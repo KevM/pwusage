@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gocarina/gocsv"
-	"go.uber.org/zap"
 )
 
 type PwApi struct {
@@ -86,77 +86,103 @@ type PwAggregates struct {
 	} `json:"solar"`
 }
 
-type PowerwallPoller struct {
-	BaseUri  string
-	Interval time.Duration
-	Logger   *zap.Logger
+type PowerwallApi struct {
+	BaseUri string
+	Logger  *slog.Logger
 }
 
-func NewPowerwallPoller(hostPort string, interval time.Duration, logger *zap.Logger) *PowerwallPoller {
-	return &PowerwallPoller{
-		BaseUri:  hostPort,
-		Interval: interval,
-		Logger:   logger,
+func NewPowerwallApi(hostPort string, logger *slog.Logger) *PowerwallApi {
+	return &PowerwallApi{
+		BaseUri: hostPort,
+		Logger:  logger,
 	}
 }
 
-func (p *PowerwallPoller) Poll() <-chan PwApi {
+func (p *PowerwallApi) GetPwApi() (PwApi, error) {
+
+	var result PwApi
+
+	aggregates, err := p.GetAggregates()
+	if err != nil {
+		return result, err
+	}
+
+	csv, err := p.GetCsv()
+	if err != nil {
+		return result, err
+	}
+
+	return PwApi{
+		Csv:        csv,
+		Aggregates: aggregates,
+	}, nil
+}
+
+func (p *PowerwallApi) GetAggregates() (PwAggregates, error) {
+	uri := fmt.Sprintf("%s/api/meters/aggregates", p.BaseUri)
+	var result PwAggregates
+
+	resp, err := http.Get(uri)
+	if err != nil {
+		p.Logger.Error("Error making aggregates HTTP request", slog.Any("error", err))
+		return result, err
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	resp.Body.Close()
+	if err != nil {
+		p.Logger.Error("Error decoding aggregates JSON response", slog.Any("error", err))
+		return result, err
+	}
+
+	return result, nil
+}
+
+func (p *PowerwallApi) GetCsv() (PwCsv, error) {
+	uri := fmt.Sprintf("%s/csv", p.BaseUri)
+	var result PwCsv
+
+	resp, err := http.Get(uri)
+	if err != nil {
+		p.Logger.Error("Error making csv HTTP request", slog.Any("error", err))
+		return result, err
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		p.Logger.Error("Error reading csv HTTP response", slog.Any("error", err))
+		return result, err
+	}
+	bodyString := "field1,field2,field3,field4,field5\n" + string(bodyBytes) // result doesn't have header so we add one.
+	csvStructs := []*PwCsv{}
+
+	if err := gocsv.UnmarshalString(bodyString, &csvStructs); err != nil {
+		p.Logger.Error("Error decoding csv HTTP response", slog.Any("error", err))
+		return result, err
+	}
+
+	result = *csvStructs[0]
+	return result, nil
+}
+
+func (p *PowerwallApi) PollApi(interval time.Duration) <-chan PwApi {
 	first := true
 	out := make(chan PwApi, 10)
-	aggUri := fmt.Sprintf("%s/api/meters/aggregates", p.BaseUri)
-	csvUri := fmt.Sprintf("%s/csv", p.BaseUri)
 
 	go func() {
 		for {
 			if !first {
-				time.Sleep(p.Interval)
+				time.Sleep(interval)
 			}
 
-			// Aggregates
-			resp, err := http.Get(aggUri)
+			api, err := p.GetPwApi()
 			if err != nil {
-				p.Logger.Error("Error making aggregates HTTP request", zap.Error(err))
-				time.Sleep(p.Interval)
+				p.Logger.Error("Error getting Powerwall API", slog.Any("error", err))
 				continue
 			}
 
-			var a PwAggregates
-			err = json.NewDecoder(resp.Body).Decode(&a)
-			resp.Body.Close()
-			if err != nil {
-				p.Logger.Error("Error decoding aggregates JSON response", zap.Error(err))
-			}
-
-			// Csv
-			resp, err = http.Get(csvUri)
-			if err != nil {
-				p.Logger.Error("Error making csv HTTP request", zap.Error(err))
-				time.Sleep(p.Interval)
-				continue
-			}
-
-			bodyBytes, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if err != nil {
-				p.Logger.Error("Error reading CSV HTTP response", zap.Error(err))
-				continue
-			}
-			bodyString := "field1,field2,field3,field4,field5\n" + string(bodyBytes)
-			csvStructs := []*PwCsv{}
-
-			if err := gocsv.UnmarshalString(bodyString, &csvStructs); err != nil {
-				p.Logger.Error("Error decoding CSV HTTP response", zap.Error(err))
-				continue
-			}
-
-			// for _, row := range csvStructs {
-			// 	p.Logger.Info("CSV", zap.Any("item", row))
-			// }
-
-			out <- PwApi{
-				Csv:        *csvStructs[0],
-				Aggregates: a,
-			}
+			out <- api
 			first = false
 		}
 	}()

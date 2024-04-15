@@ -1,6 +1,8 @@
 package monitor
 
-import "go.uber.org/zap"
+import (
+	"log/slog"
+)
 
 type PwSample struct {
 	Grid_exported  float64
@@ -11,7 +13,7 @@ type PwSample struct {
 }
 
 type PwCollector struct {
-	Logger *zap.Logger
+	Logger *slog.Logger
 
 	Samples []PwSample
 	Total   struct {
@@ -29,7 +31,7 @@ type PwCollector struct {
 	}
 }
 
-func NewPwCollector(logger *zap.Logger) PwCollector {
+func NewPwCollector(logger *slog.Logger) PwCollector {
 	return PwCollector{
 		Logger: logger,
 	}

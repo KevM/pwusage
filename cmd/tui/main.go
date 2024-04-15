@@ -9,29 +9,23 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/kevm/pw-usage/internal/monitor"
-	"go.uber.org/zap"
+
+	"log/slog"
 )
 
 func main() {
 
-	config := zap.Config{
-		Level:            zap.NewAtomicLevelAt(zap.DebugLevel),
-		Development:      false,
-		Encoding:         "json",
-		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
-		OutputPaths:      []string{"./tui.log"},
-		ErrorOutputPaths: []string{"./tui.log"},
-	}
-
-	logger, err := config.Build()
+	file, err := os.OpenFile("tui.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		panic(err)
 	}
-	defer logger.Sync()
+	defer file.Close()
 
-	poller := monitor.NewPowerwallPoller("http://localhost:8675", time.Second*5, logger)
+	logger := slog.New(slog.NewTextHandler(file, &slog.HandlerOptions{}))
 
-	ch := poller.Poll()
+	poller := monitor.NewPowerwallApi("http://localhost:8675", logger)
+
+	ch := poller.PollApi(time.Second * 20)
 	col := monitor.NewPwCollector(logger)
 
 	m := model{
@@ -41,7 +35,7 @@ func main() {
 
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
-		logger.Error("error starting tui", zap.Error(err))
+		logger.Error("error starting tui", slog.Any("error", err))
 		fmt.Printf("Error starting TUI: %v\n", err)
 		os.Exit(1)
 	}
