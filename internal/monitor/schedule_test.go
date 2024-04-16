@@ -5,12 +5,12 @@ import (
 	"time"
 )
 
-func TestTariffSchedule_Active(t *testing.T) {
-	ts := &TariffSchedule{}
+func TestTariffSchedule_GetTariffPeriod(t *testing.T) {
+	ts := &TimeOfUse{}
 
 	// Test for weekday before 8am
 	now := time.Date(2024, 4, 2, 7, 0, 0, 0, time.UTC) // Monday
-	tp := ts.Active(now)
+	tp := ts.GetTariffPeriod(now)
 
 	expectedEnd := time.Date(2024, 4, 2, 8, 0, 0, 0, time.UTC)
 	if !tp.End.Equal(expectedEnd) {
@@ -24,7 +24,7 @@ func TestTariffSchedule_Active(t *testing.T) {
 }
 
 func TestTariffSchedule_Next(t *testing.T) {
-	ts := &TariffSchedule{}
+	ts := &TimeOfUse{}
 
 	// Test for weekday before 8am
 	now := time.Date(2024, 4, 2, 7, 0, 0, 0, time.UTC) // Monday
@@ -68,7 +68,7 @@ func TestTariffSchedule_Next(t *testing.T) {
 }
 
 func TestTariffSchedule_Prev(t *testing.T) {
-	ts := &TariffSchedule{}
+	ts := &TimeOfUse{}
 
 	// Test for weekday before 8am
 	now := time.Date(2024, 4, 2, 7, 0, 0, 0, time.UTC) // Monday

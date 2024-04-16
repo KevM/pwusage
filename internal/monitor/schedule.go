@@ -9,14 +9,14 @@ type TariffPeriod struct {
 }
 
 type Schedule interface {
-	Active(now time.Time) TariffPeriod
+	GetTariffPeriod(now time.Time) TariffPeriod
 	Prev(now time.Time) time.Time
 	Next(now time.Time) time.Time
 }
 
-type TariffSchedule struct{}
+type TimeOfUse struct{}
 
-func (ts *TariffSchedule) Active(now time.Time) TariffPeriod {
+func (ts TimeOfUse) GetTariffPeriod(now time.Time) TariffPeriod {
 	var tariff string
 	if now.Weekday() == time.Saturday || now.Weekday() == time.Sunday {
 		// if weekend return "Off-Peak"
@@ -34,7 +34,7 @@ func (ts *TariffSchedule) Active(now time.Time) TariffPeriod {
 	}
 }
 
-func (ts *TariffSchedule) Prev(now time.Time) time.Time {
+func (ts TimeOfUse) Prev(now time.Time) time.Time {
 	location := now.Location()
 	dayofweek := now.Weekday()
 	hour := now.Hour()
@@ -58,7 +58,7 @@ func (ts *TariffSchedule) Prev(now time.Time) time.Time {
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
 }
 
-func (ts *TariffSchedule) Next(now time.Time) time.Time {
+func (ts TimeOfUse) Next(now time.Time) time.Time {
 	location := now.Location()
 	dayofweek := now.Weekday()
 	hour := now.Hour()
