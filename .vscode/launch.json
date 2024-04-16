@@ -5,6 +5,22 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Launch nimble socket server",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/pocketbase/",
+      "env": {
+        // "ALLOWED_ORIGINS": "*",
+        // "REDIS_HOST": "127.0.0.1:8003",
+        // "DEBUG": "true",
+        // "NIMBLE_DEBUG": "true",
+      },
+      "args": [
+        "serve",
+      ],
+    },
+    {
       "name": "Attach to TUI",
       "type": "go",
       "debugAdapter": "dlv-dap",
