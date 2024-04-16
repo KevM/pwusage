@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kevm/pw-usage/internal/monitor"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
@@ -16,8 +17,12 @@ import (
 )
 
 func main() {
+	tariffSchedule := monitor.TimeOfUse{}
+	// tariffSchedule := monitor.TestSchedule{}
+
 	app := pocketbase.New()
-	sampler := NewSampler(app)
+	sampler := NewSampler(app, tariffSchedule)
+	usager := NewUsager(app, tariffSchedule)
 
 	// loosely check if it was executed using "go run"
 	isGoRun := strings.HasPrefix(os.Args[0], os.TempDir())
@@ -31,6 +36,7 @@ func main() {
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		scheduler := cron.New()
 		scheduler.AddJob("*/30 * * * * *", sampler)
+		scheduler.Schedule(tariffSchedule, usager)
 		scheduler.Start()
 		return nil
 	})
