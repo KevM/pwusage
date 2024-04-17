@@ -3,10 +3,13 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kevm/pw-usage/internal/monitor"
+	"github.com/labstack/echo/v5"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
@@ -17,12 +20,21 @@ import (
 )
 
 func main() {
-	tariffSchedule := monitor.TimeOfUse{}
-	// tariffSchedule := monitor.TestSchedule{}
+	tz := "America/Chicago"
+	if os.Getenv("TZ") != "" {
+		tz = os.Getenv("TZ")
+	}
+
+	location, err := time.LoadLocation(tz)
+	if err != nil {
+		panic(err)
+	}
 
 	app := pocketbase.New()
+	tariffSchedule := monitor.NewTimeOfUse(location)
 	sampler := NewSampler(app, tariffSchedule)
 	usager := NewUsager(app, tariffSchedule)
+	reporter := NewReporter(app, location)
 
 	// loosely check if it was executed using "go run"
 	isGoRun := strings.HasPrefix(os.Args[0], os.TempDir())
@@ -38,6 +50,23 @@ func main() {
 		scheduler.AddJob("*/30 * * * * *", sampler)
 		scheduler.Schedule(tariffSchedule, usager)
 		scheduler.Start()
+
+		e.Router.GET("/usage/:date-range", func(c echo.Context) error {
+			dateRange := c.PathParam("date-range")
+			startS := c.QueryParam("start")
+			start, err := monitor.VerifyDate(startS)
+			if err != nil {
+				return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			}
+
+			report, err := reporter.GetUsageReport(dateRange, start)
+			if err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			}
+
+			return c.JSON(http.StatusOK, report)
+		})
+
 		return nil
 	})
 
