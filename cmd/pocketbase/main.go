@@ -54,10 +54,8 @@ func main() {
 		e.Router.GET("/usage/:date-range", func(c echo.Context) error {
 			dateRange := c.PathParam("date-range")
 			startS := c.QueryParam("start")
-			if startS == "" {
-				startS = time.Now().In(location).Format("20060102")
-			}
-			start, err := monitor.VerifyDate(startS)
+
+			dateRange, start, err := monitor.VerifyRangeStart(dateRange, startS, time.Now().In(location))
 			if err != nil {
 				return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 			}
