@@ -13,9 +13,9 @@ import (
 // Sampler is `Run` as a cron job to sample the Powerwall API and save the results to the database
 // When the date or tariff changes, a usage record is created and saved to the database
 type Sampler struct {
-	api        *monitor.PowerwallApi
-	pocketbase *pocketbase.PocketBase
-	schedule   monitor.Schedule
+	api      *monitor.PowerwallApi
+	pb       *pocketbase.PocketBase
+	schedule monitor.Schedule
 }
 
 func NewSampler(pb *pocketbase.PocketBase, s monitor.Schedule) *Sampler {
@@ -26,27 +26,31 @@ func NewSampler(pb *pocketbase.PocketBase, s monitor.Schedule) *Sampler {
 
 	api := monitor.NewPowerwallApi(baseUri, pb.Logger())
 	return &Sampler{
-		pocketbase: pb,
-		api:        api,
-		schedule:   s,
+		pb:       pb,
+		api:      api,
+		schedule: s,
 	}
 }
 
 func (s *Sampler) Run() {
 	now := time.Now()
-	tp := s.schedule.GetTariffPeriod(now)
+	s.CreateSample(now)
+}
 
+func (s *Sampler) CreateSample(t time.Time) {
 	pwapi, err := s.api.GetPwApi()
 	if err != nil {
-		s.pocketbase.Logger().Error("sampler: error getting Powerwall API", slog.Any("error", err))
+		s.pb.Logger().Error("sampler: error getting Powerwall API", slog.Any("error", err))
 	}
 
 	// save sample
-	dao := s.pocketbase.Dao()
+	dao := s.pb.Dao()
 	collection, err := dao.FindCollectionByNameOrId("sample")
 	if err != nil {
-		s.pocketbase.Logger().Error("Sampler: error finding sample collection", slog.Any("error", err))
+		s.pb.Logger().Error("Sampler: error finding sample collection", slog.Any("error", err))
 	}
+
+	tp := s.schedule.GetTariffPeriod(t)
 
 	// sample record
 	sr := models.NewRecord(collection)
@@ -62,17 +66,6 @@ func (s *Sampler) Run() {
 	sr.Set("current_grid_usage", pwapi.Csv.Grid)
 
 	if err := dao.SaveRecord(sr); err != nil {
-		s.pocketbase.Logger().Error("Sampler: error saving sample record to collection", slog.Any("error", err))
+		s.pb.Logger().Error("Sampler: error saving sample record to collection", slog.Any("error", err))
 	}
-
-	// startS := tp.Start.In(time.UTC).Format("2006-01-02 15:04:05Z")
-	// endS := tp.End.In(time.UTC).Format("2006-01-02 15:04:05Z")
-	// filter := "tariff = {:tariff} && created >= {:start} && created < {:end}"
-	// params := dbx.Params{"start": startS, "end": endS, "tariff": tp.Tariff}
-	// records, err := dao.FindRecordsByFilter("sample", filter, "created", -1, 0, params)
-	// if err != nil {
-	// 	s.pocketbase.Logger().Error("Usager: error finding sample records for usage creation", slog.Any("error", err))
-	// }
-
-	// s.pocketbase.Logger().Info("Sampler: found sample records", slog.Int("count", len(records)))
 }
