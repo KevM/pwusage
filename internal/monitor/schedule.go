@@ -14,7 +14,15 @@ type Schedule interface {
 	Next(now time.Time) time.Time
 }
 
-type TimeOfUse struct{}
+type TimeOfUse struct {
+	location *time.Location
+}
+
+func NewTimeOfUse(location *time.Location) TimeOfUse {
+	return TimeOfUse{
+		location: location,
+	}
+}
 
 func (ts TimeOfUse) GetTariffPeriod(now time.Time) TariffPeriod {
 	var tariff string
@@ -35,46 +43,44 @@ func (ts TimeOfUse) GetTariffPeriod(now time.Time) TariffPeriod {
 }
 
 func (ts TimeOfUse) Prev(now time.Time) time.Time {
-	location := now.Location()
 	dayofweek := now.Weekday()
 	hour := now.Hour()
 	isWeekday := dayofweek > time.Sunday && dayofweek < time.Saturday
 	if isWeekday {
 		if hour >= 0 && hour < 8 {
 			// retrun midnight of the previous day
-			return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+			return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, ts.location)
 		}
 		if hour >= 8 && hour < 20 {
 			// return 8am of the same day
-			return time.Date(now.Year(), now.Month(), now.Day(), 8, 0, 0, 0, location)
+			return time.Date(now.Year(), now.Month(), now.Day(), 8, 0, 0, 0, ts.location)
 		}
 		if hour >= 20 && hour < 24 {
 			// return 8pm of the same day
-			return time.Date(now.Year(), now.Month(), now.Day(), 20, 0, 0, 0, location)
+			return time.Date(now.Year(), now.Month(), now.Day(), 20, 0, 0, 0, ts.location)
 		}
 	}
 
 	// for weekend return midnight of the previous day (remember we don't want to cross date boundarys)
-	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, ts.location)
 }
 
 func (ts TimeOfUse) Next(now time.Time) time.Time {
-	location := now.Location()
 	dayofweek := now.Weekday()
 	hour := now.Hour()
 	isWeekday := dayofweek > time.Sunday && dayofweek < time.Saturday
 	if isWeekday {
 		if hour >= 0 && hour < 8 {
-			return time.Date(now.Year(), now.Month(), now.Day(), 8, 0, 0, 0, location)
+			return time.Date(now.Year(), now.Month(), now.Day(), 8, 0, 0, 0, ts.location)
 		}
 		if hour >= 8 && hour < 20 {
-			return time.Date(now.Year(), now.Month(), now.Day(), 20, 0, 0, 0, location)
+			return time.Date(now.Year(), now.Month(), now.Day(), 20, 0, 0, 0, ts.location)
 		}
 		if hour >= 20 && hour < 24 {
-			return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location).AddDate(0, 0, 1)
+			return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, ts.location).AddDate(0, 0, 1)
 		}
 	}
 
 	// for weekend return midnight of the next day (remember we don't want to cross date boundarys)
-	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location).AddDate(0, 0, 1)
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, ts.location).AddDate(0, 0, 1)
 }
