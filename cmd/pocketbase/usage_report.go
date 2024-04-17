@@ -2,11 +2,10 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	"time"
 
+	"github.com/kevm/pw-usage/internal/monitor"
 	"github.com/neomantra/ymdflag"
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 )
 
@@ -36,31 +35,42 @@ type UsageReport struct {
 type Reporter struct {
 	pb       *pocketbase.PocketBase
 	location *time.Location
+	schedule monitor.Schedule
 }
 
-func NewReporter(pb *pocketbase.PocketBase, location *time.Location) *Reporter {
+func NewReporter(pb *pocketbase.PocketBase, schedule monitor.Schedule, location *time.Location) *Reporter {
 	return &Reporter{
 		pb:       pb,
 		location: location,
+		schedule: schedule,
 	}
 }
 
 func (r *Reporter) GetUsageReport(dateGrouping string, start ymdflag.YMDFlag) (UsageReport, error) {
-	var result UsageReport
 	rangeFound, end := r.FindEndDate(dateGrouping, start)
-	result.Range = rangeFound
+	result := UsageReport{
+		Start: start.AsTimeWithLoc(r.location),
+		End:   end.AsTimeWithLoc(r.location),
+		Range: rangeFound,
+	}
 
-	// get usages between start and end
-	result.Start = start.AsTimeWithLoc(r.location).In(time.UTC)
-	result.End = end.AsTimeWithLoc(r.location).In(time.UTC)
-	startS := result.Start.Format("2006-01-02 15:04:05Z")
-	endS := result.End.Format("2006-01-02 15:04:05Z")
-	filter := "start >= {:start} && end <= {:end}"
-	params := dbx.Params{"start": startS, "end": endS}
-	r.pb.Logger().Debug("Getting usage report", slog.String("date_group", dateGrouping), slog.String("start", startS), slog.String("end", endS))
-	usages, err := r.pb.Dao().FindRecordsByFilter("usage", filter, "start", -1, 0, params)
+	repo := monitor.NewUsageRepo(r.pb)
+	usages, err := repo.GetUsagesBetween(start, end, r.location)
 	if err != nil {
-		return result, fmt.Errorf("error getting usages for range %s from %s to %s: %w", dateGrouping, startS, endS, err)
+		return result, fmt.Errorf("error getting usages for range %s starting at %s: %w", dateGrouping, start.AsYMDString(), err)
+	}
+
+	now := time.Now().In(r.location)
+	if start == ymdflag.NewYMDFlag(now) {
+		// get usage for current tarrif period
+		tp := r.schedule.GetTariffPeriod(now)
+		start, end, err := repo.GetUsageSamples(tp)
+		if err != nil {
+			return result, fmt.Errorf("error getting usage samples for today's current tarrif: %w", err)
+		}
+
+		ur := repo.CreateUsageRecord(tp, start, end)
+		usages = append(usages, ur)
 	}
 
 	// group by tariff
