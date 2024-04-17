@@ -20,24 +20,33 @@ func NewUsageRepo(pb *pocketbase.PocketBase) *Usage_Repo {
 }
 
 func (repo *Usage_Repo) GetUsageSamples(tp TariffPeriod) (*models.Record, *models.Record, error) {
-	startS := tp.Start.In(time.UTC).Format("2006-01-02 15:04:05")
-	endS := tp.End.In(time.UTC).Format("2006-01-02 15:04:05")
-	filter := "tariff = {:tariff} && created >= {:start} && created < {:end}"
-	params := dbx.Params{"start": startS, "end": endS, "tariff": tp.Tariff}
-
 	dao := repo.pb.Dao()
-	records, err := dao.FindRecordsByFilter("sample", filter, "created", -1, 0, params)
-	repo.pb.Logger().Debug("get usage samples", slog.String("filter", filter), slog.Any("params", params))
+
+	startS := tp.Start.In(time.UTC).Format("2006-01-02 15:04:05")
+	filter := "tariff = {:tariff} && created >= {:start}"
+	params := dbx.Params{"start": startS, "tariff": tp.Tariff}
+	records, err := dao.FindRecordsByFilter("sample", filter, "created", 1, 0, params)
+	repo.pb.Logger().Debug("get usage start sample", slog.String("filter", filter), slog.Any("params", params))
 	if err != nil {
-		return nil, nil, fmt.Errorf("error finding sample records for usage creation: %w", err)
+		return nil, nil, fmt.Errorf("error finding start sample record: %w", err)
 	}
-
-	if len(records) < 2 {
-		return nil, nil, fmt.Errorf("not enough sample records to create usage record")
+	if len(records) < 1 {
+		return nil, nil, fmt.Errorf("did not find start sample record")
 	}
-
 	start := records[0]
-	end := records[len(records)-1]
+
+	endS := tp.End.In(time.UTC).Format("2006-01-02 15:04:05")
+	filter = "tariff = {:tariff} && created < {:end}"
+	params = dbx.Params{"end": endS, "tariff": tp.Tariff}
+	records, err = dao.FindRecordsByFilter("sample", filter, "-created", 1, 0, params)
+	repo.pb.Logger().Debug("get usage end sample", slog.String("filter", filter), slog.Any("params", params))
+	if err != nil {
+		return nil, nil, fmt.Errorf("error finding end sample record: %w", err)
+	}
+	if len(records) < 1 {
+		return nil, nil, fmt.Errorf("did not find end sample record")
+	}
+	end := records[0]
 
 	return start, end, nil
 }
