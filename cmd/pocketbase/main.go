@@ -34,7 +34,7 @@ func main() {
 	tariffSchedule := monitor.NewTimeOfUse(location)
 	sampler := NewSampler(app, tariffSchedule)
 	usager := NewUsager(app, tariffSchedule)
-	reporter := NewReporter(app, location)
+	reporter := NewReporter(app, tariffSchedule, location)
 
 	// loosely check if it was executed using "go run"
 	isGoRun := strings.HasPrefix(os.Args[0], os.TempDir())
@@ -54,6 +54,9 @@ func main() {
 		e.Router.GET("/usage/:date-range", func(c echo.Context) error {
 			dateRange := c.PathParam("date-range")
 			startS := c.QueryParam("start")
+			if startS == "" {
+				startS = time.Now().In(location).Format("20060102")
+			}
 			start, err := monitor.VerifyDate(startS)
 			if err != nil {
 				return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
