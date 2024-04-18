@@ -2,6 +2,9 @@ module github.com/kevm/pw-usage
 
 go 1.22.2
 
+replace github.com/kevm/pw-usage/cmd/pocketbase/migrations => ./migrations
+replace github.com/kevm/pw-usage/internal/monitoring => ./internal/monitoring
+
 require (
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/charmbracelet/lipgloss v0.10.0
