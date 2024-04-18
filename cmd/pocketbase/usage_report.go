@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/kevm/pw-usage/internal/monitor"
@@ -26,9 +28,9 @@ type TariffUsage struct {
 }
 
 type UsageReport struct {
-	Range   string        `json:"date_range"`
-	Start   time.Time     `json:"start_date"`
-	End     time.Time     `json:"end_date"`
+	Range   string        `json:"range"`
+	Start   time.Time     `json:"start"`
+	End     time.Time     `json:"end"`
 	Tariffs []TariffUsage `json:"tariffs"`
 }
 
@@ -70,6 +72,7 @@ func (r *Reporter) GetUsageReport(dateGrouping string, start ymdflag.YMDFlag) (U
 		}
 
 		ur := repo.CreateUsageRecord(tp, start, end)
+		r.pb.Logger().Debug("Appending current approximate usage for today's report", slog.Any("current usage", ur))
 		usages = append(usages, ur)
 	}
 
@@ -98,6 +101,10 @@ func (r *Reporter) GetUsageReport(dateGrouping string, start ymdflag.YMDFlag) (U
 	for _, tu := range tariffs {
 		result.Tariffs = append(result.Tariffs, *tu)
 	}
+
+	sort.Slice(result.Tariffs, func(i, j int) bool {
+		return result.Tariffs[i].Tariff < result.Tariffs[j].Tariff
+	})
 
 	return result, nil
 }
