@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/neomantra/ymdflag"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/models"
@@ -51,7 +50,7 @@ func (repo *Usage_Repo) GetUsageSamples(tp TariffPeriod) (*models.Record, *model
 	return start, end, nil
 }
 
-func (repo *Usage_Repo) CreateUsageRecord(tp TariffPeriod, start *models.Record, end *models.Record) *models.Record {
+func (repo *Usage_Repo) CreateUsageRecord(ur *models.Record, tp TariffPeriod, start *models.Record, end *models.Record) *models.Record {
 	dao := repo.pb.Dao()
 	collection, err := dao.FindCollectionByNameOrId("usage")
 	if err != nil {
@@ -64,7 +63,9 @@ func (repo *Usage_Repo) CreateUsageRecord(tp TariffPeriod, start *models.Record,
 	gridImported := end.Get("grid_imported").(float64) - start.Get("grid_imported").(float64)
 	gridExported := end.Get("grid_exported").(float64) - start.Get("grid_exported").(float64)
 
-	ur := models.NewRecord(collection)
+	if ur == nil {
+		ur = models.NewRecord(collection)
+	}
 	ur.Set("tariff", tp.Tariff)
 	ur.Set("start", tp.Start)
 	ur.Set("end", tp.End)
@@ -77,11 +78,9 @@ func (repo *Usage_Repo) CreateUsageRecord(tp TariffPeriod, start *models.Record,
 	return ur
 }
 
-func (repo *Usage_Repo) GetUsagesBetween(start ymdflag.YMDFlag, end ymdflag.YMDFlag, location *time.Location) ([]*models.Record, error) {
-	s := start.AsTimeWithLoc(location).In(time.UTC)
-	e := end.AsTimeWithLoc(location).In(time.UTC)
-	startS := s.Format("2006-01-02 15:04:05")
-	endS := e.Format("2006-01-02 15:04:05")
+func (repo *Usage_Repo) GetUsagesBetween(s time.Time, e time.Time) ([]*models.Record, error) {
+	startS := s.In(time.UTC).Format("2006-01-02 15:04:05.000")
+	endS := e.In(time.UTC).Add(1 * time.Millisecond).Format("2006-01-02 15:04:05.000")
 	filter := "start >= {:start} && end <= {:end}"
 	params := dbx.Params{"start": startS, "end": endS}
 	repo.pb.Logger().Debug("Getting usages", slog.String("start", startS), slog.String("end", endS))
@@ -91,4 +90,26 @@ func (repo *Usage_Repo) GetUsagesBetween(start ymdflag.YMDFlag, end ymdflag.YMDF
 	}
 
 	return usages, nil
+}
+
+func (repo *Usage_Repo) GetTariffPeriodUsages(tp TariffPeriod) (*models.Record, error) {
+	startS := tp.Start.In(time.UTC).Format("2006-01-02 15:04:05.000")
+	endS := tp.End.In(time.UTC).Add(1 * time.Millisecond).Format("2006-01-02 15:04:05.000")
+	filter := "tariff = {:tariff} && start >= {:start} && end <= {:end}"
+	params := dbx.Params{"tariff": tp.Tariff, "start": startS, "end": endS}
+	repo.pb.Logger().Debug("Getting usages", slog.String("start", startS), slog.String("end", endS))
+	usages, err := repo.pb.Dao().FindRecordsByFilter("usage", filter, "start", -1, 0, params)
+	if err != nil {
+		return nil, fmt.Errorf("error getting usages from %s to %s: %w", startS, endS, err)
+	}
+
+	if len(usages) > 1 {
+		return nil, fmt.Errorf("found more than one usage record for tariff period %s", tp)
+	}
+
+	if len(usages) == 1 {
+		return usages[0], nil
+	}
+
+	return nil, nil
 }

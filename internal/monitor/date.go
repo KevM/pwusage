@@ -57,3 +57,31 @@ func VerifyDate(in string) (ymdflag.YMDFlag, error) {
 
 	return startDate, nil
 }
+
+func VerifyDateRange(start string, end string) (ymdflag.YMDFlag, ymdflag.YMDFlag, error) {
+
+	if start == "" {
+		return ymdflag.YMDFlag{}, ymdflag.YMDFlag{}, nil
+	}
+	startDate := ymdflag.YMDFlag{}
+	err := startDate.Set(start)
+	if err != nil {
+		return startDate, ymdflag.YMDFlag{}, fmt.Errorf("start-date must be a valid date formatted YYYYMMDD. Error: %w", err)
+	}
+
+	if end == "" {
+		return startDate, startDate, nil
+	}
+
+	endDate := ymdflag.YMDFlag{}
+	err = endDate.Set(end)
+	if err != nil {
+		return startDate, endDate, fmt.Errorf("end-date must be a valid date formatted YYYYMMDD. Error: %w", err)
+	}
+
+	if startDate.AsTime().After(endDate.AsTime()) {
+		return startDate, endDate, fmt.Errorf("start-date must be before end-date")
+	}
+
+	return startDate, endDate, nil
+}
