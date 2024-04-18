@@ -11,6 +11,7 @@ import (
 	"github.com/kevm/pw-usage/internal/monitor"
 	"github.com/labstack/echo/v5"
 	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 	"github.com/robfig/cron"
@@ -23,6 +24,10 @@ func main() {
 	tz := "America/Chicago"
 	if os.Getenv("TZ") != "" {
 		tz = os.Getenv("TZ")
+	}
+	web_dir := "/Users/kevm/github/power/cmd/web/build"
+	if os.Getenv("WEB_DIR") != "" {
+		web_dir = os.Getenv("WEB_DIR")
 	}
 
 	location, err := time.LoadLocation(tz)
@@ -51,7 +56,7 @@ func main() {
 		scheduler.AddJob("*/60 * * * * *", usager)
 		scheduler.Start()
 
-		e.Router.GET("/usage/report/:date-range", func(c echo.Context) error {
+		e.Router.GET("/usage/api/report/:date-range", func(c echo.Context) error {
 			dateRange := c.PathParam("date-range")
 			startS := c.QueryParam("start")
 
@@ -68,7 +73,7 @@ func main() {
 			return c.JSON(http.StatusOK, report)
 		})
 
-		e.Router.POST("/usage/backfill", func(c echo.Context) error {
+		e.Router.POST("/usage/api/backfill", func(c echo.Context) error {
 			startS := c.QueryParam("start")
 			if startS == "" {
 				startS = schedule.Now().AddDate(0, 0, -1).In(location).Format("20060102")
@@ -89,6 +94,8 @@ func main() {
 
 			return c.JSON(http.StatusOK, map[string]string{"message": "backfill complete"})
 		})
+
+		e.Router.GET("/usage/*", apis.StaticDirectoryHandler(os.DirFS(web_dir), false))
 
 		return nil
 	})
