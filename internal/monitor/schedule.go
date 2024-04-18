@@ -12,6 +12,7 @@ type Schedule interface {
 	GetTariffPeriod(now time.Time) TariffPeriod
 	Prev(now time.Time) time.Time
 	Next(now time.Time) time.Time
+	Now() time.Time
 }
 
 type TimeOfUse struct {
@@ -22,6 +23,10 @@ func NewTimeOfUse(location *time.Location) TimeOfUse {
 	return TimeOfUse{
 		location: location,
 	}
+}
+
+func (ts TimeOfUse) Now() time.Time {
+	return time.Now().In(ts.location)
 }
 
 func (ts TimeOfUse) GetTariffPeriod(now time.Time) TariffPeriod {

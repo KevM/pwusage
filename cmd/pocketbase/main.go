@@ -31,10 +31,10 @@ func main() {
 	}
 
 	app := pocketbase.New()
-	tariffSchedule := monitor.NewTimeOfUse(location)
-	sampler := NewSampler(app, tariffSchedule)
-	usager := NewUsager(app, tariffSchedule)
-	reporter := NewReporter(app, tariffSchedule, location)
+	schedule := monitor.NewTimeOfUse(location)
+	sampler := NewSampler(app, schedule)
+	usager := NewUsager(app, schedule)
+	reporter := NewReporter(app, schedule, location)
 
 	// loosely check if it was executed using "go run"
 	isGoRun := strings.HasPrefix(os.Args[0], os.TempDir())
@@ -48,14 +48,14 @@ func main() {
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		scheduler := cron.New()
 		scheduler.AddJob("*/30 * * * * *", sampler)
-		scheduler.Schedule(tariffSchedule, usager)
+		scheduler.AddJob("*/60 * * * * *", usager)
 		scheduler.Start()
 
-		e.Router.GET("/usage/:date-range", func(c echo.Context) error {
+		e.Router.GET("/usage/report/:date-range", func(c echo.Context) error {
 			dateRange := c.PathParam("date-range")
 			startS := c.QueryParam("start")
 
-			dateRange, start, err := monitor.VerifyRangeStart(dateRange, startS, time.Now().In(location))
+			dateRange, start, err := monitor.VerifyRangeStart(dateRange, startS, schedule.Now())
 			if err != nil {
 				return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 			}
@@ -66,6 +66,28 @@ func main() {
 			}
 
 			return c.JSON(http.StatusOK, report)
+		})
+
+		e.Router.POST("/usage/backfill", func(c echo.Context) error {
+			startS := c.QueryParam("start")
+			if startS == "" {
+				startS = schedule.Now().AddDate(0, 0, -1).In(location).Format("20060102")
+			}
+			endS := c.QueryParam("end")
+			if endS == "" {
+				endS = schedule.Now().AddDate(0, 0, 1).In(location).Format("20060102")
+			}
+			start, end, err := monitor.VerifyDateRange(startS, endS)
+			if err != nil {
+				return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			}
+
+			err = usager.Backfill(start.AsTimeWithLoc(location), end.AsTimeWithLoc(location))
+			if err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			}
+
+			return c.JSON(http.StatusOK, map[string]string{"message": "backfill complete"})
 		})
 
 		return nil

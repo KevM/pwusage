@@ -33,7 +33,7 @@ func NewSampler(pb *pocketbase.PocketBase, s monitor.Schedule) *Sampler {
 }
 
 func (s *Sampler) Run() {
-	now := time.Now()
+	now := s.schedule.Now()
 	s.CreateSample(now)
 }
 

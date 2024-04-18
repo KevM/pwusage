@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	"sort"
 	"time"
 
@@ -50,30 +49,19 @@ func NewReporter(pb *pocketbase.PocketBase, schedule monitor.Schedule, location 
 
 func (r *Reporter) GetUsageReport(dateGrouping string, start ymdflag.YMDFlag) (UsageReport, error) {
 	rangeFound, end := r.FindEndDate(dateGrouping, start)
+	s := start.AsTimeWithLoc(r.location)
+	e := end.AsTimeWithLoc(r.location)
+
 	result := UsageReport{
-		Start: start.AsTimeWithLoc(r.location),
-		End:   end.AsTimeWithLoc(r.location),
+		Start: s,
+		End:   e,
 		Range: rangeFound,
 	}
 
 	repo := monitor.NewUsageRepo(r.pb)
-	usages, err := repo.GetUsagesBetween(start, end, r.location)
+	usages, err := repo.GetUsagesBetween(s, e)
 	if err != nil {
 		return result, fmt.Errorf("error getting usages for range %s starting at %s: %w", dateGrouping, start.AsYMDString(), err)
-	}
-
-	now := time.Now().In(r.location)
-	if start == ymdflag.NewYMDFlag(now) {
-		// get usage for current tarrif period
-		tp := r.schedule.GetTariffPeriod(now)
-		start, end, err := repo.GetUsageSamples(tp)
-		if err != nil {
-			return result, fmt.Errorf("error getting usage samples for today's current tarrif: %w", err)
-		}
-
-		ur := repo.CreateUsageRecord(tp, start, end)
-		r.pb.Logger().Debug("Appending current approximate usage for today's report", slog.Any("current usage", ur))
-		usages = append(usages, ur)
 	}
 
 	// group by tariff
