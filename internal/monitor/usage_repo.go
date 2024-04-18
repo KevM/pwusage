@@ -84,7 +84,7 @@ func (repo *Usage_Repo) GetUsagesBetween(start ymdflag.YMDFlag, end ymdflag.YMDF
 	endS := e.Format("2006-01-02 15:04:05")
 	filter := "start >= {:start} && end <= {:end}"
 	params := dbx.Params{"start": startS, "end": endS}
-	repo.pb.Logger().Debug("Getting usage report", slog.String("start", startS), slog.String("end", endS))
+	repo.pb.Logger().Debug("Getting usages", slog.String("start", startS), slog.String("end", endS))
 	usages, err := repo.pb.Dao().FindRecordsByFilter("usage", filter, "start", -1, 0, params)
 	if err != nil {
 		return nil, fmt.Errorf("error getting usages from %s to %s: %w", startS, endS, err)
