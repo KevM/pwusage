@@ -20,6 +20,7 @@
       <li>Solar Production {kwh(tariff.solar_production)}</li>
       <li>Grid Imported: {kwh(tariff.grid_imported)}</li>
       <li>Grid Exported: {kwh(tariff.grid_exported)}</li>
+      <li>Grid Net: {kwh(tariff.grid_exported- tariff.grid_imported)}</li>
     </ul>
   {/each}
 {:else}

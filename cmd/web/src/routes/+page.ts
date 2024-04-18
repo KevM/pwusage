@@ -4,6 +4,6 @@ import type { PageLoad } from './$types';
 
 export const load: PageLoad = async () => {
 	return {
-		usage: await fetchUsageReport(UsageRange.day, new Date())
+		usage: await fetchUsageReport(UsageRange.month, new Date())
 	}
 };
