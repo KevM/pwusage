@@ -3,6 +3,7 @@ package main
 
 import (
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -35,10 +36,13 @@ func main() {
 		panic(err)
 	}
 
-	app := pocketbase.New()
+	var programLevel = new(slog.LevelVar)
+	h := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel})
+	slog.SetDefault(slog.New(h))
+
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDev: true})
 	schedule := monitor.NewTimeOfUse(location)
 	sampler := NewSampler(app, schedule)
-	usager := NewUsager(app, schedule)
 	reporter := NewReporter(app, schedule, location)
 
 	// loosely check if it was executed using "go run"
@@ -53,7 +57,7 @@ func main() {
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		scheduler := cron.New()
 		scheduler.AddJob("*/30 * * * * *", sampler)
-		scheduler.AddJob("*/60 * * * * *", usager)
+		// scheduler.AddJob("*/60 * * * * *", usager)
 		scheduler.Start()
 
 		e.Router.GET("/usage/api/report/:date-range", func(c echo.Context) error {
@@ -71,28 +75,6 @@ func main() {
 			}
 
 			return c.JSON(http.StatusOK, report)
-		})
-
-		e.Router.POST("/usage/api/backfill", func(c echo.Context) error {
-			startS := c.QueryParam("start")
-			if startS == "" {
-				startS = schedule.Now().AddDate(0, 0, -1).In(location).Format("20060102")
-			}
-			endS := c.QueryParam("end")
-			if endS == "" {
-				endS = schedule.Now().AddDate(0, 0, 1).In(location).Format("20060102")
-			}
-			start, end, err := monitor.VerifyDateRange(startS, endS)
-			if err != nil {
-				return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-			}
-
-			err = usager.Backfill(start.AsTimeWithLoc(location), end.AsTimeWithLoc(location))
-			if err != nil {
-				return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			}
-
-			return c.JSON(http.StatusOK, map[string]string{"message": "backfill complete"})
 		})
 
 		e.Router.GET("/usage/*", apis.StaticDirectoryHandler(os.DirFS(web_dir), false))
