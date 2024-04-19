@@ -2,5 +2,5 @@
 **/*.log
 **/pb_data/*.db
 
-app/.auth/.*
-app/pypowerwall.env
+data/.auth/.*
+data/pypowerwall.env

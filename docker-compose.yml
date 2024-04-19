@@ -1,16 +1,16 @@
 services:
     pwusage:
-        image: kevm/pwusage:latest
+        image: pwusage
         build: .
         container_name: pwusage
         hostname: pwusage
         restart: unless-stopped
         volumes:
             - type: bind
-              source: ./app/pb_data
+              source: ./data/pb_data
               target: /pb_data
         ports:
-            - "8090:8091"
+            - "8090:8090"
         environment:
             - TZ=America/Chicago
             - PYPOWERWALL_BASE_URI=http://pypowerwall:8675
@@ -22,7 +22,7 @@ services:
         restart: unless-stopped
         volumes:
             - type: bind
-              source: ./app/.auth
+              source: ./data/.auth
               target: /app/.auth
         user: "${PWD_USER:-1000:1000}"
         ports:
@@ -30,4 +30,4 @@ services:
         environment:
             - PW_AUTH_PATH=.auth
         env_file:
-            - ./app/pypowerwall.env
+            - ./data/pypowerwall.env
