@@ -1,6 +1,6 @@
 services:
     pwusage:
-        image: pwusage:latest
+        image: kevm/pwusage:latest
         build: .
         container_name: pwusage
         hostname: pwusage
