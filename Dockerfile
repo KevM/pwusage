@@ -15,7 +15,7 @@ COPY ./go.mod ./go.sum ./
 RUN go mod download
 COPY . .
 
-RUN GOOS=${TARGETOS} ;GOARCH=${TARGETARCH}; go build -ldflags="-w -s" -o app ./cmd/pocketbase
+RUN GOOS=${TARGETOS} ;GOARCH=${TARGETARCH}; go build -ldflags="-w -s" ./cmd/pocketbase
 
 FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine:3.18.3
 LABEL maintainer="kevm"
@@ -24,9 +24,8 @@ RUN apk add --no-cache tzdata
 VOLUME /pb_data
 ENV WEB_DIR "/web"
 EXPOSE 8090
-WORKDIR /app
-COPY --from=build /src/app /app/app
+COPY --from=build /src/pocketbase /pocketbase
 COPY --from=build /src/cmd/web/build /web
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
  
-ENTRYPOINT [ "./app", "serve", "--http=0.0.0.0:8090"]
+ENTRYPOINT [ "./pocketbase", "serve", "--http=0.0.0.0:8090"]
