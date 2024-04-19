@@ -1,3 +1,7 @@
 **/.DS_Store
-**/pb_data
 **/*.log
+*.env
+**/pb_data/*.db
+
+app/.auth/.*
+app/pypowerwall.env
