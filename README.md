@@ -40,3 +40,25 @@ Your solar production is mostly _On-Peak_ and a single Tesla Powerwall 2 has 11.
 **Tariff** - A rate per kwh for electricity that you purchase from the grid and usually a separate rate for selling back to the grid.
 
 **Tariff Period** - A range of time and the tariff it is being bill at. Example: _Monday 8am-8pm Tariff: On-Peak_
+
+## Developers
+
+### Running PWUsage Locally
+
+1. Clone repo
+2. Copy `./app/pypowerwall-example.env` to `./app/pypowerwall.env` 
+   * Add your Tesla Powerwall gateway login details to this file. If this is your first time [you will need to setup credentials](https://www.tesla.com/support/energy/powerwall/own/connecting-network). This can be a bit tricky but if you are running a docker container... We believe in you.
+3. **TODO Automate this*** Build web page: 
+   * `cd ./cmd/web`
+   * `sudo apt install npm vite xcb`
+   * `npm install`
+   * `npm run build`
+4. `docker-compose up`
+
+
+### Building Web App
+
+   * `cd ./cmd/web`
+   * `sudo apt install npm vite xcb`
+   * `npm install`
+   * `npm run build`
