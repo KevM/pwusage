@@ -1,9 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/kevm/pw-usage/internal/monitor"
 	"github.com/pocketbase/pocketbase"
@@ -34,23 +34,35 @@ func NewSampler(pb *pocketbase.PocketBase, s monitor.Schedule) *Sampler {
 
 func (s *Sampler) Run() {
 	now := s.schedule.Now()
-	s.CreateSample(now)
+	s.pb.Logger().Debug("sample/usage update job", slog.Any("time", now))
+
+	tp := s.schedule.GetTariffPeriod(now)
+
+	_, err := s.CreateSample(tp)
+	if err != nil {
+		s.pb.Logger().Error("sample: error creating sample", slog.Any("error", err))
+		return
+	}
+
+	_, err = s.UpsertUsage(tp)
+	if err != nil {
+		s.pb.Logger().Error("usager: error generating usage report", slog.Any("error", err))
+		return
+	}
 }
 
-func (s *Sampler) CreateSample(t time.Time) {
+func (s *Sampler) CreateSample(tp monitor.TariffPeriod) (*models.Record, error) {
 	pwapi, err := s.api.GetPwApi()
 	if err != nil {
-		s.pb.Logger().Error("sampler: error getting Powerwall API", slog.Any("error", err))
+		return nil, fmt.Errorf("sample: error getting Powerwall API: %w", err)
 	}
 
 	// save sample
 	dao := s.pb.Dao()
 	collection, err := dao.FindCollectionByNameOrId("sample")
 	if err != nil {
-		s.pb.Logger().Error("Sampler: error finding sample collection", slog.Any("error", err))
+		return nil, fmt.Errorf("sample: error finding collection: %w", err)
 	}
-
-	tp := s.schedule.GetTariffPeriod(t)
 
 	// sample record
 	sr := models.NewRecord(collection)
@@ -66,6 +78,29 @@ func (s *Sampler) CreateSample(t time.Time) {
 	sr.Set("current_grid_usage", pwapi.Csv.Grid)
 
 	if err := dao.SaveRecord(sr); err != nil {
-		s.pb.Logger().Error("Sampler: error saving sample record to collection", slog.Any("error", err))
+		return sr, fmt.Errorf("sample: error saving sample record: %w", err)
 	}
+
+	return sr, nil
+}
+
+func (s *Sampler) UpsertUsage(tp monitor.TariffPeriod) (*models.Record, error) {
+	repo := monitor.NewUsageRepo(s.pb)
+	ur, err := repo.GetTariffPeriodUsages(tp)
+	if err != nil {
+		return nil, fmt.Errorf("error getting to maybe upsertL %w", err)
+	}
+
+	s.pb.Logger().Debug("generating usage report", slog.Any("period", tp))
+	start, end, err := repo.GetUsageSamples(tp)
+	if err != nil {
+		return nil, fmt.Errorf("error getting usage samples: %w", err)
+	}
+
+	ur = repo.CreateUsageRecord(ur, tp, start, end)
+	if err := s.pb.Dao().SaveRecord(ur); err != nil {
+		return nil, fmt.Errorf("error saving usage record: %w", err)
+	}
+
+	return ur, nil
 }
