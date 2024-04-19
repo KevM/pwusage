@@ -16,6 +16,7 @@ services:
         environment:
             - TZ=America/Chicago
             - PYPOWERWALL_BASE_URI=http://pypowerwall:8675
+            - API_BASE_URL=http://harrison-a7.donkey-hen.ts.net:8090
 
     pypowerwall:
         image: jasonacox/pypowerwall:latest

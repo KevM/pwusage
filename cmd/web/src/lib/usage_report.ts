@@ -1,8 +1,7 @@
 import type { UsageRange, UsageReport } from "./types";
 
-export const fetchUsageReport = async (range: UsageRange, start: Date): Promise<UsageReport> => {
-    const uri = new URL('http://localhost:8090/usage/api/report/' + range );
-
+export const fetchUsageReport = async (base: string, range: UsageRange, start: Date): Promise<UsageReport> => {
+    const uri = new URL(base + '/usage/api/report/' + range );
     const response = await fetch(uri, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
