@@ -3,6 +3,8 @@ services:
         image: pwusage
         build: .
         container_name: pwusage
+        depends_on:
+            - pypowerwall
         hostname: pwusage
         restart: unless-stopped
         volumes:
