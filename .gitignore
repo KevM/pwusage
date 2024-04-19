@@ -1,6 +1,5 @@
 **/.DS_Store
 **/*.log
-*.env
 **/pb_data/*.db
 
 app/.auth/.*
