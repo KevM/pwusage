@@ -55,6 +55,10 @@ Your solar production is mostly _On-Peak_ and a single Tesla Powerwall 2 has 11.
    * `npm run build`
 4. `docker-compose up`
 
+### Build Docker Container 
+
+* `docker buildx build --platform=linux/amd64 -t pwusage .`
+* `docker buildx build --platform=linux/arm64v8 -t pwusage .`
 
 ### Building Web App
 
