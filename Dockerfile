@@ -17,7 +17,7 @@ COPY . .
 
 RUN GOOS=${TARGETOS} ;GOARCH=${TARGETARCH}; go build -ldflags="-w -s" ./cmd/pocketbase
 
-FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine:3.18.3
+FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine:latest
 LABEL maintainer="kevm"
 RUN apk add --no-cache tzdata
 
