@@ -33,6 +33,24 @@ type UsageReport struct {
 	Tariffs []TariffUsage `json:"tariffs"`
 }
 
+type CurrentlyReport struct {
+	Grid_exported  float64 `json:"grid_exported"`
+	Grid_imported  float64 `json:"grid_imported"`
+	Load_imported  float64 `json:"load_imported"`
+	Solar_exported float64 `json:"solar_exported"`
+	Battery_SOC    float64 `json:"battery_soc"`
+	Tariff         string  `json:"tariff"`
+}
+
+type DashboardReport struct {
+	Start     time.Time       `json:"start"`
+	Currently CurrentlyReport `json:"currently"`
+	Year      UsageReport     `json:"year"`
+	Month     UsageReport     `json:"month"`
+	Week      UsageReport     `json:"week"`
+	Day       UsageReport     `json:"day"`
+}
+
 type Reporter struct {
 	pb       *pocketbase.PocketBase
 	location *time.Location
@@ -45,6 +63,62 @@ func NewReporter(pb *pocketbase.PocketBase, schedule monitor.Schedule, location 
 		location: location,
 		schedule: schedule,
 	}
+}
+
+func (r *Reporter) GetCurrentlyReport(t time.Time) (CurrentlyReport, error) {
+	tp := r.schedule.GetTariffPeriod(t)
+	sr := monitor.NewSampleRepo(r.pb)
+	sample, err := sr.GetLastTariffPeriodSample(tp)
+	if err != nil {
+		return CurrentlyReport{}, fmt.Errorf("error getting last tariff period sample: %w", err)
+	}
+
+	result := CurrentlyReport{
+		Grid_exported:  sample.GetFloat("grid_exported"),
+		Grid_imported:  sample.GetFloat("grid_imported"),
+		Load_imported:  sample.GetFloat("home_usage"),
+		Solar_exported: sample.GetFloat("solar_production"),
+		Battery_SOC:    sample.GetFloat("battery_charge"),
+		Tariff:         tp.Tariff,
+	}
+
+	return result, nil
+}
+
+func (r *Reporter) GetDashboardReport(t time.Time) (DashboardReport, error) {
+	var result DashboardReport
+	currently, err := r.GetCurrentlyReport(t)
+	if err != nil {
+		return result, fmt.Errorf("error getting currently report: %w", err)
+	}
+	result.Currently = currently
+
+	start := ymdflag.NewYMDFlag(t)
+	year, err := r.GetUsageReport(YearRange, start)
+	if err != nil {
+		return result, fmt.Errorf("error getting year report: %w", err)
+	}
+	result.Year = year
+
+	month, err := r.GetUsageReport(MonthRange, start)
+	if err != nil {
+		return result, fmt.Errorf("error getting month report: %w", err)
+	}
+	result.Month = month
+
+	week, err := r.GetUsageReport(WeekRange, start)
+	if err != nil {
+		return result, fmt.Errorf("error getting week report: %w", err)
+	}
+	result.Week = week
+
+	day, err := r.GetUsageReport(DayRange, start)
+	if err != nil {
+		return result, fmt.Errorf("error getting week report: %w", err)
+	}
+	result.Day = day
+
+	return result, nil
 }
 
 func (r *Reporter) GetUsageReport(dateGrouping string, start ymdflag.YMDFlag) (UsageReport, error) {

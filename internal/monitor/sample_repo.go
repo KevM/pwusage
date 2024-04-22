@@ -10,15 +10,6 @@ import (
 	"github.com/pocketbase/pocketbase/models"
 )
 
-type PwCurrently struct {
-	Grid_exported  float64
-	Grid_imported  float64
-	Load_imported  float64
-	Solar_exported float64
-	Battery_SOE    float64
-	Tariff         string
-}
-
 type Sample_Repo struct {
 	pb *pocketbase.PocketBase
 }
@@ -27,7 +18,7 @@ func NewSampleRepo(pb *pocketbase.PocketBase) *Sample_Repo {
 	return &Sample_Repo{pb: pb}
 }
 
-func (repo *Sample_Repo) GetLastTariffPeriodSample(tp TariffPeriod) (*PwCurrently, error) {
+func (repo *Sample_Repo) GetLastTariffPeriodSample(tp TariffPeriod) (*models.Record, error) {
 	dao := repo.pb.Dao()
 	endS := tp.End.In(time.UTC).Add(-1 * time.Second).Format("2006-01-02 15:04:05")
 	filter := "created <= {:end}"
@@ -42,16 +33,7 @@ func (repo *Sample_Repo) GetLastTariffPeriodSample(tp TariffPeriod) (*PwCurrentl
 	}
 
 	r := records[0]
-	result := PwCurrently{
-		Grid_exported:  r.GetFloat("grid_exported"),
-		Grid_imported:  r.GetFloat("grid_imported"),
-		Load_imported:  r.GetFloat("home_usage"),
-		Solar_exported: r.GetFloat("solar_production"),
-		Battery_SOE:    r.GetFloat("battery_charge"),
-		Tariff:         tp.Tariff,
-	}
-
-	return &result, nil
+	return r, nil
 }
 
 func (repo *Sample_Repo) GetTarrifPeriodStartAndEndSamples(tp TariffPeriod) (*models.Record, *models.Record, error) {
