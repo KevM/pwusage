@@ -34,12 +34,13 @@ type UsageReport struct {
 }
 
 type CurrentlyReport struct {
-	Grid_exported  float64 `json:"grid_exported"`
-	Grid_imported  float64 `json:"grid_imported"`
-	Load_imported  float64 `json:"load_imported"`
-	Solar_exported float64 `json:"solar_exported"`
-	Battery_SOC    float64 `json:"battery_soc"`
-	Tariff         string  `json:"tariff"`
+	Home            float64 `json:"home"`
+	Grid            float64 `json:"grid"`
+	Load            float64 `json:"load"`
+	SolarProduction float64 `json:"solar_production"`
+	Battery         float64 `json:"battery"`
+	BatterySOC      float64 `json:"battery_soc"`
+	Tariff          string  `json:"tariff"`
 }
 
 type DashboardReport struct {
@@ -74,12 +75,12 @@ func (r *Reporter) GetCurrentlyReport(t time.Time) (CurrentlyReport, error) {
 	}
 
 	result := CurrentlyReport{
-		Grid_exported:  sample.GetFloat("grid_exported"),
-		Grid_imported:  sample.GetFloat("grid_imported"),
-		Load_imported:  sample.GetFloat("home_usage"),
-		Solar_exported: sample.GetFloat("solar_production"),
-		Battery_SOC:    sample.GetFloat("battery_charge"),
-		Tariff:         tp.Tariff,
+		Home:            sample.GetFloat("current_home_usage"),
+		Grid:            sample.GetFloat("current_grid_usage"),
+		SolarProduction: sample.GetFloat("current_solar_production"),
+		Battery:         sample.GetFloat("current_battery_usage"),
+		BatterySOC:      sample.GetFloat("battery_charge"),
+		Tariff:          tp.Tariff,
 	}
 
 	return result, nil

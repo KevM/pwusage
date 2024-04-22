@@ -74,7 +74,7 @@ func (s *Sampler) CreateSample(tp monitor.TariffPeriod) (*models.Record, error) 
 	sr.Set("battery_charge", pwapi.Csv.SOC)
 	sr.Set("current_battery_usage", pwapi.Csv.Battery)
 	sr.Set("current_home_usage", pwapi.Csv.Home)
-	sr.Set("current_solar_usage", pwapi.Csv.Solar)
+	sr.Set("current_solar_production", pwapi.Csv.Solar)
 	sr.Set("current_grid_usage", pwapi.Csv.Grid)
 
 	if err := dao.SaveRecord(sr); err != nil {
