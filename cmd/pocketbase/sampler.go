@@ -91,10 +91,10 @@ func (s *Sampler) UpsertUsage(tp monitor.TariffPeriod) (*models.Record, error) {
 		return nil, fmt.Errorf("error getting to maybe upsertL %w", err)
 	}
 
-	s.pb.Logger().Debug("generating usage report", slog.Any("period", tp))
-	start, end, err := repo.GetUsageSamples(tp)
+	sr := monitor.NewSampleRepo(s.pb)
+	start, end, err := sr.GetTarrifPeriodStartAndEndSamples(tp)
 	if err != nil {
-		return nil, fmt.Errorf("error getting usage samples: %w", err)
+		return nil, fmt.Errorf("error getting start and end usage samples: %w", err)
 	}
 
 	ur = repo.CreateUsageRecord(ur, tp, start, end)

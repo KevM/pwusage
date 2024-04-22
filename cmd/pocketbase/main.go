@@ -75,6 +75,17 @@ func main() {
 			return c.JSON(http.StatusOK, report)
 		})
 
+		e.Router.GET("/usage/api/currently", func(c echo.Context) error {
+			tp := schedule.GetTariffPeriod(schedule.Now())
+			sr := monitor.NewSampleRepo(app)
+			result, err := sr.GetLastTariffPeriodSample(tp)
+			if err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			}
+
+			return c.JSON(http.StatusOK, result)
+		})
+
 		e.Router.GET("/usage/*", apis.StaticDirectoryHandler(os.DirFS(web_dir), false))
 
 		return nil
