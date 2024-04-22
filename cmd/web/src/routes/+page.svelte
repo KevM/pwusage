@@ -1,23 +1,27 @@
 <script lang="ts">
-  import type { PageData } from "./$types";
   import { onMount, onDestroy } from "svelte";
-  import { fetchUsageReport } from "$lib/usage_report"; // adjust th
-  import { UsageRange } from "$lib/types";
-
-  export let data: PageData; // declare the data prop
+  import { fetchDashboardReport } from "$lib/usage_report";
+  import type { DashboardReport } from "$lib/types";
+  import Usage from "$lib/Usage.svelte";
+  
+  let dashboard : DashboardReport
 
   function kwh(value: number) {
     return (value / 1000).toFixed(1) + " kwh";
   }
-  let intervalId: number;
 
+  function soc(value: number) {
+    return value.toFixed(1) + " %";
+  }
+  let intervalId: number;
+  
   onMount(async () => {
     // Fetch data immediately on mount
-    data.usage = await fetchUsageReport(UsageRange.month, new Date());
+    dashboard = await fetchDashboardReport();
 
-    // Then fetch data every 30 seconds
+    // Then fetch data every 60 seconds
     intervalId = setInterval(async () => {
-      data.usage = await fetchUsageReport(UsageRange.month, new Date());
+      dashboard = await fetchDashboardReport();
     }, 60000);
   });
 
@@ -27,20 +31,22 @@
 </script>
 
 <h1>Harrison Power</h1>
+{#if dashboard}
 
-{#if data.usage}
-  <h2>{data.usage.range}</h2>
-  From {data.usage.start} to {data.usage.end}
-  {#each data.usage.tariffs as tariff}
-    <h3>{tariff.tariff}</h3>
-    <ul>
-      <li>Home Use {kwh(tariff.home_usage)}</li>
-      <li>Solar Production {kwh(tariff.solar_production)}</li>
-      <li>Grid Imported: {kwh(tariff.grid_imported)}</li>
-      <li>Grid Exported: {kwh(tariff.grid_exported)}</li>
-      <li>Grid Net: {kwh(tariff.grid_exported - tariff.grid_imported)}</li>
-    </ul>
-  {/each}
+<h2>Currently</h2>
+<ul>
+  <li>Home Use: {kwh(dashboard.currently.load_imported)}</li>
+  <li>Solar Production: {kwh(dashboard.currently.solar_exported)}</li>
+  <li>Grid Imported: {kwh(dashboard.currently.grid_imported)}</li>
+  <li>Grid Exported: {kwh(dashboard.currently.grid_exported)}</li>
+  <li>Battery: {soc(dashboard.currently.battery_soc)}</li>
+  <li>Tariff: {dashboard.currently.tariff}</li>
+</ul>
+
+<Usage usage={dashboard.day} />
+<Usage usage={dashboard.week} />
+<Usage usage={dashboard.month} />
+<Usage usage={dashboard.year} />
 {:else}
   <p>Loading Report...</p>
 {/if}

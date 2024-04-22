@@ -76,14 +76,21 @@ func main() {
 		})
 
 		e.Router.GET("/usage/api/currently", func(c echo.Context) error {
-			tp := schedule.GetTariffPeriod(schedule.Now())
-			sr := monitor.NewSampleRepo(app)
-			result, err := sr.GetLastTariffPeriodSample(tp)
+			report, err := reporter.GetCurrentlyReport(schedule.Now())
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			}
 
-			return c.JSON(http.StatusOK, result)
+			return c.JSON(http.StatusOK, report)
+		})
+
+		e.Router.GET("/usage/api/dashboard", func(c echo.Context) error {
+			report, err := reporter.GetDashboardReport(schedule.Now())
+			if err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			}
+
+			return c.JSON(http.StatusOK, report)
 		})
 
 		e.Router.GET("/usage/*", apis.StaticDirectoryHandler(os.DirFS(web_dir), false))
