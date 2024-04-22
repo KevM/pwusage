@@ -2,10 +2,13 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -25,9 +28,13 @@ func main() {
 	if os.Getenv("TZ") != "" {
 		tz = os.Getenv("TZ")
 	}
-	web_dir := "/Users/kevm/github/power/cmd/web/build"
+	web_dir := "/Users/kevm/github/pwusage/cmd/web/build"
 	if os.Getenv("WEB_DIR") != "" {
 		web_dir = os.Getenv("WEB_DIR")
+	}
+	err := replacePublicEnvironmentVariablesInFile(filepath.Join(web_dir, "_app/env.js"))
+	if err != nil {
+		panic(fmt.Errorf("error replacing public environment variables in file: %w", err))
 	}
 
 	location, err := time.LoadLocation(tz)
@@ -93,6 +100,8 @@ func main() {
 			return c.JSON(http.StatusOK, report)
 		})
 
+		// look for file in "{web_dir}/_app/env.js" and replace all instances of "PUBLIC_*" with the corresponding environment variable
+
 		e.Router.GET("/usage/*", apis.StaticDirectoryHandler(os.DirFS(web_dir), false))
 
 		return nil
@@ -101,4 +110,44 @@ func main() {
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func publicEnvVars() map[string]string {
+	envVars := make(map[string]string)
+
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "PUBLIC_") {
+			pair := strings.SplitN(env, "=", 2)
+			envVars[pair[0]] = pair[1]
+		}
+	}
+
+	return envVars
+}
+
+func replacePublicEnvironmentVariablesInFile(filePath string) error {
+	// Read the file
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+	contentString := string(content)
+
+	pev := publicEnvVars()
+
+	for k, v := range pev {
+		rstr := fmt.Sprintf(`"%s":"[^"]*"`, k)
+		re := regexp.MustCompile(rstr)
+
+		// Replace the matched substring with the new value
+		contentString = re.ReplaceAllString(contentString, `"PUBLIC_API_BASE_URL":"`+v+`"`)
+	}
+
+	// Write the modified content back to the file
+	err = os.WriteFile(filePath, content, 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
