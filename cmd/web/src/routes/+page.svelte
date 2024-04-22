@@ -35,7 +35,7 @@
 
 <h2>Currently</h2>
 <ul>
-  <li>Home Using: {kwh(dashboard.currently.load)}</li>
+  <li>Home Using: {kwh(dashboard.currently.home)}</li>
   <li>Solar Producing: {kwh(dashboard.currently.solar_production)}</li>
   <li>Grid Flow: {kwh(dashboard.currently.grid)}</li>
   <li>Battery Flow: {kwh(dashboard.currently.battery)}</li>
