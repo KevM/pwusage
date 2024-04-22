@@ -135,16 +135,24 @@ func replacePublicEnvironmentVariablesInFile(filePath string) error {
 
 	pev := publicEnvVars()
 
+	if len(pev) < 1 {
+		log.Println("No PUBLIC_* environment variables found, skipping replacement in env.js")
+		return nil
+	}
+
 	for k, v := range pev {
 		rstr := fmt.Sprintf(`"%s":"[^"]*"`, k)
 		re := regexp.MustCompile(rstr)
 
+		log.Printf("Replacing env.js key %s with value %s", k, v)
 		// Replace the matched substring with the new value
-		contentString = re.ReplaceAllString(contentString, `"PUBLIC_API_BASE_URL":"`+v+`"`)
+		contentString = re.ReplaceAllString(contentString, `"`+k+`":"`+v+`"`)
 	}
 
+	log.Printf("env.js content after replacement:\n%s", contentString)
+
 	// Write the modified content back to the file
-	err = os.WriteFile(filePath, content, 0644)
+	err = os.WriteFile(filePath, []byte(contentString), 0644)
 	if err != nil {
 		return err
 	}
