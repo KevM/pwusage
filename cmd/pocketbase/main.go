@@ -17,7 +17,6 @@ import (
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 	"github.com/robfig/cron"
 
-	// uncomment once you have at least one .go migration file in the "migrations" directory
 	_ "github.com/kevm/pw-usage/cmd/pocketbase/migrations"
 )
 
@@ -56,8 +55,7 @@ func main() {
 
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		scheduler := cron.New()
-		scheduler.AddJob("*/30 * * * * *", sampler)
-		// scheduler.AddJob("*/60 * * * * *", usager)
+		scheduler.AddJob("*/60 * * * * *", sampler)
 		scheduler.Start()
 
 		e.Router.GET("/usage/api/report/:date-range", func(c echo.Context) error {

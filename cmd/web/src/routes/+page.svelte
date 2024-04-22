@@ -1,11 +1,29 @@
 <script lang="ts">
-  import type { PageData } from './$types';
+  import type { PageData } from "./$types";
+  import { onMount, onDestroy } from "svelte";
+  import { fetchUsageReport } from "$lib/usage_report"; // adjust th
+  import { UsageRange } from "$lib/types";
 
   export let data: PageData; // declare the data prop
 
-  function kwh(value: number)  {
+  function kwh(value: number) {
     return (value / 1000).toFixed(1) + " kwh";
   }
+  let intervalId: number;
+
+  onMount(async () => {
+    // Fetch data immediately on mount
+    data.usage = await fetchUsageReport(UsageRange.month, new Date());
+
+    // Then fetch data every 30 seconds
+    intervalId = setInterval(async () => {
+      data.usage = await fetchUsageReport(UsageRange.month, new Date());
+    }, 60000);
+  });
+
+  onDestroy(() => {
+    clearInterval(intervalId);
+  });
 </script>
 
 <h1>Harrison Power</h1>
@@ -20,9 +38,9 @@
       <li>Solar Production {kwh(tariff.solar_production)}</li>
       <li>Grid Imported: {kwh(tariff.grid_imported)}</li>
       <li>Grid Exported: {kwh(tariff.grid_exported)}</li>
-      <li>Grid Net: {kwh(tariff.grid_exported- tariff.grid_imported)}</li>
+      <li>Grid Net: {kwh(tariff.grid_exported - tariff.grid_imported)}</li>
     </ul>
   {/each}
 {:else}
-  <p>Loading...</p>
+  <p>Loading Report...</p>
 {/if}
