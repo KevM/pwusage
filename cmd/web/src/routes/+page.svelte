@@ -35,11 +35,11 @@
 
 <h2>Currently</h2>
 <ul>
-  <li>Home Use: {kwh(dashboard.currently.load_imported)}</li>
-  <li>Solar Production: {kwh(dashboard.currently.solar_exported)}</li>
-  <li>Grid Imported: {kwh(dashboard.currently.grid_imported)}</li>
-  <li>Grid Exported: {kwh(dashboard.currently.grid_exported)}</li>
-  <li>Battery: {soc(dashboard.currently.battery_soc)}</li>
+  <li>Home Using: {kwh(dashboard.currently.load)}</li>
+  <li>Solar Producing: {kwh(dashboard.currently.solar_production)}</li>
+  <li>Grid Flow: {kwh(dashboard.currently.grid)}</li>
+  <li>Battery Flow: {soc(dashboard.currently.battery)}</li>
+  <li>Battery Charge: {soc(dashboard.currently.battery_soc)}</li>
   <li>Tariff: {dashboard.currently.tariff}</li>
 </ul>
 
