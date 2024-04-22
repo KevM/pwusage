@@ -38,7 +38,7 @@
   <li>Home Using: {kwh(dashboard.currently.load)}</li>
   <li>Solar Producing: {kwh(dashboard.currently.solar_production)}</li>
   <li>Grid Flow: {kwh(dashboard.currently.grid)}</li>
-  <li>Battery Flow: {soc(dashboard.currently.battery)}</li>
+  <li>Battery Flow: {kwh(dashboard.currently.battery)}</li>
   <li>Battery Charge: {soc(dashboard.currently.battery_soc)}</li>
   <li>Tariff: {dashboard.currently.tariff}</li>
 </ul>
