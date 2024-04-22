@@ -5,7 +5,7 @@ ARG TARGETOS
 ARG TARGETARCH
 
 FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:${GO_VERSION}-alpine AS build
-RUN apk add --no-cache git ca-certificates
+RUN apk add --no-cache git ca-certificates npm 
 
 ARG CGO_ENABLED=0
 
@@ -16,6 +16,9 @@ RUN go mod download
 COPY . .
 
 RUN GOOS=${TARGETOS} ;GOARCH=${TARGETARCH}; go build -ldflags="-w -s" ./cmd/pocketbase
+
+WORKDIR /src/cmd/web
+RUN npm install && npm run build
 
 FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine:latest
 LABEL maintainer="kevm"
