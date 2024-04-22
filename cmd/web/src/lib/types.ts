@@ -23,7 +23,6 @@ export enum UsageRange {
 export interface CurrentlyReport {
     home: number
     grid: number
-    load: number
     solar_production: number
     battery: number
     battery_soc: number
