@@ -129,7 +129,8 @@ func replacePublicEnvironmentVariablesInFile(filePath string) error {
 	// Read the file
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return err
+		log.Printf("No replacement file %s found, skipping replacement", filePath)
+		return nil
 	}
 	contentString := string(content)
 
