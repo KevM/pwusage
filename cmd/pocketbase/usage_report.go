@@ -76,6 +76,7 @@ func (r *Reporter) GetCurrentlyReport(t time.Time) (CurrentlyReport, error) {
 
 	result := CurrentlyReport{
 		Home:            sample.GetFloat("current_home_usage"),
+		Load:            sample.GetFloat("current_home_usage"),
 		Grid:            sample.GetFloat("current_grid_usage"),
 		SolarProduction: sample.GetFloat("current_solar_production"),
 		Battery:         sample.GetFloat("current_battery_usage"),
@@ -95,19 +96,23 @@ func (r *Reporter) GetDashboardReport(t time.Time) (DashboardReport, error) {
 	result.Currently = currently
 
 	start := ymdflag.NewYMDFlag(t)
-	year, err := r.GetUsageReport(YearRange, start)
+
+	_, yearStart, _ := monitor.VerifyRangeStart(YearRange, "", t)
+	year, err := r.GetUsageReport(YearRange, yearStart)
 	if err != nil {
 		return result, fmt.Errorf("error getting year report: %w", err)
 	}
 	result.Year = year
 
-	month, err := r.GetUsageReport(MonthRange, start)
+	_, monthStart, _ := monitor.VerifyRangeStart(MonthRange, "", t)
+	month, err := r.GetUsageReport(MonthRange, monthStart)
 	if err != nil {
 		return result, fmt.Errorf("error getting month report: %w", err)
 	}
 	result.Month = month
 
-	week, err := r.GetUsageReport(WeekRange, start)
+	_, weekStart, _ := monitor.VerifyRangeStart(WeekRange, "", t)
+	week, err := r.GetUsageReport(WeekRange, weekStart)
 	if err != nil {
 		return result, fmt.Errorf("error getting week report: %w", err)
 	}
