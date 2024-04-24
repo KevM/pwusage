@@ -1,6 +1,6 @@
 services:
     pwusage:
-        image: pwusage
+        image: kevm/pwusage:latest
         build: .
         container_name: pwusage
         depends_on:
