@@ -1,16 +1,6 @@
 import { writable } from 'svelte/store';
 import {PUBLIC_TESLA_CALLBACK_URL, PUBLIC_TESLA_OAUTH_CLIENT_ID} from '$env/static/public';
-
-interface User {
-    email: string;
-    authToken: string;
-    refreshToken: string;
-}
-
-interface UserStore {
-    user: User | null;
-    nonce: string | null;
-}
+import { type UserStore, type User } from '$lib/types';
 
 // Create a writable store with initial state
 export const authStore = writable<UserStore>({

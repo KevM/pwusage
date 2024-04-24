@@ -37,3 +37,14 @@ export interface DashboardReport {
     week: UsageReport
     day: UsageReport
 }
+
+export interface UserStore {
+    user: User | null;
+    nonce: string | null;
+}
+
+export interface User {
+    email: string;
+    authToken: string;
+    refreshToken: string;
+}
