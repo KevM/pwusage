@@ -1,20 +1,18 @@
 <script lang="ts">
-  import { authStore } from "$lib/authStore";  // import your auth store
+  import { authStore } from "$lib/authStore";
+  import { type User } from "$lib/types";
 
-  let isAuthenticated: boolean;
-  let username: string;
-
-  // Subscribe to the auth store
+  let user: User | null;
   authStore.subscribe((value) => {
-    isAuthenticated = value.isAuthenticated;
-    username = value.username;
+    user = value.user;
   });
 </script>
 
 <nav>
   <a href="/">Home</a>
-  {#if isAuthenticated}
-    <a href="/profile">{username}</a>
+  <a href="/usage">Usage</a>
+  {#if user}
+    <a href="/logout">Logout</a>
   {:else}
     <a href="/login">Login</a>
   {/if}
