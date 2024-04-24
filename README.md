@@ -49,7 +49,7 @@ Your solar production is mostly _On-Peak_ and a single Tesla Powerwall 2 has 11.
 2. Copy `./app/pypowerwall-example.env` to `./app/pypowerwall.env` 
    * Add your Tesla Powerwall gateway login details to this file. If this is your first time [you will need to setup credentials](https://www.tesla.com/support/energy/powerwall/own/connecting-network). This can be a bit tricky but if you are running a docker container... We believe in you.
 3. **TODO Automate this*** Build web page: 
-   * `cd ./cmd/web`
+   * `cd ./cmd/web-app`
    * `sudo apt install npm vite xcb`
    * `npm install`
    * `npm run build`
@@ -62,7 +62,7 @@ Your solar production is mostly _On-Peak_ and a single Tesla Powerwall 2 has 11.
 
 ### Building Web App
 
-   * `cd ./cmd/web`
+   * `cd ./cmd/web-app`
    * `sudo apt install npm vite xcb`
    * `npm install`
    * `npm run build`

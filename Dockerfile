@@ -17,7 +17,7 @@ COPY . .
 
 RUN GOOS=${TARGETOS} ;GOARCH=${TARGETARCH}; go build -ldflags="-w -s" ./cmd/pocketbase
 
-WORKDIR /src/cmd/web
+WORKDIR /src/cmd/web-static
 RUN npm install && npm run build
 
 FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine:latest
@@ -28,7 +28,7 @@ VOLUME /pb_data
 ENV WEB_DIR "/web"
 EXPOSE 8090
 COPY --from=build /src/pocketbase /pocketbase
-COPY --from=build /src/cmd/web/build /web
+COPY --from=build /src/cmd/web-static/build /web
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
  
 ENTRYPOINT [ "./pocketbase", "serve", "--http=0.0.0.0:8090"]

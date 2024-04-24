@@ -28,7 +28,7 @@ func main() {
 	if os.Getenv("TZ") != "" {
 		tz = os.Getenv("TZ")
 	}
-	web_dir := "/Users/kevm/github/pwusage/cmd/web/build"
+	web_dir := "/Users/kevm/github/pwusage/cmd/web-static/build"
 	if os.Getenv("WEB_DIR") != "" {
 		web_dir = os.Getenv("WEB_DIR")
 	}
