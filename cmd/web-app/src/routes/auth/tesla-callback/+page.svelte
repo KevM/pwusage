@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PageData } from './$types';
-  import { authStore} from "$lib/authStore"; // import your auth store
+  import CopyToClipboard from '$lib/CopyToClipboard.svelte';
 
   export let data: PageData;
 
@@ -9,11 +9,13 @@
 <h1>TeslaCallback</h1>
 
 <h4>Access Token</h4>
-<code>
-  {data.auth?.access_token}
-</code>
+<textarea cols="90" rows="12">{data.auth?.access_token}</textarea>
+<CopyToClipboard text={data.auth?.access_token}} let:copy>
+  <br/><button on:click={copy}>Copy</button>
+</CopyToClipboard>
 
 <h4>Refresh Token</h4>
-<code>
-  {data.auth?.refresh_token}
-</code>
+<textarea cols="90" rows="1">{data.auth?.refresh_token}</textarea>
+<CopyToClipboard text={data.auth?.refresh_token}} let:copy>
+  <br/><button on:click={copy}>Copy</button>
+</CopyToClipboard>
