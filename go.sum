@@ -200,6 +200,8 @@ github.com/ncruces/go-strftime v0.1.9 h1:bY0MQC28UADQmHmaF5dgpLmImcShSi2kHU9XLdh
 github.com/ncruces/go-strftime v0.1.9/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/neomantra/ymdflag v0.2.0 h1:MWDHA+LaIrBc3YeKqu+FsvSZJJmUnZngSRyPHyINuXc=
 github.com/neomantra/ymdflag v0.2.0/go.mod h1:F2mixKBmkdVZiHKZGYZ6Jd38O1Z1aEz5WQqNpL4wkT4=
+github.com/opus-domini/fast-shot v0.10.0 h1:zWbPy6KJZvNs0pUa0erF9TyeDsLZHDVZf4oDHOd6JGY=
+github.com/opus-domini/fast-shot v0.10.0/go.mod h1:sg5+f0VviAIIdrv24WLHL6kV7kWs4PsVDbSkr2TPYWw=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pocketbase/dbx v1.10.1 h1:cw+vsyfCJD8YObOVeqb93YErnlxwYMkNZ4rwN0G0AaA=
