@@ -82,6 +82,27 @@ func main() {
 			return c.JSON(http.StatusOK, report)
 		})
 
+		e.Router.GET("/usage/api/backfill", func(c echo.Context) error {
+			startS := c.QueryParam("start")
+			endS := c.QueryParam("end")
+			gaplimit := 61 * time.Minute
+
+			start, end, err := monitor.VerifyDateRange(startS, endS)
+			if err != nil {
+				return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			}
+
+			sr := monitor.NewSampleRepo(app)
+			backfills, err := sr.GetSampleGaps(start, end, gaplimit)
+			if err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			}
+
+			// range through gaps and get data from fleetapi and transform them into samples saving as we go in a transaction
+
+			return c.JSON(http.StatusOK, backfills)
+		})
+
 		e.Router.GET("/usage/api/currently", func(c echo.Context) error {
 			report, err := reporter.GetCurrentlyReport(schedule.Now())
 			if err != nil {

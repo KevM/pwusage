@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/neomantra/ymdflag"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/models"
@@ -65,4 +66,61 @@ func (repo *Sample_Repo) GetTarrifPeriodStartAndEndSamples(tp TariffPeriod) (*mo
 	end := records[0]
 
 	return start, end, nil
+}
+
+type Backfill struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+}
+
+func (repo *Sample_Repo) GetSampleGaps(start ymdflag.YMDFlag, end ymdflag.YMDFlag, gaplimit time.Duration) ([]Backfill, error) {
+	s := start.AsTimeWithLoc(time.UTC).Format("2006-01-02 15:04:05.000")
+	e := end.AsTimeWithLoc(time.UTC).Add(1 * time.Millisecond).Format("2006-01-02 15:04:05.000")
+
+	type Result struct {
+		Created string `db:"created" json:"created"`
+	}
+
+	samples := []Result{}
+	err := repo.pb.Dao().DB().
+		NewQuery("SELECT created FROM sample WHERE created >= {:from} and created <= {:to}").
+		Bind(dbx.Params{"from": s, "to": e}).All(&samples)
+	if err != nil {
+		return nil, err
+	}
+
+	// get sample gaps between start and end
+	results := []Backfill{}
+	if len(samples) < 1 {
+		results = append(results, Backfill{Start: start.AsTimeWithLoc(time.UTC), End: end.AsTimeWithLoc(time.UTC)})
+		return results, nil
+	}
+
+	var prev *time.Time = nil
+	for _, r := range samples {
+		created, err := time.Parse("2006-01-02 15:04:05.999Z", r.Created)
+		if err != nil {
+			return nil, err
+		}
+
+		if prev == nil {
+			if created.Sub(start.AsTimeWithLoc(time.UTC)) > gaplimit {
+				results = append(results, Backfill{Start: start.AsTimeWithLoc(time.UTC), End: created.Add(-1 * time.Second)})
+			}
+			prev = &created
+			continue
+		}
+
+		gap := created.Sub(*prev)
+		if gap > gaplimit {
+			results = append(results, Backfill{Start: prev.Add(1 * time.Second), End: created.Add(-1 * time.Second)})
+		}
+		prev = &created
+	}
+
+	if end.AsTimeWithLoc(time.UTC).Sub(*prev) > gaplimit {
+		results = append(results, Backfill{Start: prev.Add(1 * time.Second), End: end.AsTimeWithLoc(time.UTC)})
+	}
+
+	return results, nil
 }
