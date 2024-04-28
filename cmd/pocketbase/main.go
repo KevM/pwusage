@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/kevm/pw-usage/internal/monitor"
 	"github.com/labstack/echo/v5"
 	"github.com/pocketbase/pocketbase"
@@ -24,6 +25,8 @@ import (
 )
 
 func main() {
+	godotenv.Load()
+
 	tz := "America/Chicago"
 	if os.Getenv("TZ") != "" {
 		tz = os.Getenv("TZ")
@@ -62,7 +65,7 @@ func main() {
 
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		scheduler := cron.New()
-		scheduler.AddJob("*/60 * * * * *", sampler)
+		scheduler.AddJob("*/30 * * * * *", sampler)
 		scheduler.Start()
 
 		e.Router.GET("/usage/api/report/:date-range", func(c echo.Context) error {
