@@ -3,8 +3,6 @@ services:
         image: kevm/pwusage:latest
         build: .
         container_name: pwusage
-        depends_on:
-            - pypowerwall
         hostname: pwusage
         restart: unless-stopped
         volumes:
@@ -14,7 +12,6 @@ services:
         ports:
             - "8090:8090"
         env_file:
-            - path: ./cmd/pocketbase/.env
+            - ./cmd/pocketbase/.env
         environment:
             - TZ=America/Chicago
-            - PUBLIC_API_BASE_URL=http://harrison-a7.donkey-hen.ts.net:8090
