@@ -65,7 +65,7 @@ func main() {
 
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		scheduler := cron.New()
-		scheduler.AddJob("*/30 * * * * *", sampler)
+		scheduler.AddJob("*/60 * * * * *", sampler)
 		scheduler.Start()
 
 		e.Router.GET("/usage/api/report/:date-range", func(c echo.Context) error {
