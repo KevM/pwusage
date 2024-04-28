@@ -4,3 +4,4 @@
 
 data/.auth/.*
 data/pypowerwall.env
+cmd/pocketbase/.env

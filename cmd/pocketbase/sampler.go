@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/kevm/pw-usage/internal/monitor"
 	"github.com/pocketbase/pocketbase"
@@ -19,12 +18,7 @@ type Sampler struct {
 }
 
 func NewSampler(pb *pocketbase.PocketBase, s monitor.Schedule) *Sampler {
-	baseUri := "http://localhost:8675"
-	if envBaseUri := os.Getenv("PYPOWERWALL_BASE_URI"); envBaseUri != "" {
-		baseUri = envBaseUri // use environment variable value if it's set
-	}
-
-	api := monitor.NewPowerwallApi(baseUri, pb.Logger())
+	api := monitor.NewPowerwallApi(pb.Logger())
 	return &Sampler{
 		pb:       pb,
 		api:      api,
@@ -64,18 +58,35 @@ func (s *Sampler) CreateSample(tp monitor.TariffPeriod) (*models.Record, error) 
 		return nil, fmt.Errorf("sample: error finding collection: %w", err)
 	}
 
+	solar, ok := (*pwapi.Aggregates)["solar"]
+	if !ok {
+		return nil, fmt.Errorf("sample: solar aggregate not found")
+	}
+	home, ok := (*pwapi.Aggregates)["load"]
+	if !ok {
+		return nil, fmt.Errorf("sample: load aggregate not found")
+	}
+	grid, ok := (*pwapi.Aggregates)["site"]
+	if !ok {
+		return nil, fmt.Errorf("sample: site aggregate not found")
+	}
+	battery, ok := (*pwapi.Aggregates)["battery"]
+	if !ok {
+		return nil, fmt.Errorf("sample: battery aggregate not found")
+	}
+
 	// sample record
 	sr := models.NewRecord(collection)
 	sr.Set("tariff", tp.Tariff)
-	sr.Set("home_usage", pwapi.Aggregates.Load.EnergyImported)
-	sr.Set("solar_production", pwapi.Aggregates.Solar.EnergyExported)
-	sr.Set("grid_imported", pwapi.Aggregates.Site.EnergyImported)
-	sr.Set("grid_exported", pwapi.Aggregates.Site.EnergyExported)
-	sr.Set("battery_charge", pwapi.Csv.SOC)
-	sr.Set("current_battery_usage", pwapi.Csv.Battery)
-	sr.Set("current_home_usage", pwapi.Csv.Home)
-	sr.Set("current_solar_production", pwapi.Csv.Solar)
-	sr.Set("current_grid_usage", pwapi.Csv.Grid)
+	sr.Set("home_usage", home.EnergyImported)
+	sr.Set("solar_production", solar.EnergyExported)
+	sr.Set("grid_imported", grid.EnergyImported)
+	sr.Set("grid_exported", grid.EnergyExported)
+	sr.Set("battery_charge", pwapi.Soe)
+	sr.Set("current_battery_usage", battery.InstantPower)
+	sr.Set("current_home_usage", home.InstantPower)
+	sr.Set("current_solar_production", solar.InstantPower)
+	sr.Set("current_grid_usage", grid.InstantPower)
 
 	if err := dao.SaveRecord(sr); err != nil {
 		return sr, fmt.Errorf("sample: error saving sample record: %w", err)
