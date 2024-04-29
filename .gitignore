@@ -1,7 +1,6 @@
 **/.DS_Store
 **/*.log
-**/pb_data/*.db*
+**/*.db*
 
 data/.auth/.*
-data/pypowerwall.env
-cmd/pocketbase/.env
+**/.env
