@@ -41,17 +41,17 @@ type EnergyHistoryResult struct {
 	}
 }
 
-func getEnergyHistoryUrl(siteId string, start time.Time, end time.Time, period string, tz time.Location) (string, string) {
+func getEnergyHistoryUrl(siteId string, start time.Time, end time.Time, period string, tz *time.Location) (string, string) {
 	url := fmt.Sprintf("/api/1/energy_sites/%s/calendar_history", siteId)
 
-	s := start.Format("2006-01-02T15:04:05-07:00")
-	e := end.Format("2006-01-02T15:04:05-07:00")
+	s := start.In(tz).Format("2006-01-02T15:04:05-07:00")
+	e := end.In(tz).Format("2006-01-02T15:04:05-07:00")
 	query := fmt.Sprintf("kind=energy&start_date=%s&end_date=%s&period=%s&time_zone=%s", s, e, period, tz.String())
 
 	return url, query
 }
 
-func (c FleetApiClient) GetEnergyHistory(siteId string, start time.Time, end time.Time, period string, tz time.Location) ([]EnergyHistoryEntry, error) {
+func (c FleetApiClient) GetEnergyHistory(siteId string, start time.Time, end time.Time, period string, tz *time.Location) ([]EnergyHistoryEntry, error) {
 	url, query := getEnergyHistoryUrl(siteId, start, end, period, tz)
 	c.logger.Debug("GetEnergyHistory", slog.String("url", url), slog.String("query", query))
 	result, err := getOne[EnergyHistoryResult](c.getClient(), url, query)

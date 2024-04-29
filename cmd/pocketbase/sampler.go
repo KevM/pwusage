@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/kevm/pw-usage/internal/monitor"
 	"github.com/pocketbase/pocketbase"
@@ -32,7 +33,7 @@ func (s *Sampler) Run() {
 
 	tp := s.schedule.GetTariffPeriod(now)
 
-	_, err := s.CreateSample(tp)
+	_, err := s.CreateSample(now, tp)
 	if err != nil {
 		s.pb.Logger().Error("sample: error creating sample", slog.Any("error", err))
 		return
@@ -45,7 +46,7 @@ func (s *Sampler) Run() {
 	}
 }
 
-func (s *Sampler) CreateSample(tp monitor.TariffPeriod) (*models.Record, error) {
+func (s *Sampler) CreateSample(ts time.Time, tp monitor.TariffPeriod) (*models.Record, error) {
 	pwapi, err := s.api.GetPwApi()
 	if err != nil {
 		return nil, fmt.Errorf("sample: error getting Powerwall API: %w", err)
@@ -77,6 +78,7 @@ func (s *Sampler) CreateSample(tp monitor.TariffPeriod) (*models.Record, error) 
 
 	// sample record
 	sr := models.NewRecord(collection)
+	sr.Set("timestamp", ts)
 	sr.Set("tariff", tp.Tariff)
 	sr.Set("home_usage", home.EnergyImported)
 	sr.Set("solar_production", solar.EnergyExported)

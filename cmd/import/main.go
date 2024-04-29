@@ -47,7 +47,7 @@ func main() {
 	end := time.Date(today.Year(), today.Month(), today.Day(), 23, 59, 59, 9999, today.Location())
 
 	client := fleetapi.NewFleetApiClient(token, logger)
-	results, err := client.GetEnergyHistory(siteId, start, end, fleetapi.HistoryPeriod_Day, *time.Local)
+	results, err := client.GetEnergyHistory(siteId, start, end, fleetapi.HistoryPeriod_Day, time.Local)
 	if err != nil {
 		logger.Error("Error getting energy history", slog.Any("error", err))
 		os.Exit(5)
