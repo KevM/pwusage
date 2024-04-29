@@ -7,11 +7,11 @@ import (
 )
 
 type EnergySiteInfo struct {
-	ID                   string `json:"id,omitempty"`
-	SiteName             string `json:"site_name,omitempty"`
-	BackupReservePercent int    `json:"backup_reserve_percent,omitempty"`
-	DefaultRealMode      string `json:"default_real_mode,omitempty"`
-	InstallationDate     string `json:"installation_date,omitempty"`
+	ID                   string    `json:"id,omitempty"`
+	SiteName             string    `json:"site_name,omitempty"`
+	BackupReservePercent int       `json:"backup_reserve_percent,omitempty"`
+	DefaultRealMode      string    `json:"default_real_mode,omitempty"`
+	InstallationDate     time.Time `json:"installation_date,omitempty"`
 	UserSettings         struct {
 		GoOffGridTestBannerEnabled         bool `json:"go_off_grid_test_banner_enabled,omitempty"`
 		StormModeEnabled                   bool `json:"storm_mode_enabled,omitempty"`
