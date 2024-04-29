@@ -105,7 +105,11 @@ func (repo *Sample_Repo) GetSampleGaps(start ymdflag.YMDFlag, end ymdflag.YMDFla
 
 		if prev == nil {
 			if created.Sub(start.AsTimeWithLoc(time.UTC)) > gaplimit {
-				results = append(results, Backfill{Start: start.AsTimeWithLoc(time.UTC), End: created.Add(-1 * time.Second)})
+				b := Backfill{
+					Start: start.AsTimeWithLoc(time.UTC),
+					End:   created.Add(-1 * time.Second),
+				}
+				results = append(results, b)
 			}
 			prev = &created
 			continue

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/kevm/pw-usage/internal/history"
 	"github.com/kevm/pw-usage/internal/monitor"
 	"github.com/labstack/echo/v5"
 	"github.com/pocketbase/pocketbase"
@@ -55,12 +56,12 @@ func main() {
 	reporter := NewReporter(app, schedule, location)
 
 	// loosely check if it was executed using "go run"
-	isGoRun := strings.HasPrefix(os.Args[0], os.TempDir())
+	// isGoRun := strings.HasPrefix(os.Args[0], os.TempDir())
 
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
 		// enable auto creation of migration files when making collection changes in the Admin UI
 		// (the isGoRun check is to enable it only during development)
-		Automigrate: isGoRun,
+		Automigrate: true,
 	})
 
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
@@ -95,15 +96,15 @@ func main() {
 				return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 			}
 
-			sr := monitor.NewSampleRepo(app)
-			backfills, err := sr.GetSampleGaps(start, end, gaplimit)
+			token := os.Getenv("FLEET_AUTH_TOKEN")
+			siteid := os.Getenv("TESLA_SITE_ID")
+			bf := history.NewSampleBackfiller(token, app, schedule)
+			err = bf.Backfill(siteid, start, end, gaplimit, location)
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			}
 
-			// range through gaps and get data from fleetapi and transform them into samples saving as we go in a transaction
-
-			return c.JSON(http.StatusOK, backfills)
+			return c.JSON(http.StatusOK, "success")
 		})
 
 		e.Router.GET("/usage/api/currently", func(c echo.Context) error {

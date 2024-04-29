@@ -15,11 +15,24 @@ func init() {
 			{
 				"id": "8256v6i6190ghb4",
 				"created": "2024-04-15 13:36:56.035Z",
-				"updated": "2024-04-15 18:03:49.690Z",
+				"updated": "2024-04-29 00:04:11.983Z",
 				"name": "sample",
 				"type": "base",
 				"system": false,
 				"schema": [
+					{
+						"system": false,
+						"id": "bjt4bdgd",
+						"name": "timestamp",
+						"type": "date",
+						"required": false,
+						"presentable": false,
+						"unique": false,
+						"options": {
+							"min": "",
+							"max": ""
+						}
+					},
 					{
 						"system": false,
 						"id": "kzk1c5iu",
@@ -176,7 +189,7 @@ func init() {
 			{
 				"id": "xam303qkinh3j33",
 				"created": "2024-04-15 15:31:20.993Z",
-				"updated": "2024-04-15 18:04:00.550Z",
+				"updated": "2024-04-18 14:41:33.980Z",
 				"name": "usage",
 				"type": "base",
 				"system": false,
@@ -201,6 +214,19 @@ func init() {
 						"system": false,
 						"id": "xcwyicqd",
 						"name": "start",
+						"type": "date",
+						"required": true,
+						"presentable": false,
+						"unique": false,
+						"options": {
+							"min": "",
+							"max": ""
+						}
+					},
+					{
+						"system": false,
+						"id": "sq1zkhqu",
+						"name": "end",
 						"type": "date",
 						"required": true,
 						"presentable": false,
@@ -268,7 +294,8 @@ func init() {
 					}
 				],
 				"indexes": [
-					"CREATE INDEX ` + "`" + `idx_3qyPKa8` + "`" + ` ON ` + "`" + `usage` + "`" + ` (` + "`" + `start` + "`" + `)"
+					"CREATE UNIQUE INDEX ` + "`" + `idx_KgZP4KS` + "`" + ` ON ` + "`" + `usage` + "`" + ` (\n  ` + "`" + `start` + "`" + `,\n  ` + "`" + `end` + "`" + `,\n  ` + "`" + `tariff` + "`" + `\n)",
+					"CREATE INDEX ` + "`" + `idx_QY3pzAw` + "`" + ` ON ` + "`" + `usage` + "`" + ` (\n  ` + "`" + `start` + "`" + `,\n  ` + "`" + `end` + "`" + `\n)"
 				],
 				"listRule": null,
 				"viewRule": null,
@@ -280,7 +307,7 @@ func init() {
 			{
 				"id": "_pb_users_auth_",
 				"created": "2024-04-15 17:10:23.838Z",
-				"updated": "2024-04-15 17:11:37.890Z",
+				"updated": "2024-04-15 18:32:59.709Z",
 				"name": "users",
 				"type": "auth",
 				"system": false,
