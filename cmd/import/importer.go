@@ -21,25 +21,27 @@ func NewImporter(token string, dbfile string, logger *slog.Logger) *Importer {
 	return &Importer{logger: logger, client: &client, dbfile: dbfile}
 }
 
-func (i Importer) LoadFullSiteHistory(db *Database, siteid string) error {
+func (i Importer) LoadSite(db *Database, siteid string) (*Site, error) {
 	info, err := i.client.GetEnergySiteInfo(siteid)
 	if err != nil {
-		return fmt.Errorf("error getting energy site info: %w", err)
+		return nil, fmt.Errorf("error getting energy site info: %w", err)
 	}
-	installed := info.InstallationDate
-	location, err := time.LoadLocation(info.InstallationTimeZone)
+	repo := NewEnergyRepo(db)
+	site, err := repo.UpsertSite(siteid, info)
 	if err != nil {
-		return fmt.Errorf("error loading site tz location: %w", err)
+		return nil, fmt.Errorf("error upserting site info: %w", err)
 	}
-	logger.Debug("site info", slog.String("siteid", siteid), slog.String("installed", installed.String()), slog.String("location", location.String()))
+	logger.Debug("site upserted", slog.Any("site", site))
 
-	start := time.Date(installed.Year(), installed.Month(), installed.Day(), 0, 0, 0, 0, location)
-	end := time.Now().In(location)
+	return site, nil
+}
 
-	defer db.Close()
+func (i Importer) LoadFullSiteHistory(db *Database, site *Site) error {
+	start := time.Date(site.Installed.Year(), site.Installed.Month(), site.Installed.Day(), 0, 0, 0, 0, site.Location)
+	end := time.Now().In(site.Location)
 	for _, sod := range dateRange(start, end) {
 		logger.Debug("loading history", slog.String("date", sod.Format("2006-01-02")))
-		err := i.LoadSiteHistoryDay(db, sod, siteid)
+		err := i.LoadSiteHistoryDay(db, sod, site)
 		if err != nil {
 			return fmt.Errorf("error loading site history for date %s: %w", sod.Format("2006-01-02"), err)
 		}
@@ -48,18 +50,18 @@ func (i Importer) LoadFullSiteHistory(db *Database, siteid string) error {
 	return nil
 }
 
-func (i Importer) LoadSiteHistoryDay(db *Database, sod time.Time, siteid string) error {
+func (i Importer) LoadSiteHistoryDay(db *Database, sod time.Time, site *Site) error {
 	err := deleteDay(db.Conn(), sod)
 	if err != nil {
 		return fmt.Errorf("error deleting day for date %s: %w", sod.Format("2006-01-02"), err)
 	}
 
 	eod := time.Date(sod.Year(), sod.Month(), sod.Day(), 23, 59, 59, 9999, sod.Location())
-	results, err := i.client.GetEnergyHistory(siteid, sod, eod, fleetapi.HistoryPeriod_Day, sod.Location())
+	results, err := i.client.GetEnergyHistory(site.Id, sod, eod, fleetapi.HistoryPeriod_Day, sod.Location())
 	if err != nil {
 		return fmt.Errorf("error getting energy history for date %s: %w", sod.Format("2006-01-02"), err)
 	}
-	err = insertResults(db.Conn(), results)
+	err = insertResults(db.Conn(), site.Id, results)
 	if err != nil {
 		return fmt.Errorf("error inserting results for date %s: %w", sod.Format("2006-01-02"), err)
 	}
@@ -89,8 +91,8 @@ func deleteDay(db *sql.DB, sod time.Time) error {
 	return nil
 }
 
-func insertResults(db *sql.DB, histories []fleetapi.EnergyHistoryEntry) error {
-	stmt, err := db.Prepare(`INSERT INTO EnergyData(timestamp, load_power, solar_power, grid_power, battery_power) VALUES (?, ?, ?, ?, ?)`)
+func insertResults(db *sql.DB, siteid string, histories []fleetapi.EnergyHistoryEntry) error {
+	stmt, err := db.Prepare(`INSERT INTO EnergyData(site_id, timestamp, load_power, solar_power, grid_power, battery_power) VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -111,7 +113,7 @@ func insertResults(db *sql.DB, histories []fleetapi.EnergyHistoryEntry) error {
 			battery = 0 - h.TotalBatteryDischarge
 		}
 
-		_, err := stmt.Exec(h.Timestamp, h.TotalHomeUsage, h.SolarEnergyExported, grid, battery)
+		_, err := stmt.Exec(siteid, h.Timestamp, h.TotalHomeUsage, h.SolarEnergyExported, grid, battery)
 		if err != nil {
 			return err
 		}

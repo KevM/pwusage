@@ -36,28 +36,106 @@ func (d Database) Close() error {
 func setupDb(db *sql.DB) error {
 
 	var tableName = ""
-	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='EnergyData';").Scan(&tableName)
-
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='Site';").Scan(&tableName)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("error checking if table exists: %w", err)
 	}
 
-	if tableName == "" {
-		_, err := db.Exec(`CREATE TABLE EnergyData (
-			timestamp DATETIME PRIMARY KEY,
-			load_power REAL,
-			solar_power REAL,
-			grid_power REAL,
-			battery_power REAL
-		);`)
-
-		if err != nil {
-			return fmt.Errorf("error creating sqllite table: %w", err)
-		}
-
-		logger.Debug("database and table created")
+	if tableName != "" {
+		return nil
 	}
 
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS Site (
+		id TEXT PRIMARY KEY,
+		updated DATETIME NOT NULL,
+		installed DATETIME NOT NULL,
+		timezone TEXT NOT NULL,
+		json JSON
+	);`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS Tariff (
+		id TEXT PRIMARY KEY,
+		site_id TEXT NOT NULL,
+		updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		name TEXT,
+		FOREIGN KEY (site_id) REFERENCES Site(id) ON DELETE CASCADE,
+		UNIQUE(site_id, name)
+	);`)
+	if err != nil {
+		return err
+	}
+
+	// tariff -> season
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS TariffSeason (
+		id TEXT PRIMARY KEY,
+		tariff_id INTEGER NOT NULL,
+		name TEXT,
+		from_month INTEGER NOT NULL,
+		from_day INTEGER NOT NULL,
+		to_month INTEGER NOT NULL,
+		to_day INTEGER NOT NULL,
+		buy_rate REAL NOT NULL,
+		sell_rate REAL NOT NULL,
+		FOREIGN KEY (tariff_id) REFERENCES Tariff(id) ON DELETE CASCADE,
+		UNIQUE(tariff_id, name)
+	);`)
+	if err != nil {
+		return err
+	}
+
+	// tariff -> season -> schedule
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS TariffSchedule (
+		id TEXT PRIMARY KEY,
+		season_id INTEGER NOT NULL,
+		from_day_of_week INTEGER NOT NULL,
+		from_hour INTEGER NOT NULL,
+		from_minute INTEGER NOT NULL,
+		to_day_of_week INTEGER NOT NULL,
+		to_hour INTEGER NOT NULL,
+		to_minute INTEGER NOT NULL,			
+		FOREIGN KEY (season_id) REFERENCES TariffSeason(id) ON DELETE CASCADE
+	);`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS EnergyData (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		timestamp DATETIME NOT NULL,
+		site_id TEXT NOT NULL,
+		load_power REAL NOT NULL,
+		solar_power REAL NOT NULL,
+		grid_power REAL NOT NULL,
+		battery_power REAL NOT NULL,
+		FOREIGN KEY (site_id) REFERENCES Site(id) ON DELETE CASCADE,
+		UNIQUE(timestamp, site_id)
+	);`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS EnergyUsage (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		site_id TEXT NOT NULL,
+		tariff_id INTEGER NOT NULL,
+		start DATETIME NOT NULL, 
+		end DATETIME NOT NULL,
+		load_usage REAL NOT NULL,
+		solar_produced REAL NOT NULL,
+		grid_usage REAL NOT NULL,
+		battery_usage REAL NOT NULL,
+		FOREIGN KEY (site_id) REFERENCES Site(id) ON DELETE CASCADE,
+		FOREIGN KEY (tariff_id) REFERENCES Tariff(id) ON DELETE CASCADE,
+		UNIQUE(site_id, tariff_id, start, end)
+	);`)
+	if err != nil {
+		return err
+	}
+
+	logger.Debug("database and table created")
 	return nil
 }
 
