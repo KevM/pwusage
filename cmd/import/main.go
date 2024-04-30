@@ -39,6 +39,7 @@ func init() {
 }
 
 func main() {
+	defer db.Close()
 	var rootCmd = &cobra.Command{Use: "pw-usage"}
 	rootCmd.PersistentFlags().StringVarP(&db_file, "db", "d", db_file, "sqlite db file")
 	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", token, "tesla fleet api token")
@@ -101,7 +102,13 @@ var cmdImport = &cobra.Command{
 		siteid := args[0]
 		importer := NewImporter(token, db_file, logger)
 
-		err := importer.LoadFullSiteHistory(db, siteid)
+		site, err := importer.LoadSite(db, siteid)
+		if err != nil {
+			logger.Error("Error loading site info", slog.Any("error", err))
+			os.Exit(3)
+		}
+
+		err = importer.LoadFullSiteHistory(db, site)
 		if err != nil {
 			logger.Error("Error loading site history", slog.Any("error", err))
 			os.Exit(4)
@@ -127,7 +134,13 @@ var cmdImportDay = &cobra.Command{
 		}
 
 		importer := NewImporter(token, db_file, logger)
-		err := importer.LoadSiteHistoryDay(db, d.AsTime(), siteid)
+		site, err := importer.LoadSite(db, siteid)
+		if err != nil {
+			logger.Error("Error loading site info", slog.Any("error", err))
+			os.Exit(3)
+		}
+
+		err = importer.LoadSiteHistoryDay(db, d.AsTime(), site)
 		if err != nil {
 			logger.Error("Error loading site history day", slog.Any("error", err))
 			os.Exit(4)

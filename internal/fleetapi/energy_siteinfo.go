@@ -77,262 +77,63 @@ type EnergySiteInfo struct {
 		EditSettingEnergyExports      bool   `json:"edit_setting_energy_exports,omitempty"`
 		SystemAlertsEnabled           bool   `json:"system_alerts_enabled,omitempty"`
 	} `json:"components,omitempty"`
-	Version       string `json:"version,omitempty"`
-	BatteryCount  int    `json:"battery_count,omitempty"`
-	TariffContent struct {
-		Code         string `json:"code,omitempty"`
-		Name         string `json:"name,omitempty"`
-		Utility      string `json:"utility,omitempty"`
-		DailyCharges []struct {
-			Amount int    `json:"amount,omitempty"`
-			Name   string `json:"name,omitempty"`
-		} `json:"daily_charges,omitempty"`
-		DemandCharges struct {
-			All struct {
-				All int `json:"ALL,omitempty"`
-			} `json:"ALL,omitempty"`
-			Summer struct {
-			} `json:"Summer,omitempty"`
-			Winter struct {
-			} `json:"Winter,omitempty"`
-		} `json:"demand_charges,omitempty"`
-		EnergyCharges struct {
-			All struct {
-				All int `json:"ALL,omitempty"`
-			} `json:"ALL,omitempty"`
-			Summer struct {
-				OffPeak float64 `json:"OFF_PEAK,omitempty"`
-				OnPeak  float64 `json:"ON_PEAK,omitempty"`
-			} `json:"Summer,omitempty"`
-			Winter struct {
-			} `json:"Winter,omitempty"`
-		} `json:"energy_charges,omitempty"`
-		Seasons struct {
-			Summer struct {
-				FromDay    int `json:"fromDay,omitempty"`
-				ToDay      int `json:"toDay,omitempty"`
-				FromMonth  int `json:"fromMonth,omitempty"`
-				ToMonth    int `json:"toMonth,omitempty"`
-				TouPeriods struct {
-					OffPeak []struct {
-						FromDayOfWeek int `json:"fromDayOfWeek,omitempty"`
-						ToDayOfWeek   int `json:"toDayOfWeek,omitempty"`
-						FromHour      int `json:"fromHour,omitempty"`
-						FromMinute    int `json:"fromMinute,omitempty"`
-						ToHour        int `json:"toHour,omitempty"`
-						ToMinute      int `json:"toMinute,omitempty"`
-					} `json:"OFF_PEAK,omitempty"`
-					OnPeak []struct {
-						FromDayOfWeek int `json:"fromDayOfWeek,omitempty"`
-						ToDayOfWeek   int `json:"toDayOfWeek,omitempty"`
-						FromHour      int `json:"fromHour,omitempty"`
-						FromMinute    int `json:"fromMinute,omitempty"`
-						ToHour        int `json:"toHour,omitempty"`
-						ToMinute      int `json:"toMinute,omitempty"`
-					} `json:"ON_PEAK,omitempty"`
-				} `json:"tou_periods,omitempty"`
-			} `json:"Summer,omitempty"`
-			Winter struct {
-				FromDay    int `json:"fromDay,omitempty"`
-				ToDay      int `json:"toDay,omitempty"`
-				FromMonth  int `json:"fromMonth,omitempty"`
-				ToMonth    int `json:"toMonth,omitempty"`
-				TouPeriods struct {
-				} `json:"tou_periods,omitempty"`
-			} `json:"Winter,omitempty"`
-		} `json:"seasons,omitempty"`
-		SellTariff struct {
-			Name         string `json:"name,omitempty"`
-			Utility      string `json:"utility,omitempty"`
-			DailyCharges []struct {
-				Amount int    `json:"amount,omitempty"`
-				Name   string `json:"name,omitempty"`
-			} `json:"daily_charges,omitempty"`
-			DemandCharges struct {
-				All struct {
-					All int `json:"ALL,omitempty"`
-				} `json:"ALL,omitempty"`
-				Summer struct {
-				} `json:"Summer,omitempty"`
-				Winter struct {
-				} `json:"Winter,omitempty"`
-			} `json:"demand_charges,omitempty"`
-			EnergyCharges struct {
-				All struct {
-					All int `json:"ALL,omitempty"`
-				} `json:"ALL,omitempty"`
-				Summer struct {
-					OffPeak float64 `json:"OFF_PEAK,omitempty"`
-					OnPeak  float64 `json:"ON_PEAK,omitempty"`
-				} `json:"Summer,omitempty"`
-				Winter struct {
-				} `json:"Winter,omitempty"`
-			} `json:"energy_charges,omitempty"`
-			Seasons struct {
-				Summer struct {
-					FromDay    int `json:"fromDay,omitempty"`
-					ToDay      int `json:"toDay,omitempty"`
-					FromMonth  int `json:"fromMonth,omitempty"`
-					ToMonth    int `json:"toMonth,omitempty"`
-					TouPeriods struct {
-						OffPeak []struct {
-							FromDayOfWeek int `json:"fromDayOfWeek,omitempty"`
-							ToDayOfWeek   int `json:"toDayOfWeek,omitempty"`
-							FromHour      int `json:"fromHour,omitempty"`
-							FromMinute    int `json:"fromMinute,omitempty"`
-							ToHour        int `json:"toHour,omitempty"`
-							ToMinute      int `json:"toMinute,omitempty"`
-						} `json:"OFF_PEAK,omitempty"`
-						OnPeak []struct {
-							FromDayOfWeek int `json:"fromDayOfWeek,omitempty"`
-							ToDayOfWeek   int `json:"toDayOfWeek,omitempty"`
-							FromHour      int `json:"fromHour,omitempty"`
-							FromMinute    int `json:"fromMinute,omitempty"`
-							ToHour        int `json:"toHour,omitempty"`
-							ToMinute      int `json:"toMinute,omitempty"`
-						} `json:"ON_PEAK,omitempty"`
-					} `json:"tou_periods,omitempty"`
-				} `json:"Summer,omitempty"`
-				Winter struct {
-					FromDay    int `json:"fromDay,omitempty"`
-					ToDay      int `json:"toDay,omitempty"`
-					FromMonth  int `json:"fromMonth,omitempty"`
-					ToMonth    int `json:"toMonth,omitempty"`
-					TouPeriods struct {
-					} `json:"tou_periods,omitempty"`
-				} `json:"Winter,omitempty"`
-			} `json:"seasons,omitempty"`
-		} `json:"sell_tariff,omitempty"`
-	} `json:"tariff_content,omitempty"`
-	NameplatePower                       int    `json:"nameplate_power,omitempty"`
-	NameplateEnergy                      int    `json:"nameplate_energy,omitempty"`
-	InstallationTimeZone                 string `json:"installation_time_zone,omitempty"`
-	OffGridVehicleChargingReservePercent int    `json:"off_grid_vehicle_charging_reserve_percent,omitempty"`
-	MaxSiteMeterPowerAc                  int    `json:"max_site_meter_power_ac,omitempty"`
-	MinSiteMeterPowerAc                  int    `json:"min_site_meter_power_ac,omitempty"`
-	TariffContentV2                      struct {
-		Code         string `json:"code,omitempty"`
-		Name         string `json:"name,omitempty"`
-		Utility      string `json:"utility,omitempty"`
-		DailyCharges []struct {
-			Name string `json:"name,omitempty"`
-		} `json:"daily_charges,omitempty"`
-		DemandCharges struct {
-			All struct {
-				Rates struct {
-					All int `json:"ALL,omitempty"`
-				} `json:"rates,omitempty"`
-			} `json:"ALL,omitempty"`
-			Summer struct {
-			} `json:"Summer,omitempty"`
-			Winter struct {
-			} `json:"Winter,omitempty"`
-		} `json:"demand_charges,omitempty"`
-		EnergyCharges struct {
-			All struct {
-				Rates struct {
-					All int `json:"ALL,omitempty"`
-				} `json:"rates,omitempty"`
-			} `json:"ALL,omitempty"`
-			Summer struct {
-				Rates struct {
-					OffPeak float64 `json:"OFF_PEAK,omitempty"`
-					OnPeak  float64 `json:"ON_PEAK,omitempty"`
-				} `json:"rates,omitempty"`
-			} `json:"Summer,omitempty"`
-			Winter struct {
-			} `json:"Winter,omitempty"`
-		} `json:"energy_charges,omitempty"`
-		Seasons struct {
-			Summer struct {
-				FromDay    int `json:"fromDay,omitempty"`
-				ToDay      int `json:"toDay,omitempty"`
-				FromMonth  int `json:"fromMonth,omitempty"`
-				ToMonth    int `json:"toMonth,omitempty"`
-				TouPeriods struct {
-					OffPeak struct {
-						Periods []struct {
-							ToDayOfWeek   int `json:"toDayOfWeek,omitempty"`
-							FromHour      int `json:"fromHour,omitempty"`
-							ToHour        int `json:"toHour,omitempty"`
-							FromDayOfWeek int `json:"fromDayOfWeek,omitempty"`
-						} `json:"periods,omitempty"`
-					} `json:"OFF_PEAK,omitempty"`
-					OnPeak struct {
-						Periods []struct {
-							ToDayOfWeek int `json:"toDayOfWeek,omitempty"`
-							FromHour    int `json:"fromHour,omitempty"`
-							ToHour      int `json:"toHour,omitempty"`
-						} `json:"periods,omitempty"`
-					} `json:"ON_PEAK,omitempty"`
-				} `json:"tou_periods,omitempty"`
-			} `json:"Summer,omitempty"`
-			Winter struct {
-			} `json:"Winter,omitempty"`
-		} `json:"seasons,omitempty"`
-		SellTariff struct {
-			Name         string `json:"name,omitempty"`
-			Utility      string `json:"utility,omitempty"`
-			DailyCharges []struct {
-				Name string `json:"name,omitempty"`
-			} `json:"daily_charges,omitempty"`
-			DemandCharges struct {
-				All struct {
-					Rates struct {
-						All int `json:"ALL,omitempty"`
-					} `json:"rates,omitempty"`
-				} `json:"ALL,omitempty"`
-				Summer struct {
-				} `json:"Summer,omitempty"`
-				Winter struct {
-				} `json:"Winter,omitempty"`
-			} `json:"demand_charges,omitempty"`
-			EnergyCharges struct {
-				All struct {
-					Rates struct {
-						All int `json:"ALL,omitempty"`
-					} `json:"rates,omitempty"`
-				} `json:"ALL,omitempty"`
-				Summer struct {
-					Rates struct {
-						OffPeak float64 `json:"OFF_PEAK,omitempty"`
-						OnPeak  float64 `json:"ON_PEAK,omitempty"`
-					} `json:"rates,omitempty"`
-				} `json:"Summer,omitempty"`
-				Winter struct {
-				} `json:"Winter,omitempty"`
-			} `json:"energy_charges,omitempty"`
-			Seasons struct {
-				Summer struct {
-					FromDay    int `json:"fromDay,omitempty"`
-					ToDay      int `json:"toDay,omitempty"`
-					FromMonth  int `json:"fromMonth,omitempty"`
-					ToMonth    int `json:"toMonth,omitempty"`
-					TouPeriods struct {
-						OffPeak struct {
-							Periods []struct {
-								ToDayOfWeek   int `json:"toDayOfWeek,omitempty"`
-								FromHour      int `json:"fromHour,omitempty"`
-								ToHour        int `json:"toHour,omitempty"`
-								FromDayOfWeek int `json:"fromDayOfWeek,omitempty"`
-							} `json:"periods,omitempty"`
-						} `json:"OFF_PEAK,omitempty"`
-						OnPeak struct {
-							Periods []struct {
-								ToDayOfWeek int `json:"toDayOfWeek,omitempty"`
-								FromHour    int `json:"fromHour,omitempty"`
-								ToHour      int `json:"toHour,omitempty"`
-							} `json:"periods,omitempty"`
-						} `json:"ON_PEAK,omitempty"`
-					} `json:"tou_periods,omitempty"`
-				} `json:"Summer,omitempty"`
-				Winter struct {
-				} `json:"Winter,omitempty"`
-			} `json:"seasons,omitempty"`
-		} `json:"sell_tariff,omitempty"`
-		Version int `json:"version,omitempty"`
-	} `json:"tariff_content_v2,omitempty"`
-	VppBackupReservePercent int `json:"vpp_backup_reserve_percent,omitempty"`
+	Version                              string      `json:"version,omitempty"`
+	BatteryCount                         int         `json:"battery_count,omitempty"`
+	TariffContent                        interface{} `json:"tariff_content,omitempty"`
+	NameplatePower                       int         `json:"nameplate_power,omitempty"`
+	NameplateEnergy                      int         `json:"nameplate_energy,omitempty"`
+	InstallationTimeZone                 string      `json:"installation_time_zone,omitempty"`
+	OffGridVehicleChargingReservePercent int         `json:"off_grid_vehicle_charging_reserve_percent,omitempty"`
+	MaxSiteMeterPowerAc                  int         `json:"max_site_meter_power_ac,omitempty"`
+	MinSiteMeterPowerAc                  int         `json:"min_site_meter_power_ac,omitempty"`
+	TariffContentV2                      TariffV2    `json:"tariff_content_v2"`
+	VppBackupReservePercent              int         `json:"vpp_backup_reserve_percent,omitempty"`
+}
+
+type SeasonPeriod struct {
+	ToDayOfWeek   int `json:"toDayOfWeek"`
+	ToHour        int `json:"toHour"`
+	ToMinute      int `json:"toMinute"`
+	FromDayOfWeek int `json:"fromDayOfWeek"`
+	FromHour      int `json:"fromHour"`
+	FromMinute    int `json:"fromMinute"`
+}
+
+type SeasonPeriods struct {
+	Periods []SeasonPeriod `json:"periods"`
+}
+
+type Season struct {
+	FromDay    int                      `json:"fromDay"`
+	ToDay      int                      `json:"toDay"`
+	FromMonth  int                      `json:"fromMonth"`
+	ToMonth    int                      `json:"toMonth"`
+	TouPeriods map[string]SeasonPeriods `json:"tou_periods"`
+}
+
+type EnergyChargeRates struct {
+	Rates map[string]float64 `json:"rates"`
+}
+
+type TariffV2 struct {
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Utility string `json:"utility"`
+	// DailyCharges interface{} `json:"daily_charges"`
+	// DemandCharges map[string]interface{}
+	// EnergyCharges map[string]map[string]float64
+	EnergyCharges map[string]EnergyChargeRates `json:"energy_charges"`
+	Seasons       map[string]Season            `json:"seasons"`
+	SellTariff    struct {
+		Name    string `json:"name"`
+		Utility string `json:"utility"`
+		// DailyCharges interface{} `json:"daily_charges"`
+		// DemandCharges map[string]map[string]float64 `json:"demand_charges"`
+		//EnergyCharges map[string]map[string]float64 `json:"energy_charges"`
+		EnergyCharges map[string]EnergyChargeRates `json:"energy_charges"`
+		Seasons       map[string]Season            `json:"seasons"`
+	} `json:"sell_tariff"`
+	Version int `json:"version"`
 }
 
 type SiteInfoResult struct {
@@ -351,5 +152,6 @@ func (c FleetApiClient) GetEnergySiteInfo(siteId string) (*EnergySiteInfo, error
 	if err != nil {
 		return nil, fmt.Errorf("error getting energy history: %w", err)
 	}
-	return &result.Response, nil
+	r := result.Response
+	return &r, nil
 }
