@@ -8,14 +8,10 @@
       "name": "Launch import cli",
       "type": "go",
       "request": "launch",
-      "mode": "debug",
-      "program": "${workspaceFolder}/cmd/import/main.go",
-      "args": ["2252268092126997"],
-      "env": {
-        
-      }
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/import/",
+      "args": ["usage-day","20240428"],
     },
-
     {
       "name": "Launch pocketbase server",
       "type": "go",
