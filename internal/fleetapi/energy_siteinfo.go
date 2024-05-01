@@ -145,7 +145,7 @@ func getEnergySiteInfoUrl(siteId string) (string, string) {
 	return url, ""
 }
 
-func (c FleetApiClient) GetEnergySiteInfo(siteId string) (*EnergySiteInfo, error) {
+func (c Client) GetEnergySiteInfo(siteId string) (*EnergySiteInfo, error) {
 	url, query := getEnergySiteInfoUrl(siteId)
 	c.logger.Debug("GetEnergySiteInfo", slog.String("siteid", siteId), slog.String("url", url))
 	result, err := getOne[SiteInfoResult](c.getClient(), url, query)

@@ -31,7 +31,7 @@ func getEnergySiteLiveUrl(siteId string) (string, string) {
 	return url, ""
 }
 
-func (c FleetApiClient) GetEnergySiteLiveStatus(siteId string) (*EnergySiteLiveStatus, error) {
+func (c Client) GetEnergySiteLiveStatus(siteId string) (*EnergySiteLiveStatus, error) {
 	url, query := getEnergySiteLiveUrl(siteId)
 	c.logger.Debug("GetEnergySiteLiveStatus", slog.String("siteid", siteId), slog.String("url", url))
 	result, err := getOne[EnergySiteLiveStatusResult](c.getClient(), url, query)

@@ -1,4 +1,4 @@
-package main
+package fleetdb
 
 import (
 	"encoding/json"
@@ -93,7 +93,7 @@ type TariffSchedule struct {
 	ToHour        *int
 }
 
-func (r EnergyRepo) LoadSite(siteid string, client *fleetapi.FleetApiClient) (*Site, error) {
+func (r EnergyRepo) LoadSite(siteid string, client *fleetapi.Client) (*Site, error) {
 	info, err := client.GetEnergySiteInfo(siteid)
 	if err != nil {
 		return nil, fmt.Errorf("error getting energy site info: %w", err)

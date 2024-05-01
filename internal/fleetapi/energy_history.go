@@ -51,7 +51,7 @@ func getEnergyHistoryUrl(siteId string, start time.Time, end time.Time, period s
 	return url, query
 }
 
-func (c FleetApiClient) GetEnergyHistory(siteId string, start time.Time, end time.Time, period string, tz *time.Location) ([]EnergyHistoryEntry, error) {
+func (c Client) GetEnergyHistory(siteId string, start time.Time, end time.Time, period string, tz *time.Location) ([]EnergyHistoryEntry, error) {
 	url, query := getEnergyHistoryUrl(siteId, start, end, period, tz)
 	c.logger.Debug("GetEnergyHistory", slog.String("url", url), slog.String("query", query))
 	result, err := getOne[EnergyHistoryResult](c.getClient(), url, query)
