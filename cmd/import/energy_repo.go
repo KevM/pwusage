@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,11 +19,12 @@ type EnergyData struct {
 }
 
 type EnergyRepo struct {
-	db *Database
+	db     *Database
+	logger *slog.Logger
 }
 
-func NewEnergyRepo(db *Database) *EnergyRepo {
-	return &EnergyRepo{db: db}
+func NewEnergyRepo(db *Database, logger *slog.Logger) *EnergyRepo {
+	return &EnergyRepo{db: db, logger: logger}
 }
 
 func (r EnergyRepo) GetEnergies(start time.Time, end time.Time) ([]EnergyData, error) {
@@ -85,12 +87,24 @@ type TariffSeason struct {
 type TariffSchedule struct {
 	Id            uuid.UUID
 	SeasonId      uuid.UUID
-	FromDayOfWeek int
-	FromHour      int
-	FromMinute    int
-	ToDayOfWeek   int
-	ToHour        int
-	ToMinute      int
+	FromDayOfWeek *int
+	FromHour      *int
+	ToDayOfWeek   *int
+	ToHour        *int
+}
+
+func (r EnergyRepo) LoadSite(siteid string, client *fleetapi.FleetApiClient) (*Site, error) {
+	info, err := client.GetEnergySiteInfo(siteid)
+	if err != nil {
+		return nil, fmt.Errorf("error getting energy site info: %w", err)
+	}
+	site, err := r.UpsertSite(siteid, info)
+	if err != nil {
+		return nil, fmt.Errorf("error upserting site info: %w", err)
+	}
+	// r.logger.Debug("site loaded", slog.Any("site", site))
+
+	return site, nil
 }
 
 func (r EnergyRepo) UpsertSite(siteid string, fleetSiteInfo *fleetapi.EnergySiteInfo) (*Site, error) {
@@ -129,7 +143,7 @@ func (r EnergyRepo) UpsertSite(siteid string, fleetSiteInfo *fleetapi.EnergySite
 		JSON:      string(jsonData),
 	}
 
-	site, err = r.UpsertSiteTariffs(site, fleetSiteInfo)
+	site, err = r.upsertSiteTariffs(site, fleetSiteInfo)
 	if err != nil {
 		return nil, fmt.Errorf("error upserting site tariffs for site %s: %w", site.Id, err)
 	}
@@ -137,10 +151,10 @@ func (r EnergyRepo) UpsertSite(siteid string, fleetSiteInfo *fleetapi.EnergySite
 	return &site, nil
 }
 
-func (r EnergyRepo) UpsertSiteTariffs(site Site, fleetSiteInfo *fleetapi.EnergySiteInfo) (Site, error) {
+func (r EnergyRepo) upsertSiteTariffs(site Site, fleetSiteInfo *fleetapi.EnergySiteInfo) (Site, error) {
 	tariffs := []Tariff{}
 	for _, name := range findSiteTariffNames(fleetSiteInfo) {
-		tariff, err := r.UpsertTariff(name, site, fleetSiteInfo)
+		tariff, err := r.upsertTariff(name, site, fleetSiteInfo)
 		if err != nil {
 			return site, fmt.Errorf("error upserting tariff %s for site %s: %w", name, site.Id, err)
 		}
@@ -166,7 +180,7 @@ func findSiteTariffNames(site *fleetapi.EnergySiteInfo) []string {
 	return tariffs
 }
 
-func (r EnergyRepo) UpsertTariff(name string, site Site, fleetSiteInfo *fleetapi.EnergySiteInfo) (*Tariff, error) {
+func (r EnergyRepo) upsertTariff(name string, site Site, fleetSiteInfo *fleetapi.EnergySiteInfo) (*Tariff, error) {
 	tariff := &Tariff{
 		Id:      uuid.New(),
 		SiteId:  site.Id,
@@ -218,9 +232,9 @@ func (r EnergyRepo) UpsertTariff(name string, site Site, fleetSiteInfo *fleetapi
 
 		for _, schedule := range season.Schedules {
 			insertScheduleSql := `INSERT INTO TariffSchedule(id, season_id, 
-								  from_day_of_week, from_hour, from_minute, to_day_of_week, to_hour, to_minute)
-								  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-			_, err = r.db.Conn().Exec(insertScheduleSql, schedule.Id.String(), season.Id.String(), schedule.FromDayOfWeek, schedule.FromHour, schedule.FromMinute, schedule.ToDayOfWeek, schedule.ToHour, schedule.ToMinute)
+								  from_day_of_week, from_hour, to_day_of_week, to_hour)
+								  VALUES (?, ?, ?, ?, ?, ?)`
+			_, err = r.db.Conn().Exec(insertScheduleSql, schedule.Id.String(), season.Id.String(), schedule.FromDayOfWeek, schedule.FromHour, schedule.ToDayOfWeek, schedule.ToHour)
 			if err != nil {
 				return tariff, fmt.Errorf("error inserting schedule for tariff %s: %w", name, err)
 			}
@@ -272,10 +286,8 @@ func getSeasonsFromFleetSiteInfo(tariff *Tariff, fleetSiteInfo *fleetapi.EnergyS
 					SeasonId:      ts.Id,
 					FromDayOfWeek: period.FromDayOfWeek,
 					FromHour:      period.FromHour,
-					FromMinute:    period.FromMinute,
 					ToDayOfWeek:   period.ToDayOfWeek,
 					ToHour:        period.ToHour,
-					ToMinute:      period.ToMinute,
 				}
 				schedules = append(schedules, s)
 			}
