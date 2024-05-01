@@ -11,21 +11,21 @@ import (
 	"github.com/opus-domini/fast-shot/constant/mime"
 )
 
-type FleetApiClient struct {
+type Client struct {
 	baseUri     string
 	bearerToken string
 	logger      *slog.Logger
 }
 
-func NewFleetApiClient(token string, logger *slog.Logger) *FleetApiClient {
-	return &FleetApiClient{
+func NewFleetApiClient(token string, logger *slog.Logger) *Client {
+	return &Client{
 		baseUri:     fleetApiBaseUri,
 		bearerToken: token,
 		logger:      logger,
 	}
 }
 
-func (c FleetApiClient) getClient() fastshot.ClientHttpMethods {
+func (c Client) getClient() fastshot.ClientHttpMethods {
 	return fastshot.NewClient(c.baseUri).
 		Auth().BearerToken(c.bearerToken).
 		Build()

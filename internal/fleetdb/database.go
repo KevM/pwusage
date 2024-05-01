@@ -1,4 +1,4 @@
-package main
+package fleetdb
 
 import (
 	"database/sql"
@@ -147,7 +147,6 @@ func setupDb(db *sql.DB) error {
 		return err
 	}
 
-	logger.Debug("database and table created")
 	return nil
 }
 

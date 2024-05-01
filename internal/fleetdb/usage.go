@@ -1,4 +1,4 @@
-package main
+package fleetdb
 
 import (
 	"log/slog"
@@ -8,14 +8,13 @@ import (
 
 type Usage struct {
 	siteid   string
-	client   *fleetapi.FleetApiClient
+	client   *fleetapi.Client
 	schedule *Schedule
 	db       *Database
 	logger   *slog.Logger
 }
 
-func NewUsage(siteid string, db *Database, token string, logger *slog.Logger) (*Usage, error) {
-	client := fleetapi.NewFleetApiClient(token, logger)
+func NewUsage(siteid string, db *Database, client *fleetapi.Client, logger *slog.Logger) (*Usage, error) {
 	repo := NewEnergyRepo(db, logger)
 	site, err := repo.LoadSite(siteid, client)
 	if err != nil {

@@ -1,4 +1,4 @@
-package main
+package fleetdb
 
 import (
 	"database/sql"
@@ -11,12 +11,10 @@ import (
 
 type Importer struct {
 	logger *slog.Logger
-	client *fleetapi.FleetApiClient
+	client *fleetapi.Client
 }
 
-func NewImporter(token string, logger *slog.Logger) *Importer {
-	client := fleetapi.NewFleetApiClient(token, logger)
-
+func NewImporter(client *fleetapi.Client, logger *slog.Logger) *Importer {
 	return &Importer{logger: logger, client: client}
 }
 
@@ -24,7 +22,7 @@ func (i Importer) LoadFullSiteHistory(db *Database, site *Site) error {
 	start := time.Date(site.Installed.Year(), site.Installed.Month(), site.Installed.Day(), 0, 0, 0, 0, site.Location)
 	end := time.Now().In(site.Location)
 	for _, sod := range dateRange(start, end) {
-		logger.Debug("loading history", slog.String("date", sod.Format("2006-01-02")))
+		i.logger.Debug("loading history", slog.String("date", sod.Format("2006-01-02")))
 		err := i.LoadSiteHistoryDay(db, sod, site)
 		if err != nil {
 			return fmt.Errorf("error loading site history for date %s: %w", sod.Format("2006-01-02"), err)

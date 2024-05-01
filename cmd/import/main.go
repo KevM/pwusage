@@ -4,45 +4,29 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/joho/godotenv"
 	"github.com/kevm/pw-usage/internal/fleetapi"
-	_ "github.com/mattn/go-sqlite3"
-
+	"github.com/kevm/pw-usage/internal/fleetdb"
 	"github.com/neomantra/ymdflag"
 	"github.com/spf13/cobra"
 )
 
-var db *Database
+var db *fleetdb.Database
 var db_file = "./pw-history.db"
 var logger *slog.Logger
-var token string
+var client *fleetapi.Client
 
 func init() {
-	godotenv.Load()
-	logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
-
-	if os.Getenv("FLEET_AUTH_TOKEN") != "" {
-		token = os.Getenv("FLEET_AUTH_TOKEN")
-	} else {
-		logger.Error("Please set the FLEET_AUTH_TOKEN environment variable")
+	var err error
+	db, client, logger, err = fleetdb.Setup(db_file)
+	if err != nil {
+		logger.Error("error setting up db", slog.Any("error", err))
 		os.Exit(1)
 	}
-
-	d, err := NewDatabase(db_file)
-	if err != nil {
-		logger.Error("Error opening database", slog.Any("error", err))
-		os.Exit(2)
-	}
-	db = d
 }
 
 func main() {
 	defer db.Close()
 	var rootCmd = &cobra.Command{Use: "pw-usage"}
-	rootCmd.PersistentFlags().StringVarP(&db_file, "db", "d", db_file, "sqlite db file")
-	rootCmd.PersistentFlags().StringVarP(&token, "token", "t", token, "tesla fleet api token")
 	rootCmd.AddCommand(cmdImport)
 	rootCmd.AddCommand(cmdImportDay)
 	rootCmd.AddCommand(cmdUsage)
@@ -66,7 +50,7 @@ var cmdUsage = &cobra.Command{
 			os.Exit(1)
 		}
 
-		usage, err := NewUsage(siteid, db, token, logger)
+		usage, err := fleetdb.NewUsage(siteid, db, client, logger)
 		if err != nil {
 			logger.Error("error creating usage", slog.Any("error", err))
 			os.Exit(2)
@@ -112,15 +96,14 @@ var cmdImport = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		siteid := args[0]
 
-		repo := NewEnergyRepo(db, logger)
-		client := fleetapi.NewFleetApiClient(token, logger)
+		repo := fleetdb.NewEnergyRepo(db, logger)
 		site, err := repo.LoadSite(siteid, client)
 		if err != nil {
 			logger.Error("Error loading site info", slog.Any("error", err))
 			os.Exit(3)
 		}
 
-		importer := NewImporter(token, logger)
+		importer := fleetdb.NewImporter(client, logger)
 		err = importer.LoadFullSiteHistory(db, site)
 		if err != nil {
 			logger.Error("Error loading site history", slog.Any("error", err))
@@ -146,15 +129,14 @@ var cmdImportDay = &cobra.Command{
 			}
 		}
 
-		repo := NewEnergyRepo(db, logger)
-		client := fleetapi.NewFleetApiClient(token, logger)
+		repo := fleetdb.NewEnergyRepo(db, logger)
 		site, err := repo.LoadSite(siteid, client)
 		if err != nil {
 			logger.Error("Error loading site info", slog.Any("error", err))
 			os.Exit(3)
 		}
 
-		importer := NewImporter(token, logger)
+		importer := fleetdb.NewImporter(client, logger)
 		err = importer.LoadSiteHistoryDay(db, d.AsTime(), site)
 		if err != nil {
 			logger.Error("Error loading site history day", slog.Any("error", err))
@@ -171,7 +153,7 @@ var cmdBatteryStartHold = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		siteid := args[0]
-		batteryReserve := NewBatteryHold(db.Conn(), token, logger)
+		batteryReserve := fleetdb.NewBatteryHold(db, client, logger)
 		err := batteryReserve.StartHold(siteid)
 		if err != nil {
 			logger.Error("Error holding battery", slog.Any("error", err))
@@ -186,7 +168,7 @@ var cmdBatteryStopHold = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		siteid := args[0]
-		batteryReserve := NewBatteryHold(db.Conn(), token, logger)
+		batteryReserve := fleetdb.NewBatteryHold(db, client, logger)
 		err := batteryReserve.StopHold(siteid)
 		if err != nil {
 			logger.Error("Error stopping battery hold", slog.Any("error", err))
