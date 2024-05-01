@@ -121,7 +121,7 @@ func setupDb(db *sql.DB) error {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS EnergyUsage (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		site_id TEXT NOT NULL,
-		tariff_id INTEGER NOT NULL,
+		tariff_id TEXT NOT NULL,
 		start DATETIME NOT NULL, 
 		end DATETIME NOT NULL,
 		load_usage REAL NOT NULL,
