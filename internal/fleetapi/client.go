@@ -17,8 +17,8 @@ type FleetApiClient struct {
 	logger      *slog.Logger
 }
 
-func NewFleetApiClient(token string, logger *slog.Logger) FleetApiClient {
-	return FleetApiClient{
+func NewFleetApiClient(token string, logger *slog.Logger) *FleetApiClient {
+	return &FleetApiClient{
 		baseUri:     fleetApiBaseUri,
 		bearerToken: token,
 		logger:      logger,
@@ -41,7 +41,7 @@ func getOne[T any](c fastshot.ClientHttpMethods, url string, query string) (T, e
 	if response.IsError() {
 		bodyBytes, err := io.ReadAll(response.RawBody())
 		if err != nil {
-			return result, fmt.Errorf("non 200 ok response (%s) returned from web service; failed to ready body", response.Status())
+			return result, fmt.Errorf("non 200 ok response (%s) returned from web service; failed to read body", response.Status())
 		}
 		bodyString := string(bodyBytes)
 		return result, fmt.Errorf("non 200 ok response (%s) returned from web service:\n%s", response.Status(), bodyString)

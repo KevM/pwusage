@@ -18,7 +18,7 @@ type Importer struct {
 func NewImporter(token string, dbfile string, logger *slog.Logger) *Importer {
 	client := fleetapi.NewFleetApiClient(token, logger)
 
-	return &Importer{logger: logger, client: &client, dbfile: dbfile}
+	return &Importer{logger: logger, client: client, dbfile: dbfile}
 }
 
 func (i Importer) LoadSite(db *Database, siteid string) (*Site, error) {
