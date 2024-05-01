@@ -14,7 +14,7 @@ func postSetBatteryReserveUrl(siteId string) string {
 	return url
 }
 
-func (c *FleetApiClient) SetBatteryReserve(siteid string, reserve int64) error {
+func (c *FleetApiClient) SetBatteryReserve(siteid string, reserve int) error {
 	uri := postSetBatteryReserveUrl(siteid)
 	payload := map[string]interface{}{
 		"backup_reserve_percent": reserve,
