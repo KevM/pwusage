@@ -35,8 +35,9 @@ func (d Database) Close() error {
 
 func setupDb(db *sql.DB) error {
 
+	// being so clever putting the last created table here to force a setup :o
 	var tableName = ""
-	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='Site';").Scan(&tableName)
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='BatteryHold';").Scan(&tableName)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("error checking if table exists: %w", err)
 	}
@@ -130,6 +131,17 @@ func setupDb(db *sql.DB) error {
 		FOREIGN KEY (site_id) REFERENCES Site(id) ON DELETE CASCADE,
 		FOREIGN KEY (tariff_id) REFERENCES Tariff(id) ON DELETE CASCADE,
 		UNIQUE(site_id, tariff_id, start, end)
+	);`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS BatteryHold (
+		site_id TEXT PRIMARY KEY,
+		created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		battery_reserve_before_hold INTEGER NOT NULL,
+		battery_soe_at_hold INTEGER NOT NULL,
+		FOREIGN KEY (site_id) REFERENCES Site(id) ON DELETE CASCADE
 	);`)
 	if err != nil {
 		return err
