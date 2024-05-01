@@ -7,6 +7,7 @@ replace github.com/kevm/pw-usage/cmd/pocketbase/migrations => ./migrations
 replace github.com/kevm/pw-usage/internal/monitoring => ./internal/monitoring
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/neomantra/ymdflag v0.2.0

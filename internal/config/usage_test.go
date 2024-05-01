@@ -1,28 +1,27 @@
-package fleetdb
+package config
 
 import (
 	"testing"
 	"time"
 
+	"github.com/kevm/pw-usage/internal/fleetdb"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUsage_GetUsages(t *testing.T) {
 	siteid := "2252268092126997"
-	var err error
-	db, client, logger, err := Setup("./pw-testing.db")
+	config, err := NewConfig()
 	require.NoError(t, err)
+	defer config.Database.DeleteDb()
 
-	defer db.DeleteDb()
-
-	er := NewEnergyRepo(db, logger)
-	site, err := er.LoadSite(siteid, client)
+	er := fleetdb.NewEnergyRepo(config.Database, config.Logger)
+	site, err := er.LoadSite(siteid, config.Client)
 	require.NoError(t, err)
 
 	sod := time.Date(2024, 5, 1, 0, 0, 0, 0, site.Location)
 	eod := time.Date(2024, 5, 2, 0, 0, 0, 0, site.Location)
 
-	importer := NewImporter(db, client, logger)
+	importer := fleetdb.NewImporter(config.Database, config.Client, config.Logger)
 	err = importer.LoadSiteEnergyDataForDay(sod, site)
 	require.NoError(t, err)
 
@@ -30,7 +29,7 @@ func TestUsage_GetUsages(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, data, 288)
 
-	usage := NewUsage(site, db, client, logger)
+	usage := fleetdb.NewUsage(site, config.Database, config.Client, config.Logger)
 	usages := usage.GetUsagesFromData(site, data)
 	require.NoError(t, err)
 
@@ -61,8 +60,8 @@ func TestUsage_GetUsages(t *testing.T) {
 	require.ElementsMatch(t, usages, from_db)
 }
 
-func TotalUsage(usages []UsageData) UsageData {
-	var result UsageData
+func TotalUsage(usages []fleetdb.UsageData) fleetdb.UsageData {
+	var result fleetdb.UsageData
 
 	for _, u := range usages {
 		result.HomeUsage += u.HomeUsage
