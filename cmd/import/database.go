@@ -91,12 +91,12 @@ func setupDb(db *sql.DB) error {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS TariffSchedule (
 		id TEXT PRIMARY KEY,
 		season_id INTEGER NOT NULL,
-		from_day_of_week INTEGER NOT NULL,
-		from_hour INTEGER NOT NULL,
-		from_minute INTEGER NOT NULL,
-		to_day_of_week INTEGER NOT NULL,
-		to_hour INTEGER NOT NULL,
-		to_minute INTEGER NOT NULL,			
+		from_day_of_week INTEGER,
+		from_hour INTEGER,
+		from_minute INTEGER,
+		to_day_of_week INTEGER,
+		to_hour INTEGER,
+		to_minute INTEGER,
 		FOREIGN KEY (season_id) REFERENCES TariffSeason(id) ON DELETE CASCADE
 	);`)
 	if err != nil {

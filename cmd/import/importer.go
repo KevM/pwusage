@@ -12,28 +12,12 @@ import (
 type Importer struct {
 	logger *slog.Logger
 	client *fleetapi.FleetApiClient
-	dbfile string
 }
 
-func NewImporter(token string, dbfile string, logger *slog.Logger) *Importer {
+func NewImporter(token string, logger *slog.Logger) *Importer {
 	client := fleetapi.NewFleetApiClient(token, logger)
 
-	return &Importer{logger: logger, client: client, dbfile: dbfile}
-}
-
-func (i Importer) LoadSite(db *Database, siteid string) (*Site, error) {
-	info, err := i.client.GetEnergySiteInfo(siteid)
-	if err != nil {
-		return nil, fmt.Errorf("error getting energy site info: %w", err)
-	}
-	repo := NewEnergyRepo(db)
-	site, err := repo.UpsertSite(siteid, info)
-	if err != nil {
-		return nil, fmt.Errorf("error upserting site info: %w", err)
-	}
-	logger.Debug("site upserted", slog.Any("site", site))
-
-	return site, nil
+	return &Importer{logger: logger, client: client}
 }
 
 func (i Importer) LoadFullSiteHistory(db *Database, site *Site) error {

@@ -91,12 +91,12 @@ type EnergySiteInfo struct {
 }
 
 type SeasonPeriod struct {
-	ToDayOfWeek   int `json:"toDayOfWeek"`
-	ToHour        int `json:"toHour"`
-	ToMinute      int `json:"toMinute"`
-	FromDayOfWeek int `json:"fromDayOfWeek"`
-	FromHour      int `json:"fromHour"`
-	FromMinute    int `json:"fromMinute"`
+	ToDayOfWeek   *int `json:"toDayOfWeek,omitempty"`
+	ToHour        *int `json:"toHour,omitempty"`
+	ToMinute      *int `json:"toMinute,omitempty"`
+	FromDayOfWeek *int `json:"fromDayOfWeek,omitempty"`
+	FromHour      *int `json:"fromHour,omitempty"`
+	FromMinute    *int `json:"fromMinute,omitempty"`
 }
 
 type SeasonPeriods struct {
