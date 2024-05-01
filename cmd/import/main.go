@@ -46,7 +46,8 @@ func main() {
 	rootCmd.AddCommand(cmdImport)
 	rootCmd.AddCommand(cmdImportDay)
 	rootCmd.AddCommand(cmdUsage)
-	rootCmd.AddCommand(cmdBatteryHold)
+	rootCmd.AddCommand(cmdBatteryStartHold)
+	rootCmd.AddCommand(cmdBatteryStopHold)
 	rootCmd.Execute()
 }
 
@@ -151,7 +152,7 @@ var cmdImportDay = &cobra.Command{
 	},
 }
 
-var cmdBatteryHold = &cobra.Command{
+var cmdBatteryStartHold = &cobra.Command{
 	Use:   "battery-hold [siteid]",
 	Short: "hold the battery the current level - usually used while charging vehicles",
 	Args:  cobra.MinimumNArgs(1),
@@ -160,7 +161,22 @@ var cmdBatteryHold = &cobra.Command{
 		batteryReserve := NewBatteryHold(db.Conn(), token, logger)
 		err := batteryReserve.StartHold(siteid)
 		if err != nil {
-			logger.Error("Error setting battery reserve", slog.Any("error", err))
+			logger.Error("Error holding battery", slog.Any("error", err))
+			os.Exit(2)
+		}
+	},
+}
+
+var cmdBatteryStopHold = &cobra.Command{
+	Use:   "battery-hold-done [siteid]",
+	Short: "stop holding the battery level - used when done charging vehicles",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		siteid := args[0]
+		batteryReserve := NewBatteryHold(db.Conn(), token, logger)
+		err := batteryReserve.StopHold(siteid)
+		if err != nil {
+			logger.Error("Error stopping battery hold", slog.Any("error", err))
 			os.Exit(2)
 		}
 	},
