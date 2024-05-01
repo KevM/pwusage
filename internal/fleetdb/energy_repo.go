@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/kevm/pw-usage/internal/fleetapi"
 )
 
@@ -62,7 +61,7 @@ type Site struct {
 
 // site -> tariff
 type Tariff struct {
-	Id      uuid.UUID
+	Id      int
 	SiteId  string
 	Name    string
 	Updated time.Time
@@ -71,8 +70,8 @@ type Tariff struct {
 
 // site -> tariff -> season
 type TariffSeason struct {
-	Id        uuid.UUID
-	TariffId  uuid.UUID
+	Id        int
+	TariffId  int
 	Name      string
 	FromMonth int
 	FromDay   int
@@ -85,8 +84,8 @@ type TariffSeason struct {
 
 // site -> tariff -> season -> schedule
 type TariffSchedule struct {
-	Id            uuid.UUID
-	SeasonId      uuid.UUID
+	Id            int
+	SeasonId      int
 	FromDayOfWeek *int
 	FromHour      *int
 	ToDayOfWeek   *int
@@ -98,11 +97,11 @@ func (r EnergyRepo) LoadSite(siteid string, client *fleetapi.Client) (*Site, err
 	if err != nil {
 		return nil, fmt.Errorf("error getting energy site info: %w", err)
 	}
+
 	site, err := r.UpsertSite(siteid, info)
 	if err != nil {
 		return nil, fmt.Errorf("error upserting site info: %w", err)
 	}
-	// r.logger.Debug("site loaded", slog.Any("site", site))
 
 	return site, nil
 }
@@ -182,14 +181,13 @@ func findSiteTariffNames(site *fleetapi.EnergySiteInfo) []string {
 
 func (r EnergyRepo) upsertTariff(name string, site Site, fleetSiteInfo *fleetapi.EnergySiteInfo) (*Tariff, error) {
 	tariff := &Tariff{
-		Id:      uuid.New(),
 		SiteId:  site.Id,
 		Name:    name,
 		Updated: site.Updated,
 	}
-	insertSql := `INSERT INTO Tariff(id, site_id, name, updated) VALUES (?, ?, ?, ?)
+	insertSql := `INSERT INTO Tariff(site_id, name, updated) VALUES (?, ?, ?)
 				  ON CONFLICT(site_id, name) DO UPDATE SET updated = ?;`
-	_, err := r.db.Conn().Exec(insertSql, tariff.Id, site.Id, name, site.Updated, site.Updated)
+	_, err := r.db.Conn().Exec(insertSql, site.Id, name, site.Updated, site.Updated)
 	if err != nil {
 		return tariff, fmt.Errorf("error upserting site tariff %s: %w", name, err)
 	}
@@ -197,16 +195,12 @@ func (r EnergyRepo) upsertTariff(name string, site Site, fleetSiteInfo *fleetapi
 	// get tariff id for this site in case it was an update as that would make the current id incorrect
 	tariffIdQuery := `SELECT id FROM Tariff WHERE site_id = ? AND name = ?`
 	row := r.db.Conn().QueryRow(tariffIdQuery, site.Id, name)
-	var tariffId string
+	var tariffId int
 	err = row.Scan(&tariffId)
 	if err != nil {
 		return tariff, fmt.Errorf("error querying tariff id for site %s: %w", site.Id, err)
 	}
-	id, err := uuid.Parse(tariffId)
-	if err != nil {
-		return tariff, fmt.Errorf("error parsing tariff id for site %s: %w", site.Id, err)
-	}
-	tariff.Id = id
+	tariff.Id = tariffId
 
 	// delete all tariff seasons (cascading to schedules) for this tariff
 	deleteSql := `DELETE FROM TariffSeason WHERE tariff_id = ?`
@@ -222,22 +216,32 @@ func (r EnergyRepo) upsertTariff(name string, site Site, fleetSiteInfo *fleetapi
 	}
 
 	for _, season := range seasons {
-		insertSeasonSql := `INSERT INTO TariffSeason(id, tariff_id, name, 
+		insertSeasonSql := `INSERT INTO TariffSeason(tariff_id, name, 
 							from_month, from_day, to_month, to_day, buy_rate, sell_rate)
-							VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		_, err = r.db.Conn().Exec(insertSeasonSql, season.Id.String(), tariff.Id.String(), season.Name, season.FromMonth, season.FromDay, season.ToMonth, season.ToDay, season.BuyRate, season.SellRate)
+							VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		res, err := r.db.Conn().Exec(insertSeasonSql, tariff.Id, season.Name, season.FromMonth, season.FromDay, season.ToMonth, season.ToDay, season.BuyRate, season.SellRate)
 		if err != nil {
-			return tariff, fmt.Errorf("error inserting season for tariff %s: %w", name, err)
+			return tariff, fmt.Errorf("error inserting season for tariff %s: %w", season.Name, err)
 		}
+		seasonId, err := res.LastInsertId()
+		if err != nil {
+			return tariff, fmt.Errorf("error getting season id for tariff %s: %w", season.Name, err)
+		}
+		season.Id = int(seasonId)
 
 		for _, schedule := range season.Schedules {
-			insertScheduleSql := `INSERT INTO TariffSchedule(id, season_id, 
+			insertScheduleSql := `INSERT INTO TariffSchedule(season_id, 
 								  from_day_of_week, from_hour, to_day_of_week, to_hour)
-								  VALUES (?, ?, ?, ?, ?, ?)`
-			_, err = r.db.Conn().Exec(insertScheduleSql, schedule.Id.String(), season.Id.String(), schedule.FromDayOfWeek, schedule.FromHour, schedule.ToDayOfWeek, schedule.ToHour)
+								  VALUES (?, ?, ?, ?, ?)`
+			res, err = r.db.Conn().Exec(insertScheduleSql, season.Id, schedule.FromDayOfWeek, schedule.FromHour, schedule.ToDayOfWeek, schedule.ToHour)
 			if err != nil {
 				return tariff, fmt.Errorf("error inserting schedule for tariff %s: %w", name, err)
 			}
+			scheduleId, err := res.LastInsertId()
+			if err != nil {
+				return tariff, fmt.Errorf("error getting season id for tariff %s: %w", season.Name, err)
+			}
+			schedule.Id = int(scheduleId)
 		}
 	}
 	tariff.Seasons = seasons
@@ -251,7 +255,6 @@ func getSeasonsFromFleetSiteInfo(tariff *Tariff, fleetSiteInfo *fleetapi.EnergyS
 	// find tariff seasons and their schedules
 	for season_name, season := range fleetSiteInfo.TariffContentV2.Seasons {
 		ts := TariffSeason{
-			Id:        uuid.New(),
 			TariffId:  tariff.Id,
 			Name:      season_name,
 			FromMonth: season.FromMonth,
@@ -272,8 +275,6 @@ func getSeasonsFromFleetSiteInfo(tariff *Tariff, fleetSiteInfo *fleetapi.EnergyS
 		}
 		ts.SellRate = rate
 
-		// do we write to the db here?
-
 		for season_tariff_name, periods := range season.TouPeriods {
 			if tariff.Name != season_tariff_name {
 				continue
@@ -282,7 +283,6 @@ func getSeasonsFromFleetSiteInfo(tariff *Tariff, fleetSiteInfo *fleetapi.EnergyS
 			schedules := []TariffSchedule{}
 			for _, period := range periods.Periods {
 				s := TariffSchedule{
-					Id:            uuid.New(),
 					SeasonId:      ts.Id,
 					FromDayOfWeek: period.FromDayOfWeek,
 					FromHour:      period.FromHour,

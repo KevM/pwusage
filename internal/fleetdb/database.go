@@ -58,7 +58,7 @@ func setupDb(db *sql.DB) error {
 	}
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS Tariff (
-		id TEXT PRIMARY KEY,
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		site_id TEXT NOT NULL,
 		updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		name TEXT,
@@ -71,7 +71,7 @@ func setupDb(db *sql.DB) error {
 
 	// tariff -> season
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS TariffSeason (
-		id TEXT PRIMARY KEY,
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		tariff_id INTEGER NOT NULL,
 		name TEXT,
 		from_month INTEGER NOT NULL,
@@ -89,7 +89,7 @@ func setupDb(db *sql.DB) error {
 
 	// tariff -> season -> schedule
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS TariffSchedule (
-		id TEXT PRIMARY KEY,
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		season_id INTEGER NOT NULL,
 		from_day_of_week INTEGER,
 		from_hour INTEGER,
@@ -121,7 +121,7 @@ func setupDb(db *sql.DB) error {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS EnergyUsage (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		site_id TEXT NOT NULL,
-		tariff_id TEXT NOT NULL,
+		tariff_id INTEGER NOT NULL,
 		start DATETIME NOT NULL, 
 		end DATETIME NOT NULL,
 		load_usage REAL NOT NULL,
