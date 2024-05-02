@@ -43,7 +43,7 @@ type GetProductResult struct {
 	Count    int            `json:"count"`
 }
 
-func (c FleetApiClient) GetProducts() ([]FleetProduct, error) {
+func (c Client) GetProducts() ([]FleetProduct, error) {
 	url := "/api/1/products"
 	c.logger.Debug("GetProducts", slog.String("url", url))
 	result, err := getOne[GetProductResult](c.getClient(), url, "")
