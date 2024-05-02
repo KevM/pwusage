@@ -33,6 +33,8 @@ func (i Importer) LoadFullSiteHistory(db *Database, site *Site) error {
 }
 
 func (i Importer) LoadSiteHistoryDay(db *Database, sod time.Time, site *Site) error {
+	usage := NewUsage(site, db, i.client, i.logger)
+
 	err := deleteDay(db.Conn(), sod)
 	if err != nil {
 		return fmt.Errorf("error deleting day for date %s: %w", sod.Format("2006-01-02"), err)
@@ -43,9 +45,15 @@ func (i Importer) LoadSiteHistoryDay(db *Database, sod time.Time, site *Site) er
 	if err != nil {
 		return fmt.Errorf("error getting energy history for date %s: %w", sod.Format("2006-01-02"), err)
 	}
-	err = insertResults(db.Conn(), site.Id, results)
+	ed, err := insertEnergyDatas(db.Conn(), site, results)
 	if err != nil {
 		return fmt.Errorf("error inserting results for date %s: %w", sod.Format("2006-01-02"), err)
+	}
+
+	usages := usage.GetUsages(site, ed)
+	err = insertEnergyUsages(db.Conn(), usages)
+	if err != nil {
+		return fmt.Errorf("error inserting usages for date %s: %w", sod.Format("2006-01-02"), err)
 	}
 
 	return nil
@@ -73,14 +81,38 @@ func deleteDay(db *sql.DB, sod time.Time) error {
 	return nil
 }
 
-func insertResults(db *sql.DB, siteid string, histories []fleetapi.EnergyHistoryEntry) error {
-	stmt, err := db.Prepare(`INSERT INTO EnergyData(site_id, timestamp, load_power, solar_power, grid_power, battery_power) VALUES (?, ?, ?, ?, ?, ?)`)
+func insertEnergyUsages(db *sql.DB, usages []UsageData) error {
+	stmt, err := db.Prepare(`INSERT INTO EnergyUsage(tariff_id, start, end, load_usage, solar_produced, grid_usage, battery_usage) VALUES (?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
+	for _, u := range usages {
+		_, err := stmt.Exec(u.Tariff.Id, u.Start, u.End, u.HomeUsage, u.SolarProduction, u.GridUsage, u.BatteryChange)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func insertEnergyDatas(db *sql.DB, site *Site, histories []fleetapi.EnergyHistoryEntry) ([]EnergyData, error) {
+	schedule := NewSchedule(site.Tariffs)
+	stmt, err := db.Prepare(`INSERT INTO EnergyData(tariff_id, timestamp, load_power, solar_power, grid_power, battery_power) VALUES (?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	var results []EnergyData = make([]EnergyData, len(histories))
 	for _, h := range histories {
+		tp := schedule.GetTariffPeriod(h.Timestamp)
+		if tp == nil {
+			return nil, fmt.Errorf("no tariff period found for %s", h.Timestamp)
+		}
+
 		var grid float64
 		if h.GridEnergyImported > 0 {
 			grid = h.GridEnergyImported
@@ -95,11 +127,21 @@ func insertResults(db *sql.DB, siteid string, histories []fleetapi.EnergyHistory
 			battery = 0 - h.TotalBatteryDischarge
 		}
 
-		_, err := stmt.Exec(siteid, h.Timestamp, h.TotalHomeUsage, h.SolarEnergyExported, grid, battery)
+		_, err := stmt.Exec(tp.Tariff.Id, h.Timestamp, h.TotalHomeUsage, h.SolarEnergyExported, grid, battery)
 		if err != nil {
-			return err
+			return nil, err
 		}
+
+		ed := EnergyData{
+			TariffId:     tp.Tariff.Id,
+			Timestamp:    h.Timestamp,
+			LoadPower:    h.TotalHomeUsage,
+			SolarPower:   h.SolarEnergyExported,
+			GridPower:    grid,
+			BatteryPower: battery,
+		}
+		results = append(results, ed)
 	}
 
-	return nil
+	return results, nil
 }

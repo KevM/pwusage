@@ -37,7 +37,7 @@ func setupDb(db *sql.DB) error {
 
 	// being so clever putting the last created table here to force a setup :o
 	var tableName = ""
-	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='BatteryHold';").Scan(&tableName)
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='EnergyUsage';").Scan(&tableName)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("error checking if table exists: %w", err)
 	}
@@ -106,13 +106,13 @@ func setupDb(db *sql.DB) error {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS EnergyData (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		timestamp DATETIME NOT NULL,
-		site_id TEXT NOT NULL,
+		tariff_id INTEGER NOT NULL,
 		load_power REAL NOT NULL,
 		solar_power REAL NOT NULL,
 		grid_power REAL NOT NULL,
 		battery_power REAL NOT NULL,
-		FOREIGN KEY (site_id) REFERENCES Site(id) ON DELETE CASCADE,
-		UNIQUE(timestamp, site_id)
+		FOREIGN KEY (tariff_id) REFERENCES Tariff(id) ON DELETE CASCADE,
+		UNIQUE(timestamp, tariff_id)
 	);`)
 	if err != nil {
 		return err
@@ -120,7 +120,6 @@ func setupDb(db *sql.DB) error {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS EnergyUsage (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		site_id TEXT NOT NULL,
 		tariff_id INTEGER NOT NULL,
 		start DATETIME NOT NULL, 
 		end DATETIME NOT NULL,
@@ -128,9 +127,8 @@ func setupDb(db *sql.DB) error {
 		solar_produced REAL NOT NULL,
 		grid_usage REAL NOT NULL,
 		battery_usage REAL NOT NULL,
-		FOREIGN KEY (site_id) REFERENCES Site(id) ON DELETE CASCADE,
 		FOREIGN KEY (tariff_id) REFERENCES Tariff(id) ON DELETE CASCADE,
-		UNIQUE(site_id, tariff_id, start, end)
+		UNIQUE(tariff_id, start, end)
 	);`)
 	if err != nil {
 		return err

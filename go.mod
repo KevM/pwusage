@@ -9,9 +9,11 @@ replace github.com/kevm/pw-usage/internal/monitoring => ./internal/monitoring
 require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
+	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/neomantra/ymdflag v0.2.0
 	github.com/opus-domini/fast-shot v0.10.0
 	github.com/spf13/cobra v1.8.0
+	github.com/stretchr/testify v1.9.0
 )
 
 require (

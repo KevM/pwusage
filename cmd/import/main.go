@@ -40,53 +40,53 @@ var cmdUsage = &cobra.Command{
 	Use:   "usage-day [siteid] [YYYYMMDD]",
 	Short: "determine energy usage for the given date",
 	Args:  cobra.MinimumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		siteid := args[0]
-		sd := args[1]
-		start := ymdflag.YMDFlag{}
-		err := start.Set(sd)
-		if err != nil {
-			logger.Error("error parsing date should be YYYYMMDD", slog.String("date", sd), slog.Any("error", err))
-			os.Exit(1)
-		}
+	// Run: func(cmd *cobra.Command, args []string) {
+	// siteid := args[0]
+	// sd := args[1]
+	// start := ymdflag.YMDFlag{}
+	// err := start.Set(sd)
+	// if err != nil {
+	// 	logger.Error("error parsing date should be YYYYMMDD", slog.String("date", sd), slog.Any("error", err))
+	// 	os.Exit(1)
+	// }
 
-		usage, err := fleetdb.NewUsage(siteid, db, client, logger)
-		if err != nil {
-			logger.Error("error creating usage", slog.Any("error", err))
-			os.Exit(2)
-		}
+	// usage, err := fleetdb.NewUsage(siteid, db, client, logger)
+	// if err != nil {
+	// 	logger.Error("error creating usage", slog.Any("error", err))
+	// 	os.Exit(2)
+	// }
 
-		logger.Debug("kill this", "usage", usage)
+	// logger.Debug("kill this", "usage", usage)
 
-		// data, err := repo.GetEnergies(start.AsTime(), start.AsTime().AddDate(0, 0, 1))
-		// if err != nil {
-		// 	logger.Error("error getting energies", slog.Any("error", err))
-		// 	os.Exit(5)
-		// }
+	// data, err := repo.GetEnergies(start.AsTime(), start.AsTime().AddDate(0, 0, 1))
+	// if err != nil {
+	// 	logger.Error("error getting energies", slog.Any("error", err))
+	// 	os.Exit(5)
+	// }
 
-		// var load_sum, solar_sum, grid_sum float64
-		// for _, e := range data {
-		// 	load_sum += e.LoadPower
-		// 	solar_sum += e.SolarPower
-		// 	grid_sum += e.GridPower
-		// }
+	// var load_sum, solar_sum, grid_sum float64
+	// for _, e := range data {
+	// 	load_sum += e.LoadPower
+	// 	solar_sum += e.SolarPower
+	// 	grid_sum += e.GridPower
+	// }
 
-		// len := float64(len(data))
-		// load_mean := load_sum / len
-		// // Calculate the variance
-		// var variance float64
-		// for _, ts := range data {
-		// 	difference := ts.LoadPower - load_mean
-		// 	squaredDifference := difference * difference
-		// 	variance += squaredDifference
-		// }
-		// variance = variance / len
+	// len := float64(len(data))
+	// load_mean := load_sum / len
+	// // Calculate the variance
+	// var variance float64
+	// for _, ts := range data {
+	// 	difference := ts.LoadPower - load_mean
+	// 	squaredDifference := difference * difference
+	// 	variance += squaredDifference
+	// }
+	// variance = variance / len
 
-		// // Calculate the standard deviation
-		// stdDev := math.Sqrt(variance)
+	// // Calculate the standard deviation
+	// stdDev := math.Sqrt(variance)
 
-		// logger.Info("energy usage", slog.String("date", start.AsTime().Format("2006-01-02")), slog.Float64("usage", load_sum), slog.Float64("load-stddev", stdDev), slog.Float64("solar", solar_sum), slog.Float64("grid", grid_sum))
-	},
+	// logger.Info("energy usage", slog.String("date", start.AsTime().Format("2006-01-02")), slog.Float64("usage", load_sum), slog.Float64("load-stddev", stdDev), slog.Float64("solar", solar_sum), slog.Float64("grid", grid_sum))
+	// },
 }
 
 var cmdImport = &cobra.Command{
