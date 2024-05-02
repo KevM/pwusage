@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
+	"github.com/kevm/pw-usage/internal/fleetapi"
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/neomantra/ymdflag"
@@ -48,6 +49,7 @@ func main() {
 	rootCmd.AddCommand(cmdUsage)
 	rootCmd.AddCommand(cmdBatteryStartHold)
 	rootCmd.AddCommand(cmdBatteryStopHold)
+	rootCmd.AddCommand(cmdProducts)
 	rootCmd.Execute()
 }
 
@@ -178,6 +180,25 @@ var cmdBatteryStopHold = &cobra.Command{
 		if err != nil {
 			logger.Error("Error stopping battery hold", slog.Any("error", err))
 			os.Exit(2)
+		}
+	},
+}
+
+var cmdProducts = &cobra.Command{
+	Use:   "products",
+	Short: "get list of products (sites) available to the account",
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+
+		client := fleetapi.NewFleetApiClient(token, logger)
+		products, err := client.GetProducts()
+		if err != nil {
+			logger.Error("Error getting products", slog.Any("error", err))
+			os.Exit(1)
+		}
+
+		for _, p := range products {
+			logger.Info("product", slog.String("name", p.SiteName), slog.Int64("energy_site_id", p.EnergySiteID))
 		}
 	},
 }
