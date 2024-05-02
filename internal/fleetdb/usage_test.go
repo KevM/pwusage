@@ -31,7 +31,7 @@ func TestUsage_GetUsages(t *testing.T) {
 	require.Len(t, data, 288)
 
 	usage := NewUsage(site, db, client, logger)
-	usages := usage.GetUsages(site, data)
+	usages := usage.GetUsagesFromData(site, data)
 	require.NoError(t, err)
 
 	require.Len(t, usages, 2)
@@ -56,6 +56,9 @@ func TestUsage_GetUsages(t *testing.T) {
 	require.Equal(t, 4510.0, r.BatteryChange)
 	require.Equal(t, 67149.25, r.SolarProduction)
 
+	from_db, err := usage.GetEnergyUsage(sod, eod)
+	require.NoError(t, err)
+	require.ElementsMatch(t, usages, from_db)
 }
 
 func TotalUsage(usages []UsageData) UsageData {

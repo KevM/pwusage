@@ -50,7 +50,7 @@ func (i Importer) LoadSiteHistoryDay(db *Database, sod time.Time, site *Site) er
 		return fmt.Errorf("error inserting results for date %s: %w", sod.Format("2006-01-02"), err)
 	}
 
-	usages := usage.GetUsages(site, ed)
+	usages := usage.GetUsagesFromData(site, ed)
 	err = insertEnergyUsages(db.Conn(), usages)
 	if err != nil {
 		return fmt.Errorf("error inserting usages for date %s: %w", sod.Format("2006-01-02"), err)
@@ -82,14 +82,14 @@ func deleteDay(db *sql.DB, sod time.Time) error {
 }
 
 func insertEnergyUsages(db *sql.DB, usages []UsageData) error {
-	stmt, err := db.Prepare(`INSERT INTO EnergyUsage(tariff_id, start, end, load_usage, solar_produced, grid_usage, battery_usage) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := db.Prepare(`INSERT INTO EnergyUsage(tariff_id, start, load_usage, solar_produced, grid_usage, battery_usage) VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, u := range usages {
-		_, err := stmt.Exec(u.Tariff.Id, u.Start, u.End, u.HomeUsage, u.SolarProduction, u.GridUsage, u.BatteryChange)
+		_, err := stmt.Exec(u.Tariff.Id, u.Start, u.HomeUsage, u.SolarProduction, u.GridUsage, u.BatteryChange)
 		if err != nil {
 			return err
 		}
@@ -106,7 +106,7 @@ func insertEnergyDatas(db *sql.DB, site *Site, histories []fleetapi.EnergyHistor
 	}
 	defer stmt.Close()
 
-	var results []EnergyData = make([]EnergyData, len(histories))
+	var results []EnergyData
 	for _, h := range histories {
 		tp := schedule.GetTariffPeriod(h.Timestamp)
 		if tp == nil {
@@ -133,8 +133,8 @@ func insertEnergyDatas(db *sql.DB, site *Site, histories []fleetapi.EnergyHistor
 		}
 
 		ed := EnergyData{
-			TariffId:     tp.Tariff.Id,
 			Timestamp:    h.Timestamp,
+			TariffId:     tp.Tariff.Id,
 			LoadPower:    h.TotalHomeUsage,
 			SolarPower:   h.SolarEnergyExported,
 			GridPower:    grid,
