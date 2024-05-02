@@ -167,8 +167,6 @@ var cmdProducts = &cobra.Command{
 	Short: "get list of products (sites) available to the account",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-
-		client := fleetapi.NewFleetApiClient(token, logger)
 		products, err := client.GetProducts()
 		if err != nil {
 			logger.Error("Error getting products", slog.Any("error", err))
