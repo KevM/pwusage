@@ -15,6 +15,7 @@ type EnergyData struct {
 	SolarPower   float64
 	GridPower    float64
 	BatteryPower float64
+	TariffId     int
 }
 
 type EnergyRepo struct {
@@ -27,7 +28,7 @@ func NewEnergyRepo(db *Database, logger *slog.Logger) *EnergyRepo {
 }
 
 func (r EnergyRepo) GetEnergies(start time.Time, end time.Time) ([]EnergyData, error) {
-	sql := `SELECT timestamp, load_power, solar_power, grid_power, battery_power 
+	sql := `SELECT timestamp, tariff_id, load_power, solar_power, grid_power, battery_power 
 			FROM EnergyData 
 			WHERE timestamp >= ? AND timestamp < ?`
 
@@ -40,7 +41,7 @@ func (r EnergyRepo) GetEnergies(start time.Time, end time.Time) ([]EnergyData, e
 	var results []EnergyData
 	for rows.Next() {
 		var e EnergyData
-		err := rows.Scan(&e.Timestamp, &e.LoadPower, &e.SolarPower, &e.GridPower, &e.BatteryPower)
+		err := rows.Scan(&e.Timestamp, &e.TariffId, &e.LoadPower, &e.SolarPower, &e.GridPower, &e.BatteryPower)
 		if err != nil {
 			return nil, err
 		}
