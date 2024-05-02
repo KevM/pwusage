@@ -10,7 +10,7 @@
       "request": "launch",
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/import/",
-      "args": ["battery-hold","2252268092126997"],  //site-id:2252268092126997
+      "args": ["usage","2252268092126997", "week", "20240501"],  //site-id:2252268092126997
     },
     {
       "name": "Launch pocketbase server",

@@ -1,6 +1,7 @@
 package fleetdb
 
 import (
+	"fmt"
 	"log/slog"
 	"sort"
 	"time"
@@ -29,7 +30,6 @@ func NewUsage(site *Site, db *Database, client *fleetapi.Client, logger *slog.Lo
 
 type UsageData struct {
 	Start           time.Time
-	End             time.Time
 	HomeUsage       float64
 	GridUsage       float64
 	SolarProduction float64
@@ -37,17 +37,55 @@ type UsageData struct {
 	Tariff          *Tariff
 }
 
-func (u *Usage) GetUsages(site *Site, data []EnergyData) []UsageData {
-	var min_date time.Time
-	var max_date time.Time
+func (u *Usage) GetEnergyUsage(startDate time.Time, endDate time.Time) ([]UsageData, error) {
+	query := `
+        SELECT tariff_id, start, load_usage, solar_produced, grid_usage, battery_usage FROM EnergyUsage
+        WHERE start >= ? AND start < ?
+    `
+	rows, err := u.db.Conn().Query(query, startDate.Format("2006-01-02 15:04:05"), endDate.Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return nil, fmt.Errorf("error querying EnergyUsage: %w", err)
+	}
+	defer rows.Close()
+
+	tariffsById := map[int]Tariff{}
+	for _, t := range u.site.Tariffs {
+		tariffsById[t.Id] = t
+	}
+
+	var usages []UsageData
+	for rows.Next() {
+		var ud UsageData
+		var tariffId int
+		err = rows.Scan(&tariffId, &ud.Start, &ud.HomeUsage, &ud.SolarProduction, &ud.GridUsage, &ud.BatteryChange)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning usage data row: %w", err)
+		}
+
+		t, ok := tariffsById[tariffId]
+		if !ok {
+			return nil, fmt.Errorf("tariff not found for id %d", tariffId)
+		}
+		ud.Tariff = &t
+		usages = append(usages, ud)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return usages, nil
+}
+
+func (u *Usage) GetUsagesFromData(site *Site, data []EnergyData) []UsageData {
+	var min_date time.Time = time.Now().AddDate(1, 0, 0)
 	for _, e := range data {
 		if e.Timestamp.Before(min_date) {
 			min_date = e.Timestamp
 		}
-		if e.Timestamp.After(max_date) {
-			max_date = e.Timestamp
-		}
 	}
+	usage_date := time.Date(min_date.Year(), min_date.Month(), min_date.Day(), 0, 0, 0, 0, min_date.Location())
+
 	tariffById := map[int]Tariff{}
 	for _, t := range site.Tariffs {
 		tariffById[t.Id] = t
@@ -60,8 +98,7 @@ func (u *Usage) GetUsages(site *Site, data []EnergyData) []UsageData {
 		if !ok {
 			tariff := tariffById[e.TariffId]
 			ud = UsageData{
-				Start:  min_date,
-				End:    max_date,
+				Start:  usage_date,
 				Tariff: &tariff,
 			}
 		}

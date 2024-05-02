@@ -122,13 +122,12 @@ func setupDb(db *sql.DB) error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		tariff_id INTEGER NOT NULL,
 		start DATETIME NOT NULL, 
-		end DATETIME NOT NULL,
 		load_usage REAL NOT NULL,
 		solar_produced REAL NOT NULL,
 		grid_usage REAL NOT NULL,
 		battery_usage REAL NOT NULL,
 		FOREIGN KEY (tariff_id) REFERENCES Tariff(id) ON DELETE CASCADE,
-		UNIQUE(tariff_id, start, end)
+		UNIQUE(tariff_id, start)
 	);`)
 	if err != nil {
 		return err
