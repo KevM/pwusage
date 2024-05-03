@@ -72,7 +72,7 @@ func (b *BatteryHold) StartHold(siteid string) error {
 		return fmt.Errorf("error getting energy site live status: %w", err)
 	}
 
-	reserveSetting := info.BackupReservePercent
+	reserveSetting := 100 - info.BackupReservePercent
 	currentlyAt := int(live.PercentageCharged)
 	b.logger.Debug("Battery Details", slog.Int("currently", currentlyAt), slog.Int("reserve", reserveSetting))
 
