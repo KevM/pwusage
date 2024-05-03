@@ -13,7 +13,7 @@ import (
 
 func Setup(db_file string) (*Database, *fleetapi.Client, *slog.Logger, error) {
 	godotenv.Load()
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
 

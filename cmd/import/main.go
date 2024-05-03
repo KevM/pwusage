@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/kevm/pw-usage/internal/fleetapi"
 	"github.com/kevm/pw-usage/internal/fleetdb"
@@ -33,6 +35,7 @@ func main() {
 	rootCmd.AddCommand(cmdBatteryStartHold)
 	rootCmd.AddCommand(cmdBatteryStopHold)
 	rootCmd.AddCommand(cmdProducts)
+	rootCmd.AddCommand(cmdAnalysis)
 	rootCmd.Execute()
 }
 
@@ -88,8 +91,8 @@ var cmdImport = &cobra.Command{
 			os.Exit(3)
 		}
 
-		importer := fleetdb.NewImporter(client, logger)
-		err = importer.LoadFullSiteHistory(db, site)
+		importer := fleetdb.NewImporter(db, client, logger)
+		err = importer.LoadSiteEnergyData(site)
 		if err != nil {
 			logger.Error("Error loading site history", slog.Any("error", err))
 			os.Exit(4)
@@ -121,8 +124,8 @@ var cmdImportDay = &cobra.Command{
 			os.Exit(3)
 		}
 
-		importer := fleetdb.NewImporter(client, logger)
-		err = importer.LoadSiteHistoryDay(db, d.AsTime(), site)
+		importer := fleetdb.NewImporter(db, client, logger)
+		err = importer.LoadSiteEnergyDataForDay(d.AsTime(), site)
 		if err != nil {
 			logger.Error("Error loading site history day", slog.Any("error", err))
 			os.Exit(4)
@@ -177,4 +180,86 @@ var cmdProducts = &cobra.Command{
 			logger.Info("product", slog.String("name", p.SiteName), slog.Int64("energy_site_id", p.EnergySiteID))
 		}
 	},
+}
+
+var cmdAnalysis = &cobra.Command{
+	Use:   "analysis [siteid]",
+	Short: "hmm",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		siteid := args[0]
+		er := fleetdb.NewEnergyRepo(db, logger)
+		site, err := er.LoadSite(siteid, client)
+		if err != nil {
+			logger.Error("Error loading site info", slog.String("site", "siteid"), slog.Any("error", err))
+			os.Exit(3)
+		}
+
+		importer := fleetdb.NewImporter(db, client, logger)
+		err = importer.LoadSiteEnergyData(site)
+		if err != nil {
+			logger.Error("Error loading site history", slog.Any("error", err))
+			os.Exit(4)
+		}
+
+		start, end := fleetdb.GetDateRange(fleetdb.MonthRange, time.Now().In(site.Location))
+		usage := fleetdb.NewUsage(site, db, client, logger)
+		result, err := usage.GetEnergyUsage(start, end)
+		if err != nil {
+			logger.Error("Error getting energy usage", slog.Any("error", err))
+			os.Exit(4)
+		}
+
+		type analysis struct {
+			Tariff          *fleetdb.Tariff
+			Season          *fleetdb.TariffSeason
+			HomeUsage       float64
+			GridUsage       float64
+			SolarProduction float64
+		}
+
+		tariffMap := map[string]analysis{}
+		for _, t := range site.Tariffs {
+			season := t.FindSeason(start)
+			tariffMap[t.Name] = analysis{
+				Tariff: &t,
+				Season: season,
+			}
+		}
+
+		for _, r := range result {
+			t, ok := tariffMap[r.Tariff.Name]
+			if !ok {
+				logger.Error("Error getting tariff for result - skipping", slog.String("tariff", r.Tariff.Name))
+				continue
+			}
+			t.HomeUsage += r.HomeUsage
+			t.SolarProduction += r.SolarProduction
+			t.GridUsage += r.GridUsage
+			tariffMap[r.Tariff.Name] = t
+		}
+
+		// show row for each tariff with home usage and solar production and how much it will cost
+		for _, t := range tariffMap {
+			usageLabel, cost := Cost(*t.Season, t.GridUsage)
+			fmt.Printf("\nTariff: %s\n", t.Tariff.Name)
+			fmt.Printf("Season: %s\t Buy Rate: %.2f\tSell Rate: %.2f\n", t.Season.Name, t.Season.BuyRate, t.Season.SellRate)
+			fmt.Printf("Home Usage: %.2f kwh\n", kwh(t.HomeUsage))
+			fmt.Printf("Grid Usage: %.2f kwh\t%s: %.2f\n", kwh(t.GridUsage), usageLabel, cost)
+			fmt.Printf("Solar Production: %.2f kwh\n", kwh(t.SolarProduction))
+		}
+	},
+}
+
+func kwh(usage float64) float64 {
+	return usage / 1000
+}
+
+// Cost returns the cost or credit for the given season and usage. First result is the label, Second is the cost/credit
+func Cost(season fleetdb.TariffSeason, usage float64) (string, float64) {
+	if usage > 0 {
+		return "Cost", season.BuyRate * kwh(usage)
+	}
+
+	return "Credit", 0 - (season.SellRate * kwh(usage))
 }

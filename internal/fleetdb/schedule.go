@@ -18,6 +18,18 @@ type TariffPeriod struct {
 	Schedule *TariffSchedule
 }
 
+func (s Schedule) GetSeason(t time.Time) *TariffSeason {
+	for _, tariff := range s.tariffs {
+		for _, season := range tariff.Seasons {
+			if matchSeason(t, season) {
+				return &season
+			}
+		}
+	}
+
+	return nil
+}
+
 // GetTariffPeriod returns the tariff period matching the given time
 func (s Schedule) GetTariffPeriod(t time.Time) *TariffPeriod {
 	for _, tariff := range s.tariffs {
