@@ -16,6 +16,7 @@ type EnergyData struct {
 	GridPower    float64
 	BatteryPower float64
 	TariffId     int
+	SiteId       string
 }
 
 type EnergyRepo struct {
@@ -28,7 +29,7 @@ func NewEnergyRepo(db *Database, logger *slog.Logger) *EnergyRepo {
 }
 
 func (r EnergyRepo) GetEnergies(start time.Time, end time.Time) ([]EnergyData, error) {
-	sql := `SELECT timestamp, tariff_id, load_power, solar_power, grid_power, battery_power 
+	sql := `SELECT timestamp, site_id, tariff_id, load_power, solar_power, grid_power, battery_power 
 			FROM EnergyData 
 			WHERE timestamp >= ? AND timestamp < ?`
 
@@ -41,7 +42,7 @@ func (r EnergyRepo) GetEnergies(start time.Time, end time.Time) ([]EnergyData, e
 	var results []EnergyData
 	for rows.Next() {
 		var e EnergyData
-		err := rows.Scan(&e.Timestamp, &e.TariffId, &e.LoadPower, &e.SolarPower, &e.GridPower, &e.BatteryPower)
+		err := rows.Scan(&e.Timestamp, &e.SiteId, &e.TariffId, &e.LoadPower, &e.SolarPower, &e.GridPower, &e.BatteryPower)
 		if err != nil {
 			return nil, err
 		}
@@ -67,6 +68,15 @@ type Tariff struct {
 	Name    string
 	Updated time.Time
 	Seasons []TariffSeason
+}
+
+func (t Tariff) FindSeason(timestamp time.Time) *TariffSeason {
+	for _, s := range t.Seasons {
+		if matchSeason(timestamp, s) {
+			return &s
+		}
+	}
+	return nil
 }
 
 // site -> tariff -> season

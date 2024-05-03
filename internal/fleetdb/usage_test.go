@@ -22,8 +22,8 @@ func TestUsage_GetUsages(t *testing.T) {
 	sod := time.Date(2024, 5, 1, 0, 0, 0, 0, site.Location)
 	eod := time.Date(2024, 5, 2, 0, 0, 0, 0, site.Location)
 
-	importer := NewImporter(client, logger)
-	err = importer.LoadSiteHistoryDay(db, sod, site)
+	importer := NewImporter(db, client, logger)
+	err = importer.LoadSiteEnergyDataForDay(sod, site)
 	require.NoError(t, err)
 
 	data, err := er.GetEnergies(sod, eod)

@@ -106,13 +106,15 @@ func setupDb(db *sql.DB) error {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS EnergyData (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		timestamp DATETIME NOT NULL,
+		site_id TEXT NOT NULL,
 		tariff_id INTEGER NOT NULL,
 		load_power REAL NOT NULL,
 		solar_power REAL NOT NULL,
 		grid_power REAL NOT NULL,
 		battery_power REAL NOT NULL,
+		FOREIGN KEY (site_id) REFERENCES Tariff(id) ON DELETE CASCADE,
 		FOREIGN KEY (tariff_id) REFERENCES Tariff(id) ON DELETE CASCADE,
-		UNIQUE(timestamp, tariff_id)
+		UNIQUE(timestamp, site_id, tariff_id)
 	);`)
 	if err != nil {
 		return err
