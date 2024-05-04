@@ -49,20 +49,6 @@ func (i Importer) LoadSiteEnergyData(site *Site) error {
 	return nil
 }
 
-// func (i Importer) LoadFullSiteHistory(site *Site) error {
-// 	start := time.Date(site.Installed.Year(), site.Installed.Month(), site.Installed.Day(), 0, 0, 0, 0, site.Location)
-// 	end := time.Now().In(site.Location)
-// 	for _, sod := range dateRange(start, end) {
-// 		i.logger.Debug("loading history", slog.String("date", sod.Format("2006-01-02")))
-// 		err := i.LoadSiteHistoryDay(sod, site)
-// 		if err != nil {
-// 			return fmt.Errorf("error loading site history for date %s: %w", sod.Format("2006-01-02"), err)
-// 		}
-// 	}
-
-// 	return nil
-// }
-
 func (i Importer) LoadSiteEnergyDataForDay(sod time.Time, site *Site) error {
 	usage := NewUsage(site, i.db, i.client, i.logger)
 
@@ -114,7 +100,6 @@ func deleteDay(db *sql.DB, siteid string, sod time.Time) error {
 
 func getLastEneryDataTimestamp(db *sql.DB, siteId string) (time.Time, error) {
 	row := db.QueryRow(`SELECT timestamp FROM EnergyData WHERE site_id = ? ORDER BY timestamp DESC LIMIT 1`, siteId)
-
 	var lastts time.Time
 	err := row.Scan(&lastts)
 	if err != nil {
