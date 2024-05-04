@@ -49,7 +49,6 @@ func NewConfig() (Config, error) {
 			return result, &NoAuthTokenError{}
 		}
 	} else {
-		logger.Debug("loaded auth tokens from dotfiles")
 		authToken = dotfiles.AccessToken
 	}
 	result.Client = fleetapi.NewFleetApiClient(authToken, logger)

@@ -26,7 +26,7 @@ func main() {
 		os.Exit(-1)
 	}
 
-	defer c.Database.DeleteDb()
+	defer c.Database.Close()
 	var rootCmd = &cobra.Command{Use: "pw-usage"}
 	if c.Client != nil {
 		rootCmd.AddCommand(cmdImport(c))
