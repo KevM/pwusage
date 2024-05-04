@@ -225,7 +225,7 @@ func cmdLogin(c config.Config) *cobra.Command {
 					os.Exit(1)
 				case tokens := <-callback.Result:
 					if tokens.Error != nil {
-						c.Logger.Error("error getting auth tokens. Likely this Auth0 user is not authorized in nimble.", slog.Any("error", tokens.Error))
+						c.Logger.Error("error getting auth tokens. .", slog.Any("error", tokens.Error))
 						fmt.Println("authentication failed.")
 						os.Exit(2)
 					}
