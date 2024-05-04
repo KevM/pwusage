@@ -18,7 +18,7 @@ type Callback struct {
 	Result chan DotFiles
 }
 
-// start web server to handle callback from auth provider. Resulting nimble id_token is put into the channel when it is received
+// start web server to handle callback from auth provider. Resulting tesla tokens areput into the channel when it is received
 func StartCallbackServer(ctx context.Context, config AuthConfig, logger *slog.Logger) Callback {
 	logger.Debug("starting callback server", slog.Any("config", config))
 	state := stringWithCharset(12, charset)
@@ -52,7 +52,7 @@ func StartCallbackServer(ctx context.Context, config AuthConfig, logger *slog.Lo
 		tokens := config.Exchange(code, nonce)
 		tokenChannel <- tokens
 		if tokens.Error != nil {
-			logger.Error("Could not exchange code for nimble auth token. Is this user authorized?", slog.Any("error", tokens.Error))
+			logger.Error("Could not exchange code tesla auth token. Is this user authorized?", slog.Any("error", tokens.Error))
 			http.Error(w, "There was a problem logging in. Please try again.", http.StatusUnauthorized)
 			return
 		}
