@@ -37,7 +37,7 @@ func main() {
 		rootCmd.AddCommand(cmdAnalysis(c))
 	}
 	rootCmd.AddCommand(cmdLogin(c))
-	rootCmd.AddCommand(cmdRevoke(c))
+	// rootCmd.AddCommand(cmdRevoke(c))
 	rootCmd.Execute()
 }
 
@@ -219,28 +219,28 @@ func cmdLogin(c config.Config) *cobra.Command {
 	}
 }
 
-func cmdRevoke(c config.Config) *cobra.Command {
-	return &cobra.Command{
-		Use:   "revoke-access",
-		Short: "change or revoke access to the tesla api",
-		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			c.Logger.Info("Change or revoke Tesla API access")
-			config, err := auth.NewRevokeAuthConfig(c.Logger)
-			if err != nil {
-				c.Logger.Error("error creating auth config", slog.Any("error", err))
-				os.Exit(1)
-			}
+// func cmdRevoke(c config.Config) *cobra.Command {
+// 	return &cobra.Command{
+// 		Use:   "revoke-access",
+// 		Short: "change or revoke access to the tesla api",
+// 		Args:  cobra.NoArgs,
+// 		Run: func(cmd *cobra.Command, args []string) {
+// 			c.Logger.Info("Change or revoke Tesla API access")
+// 			config, err := auth.NewRevokeAuthConfig(c.Logger)
+// 			if err != nil {
+// 				c.Logger.Error("error creating auth config", slog.Any("error", err))
+// 				os.Exit(1)
+// 			}
 
-			ch := auth.NewOAuthAction(config)
-			err = <-ch
-			if err != nil {
-				c.Logger.Error("Error revoking tesla api access", slog.Any("error", err))
-				os.Exit(2)
-			}
-		},
-	}
-}
+// 			ch := auth.NewOAuthAction(config)
+// 			err = <-ch
+// 			if err != nil {
+// 				c.Logger.Error("Error revoking tesla api access", slog.Any("error", err))
+// 				os.Exit(2)
+// 			}
+// 		},
+// 	}
+// }
 
 func cmdAnalysis(c config.Config) *cobra.Command {
 	return &cobra.Command{

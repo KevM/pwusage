@@ -5,21 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"os"
 	"time"
 )
 
-type Callback struct {
-	Config AuthConfig
-	// State  string
-	// Nonce  string
-	Result chan DotFiles
-}
-
-// start web server to handle callback from auth provider. Resulting tesla tokens areput into the channel when it is received
-func StartCallbackServer(ctx context.Context, config AuthConfig) Callback {
+func StartCallbackServer(ctx context.Context, config AuthConfig) chan DotFiles {
 	logger := config.Logger
 	logger.Debug("starting callback server", slog.Any("config", config))
 	tokenChannel := make(chan DotFiles)
@@ -44,23 +35,14 @@ func StartCallbackServer(ctx context.Context, config AuthConfig) Callback {
 			io.WriteString(w, "You can close this browser window.")
 		}
 
-		// logged in so validate the state and exchange the code for tokens
-		err := validateState(r, config.State())
-		if err != nil {
-			http.Error(w, "There was a problem logging in. Please try again.", http.StatusUnauthorized)
-			tokenChannel <- DotFiles{Error: err}
-			return
-		}
-
-		code := r.URL.Query().Get("code")
-		tokens := config.Exchange(code, config.Nonce())
-		tokenChannel <- tokens
+		// extract tokens from headers
+		tokens := config.extractDotfileFromRequest(r)
 		if tokens.Error != nil {
-			logger.Error("Could not exchange code tesla auth token. Is this user authorized?", slog.Any("error", tokens.Error))
+			logger.Error("Error extracting tokens from request", slog.Any("error", tokens.Error))
 			http.Error(w, "There was a problem logging in. Please try again.", http.StatusUnauthorized)
 			return
 		}
-
+		tokenChannel <- tokens
 		io.WriteString(w, "You can close this browser window.")
 	}
 
@@ -96,26 +78,32 @@ func StartCallbackServer(ctx context.Context, config AuthConfig) Callback {
 		}
 	}()
 
-	return Callback{
-		Config: config,
-		Result: tokenChannel,
-	}
+	return tokenChannel
 }
 
-func validateState(r *http.Request, state string) error {
-	s := r.URL.Query().Get("state")
-	if s != state {
-		return fmt.Errorf("auth callback state does not match: %s != %s", s, state)
-	}
-	return nil
-}
+func (config AuthConfig) extractDotfileFromRequest(r *http.Request) DotFiles {
+	q := r.URL.Query()
+	authToken := q.Get("auth")
+	refreshToken := q.Get("refresh")
+	idToken := q.Get("id")
 
-const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-func stringWithCharset(length int, charset string) string {
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))]
+	if idToken == "" || authToken == "" || refreshToken == "" {
+		config.Logger.Error("missing tokens in headers", slog.String("id_token", idToken), slog.String("auth_token", authToken), slog.String("refresh_token", refreshToken))
+		return DotFiles{Error: fmt.Errorf("missing tokens in headers")}
 	}
-	return string(b)
+
+	//validate the id token
+	idtoken_nonce, err := ExtractNonceFromIdToken(idToken)
+	if err != nil {
+		return DotFiles{Error: fmt.Errorf("error extracting nonce from id_token: %w", err)}
+	}
+
+	if idtoken_nonce != config.Nonce() {
+		return DotFiles{Error: fmt.Errorf("invalid nonce in id_token; expected %s got %s", config.Nonce(), idtoken_nonce)}
+	}
+
+	return DotFiles{
+		AccessToken: authToken,
+		Refresh:     refreshToken,
+	}
 }

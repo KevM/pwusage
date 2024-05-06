@@ -3,6 +3,7 @@ import {env as private_env} from '$env/dynamic/private';
 import {env as public_env} from '$env/dynamic/public';
 import { userAuthRepo } from '$lib/userRepo';
 import jwt from 'jsonwebtoken';
+import { redirect } from "@sveltejs/kit";
 
 export const load : PageServerLoad = (async (event) => {
   const code = event.url.searchParams.get("code") || "";
@@ -18,7 +19,7 @@ export const load : PageServerLoad = (async (event) => {
       client_id: public_env.PUBLIC_TESLA_OAUTH_CLIENT_ID,
       client_secret: private_env.TESLA_OAUTH_SECRET,
       audience: public_env.PUBLIC_TESLA_OAUTH_AUDIENCE,
-      redirect_uri: public_env.PUBLIC_TESLA_CALLBACK_URL,
+      redirect_uri: public_env.PUBLIC_WEBAPP_BASE_URL + "/auth/tesla-callback",
       grant_type: "authorization_code",
       code: code,
     }),
@@ -68,18 +69,7 @@ export const load : PageServerLoad = (async (event) => {
   }
 
   if (ua.callback != null) {
-    // POST to the callback uri with the auth response
-    return {
-      status: 302,
-      headers: {
-        location: ua.callback,
-        'X-Auth-Token': auth.access_token,
-        'X-Refresh-Token': auth.refresh_token,
-        'X-Id-Token': auth.id_token,
-        'X-Expires-In': auth.expires_in.toString(),
-        'X-Nonce': nonce,
-      },
-    };
+    redirect(302, ua.callback + `?auth=${auth.access_token}&refresh=${auth.refresh_token}&id=${auth.id_token}`);
   }
 
   return {
