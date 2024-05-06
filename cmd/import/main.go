@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -38,6 +37,7 @@ func main() {
 		rootCmd.AddCommand(cmdAnalysis(c))
 	}
 	rootCmd.AddCommand(cmdLogin(c))
+	rootCmd.AddCommand(cmdRevoke(c))
 	rootCmd.Execute()
 }
 
@@ -203,46 +203,40 @@ func cmdLogin(c config.Config) *cobra.Command {
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			c.Logger.Info("Login to the Tesla API")
-
-			timeout := 120 * time.Second
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
-			defer cancel()
-
-			config, err := auth.NewAuthConfig()
+			config, err := auth.NewLoginAuthConfig(c.Logger)
 			if err != nil {
 				c.Logger.Error("error creating auth config", slog.Any("error", err))
 				os.Exit(1)
 			}
-			callback := auth.StartCallbackServer(ctx, config, c.Logger)
-			auth.OpenURLInBrowser(config.LoginUrl(callback.State, callback.Nonce))
 
-			// // wait for callback to complete or timeout
-			for {
-				select {
-				case <-ctx.Done():
-					c.Logger.Warn("authentication timed out")
-					fmt.Println("authentication timed out")
-					os.Exit(1)
-				case tokens := <-callback.Result:
-					if tokens.Error != nil {
-						c.Logger.Error("error getting auth tokens. .", slog.Any("error", tokens.Error))
-						fmt.Println("authentication failed.")
-						os.Exit(2)
-					}
-					// TODO: TUI this up and make it look pretty?
-					err := tokens.WriteToDotFiles()
-					if err != nil {
-						c.Logger.Error("error writing auth tokens to dotfiles", slog.Any("error", err))
-						fmt.Println("authentication failed to write result to disk: %w", err)
-						os.Exit(3)
-					}
-					c.Logger.Info("authentication successful; auth tokens written to dotfiles")
-					fmt.Println("authentication successful")
-					cancel()
-					os.Exit(0)
-				default:
-					time.Sleep(100 * time.Millisecond)
-				}
+			ch := auth.NewOAuthAction(config)
+			err = <-ch
+			if err != nil {
+				c.Logger.Error("Error logging in", slog.Any("error", err))
+				os.Exit(2)
+			}
+		},
+	}
+}
+
+func cmdRevoke(c config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "revoke-access",
+		Short: "change or revoke access to the tesla api",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			c.Logger.Info("Change or revoke Tesla API access")
+			config, err := auth.NewRevokeAuthConfig(c.Logger)
+			if err != nil {
+				c.Logger.Error("error creating auth config", slog.Any("error", err))
+				os.Exit(1)
+			}
+
+			ch := auth.NewOAuthAction(config)
+			err = <-ch
+			if err != nil {
+				c.Logger.Error("Error revoking tesla api access", slog.Any("error", err))
+				os.Exit(2)
 			}
 		},
 	}
