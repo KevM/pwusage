@@ -1,5 +1,5 @@
 import { userAuthRepo } from '$lib/userRepo';
-import {PUBLIC_TESLA_CALLBACK_URL, PUBLIC_TESLA_OAUTH_CLIENT_ID} from '$env/static/public';
+import {PUBLIC_WEBAPP_BASE_URL, PUBLIC_TESLA_OAUTH_CLIENT_ID} from '$env/static/public';
 import type { PageServerLoad } from './$types';
 import { redirect } from '@sveltejs/kit';
 
@@ -18,6 +18,7 @@ export const load : PageServerLoad = (async (event) => {
 
 function getLoginUri(state: string, nonce: string) : string {
   const scopes = "openid%20energy_device_data%20offline_access%20user_data%20energy_cmds"
-  const uri = `https://auth.tesla.com/oauth2/v3/authorize?&locale=en-US&prompt=login&response_type=code&scope=${scopes}&state=${state}&redirect_uri=${PUBLIC_TESLA_CALLBACK_URL}&client_id=${PUBLIC_TESLA_OAUTH_CLIENT_ID}&nonce=${nonce}`;
+  const callbackUrl = `${PUBLIC_WEBAPP_BASE_URL}/auth/tesla-callback`
+  const uri = `https://auth.tesla.com/oauth2/v3/authorize?&locale=en-US&prompt=login&response_type=code&scope=${scopes}&state=${state}&redirect_uri=${callbackUrl}&client_id=${PUBLIC_TESLA_OAUTH_CLIENT_ID}&nonce=${nonce}`;
   return uri
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,12 +26,12 @@ func NewOAuthAction(config AuthConfig) chan error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	callback := StartCallbackServer(ctx, config)
+	ch_callback := StartCallbackServer(ctx, config)
 	url := config.Url()
 	logger.Debug("opening url in browser", slog.String("url", url))
 	OpenURLInBrowser(url)
 
-	var out chan error
+	out := make(chan error, 10)
 	func() {
 		for {
 			select {
@@ -40,7 +41,7 @@ func NewOAuthAction(config AuthConfig) chan error {
 				fmt.Println("authentication timed out")
 				out <- err
 				return
-			case dotfile := <-callback.Result:
+			case dotfile := <-ch_callback:
 				if dotfile.Error != nil {
 					logger.Error("error getting auth tokens. .", slog.Any("error", dotfile.Error))
 					fmt.Println("authentication failed.")
@@ -58,8 +59,8 @@ func NewOAuthAction(config AuthConfig) chan error {
 				}
 				logger.Info("authentication successful; auth tokens written to dotfiles")
 				fmt.Println("authentication successful")
-				cancel()
 				out <- nil
+				cancel()
 				return
 			default:
 				time.Sleep(100 * time.Millisecond)
@@ -70,85 +71,35 @@ func NewOAuthAction(config AuthConfig) chan error {
 	return out
 }
 
-type UserAuthorizationResult struct {
-	IdToken string `json:"id_token"`
-}
-
 type AuthConfig struct {
 	Logger             *slog.Logger
 	Action             string // login, revoke
-	Scopes             []string
-	Audience           string
-	AuthDomain         string
 	AuthClientId       string
-	AuthClientSecret   string
 	LocalCallbackPort  int
 	LocalCallbackRoute string
+	WebAppBase         string
 
-	state string
 	nonce string
-}
-
-func (c *AuthConfig) State() string {
-	if c.state == "" {
-		c.state = stringWithCharset(12, charset)
-	}
-	return c.state
-}
-
-func (c *AuthConfig) Nonce() string {
-	if c.nonce == "" {
-		c.nonce = stringWithCharset(12, charset)
-	}
-	return c.nonce
-}
-
-func (c *AuthConfig) Url() string {
-	switch c.Action {
-	case "revoke":
-		return c.RevokeUrl()
-	default:
-		return c.LoginUrl(c.State(), c.Nonce())
-	}
-}
-
-func NewRevokeAuthConfig(logger *slog.Logger) (AuthConfig, error) {
-	result, err := NewLoginAuthConfig(logger)
-	if err != nil {
-		return result, err
-	}
-
-	result.Action = "revoke"
-	return result, nil
 }
 
 func NewLoginAuthConfig(logger *slog.Logger) (AuthConfig, error) {
 	result := AuthConfig{
-		Logger:     logger,
-		Action:     "login",
-		Scopes:     []string{"openid", "energy_device_data", "offline_access", "user_data", "energy_cmds"},
-		AuthDomain: "https://auth.tesla.com/oauth2/v3/token",
-		state:      stringWithCharset(12, charset),
-		nonce:      stringWithCharset(12, charset),
+		Logger: logger,
+		Action: "login",
+		nonce:  stringWithCharset(12, charset),
 	}
+
+	baseurl := os.Getenv("PUBLIC_WEBAPP_BASE_URL")
+	if baseurl == "" {
+		return result, fmt.Errorf("PUBLIC_WEBAPP_BASE_URL env not set")
+	}
+	result.WebAppBase = baseurl
 
 	clientid := os.Getenv("PUBLIC_TESLA_OAUTH_CLIENT_ID")
 	if clientid == "" {
 		return result, fmt.Errorf("PUBLIC_TESLA_OAUTH_CLIENT_ID env not set")
 	}
 	result.AuthClientId = clientid
-
-	clientsecret := os.Getenv("TESLA_OAUTH_SECRET")
-	if clientsecret == "" {
-		return result, fmt.Errorf("TESLA_OAUTH_SECRET env not set")
-	}
-	result.AuthClientSecret = clientsecret
-
-	audience := os.Getenv("PUBLIC_TESLA_OAUTH_AUDIENCE")
-	if audience == "" {
-		return result, fmt.Errorf("PUBLIC_TESLA_OAUTH_AUDIENCE env not set")
-	}
-	result.Audience = audience
 
 	callbackRoute := os.Getenv("PUBLIC_AUTH_CALLBACK_ROUTE")
 	if callbackRoute == "" {
@@ -169,13 +120,30 @@ func NewLoginAuthConfig(logger *slog.Logger) (AuthConfig, error) {
 	return result, nil
 }
 
-func (c *AuthConfig) LoginUrl(state, nonce string) string {
-	redirect_uri := fmt.Sprintf("http://localhost:%d%s", c.LocalCallbackPort, c.LocalCallbackRoute)
-	scopes := strings.Join(c.Scopes, "%20")
-	return fmt.Sprintf("https://auth.tesla.com/oauth2/v3/authorize?&locale=en-US&prompt=login&response_type=code&scope=%s&state=%s&redirect_uri=%s&client_id=%s&nonce=%s", scopes, state, redirect_uri, c.AuthClientId, nonce)
+func (c *AuthConfig) Nonce() string {
+	if c.nonce == "" {
+		c.nonce = stringWithCharset(12, charset)
+	}
+	return c.nonce
 }
 
-func (c *AuthConfig) RevokeUrl() string {
+func (c *AuthConfig) Url() string {
+	switch c.Action {
+	case "revoke":
+		return c.revokeUrl()
+	default:
+		return c.loginUrl()
+	}
+}
+
+func (c *AuthConfig) loginUrl() string {
+	callbackUri := fmt.Sprintf("http://localhost:%d%s", c.LocalCallbackPort, c.LocalCallbackRoute)
+	loginUrl := fmt.Sprintf("%s/login", c.WebAppBase)
+
+	return fmt.Sprintf("%s?nonce=%s&callback=%s", loginUrl, c.Nonce(), callbackUri)
+}
+
+func (c *AuthConfig) revokeUrl() string {
 	redirect_uri := fmt.Sprintf("http://localhost:%d%s", c.LocalCallbackPort, c.LocalCallbackRoute)
 
 	return fmt.Sprintf("https://auth.tesla.com/user/revoke/consent?revoke_client_id=%s&back_url=%s", c.AuthClientId, redirect_uri)
@@ -209,15 +177,6 @@ func (c AuthConfig) LoadDotFiles(logger *slog.Logger) DotFiles {
 	}
 
 	return dotfiles
-}
-
-type AuthResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	IDToken      string `json:"id_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	State        string `json:"state"`
-	TokenType    string `json:"token_type"`
 }
 
 func (c *AuthConfig) Refresh(refreshToken string) DotFiles {
@@ -257,52 +216,13 @@ func (c *AuthConfig) Refresh(refreshToken string) DotFiles {
 		Error:       nil}
 }
 
-func (c *AuthConfig) Exchange(code string, nonce string) DotFiles {
-	data := url.Values{}
-	data.Set("client_id", c.AuthClientId)
-	data.Set("client_secret", c.AuthClientSecret)
-	data.Set("audience", c.Audience)
-	data.Set("redirect_uri", fmt.Sprintf("http://localhost:%d%s", c.LocalCallbackPort, c.LocalCallbackRoute))
-	data.Set("grant_type", "authorization_code")
-	data.Set("code", code)
-
-	resp, err := http.Post(
-		"https://auth.tesla.com/oauth2/v3/token",
-		"application/x-www-form-urlencoded",
-		strings.NewReader(data.Encode()),
-	)
-	if err != nil {
-		return DotFiles{Error: fmt.Errorf("error making request: %w", err)}
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return DotFiles{Error: fmt.Errorf("error reading response body: %w", err)}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return DotFiles{Error: fmt.Errorf("error: %d; body: %s", resp.StatusCode, string(body))}
-	}
-
-	var auth AuthResponse
-	err = json.Unmarshal(body, &auth)
-	if err != nil {
-		return DotFiles{Error: fmt.Errorf("error unmarshalling response body: %w", err)}
-	}
-
-	idtoken_nonce, err := ExtractNonceFromIdToken(auth.IDToken)
-	if err != nil {
-		return DotFiles{Error: fmt.Errorf("error extracting nonce from id_token: %w", err)}
-	}
-	if idtoken_nonce != nonce {
-		return DotFiles{Error: fmt.Errorf("invalid nonce in id_token; expected %s got %s", nonce, idtoken_nonce)}
-	}
-
-	return DotFiles{
-		AccessToken: auth.AccessToken,
-		Refresh:     auth.RefreshToken,
-		Error:       nil}
+type AuthResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token"`
+	ExpiresIn    int    `json:"expires_in"`
+	State        string `json:"state"`
+	TokenType    string `json:"token_type"`
 }
 
 func ExtractNonceFromIdToken(idToken string) (string, error) {
@@ -344,4 +264,14 @@ func OpenURLInBrowser(url string) error {
 	}
 	args = append(args, url)
 	return exec.Command(cmd, args...).Start()
+}
+
+const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+func stringWithCharset(length int, charset string) string {
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(b)
 }
