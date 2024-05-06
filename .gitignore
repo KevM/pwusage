@@ -2,4 +2,3 @@
 **/*.log
 **/*.db*
 **/.env
-cmd/import/import

@@ -10,30 +10,34 @@ import (
 )
 
 const (
-	AccessTokenFileName       = ".auth"
-	RefreshTokenFileName      = ".refresh"
-	SelectedPortfolioFileName = ".portfolio"
+	AuthTokenFileName    = ".auth"
+	RefreshTokenFileName = ".refresh"
 )
-
-func WritePortfolioDotfile(portfolioId string) error {
-	configDir, err := getConfigDir()
-	if err != nil {
-		return fmt.Errorf("failed to get config directory: %w", err)
-	}
-
-	portfoliofn := filepath.Join(configDir, SelectedPortfolioFileName)
-	err = os.WriteFile(portfoliofn, []byte(portfolioId), 0600)
-	if err != nil {
-		return fmt.Errorf("failed to write portfolio_id to file: %w", err)
-	}
-
-	return nil
-}
 
 type DotFiles struct {
 	AccessToken string
 	Refresh     string
 	Error       error
+}
+
+func RemoveDotFiles() error {
+	configDir, err := getConfigDir()
+	if err != nil {
+		return fmt.Errorf("failed to get config directory: %w", err)
+	}
+
+	accessfn := filepath.Join(configDir, AuthTokenFileName)
+	err = os.Remove(accessfn)
+	if err != nil {
+		return fmt.Errorf("failed to remove auth_token file: %w", err)
+	}
+
+	refreshfn := filepath.Join(configDir, AuthTokenFileName)
+	err = os.Remove(refreshfn)
+	if err != nil {
+		return fmt.Errorf("failed to remove refresh_token file: %w", err)
+	}
+	return nil
 }
 
 // IsIdExpired checks the id_token to see if it has expired
@@ -63,10 +67,10 @@ func (t DotFiles) WriteToDotFiles() error {
 		return fmt.Errorf("failed to get config directory: %w", err)
 	}
 
-	accessfn := filepath.Join(configDir, AccessTokenFileName)
+	accessfn := filepath.Join(configDir, AuthTokenFileName)
 	err = os.WriteFile(accessfn, []byte(t.AccessToken), 0600)
 	if err != nil {
-		return fmt.Errorf("failed to write access_token to file: %w", err)
+		return fmt.Errorf("failed to write auth_token to file: %w", err)
 	}
 
 	refreshfn := filepath.Join(configDir, RefreshTokenFileName)
@@ -87,10 +91,10 @@ func NewFromDotFiles() DotFiles {
 		return result
 	}
 
-	fn := filepath.Join(configDir, AccessTokenFileName)
+	fn := filepath.Join(configDir, AuthTokenFileName)
 	bytes, err := os.ReadFile(fn)
 	if err != nil {
-		result.Error = fmt.Errorf("failed to read access_token file: %w", err)
+		result.Error = fmt.Errorf("failed to read auth_token file: %w", err)
 		return result
 	}
 	result.AccessToken = string(bytes)

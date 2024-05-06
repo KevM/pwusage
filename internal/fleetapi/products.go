@@ -6,24 +6,24 @@ import (
 )
 
 type FleetProduct struct {
-	EnergySiteID                       int64  `json:"energy_site_id"`
-	ResourceType                       string `json:"resource_type"`
-	SiteName                           string `json:"site_name"`
-	ID                                 string `json:"id"`
-	GatewayID                          string `json:"gateway_id"`
-	AssetSiteID                        string `json:"asset_site_id"`
-	WarpSiteNumber                     string `json:"warp_site_number"`
-	PercentageCharged                  int    `json:"percentage_charged"`
-	BatteryType                        string `json:"battery_type"`
-	BackupCapable                      bool   `json:"backup_capable"`
-	BatteryPower                       int    `json:"battery_power"`
-	GoOffGridTestBannerEnabled         any    `json:"go_off_grid_test_banner_enabled"`
-	StormModeEnabled                   bool   `json:"storm_mode_enabled"`
-	PowerwallOnboardingSettingsSet     bool   `json:"powerwall_onboarding_settings_set"`
-	PowerwallTeslaElectricInterestedIn any    `json:"powerwall_tesla_electric_interested_in"`
-	VppTourEnabled                     any    `json:"vpp_tour_enabled"`
-	SyncGridAlertEnabled               bool   `json:"sync_grid_alert_enabled"`
-	BreakerAlertEnabled                bool   `json:"breaker_alert_enabled"`
+	EnergySiteID                       int64   `json:"energy_site_id"`
+	ResourceType                       string  `json:"resource_type"`
+	SiteName                           string  `json:"site_name"`
+	ID                                 string  `json:"id"`
+	GatewayID                          string  `json:"gateway_id"`
+	AssetSiteID                        string  `json:"asset_site_id"`
+	WarpSiteNumber                     string  `json:"warp_site_number"`
+	PercentageCharged                  float64 `json:"percentage_charged"`
+	BatteryType                        string  `json:"battery_type"`
+	BackupCapable                      bool    `json:"backup_capable"`
+	BatteryPower                       float64 `json:"battery_power"`
+	GoOffGridTestBannerEnabled         any     `json:"go_off_grid_test_banner_enabled"`
+	StormModeEnabled                   bool    `json:"storm_mode_enabled"`
+	PowerwallOnboardingSettingsSet     bool    `json:"powerwall_onboarding_settings_set"`
+	PowerwallTeslaElectricInterestedIn any     `json:"powerwall_tesla_electric_interested_in"`
+	VppTourEnabled                     any     `json:"vpp_tour_enabled"`
+	SyncGridAlertEnabled               bool    `json:"sync_grid_alert_enabled"`
+	BreakerAlertEnabled                bool    `json:"breaker_alert_enabled"`
 	Components                         struct {
 		Battery     bool   `json:"battery"`
 		BatteryType string `json:"battery_type"`

@@ -10,7 +10,7 @@
       "request": "launch",
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/import/",
-      "args": ["import", "2252268092126997"] //, "week", "20240501"],  //site-id:2252268092126997
+      "args": ["login"] //, "2252268092126997"] //, "week", "20240501"],  //site-id:2252268092126997
     },
     {
       "name": "Launch pocketbase server",

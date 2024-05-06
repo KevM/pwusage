@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,15 +14,69 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
+
+func NewOAuthAction(config AuthConfig) chan error {
+	logger := config.Logger
+	timeout := 120 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	callback := StartCallbackServer(ctx, config)
+	url := config.Url()
+	logger.Debug("opening url in browser", slog.String("url", url))
+	OpenURLInBrowser(url)
+
+	var out chan error
+	func() {
+		for {
+			select {
+			case <-ctx.Done():
+				logger.Warn("authentication timed out")
+				err := errors.New("authentication timed out")
+				fmt.Println("authentication timed out")
+				out <- err
+				return
+			case dotfile := <-callback.Result:
+				if dotfile.Error != nil {
+					logger.Error("error getting auth tokens. .", slog.Any("error", dotfile.Error))
+					fmt.Println("authentication failed.")
+					out <- dotfile.Error
+					return
+				}
+
+				// maybe use lipgloss to make output look pretty on the cli?
+				err := dotfile.WriteToDotFiles()
+				if err != nil {
+					logger.Error("error writing auth tokens to dotfiles", slog.Any("error", err))
+					fmt.Println("authentication failed to write result to disk: %w", err)
+					out <- err
+					return
+				}
+				logger.Info("authentication successful; auth tokens written to dotfiles")
+				fmt.Println("authentication successful")
+				cancel()
+				out <- nil
+				return
+			default:
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+	}()
+
+	return out
+}
 
 type UserAuthorizationResult struct {
 	IdToken string `json:"id_token"`
 }
 
 type AuthConfig struct {
+	Logger             *slog.Logger
+	Action             string // login, revoke
 	Scopes             []string
 	Audience           string
 	AuthDomain         string
@@ -29,13 +84,52 @@ type AuthConfig struct {
 	AuthClientSecret   string
 	LocalCallbackPort  int
 	LocalCallbackRoute string
+
+	state string
+	nonce string
 }
 
-func NewAuthConfig() (AuthConfig, error) {
+func (c *AuthConfig) State() string {
+	if c.state == "" {
+		c.state = stringWithCharset(12, charset)
+	}
+	return c.state
+}
 
+func (c *AuthConfig) Nonce() string {
+	if c.nonce == "" {
+		c.nonce = stringWithCharset(12, charset)
+	}
+	return c.nonce
+}
+
+func (c *AuthConfig) Url() string {
+	switch c.Action {
+	case "revoke":
+		return c.RevokeUrl()
+	default:
+		return c.LoginUrl(c.State(), c.Nonce())
+	}
+}
+
+func NewRevokeAuthConfig(logger *slog.Logger) (AuthConfig, error) {
+	result, err := NewLoginAuthConfig(logger)
+	if err != nil {
+		return result, err
+	}
+
+	result.Action = "revoke"
+	return result, nil
+}
+
+func NewLoginAuthConfig(logger *slog.Logger) (AuthConfig, error) {
 	result := AuthConfig{
+		Logger:     logger,
+		Action:     "login",
 		Scopes:     []string{"openid", "energy_device_data", "offline_access", "user_data", "energy_cmds"},
 		AuthDomain: "https://auth.tesla.com/oauth2/v3/token",
+		state:      stringWithCharset(12, charset),
+		nonce:      stringWithCharset(12, charset),
 	}
 
 	clientid := os.Getenv("PUBLIC_TESLA_OAUTH_CLIENT_ID")
@@ -77,8 +171,14 @@ func NewAuthConfig() (AuthConfig, error) {
 
 func (c *AuthConfig) LoginUrl(state, nonce string) string {
 	redirect_uri := fmt.Sprintf("http://localhost:%d%s", c.LocalCallbackPort, c.LocalCallbackRoute)
+	scopes := strings.Join(c.Scopes, "%20")
+	return fmt.Sprintf("https://auth.tesla.com/oauth2/v3/authorize?&locale=en-US&prompt=login&response_type=code&scope=%s&state=%s&redirect_uri=%s&client_id=%s&nonce=%s", scopes, state, redirect_uri, c.AuthClientId, nonce)
+}
 
-	return fmt.Sprintf("https://auth.tesla.com/oauth2/v3/authorize?&locale=en-US&prompt=login&response_type=code&scope=%s&state=%s&redirect_uri=%s&client_id=%s&nonce=%s", c.Scopes, state, redirect_uri, c.AuthClientId, nonce)
+func (c *AuthConfig) RevokeUrl() string {
+	redirect_uri := fmt.Sprintf("http://localhost:%d%s", c.LocalCallbackPort, c.LocalCallbackRoute)
+
+	return fmt.Sprintf("https://auth.tesla.com/user/revoke/consent?revoke_client_id=%s&back_url=%s", c.AuthClientId, redirect_uri)
 }
 
 // LoadDotFiles loads tokens from the user's dot files and checks if it is about to expire.

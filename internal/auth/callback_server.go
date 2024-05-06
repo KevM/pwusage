@@ -13,23 +13,16 @@ import (
 
 type Callback struct {
 	Config AuthConfig
-	State  string
-	Nonce  string
+	// State  string
+	// Nonce  string
 	Result chan DotFiles
 }
 
 // start web server to handle callback from auth provider. Resulting tesla tokens areput into the channel when it is received
-func StartCallbackServer(ctx context.Context, config AuthConfig, logger *slog.Logger) Callback {
+func StartCallbackServer(ctx context.Context, config AuthConfig) Callback {
+	logger := config.Logger
 	logger.Debug("starting callback server", slog.Any("config", config))
-	state := stringWithCharset(12, charset)
-	nonce := stringWithCharset(12, charset)
 	tokenChannel := make(chan DotFiles)
-	result := Callback{
-		Config: config,
-		State:  state,
-		Nonce:  nonce,
-		Result: tokenChannel,
-	}
 
 	responseReceived := false
 
@@ -41,7 +34,18 @@ func StartCallbackServer(ctx context.Context, config AuthConfig, logger *slog.Lo
 		}
 		responseReceived = true
 
-		err := validateState(r, state)
+		if config.Action == "revoke" {
+			err := RemoveDotFiles()
+			if err != nil {
+				logger.Error("Error removing dotfiles", slog.Any("error", err))
+				http.Error(w, "There was a problem revoking or changing API access. Please try again.", http.StatusUnauthorized)
+				return
+			}
+			io.WriteString(w, "You can close this browser window.")
+		}
+
+		// logged in so validate the state and exchange the code for tokens
+		err := validateState(r, config.State())
 		if err != nil {
 			http.Error(w, "There was a problem logging in. Please try again.", http.StatusUnauthorized)
 			tokenChannel <- DotFiles{Error: err}
@@ -49,7 +53,7 @@ func StartCallbackServer(ctx context.Context, config AuthConfig, logger *slog.Lo
 		}
 
 		code := r.URL.Query().Get("code")
-		tokens := config.Exchange(code, nonce)
+		tokens := config.Exchange(code, config.Nonce())
 		tokenChannel <- tokens
 		if tokens.Error != nil {
 			logger.Error("Could not exchange code tesla auth token. Is this user authorized?", slog.Any("error", tokens.Error))
@@ -76,8 +80,8 @@ func StartCallbackServer(ctx context.Context, config AuthConfig, logger *slog.Lo
 
 		for {
 			select {
-			case <-tokenChannel:
-				logger.Debug("auth callback server received a token. Shutting down callback server")
+			case token := <-tokenChannel:
+				logger.Debug("auth callback server received a token. Shutting down callback server", slog.Any("token", token))
 				// shutdown the server after we get a result
 				timeoutCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 				if err := server.Shutdown(timeoutCtx); err != nil {
@@ -92,7 +96,10 @@ func StartCallbackServer(ctx context.Context, config AuthConfig, logger *slog.Lo
 		}
 	}()
 
-	return result
+	return Callback{
+		Config: config,
+		Result: tokenChannel,
+	}
 }
 
 func validateState(r *http.Request, state string) error {

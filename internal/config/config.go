@@ -34,7 +34,7 @@ func NewConfig() (Config, error) {
 		Logger: logger,
 	}
 
-	authCfg, err := auth.NewAuthConfig()
+	authCfg, err := auth.NewLoginAuthConfig(logger)
 	if err != nil {
 		return result, err
 	}
