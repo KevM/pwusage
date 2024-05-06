@@ -19,3 +19,14 @@
 <CopyToClipboard text={data.auth?.refresh_token || ""} let:copy>
   <br/><button on:click={copy}>Copy</button>
 </CopyToClipboard>
+
+
+<div style="display:none" id="access-token">
+  {data.auth?.access_token}
+</div>
+<div style="display:none" id="id-token">
+  {data.auth?.id_token}
+</div>
+<div style="display:none" id="refresh-token">
+  {data.auth?.refresh_token}
+</div>
