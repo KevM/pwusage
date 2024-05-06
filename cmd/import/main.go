@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/kevm/pw-usage/internal/auth"
 	"github.com/kevm/pw-usage/internal/config"
@@ -244,9 +243,9 @@ func cmdLogin(c config.Config) *cobra.Command {
 
 func cmdAnalysis(c config.Config) *cobra.Command {
 	return &cobra.Command{
-		Use:   "analysis [siteid]",
+		Use:   "analysis [siteid] [billing start date - YYYYMMDD]",
 		Short: "hmm",
-		Args:  cobra.MinimumNArgs(1),
+		Args:  cobra.MinimumNArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
 			siteid := args[0]
 			er := fleetdb.NewEnergyRepo(c.Database, c.Logger)
@@ -256,6 +255,14 @@ func cmdAnalysis(c config.Config) *cobra.Command {
 				os.Exit(3)
 			}
 
+			bd := args[1]
+			billingStart := ymdflag.YMDFlag{}
+			err = billingStart.Set(bd)
+			if err != nil {
+				c.Logger.Error("error parsing billing date should be YYYYMMDD", slog.String("billing-date", bd), slog.Any("error", err))
+				os.Exit(1)
+			}
+
 			importer := fleetdb.NewImporter(c.Database, c.Client, c.Logger)
 			err = importer.LoadSiteEnergyData(site)
 			if err != nil {
@@ -263,7 +270,7 @@ func cmdAnalysis(c config.Config) *cobra.Command {
 				os.Exit(4)
 			}
 
-			start, end := fleetdb.GetDateRange(fleetdb.MonthRange, time.Now().In(site.Location))
+			start, end := fleetdb.GetDateRange(fleetdb.BillingRange, billingStart.AsTimeWithLoc(site.Location))
 			usage := fleetdb.NewUsage(site, c.Database, c.Client, c.Logger)
 			result, err := usage.GetEnergyUsage(start, end)
 			if err != nil {
@@ -300,6 +307,7 @@ func cmdAnalysis(c config.Config) *cobra.Command {
 				tariffMap[r.Tariff.Name] = t
 			}
 
+			fmt.Printf("\nReporting from %s to %s\n", start.Format("2006-01-02"), end.Format("2006-01-02"))
 			// show row for each tariff with home usage and solar production and how much it will cost
 			for _, t := range tariffMap {
 				usageLabel, cost := Cost(*t.Season, t.GridUsage)
