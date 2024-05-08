@@ -326,7 +326,7 @@ func cmdAnalysis(c config.Config) *cobra.Command {
 				tariffMap[r.Tariff.Name] = t
 			}
 
-			fmt.Printf("\nReporting from %s to %s\n", start.Format("2006-01-02"), end.Format("2006-01-02"))
+			fmt.Printf("\nTime of Use Report\n- for billing period %s to %s\n", start.Format("2006-01-02"), end.Format("2006-01-02"))
 			// show row for each tariff with home usage and solar production and how much it will cost
 			for _, t := range tariffMap {
 				usageLabel, cost := Cost(*t.Season, t.GridUsage)

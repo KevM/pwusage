@@ -7,7 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/glamour"
 	"github.com/kevm/pw-usage/internal/config"
 	"github.com/kevm/pw-usage/internal/fleetdb"
 	"github.com/kevm/pw-usage/internal/tui/settings"
@@ -96,14 +96,19 @@ func (m Model) View() string {
 		return "No site configured"
 	}
 
-	header := lipgloss.NewStyle().Render(m.Config.Site.Name)
-
 	report, err := m.usageReport()
 	if err != nil {
 		return fmt.Sprintf("Error generating usage report: %s", err)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, report)
+	r, _ := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		// wrap output at specific width (default is 80)
+		glamour.WithWordWrap(80),
+	)
+
+	mdreport, _ := r.Render(report)
+	return mdreport
 }
 
 func cmdize[T any](t T) tea.Cmd {
@@ -149,6 +154,8 @@ func (m Model) usageReport() (string, error) {
 	b := strings.Builder{}
 	site := m.Config.Site
 
+	b.WriteString(fmt.Sprintf("# %s\n", site.Name))
+
 	type analysis struct {
 		Tariff          *fleetdb.Tariff
 		Season          *fleetdb.TariffSeason
@@ -188,15 +195,15 @@ func (m Model) usageReport() (string, error) {
 		return "Credit", 0 - (season.SellRate * kwh(usage))
 	}
 
-	b.WriteString(fmt.Sprintf("\nReporting from %s to %s\n", start.Format("2006-01-02"), end.Format("2006-01-02")))
+	b.WriteString(fmt.Sprintf("## Time of Use Report\n\n- billing period from %s to %s\n", start.Format("2006-01-02"), end.Format("2006-01-02")))
 	// show row for each tariff with home usage and solar production and how much it will cost
 	for _, t := range tariffMap {
 		usageLabel, cost := cost(*t.Season, t.GridUsage)
-		b.WriteString(fmt.Sprintf("\nTariff: %s\n", t.Tariff.Name))
-		b.WriteString(fmt.Sprintf("Season: %s\t Buy Rate: %.2f\tSell Rate: %.2f\n", t.Season.Name, t.Season.BuyRate, t.Season.SellRate))
-		b.WriteString(fmt.Sprintf("Home Usage: %.2f kwh\n", kwh(t.HomeUsage)))
-		b.WriteString(fmt.Sprintf("Grid Usage: %.2f kwh\t%s: %.2f\n", kwh(t.GridUsage), usageLabel, cost))
-		b.WriteString(fmt.Sprintf("Solar Production: %.2f kwh\n", kwh(t.SolarProduction)))
+		b.WriteString(fmt.Sprintf("### Tariff %s season %s\n", t.Tariff.Name, t.Season.Name))
+		b.WriteString(fmt.Sprintf("* Buy rate $%.2f / kwh\n* Sell rate $%.2f / kwh\n", t.Season.BuyRate, t.Season.SellRate))
+		b.WriteString(fmt.Sprintf("* Home Usage: %.2f kwh\n", kwh(t.HomeUsage)))
+		b.WriteString(fmt.Sprintf("* Solar Production: %.2f kwh\n", kwh(t.SolarProduction)))
+		b.WriteString(fmt.Sprintf("* Grid Usage: %.2f kwh\n* %s: $%.2f\n", kwh(t.GridUsage), usageLabel, cost))
 	}
 
 	return b.String(), nil
