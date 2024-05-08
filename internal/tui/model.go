@@ -14,18 +14,27 @@ import (
 )
 
 type ShowSettings struct{}
-type UpdateUsages struct{}
+type UpdateUsageEvt struct{}
+type UpdateUsageCmd struct {
+	Usages []fleetdb.UsageData
+}
+type UpdateStatus struct {
+	Message string
+}
 
 type Model struct {
 	Config *config.Config
 
 	settingsModel *settings.Model
 	usages        []fleetdb.UsageData
+	status        string
+	background    chan tea.Msg
 }
 
 func NewModel(config *config.Config) *Model {
 	return &Model{
-		Config: config,
+		Config:     config,
+		background: make(chan tea.Msg, 1),
 	}
 }
 
@@ -33,41 +42,43 @@ func (m Model) Init() tea.Cmd {
 	if m.Config.Site == nil {
 		return cmdize(ShowSettings{})
 	} else {
-		return cmdize(UpdateUsages{})
+		return cmdize(UpdateUsageEvt{})
 	}
-	return nil
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case UpdateStatus:
+		m.status = msg.Message
+		cmd := tea.Every(30*time.Second, func(t time.Time) tea.Msg { return UpdateStatus{Message: ""} }) //reset status to blank after 30 seconds
+		return m, cmd
 	case ShowSettings:
 		m.settingsModel = settings.NewModel(m.Config)
 		return m, m.settingsModel.Init()
-	case UpdateUsages:
-		if err := m.loadUsages(); err != nil {
-			m.Config.Logger.Error("Error loading usages", slog.Any("error", err))
-		}
-		tickUsages := tea.Every(5*time.Minute, func(t time.Time) tea.Msg {
-			return UpdateUsages{}
-		})
-		return m, tickUsages
+	case UpdateUsageEvt:
+		cmd := m.loadUsages()
+		tickUsages := tea.Every(5*time.Minute, func(t time.Time) tea.Msg { return UpdateUsageEvt{} }) // update usage every 5 minutes
+		return m, tea.Batch(cmd, tickUsages)
+	case UpdateUsageCmd:
+		m.usages = msg.Usages
+		return m, cmdize(UpdateStatus{Message: "Usages updated."})
 	case settings.SettingsUpdated:
+		cmds := []tea.Cmd{}
 		// update config
 		m.Config.BillStartDay = msg.BillingStartDay
-		err := m.loadSite(msg.SiteId)
-		if err != nil {
-			m.Config.Logger.Error("Error loading site", slog.Any("error", err))
-			return m, tea.Quit
-		}
+		cmd := m.loadSite(msg.SiteId)
+		cmds = append(cmds, cmd)
 
 		// save config
-		err = m.Config.SaveToDotFiles()
+		err := m.Config.SaveToDotFiles()
 		if err != nil {
-			m.Config.Logger.Error("Error saving settings to dotfiles", slog.Any("error", err))
+			m.Config.Logger.Error("Error saving settings to dotfiles", slog.Any("error", cmd))
+			cmds = append(cmds, cmdize(UpdateStatus{Message: "Error saving settings"}))
 		}
 
 		m.settingsModel = nil
-		return m, cmdize(UpdateUsages{})
+		cmds = append(cmds, cmdize(UpdateUsageEvt{}))
+		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q":
@@ -103,39 +114,47 @@ func (m Model) View() string {
 
 	r, _ := glamour.NewTermRenderer(
 		glamour.WithStandardStyle("dark"),
-		// wrap output at specific width (default is 80)
-		glamour.WithWordWrap(80),
+		// glamour.WithWordWrap(80), //default 80
 	)
 
+	if m.status != "" {
+		report += fmt.Sprintf("\n\n> **Status:** %s", m.status)
+	}
 	mdreport, _ := r.Render(report)
 	return mdreport
 }
 
-func cmdize[T any](t T) tea.Cmd {
-	return func() tea.Msg {
-		return t
-	}
-}
-
-func (m *Model) loadSite(siteid string) error {
+func (m *Model) loadSite(siteid string) tea.Cmd {
 	repo := fleetdb.NewEnergyRepo(m.Config.Database, m.Config.Logger)
 	site, err := repo.LoadSite(siteid, m.Config.Client)
 	if err != nil {
-		return err
+		return cmdize(UpdateStatus{Message: fmt.Sprintf("Error loading site info: %s", err)})
 	}
 	m.Config.Site = site
 	return nil
 }
 
-func (m *Model) loadUsages() error {
-	start, end := m.getDateRange()
-	usage := fleetdb.NewUsage(m.Config.Site, m.Config.Database, m.Config.Client, m.Config.Logger)
-	usages, err := usage.GetEnergyUsage(start, end)
-	if err != nil {
-		return err
-	}
-	m.usages = usages
-	return nil
+func (m Model) loadUsages() tea.Cmd {
+	go func() {
+		err := fleetdb.NewImporter(m.Config.Database, m.Config.Client, m.Config.Logger).LoadSiteEnergyData(m.Config.Site)
+		if err != nil {
+			m.Config.Logger.Error("Error loading site energy data", slog.Any("error", err))
+			m.background <- UpdateStatus{Message: "Error loading site energy data"}
+			return
+		}
+
+		start, end := m.getDateRange()
+		usage := fleetdb.NewUsage(m.Config.Site, m.Config.Database, m.Config.Client, m.Config.Logger)
+		usages, err := usage.GetEnergyUsage(start, end)
+		if err != nil {
+			m.Config.Logger.Error("Error getting energy usage", slog.Any("error", err))
+			m.background <- UpdateStatus{Message: fmt.Sprintf("Error getting energy usage: %s", err)}
+			return
+		}
+		m.background <- UpdateUsageCmd{Usages: usages}
+	}()
+
+	return tea.Batch(cmdize(UpdateStatus{Message: "Loading site usage..."}), waitForChannel(m.background))
 }
 
 func (m Model) getDateRange() (time.Time, time.Time) {
@@ -207,4 +226,16 @@ func (m Model) usageReport() (string, error) {
 	}
 
 	return b.String(), nil
+}
+
+func cmdize[T any](t T) tea.Cmd {
+	return func() tea.Msg {
+		return t
+	}
+}
+
+func waitForChannel(c chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		return <-c
+	}
 }

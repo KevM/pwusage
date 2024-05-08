@@ -30,10 +30,12 @@ func (e *NoAuthTokenError) Error() string {
 
 func NewConfig() (Config, error) {
 	godotenv.Load()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
 
+	logFile, err := os.OpenFile("pwusage.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		panic(err)
+	}
+	logger := slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	result := Config{
 		Logger: logger,
 	}
