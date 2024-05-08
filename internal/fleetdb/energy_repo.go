@@ -54,6 +54,7 @@ func (r EnergyRepo) GetEnergies(start time.Time, end time.Time) ([]EnergyData, e
 
 type Site struct {
 	Id        string
+	Name      string
 	Updated   time.Time
 	Installed time.Time
 	Location  *time.Location
@@ -138,15 +139,16 @@ func (r EnergyRepo) UpsertSite(siteid string, fleetSiteInfo *fleetapi.EnergySite
 	}
 
 	// upsert site
-	insertSql := `INSERT INTO Site(id, updated, installed, timezone, json) VALUES (?, ?, ?, ?, ?) 
-				  ON CONFLICT(id) DO UPDATE SET updated = ?,installed = ?, timezone = ?, json = ?;`
-	_, err = r.db.Conn().Exec(insertSql, siteid, updated, installed, fleetSiteInfo.InstallationTimeZone, jsonData, updated, installed, fleetSiteInfo.InstallationTimeZone, jsonData)
+	insertSql := `INSERT INTO Site(id, name, updated, installed, timezone, json) VALUES (?, ?, ?, ?, ?, ?) 
+				  ON CONFLICT(id) DO UPDATE SET updated = excluded.updated, installed = excluded.installed, timezone = excluded.timezone, json = excluded.json;`
+	_, err = r.db.Conn().Exec(insertSql, siteid, fleetSiteInfo.SiteName, updated, installed, fleetSiteInfo.InstallationTimeZone, jsonData)
 	if err != nil {
 		return nil, fmt.Errorf("error upserting site %s info query: %w", fleetSiteInfo.ID, err)
 	}
 
 	site := Site{
 		Id:        siteid,
+		Name:      fleetSiteInfo.SiteName,
 		Updated:   updated,
 		Installed: installed,
 		Location:  location,
@@ -197,7 +199,7 @@ func (r EnergyRepo) upsertTariff(name string, site Site, fleetSiteInfo *fleetapi
 		Updated: site.Updated,
 	}
 	insertSql := `INSERT INTO Tariff(site_id, name, updated) VALUES (?, ?, ?)
-				  ON CONFLICT(site_id, name) DO UPDATE SET updated = ?;`
+				  ON CONFLICT(site_id, name) DO UPDATE SET updated = excluded.updated;`
 	_, err := r.db.Conn().Exec(insertSql, site.Id, name, site.Updated, site.Updated)
 	if err != nil {
 		return tariff, fmt.Errorf("error upserting site tariff %s: %w", name, err)

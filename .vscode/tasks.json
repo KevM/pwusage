@@ -13,9 +13,9 @@
                 "--headless",
                 "--listen=:2345",
                 "--api-version=2",
-                "${workspaceFolder}/cmd/tui",
+                "${workspaceFolder}/cmd/pwrwool",
                 "--",
-                "tui", "--dev",
+                "tui",
             ],
             "isBackground": true,
             "problemMatcher": {

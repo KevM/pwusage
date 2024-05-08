@@ -50,6 +50,7 @@ func setupDb(db *sql.DB) error {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS Site (
 		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
 		updated DATETIME NOT NULL,
 		installed DATETIME NOT NULL,
 		timezone TEXT NOT NULL,

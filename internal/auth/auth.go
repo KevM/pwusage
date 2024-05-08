@@ -88,6 +88,8 @@ func NewLoginAuthConfig(logger *slog.Logger) (AuthConfig, error) {
 		Action: "login",
 		nonce:  stringWithCharset(12, charset),
 	}
+	cwd, _ := os.Getwd()
+	logger.Debug("current working directory", slog.String("cwd", cwd))
 
 	baseurl := os.Getenv("PUBLIC_WEBAPP_BASE_URL")
 	if baseurl == "" {
@@ -103,13 +105,15 @@ func NewLoginAuthConfig(logger *slog.Logger) (AuthConfig, error) {
 
 	callbackRoute := os.Getenv("PUBLIC_AUTH_CALLBACK_ROUTE")
 	if callbackRoute == "" {
-		return result, fmt.Errorf("PUBLIC_AUTH_CALLBACK_ROUTE env not set")
+		logger.Warn("PUBLIC_AUTH_CALLBACK_ROUTE env not set - using default '/callback'")
+		callbackRoute = "/callback"
 	}
 	result.LocalCallbackRoute = callbackRoute
 
 	callbackPort := os.Getenv("PUBLIC_AUTH_CALLBACK_PORT")
 	if callbackPort == "" {
-		return result, fmt.Errorf("PUBLIC_AUTH_CALLBACK_PORT env not set")
+		logger.Warn("PUBLIC_AUTH_CALLBACK_PORT env not set - using default '6789'")
+		callbackPort = "6789"
 	}
 	port, err := strconv.Atoi(callbackPort)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -12,18 +13,35 @@ import (
 const (
 	AuthTokenFileName    = ".auth"
 	RefreshTokenFileName = ".refresh"
+	SiteIDFileName       = ".siteid"
+	BillStartDayFileName = ".billstart"
 )
 
 type DotFiles struct {
 	AccessToken string
 	Refresh     string
 	Error       error
+
+	Siteid       string
+	BillStartDay int
 }
 
 func RemoveDotFiles() error {
 	configDir, err := getConfigDir()
 	if err != nil {
 		return fmt.Errorf("failed to get config directory: %w", err)
+	}
+
+	billfn := filepath.Join(configDir, BillStartDayFileName)
+	err = os.Remove(billfn)
+	if err != nil {
+		return fmt.Errorf("failed to remove bill_start file: %w", err)
+	}
+
+	sitefn := filepath.Join(configDir, SiteIDFileName)
+	err = os.Remove(sitefn)
+	if err != nil {
+		return fmt.Errorf("failed to remove site_id file: %w", err)
 	}
 
 	accessfn := filepath.Join(configDir, AuthTokenFileName)
@@ -67,6 +85,18 @@ func (t DotFiles) WriteToDotFiles() error {
 		return fmt.Errorf("failed to get config directory: %w", err)
 	}
 
+	billfn := filepath.Join(configDir, BillStartDayFileName)
+	err = os.WriteFile(billfn, []byte(fmt.Sprintf("%d", t.BillStartDay)), 0600)
+	if err != nil {
+		return fmt.Errorf("failed to write bill_start file: %w", err)
+	}
+
+	sitefn := filepath.Join(configDir, SiteIDFileName)
+	err = os.WriteFile(sitefn, []byte(t.Siteid), 0600)
+	if err != nil {
+		return fmt.Errorf("failed to write site_id file: %w", err)
+	}
+
 	accessfn := filepath.Join(configDir, AuthTokenFileName)
 	err = os.WriteFile(accessfn, []byte(t.AccessToken), 0600)
 	if err != nil {
@@ -91,8 +121,28 @@ func NewFromDotFiles() DotFiles {
 		return result
 	}
 
-	fn := filepath.Join(configDir, AuthTokenFileName)
+	fn := filepath.Join(configDir, BillStartDayFileName)
 	bytes, err := os.ReadFile(fn)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to read bill_start file: %w", err)
+		return result
+	}
+	bs, err := strconv.Atoi(string(bytes)) // string to int default to 11
+	if err != nil {
+		bs = 11
+	}
+	result.BillStartDay = bs
+
+	fn = filepath.Join(configDir, SiteIDFileName)
+	bytes, err = os.ReadFile(fn)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to read site_id file: %w", err)
+		return result
+	}
+	result.Siteid = string(bytes)
+
+	fn = filepath.Join(configDir, AuthTokenFileName)
+	bytes, err = os.ReadFile(fn)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to read auth_token file: %w", err)
 		return result

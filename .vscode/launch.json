@@ -9,21 +9,8 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "${workspaceFolder}/cmd/import/",
+      "program": "${workspaceFolder}/cmd/pwrwool/",
       "args": ["login"] //, "2252268092126997"] //, "week", "20240501"],  //site-id:2252268092126997
-    },
-    {
-      "name": "Launch pocketbase server",
-      "type": "go",
-      "request": "launch",
-      "mode": "debug",
-      "program": "${workspaceFolder}/cmd/pocketbase/",
-      "env": {
-      },
-      "args": [
-        "serve",
-        "--http=0.0.0.0:8090"
-      ],
     },
     {
       "name": "Attach to TUI",
@@ -31,7 +18,7 @@
       "debugAdapter": "dlv-dap",
       "request": "attach",
       "mode": "remote",
-      "remotePath": "${workspaceFolder}/cmd/tui",
+      "remotePath": "${workspaceFolder}/cmd/pwrwool",
       "port": 2345,
       "host": "127.0.0.1",
       "preLaunchTask": "Run headless dlv" // Here !
