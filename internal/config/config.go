@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -15,6 +16,9 @@ type Config struct {
 	Database *fleetdb.Database
 	Client   *fleetapi.Client
 	Logger   *slog.Logger
+
+	Site         *fleetdb.Site
+	BillStartDay int
 }
 
 type NoAuthTokenError struct {
@@ -43,8 +47,7 @@ func NewConfig() (Config, error) {
 
 	var authToken string
 	if dotfiles.Error != nil {
-		logger.Error("error loading dotfiles", slog.Any("error", dotfiles.Error))
-		authToken = os.Getenv("TESLA_AUTH_TOKEN")
+		logger.Warn("error loading saved configuration", slog.Any("error", dotfiles.Error))
 		if authToken == "" {
 			return result, &NoAuthTokenError{}
 		}
@@ -59,5 +62,34 @@ func NewConfig() (Config, error) {
 	}
 	result.Database = db
 
+	if dotfiles.Siteid != "" {
+		er := fleetdb.NewEnergyRepo(db, logger)
+		result.Site, err = er.LoadSite(dotfiles.Siteid, result.Client)
+		if err != nil {
+			logger.Warn("error loading site info - skipping", slog.String("site_id", dotfiles.Siteid), slog.Any("error", err))
+		}
+	}
+
+	result.BillStartDay = dotfiles.BillStartDay
+
 	return result, nil
+}
+
+func (c Config) SaveToDotFiles() error {
+	authCfg, err := auth.NewLoginAuthConfig(c.Logger)
+	if err != nil {
+		return err
+	}
+
+	dotfiles := authCfg.LoadDotFiles(c.Logger)
+	if dotfiles.Error != nil {
+		return fmt.Errorf("could not load dot files for saving: %w", dotfiles.Error)
+	}
+
+	dotfiles.BillStartDay = c.BillStartDay
+	if c.Site != nil {
+		dotfiles.Siteid = c.Site.Id
+	}
+
+	return dotfiles.WriteToDotFiles()
 }

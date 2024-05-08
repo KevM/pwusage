@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"os"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kevm/pw-usage/internal/auth"
 	"github.com/kevm/pw-usage/internal/config"
 	"github.com/kevm/pw-usage/internal/fleetdb"
+	"github.com/kevm/pw-usage/internal/tui"
 	"github.com/neomantra/ymdflag"
 	"github.com/spf13/cobra"
 )
@@ -34,10 +36,27 @@ func main() {
 		rootCmd.AddCommand(cmdBatteryStopHold(c))
 		rootCmd.AddCommand(cmdProducts(c))
 		rootCmd.AddCommand(cmdAnalysis(c))
+		rootCmd.AddCommand(cmdTea(c))
 	}
 	rootCmd.AddCommand(cmdLogin(c))
 	// rootCmd.AddCommand(cmdRevoke(c))
 	rootCmd.Execute()
+}
+
+func cmdTea(c config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "tui",
+		Short: "interactive terminal UI",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			m := tui.NewModel(&c)
+			p := tea.NewProgram(m, tea.WithAltScreen())
+			if _, err := p.Run(); err != nil {
+				fmt.Printf("Oops: %v", err)
+				os.Exit(1)
+			}
+		},
+	}
 }
 
 func usageCmd(c config.Config) *cobra.Command {
