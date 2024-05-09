@@ -169,7 +169,7 @@ func cmdBatteryStartHold(c config.Config) *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			siteid := args[0]
 			batteryReserve := fleetdb.NewBatteryHold(c.Database, c.Client, c.Logger)
-			err := batteryReserve.StartHold(siteid)
+			_, err := batteryReserve.StartHold(siteid)
 			if err != nil {
 				c.Logger.Error("Error holding battery", slog.Any("error", err))
 				os.Exit(2)

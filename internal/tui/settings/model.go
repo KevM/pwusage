@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+	"github.com/kevm/bubbleo/navstack"
 	"github.com/kevm/pw-usage/internal/config"
-	"github.com/kevm/pw-usage/internal/fleetdb"
 )
 
 type Product struct {
@@ -69,8 +69,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.form.State == huh.StateCompleted {
-		settings := m.createNewSettings()
-		return m, cmdize(settings)
+		// all done pop settings off the navstack and return setings update cmd
+		pop := navstack.PopNavigationCmd()
+		cmd := cmdize(m.createNewSettings())
+		return m, tea.Sequence(pop, cmd)
 	}
 
 	form, cmd := m.form.Update(msg)
@@ -87,25 +89,25 @@ func (m Model) View() string {
 
 func (m *Model) createNewSettings() SettingsUpdated {
 	siteid := m.form.GetString("site")
-	for _, p := range m.products {
-		if p.SiteId == siteid {
-			m.SelectedProduct = &p
-			break
-		}
-	}
+	// for _, p := range m.products {
+	// 	if p.SiteId == siteid {
+	// 		m.SelectedProduct = &p
+	// 		break
+	// 	}
+	// }
 
-	er := fleetdb.NewEnergyRepo(m.Config.Database, m.Config.Logger)
-	site, err := er.LoadSite(siteid, m.Config.Client)
-	if err != nil {
-		m.Config.Logger.Error("Error loading site info", "site", m.SelectedProduct.SiteId, "error", err)
-		return SettingsUpdated{}
-	}
+	// er := fleetdb.NewEnergyRepo(m.Config.Database, m.Config.Logger)
+	// site, err := er.LoadSite(siteid, m.Config.Client)
+	// if err != nil {
+	// 	m.Config.Logger.Error("Error loading site info", "site", m.SelectedProduct.SiteId, "error", err)
+	// 	return SettingsUpdated{}
+	// }
 
 	bs := m.form.GetString("billing_start")
 	m.BillingStartDay, _ = strconv.Atoi(bs)
 
 	return SettingsUpdated{
-		SiteId:          site.Id,
+		SiteId:          siteid,
 		BillingStartDay: m.BillingStartDay,
 	}
 }
@@ -131,9 +133,11 @@ func (m Model) newForm(products []Product) *huh.Form {
 		Options(site_options...)
 
 	// billing start day select
+	start := fmt.Sprintf("%d", m.BillingStartDay)
 	billing_day := huh.NewInput().
 		Title("Billing Start Day Of Month").
 		Key("billing_start").
+		Value(&start).
 		Validate(func(s string) error {
 			if s == "" {
 				return errors.New("required")
