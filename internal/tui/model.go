@@ -6,62 +6,137 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/kevm/bubbleo/navstack"
+	"github.com/kevm/bubbleo/window"
 	"github.com/kevm/pw-usage/internal/config"
+	"github.com/kevm/pw-usage/internal/fleetapi"
 	"github.com/kevm/pw-usage/internal/fleetdb"
+	"github.com/kevm/pw-usage/internal/tui/hold"
 	"github.com/kevm/pw-usage/internal/tui/settings"
 )
 
 type ShowSettings struct{}
+type ShowBatteryHold struct{}
 type UpdateUsageEvt struct{}
 type UpdateUsageCmd struct {
 	Usages []fleetdb.UsageData
 }
+type UpdateLiveEvt struct{}
+type UpdateLiveCmd struct {
+	Live fleetapi.EnergySiteLiveStatus
+}
+type UpdateHoldEvt struct{}
 type UpdateStatus struct {
 	Message string
+	TTL     time.Duration
 }
 
 type Model struct {
 	Config *config.Config
 
-	settingsModel *settings.Model
-	usages        []fleetdb.UsageData
-	status        string
-	background    chan tea.Msg
+	usages     []fleetdb.UsageData
+	live       fleetapi.EnergySiteLiveStatus
+	status     string
+	background chan tea.Msg
+	keys       KeyMap
+	help       help.Model
+	width      int
+
+	navstack *navstack.Model
+	window   *window.Model
+	hold     *fleetdb.BatteryHoldState
 }
 
 func NewModel(config *config.Config) *Model {
+	w := window.New(120, 30, 0, 0)
+	ns := navstack.New(&w).QuitOnEmptyStack(false)
+
 	return &Model{
 		Config:     config,
 		background: make(chan tea.Msg, 1),
+		keys:       DefaultKeyMap,
+		help:       help.New(),
+
+		window:   &w,
+		navstack: &ns,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{}
+
 	if m.Config.Site == nil {
-		return cmdize(ShowSettings{})
+		cmds = append(cmds, cmdize(ShowSettings{}))
 	} else {
-		return cmdize(UpdateUsageEvt{})
+		cmds = append(cmds, cmdize(UpdateUsageEvt{}))
+		cmds = append(cmds, cmdize(UpdateLiveEvt{}))
+		cmds = append(cmds, cmdize(UpdateHoldEvt{}))
 	}
+
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+
+	if m.navstack.Top() != nil {
+		// delegating to navstack when it has views
+		cmd := m.navstack.Update(msg)
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case UpdateStatus:
 		m.status = msg.Message
-		cmd := tea.Every(30*time.Second, func(t time.Time) tea.Msg { return UpdateStatus{Message: ""} }) //reset status to blank after 30 seconds
+		if m.status == "" {
+			return m, nil
+		}
+		cmd := tea.Every(msg.TTL, func(_ time.Time) tea.Msg { return UpdateStatus{Message: ""} })
 		return m, cmd
+	case hold.HoldCreated:
+		m.hold = &msg.Hold
+		return m, cmdize(UpdateStatus{Message: "Hold started", TTL: 5 * time.Second})
 	case ShowSettings:
-		m.settingsModel = settings.NewModel(m.Config)
-		return m, m.settingsModel.Init()
+		settingsModel := settings.NewModel(m.Config)
+		item := navstack.NavigationItem{
+			Title: "Settings",
+			Model: settingsModel,
+		}
+		cmd := m.navstack.Push(item)
+		return m, cmd
+	case ShowBatteryHold:
+		batteryHoldModel := hold.NewModel(m.Config)
+		item := navstack.NavigationItem{
+			Title: "Settings",
+			Model: batteryHoldModel,
+		}
+		cmd := m.navstack.Push(item)
+		return m, cmd
 	case UpdateUsageEvt:
 		cmd := m.loadUsages()
-		tickUsages := tea.Every(5*time.Minute, func(t time.Time) tea.Msg { return UpdateUsageEvt{} }) // update usage every 5 minutes
+		tickUsages := tea.Every(5*time.Minute, func(_ time.Time) tea.Msg { return UpdateUsageEvt{} })
 		return m, tea.Batch(cmd, tickUsages)
+	case UpdateLiveEvt:
+		cmd := m.loadLive()
+		tickLive := tea.Every(30*time.Second, func(_ time.Time) tea.Msg { return UpdateUsageEvt{} })
+		return m, tea.Batch(cmd, tickLive)
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.window.Height = msg.Height
+		m.window.Width = msg.Width
+		m.help.Width = msg.Width
+		return m, nil
+	case UpdateHoldEvt:
+		cmd := m.loadHold()
+		return m, cmd
+	case UpdateLiveCmd:
+		m.live = msg.Live
+		return m, cmdize(UpdateStatus{Message: "...", TTL: 1 * time.Second})
 	case UpdateUsageCmd:
 		m.usages = msg.Usages
-		return m, cmdize(UpdateStatus{Message: "Usages updated."})
+		return m, cmdize(UpdateStatus{Message: "Usages updated.", TTL: 5 * time.Second})
 	case settings.SettingsUpdated:
 		cmds := []tea.Cmd{}
 		// update config
@@ -73,41 +148,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		err := m.Config.SaveToDotFiles()
 		if err != nil {
 			m.Config.Logger.Error("Error saving settings to dotfiles", slog.Any("error", cmd))
-			cmds = append(cmds, cmdize(UpdateStatus{Message: "Error saving settings"}))
+			cmds = append(cmds, cmdize(UpdateStatus{Message: "Error saving settings", TTL: 30 * time.Second}))
 		}
 
-		m.settingsModel = nil
-		cmds = append(cmds, cmdize(UpdateUsageEvt{}))
+		cmds = append(cmds, cmdize(UpdateUsageEvt{}), cmdize(UpdateLiveEvt{}))
 		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q":
-			return m, tea.Quit
-		}
-	}
-
-	if m.settingsModel != nil {
-		sm, cmd := m.settingsModel.Update(msg)
-		if sm != nil {
-			smp := sm.(settings.Model)
-			m.settingsModel = &smp
-		}
-		return m, cmd
+		return m.handleKeyMsg(msg)
 	}
 
 	return m, nil
 }
 
 func (m Model) View() string {
-	if m.settingsModel != nil {
-		return m.settingsModel.View()
+
+	if m.navstack.Top() != nil {
+		return m.navstack.View()
+	}
+
+	if m.help.ShowAll {
+		return m.help.View(m.keys)
 	}
 
 	if m.Config.Site == nil {
 		return "No site configured"
 	}
 
-	report, err := m.usageReport()
+	header := fmt.Sprintf("# %s\n", m.Config.Site.Name)
+
+	live_report := m.liveReport()
+	usage_report, err := m.usageReport()
 	if err != nil {
 		return fmt.Sprintf("Error generating usage report: %s", err)
 	}
@@ -118,9 +188,9 @@ func (m Model) View() string {
 	)
 
 	if m.status != "" {
-		report += fmt.Sprintf("\n\n> **Status:** %s", m.status)
+		usage_report += fmt.Sprintf("\n\n> **Status:** %s", m.status)
 	}
-	mdreport, _ := r.Render(report)
+	mdreport, _ := r.Render(header + live_report + "\n" + usage_report)
 	return mdreport
 }
 
@@ -128,9 +198,35 @@ func (m *Model) loadSite(siteid string) tea.Cmd {
 	repo := fleetdb.NewEnergyRepo(m.Config.Database, m.Config.Logger)
 	site, err := repo.LoadSite(siteid, m.Config.Client)
 	if err != nil {
-		return cmdize(UpdateStatus{Message: fmt.Sprintf("Error loading site info: %s", err)})
+		return cmdize(UpdateStatus{Message: fmt.Sprintf("Error loading site info: %s", err), TTL: 30 * time.Second})
 	}
 	m.Config.Site = site
+	return nil
+}
+
+func (m Model) loadLive() tea.Cmd {
+	go func() {
+		live, err := m.Config.Client.GetEnergySiteLiveStatus(m.Config.Site.Id)
+		if err != nil {
+			m.background <- UpdateStatus{Message: fmt.Sprintf("Error loading site info: %s", err), TTL: 30 * time.Second}
+		}
+
+		m.background <- UpdateLiveCmd{Live: *live}
+	}()
+
+	return waitForChannel(m.background)
+}
+
+func (m *Model) loadHold() tea.Cmd {
+
+	bh := fleetdb.NewBatteryHold(m.Config.Database, m.Config.Client, m.Config.Logger)
+	hold, err := bh.FindSiteHold(m.Config.Site.Id)
+	if err != nil {
+		m.Config.Logger.Error("Error finding battery hold for site", slog.String("site", m.Config.Site.Id), slog.Any("error", err))
+		return nil
+	}
+
+	m.hold = hold
 	return nil
 }
 
@@ -139,7 +235,7 @@ func (m Model) loadUsages() tea.Cmd {
 		err := fleetdb.NewImporter(m.Config.Database, m.Config.Client, m.Config.Logger).LoadSiteEnergyData(m.Config.Site)
 		if err != nil {
 			m.Config.Logger.Error("Error loading site energy data", slog.Any("error", err))
-			m.background <- UpdateStatus{Message: "Error loading site energy data"}
+			m.background <- UpdateStatus{Message: "Error loading site energy data", TTL: 30 * time.Second}
 			return
 		}
 
@@ -148,13 +244,15 @@ func (m Model) loadUsages() tea.Cmd {
 		usages, err := usage.GetEnergyUsage(start, end)
 		if err != nil {
 			m.Config.Logger.Error("Error getting energy usage", slog.Any("error", err))
-			m.background <- UpdateStatus{Message: fmt.Sprintf("Error getting energy usage: %s", err)}
+			m.background <- UpdateStatus{Message: fmt.Sprintf("Error getting energy usage: %s", err), TTL: 30 * time.Second}
 			return
 		}
 		m.background <- UpdateUsageCmd{Usages: usages}
 	}()
 
-	return tea.Batch(cmdize(UpdateStatus{Message: "Loading site usage..."}), waitForChannel(m.background))
+	statusCmd := cmdize(UpdateStatus{Message: "Loading site usage...", TTL: 30 * time.Second})
+	waitCmd := waitForChannel(m.background)
+	return tea.Batch(statusCmd, waitCmd)
 }
 
 func (m Model) getDateRange() (time.Time, time.Time) {
@@ -169,11 +267,40 @@ func (m Model) getDateRange() (time.Time, time.Time) {
 	return fleetdb.GetDateRange(fleetdb.BillingRange, start)
 }
 
+func (m Model) liveReport() string {
+
+	if m.live.Timestamp == "" {
+		return "No live data..."
+	}
+
+	b := strings.Builder{}
+	if m.hold != nil {
+		b.WriteString(fmt.Sprintf("## Battery Hold\n\n- Started at %s\n", m.hold.Started.Format("2006-01-02 15:04:05")))
+		b.WriteString(fmt.Sprintf("- Battery was at %d%% when the hold started.\n", m.hold.StartBatteryCharge))
+		b.WriteString(fmt.Sprintf("- Reserve will be restored to %d%% when the hold is cancelled.\n", m.hold.BatteryReserveAtStart))
+		b.WriteString("- press 'h' to cancel hold.\n\n")
+	}
+
+	updated, err := time.Parse(time.RFC3339, m.live.Timestamp)
+	if err != nil {
+		m.Config.Logger.Error("Error parsing timestamp from live status", slog.String("timestamp", m.live.Timestamp))
+		updated = time.Now()
+	}
+
+	kwh := func(usage float64) float64 { return usage / 1000 }
+
+	b.WriteString(fmt.Sprintf("## Live Data\n\n- Last updated at %s\n", updated.Format("2006-01-02 15:04:05")))
+	b.WriteString(fmt.Sprintf("- Solar Production: %.2f kwh\n", kwh(m.live.SolarPower)))
+	b.WriteString(fmt.Sprintf("- Home Usage: %.2f kwh\n", kwh(m.live.LoadPower)))
+	b.WriteString(fmt.Sprintf("- Grid Usage: %.2f kwh\n", kwh(m.live.GridPower)))
+	b.WriteString(fmt.Sprintf("- Battery Usage: %.2f kwh\n", kwh(m.live.BatteryPower)))
+	b.WriteString(fmt.Sprintf("- Battery Charge: %d%%\n", int(m.live.PercentageCharged)))
+	return b.String()
+}
+
 func (m Model) usageReport() (string, error) {
 	b := strings.Builder{}
 	site := m.Config.Site
-
-	b.WriteString(fmt.Sprintf("# %s\n", site.Name))
 
 	type analysis struct {
 		Tariff          *fleetdb.Tariff

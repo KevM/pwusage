@@ -2,9 +2,7 @@ module github.com/kevm/pw-usage
 
 go 1.22.3
 
-replace github.com/kevm/pw-usage/cmd/pocketbase/migrations => ./migrations
-
-replace github.com/kevm/pw-usage/internal/monitoring => ./internal/monitoring
+replace github.com/kevm/bubbleo => /Users/kevm/github/bubbleo
 
 require (
 	github.com/charmbracelet/bubbletea v0.26.1
@@ -32,6 +30,7 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/gorilla/css v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/kevm/bubbleo v0.1.5 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
