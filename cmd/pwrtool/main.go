@@ -32,7 +32,7 @@ func main() {
 		c.Logger.Error("error creating config", slog.Any("error", err))
 		os.Exit(-1)
 	}
-	c.Logger.Info("Starting pwrtool cli", slog.String("version", version), slog.String("commit", commit), slog.String("date", date), slog.String("weburl", weburl))
+	c.Logger.Info("Starting pwrtool cli", slog.String("version", version), slog.String("commit", commit), slog.String("date", date))
 
 	defer c.Database.Close()
 	var rootCmd = &cobra.Command{Use: "pw-usage"}
