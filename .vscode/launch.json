@@ -9,7 +9,7 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "${workspaceFolder}/cmd/pwrwool/",
+      "program": "${workspaceFolder}/cmd/pwrtool/",
       "args": ["login"] //, "2252268092126997"] //, "week", "20240501"],  //site-id:2252268092126997
     },
     {
@@ -18,7 +18,7 @@
       "debugAdapter": "dlv-dap",
       "request": "attach",
       "mode": "remote",
-      "remotePath": "${workspaceFolder}/cmd/pwrwool",
+      "remotePath": "${workspaceFolder}/cmd/pwrtool",
       "port": 2345,
       "host": "127.0.0.1",
       "preLaunchTask": "Run headless dlv" // Here !
