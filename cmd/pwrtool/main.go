@@ -15,8 +15,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	version string
+	commit  string
+	date    string
+	weburl  string
+)
+
 func main() {
-	c, err := config.NewConfig()
+	c, err := config.NewConfig(weburl)
 	if err != nil {
 		if errors.Is(err, &config.NoAuthTokenError{}) && os.Args[0] != "login" {
 			c.Logger.Warn("no auth token found. Forcing authentication")
@@ -25,6 +32,7 @@ func main() {
 		c.Logger.Error("error creating config", slog.Any("error", err))
 		os.Exit(-1)
 	}
+	c.Logger.Info("Starting pwrtool cli", slog.String("version", version), slog.String("commit", commit), slog.String("date", date), slog.String("weburl", weburl))
 
 	defer c.Database.Close()
 	var rootCmd = &cobra.Command{Use: "pw-usage"}
@@ -221,7 +229,7 @@ func cmdLogin(c config.Config) *cobra.Command {
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			c.Logger.Info("Login to the Tesla API")
-			config, err := auth.NewLoginAuthConfig(c.Logger)
+			config, err := auth.NewLoginAuthConfig(weburl, c.Logger)
 			if err != nil {
 				c.Logger.Error("error creating auth config", slog.Any("error", err))
 				os.Exit(1)

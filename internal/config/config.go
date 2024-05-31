@@ -28,10 +28,10 @@ func (e *NoAuthTokenError) Error() string {
 	return "no auth token found"
 }
 
-func NewConfig() (Config, error) {
+func NewConfig(weburl string) (Config, error) {
 	godotenv.Load()
 
-	logFile, err := os.OpenFile("pwusage.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	logFile, err := os.OpenFile("pwrtool.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		panic(err)
 	}
@@ -40,7 +40,7 @@ func NewConfig() (Config, error) {
 		Logger: logger,
 	}
 
-	authCfg, err := auth.NewLoginAuthConfig(logger)
+	authCfg, err := auth.NewLoginAuthConfig(weburl, logger)
 	if err != nil {
 		return result, err
 	}
@@ -78,7 +78,7 @@ func NewConfig() (Config, error) {
 }
 
 func (c Config) SaveToDotFiles() error {
-	authCfg, err := auth.NewLoginAuthConfig(c.Logger)
+	authCfg, err := auth.NewLoginAuthConfig("", c.Logger)
 	if err != nil {
 		return err
 	}

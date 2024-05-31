@@ -46,23 +46,13 @@ Your solar production is mostly _On-Peak_ and a single Tesla Powerwall 2 has 11.
 ### Running PWUsage Locally
 
 1. Clone repo
-2. Copy `./app/pypowerwall-example.env` to `./app/pypowerwall.env` 
-   * Add your Tesla Powerwall gateway login details to this file. If this is your first time [you will need to setup credentials](https://www.tesla.com/support/energy/powerwall/own/connecting-network). This can be a bit tricky but if you are running a docker container... We believe in you.
-3. **TODO Automate this*** Build web page: 
+2. Copy `./cmd/web-app/example.env` to `./cmd/web-app/.env` 
+   * You'll need to have a [Tesla Developer account](https://developer.tesla.com/dashboard) and have [requested API access](https://developer.tesla.com/request). Rename the `example.env` files and edit their contents for your developer account.
+3. Start the web application
    * `cd ./cmd/web-app`
-   * `sudo apt install npm vite xcb`
    * `npm install`
-   * `npm run build`
-4. `docker-compose up`
+   * `npm run dev`
+4. Start the TUI 
+   * `cd ./cmd/pwrtool`
+   * `go run . tui`
 
-### Build Docker Container 
-
-* `docker buildx build --platform=linux/amd64 -t pwusage .`
-* `docker buildx build --platform=linux/arm64v8 -t pwusage .`
-
-### Building Web App
-
-   * `cd ./cmd/web-app`
-   * `sudo apt install npm vite xcb`
-   * `npm install`
-   * `npm run build`
