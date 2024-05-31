@@ -10,7 +10,7 @@ import (
 
 func TestTariffSchedule_GetTariffPeriod(t *testing.T) {
 	siteid := "2252268092126997"
-	config, err := NewConfig()
+	config, err := NewConfig("")
 	require.NoError(t, err)
 	defer config.Database.DeleteDb()
 

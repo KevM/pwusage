@@ -82,7 +82,7 @@ type AuthConfig struct {
 	nonce string
 }
 
-func NewLoginAuthConfig(logger *slog.Logger) (AuthConfig, error) {
+func NewLoginAuthConfig(weburl string, logger *slog.Logger) (AuthConfig, error) {
 	result := AuthConfig{
 		Logger: logger,
 		Action: "login",
@@ -92,14 +92,21 @@ func NewLoginAuthConfig(logger *slog.Logger) (AuthConfig, error) {
 	logger.Debug("current working directory", slog.String("cwd", cwd))
 
 	baseurl := os.Getenv("PUBLIC_WEBAPP_BASE_URL")
-	if baseurl == "" {
-		return result, fmt.Errorf("PUBLIC_WEBAPP_BASE_URL env not set")
+	if baseurl != "" {
+		logger.Debug("weburl set via env", slog.String("baseurl", baseurl))
+	} else if weburl != "" {
+		baseurl = weburl
+		logger.Debug("weburl set via ldflags", slog.String("baseurl", baseurl))
+	} else {
+		baseurl = "http://localhost:6789"
+		logger.Debug("weburl unknown, not set via env or ldflags using default", slog.String("baseurl", baseurl))
 	}
 	result.WebAppBase = baseurl
 
 	clientid := os.Getenv("PUBLIC_TESLA_OAUTH_CLIENT_ID")
 	if clientid == "" {
-		return result, fmt.Errorf("PUBLIC_TESLA_OAUTH_CLIENT_ID env not set")
+		clientid = "ace37a750639-4a1c-84f7-478569684385"
+		// return result, fmt.Errorf("PUBLIC_TESLA_OAUTH_CLIENT_ID env not set")
 	}
 	result.AuthClientId = clientid
 
