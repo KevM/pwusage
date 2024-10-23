@@ -23,7 +23,6 @@ func (k KeyMap) ShortHelp() []key.Binding {
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		k.ShortHelp(),
-		k.ShortHelp(),
 	}
 }
 
