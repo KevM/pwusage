@@ -120,7 +120,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, tickUsages)
 	case UpdateLiveEvt:
 		cmd := m.loadLive()
-		tickLive := tea.Every(30*time.Second, func(_ time.Time) tea.Msg { return UpdateUsageEvt{} })
+		tickLive := tea.Every(30*time.Second, func(_ time.Time) tea.Msg { return UpdateLiveEvt{} })
 		return m, tea.Batch(cmd, tickLive)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
