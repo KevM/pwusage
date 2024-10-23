@@ -38,8 +38,8 @@ func postBody(c fastshot.ClientHttpMethods, url string, body interface{}) error 
 		return fmt.Errorf("error posting to url: %s %w", url, err)
 	}
 
-	if response.IsError() {
-		bodyBytes, err := io.ReadAll(response.RawBody())
+	if response.Status().IsError() {
+		bodyBytes, err := io.ReadAll(response.Body().Raw())
 		if err != nil {
 			return fmt.Errorf("non 200 ok response (%s) returned from web service; failed to read body", response.Status())
 		}
