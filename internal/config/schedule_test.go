@@ -65,4 +65,14 @@ func TestTariffSchedule_GetTariffPeriod(t *testing.T) {
 	require.Equal(t, expectedEnd, tp.End)
 	expectedStart = time.Date(2024, 4, 4, 8, 0, 0, 0, site.Location)
 	require.Equal(t, expectedStart, tp.Start)
+
+	boundary = time.Date(2024, 7, 31, 23, 59, 59, 9, site.Location)
+	tp = schedule.GetTariffPeriod(boundary)
+	require.NotNil(t, tp)
+	require.Equal(t, "OFF_PEAK", tp.Tariff.Name)
+	// require.Equal(t, "Summer", tp.Season.Name)
+	// expectedEnd = time.Date(2024, 4, 4, 20, 0, 0, 0, site.Location)
+	// require.Equal(t, expectedEnd, tp.End)
+	// expectedStart = time.Date(2024, 4, 4, 8, 0, 0, 0, site.Location)
+	// require.Equal(t, expectedStart, tp.Start)
 }
