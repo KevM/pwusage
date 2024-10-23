@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/kevm/pw-usage/internal/auth"
 	"github.com/kevm/pw-usage/internal/fleetapi"
@@ -17,8 +18,9 @@ type Config struct {
 	Client   *fleetapi.Client
 	Logger   *slog.Logger
 
-	Site         *fleetdb.Site
-	BillStartDay int
+	Site                *fleetdb.Site
+	BillStartDayOfMonth int
+	CurrentDate         time.Time
 }
 
 type NoAuthTokenError struct {
@@ -72,7 +74,8 @@ func NewConfig(weburl string) (Config, error) {
 		}
 	}
 
-	result.BillStartDay = dotfiles.BillStartDay
+	result.BillStartDayOfMonth = dotfiles.BillStartDay
+	result.CurrentDate = time.Now()
 
 	return result, nil
 }
@@ -88,7 +91,7 @@ func (c Config) SaveToDotFiles() error {
 		return fmt.Errorf("could not load dot files for saving: %w", dotfiles.Error)
 	}
 
-	dotfiles.BillStartDay = c.BillStartDay
+	dotfiles.BillStartDay = c.BillStartDayOfMonth
 	if c.Site != nil {
 		dotfiles.Siteid = c.Site.Id
 	}

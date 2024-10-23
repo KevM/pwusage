@@ -140,7 +140,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case settings.SettingsUpdated:
 		cmds := []tea.Cmd{}
 		// update config
-		m.Config.BillStartDay = msg.BillingStartDay
+		m.Config.BillStartDayOfMonth = msg.BillingStartDay
 		cmd := m.loadSite(msg.SiteId)
 		cmds = append(cmds, cmd)
 
@@ -257,11 +257,12 @@ func (m Model) loadUsages() tea.Cmd {
 
 func (m Model) getDateRange() (time.Time, time.Time) {
 	var start time.Time
-	now := time.Now().In(m.Config.Site.Location)
-	if now.Day() < m.Config.BillStartDay {
-		start = time.Date(now.Year(), now.Month()-1, m.Config.BillStartDay, 0, 0, 0, 0, m.Config.Site.Location)
+	t := m.Config.CurrentDate
+
+	if t.Day() < m.Config.BillStartDayOfMonth {
+		start = time.Date(t.Year(), t.Month()-1, m.Config.BillStartDayOfMonth, 0, 0, 0, 0, m.Config.Site.Location)
 	} else {
-		start = time.Date(now.Year(), now.Month(), m.Config.BillStartDay, 0, 0, 0, 0, m.Config.Site.Location)
+		start = time.Date(t.Year(), t.Month(), m.Config.BillStartDayOfMonth, 0, 0, 0, 0, m.Config.Site.Location)
 	}
 
 	return fleetdb.GetDateRange(fleetdb.BillingRange, start)
@@ -311,17 +312,18 @@ func (m Model) usageReport() (string, error) {
 	}
 
 	start, end := m.getDateRange()
-	tariffMap := map[string]analysis{}
+	analysisMapByTariff := map[string]analysis{}
 	for _, t := range site.Tariffs {
 		season := t.FindSeason(start)
-		tariffMap[t.Name] = analysis{
+		analysisMapByTariff[t.Name] = analysis{
 			Tariff: &t,
 			Season: season,
 		}
 	}
 
+	// reduce the usages into analysis structs by tariff
 	for _, eu := range m.usages {
-		t, ok := tariffMap[eu.Tariff.Name]
+		t, ok := analysisMapByTariff[eu.Tariff.Name]
 		if !ok {
 			m.Config.Logger.Error("Error getting tariff for result - skipping", slog.String("tariff", eu.Tariff.Name))
 			continue
@@ -329,8 +331,10 @@ func (m Model) usageReport() (string, error) {
 		t.HomeUsage += eu.HomeUsage
 		t.SolarProduction += eu.SolarProduction
 		t.GridUsage += eu.GridUsage
-		tariffMap[eu.Tariff.Name] = t
+		analysisMapByTariff[eu.Tariff.Name] = t
 	}
+
+	// create report string result
 
 	kwh := func(usage float64) float64 { return usage / 1000 }
 	// cost returns the cost or credit for the given season and usage. First result is the label, Second is the cost/credit
@@ -343,7 +347,7 @@ func (m Model) usageReport() (string, error) {
 
 	b.WriteString(fmt.Sprintf("## Time of Use Report\n\n- billing period from %s to %s\n", start.Format("2006-01-02"), end.Format("2006-01-02")))
 	// show row for each tariff with home usage and solar production and how much it will cost
-	for _, t := range tariffMap {
+	for _, t := range analysisMapByTariff {
 		usageLabel, cost := cost(*t.Season, t.GridUsage)
 		b.WriteString(fmt.Sprintf("### Tariff %s season %s\n", t.Tariff.Name, t.Season.Name))
 		b.WriteString(fmt.Sprintf("* Buy rate $%.2f / kwh\n* Sell rate $%.2f / kwh\n", t.Season.BuyRate, t.Season.SellRate))
