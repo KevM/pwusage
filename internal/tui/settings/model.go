@@ -44,7 +44,7 @@ func NewModel(config *config.Config) *Model {
 	result := &Model{
 		Config:          config,
 		SelectedProduct: selectedProduct,
-		BillingStartDay: config.BillStartDay,
+		BillingStartDay: config.BillStartDayOfMonth,
 	}
 
 	result.form = result.newForm(nil)
