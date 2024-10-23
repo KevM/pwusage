@@ -132,18 +132,30 @@ func matchSeason(t time.Time, season TariffSeason) bool {
 	}
 
 	if betweenFromTo {
-		if month >= season.FromMonth && month <= season.ToMonth && matchDay(t, season) {
+		if month > season.FromMonth && month < season.ToMonth {
+			return true
+		}
+		if month == season.FromMonth && season.FromDay < t.Day() {
+			return true
+		}
+		if month == season.ToMonth && season.ToDay > t.Day() {
 			return true
 		}
 	} else {
-		if (month >= season.FromMonth || month <= season.ToMonth) && matchDay(t, season) {
+		if month < season.FromMonth || month > season.ToMonth {
+			return true
+		}
+		if month == season.FromMonth && season.FromDay > t.Day() {
+			return true
+		}
+		if month == season.ToMonth && season.ToDay < t.Day() {
 			return true
 		}
 	}
 	return false
 }
 
-func matchDay(t time.Time, season TariffSeason) bool {
-	day := t.Day()
-	return day >= season.FromDay && day <= season.ToDay
-}
+// func matchDay(t time.Time, season TariffSeason) bool {
+// 	day := t.Day()
+// 	return day >= season.FromDay && day <= season.ToDay
+// }
