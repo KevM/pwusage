@@ -38,16 +38,16 @@ func getOne[T any](c fastshot.ClientHttpMethods, url string, query string) (T, e
 		return result, fmt.Errorf("error getting from url: %s %w", url, err)
 	}
 
-	if response.IsError() {
-		bodyBytes, err := io.ReadAll(response.RawBody())
+	if response.Status().IsError() {
+		bodyBytes, err := io.ReadAll(response.Body().Raw())
 		if err != nil {
-			return result, fmt.Errorf("non 200 ok response (%s) returned from web service; failed to read body", response.Status())
+			return result, fmt.Errorf("non 200 ok response (%d) returned from web service; failed to read body", response.Status().Code())
 		}
 		bodyString := string(bodyBytes)
-		return result, fmt.Errorf("non 200 ok response (%s) returned from web service:\n%s", response.Status(), bodyString)
+		return result, fmt.Errorf("non 200 ok response (%d) returned from web service:\n%s", response.Status().Code(), bodyString)
 	}
 
-	body, err := io.ReadAll(response.RawBody())
+	body, err := io.ReadAll(response.Body().Raw())
 	if err != nil {
 		return result, fmt.Errorf("error reading response body: %w", err)
 	}
