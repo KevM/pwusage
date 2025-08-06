@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -345,9 +346,17 @@ func (m Model) usageReport() (string, error) {
 		return "Credit", 0 - (season.SellRate * kwh(usage))
 	}
 
+	// Sort the map by tariff name
+	var sortedTariffNames []string
+	for name := range analysisMapByTariff {
+		sortedTariffNames = append(sortedTariffNames, name)
+	}
+	sort.Strings(sortedTariffNames) // Sort the tariff names alphabetically
+
 	b.WriteString(fmt.Sprintf("## Time of Use Report\n\n- billing period from %s to %s\n", start.Format("2006-01-02"), end.Format("2006-01-02")))
 	// show row for each tariff with home usage and solar production and how much it will cost
-	for _, t := range analysisMapByTariff {
+	for _, name := range sortedTariffNames {
+		t := analysisMapByTariff[name]
 		usageLabel, cost := cost(*t.Season, t.GridUsage)
 		b.WriteString(fmt.Sprintf("### Tariff %s season %s\n", t.Tariff.Name, t.Season.Name))
 		b.WriteString(fmt.Sprintf("* Buy rate $%.2f / kwh\n* Sell rate $%.2f / kwh\n", t.Season.BuyRate, t.Season.SellRate))
