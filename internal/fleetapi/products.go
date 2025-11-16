@@ -9,7 +9,7 @@ type FleetProduct struct {
 	EnergySiteID                       int64   `json:"energy_site_id"`
 	ResourceType                       string  `json:"resource_type"`
 	SiteName                           string  `json:"site_name"`
-	ID                                 string  `json:"id"`
+	ID                                 any     `json:"id"`
 	GatewayID                          string  `json:"gateway_id"`
 	AssetSiteID                        string  `json:"asset_site_id"`
 	WarpSiteNumber                     string  `json:"warp_site_number"`
@@ -50,6 +50,18 @@ func (c Client) GetProducts() ([]FleetProduct, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error getting energy history: %w", err)
 	}
-	r := result.Response
-	return r, nil
+
+	// filter out non-energy (car) products
+	energyProducts := make([]FleetProduct, 0, result.Count)
+	for _, product := range result.Response {
+		if product.EnergySiteID != 0 {
+			energyProducts = append(energyProducts, product)
+			continue
+		}
+		c.logger.Debug("Skipping non-energy product",
+			slog.String("resource_type", product.ResourceType),
+			slog.String("id", fmt.Sprint(product.ID)))
+	}
+
+	return energyProducts, nil
 }
