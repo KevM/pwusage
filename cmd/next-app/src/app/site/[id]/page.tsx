@@ -1,7 +1,11 @@
 import { EnergyRepo } from '@/lib/energy-repo';
 import Link from 'next/link';
-
+import { EnergyChartWithNav } from '@/components/EnergyChartWithNav';
+import { SiteLiveStats } from '@/components/SiteLiveStats';
 import { SettingsRepo } from '@/lib/settings-repo';
+import { TeslaClient } from '@/lib/tesla-client';
+import { Schedule } from '@/lib/schedule';
+import { cookies } from 'next/headers';
 
 export default async function SitePage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
@@ -12,6 +16,57 @@ export default async function SitePage({ params }: { params: Promise<{ id: strin
     if (!site) {
         return <div>Site not found</div>;
     }
+
+    // Get live stats for initial render
+    const cookieStore = await cookies();
+    const token = cookieStore.get('access_token')?.value;
+    let initialStats = {
+        solarPower: 0,
+        loadPower: 0,
+        batteryPower: 0,
+        gridPower: 0,
+        percentageCharged: 0,
+        currentTariff: 'Unknown'
+    };
+
+    if (token) {
+        try {
+            const client = new TeslaClient(token);
+            const liveStatus = await client.getLiveStatus(id);
+
+            // Get current tariff
+            let currentTariff = 'Unknown';
+            if (site.tariffs.length > 0) {
+                const schedule = new Schedule(site.tariffs);
+                const tariffPeriod = schedule.getTariffPeriod(new Date());
+                if (tariffPeriod) {
+                    const season = tariffPeriod.season.name || 'Season';
+                    const tariffName = tariffPeriod.tariff.name || 'Unknown';
+                    currentTariff = `${season} - ${tariffName}`;
+                }
+            }
+
+            initialStats = {
+                solarPower: liveStatus.solar_power,
+                loadPower: liveStatus.load_power,
+                batteryPower: liveStatus.battery_power,
+                gridPower: liveStatus.grid_power,
+                percentageCharged: liveStatus.percentage_charged,
+                currentTariff
+            };
+        } catch (error) {
+            console.error('Failed to fetch initial live stats:', error);
+        }
+    }
+
+    // Get today's hourly data
+    const today = new Date();
+    const hourlyData = repo.getHourlyEnergyData(id, today);
+    // Use local date components instead of UTC
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    const todayStr = `${year}-${month}-${day}`;
 
     // Calculate period based on billing start day
     const billingDay = settingsRepo.getBillingStartDay();
@@ -58,10 +113,20 @@ export default async function SitePage({ params }: { params: Promise<{ id: strin
 
     return (
         <div className="flex min-h-screen flex-col items-center p-24">
-            <div className="w-full max-w-4xl">
+            <div className="w-full max-w-6xl">
                 <Link href="/" className="text-blue-600 hover:underline mb-4 block">&larr; Back to Dashboard</Link>
-                <h1 className="text-4xl font-bold mb-2">{site.name}</h1>
-                <p className="text-gray-600 mb-8">Site ID: {site.id}</p>
+                <h1 className="text-4xl font-bold mb-4">{site.name}</h1>
+
+                {/* Live Stats */}
+                <SiteLiveStats siteId={id} initialStats={initialStats} />
+
+                {/* Hourly Chart with Navigation */}
+                <div className="mb-8">
+                    <EnergyChartWithNav
+                        initialData={{ date: todayStr, data: hourlyData }}
+                        siteId={id}
+                    />
+                </div>
 
                 <h2 className="text-2xl font-bold mb-4">Usage for {start.toLocaleDateString()} - {end.toLocaleDateString()}</h2>
 
@@ -72,19 +137,19 @@ export default async function SitePage({ params }: { params: Promise<{ id: strin
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                 <div>
                                     <p className="text-sm text-gray-500">Home Usage</p>
-                                    <p className="text-lg font-medium">{(t.home / 1000).toFixed(2)} kWh</p>
+                                    <p className="text-lg font-medium text-blue-700">{(t.home / 1000).toFixed(2)} kWh</p>
                                 </div>
                                 <div>
                                     <p className="text-sm text-gray-500">Solar Production</p>
-                                    <p className="text-lg font-medium">{(t.solar / 1000).toFixed(2)} kWh</p>
+                                    <p className="text-lg font-medium text-amber-700">{(t.solar / 1000).toFixed(2)} kWh</p>
                                 </div>
                                 <div>
                                     <p className="text-sm text-gray-500">Grid Usage</p>
-                                    <p className="text-lg font-medium">{(t.grid / 1000).toFixed(2)} kWh</p>
+                                    <p className="text-lg font-medium text-orange-700">{(t.grid / 1000).toFixed(2)} kWh</p>
                                 </div>
                                 <div>
                                     <p className="text-sm text-gray-500">Battery Change</p>
-                                    <p className="text-lg font-medium">{(t.battery / 1000).toFixed(2)} kWh</p>
+                                    <p className="text-lg font-medium text-purple-700">{(t.battery / 1000).toFixed(2)} kWh</p>
                                 </div>
                             </div>
                         </div>

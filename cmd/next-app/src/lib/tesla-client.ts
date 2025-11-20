@@ -130,4 +130,72 @@ export class TeslaClient {
         const result = await this.fetch<{ response: EnergySiteInfo }>(`/api/1/energy_sites/${siteId}/site_info`);
         return result.response;
     }
+
+    async getEnergyHistory(siteId: string, start: Date, end: Date, period: string = "day", timeZone: string): Promise<EnergyHistoryEntry[]> {
+        const s = start.toISOString();
+        const e = end.toISOString();
+        // Tesla API expects specific format, but ISO might work or we need to match Go's format.
+        // Go uses: 2006-01-02T15:04:05-07:00
+        // JS toISOString is 2024-11-20T15:37:03.000Z (UTC).
+        // We might need to handle timezone carefully if the API expects local time with offset.
+        // For now, let's pass ISO string and see, or construct it manually if needed.
+        // Actually, let's use a helper to format it similar to Go if we can, but standard ISO is usually safe.
+
+        const query = new URLSearchParams({
+            kind: 'energy',
+            start_date: s,
+            end_date: e,
+            period: period,
+            time_zone: timeZone
+        });
+
+        const result = await this.fetch<{ response: { time_series: EnergyHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
+        return result.response.time_series;
+    }
+
+    async getLiveStatus(siteId: string): Promise<EnergySiteLiveStatus> {
+        const result = await this.fetch<{ response: EnergySiteLiveStatus }>(`/api/1/energy_sites/${siteId}/live_status`);
+        return result.response;
+    }
+}
+
+export interface EnergySiteLiveStatus {
+    solar_power: number;
+    percentage_charged: number;
+    backup_capable: boolean;
+    battery_power: number;
+    load_power: number;
+    grid_status: string;
+    grid_services_active: boolean;
+    grid_power: number;
+    grid_services_power: number;
+    generator_power: number;
+    island_status: string;
+    storm_mode_active: boolean;
+    timestamp: string;
+}
+
+export interface EnergyHistoryEntry {
+    timestamp: string;
+    solar_energy_exported: number;
+    generator_energy_exported: number;
+    grid_energy_imported: number;
+    grid_services_energy_imported: number;
+    grid_services_energy_exported: number;
+    grid_energy_exported_from_solar: number;
+    grid_energy_exported_from_generator: number;
+    grid_energy_exported_from_battery: number;
+    battery_energy_exported: number;
+    battery_energy_imported_from_grid: number;
+    battery_energy_imported_from_solar: number;
+    battery_energy_imported_from_generator: number;
+    consumer_energy_imported_from_grid: number;
+    consumer_energy_imported_from_solar: number;
+    consumer_energy_imported_from_battery: number;
+    consumer_energy_imported_from_generator: number;
+    total_home_usage: number;
+    total_solar_generation: number;
+    total_battery_charge: number;
+    total_battery_discharge: number;
+    total_grid_energy_exported: number;
 }
