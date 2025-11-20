@@ -1,0 +1,96 @@
+import { EnergyRepo } from '@/lib/energy-repo';
+import Link from 'next/link';
+
+import { SettingsRepo } from '@/lib/settings-repo';
+
+export default async function SitePage({ params }: { params: Promise<{ id: string }> }) {
+    const { id } = await params;
+    const repo = new EnergyRepo();
+    const settingsRepo = new SettingsRepo();
+    const site = repo.getSite(id);
+
+    if (!site) {
+        return <div>Site not found</div>;
+    }
+
+    // Calculate period based on billing start day
+    const billingDay = settingsRepo.getBillingStartDay();
+    const now = new Date();
+    let startMonth = now.getMonth();
+    let startYear = now.getFullYear();
+
+    // If today is before the billing day, we are in the previous month's billing cycle
+    if (now.getDate() < billingDay) {
+        startMonth--;
+    }
+
+    const start = new Date(startYear, startMonth, billingDay);
+    // End date is start date + 1 month
+    const end = new Date(start.getFullYear(), start.getMonth() + 1, billingDay);
+
+    const usage = repo.getEnergyUsage(id, start, end);
+
+    // Group by tariff
+    const tariffUsage = new Map<string, {
+        tariffName: string;
+        home: number;
+        grid: number;
+        solar: number;
+        battery: number;
+    }>();
+
+    usage.forEach(u => {
+        const name = u.tariff.name || 'Unknown';
+        const existing = tariffUsage.get(name) || {
+            tariffName: name,
+            home: 0,
+            grid: 0,
+            solar: 0,
+            battery: 0,
+        };
+
+        existing.home += u.homeUsage;
+        existing.grid += u.gridUsage;
+        existing.solar += u.solarProduction;
+        existing.battery += u.batteryChange;
+        tariffUsage.set(name, existing);
+    });
+
+    return (
+        <div className="flex min-h-screen flex-col items-center p-24">
+            <div className="w-full max-w-4xl">
+                <Link href="/" className="text-blue-600 hover:underline mb-4 block">&larr; Back to Dashboard</Link>
+                <h1 className="text-4xl font-bold mb-2">{site.name}</h1>
+                <p className="text-gray-600 mb-8">Site ID: {site.id}</p>
+
+                <h2 className="text-2xl font-bold mb-4">Usage for {start.toLocaleDateString()} - {end.toLocaleDateString()}</h2>
+
+                <div className="grid gap-6">
+                    {Array.from(tariffUsage.values()).map((t) => (
+                        <div key={t.tariffName} className="border p-6 rounded shadow">
+                            <h3 className="text-xl font-semibold mb-4">{t.tariffName}</h3>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div>
+                                    <p className="text-sm text-gray-500">Home Usage</p>
+                                    <p className="text-lg font-medium">{(t.home / 1000).toFixed(2)} kWh</p>
+                                </div>
+                                <div>
+                                    <p className="text-sm text-gray-500">Solar Production</p>
+                                    <p className="text-lg font-medium">{(t.solar / 1000).toFixed(2)} kWh</p>
+                                </div>
+                                <div>
+                                    <p className="text-sm text-gray-500">Grid Usage</p>
+                                    <p className="text-lg font-medium">{(t.grid / 1000).toFixed(2)} kWh</p>
+                                </div>
+                                <div>
+                                    <p className="text-sm text-gray-500">Battery Change</p>
+                                    <p className="text-lg font-medium">{(t.battery / 1000).toFixed(2)} kWh</p>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
