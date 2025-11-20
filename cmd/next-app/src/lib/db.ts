@@ -28,6 +28,31 @@ export interface Tariff {
     site_id: string;
     updated: string;
     name: string | null;
+    seasons?: TariffSeason[];
+}
+
+export interface TariffSeason {
+    id: number;
+    tariff_id: number;
+    name: string | null;
+    from_month: number;
+    from_day: number;
+    to_month: number;
+    to_day: number;
+    buy_rate: number;
+    sell_rate: number;
+    schedules?: TariffSchedule[];
+}
+
+export interface TariffSchedule {
+    id: number;
+    season_id: number;
+    from_day_of_week: number | null;
+    from_hour: number | null;
+    from_minute: number | null;
+    to_day_of_week: number | null;
+    to_hour: number | null;
+    to_minute: number | null;
 }
 
 export interface EnergyUsage {

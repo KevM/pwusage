@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { NextRequest, NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
+import { SettingsRepo } from '@/lib/settings-repo';
 
 export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
@@ -52,6 +53,11 @@ export async function GET(request: NextRequest) {
     // Save tokens
     cookieStore.set('access_token', authData.access_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: authData.expires_in });
     cookieStore.set('refresh_token', authData.refresh_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+
+    // Also save to DB for background worker
+    const settingsRepo = new SettingsRepo();
+    settingsRepo.setAccessToken(authData.access_token);
+    settingsRepo.setRefreshToken(authData.refresh_token);
 
     // Clean up auth cookies
     cookieStore.delete('auth_state');
