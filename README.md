@@ -56,3 +56,28 @@ Your solar production is mostly _On-Peak_ and a single Tesla Powerwall 2 has 11.
    * `cd ./cmd/pwrtool`
    * `go run . tui`
 
+### Setup
+
+If you're starting from an empty DB for the Next.js app:
+
+1. Create the schema:
+   ```bash
+   cd cmd/next-app
+   ./create-db.sh
+   ```
+   This creates `cmd/next-app/pwusage.db` with the required tables and foreign keys.
+
+2. Point the app/worker at it by setting `DATABASE_URL` (in `cmd/next-app/.env` or your shell), e.g.:
+   ```env
+   DATABASE_URL="file:pwusage.db"
+   ```
+
+3. Start the Next.js dev server and worker:
+   ```bash
+   cd cmd/next-app
+   npm install
+   npm run dev     # start the web app
+   npm run worker  # in another shell, to import data
+   ```
+
+4. Authenticate via the UI (or copy an existing access token into AppSettings), then the worker will upsert your site/tariff data and begin importing history.

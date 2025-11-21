@@ -5,21 +5,40 @@ import { SiteLiveStats } from '@/components/SiteLiveStats';
 import { SettingsRepo } from '@/lib/settings-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { Schedule } from '@/lib/schedule';
+import { Importer } from '@/lib/importer';
 import { cookies } from 'next/headers';
 
-export default async function SitePage({ params }: { params: Promise<{ id: string }> }) {
+export const dynamic = 'force-dynamic';
+
+export default async function SitePage({ params, searchParams }: {
+    params: Promise<{ id: string }>;
+    searchParams: Promise<{ date?: string }>;
+}) {
     const { id } = await params;
+    const { date: queryDate } = await searchParams;
     const repo = new EnergyRepo();
     const settingsRepo = new SettingsRepo();
-    const site = repo.getSite(id);
 
+    // Always ensure the site exists (idempotent) before rendering
+    const cookieStore = await cookies();
+    let token = cookieStore.get('access_token')?.value;
+    if (!token) {
+        // Fall back to saved token in AppSettings (used by worker)
+        token = settingsRepo.getAccessToken();
+    }
+    if (!token) {
+        return <div>Not authenticated</div>;
+    }
+
+    const importer = new Importer(token);
+    await importer.ensureSite(id);
+
+    const site = repo.getSite(id);
     if (!site) {
         return <div>Site not found</div>;
     }
 
     // Get live stats for initial render
-    const cookieStore = await cookies();
-    const token = cookieStore.get('access_token')?.value;
     let initialStats = {
         solarPower: 0,
         loadPower: 0,
@@ -59,18 +78,23 @@ export default async function SitePage({ params }: { params: Promise<{ id: strin
         }
     }
 
-    // Get today's hourly data
-    const today = new Date();
-    const hourlyData = repo.getHourlyEnergyData(id, today);
-    // Use local date components instead of UTC
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const todayStr = `${year}-${month}-${day}`;
+    // Get hourly data for the requested date (from query param) or today
+    const now = new Date();
+    let dateStr: string;
+
+    if (queryDate) {
+        dateStr = queryDate;
+    } else {
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        dateStr = `${year}-${month}-${day}`;
+    }
+
+    const hourlyData = repo.getHourlyEnergyData(id, dateStr, site.timezone);
 
     // Calculate period based on billing start day
     const billingDay = settingsRepo.getBillingStartDay();
-    const now = new Date();
     let startMonth = now.getMonth();
     let startYear = now.getFullYear();
 
@@ -123,7 +147,7 @@ export default async function SitePage({ params }: { params: Promise<{ id: strin
                 {/* Hourly Chart with Navigation */}
                 <div className="mb-8">
                     <EnergyChartWithNav
-                        initialData={{ date: todayStr, data: hourlyData }}
+                        initialData={{ date: dateStr, data: hourlyData }}
                         siteId={id}
                     />
                 </div>

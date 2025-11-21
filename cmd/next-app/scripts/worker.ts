@@ -5,14 +5,20 @@
  */
 
 const IMPORT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const IMPORT_GRANULARITY = process.env.IMPORT_GRANULARITY || 'day';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5173';
+const IMPORT_TIMEOUT_MS = Number(process.env.IMPORT_TIMEOUT_MS || 120000); // 2 minutes
 
 async function runImport() {
     console.log(`[${new Date().toISOString()}] Starting import...`);
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), IMPORT_TIMEOUT_MS);
+
     try {
-        const response = await fetch(`${API_URL}/api/import`, {
+        const response = await fetch(`${API_URL}/api/import?granularity=${encodeURIComponent(IMPORT_GRANULARITY)}`, {
             method: 'POST',
+            signal: controller.signal
         });
 
         if (!response.ok) {
@@ -25,12 +31,15 @@ async function runImport() {
         console.log(`[${new Date().toISOString()}] Import complete:`, result);
     } catch (error) {
         console.error(`[${new Date().toISOString()}] Import error:`, error);
+    } finally {
+        clearTimeout(timeout);
     }
 }
 
 async function main() {
     console.log('Starting background worker...');
     console.log(`Import interval: ${IMPORT_INTERVAL_MS / 1000}s`);
+    console.log(`Import granularity (period): ${IMPORT_GRANULARITY}`);
 
     // Run immediately on start
     await runImport();

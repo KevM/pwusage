@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface HourlyData {
@@ -20,6 +21,17 @@ interface DailyChartData {
 export function EnergyChartWithNav({ initialData, siteId }: { initialData: DailyChartData; siteId: string }) {
     const [chartData, setChartData] = useState(initialData);
     const [loading, setLoading] = useState(false);
+    const [isDark, setIsDark] = useState(false);
+    const router = useRouter();
+    const searchParams = useSearchParams();
+
+    useEffect(() => {
+        const mq = window.matchMedia('(prefers-color-scheme: dark)');
+        const update = () => setIsDark(mq.matches);
+        update();
+        mq.addEventListener('change', update);
+        return () => mq.removeEventListener('change', update);
+    }, []);
 
     const navigateDay = async (offset: number) => {
         setLoading(true);
@@ -38,6 +50,9 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
             if (response.ok) {
                 const data = await response.json();
                 setChartData(data);
+
+                // Update URL with date query parameter
+                router.push(`/site/${siteId}?date=${dateStr}`, { scroll: false });
             }
         } catch (error) {
             console.error('Failed to fetch chart data:', error);
@@ -59,8 +74,30 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
     const displayDate = new Date(chartData.date + 'T00:00:00');
     const isToday = displayDate.toDateString() === new Date().toDateString();
 
+    const palette = isDark
+        ? {
+            bg: 'bg-slate-900',
+            text: 'text-slate-100',
+            card: 'bg-slate-900',
+            grid: '#334155',
+            axis: '#e5e7eb',
+            tooltipBg: '#0f172a',
+            tooltipBorder: '#1e293b',
+            tooltipText: '#e5e7eb',
+        }
+        : {
+            bg: 'bg-white',
+            text: 'text-slate-900',
+            card: 'bg-white',
+            grid: '#e5e7eb',
+            axis: '#1f2937',
+            tooltipBg: '#ffffff',
+            tooltipBorder: '#e5e7eb',
+            tooltipText: '#111827',
+        };
+
     return (
-        <div className="w-full bg-white p-4 rounded shadow">
+        <div className={`w-full ${palette.card} p-4 rounded shadow`}>
             <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-semibold">Hourly Energy (kWh) & Battery SOC (%)</h3>
                 <div className="flex items-center gap-4">
@@ -86,11 +123,15 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
             </div>
             <ResponsiveContainer width="100%" height={400}>
                 <LineChart data={formattedData} key={chartData.date}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="hour" />
-                    <YAxis yAxisId="left" label={{ value: 'Energy (kWh)', angle: -90, position: 'insideLeft' }} />
-                    <YAxis yAxisId="right" orientation="right" label={{ value: 'SOC (%)', angle: 90, position: 'insideRight' }} />
-                    <Tooltip />
+                    <CartesianGrid stroke={palette.grid} strokeDasharray="3 3" />
+                    <XAxis dataKey="hour" tick={{ fill: palette.axis }} />
+                    <YAxis yAxisId="left" tick={{ fill: palette.axis }} label={{ value: 'Energy (kWh)', angle: -90, position: 'insideLeft', fill: palette.axis }} />
+                    <YAxis yAxisId="right" orientation="right" tick={{ fill: palette.axis }} label={{ value: 'SOC (%)', angle: 90, position: 'insideRight', fill: palette.axis }} />
+                    <Tooltip
+                        contentStyle={{ background: palette.tooltipBg, borderColor: palette.tooltipBorder, color: palette.tooltipText }}
+                        labelStyle={{ color: palette.tooltipText }}
+                        itemStyle={{ color: palette.tooltipText }}
+                    />
                     <Legend />
                     <Line yAxisId="left" type="monotone" dataKey="Solar Production" stroke="#f59e0b" strokeWidth={2} />
                     <Line yAxisId="left" type="monotone" dataKey="Home Usage" stroke="#3b82f6" strokeWidth={2} />

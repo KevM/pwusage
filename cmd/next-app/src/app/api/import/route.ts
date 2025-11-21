@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
 import { SettingsRepo } from '@/lib/settings-repo';
-import { TeslaClient } from '@/lib/tesla-client';
+import { EnergyRepo } from '@/lib/energy-repo';
 
-export async function POST() {
+export async function POST(request: Request) {
     try {
+        const { searchParams } = new URL(request.url);
+        const granularity = searchParams.get('granularity') || 'day';
+
         const settingsRepo = new SettingsRepo();
         const token = settingsRepo.getAccessToken();
 
@@ -12,18 +15,16 @@ export async function POST() {
             return NextResponse.json({ error: 'No access token found' }, { status: 401 });
         }
 
-        // Get all sites
-        const client = new TeslaClient(token);
-        const products = await client.getProducts();
-
+        const repo = new EnergyRepo();
+        const siteIds = repo.getSiteIds();
         const importer = new Importer(token);
 
-        for (const product of products) {
-            console.log(`Importing site ${product.energy_site_id}`);
-            await importer.importSite(product.energy_site_id.toString());
+        for (const siteId of siteIds) {
+            console.log(`Importing site ${siteId}`);
+            await importer.importSite(siteId.toString(), granularity);
         }
 
-        return NextResponse.json({ success: true, sitesImported: products.length });
+        return NextResponse.json({ success: true, sitesImported: siteIds.length, granularity });
     } catch (error) {
         console.error('Import error:', error);
         return NextResponse.json({ error: (error as Error).message }, { status: 500 });

@@ -132,15 +132,8 @@ export class TeslaClient {
     }
 
     async getEnergyHistory(siteId: string, start: Date, end: Date, period: string = "day", timeZone: string): Promise<EnergyHistoryEntry[]> {
-        const s = start.toISOString();
-        const e = end.toISOString();
-        // Tesla API expects specific format, but ISO might work or we need to match Go's format.
-        // Go uses: 2006-01-02T15:04:05-07:00
-        // JS toISOString is 2024-11-20T15:37:03.000Z (UTC).
-        // We might need to handle timezone carefully if the API expects local time with offset.
-        // For now, let's pass ISO string and see, or construct it manually if needed.
-        // Actually, let's use a helper to format it similar to Go if we can, but standard ISO is usually safe.
-
+        const s = formatDateWithTimezone(start, timeZone);
+        const e = formatDateWithTimezone(end, timeZone);
         const query = new URLSearchParams({
             kind: 'energy',
             start_date: s,
@@ -150,6 +143,21 @@ export class TeslaClient {
         });
 
         const result = await this.fetch<{ response: { time_series: EnergyHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
+        return result.response.time_series;
+    }
+
+    async getSoeHistory(siteId: string, start: Date, end: Date, period: string = "day", timeZone: string): Promise<SoeHistoryEntry[]> {
+        const s = formatDateWithTimezone(start, timeZone);
+        const e = formatDateWithTimezone(end, timeZone);
+        const query = new URLSearchParams({
+            kind: 'soe',
+            start_date: s,
+            end_date: e,
+            period,
+            time_zone: timeZone
+        });
+
+        const result = await this.fetch<{ response: { time_series: SoeHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
         return result.response.time_series;
     }
 
@@ -198,4 +206,57 @@ export interface EnergyHistoryEntry {
     total_battery_charge: number;
     total_battery_discharge: number;
     total_grid_energy_exported: number;
+}
+
+export interface SoeHistoryEntry {
+    timestamp: string;
+    percentage_charged: number;
+}
+
+function formatDateWithTimezone(date: Date, timeZone: string): string {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+        timeZoneName: 'shortOffset'
+    }).formatToParts(date);
+
+    const get = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)?.value ?? '';
+    const year = get('year');
+    const month = get('month');
+    const day = get('day');
+    const hour = get('hour');
+    const minute = get('minute');
+    const second = get('second');
+    const tzName = get('timeZoneName'); // e.g. GMT-05 or GMT-05:00
+
+    let offsetMinutes = 0;
+    const match = tzName.match(/GMT([+-]?)(\d{1,2})(?::?(\d{2}))?/i);
+    if (match) {
+        const sign = match[1] === '-' ? -1 : 1;
+        const hrs = Number(match[2]);
+        const mins = match[3] ? Number(match[3]) : 0;
+        offsetMinutes = sign * (hrs * 60 + mins);
+    } else {
+        // Fallback to local offset in the target timezone via toLocaleString
+        const localMs = date.getTime();
+        const loc = new Date(date.toLocaleString('en-US', { timeZone })).getTime();
+        offsetMinutes = Math.round((localMs - loc) / (60 * 1000));
+    }
+
+    const offH = Math.floor(Math.abs(offsetMinutes) / 60)
+        .toString()
+        .padStart(2, '0');
+    const offM = Math.abs(offsetMinutes % 60)
+        .toString()
+        .padStart(2, '0');
+    const sign = offsetMinutes >= 0 ? '+' : '-';
+    const offset = `${sign}${offH}:${offM}`;
+
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}${offset}`;
 }
