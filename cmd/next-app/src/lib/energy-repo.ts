@@ -135,7 +135,7 @@ export class EnergyRepo {
                 if (t) tariffName = t.name || 'Unknown';
             }
 
-            const key = `${tariffName}|${touName}`;
+            const key = `${tariffName}|${touName}|${buyRate}|${sellRate}`;
 
             let data = aggregation.get(key);
             if (!data) {
@@ -156,14 +156,19 @@ export class EnergyRepo {
             data.gridUsage += row.grid_power;
             data.solarProduction += row.solar_power;
             data.batteryChange += row.battery_power;
+        }
 
-            // Cost calculation: (Import * Buy) - (Export * Sell)
-            // Grid Power: + is Import, - is Export
-            const currentCost = data.cost ?? 0;
-            if (row.grid_power > 0) {
-                data.cost = currentCost + (row.grid_power / 1000) * buyRate; // kWh * $
+        // Calculate cost based on aggregated usage (Net Metering logic)
+        for (const [key, data] of aggregation) {
+            const [_, __, buyRateStr, sellRateStr] = key.split('|');
+            const buyRate = parseFloat(buyRateStr);
+            const sellRate = parseFloat(sellRateStr);
+
+            const gridKwh = data.gridUsage / 1000;
+            if (gridKwh >= 0) {
+                data.cost = gridKwh * buyRate;
             } else {
-                data.cost = currentCost + (row.grid_power / 1000) * sellRate; // Negative grid power * sell rate = negative cost (credit)
+                data.cost = gridKwh * sellRate;
             }
         }
 

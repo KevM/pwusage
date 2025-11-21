@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { formatTouName } from '../lib/format-utils';
 
 interface LiveStats {
     solarPower: number;
@@ -57,7 +58,7 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
                     <span className="text-gray-600">Charge: </span>
                     <span className="font-semibold">{Math.round(stats.percentageCharged)}%</span>
                     <span className="text-gray-600 ml-4">Tariff: </span>
-                    <span className="font-semibold">{stats.currentTariff}</span>
+                    <span className="font-semibold">{formatTouName(stats.currentTariff)}</span>
                 </div>
                 <span className="text-xs text-gray-400">Updated: {lastUpdate.toLocaleTimeString()}</span>
             </div>
