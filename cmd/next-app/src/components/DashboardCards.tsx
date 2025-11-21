@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { formatTouName } from '../lib/format-utils';
 
 interface ProductWithLiveData {
     id: string;
@@ -72,7 +73,7 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                                     <p className="text-blue-700">Load: {(product.liveLoadPower / 1000).toFixed(1)} kW</p>
                                 </div>
                             </div>
-                            <p className="text-sm text-gray-500 mt-2">Tariff: {product.currentTariff}</p>
+                            <p className="text-sm text-gray-500 mt-2">Tariff: {formatTouName(product.currentTariff)}</p>
                             <div className="mt-4">
                                 <span className="text-blue-600 hover:underline">
                                     View Details
