@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { SettingsRepo } from '@/lib/settings-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
@@ -15,14 +15,23 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Missing siteId' }, { status: 400 });
         }
 
-        const cookieStore = await cookies();
-        const token = cookieStore.get('access_token')?.value;
+        const settingsRepo = new SettingsRepo();
+        const token = settingsRepo.getAccessToken();
+        const refreshToken = settingsRepo.getRefreshToken();
 
         if (!token) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
         }
 
-        const client = new TeslaClient(token);
+        const client = new TeslaClient({
+            accessToken: token,
+            refreshToken: refreshToken,
+            onTokenUpdate: (newAccess, newRefresh) => {
+                console.log('Refreshing tokens in DB from Site Live Data API');
+                settingsRepo.setAccessToken(newAccess);
+                settingsRepo.setRefreshToken(newRefresh);
+            }
+        });
         const repo = new EnergyRepo();
 
         // Get live status

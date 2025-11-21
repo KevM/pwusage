@@ -19,18 +19,24 @@ export default async function SitePage({ params, searchParams }: {
     const repo = new EnergyRepo();
     const settingsRepo = new SettingsRepo();
 
-    // Always ensure the site exists (idempotent) before rendering
-    const cookieStore = await cookies();
-    let token = cookieStore.get('access_token')?.value;
-    if (!token) {
-        // Fall back to saved token in AppSettings (used by worker)
-        token = settingsRepo.getAccessToken();
-    }
+    const token = settingsRepo.getAccessToken();
+    const refreshToken = settingsRepo.getRefreshToken();
+
     if (!token) {
         return <div>Not authenticated</div>;
     }
 
-    const importer = new Importer(token);
+    const client = new TeslaClient({
+        accessToken: token,
+        refreshToken: refreshToken,
+        onTokenUpdate: (newAccess, newRefresh) => {
+            console.log('Refreshing tokens in DB from Site Page');
+            settingsRepo.setAccessToken(newAccess);
+            settingsRepo.setRefreshToken(newRefresh);
+        }
+    });
+
+    const importer = new Importer(client);
     await importer.ensureSite(id);
 
     const site = repo.getSite(id);
@@ -50,7 +56,6 @@ export default async function SitePage({ params, searchParams }: {
 
     if (token) {
         try {
-            const client = new TeslaClient(token);
             const liveStatus = await client.getLiveStatus(id);
 
             // Get current tariff
