@@ -72,24 +72,31 @@ export function BillSummary({ usage, activeTariffId }: BillSummaryProps) {
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] gap-2 items-center">
+
                                         <div>
-                                            <p className="text-sm text-gray-500">Grid Usage</p>
-                                            <p className="text-lg font-medium text-orange-700">{(p.grid / 1000).toFixed(2)} kWh</p>
+                                            <p className="text-sm text-gray-500">Home Usage</p>
+                                            <p className="text-lg font-medium text-blue-700">{(p.home / 1000).toFixed(2)} kWh</p>
                                         </div>
+
                                         <div className="text-2xl font-bold text-gray-400 text-center">+</div>
+
                                         <div>
                                             <p className="text-sm text-gray-500">Battery Charge</p>
                                             <p className="text-lg font-medium text-purple-700">{(p.battery / 1000).toFixed(2)} kWh</p>
                                         </div>
+
                                         <div className="text-2xl font-bold text-gray-400 text-center">−</div>
+
                                         <div>
                                             <p className="text-sm text-gray-500">Solar Production</p>
                                             <p className="text-lg font-medium text-amber-700">{(p.solar / 1000).toFixed(2)} kWh</p>
                                         </div>
+
                                         <div className="text-2xl font-bold text-gray-400 text-center">=</div>
+
                                         <div>
-                                            <p className="text-sm text-gray-500">Home Usage</p>
-                                            <p className="text-lg font-medium text-blue-700">{(p.home / 1000).toFixed(2)} kWh</p>
+                                            <p className="text-sm text-gray-500">Grid Usage</p>
+                                            <p className="text-lg font-medium text-orange-700">{(p.grid / 1000).toFixed(2)} kWh</p>
                                         </div>
                                     </div>
                                 </div>
