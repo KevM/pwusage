@@ -1,4 +1,4 @@
-import { TeslaClient, EnergyHistoryEntry } from './tesla-client';
+import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, Season, SeasonPeriods } from './tesla-client';
 import { EnergyRepo, SiteWithTariffs, UsageData } from './energy-repo';
 import { Schedule } from './schedule';
 import { db, EnergyUsage, Tariff, TariffSeason, TariffSchedule } from './db';
@@ -118,7 +118,7 @@ export class Importer {
 
         // Do NOT delete Tariff rows (EnergyData FK). We'll upsert tariffs and refresh seasons/schedules per tariff.
 
-        const pickNumber = (obj: Record<string, unknown>, keys: string[], fallback: number | null = null) => {
+        const pickNumber = (obj: any, keys: string[], fallback: number | null = null) => {
             for (const k of keys) {
                 const v = obj?.[k];
                 if (typeof v === 'number') return v;
@@ -143,10 +143,10 @@ export class Importer {
         }
 
         for (const tariffName of tariffNames) {
-            const buyRates = Object.values(buyCharges[tariffName]?.rates || {});
-            const buyRate = buyRates.length > 0 ? Number(buyRates[0]) : 0;
-            const sellRates = Object.values(sellCharges[tariffName]?.rates || {});
-            const sellRate = sellRates.length > 0 ? Number(sellRates[0]) : 0;
+            const buyRates = buyCharges[tariffName]?.rates || {};
+            const sellRates = sellCharges[tariffName]?.rates || {};
+            const buyRate = Object.values(buyRates).length > 0 ? Number(Object.values(buyRates)[0]) : 0;
+            const sellRate = Object.values(sellRates).length > 0 ? Number(Object.values(sellRates)[0]) : 0;
 
             db.prepare(`
                 INSERT INTO Tariff(site_id, name, updated)
@@ -183,34 +183,49 @@ export class Importer {
                     fromDay,
                     toMonth,
                     toDay,
-                    buyRate,
-                    sellRate
+                    0, // buy_rate (moved to schedule)
+                    0  // sell_rate (moved to schedule)
                 );
                 const seasonRow = db.prepare(`SELECT id FROM TariffSeason WHERE tariff_id = ? AND name = ?`).get(tariffRow.id, seasonName) as { id: number } | undefined;
                 if (!seasonRow) continue;
 
                 const touPeriods = season.tou_periods || {};
-                const selected = (tariffName in touPeriods) ? touPeriods[tariffName] : Object.values(touPeriods)[0];
-                const periods = (selected as SeasonPeriod[] | undefined) || [];
+                const touPeriodEntries = Object.entries(touPeriods);
 
-                if (periods.length === 0) {
-                    this.ensureDefaultSchedule(seasonRow.id);
+                if (touPeriodEntries.length === 0) {
+                    this.ensureDefaultSchedule(seasonRow.id, 0, 0); // Default rates for default schedule
                     continue;
                 }
 
-                for (const p of periods) {
-                    db.prepare(`
-                        INSERT INTO TariffSchedule(season_id, from_day_of_week, to_day_of_week, from_hour, from_minute, to_hour, to_minute)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    `).run(
-                        seasonRow.id,
-                        pickNumber(p, ['fromDayOfWeek', 'from_day_of_week']),
-                        pickNumber(p, ['toDayOfWeek', 'to_day_of_week']),
-                        pickNumber(p, ['fromHour', 'from_hour']),
-                        pickNumber(p, ['fromMinute', 'from_minute']),
-                        pickNumber(p, ['toHour', 'to_hour']),
-                        pickNumber(p, ['toMinute', 'to_minute'])
-                    );
+                for (const [touName, periodGroup] of touPeriodEntries) {
+                    const periods = (periodGroup as SeasonPeriods).periods || [];
+
+                    // Find rates for this TOU period
+                    const touBuyRate = buyRates[touName] ?? 0;
+                    const touSellRate = sellRates[touName] ?? 0;
+
+                    if (periods.length === 0) {
+                        this.ensureDefaultSchedule(seasonRow.id, touBuyRate, touSellRate, touName);
+                        continue;
+                    }
+
+                    for (const p of periods) {
+                        db.prepare(`
+                            INSERT INTO TariffSchedule(season_id, name, buy_rate, sell_rate, from_day_of_week, to_day_of_week, from_hour, from_minute, to_hour, to_minute)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        `).run(
+                            seasonRow.id,
+                            touName,
+                            touBuyRate,
+                            touSellRate,
+                            pickNumber(p, ['fromDayOfWeek', 'from_day_of_week']),
+                            pickNumber(p, ['toDayOfWeek', 'to_day_of_week']),
+                            pickNumber(p, ['fromHour', 'from_hour']),
+                            pickNumber(p, ['fromMinute', 'from_minute']),
+                            pickNumber(p, ['toHour', 'to_hour']),
+                            pickNumber(p, ['toMinute', 'to_minute'])
+                        );
+                    }
                 }
             }
         }
@@ -238,17 +253,17 @@ export class Importer {
         `).run(tariffId, 'All Year', buyRate, sellRate);
         const seasonRow = db.prepare(`SELECT id FROM TariffSeason WHERE tariff_id = ? LIMIT 1`).get(tariffId) as { id: number } | undefined;
         if (seasonRow) {
-            this.ensureDefaultSchedule(seasonRow.id);
+            this.ensureDefaultSchedule(seasonRow.id, buyRate, sellRate, 'Default');
         }
     }
 
-    private ensureDefaultSchedule(seasonId: number) {
+    private ensureDefaultSchedule(seasonId: number, buyRate: number, sellRate: number, name: string = 'Default') {
         const hasSchedule = db.prepare(`SELECT 1 FROM TariffSchedule WHERE season_id = ? LIMIT 1`).get(seasonId) as { 1: number } | undefined;
         if (!hasSchedule) {
             db.prepare(`
-                INSERT INTO TariffSchedule(season_id, from_day_of_week, to_day_of_week, from_hour, to_hour)
-                VALUES (?, 0, 6, 0, 24)
-            `).run(seasonId);
+                INSERT INTO TariffSchedule(season_id, name, buy_rate, sell_rate, from_day_of_week, to_day_of_week, from_hour, to_hour)
+                VALUES (?, ?, ?, ?, 0, 6, 0, 24)
+            `).run(seasonId, name, buyRate, sellRate);
         }
     }
 
@@ -366,6 +381,9 @@ export class Importer {
         const sched: TariffSchedule = {
             id: -1,
             season_id: season.id,
+            name: 'Fallback',
+            buy_rate: 0,
+            sell_rate: 0,
             from_day_of_week: 0,
             to_day_of_week: 6,
             from_hour: 0,
