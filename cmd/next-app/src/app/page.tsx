@@ -1,4 +1,4 @@
-import { cookies } from 'next/headers';
+import { SettingsRepo } from '@/lib/settings-repo';
 import Link from 'next/link';
 import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
@@ -9,8 +9,9 @@ import { DashboardCards } from '@/components/DashboardCards';
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get('access_token')?.value;
+  const settingsRepo = new SettingsRepo();
+  const token = settingsRepo.getAccessToken();
+  const refreshToken = settingsRepo.getRefreshToken();
 
   if (!token) {
     return (
@@ -27,7 +28,15 @@ export default async function Home() {
   }
 
   try {
-    const client = new TeslaClient(token);
+    const client = new TeslaClient({
+      accessToken: token,
+      refreshToken: refreshToken,
+      onTokenUpdate: (newAccess, newRefresh) => {
+        console.log('Refreshing tokens in DB from Dashboard');
+        settingsRepo.setAccessToken(newAccess);
+        settingsRepo.setRefreshToken(newRefresh);
+      }
+    });
     const products = await client.getProducts();
 
     // Fetch current tariff and live battery power for each site

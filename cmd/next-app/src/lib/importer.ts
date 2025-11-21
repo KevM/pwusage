@@ -49,8 +49,8 @@ export class Importer {
     private client: TeslaClient;
     private repo: EnergyRepo;
 
-    constructor(token: string) {
-        this.client = new TeslaClient(token);
+    constructor(client: TeslaClient) {
+        this.client = client;
         this.repo = new EnergyRepo();
     }
 
@@ -93,6 +93,22 @@ export class Importer {
         try {
             const info = await this.client.getEnergySiteInfo(siteId);
 
+            // Check if tariff content has changed
+            const existingSite = db.prepare('SELECT json FROM Site WHERE id = ?').get(siteId) as { json: string } | undefined;
+            let tariffsChanged = true;
+
+            if (existingSite && existingSite.json) {
+                try {
+                    const existingInfo = JSON.parse(existingSite.json) as EnergySiteInfo;
+                    // Simple string comparison of the tariff content objects
+                    if (JSON.stringify(existingInfo.tariff_content_v2) === JSON.stringify(info.tariff_content_v2)) {
+                        tariffsChanged = false;
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse existing site JSON for comparison', e);
+                }
+            }
+
             // Upsert Site
             db.prepare(`
                 INSERT INTO Site(id, name, updated, installed, timezone, json)
@@ -106,7 +122,13 @@ export class Importer {
                 JSON.stringify(info)
             );
 
-            this.upsertTariffsFromSiteInfo(siteId, info);
+            if (tariffsChanged) {
+                console.log(`Tariff content changed for site ${siteId}, updating tariffs...`);
+                this.upsertTariffsFromSiteInfo(siteId, info);
+            } else {
+                console.log(`Tariff content unchanged for site ${siteId}, skipping tariff update.`);
+            }
+
             return this.repo.getSite(siteId);
         } catch (err) {
             console.error(`Failed to ensure site ${siteId}:`, err);
@@ -151,7 +173,7 @@ export class Importer {
             db.prepare(`
                 INSERT INTO Tariff(site_id, name, updated)
                 VALUES (?, ?, datetime('now'))
-                ON CONFLICT(site_id, name) DO UPDATE SET name=excluded.name
+                ON CONFLICT(site_id, name) DO UPDATE SET name=excluded.name, updated=datetime('now')
             `).run(siteId, tariffName);
 
             const tariffRow = db.prepare(`SELECT id FROM Tariff WHERE site_id = ? AND name = ?`).get(siteId, tariffName) as { id: number } | undefined;

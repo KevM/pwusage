@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
 import { SettingsRepo } from '@/lib/settings-repo';
 import { EnergyRepo } from '@/lib/energy-repo';
+import { TeslaClient } from '@/lib/tesla-client';
 
 export async function POST(request: Request) {
     try {
@@ -10,6 +11,7 @@ export async function POST(request: Request) {
 
         const settingsRepo = new SettingsRepo();
         const token = settingsRepo.getAccessToken();
+        const refreshToken = settingsRepo.getRefreshToken();
 
         if (!token) {
             return NextResponse.json({ error: 'No access token found' }, { status: 401 });
@@ -17,7 +19,18 @@ export async function POST(request: Request) {
 
         const repo = new EnergyRepo();
         const siteIds = repo.getSiteIds();
-        const importer = new Importer(token);
+
+        const client = new TeslaClient({
+            accessToken: token,
+            refreshToken: refreshToken,
+            onTokenUpdate: (newAccess, newRefresh) => {
+                console.log('Refreshing tokens in DB');
+                settingsRepo.setAccessToken(newAccess);
+                settingsRepo.setRefreshToken(newRefresh);
+            }
+        });
+
+        const importer = new Importer(client);
 
         for (const siteId of siteIds) {
             console.log(`Importing site ${siteId}`);

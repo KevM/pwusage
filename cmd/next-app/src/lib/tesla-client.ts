@@ -95,23 +95,55 @@ export interface SeasonPeriod {
     toMinute: number;
 }
 
+export interface TeslaClientConfig {
+    accessToken: string;
+    refreshToken?: string;
+    onTokenUpdate?: (accessToken: string, refreshToken: string) => void;
+}
+
 export class TeslaClient {
     private baseUrl = "https://fleet-api.prd.na.vn.cloud.tesla.com";
-    private token: string;
+    private config: TeslaClientConfig;
 
-    constructor(token: string) {
-        this.token = token;
+    constructor(config: TeslaClientConfig | string) {
+        if (typeof config === 'string') {
+            this.config = { accessToken: config };
+        } else {
+            this.config = config;
+        }
     }
 
     private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
-        const url = `${this.baseUrl}${path}`;
-        const headers = {
-            "Authorization": `Bearer ${this.token}`,
-            "Content-Type": "application/json",
-            ...options?.headers,
+        const makeRequest = async (token: string) => {
+            const url = `${this.baseUrl}${path}`;
+            const headers = {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+                ...options?.headers,
+            };
+            return fetch(url, { ...options, headers });
         };
 
-        const response = await fetch(url, { ...options, headers });
+        let response = await makeRequest(this.config.accessToken);
+
+        if (response.status === 401 && this.config.refreshToken) {
+            console.log('Tesla API 401, attempting refresh...');
+            try {
+                const newTokens = await TeslaClient.refreshAccessToken(this.config.refreshToken);
+                this.config.accessToken = newTokens.access_token;
+                this.config.refreshToken = newTokens.refresh_token;
+
+                if (this.config.onTokenUpdate) {
+                    this.config.onTokenUpdate(newTokens.access_token, newTokens.refresh_token);
+                }
+
+                // Retry with new token
+                response = await makeRequest(this.config.accessToken);
+            } catch (refreshError) {
+                console.error('Token refresh failed:', refreshError);
+                // Fall through to original error
+            }
+        }
 
         if (!response.ok) {
             const body = await response.text();
@@ -164,6 +196,31 @@ export class TeslaClient {
     async getLiveStatus(siteId: string): Promise<EnergySiteLiveStatus> {
         const result = await this.fetch<{ response: EnergySiteLiveStatus }>(`/api/1/energy_sites/${siteId}/live_status`);
         return result.response;
+    }
+
+    static async refreshAccessToken(refreshToken: string): Promise<{ access_token: string; refresh_token: string }> {
+        const url = 'https://auth.tesla.com/oauth2/v3/token';
+        const clientId = process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'ownerapi';
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                grant_type: 'refresh_token',
+                client_id: clientId,
+                refresh_token: refreshToken,
+                scope: 'openid email offline_access'
+            })
+        });
+
+        if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Failed to refresh token: ${response.status} ${body}`);
+        }
+
+        return response.json();
     }
 }
 
