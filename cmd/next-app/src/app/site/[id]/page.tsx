@@ -107,32 +107,36 @@ export default async function SitePage({ params, searchParams }: {
     // End date is start date + 1 month
     const end = new Date(start.getFullYear(), start.getMonth() + 1, billingDay);
 
-    const usage = repo.getEnergyUsage(id, start, end);
+    const usage = repo.getUsageByTOU(id, start, end);
 
-    // Group by tariff
-    const tariffUsage = new Map<string, {
+    // Group by tariff and then by TOU
+    const tariffGroups = new Map<string, {
         tariffName: string;
-        home: number;
-        grid: number;
-        solar: number;
-        battery: number;
+        periods: {
+            touName: string;
+            home: number;
+            grid: number;
+            solar: number;
+            battery: number;
+            cost: number;
+        }[];
     }>();
 
     usage.forEach(u => {
-        const name = u.tariff.name || 'Unknown';
-        const existing = tariffUsage.get(name) || {
-            tariffName: name,
-            home: 0,
-            grid: 0,
-            solar: 0,
-            battery: 0,
-        };
-
-        existing.home += u.homeUsage;
-        existing.grid += u.gridUsage;
-        existing.solar += u.solarProduction;
-        existing.battery += u.batteryChange;
-        tariffUsage.set(name, existing);
+        const tName = u.tariff.name || 'Unknown';
+        let group = tariffGroups.get(tName);
+        if (!group) {
+            group = { tariffName: tName, periods: [] };
+            tariffGroups.set(tName, group);
+        }
+        group.periods.push({
+            touName: u.touName || 'Standard',
+            home: u.homeUsage,
+            grid: u.gridUsage,
+            solar: u.solarProduction,
+            battery: u.batteryChange,
+            cost: u.cost || 0
+        });
     });
 
     return (
@@ -155,26 +159,42 @@ export default async function SitePage({ params, searchParams }: {
                 <h2 className="text-2xl font-bold mb-4">Usage for {start.toLocaleDateString()} - {end.toLocaleDateString()}</h2>
 
                 <div className="grid gap-6">
-                    {Array.from(tariffUsage.values()).map((t) => (
-                        <div key={t.tariffName} className="border p-6 rounded shadow">
+                    {Array.from(tariffGroups.values()).map((t) => (
+                        <div key={t.tariffName} className="border p-6 rounded shadow bg-white dark:bg-slate-900">
                             <h3 className="text-xl font-semibold mb-4">{t.tariffName}</h3>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                <div>
-                                    <p className="text-sm text-gray-500">Home Usage</p>
-                                    <p className="text-lg font-medium text-blue-700">{(t.home / 1000).toFixed(2)} kWh</p>
-                                </div>
-                                <div>
-                                    <p className="text-sm text-gray-500">Solar Production</p>
-                                    <p className="text-lg font-medium text-amber-700">{(t.solar / 1000).toFixed(2)} kWh</p>
-                                </div>
-                                <div>
-                                    <p className="text-sm text-gray-500">Grid Usage</p>
-                                    <p className="text-lg font-medium text-orange-700">{(t.grid / 1000).toFixed(2)} kWh</p>
-                                </div>
-                                <div>
-                                    <p className="text-sm text-gray-500">Battery Change</p>
-                                    <p className="text-lg font-medium text-purple-700">{(t.battery / 1000).toFixed(2)} kWh</p>
-                                </div>
+                            <div className="space-y-6">
+                                {t.periods.sort((a, b) => a.touName.localeCompare(b.touName)).map((p) => (
+                                    <div key={p.touName} className="border-t pt-4 first:border-t-0 first:pt-0">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <h4 className="font-medium text-lg">{p.touName}</h4>
+                                            <div className="text-right">
+                                                <span className={`font-bold ${p.cost >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                                    {p.cost >= 0 ? '$' : '-$'}
+                                                    {Math.abs(p.cost).toFixed(2)}
+                                                </span>
+                                                <span className="text-xs text-gray-500 block">Est. Cost</span>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                            <div>
+                                                <p className="text-sm text-gray-500">Home Usage</p>
+                                                <p className="text-lg font-medium text-blue-700">{(p.home / 1000).toFixed(2)} kWh</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-500">Solar Production</p>
+                                                <p className="text-lg font-medium text-amber-700">{(p.solar / 1000).toFixed(2)} kWh</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-500">Grid Usage</p>
+                                                <p className="text-lg font-medium text-orange-700">{(p.grid / 1000).toFixed(2)} kWh</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-500">Battery Change</p>
+                                                <p className="text-lg font-medium text-purple-700">{(p.battery / 1000).toFixed(2)} kWh</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     ))}

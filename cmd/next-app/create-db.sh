@@ -38,6 +38,9 @@ CREATE TABLE TariffSeason (
 CREATE TABLE TariffSchedule (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   season_id INTEGER NOT NULL,
+  name TEXT,
+  buy_rate REAL,
+  sell_rate REAL,
   from_day_of_week INTEGER,
   from_hour INTEGER,
   from_minute INTEGER,

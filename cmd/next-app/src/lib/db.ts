@@ -50,6 +50,9 @@ export interface TariffSeason {
 export interface TariffSchedule {
     id: number;
     season_id: number;
+    name: string | null;
+    buy_rate: number | null;
+    sell_rate: number | null;
     from_day_of_week: number | null;
     from_hour: number | null;
     from_minute: number | null;

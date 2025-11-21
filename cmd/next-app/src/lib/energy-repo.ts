@@ -1,4 +1,5 @@
 import { db, EnergyUsage, Tariff, Site } from './db';
+import { Schedule } from './schedule';
 
 function formatYMD(date: Date, timeZone: string): string {
     return new Intl.DateTimeFormat('en-CA', {
@@ -68,6 +69,8 @@ export interface UsageData {
     solarProduction: number;
     batteryChange: number;
     tariff: Tariff;
+    touName?: string;
+    cost?: number;
 }
 
 export interface SiteWithTariffs extends Site {
@@ -75,41 +78,96 @@ export interface SiteWithTariffs extends Site {
 }
 
 export class EnergyRepo {
-    getEnergyUsage(siteId: string, start: Date, end: Date): UsageData[] {
+    getUsageByTOU(siteId: string, start: Date, end: Date): UsageData[] {
         // Get tariffs for the site first to map them
         const tariffs = db.prepare('SELECT * FROM Tariff WHERE site_id = ?').all(siteId) as Tariff[];
         const tariffMap = new Map<number, Tariff>();
         tariffs.forEach(t => tariffMap.set(t.id, t));
 
-        // Query EnergyUsage
-        // SQLite stores dates as strings usually, but depends on how they were inserted.
-        // The Go code uses "2006-01-02 15:04:05" format.
-        const startStr = start.toISOString().replace('T', ' ').split('.')[0];
-        const endStr = end.toISOString().replace('T', ' ').split('.')[0];
+        // Get schedules to map names
+        // We need to join EnergyData -> Tariff -> TariffSeason -> TariffSchedule?
+        // Actually, EnergyData has tariff_id. But it doesn't store which Schedule was active.
+        // The Importer calculates it but doesn't store it in EnergyData (only tariff_id).
+        // Wait, the goal is to aggregate by TOU period (On-Peak, Off-Peak).
+        // Since we don't store the Schedule ID in EnergyData, we have to re-calculate it OR assume the importer did it right?
+        // The importer stores raw data. We need to apply the schedule logic again to group by TOU.
+        // OR, we could have stored the Schedule ID in EnergyData? No, schema has tariff_id.
+
+        // Re-calculating for every query is expensive but accurate if schedules change?
+        // Actually, for "Usage for X - Y", we just want the totals.
+        // The Importer ALREADY aggregated into EnergyUsage table?
+        // No, EnergyUsage table is by Tariff ID. It loses the TOU granularity.
+        // So we MUST query EnergyData (raw 5min/15min/1h intervals) and map each to a TOU period.
+
+        const site = this.getSite(siteId);
+        if (!site) return [];
+        const schedule = new Schedule(site.tariffs);
+
+        const startStr = start.toISOString();
+        const endStr = end.toISOString();
 
         const rows = db.prepare(`
-        SELECT tariff_id, start, load_usage, solar_produced, grid_usage, battery_usage 
-        FROM EnergyUsage
-        WHERE start >= ? AND start < ?
-    `).all(startStr, endStr) as EnergyUsage[];
+            SELECT timestamp, tariff_id, load_power, solar_power, grid_power, battery_power 
+            FROM EnergyData
+            WHERE site_id = ? AND timestamp >= ? AND timestamp < ?
+        `).all(siteId, startStr, endStr) as any[];
 
-        const results: UsageData[] = [];
+        const aggregation = new Map<string, UsageData>();
 
         for (const row of rows) {
-            const tariff = tariffMap.get(row.tariff_id);
-            if (!tariff) continue; // Skip if tariff not found for this site (shouldn't happen if logic is correct)
+            const ts = new Date(row.timestamp);
+            const tp = schedule.getTariffPeriod(ts);
 
-            results.push({
-                start: new Date(row.start),
-                homeUsage: row.load_usage,
-                gridUsage: row.grid_usage,
-                solarProduction: row.solar_produced,
-                batteryChange: row.battery_usage,
-                tariff: tariff
-            });
+            // Default to "Unknown" if no schedule match, or use the tariff name
+            let touName = 'Unknown';
+            let tariffName = 'Unknown';
+            let buyRate = 0;
+            let sellRate = 0;
+
+            if (tp) {
+                touName = tp.schedule.name || 'Standard';
+                tariffName = tp.tariff.name || 'Unknown';
+                buyRate = tp.schedule.buy_rate || 0;
+                sellRate = tp.schedule.sell_rate || 0;
+            } else {
+                // Fallback to tariff name if available
+                const t = tariffMap.get(row.tariff_id);
+                if (t) tariffName = t.name || 'Unknown';
+            }
+
+            const key = `${tariffName}|${touName}`;
+
+            let data = aggregation.get(key);
+            if (!data) {
+                data = {
+                    start: start, // Just use the query start date for the bucket
+                    homeUsage: 0,
+                    gridUsage: 0,
+                    solarProduction: 0,
+                    batteryChange: 0,
+                    tariff: tp?.tariff || tariffMap.get(row.tariff_id)!,
+                    touName: touName,
+                    cost: 0
+                };
+                aggregation.set(key, data);
+            }
+
+            data.homeUsage += row.load_power;
+            data.gridUsage += row.grid_power;
+            data.solarProduction += row.solar_power;
+            data.batteryChange += row.battery_power;
+
+            // Cost calculation: (Import * Buy) - (Export * Sell)
+            // Grid Power: + is Import, - is Export
+            const currentCost = data.cost ?? 0;
+            if (row.grid_power > 0) {
+                data.cost = currentCost + (row.grid_power / 1000) * buyRate; // kWh * $
+            } else {
+                data.cost = currentCost + (row.grid_power / 1000) * sellRate; // Negative grid power * sell rate = negative cost (credit)
+            }
         }
 
-        return results;
+        return Array.from(aggregation.values());
     }
 
     getSite(siteId: string): SiteWithTariffs | undefined {
