@@ -2,6 +2,7 @@ import { EnergyRepo } from '@/lib/energy-repo';
 import Link from 'next/link';
 import { EnergyChartWithNav } from '@/components/EnergyChartWithNav';
 import { SiteLiveStats } from '@/components/SiteLiveStats';
+import { BillSummary } from '@/components/BillSummary';
 import { SettingsRepo } from '@/lib/settings-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { Schedule } from '@/lib/schedule';
@@ -100,11 +101,21 @@ export default async function SitePage({ params, searchParams }: {
 
     // Calculate period based on billing start day
     const billingDay = settingsRepo.getBillingStartDay();
-    let startMonth = now.getMonth();
-    let startYear = now.getFullYear();
 
-    // If today is before the billing day, we are in the previous month's billing cycle
-    if (now.getDate() < billingDay) {
+    // Determine reference date: queryDate or now
+    let refDate = now;
+    if (queryDate) {
+        const [y, m, d] = queryDate.split('-').map(Number);
+        if (!Number.isNaN(y) && !Number.isNaN(m) && !Number.isNaN(d)) {
+            refDate = new Date(y, m - 1, d);
+        }
+    }
+
+    let startMonth = refDate.getMonth();
+    let startYear = refDate.getFullYear();
+
+    // If reference date is before the billing day, we are in the previous month's billing cycle
+    if (refDate.getDate() < billingDay) {
         startMonth--;
     }
 
@@ -114,35 +125,29 @@ export default async function SitePage({ params, searchParams }: {
 
     const usage = repo.getUsageByTOU(id, start, end);
 
-    // Group by tariff and then by TOU
-    const tariffGroups = new Map<string, {
-        tariffName: string;
-        periods: {
-            touName: string;
-            home: number;
-            grid: number;
-            solar: number;
-            battery: number;
-            cost: number;
-        }[];
-    }>();
-
-    usage.forEach(u => {
-        const tName = u.tariff.name || 'Unknown';
-        let group = tariffGroups.get(tName);
-        if (!group) {
-            group = { tariffName: tName, periods: [] };
-            tariffGroups.set(tName, group);
+    // Determine active tariff ID
+    let activeTariffId: number | undefined;
+    if (site.tariffs.length > 0) {
+        const schedule = new Schedule(site.tariffs);
+        const tariffPeriod = schedule.getTariffPeriod(new Date());
+        if (tariffPeriod) {
+            activeTariffId = tariffPeriod.tariff.id;
         }
-        group.periods.push({
-            touName: u.touName || 'Standard',
-            home: u.homeUsage,
-            grid: u.gridUsage,
-            solar: u.solarProduction,
-            battery: u.batteryChange,
-            cost: u.cost || 0
-        });
-    });
+    }
+
+    // Navigation dates
+    const prevDate = new Date(start.getFullYear(), start.getMonth() - 1, billingDay);
+    const nextDate = new Date(start.getFullYear(), start.getMonth() + 1, billingDay);
+    const fmtDate = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
+
+    // Check if next month would be in the future
+    const currentDate = new Date();
+    const isCurrentPeriod = currentDate >= start && currentDate < end;
 
     return (
         <div className="flex min-h-screen flex-col items-center p-24">
@@ -161,49 +166,38 @@ export default async function SitePage({ params, searchParams }: {
                     />
                 </div>
 
-                <h2 className="text-2xl font-bold mb-4">Usage for {start.toLocaleDateString()} - {end.toLocaleDateString()}</h2>
-
-                <div className="grid gap-6">
-                    {Array.from(tariffGroups.values()).map((t) => (
-                        <div key={t.tariffName} className="border p-6 rounded shadow bg-white dark:bg-slate-900">
-                            <h3 className="text-xl font-semibold mb-4">{t.tariffName}</h3>
-                            <div className="space-y-6">
-                                {t.periods.sort((a, b) => a.touName.localeCompare(b.touName)).map((p) => (
-                                    <div key={p.touName} className="border-t pt-4 first:border-t-0 first:pt-0">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <h4 className="font-medium text-lg">{p.touName}</h4>
-                                            <div className="text-right">
-                                                <span className={`font-bold ${p.cost >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                                    {p.cost >= 0 ? '$' : '-$'}
-                                                    {Math.abs(p.cost).toFixed(2)}
-                                                </span>
-                                                <span className="text-xs text-gray-500 block">Est. Cost</span>
-                                            </div>
-                                        </div>
-                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                            <div>
-                                                <p className="text-sm text-gray-500">Home Usage</p>
-                                                <p className="text-lg font-medium text-blue-700">{(p.home / 1000).toFixed(2)} kWh</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-sm text-gray-500">Solar Production</p>
-                                                <p className="text-lg font-medium text-amber-700">{(p.solar / 1000).toFixed(2)} kWh</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-sm text-gray-500">Grid Usage</p>
-                                                <p className="text-lg font-medium text-orange-700">{(p.grid / 1000).toFixed(2)} kWh</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-sm text-gray-500">Battery Change</p>
-                                                <p className="text-lg font-medium text-purple-700">{(p.battery / 1000).toFixed(2)} kWh</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    ))}
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-2xl font-bold">Usage for {start.toLocaleDateString()} - {end.toLocaleDateString()}</h2>
+                    <div className="flex items-center gap-4">
+                        <Link
+                            href={`/site/${id}/usage?date=${fmtDate(prevDate)}`}
+                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                        >
+                            ← Prev Month
+                        </Link>
+                        {isCurrentPeriod ? (
+                            <span className="px-3 py-1 bg-gray-300 text-gray-500 rounded cursor-not-allowed">
+                                Next Month →
+                            </span>
+                        ) : (
+                            <Link
+                                href={`/site/${id}/usage?date=${fmtDate(nextDate)}`}
+                                className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                            >
+                                Next Month →
+                            </Link>
+                        )}
+                        <span className="text-gray-300">|</span>
+                        <Link
+                            href={`/site/${id}/usage?date=${fmtDate(start)}`}
+                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
+                        >
+                            View Full Bill →
+                        </Link>
+                    </div>
                 </div>
+
+                <BillSummary usage={usage} activeTariffId={activeTariffId} />
             </div>
         </div>
     );
