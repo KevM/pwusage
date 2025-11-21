@@ -1,7 +1,49 @@
 import { TeslaClient, EnergyHistoryEntry } from './tesla-client';
 import { EnergyRepo, SiteWithTariffs, UsageData } from './energy-repo';
 import { Schedule } from './schedule';
-import { db, EnergyUsage, Tariff } from './db';
+import { db, EnergyUsage, Tariff, TariffSeason, TariffSchedule } from './db';
+
+function getTimeZoneOffsetMinutes(date: Date, timeZone: string): number | null {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        timeZoneName: 'shortOffset',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23'
+    });
+    const parts = fmt.formatToParts(date);
+    const tzName = parts.find(p => p.type === 'timeZoneName')?.value ?? '';
+    const match = tzName.match(/GMT([+-]\d{2})(?::?(\d{2}))?/i);
+    if (!match) return null;
+    const hours = Number(match[1]);
+    const minutes = match[2] ? Number(match[2]) : 0;
+    return hours * 60 + Math.sign(hours) * minutes;
+}
+
+function getStartOfDayInTimeZone(baseDate: Date, timeZone: string): Date {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    });
+
+    const parts = fmt.formatToParts(baseDate);
+    const year = Number(parts.find(p => p.type === 'year')?.value);
+    const month = Number(parts.find(p => p.type === 'month')?.value);
+    const day = Number(parts.find(p => p.type === 'day')?.value);
+    const offsetMinutes = getTimeZoneOffsetMinutes(baseDate, timeZone);
+
+    if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day) || offsetMinutes === null) {
+        // Fallback to local start of day if timezone parsing fails
+        const fallback = new Date(baseDate);
+        fallback.setHours(0, 0, 0, 0);
+        return fallback;
+    }
+
+    const startUtcMs = Date.UTC(year, month - 1, day, 0, 0, 0) - offsetMinutes * 60 * 1000;
+    return new Date(startUtcMs);
+}
 
 export class Importer {
     private client: TeslaClient;
@@ -12,117 +54,277 @@ export class Importer {
         this.repo = new EnergyRepo();
     }
 
-    async importSite(siteId: string) {
-        const site = this.repo.getSite(siteId);
+    async importSite(siteId: string, period: string = "day") {
+        let site = this.repo.getSite(siteId);
         if (!site) {
-            console.error(`Site ${siteId} not found in DB`);
+            site = await this.ensureSite(siteId);
+            if (!site) {
+                console.error(`Site ${siteId} not found in DB and failed to create`);
+                return;
+            }
+        }
+
+        // Determine start date from last stored timestamp or installation date
+        const lastRow = db.prepare('SELECT timestamp FROM EnergyData WHERE site_id = ? ORDER BY timestamp DESC LIMIT 1').get(siteId) as { timestamp: string } | undefined;
+        const now = new Date();
+
+        // Start from the beginning of the day that contains the last stored record (site TZ) to refill any gaps,
+        // or the install date if none. Step back one interval for overlap.
+        const startFromDb = lastRow ? getStartOfDayInTimeZone(new Date(lastRow.timestamp), site.timezone) : new Date(site.installed);
+        const start = new Date(startFromDb.getTime() - 5 * 60 * 1000);
+        const adjustedStart = start < new Date(site.installed) ? new Date(site.installed) : start;
+
+        if (adjustedStart >= now) {
+            console.log(`No new data to import for site ${siteId}`);
             return;
         }
 
-        // Determine start date
-        // Get last timestamp from EnergyData
-        const lastRow = db.prepare('SELECT timestamp FROM EnergyData WHERE site_id = ? ORDER BY timestamp DESC LIMIT 1').get(siteId) as { timestamp: string } | undefined;
-
-        let start: Date;
-        if (lastRow) {
-            start = new Date(lastRow.timestamp);
-        } else {
-            start = new Date(site.installed);
-        }
-
-        // Normalize start to beginning of day if it's the installed date, 
-        // or keep it if it's the last sync (though usually we might want to overlap slightly or start from next interval)
-        // The Go code replaces start with last timestamp if found.
-        // And then iterates day by day.
-
-        const now = new Date();
-        // Loop day by day
-        let current = new Date(start);
-        current.setHours(0, 0, 0, 0);
-
-        while (current < now) {
-            const nextDay = new Date(current);
-            nextDay.setDate(nextDay.getDate() + 1);
-
-            // End of this day (or now if it's today)
-            let end = nextDay;
-            if (end > now) end = now;
-
-            console.log(`Importing ${site.name} for ${current.toISOString()}`);
-            await this.loadDay(site, current, end);
-
-            current = nextDay;
+        // Load in day-sized chunks to avoid API limits and cover gaps
+        let cursor = adjustedStart;
+        const oneDayMs = 24 * 60 * 60 * 1000;
+        while (cursor < now) {
+            const next = new Date(Math.min(cursor.getTime() + oneDayMs, now.getTime()));
+            await this.loadInterval(site, cursor, next, period);
+            cursor = next;
         }
     }
 
-    private async loadDay(site: SiteWithTariffs, start: Date, end: Date) {
-        // Delete existing data for this day to avoid duplicates/conflicts if re-importing
-        // But we need to be careful not to delete future data if we are doing partial day.
-        // The Go code deletes the whole day.
-
-        const startStr = start.toISOString();
-        const nextDay = new Date(start);
-        nextDay.setDate(nextDay.getDate() + 1);
-        const nextDayStr = nextDay.toISOString();
-
-        db.prepare('DELETE FROM EnergyData WHERE site_id = ? AND timestamp >= ? AND timestamp < ?').run(site.id, startStr, nextDayStr);
-
-        // Fetch live status to get current SOC
-        let currentSOC: number | null = null;
+    async ensureSite(siteId: string): Promise<SiteWithTariffs | undefined> {
         try {
-            const liveStatus = await this.client.getLiveStatus(site.id);
-            currentSOC = liveStatus.percentage_charged;
-        } catch (error) {
-            console.warn('Failed to fetch live status, SOC will be null:', error);
+            const info = await this.client.getEnergySiteInfo(siteId);
+
+            // Upsert Site
+            db.prepare(`
+                INSERT INTO Site(id, name, updated, installed, timezone, json)
+                VALUES (?, ?, datetime('now'), ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET name=excluded.name, installed=excluded.installed, timezone=excluded.timezone, json=excluded.json
+            `).run(
+                siteId,
+                info.site_name,
+                info.installation_date,
+                info.installation_time_zone,
+                JSON.stringify(info)
+            );
+
+            this.upsertTariffsFromSiteInfo(siteId, info);
+            return this.repo.getSite(siteId);
+        } catch (err) {
+            console.error(`Failed to ensure site ${siteId}:`, err);
+            return undefined;
+        }
+    }
+
+    private upsertTariffsFromSiteInfo(siteId: string, info: EnergySiteInfo) {
+
+        // Do NOT delete Tariff rows (EnergyData FK). We'll upsert tariffs and refresh seasons/schedules per tariff.
+
+        const pickNumber = (obj: Record<string, unknown>, keys: string[], fallback: number | null = null) => {
+            for (const k of keys) {
+                const v = obj?.[k];
+                if (typeof v === 'number') return v;
+            }
+            return fallback;
+        };
+
+        const tariffContent = info.tariff_content_v2;
+        if (!tariffContent) {
+            this.ensureDefaultTariff(siteId, 'Default');
+            return;
         }
 
-        // Fetch from Tesla
-        // API requires timezone. Site has timezone string.
-        const history = await this.client.getEnergyHistory(site.id, start, nextDay, "day", site.timezone);
+        const buyCharges = tariffContent.energy_charges || {};
+        const sellCharges = tariffContent.sell_tariff?.energy_charges || {};
+        const seasonsMap: Record<string, Season> = tariffContent.seasons || {};
 
+        const tariffNames = Object.keys(buyCharges);
+        if (tariffNames.length === 0) {
+            this.ensureDefaultTariff(siteId, 'Default');
+            return;
+        }
+
+        for (const tariffName of tariffNames) {
+            const buyRates = Object.values(buyCharges[tariffName]?.rates || {});
+            const buyRate = buyRates.length > 0 ? Number(buyRates[0]) : 0;
+            const sellRates = Object.values(sellCharges[tariffName]?.rates || {});
+            const sellRate = sellRates.length > 0 ? Number(sellRates[0]) : 0;
+
+            db.prepare(`
+                INSERT INTO Tariff(site_id, name, updated)
+                VALUES (?, ?, datetime('now'))
+                ON CONFLICT(site_id, name) DO UPDATE SET name=excluded.name
+            `).run(siteId, tariffName);
+
+            const tariffRow = db.prepare(`SELECT id FROM Tariff WHERE site_id = ? AND name = ?`).get(siteId, tariffName) as { id: number } | undefined;
+            if (!tariffRow) continue;
+
+            // Refresh seasons/schedules for this tariff
+            db.prepare(`DELETE FROM TariffSchedule WHERE season_id IN (SELECT id FROM TariffSeason WHERE tariff_id = ?)`).run(tariffRow.id);
+            db.prepare(`DELETE FROM TariffSeason WHERE tariff_id = ?`).run(tariffRow.id);
+
+            const seasonEntries = Object.entries(seasonsMap) as [string, Season][];
+            if (seasonEntries.length === 0) {
+                this.ensureDefaultSeasonAndSchedule(tariffRow.id, buyRate, sellRate);
+                continue;
+            }
+
+            for (const [seasonName, season] of seasonEntries) {
+                const fromMonth = pickNumber(season, ['fromMonth', 'from_month'], 1) ?? 1;
+                const fromDay = pickNumber(season, ['fromDay', 'from_day'], 1) ?? 1;
+                const toMonth = pickNumber(season, ['toMonth', 'to_month'], 12) ?? 12;
+                const toDay = pickNumber(season, ['toDay', 'to_day'], 31) ?? 31;
+
+                db.prepare(`
+                    INSERT INTO TariffSeason(tariff_id, name, from_month, from_day, to_month, to_day, buy_rate, sell_rate)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                `).run(
+                    tariffRow.id,
+                    seasonName,
+                    fromMonth,
+                    fromDay,
+                    toMonth,
+                    toDay,
+                    buyRate,
+                    sellRate
+                );
+                const seasonRow = db.prepare(`SELECT id FROM TariffSeason WHERE tariff_id = ? AND name = ?`).get(tariffRow.id, seasonName) as { id: number } | undefined;
+                if (!seasonRow) continue;
+
+                const touPeriods = season.tou_periods || {};
+                const selected = (tariffName in touPeriods) ? touPeriods[tariffName] : Object.values(touPeriods)[0];
+                const periods = (selected as SeasonPeriod[] | undefined) || [];
+
+                if (periods.length === 0) {
+                    this.ensureDefaultSchedule(seasonRow.id);
+                    continue;
+                }
+
+                for (const p of periods) {
+                    db.prepare(`
+                        INSERT INTO TariffSchedule(season_id, from_day_of_week, to_day_of_week, from_hour, from_minute, to_hour, to_minute)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    `).run(
+                        seasonRow.id,
+                        pickNumber(p, ['fromDayOfWeek', 'from_day_of_week']),
+                        pickNumber(p, ['toDayOfWeek', 'to_day_of_week']),
+                        pickNumber(p, ['fromHour', 'from_hour']),
+                        pickNumber(p, ['fromMinute', 'from_minute']),
+                        pickNumber(p, ['toHour', 'to_hour']),
+                        pickNumber(p, ['toMinute', 'to_minute'])
+                    );
+                }
+            }
+        }
+    }
+
+    private ensureDefaultTariff(siteId: string, name: string) {
+        db.prepare(`
+            INSERT INTO Tariff(site_id, name, updated)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(site_id, name) DO UPDATE SET name=excluded.name
+        `).run(siteId, name);
+        const tariffRow = db.prepare(`SELECT id FROM Tariff WHERE site_id = ? AND name = ?`).get(siteId, name) as { id: number } | undefined;
+        if (tariffRow) {
+            // Refresh any existing seasons/schedules for consistency
+            db.prepare(`DELETE FROM TariffSchedule WHERE season_id IN (SELECT id FROM TariffSeason WHERE tariff_id = ?)`).run(tariffRow.id);
+            db.prepare(`DELETE FROM TariffSeason WHERE tariff_id = ?`).run(tariffRow.id);
+            this.ensureDefaultSeasonAndSchedule(tariffRow.id, 0, 0);
+        }
+    }
+
+    private ensureDefaultSeasonAndSchedule(tariffId: number, buyRate: number, sellRate: number) {
+        db.prepare(`
+            INSERT OR IGNORE INTO TariffSeason(tariff_id, name, from_month, from_day, to_month, to_day, buy_rate, sell_rate)
+            VALUES (?, ?, 1, 1, 12, 31, ?, ?)
+        `).run(tariffId, 'All Year', buyRate, sellRate);
+        const seasonRow = db.prepare(`SELECT id FROM TariffSeason WHERE tariff_id = ? LIMIT 1`).get(tariffId) as { id: number } | undefined;
+        if (seasonRow) {
+            this.ensureDefaultSchedule(seasonRow.id);
+        }
+    }
+
+    private ensureDefaultSchedule(seasonId: number) {
+        const hasSchedule = db.prepare(`SELECT 1 FROM TariffSchedule WHERE season_id = ? LIMIT 1`).get(seasonId) as { 1: number } | undefined;
+        if (!hasSchedule) {
+            db.prepare(`
+                INSERT INTO TariffSchedule(season_id, from_day_of_week, to_day_of_week, from_hour, to_hour)
+                VALUES (?, 0, 6, 0, 24)
+            `).run(seasonId);
+        }
+    }
+
+    private async loadInterval(site: SiteWithTariffs, start: Date, end: Date, period: string) {
+        // Fetch history for the interval at the requested granularity
+        const [history, soeHistory] = await Promise.all([
+            this.client.getEnergyHistory(site.id, start, end, period, site.timezone),
+            this.client.getSoeHistory(site.id, start, end, period, site.timezone).catch(err => {
+                console.warn('Failed to fetch SOC history, SOC will be null:', err);
+                return [];
+            })
+        ]);
         if (!history || history.length === 0) return;
 
-        // Insert EnergyData
-        const energyDatas = this.processHistory(site, history, currentSOC);
-        this.insertEnergyData(energyDatas);
+        const soeByTimestamp = new Map<number, number>();
+        for (const s of soeHistory) {
+            if (s.percentage_charged !== undefined && s.timestamp) {
+                const tsKey = new Date(s.timestamp).getTime();
+                if (!Number.isNaN(tsKey)) {
+                    soeByTimestamp.set(tsKey, s.percentage_charged);
+                }
+            }
+        }
 
-        // Aggregate and Insert EnergyUsage
+        const energyDatas = this.processHistory(site, history, soeByTimestamp);
         const usages = this.aggregateUsage(site, energyDatas);
-        this.insertEnergyUsage(usages);
+
+        const startStr = start.toISOString();
+        const endStr = end.toISOString();
+
+        // Wrap this interval in a single transaction so partial failures don't affect other days
+        const tx = db.transaction(() => {
+            db.prepare('DELETE FROM EnergyData WHERE site_id = ? AND timestamp >= ? AND timestamp < ?').run(site.id, startStr, endStr);
+            this.insertEnergyData(energyDatas, true);
+            this.insertEnergyUsage(usages, true);
+        });
+
+        tx();
     }
 
-    private processHistory(site: SiteWithTariffs, history: EnergyHistoryEntry[], currentSOC: number | null): any[] {
+    private processHistory(site: SiteWithTariffs, history: EnergyHistoryEntry[], soeByTimestamp: Map<number, number>): any[] {
         const schedule = new Schedule(site.tariffs);
         const results: any[] = [];
 
         for (const h of history) {
             const ts = new Date(h.timestamp);
-            const tp = schedule.getTariffPeriod(ts);
+            const tp = this.getTariffPeriodOrFallback(site, schedule, ts);
             if (!tp) {
-                console.warn(`No tariff period found for ${h.timestamp}`);
+                console.warn(`No tariff period found for ${h.timestamp}; skipping row`);
                 continue;
             }
 
-            let grid = h.grid_energy_imported;
+            const gridImported = h.grid_energy_imported ?? 0;
+            const gridExported = h.total_grid_energy_exported ?? 0;
+            let grid = gridImported;
             if (grid === 0) {
-                grid = -h.total_grid_energy_exported; // Go logic: if imported > 0 use it, else -exported
+                grid = -gridExported; // Go logic: if imported > 0 use it, else -exported
                 // Wait, Go logic:
                 // if h.GridEnergyImported > 0 { grid = h.GridEnergyImported } else { grid = 0 - h.TotalGridEnergyExported }
                 // Note: API might return both? Usually one is non-zero per interval or net.
                 // Let's stick to Go logic.
             }
 
-            let battery = h.total_battery_charge;
+            const batteryCharge = h.total_battery_charge ?? 0;
+            const batteryDischarge = h.total_battery_discharge ?? 0;
+            let battery = batteryCharge;
             if (battery === 0) {
-                battery = -h.total_battery_discharge;
+                battery = -batteryDischarge;
             }
 
             results.push({
                 site_id: site.id,
-                tariff_id: tp.tariff.id,
+                tariff_id: Number(tp.tariff.id),
                 timestamp: h.timestamp,
-                load_power: h.total_home_usage,
-                solar_power: h.solar_energy_exported, // Wait, Go uses SolarEnergyExported? 
+                load_power: h.total_home_usage ?? 0,
+                solar_power: h.solar_energy_exported ?? 0, // Wait, Go uses SolarEnergyExported? 
                 // Go: SolarPower: h.SolarEnergyExported. 
                 // Is this correct? Usually Solar Generation is total_solar_generation.
                 // Let's check Go code again.
@@ -134,23 +336,84 @@ export class Importer {
                 // Let's assume Go code is correct for now.
                 grid_power: grid,
                 battery_power: battery,
-                battery_soc: currentSOC // Use current SOC for all records in this batch
+                battery_soc: soeByTimestamp.get(ts.getTime()) ?? null
             });
         }
         return results;
     }
 
-    private insertEnergyData(data: any[]) {
+    private getTariffPeriodOrFallback(site: SiteWithTariffs, schedule: Schedule, ts: Date) {
+        const tp = schedule.getTariffPeriod(ts);
+        if (tp) return tp;
+
+        // Fallback: assign to the first tariff with a synthetic all-day schedule
+        const fallbackTariff = site.tariffs[0];
+        if (!fallbackTariff) return null;
+
+        const season: TariffSeason = {
+            id: -1,
+            tariff_id: fallbackTariff.id,
+            name: 'Fallback',
+            from_month: 1,
+            from_day: 1,
+            to_month: 12,
+            to_day: 31,
+            buy_rate: fallbackTariff.seasons?.[0]?.buy_rate ?? 0,
+            sell_rate: fallbackTariff.seasons?.[0]?.sell_rate ?? 0,
+            schedules: []
+        };
+
+        const sched: TariffSchedule = {
+            id: -1,
+            season_id: season.id,
+            from_day_of_week: 0,
+            to_day_of_week: 6,
+            from_hour: 0,
+            from_minute: 0,
+            to_hour: 24,
+            to_minute: 0
+        };
+
+        return {
+            start: new Date(ts),
+            end: new Date(ts),
+            tariff: fallbackTariff,
+            season,
+            schedule: sched
+        };
+    }
+
+    private insertEnergyData(data: any[], inTransaction = false) {
+        // Skip rows whose tariff is unknown rather than creating new tariffs during data import
+        const validRows = data.filter(row => {
+            const tariffExists = db.prepare('SELECT 1 FROM Tariff WHERE id = ?').get(row.tariff_id) as { 1: number } | undefined;
+            if (!tariffExists) {
+                console.warn(`Skipping row for unknown tariff_id=${row.tariff_id}`);
+                return false;
+            }
+            return true;
+        });
+
         const stmt = db.prepare(`
             INSERT INTO EnergyData(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc) 
             VALUES (@site_id, @tariff_id, @timestamp, @load_power, @solar_power, @grid_power, @battery_power, @battery_soc)
+            ON CONFLICT(timestamp, site_id, tariff_id) DO UPDATE SET
+                load_power=excluded.load_power,
+                solar_power=excluded.solar_power,
+                grid_power=excluded.grid_power,
+                battery_power=excluded.battery_power,
+                battery_soc=excluded.battery_soc
         `);
 
-        const insertMany = db.transaction((rows: any[]) => {
+        const runner = (rows: any[]) => {
             for (const row of rows) stmt.run(row);
-        });
+        };
 
-        insertMany(data);
+        if (inTransaction) {
+            runner(validRows);
+        } else {
+            db.transaction(runner)(validRows);
+        }
     }
 
     private aggregateUsage(site: SiteWithTariffs, data: any[]): UsageData[] {
@@ -201,7 +464,7 @@ export class Importer {
         return Array.from(tariffMap.values());
     }
 
-    private insertEnergyUsage(usages: UsageData[]) {
+    private insertEnergyUsage(usages: UsageData[], inTransaction = false) {
         const stmt = db.prepare(`
             INSERT INTO EnergyUsage(tariff_id, start, load_usage, solar_produced, grid_usage, battery_usage) 
             VALUES (@tariff_id, @start, @load_usage, @solar_produced, @grid_usage, @battery_usage)
@@ -212,7 +475,7 @@ export class Importer {
                 battery_usage = excluded.battery_usage
         `);
 
-        const insertMany = db.transaction((rows: UsageData[]) => {
+        const runner = (rows: UsageData[]) => {
             for (const row of rows) {
                 stmt.run({
                     tariff_id: row.tariff.id,
@@ -223,8 +486,12 @@ export class Importer {
                     battery_usage: row.batteryChange
                 });
             }
-        });
+        };
 
-        insertMany(usages);
+        if (inTransaction) {
+            runner(usages);
+        } else {
+            db.transaction(runner)(usages);
+        }
     }
 }

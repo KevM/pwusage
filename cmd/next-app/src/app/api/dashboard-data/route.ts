@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
+import { Importer } from '@/lib/importer';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,8 +21,14 @@ export async function GET() {
 
         // Fetch current tariff and live battery power for each site
         const repo = new EnergyRepo();
+        const importer = new Importer(token);
+
         const productsWithTariff = await Promise.all(products.map(async (product) => {
-            const site = repo.getSite(product.energy_site_id.toString());
+            let site = repo.getSite(product.energy_site_id.toString());
+            if (!site) {
+                // Upsert the site/tariffs lazily when encountered from Tesla
+                site = await importer.ensureSite(product.energy_site_id.toString());
+            }
             let currentTariff = 'Unknown';
             let liveBatteryPower = product.battery_power;
             let liveSolarPower = 0;

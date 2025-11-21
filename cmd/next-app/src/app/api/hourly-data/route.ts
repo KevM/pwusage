@@ -14,13 +14,18 @@ export async function GET(request: Request) {
         }
 
         const repo = new EnergyRepo();
-        const date = new Date(dateStr + 'T00:00:00');
-        const hourlyData = repo.getHourlyEnergyData(siteId, date);
+        const site = repo.getSite(siteId);
+        if (!site) {
+            return NextResponse.json({ error: 'Site not found' }, { status: 404 });
+        }
+
+        const hourlyData = repo.getHourlyEnergyData(siteId, dateStr, site.timezone);
 
         return NextResponse.json(
             {
                 date: dateStr,
-                data: hourlyData
+                data: hourlyData,
+                timezone: site.timezone
             },
             {
                 headers: {

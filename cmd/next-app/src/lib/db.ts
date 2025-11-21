@@ -5,11 +5,14 @@ import path from 'path';
 // In production, it's created once per process
 const globalForDb = global as unknown as { db: Database.Database };
 
-const dbPath = process.env.DATABASE_URL?.replace('file:', '') || '../../pwrtool/pwusage.db';
+// Default to app-local db; override via DATABASE_URL (file:... or plain path)
+const dbPathEnv = process.env.DATABASE_URL;
+const dbPath = dbPathEnv ? dbPathEnv.replace('file:', '') : './pwusage.db';
 // Resolve path relative to cwd if it's relative
 const resolvedPath = path.isAbsolute(dbPath) ? dbPath : path.resolve(process.cwd(), dbPath);
 
 export const db = globalForDb.db || new Database(resolvedPath, { verbose: console.log });
+db.pragma('foreign_keys = ON');
 
 if (process.env.NODE_ENV !== 'production') globalForDb.db = db;
 

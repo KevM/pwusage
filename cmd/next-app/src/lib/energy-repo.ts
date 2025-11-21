@@ -1,5 +1,66 @@
 import { db, EnergyUsage, Tariff, Site } from './db';
 
+function formatYMD(date: Date, timeZone: string): string {
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).format(date); // YYYY-MM-DD
+}
+
+function getHourInTimeZone(date: Date, timeZone: string): number {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        hour: '2-digit',
+        hourCycle: 'h23'
+    });
+    const parts = fmt.formatToParts(date);
+    const hourStr = parts.find(p => p.type === 'hour')?.value;
+    return Number(hourStr);
+}
+
+function getOffsetMinutesForDate(dateStr: string, timeZone: string): number | null {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if ([y, m, d].some(v => Number.isNaN(v))) return null;
+    const baselineUtc = Date.UTC(y, m - 1, d, 12, 0, 0);
+    const fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        timeZoneName: 'shortOffset'
+    });
+    const parts = fmt.formatToParts(new Date(baselineUtc));
+    const tzName = parts.find(p => p.type === 'timeZoneName')?.value ?? '';
+    const match = tzName.match(/GMT([+-]\d{2})(?::?(\d{2}))?/i);
+    if (!match) return null;
+    const hours = Number(match[1]);
+    const minutes = match[2] ? Number(match[2]) : 0;
+    return hours * 60 + Math.sign(hours) * minutes;
+}
+
+function getUtcRangeForDate(dateStr: string, timeZone: string, clampToNow: boolean): { start: Date; end: Date } {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const offsetMinutes = getOffsetMinutesForDate(dateStr, timeZone);
+    if ([y, m, d].some(v => Number.isNaN(v)) || offsetMinutes === null) {
+        const fallback = new Date(dateStr + 'T00:00:00');
+        const start = new Date(fallback);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+        return { start, end };
+    }
+    const startUtcMs = Date.UTC(y, m - 1, d, 0, 0, 0) - offsetMinutes * 60 * 1000;
+    let endUtcMs = startUtcMs + 24 * 60 * 60 * 1000;
+
+    if (clampToNow) {
+        const now = new Date();
+        const nowDateStr = formatYMD(now, timeZone);
+        if (nowDateStr === dateStr) {
+            endUtcMs = Math.min(endUtcMs, now.getTime());
+        }
+    }
+
+    return { start: new Date(startUtcMs), end: new Date(endUtcMs) };
+}
+
 export interface UsageData {
     start: Date;
     homeUsage: number;
@@ -73,7 +134,12 @@ export class EnergyRepo {
         };
     }
 
-    getHourlyEnergyData(siteId: string, date: Date): Array<{
+    getSiteIds(): string[] {
+        const rows = db.prepare('SELECT id FROM Site').all() as { id: string }[];
+        return rows.map(r => r.id);
+    }
+
+    getHourlyEnergyData(siteId: string, dateStr: string, timeZone?: string): Array<{
         hour: number;
         homeUsage: number;
         solarProduction: number;
@@ -81,34 +147,65 @@ export class EnergyRepo {
         batteryUsage: number;
         batterySoc: number | null;
     }> {
-        // SQLite stores timestamps as strings with timezone info
-        // We need to extract just the date part for comparison
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const dateStr = `${year}-${month}-${day}`;
+        const tz = timeZone ?? 'UTC';
+        const { start, end } = getUtcRangeForDate(dateStr, tz, false);
 
         const rows = db.prepare(`
             SELECT 
-                CAST(strftime('%H', datetime(timestamp, 'localtime')) AS INTEGER) as hour,
-                SUM(load_power) as home_usage,
-                SUM(solar_power) as solar_production,
-                SUM(grid_power) as grid_usage,
-                SUM(battery_power) as battery_usage,
-                AVG(battery_soc) as battery_soc
+                timestamp,
+                load_power,
+                solar_power,
+                grid_power,
+                battery_power,
+                battery_soc
             FROM EnergyData
-            WHERE site_id = ? AND date(datetime(timestamp, 'localtime')) = ?
-            GROUP BY hour
-            ORDER BY hour
-        `).all(siteId, dateStr) as any[];
+            WHERE site_id = ? AND datetime(timestamp) >= datetime(?) AND datetime(timestamp) < datetime(?)
+        `).all(siteId, start.toISOString(), end.toISOString()) as any[];
 
-        return rows.map(row => ({
-            hour: row.hour,
-            homeUsage: row.home_usage / 1000, // Convert to kWh
-            solarProduction: row.solar_production / 1000,
-            gridUsage: row.grid_usage / 1000,
-            batteryUsage: row.battery_usage / 1000,
-            batterySoc: row.battery_soc, // Already a percentage
+        const buckets = new Map<number, {
+            homeUsage: number;
+            solarProduction: number;
+            gridUsage: number;
+            batteryUsage: number;
+            batterySocTotal: number;
+            batterySocCount: number;
+        }>();
+
+        for (const row of rows) {
+            const ts = new Date(row.timestamp);
+            const rowDateStr = formatYMD(ts, tz);
+            if (rowDateStr !== dateStr) continue;
+            const hr = getHourInTimeZone(ts, tz);
+            if (!buckets.has(hr)) {
+                buckets.set(hr, {
+                    homeUsage: 0,
+                    solarProduction: 0,
+                    gridUsage: 0,
+                    batteryUsage: 0,
+                    batterySocTotal: 0,
+                    batterySocCount: 0
+                });
+            }
+
+            const bucket = buckets.get(hr)!;
+            bucket.homeUsage += row.load_power;
+            bucket.solarProduction += row.solar_power;
+            bucket.gridUsage += row.grid_power;
+            bucket.batteryUsage += row.battery_power;
+            if (row.battery_soc !== null && row.battery_soc !== undefined) {
+                bucket.batterySocTotal += row.battery_soc;
+                bucket.batterySocCount += 1;
+            }
+        }
+
+        const sortedHours = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]);
+        return sortedHours.map(([hour, bucket]) => ({
+            hour,
+            homeUsage: bucket.homeUsage / 1000, // Convert to kWh
+            solarProduction: bucket.solarProduction / 1000,
+            gridUsage: bucket.gridUsage / 1000,
+            batteryUsage: bucket.batteryUsage / 1000,
+            batterySoc: bucket.batterySocCount > 0 ? bucket.batterySocTotal / bucket.batterySocCount : null
         }));
     }
 }
