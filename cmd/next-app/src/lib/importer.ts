@@ -154,100 +154,98 @@ export class Importer {
             return;
         }
 
+        const tariffName = tariffContent.name || 'Default Tariff';
         const buyCharges = tariffContent.energy_charges || {};
         const sellCharges = tariffContent.sell_tariff?.energy_charges || {};
         const seasonsMap: Record<string, Season> = tariffContent.seasons || {};
 
-        const tariffNames = Object.keys(buyCharges);
-        if (tariffNames.length === 0) {
-            this.ensureDefaultTariff(siteId, 'Default');
+        // Create the single Tariff
+        db.prepare(`
+            INSERT INTO Tariff(site_id, name, updated)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(site_id, name) DO UPDATE SET updated=datetime('now')
+        `).run(siteId, tariffName);
+
+        const tariffRow = db.prepare(`SELECT id FROM Tariff WHERE site_id = ? AND name = ?`).get(siteId, tariffName) as { id: number } | undefined;
+        if (!tariffRow) return;
+
+        // Refresh seasons/schedules for this tariff
+        db.prepare(`DELETE FROM TariffSchedule WHERE season_id IN (SELECT id FROM TariffSeason WHERE tariff_id = ?)`).run(tariffRow.id);
+        db.prepare(`DELETE FROM TariffSeason WHERE tariff_id = ?`).run(tariffRow.id);
+
+        const seasonEntries = Object.entries(seasonsMap) as [string, Season][];
+        if (seasonEntries.length === 0) {
+            this.ensureDefaultSeasonAndSchedule(tariffRow.id, 0, 0);
             return;
         }
 
-        for (const tariffName of tariffNames) {
-            const buyRates = buyCharges[tariffName]?.rates || {};
-            const sellRates = sellCharges[tariffName]?.rates || {};
-            const buyRate = Object.values(buyRates).length > 0 ? Number(Object.values(buyRates)[0]) : 0;
-            const sellRate = Object.values(sellRates).length > 0 ? Number(Object.values(sellRates)[0]) : 0;
+        for (const [seasonName, season] of seasonEntries) {
+            const fromMonth = pickNumber(season, ['fromMonth', 'from_month'], 1) ?? 1;
+            const fromDay = pickNumber(season, ['fromDay', 'from_day'], 1) ?? 1;
+            const toMonth = pickNumber(season, ['toMonth', 'to_month'], 12) ?? 12;
+            const toDay = pickNumber(season, ['toDay', 'to_day'], 31) ?? 31;
+
+            // Get rates for this season from energy_charges
+            // The structure seems to be energy_charges[SeasonName].rates[TouName]
+            const seasonBuyRates = buyCharges[seasonName]?.rates || {};
+            const seasonSellRates = sellCharges[seasonName]?.rates || {};
+
+            // Fallback rates if TOU not found
+            const defaultBuyRate = Object.values(seasonBuyRates).length > 0 ? Number(Object.values(seasonBuyRates)[0]) : 0;
+            const defaultSellRate = Object.values(seasonSellRates).length > 0 ? Number(Object.values(seasonSellRates)[0]) : 0;
 
             db.prepare(`
-                INSERT INTO Tariff(site_id, name, updated)
-                VALUES (?, ?, datetime('now'))
-                ON CONFLICT(site_id, name) DO UPDATE SET name=excluded.name, updated=datetime('now')
-            `).run(siteId, tariffName);
+                INSERT INTO TariffSeason(tariff_id, name, from_month, from_day, to_month, to_day, buy_rate, sell_rate)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                tariffRow.id,
+                seasonName,
+                fromMonth,
+                fromDay,
+                toMonth,
+                toDay,
+                defaultBuyRate,
+                defaultSellRate
+            );
+            const seasonRow = db.prepare(`SELECT id FROM TariffSeason WHERE tariff_id = ? AND name = ?`).get(tariffRow.id, seasonName) as { id: number } | undefined;
+            if (!seasonRow) continue;
 
-            const tariffRow = db.prepare(`SELECT id FROM Tariff WHERE site_id = ? AND name = ?`).get(siteId, tariffName) as { id: number } | undefined;
-            if (!tariffRow) continue;
+            const touPeriods = season.tou_periods || {};
+            const touPeriodEntries = Object.entries(touPeriods);
 
-            // Refresh seasons/schedules for this tariff
-            db.prepare(`DELETE FROM TariffSchedule WHERE season_id IN (SELECT id FROM TariffSeason WHERE tariff_id = ?)`).run(tariffRow.id);
-            db.prepare(`DELETE FROM TariffSeason WHERE tariff_id = ?`).run(tariffRow.id);
-
-            const seasonEntries = Object.entries(seasonsMap) as [string, Season][];
-            if (seasonEntries.length === 0) {
-                this.ensureDefaultSeasonAndSchedule(tariffRow.id, buyRate, sellRate);
+            if (touPeriodEntries.length === 0) {
+                this.ensureDefaultSchedule(seasonRow.id, defaultBuyRate, defaultSellRate);
                 continue;
             }
 
-            for (const [seasonName, season] of seasonEntries) {
-                const fromMonth = pickNumber(season, ['fromMonth', 'from_month'], 1) ?? 1;
-                const fromDay = pickNumber(season, ['fromDay', 'from_day'], 1) ?? 1;
-                const toMonth = pickNumber(season, ['toMonth', 'to_month'], 12) ?? 12;
-                const toDay = pickNumber(season, ['toDay', 'to_day'], 31) ?? 31;
+            for (const [touName, periodGroup] of touPeriodEntries) {
+                const periods = (periodGroup as SeasonPeriods).periods || [];
 
-                db.prepare(`
-                    INSERT INTO TariffSeason(tariff_id, name, from_month, from_day, to_month, to_day, buy_rate, sell_rate)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                `).run(
-                    tariffRow.id,
-                    seasonName,
-                    fromMonth,
-                    fromDay,
-                    toMonth,
-                    toDay,
-                    0, // buy_rate (moved to schedule)
-                    0  // sell_rate (moved to schedule)
-                );
-                const seasonRow = db.prepare(`SELECT id FROM TariffSeason WHERE tariff_id = ? AND name = ?`).get(tariffRow.id, seasonName) as { id: number } | undefined;
-                if (!seasonRow) continue;
+                // Find rates for this TOU period
+                const touBuyRate = seasonBuyRates[touName] ?? defaultBuyRate;
+                const touSellRate = seasonSellRates[touName] ?? defaultSellRate;
 
-                const touPeriods = season.tou_periods || {};
-                const touPeriodEntries = Object.entries(touPeriods);
-
-                if (touPeriodEntries.length === 0) {
-                    this.ensureDefaultSchedule(seasonRow.id, 0, 0); // Default rates for default schedule
+                if (periods.length === 0) {
+                    this.ensureDefaultSchedule(seasonRow.id, touBuyRate, touSellRate, touName);
                     continue;
                 }
 
-                for (const [touName, periodGroup] of touPeriodEntries) {
-                    const periods = (periodGroup as SeasonPeriods).periods || [];
-
-                    // Find rates for this TOU period
-                    const touBuyRate = buyRates[touName] ?? 0;
-                    const touSellRate = sellRates[touName] ?? 0;
-
-                    if (periods.length === 0) {
-                        this.ensureDefaultSchedule(seasonRow.id, touBuyRate, touSellRate, touName);
-                        continue;
-                    }
-
-                    for (const p of periods) {
-                        db.prepare(`
-                            INSERT INTO TariffSchedule(season_id, name, buy_rate, sell_rate, from_day_of_week, to_day_of_week, from_hour, from_minute, to_hour, to_minute)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        `).run(
-                            seasonRow.id,
-                            touName,
-                            touBuyRate,
-                            touSellRate,
-                            pickNumber(p, ['fromDayOfWeek', 'from_day_of_week']),
-                            pickNumber(p, ['toDayOfWeek', 'to_day_of_week']),
-                            pickNumber(p, ['fromHour', 'from_hour']),
-                            pickNumber(p, ['fromMinute', 'from_minute']),
-                            pickNumber(p, ['toHour', 'to_hour']),
-                            pickNumber(p, ['toMinute', 'to_minute'])
-                        );
-                    }
+                for (const p of periods) {
+                    db.prepare(`
+                        INSERT INTO TariffSchedule(season_id, name, buy_rate, sell_rate, from_day_of_week, to_day_of_week, from_hour, from_minute, to_hour, to_minute)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    `).run(
+                        seasonRow.id,
+                        touName,
+                        touBuyRate,
+                        touSellRate,
+                        pickNumber(p, ['fromDayOfWeek', 'from_day_of_week'], 0),
+                        pickNumber(p, ['toDayOfWeek', 'to_day_of_week'], 6),
+                        pickNumber(p, ['fromHour', 'from_hour'], 0),
+                        pickNumber(p, ['fromMinute', 'from_minute'], 0),
+                        pickNumber(p, ['toHour', 'to_hour'], 24),
+                        pickNumber(p, ['toMinute', 'to_minute'], 0)
+                    );
                 }
             }
         }

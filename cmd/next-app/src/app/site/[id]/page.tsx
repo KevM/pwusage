@@ -194,6 +194,12 @@ export default async function SitePage({ params, searchParams }: {
                         >
                             View Full Bill →
                         </Link>
+                        <Link
+                            href={`/site/${id}/tariffs`}
+                            className="px-3 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 font-medium"
+                        >
+                            View Tariffs →
+                        </Link>
                     </div>
                 </div>
 
