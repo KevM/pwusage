@@ -54,7 +54,7 @@ export class Importer {
         this.repo = new EnergyRepo();
     }
 
-    async importSite(siteId: string, period: string = "day") {
+    async importSite(siteId: string, period: string = "day", maxDays: number = 7) {
         let site = this.repo.getSite(siteId);
         if (!site) {
             site = await this.ensureSite(siteId);
@@ -82,10 +82,16 @@ export class Importer {
         // Load in day-sized chunks to avoid API limits and cover gaps
         let cursor = adjustedStart;
         const oneDayMs = 24 * 60 * 60 * 1000;
+        let daysProcessed = 0;
         while (cursor < now) {
+            if (daysProcessed >= maxDays) {
+                console.log(`[Importer] Hit max days limit (${maxDays}) for site ${siteId}. Stopping for now.`);
+                break;
+            }
             const next = new Date(Math.min(cursor.getTime() + oneDayMs, now.getTime()));
             await this.loadInterval(site, cursor, next, period);
             cursor = next;
+            daysProcessed++;
         }
     }
 
@@ -291,10 +297,39 @@ export class Importer {
         // Fetch history for the interval at the requested granularity
         const [history, soeHistory] = await Promise.all([
             this.client.getEnergyHistory(site.id, start, end, period, site.timezone),
-            this.client.getSoeHistory(site.id, start, end, period, site.timezone).catch(err => {
-                console.warn('Failed to fetch SOC history, SOC will be null:', err);
-                return [];
-            })
+            // Fetch SOE history in 20-minute chunks to avoid 504 Gateway Timeouts
+            (async () => {
+                const chunks: any[] = [];
+                const chunkDuration = 20 * 60 * 1000; // 20 minutes
+                let chunkStart = new Date(start);
+
+                while (chunkStart < end) {
+                    const chunkEnd = new Date(Math.min(chunkStart.getTime() + chunkDuration, end.getTime()));
+                    let success = false;
+                    let attempts = 0;
+
+                    while (!success && attempts < 3) {
+                        attempts++;
+                        try {
+                            const chunk = await this.client.getSoeHistory(site.id, chunkStart, chunkEnd, period, site.timezone);
+                            chunks.push(...chunk);
+                            success = true;
+                        } catch (err: any) {
+                            console.warn(`[Importer] Failed to fetch SOC history chunk for site ${site.id} (${chunkStart.toISOString()} - ${chunkEnd.toISOString()}) Attempt ${attempts}:`, err.message || err);
+                            if (attempts < 3) {
+                                // Exponential backoff: 1s, 2s, 4s
+                                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempts - 1)));
+                            } else {
+                                console.error(`[Importer] Gave up on SOC chunk after 3 attempts.`);
+                            }
+                        }
+                    }
+                    chunkStart = chunkEnd;
+                    // Add a small delay between chunks
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+                return chunks;
+            })()
         ]);
         if (!history || history.length === 0) return;
 
