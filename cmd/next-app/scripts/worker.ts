@@ -3,10 +3,13 @@
  * Background worker to import Tesla data every 5 minutes
  * Run with: npx tsx scripts/worker.ts
  */
+import { loadEnvConfig } from '@next/env';
 
+// Load environment variables from .env* files
+loadEnvConfig(process.cwd());
 const IMPORT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const IMPORT_GRANULARITY = process.env.IMPORT_GRANULARITY || 'day';
-const API_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+const API_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:5173';
 const IMPORT_TIMEOUT_MS = Number(process.env.IMPORT_TIMEOUT_MS || 600000); // 10 minutes
 
 async function runImport() {

@@ -64,15 +64,29 @@ export class Importer {
             }
         }
 
+        // Determine retention period
+        const retentionDays = process.env.DATA_RETENTION_DAYS ? parseInt(process.env.DATA_RETENTION_DAYS, 10) : 90;
+        const now = new Date();
+        const retentionDate = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
+
         // Determine start date from last stored timestamp or installation date
         const lastRow = db.prepare('SELECT timestamp FROM EnergyData WHERE site_id = ? ORDER BY timestamp DESC LIMIT 1').get(siteId) as { timestamp: string } | undefined;
-        const now = new Date();
 
         // Start from the beginning of the day that contains the last stored record (site TZ) to refill any gaps,
         // or the install date if none. Step back one interval for overlap.
-        const startFromDb = lastRow ? getStartOfDayInTimeZone(new Date(lastRow.timestamp), site.timezone) : new Date(site.installed);
+        let startFromDb: Date;
+        if (lastRow) {
+            startFromDb = getStartOfDayInTimeZone(new Date(lastRow.timestamp), site.timezone);
+        } else {
+            // If no data, start from install date OR retention limit, whichever is later
+            const installDate = new Date(site.installed);
+            startFromDb = installDate > retentionDate ? installDate : retentionDate;
+        }
+
         const start = new Date(startFromDb.getTime() - 5 * 60 * 1000);
-        const adjustedStart = start < new Date(site.installed) ? new Date(site.installed) : start;
+        // Ensure we don't go earlier than installed date or retention date (synthetic constraint)
+        const earliestAllowed = new Date(site.installed) > retentionDate ? new Date(site.installed) : retentionDate;
+        const adjustedStart = start < earliestAllowed ? earliestAllowed : start;
 
         if (adjustedStart >= now) {
             console.log(`No new data to import for site ${siteId}`);
@@ -93,6 +107,36 @@ export class Importer {
             cursor = next;
             daysProcessed++;
         }
+
+        // Prune old data after import
+        await this.pruneOldData(siteId, retentionDays);
+    }
+
+    async pruneOldData(siteId: string, retentionDays: number) {
+        const pruneDate = new Date();
+        pruneDate.setDate(pruneDate.getDate() - retentionDays);
+        const pruneDateStr = pruneDate.toISOString();
+
+        console.log(`[Importer] Pruning data older than ${pruneDateStr} for site ${siteId}`);
+
+        const tx = db.transaction(() => {
+            // Prune EnergyData
+            const resData = db.prepare(`DELETE FROM EnergyData WHERE site_id = ? AND timestamp < ?`).run(siteId, pruneDateStr);
+            if (resData.changes > 0) {
+                console.log(`[Importer] Deleted ${resData.changes} rows from EnergyData`);
+            }
+
+            // Prune EnergyUsage (tariff-based)
+            const resUsage = db.prepare(`
+                DELETE FROM EnergyUsage 
+                WHERE tariff_id IN (SELECT id FROM Tariff WHERE site_id = ?) 
+                AND start < ?
+            `).run(siteId, pruneDateStr);
+            if (resUsage.changes > 0) {
+                console.log(`[Importer] Deleted ${resUsage.changes} rows from EnergyUsage`);
+            }
+        });
+        tx();
     }
 
     async ensureSite(siteId: string): Promise<SiteWithTariffs | undefined> {
@@ -300,7 +344,7 @@ export class Importer {
             // Fetch SOE history in 20-minute chunks to avoid 504 Gateway Timeouts
             (async () => {
                 const chunks: any[] = [];
-                const chunkDuration = 20 * 60 * 1000; // 20 minutes
+                const chunkDuration = 720 * 60 * 1000; // 12 hours
                 let chunkStart = new Date(start);
 
                 while (chunkStart < end) {
@@ -326,7 +370,7 @@ export class Importer {
                     }
                     chunkStart = chunkEnd;
                     // Add a small delay between chunks
-                    await new Promise(resolve => setTimeout(resolve, 200));
+                    await new Promise(resolve => setTimeout(resolve, 20));
                 }
                 return chunks;
             })()
