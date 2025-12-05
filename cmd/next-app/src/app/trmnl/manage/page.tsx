@@ -68,18 +68,28 @@ function ManageContent() {
 
             {success && <div className="mb-4 p-2 bg-green-100 text-green-700 rounded">{success}</div>}
 
-            <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">Select Site to Display</label>
-                <select
-                    value={selectedSite}
-                    onChange={e => setSelectedSite(e.target.value)}
-                    className="w-full p-2 border rounded"
-                >
-                    {sites.map(site => (
-                        <option key={site.id} value={site.id}>{site.name}</option>
-                    ))}
-                </select>
-            </div>
+            {sites.length > 1 ? (
+                <div className="mb-4">
+                    <label className="block text-sm font-medium mb-2">Select Site to Display</label>
+                    <select
+                        value={selectedSite}
+                        onChange={e => setSelectedSite(e.target.value)}
+                        className="w-full p-2 border rounded"
+                    >
+                        {sites.map(site => (
+                            <option key={site.id} value={site.id}>{site.name}</option>
+                        ))}
+                    </select>
+                </div>
+            ) : sites.length === 1 ? (
+                <div className="mb-4">
+                    <p className="text-sm font-medium mb-1">Link to Site:</p>
+                    <p className="font-bold">{sites[0].name}</p>
+                    <input type="hidden" value={sites[0].id} />
+                </div>
+            ) : (
+                <div className="mb-4 text-red-500">No sites found. Please set up a site first.</div>
+            )}
 
             <button
                 onClick={handleSave}

@@ -131,7 +131,7 @@ export class Schedule {
             }
         } else {
             // Wrap around year (e.g. Nov to Mar)
-            if (month < season.from_month || month > season.to_month) {
+            if (month > season.from_month || month < season.to_month) {
                 return true;
             }
             if (month === season.from_month && day > season.from_day) {
