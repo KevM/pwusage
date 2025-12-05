@@ -70,3 +70,12 @@ export interface EnergyUsage {
     grid_usage: number;
     battery_usage: number;
 }
+
+export interface TrmnlInstallation {
+    id: number;
+    access_token: string;
+    uuid: string | null;
+    site_id: string;
+    plugin_setting_id: number | null;
+    created_at: string;
+}

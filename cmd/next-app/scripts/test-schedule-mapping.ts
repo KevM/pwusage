@@ -26,9 +26,7 @@ function runTest() {
             from_hour: 0,
             to_hour: 8,
             from_minute: 0,
-            to_minute: 0,
-            from_minute: null,
-            to_minute: null
+            to_minute: 0
         },
         {
             id: 2,
@@ -41,9 +39,7 @@ function runTest() {
             from_hour: 8,
             to_hour: 20,
             from_minute: 0,
-            to_minute: 0,
-            from_minute: null,
-            to_minute: null
+            to_minute: 0
         },
         {
             id: 3,
@@ -56,9 +52,7 @@ function runTest() {
             from_hour: 20,
             to_hour: 24,
             from_minute: 0,
-            to_minute: 0,
-            from_minute: null,
-            to_minute: null
+            to_minute: 0
         },
         {
             id: 4,
@@ -71,9 +65,7 @@ function runTest() {
             from_hour: 0,
             to_hour: 24,
             from_minute: 0,
-            to_minute: 0,
-            from_minute: null,
-            to_minute: null
+            to_minute: 0
         }
     ];
 

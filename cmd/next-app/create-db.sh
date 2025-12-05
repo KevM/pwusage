@@ -89,4 +89,13 @@ CREATE TABLE AppSettings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE TrmnlInstallation (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  access_token TEXT UNIQUE NOT NULL,
+  uuid TEXT UNIQUE,
+  site_id TEXT NOT NULL,
+  plugin_setting_id INTEGER,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 SQL

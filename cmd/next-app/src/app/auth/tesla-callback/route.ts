@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
             client_id: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID!,
             client_secret: process.env.TESLA_OAUTH_SECRET!,
             audience: process.env.PUBLIC_TESLA_OAUTH_AUDIENCE!,
-            redirect_uri: `${process.env.PUBLIC_WEBAPP_BASE_URL}/auth/tesla-callback`,
+            redirect_uri: `${process.env.NEXT_PUBLIC_APP_URL}/auth/tesla-callback`,
             grant_type: "authorization_code",
             code: code,
         }),
