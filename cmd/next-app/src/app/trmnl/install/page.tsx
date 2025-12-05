@@ -13,88 +13,104 @@ function InstallContent() {
     const [selectedSite, setSelectedSite] = useState('');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [accessToken, setAccessToken] = useState('');
 
+    const [autoConnecting, setAutoConnecting] = useState(false);
+
+    // Effect to handle initial data load and auto-connection
     useEffect(() => {
+        if (!code) return; // Wait for code
+
         // 1. Fetch sites
         fetch('/api/sites')
             .then(res => res.json())
             .then(data => {
                 setSites(data);
-                if (data.length > 0) setSelectedSite(data[0].id);
+                if (data.length > 0) {
+                    const firstSiteId = data[0].id;
+                    setSelectedSite(firstSiteId);
+
+                    // Auto-connect if only one site
+                    if (data.length === 1) {
+                        setAutoConnecting(true);
+                        // triggerSetup(firstSiteId, code); // Call separate function to avoid stale state issues in effect? 
+                        // Actually, we can just call the setup logic here directly or use a ref.
+                        // Let's call a minimal version of handleSetup here.
+                        performSetup(firstSiteId, code, installationCallbackUrl);
+                    }
+                }
             })
             .catch(err => setError('Failed to load sites'))
-            .finally(() => setLoading(false));
+            .finally(() => {
+                if (!autoConnecting) setLoading(false);
+            });
+    }, [code, installationCallbackUrl]); // Only run once on mount (with code)
 
-        // 2. Exchange code for token (if we have a code)
-        // Note: In a real app, we should do this server-side to keep client_secret hidden.
-        // But for this personal app, we might need a server action or API route to proxy the exchange.
-        // Let's assume we have an API route for this or we do it here if we don't care about exposing secret (bad practice).
-        // Wait, the plan said "Exchanges the code for an access_token (server-side)".
-        // So we need an API route to do the exchange.
-        // But we don't have that route yet in the plan?
-        // Ah, TrmnlService has exchangeCodeForToken.
-        // We need an API route to call it.
-        // Let's add that to the plan or just implement it.
-        // Actually, the "setup" route takes access_token.
-        // So the client needs to get the token? No, that exposes the secret.
-        // The client should send the CODE to our backend, and our backend exchanges it.
-
-    }, []);
-
-    const handleSetup = async () => {
-        if (!selectedSite || !code) return;
-        setLoading(true);
-
+    const performSetup = async (siteId: string, authCode: string, callbackUrl: string | null) => {
         try {
-            // We need to exchange code for token first.
-            // Let's create a new API route for this: /api/trmnl/exchange
-            // Or just modify /api/trmnl/setup to take the code and do the exchange?
-            // Yes, that's better.
-
             const res = await fetch('/api/trmnl/setup', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    code,
-                    site_id: selectedSite,
-                    // We need to pass the callback URL too? No.
+                    code: authCode,
+                    site_id: siteId,
                 })
             });
 
             if (!res.ok) throw new Error(await res.text());
 
             // Redirect back to Trmnl
-            if (installationCallbackUrl) {
-                window.location.href = installationCallbackUrl;
+            if (callbackUrl) {
+                window.location.href = callbackUrl;
             } else {
                 alert('Setup complete! You can close this window.');
             }
         } catch (err: any) {
             setError(err.message);
             setLoading(false);
+            setAutoConnecting(false);
         }
     };
 
-    if (loading) return <div className="p-8">Loading...</div>;
+    const handleSetup = () => {
+        performSetup(selectedSite, code!, installationCallbackUrl);
+    };
+
+    if (loading || autoConnecting) return (
+        <div className="max-w-md mx-auto mt-10 p-8 bg-white rounded-lg shadow-md text-center">
+            <h1 className="text-xl font-bold mb-4">Connecting to Trmnl...</h1>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+            {autoConnecting && sites.length > 0 && <p className="mt-4 text-gray-600">Linking to {sites[0].name}</p>}
+        </div>
+    );
+
     if (error) return <div className="p-8 text-red-500">Error: {error}</div>;
 
     return (
         <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-md">
             <h1 className="text-2xl font-bold mb-6">Connect to Trmnl</h1>
 
-            <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">Select Site to Display</label>
-                <select
-                    value={selectedSite}
-                    onChange={e => setSelectedSite(e.target.value)}
-                    className="w-full p-2 border rounded"
-                >
-                    {sites.map(site => (
-                        <option key={site.id} value={site.id}>{site.name}</option>
-                    ))}
-                </select>
-            </div>
+            {sites.length > 1 ? (
+                <div className="mb-4">
+                    <label className="block text-sm font-medium mb-2">Select Site to Display</label>
+                    <select
+                        value={selectedSite}
+                        onChange={e => setSelectedSite(e.target.value)}
+                        className="w-full p-2 border rounded"
+                    >
+                        {sites.map(site => (
+                            <option key={site.id} value={site.id}>{site.name}</option>
+                        ))}
+                    </select>
+                </div>
+            ) : sites.length === 1 ? (
+                // Should generally not be reached due to auto-connect, but good fallback
+                <div className="mb-4">
+                    <p className="text-sm font-medium mb-1">Link to Site:</p>
+                    <p className="font-bold">{sites[0].name}</p>
+                </div>
+            ) : (
+                <div className="mb-4 text-red-500">No sites found. Please set up a site first.</div>
+            )}
 
             <button
                 onClick={handleSetup}

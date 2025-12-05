@@ -89,6 +89,11 @@ export async function POST(request: Request) {
         const displayCost = isCredit ? `+${currency}${Math.abs(totalBillCost).toFixed(2)}` : `${currency}${costStr}`;
         const costLabel = isCredit ? 'Est. Credit' : 'Est. Cost';
 
+        // Check for active period
+        const schedule = new Schedule(site.tariffs);
+        const currentPeriod = schedule.getTariffPeriod(new Date());
+        const currentTouName = currentPeriod?.schedule.name;
+
         // Generate HTML for each tariff group
         const tariffHtml = Array.from(tariffGroups.values()).map(group => {
             // Sort periods by name
@@ -103,22 +108,26 @@ export async function POST(request: Request) {
                                 <th>Period</th>
                                 <th class="text--right">Home</th>
                                 <th class="text--right">Sol</th>
-                                <th class="text--right">Bat</th>
+                                <th class="text--right">Batt</th>
                                 <th class="text--right">Grid</th>
                                 <th class="text--right">Cost</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${periods.map(p => `
+                            ${periods.map(p => {
+                const isCurrent = currentTouName && p.touName === currentTouName;
+                const b = isCurrent ? '<b>' : '';
+                const eb = isCurrent ? '</b>' : '';
+                return `
                                 <tr>
-                                    <td>${p.label}</td>
-                                    <td class="text--right">${(p.home / 1000).toFixed(1)}</td>
-                                    <td class="text--right">${(p.solar / 1000).toFixed(1)}</td>
-                                    <td class="text--right">${(p.battery / 1000).toFixed(1)}</td>
-                                    <td class="text--right">${(p.grid / 1000).toFixed(1)}</td>
-                                    <td class="text--right">${currency}${p.cost.toFixed(2)}</td>
+                                    <td>${b}${p.label}${eb}</td>
+                                    <td class="text--right">${b}${(p.home / 1000).toFixed(1)}${eb}</td>
+                                    <td class="text--right">${b}${(p.solar / 1000).toFixed(1)}${eb}</td>
+                                    <td class="text--right">${b}${(p.battery / 1000).toFixed(1)}${eb}</td>
+                                    <td class="text--right">${b}${(p.grid / 1000).toFixed(1)}${eb}</td>
+                                    <td class="text--right">${b}${currency}${p.cost.toFixed(2)}${eb}</td>
                                 </tr>
-                            `).join('')}
+                            `}).join('')}
                         </tbody>
                     </table>
                 </div>
@@ -128,7 +137,7 @@ export async function POST(request: Request) {
         // Trmnl Markup
         const markup = `
             <div class="view view--full">
-                <div class="layout">
+                <div class="layout" style="padding: 2.5rem;">
                     <div class="columns">
                         <div class="column">
                             <div class="markdown gap--large">

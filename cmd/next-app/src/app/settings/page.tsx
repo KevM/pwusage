@@ -43,6 +43,72 @@ export default async function SettingsPage() {
                         </button>
                     </form>
                 </div>
+
+                <div className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800 mt-8">
+                    <h2 className="text-xl font-semibold mb-4">Trmnl E-Ink Display</h2>
+                    <p className="mb-6 text-gray-600 dark:text-gray-300">
+                        Display your daily energy usage on a dedicated, always-on e-ink screen.
+                    </p>
+
+                    <div className="mb-8">
+                        <div className="border-4 border-black rounded-xl p-4 max-w-sm mx-auto bg-white text-black font-mono shadow-xl relative mb-4">
+                            {/* Device "Chin" mockup */}
+                            <div className="absolute bottom-0 left-0 right-0 h-1 bg-black opacity-10"></div>
+
+                            <div className="flex flex-col gap-4">
+                                <div>
+                                    <h3 className="text-lg font-bold">Home Energy</h3>
+                                    <p className="text-xs uppercase tracking-wider">12/05/2025 - 12/05/2025</p>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <div className="border-b border-black pb-1 mb-2">
+                                        <span className="font-bold border-b-2 border-black">On-Peak</span>
+                                    </div>
+                                    <div className="grid grid-cols-4 text-xs gap-x-2">
+                                        <div className="text-right">Home</div>
+                                        <div className="text-right">Sol</div>
+                                        <div className="text-right">Grid</div>
+                                        <div className="text-right">$$</div>
+
+                                        <div className="text-right font-bold">12.5</div>
+                                        <div className="text-right font-bold">8.2</div>
+                                        <div className="text-right font-bold">4.3</div>
+                                        <div className="text-right font-bold">$1.20</div>
+                                    </div>
+                                </div>
+
+                                <div className="text-center mt-2 border-t border-black pt-4">
+                                    <p className="text-xs uppercase">Est. Cost</p>
+                                    <p className="text-3xl font-bold">$4.52</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="text-center">
+                            <Link href="/trmnl/preview" className="text-blue-600 hover:underline font-medium text-sm" target="_blank">
+                                View Live Device Preview &rarr;
+                            </Link>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-4 flex-col sm:flex-row">
+                        <a
+                            href="https://usetrmnl.com/plugin_settings/new?keyname=test_powerwall_energy&code=72ca99f2132d8cb6d869a9969126faeffdc5dae7"
+                            target="_blank"
+                            className="flex-1 bg-black text-white px-4 py-2 rounded text-center hover:bg-gray-800 transition-colors font-semibold"
+                        >
+                            Add Trmnl Plugin
+                        </a>
+                        <a
+                            href="https://usetrmnl.com"
+                            target="_blank"
+                            className="flex-1 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-200 px-4 py-2 rounded text-center hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                        >
+                            Buy Device
+                        </a>
+                    </div>
+                </div>
             </div>
         </div>
     );
