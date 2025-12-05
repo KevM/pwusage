@@ -50,4 +50,8 @@ export class SettingsRepo {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(token);
   }
+
+  clearTokens() {
+    db.prepare("DELETE FROM AppSettings WHERE key IN ('access_token', 'refresh_token')").run();
+  }
 }

@@ -1,5 +1,25 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+
+## Configuration
+
+Create a `.env` file in the root directory (or use `env_file` in Docker) with the following variables:
+
+### Required
+- `DATABASE_URL`: Path to the SQLite database. Example: `file:pwusage.db`
+- `NEXT_PUBLIC_APP_URL`: The base URL of your application. Used for API calls and OAuth redirects. Example: `http://localhost:3000`
+- `PUBLIC_TESLA_OAUTH_CLIENT_ID`: Your Tesla Fleet API Client ID.
+- `TESLA_OAUTH_SECRET`: Your Tesla Fleet API Client Secret.
+- `PUBLIC_TESLA_OAUTH_AUDIENCE`: The Tesla API audience. Example: `https://fleet-api.prd.na.vn.cloud.tesla.com`
+
+### Optional / Integrations
+- `TRMNL_CLIENT_ID`: Client ID for Trmnl integration.
+- `TRMNL_CLIENT_SECRET`: Client Secret for Trmnl integration.
+
+### Worker Settings (Optional)
+- `IMPORT_GRANULARITY`: Data import granularity (default: `day`).
+- `IMPORT_TIMEOUT_MS`: Import timeout in milliseconds (default: `600000`).
+
 ## Getting Started
 
 First, run the development server:

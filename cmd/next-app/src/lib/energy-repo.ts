@@ -202,6 +202,10 @@ export class EnergyRepo {
         return rows.map(r => r.id);
     }
 
+    getSites(): Site[] {
+        return db.prepare('SELECT * FROM Site').all() as Site[];
+    }
+
     getHourlyEnergyData(siteId: string, dateStr: string, timeZone?: string): Array<{
         hour: number;
         homeUsage: number;
