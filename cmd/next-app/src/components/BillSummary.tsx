@@ -85,33 +85,42 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
                                                 </span>
                                             </div>
                                         </div>
-                                        <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] gap-2 items-center">
+                                        <div className="flex flex-col md:grid md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] gap-3 md:gap-2 md:items-center">
 
-                                            <div>
+                                            <div className="flex justify-between items-center md:block">
                                                 <p className="text-sm text-gray-500">Home Usage</p>
                                                 <p className="text-lg font-medium text-blue-700">{(p.home / 1000).toFixed(2)} kWh</p>
                                             </div>
 
-                                            <div className="text-2xl font-bold text-gray-400 text-center">+</div>
+                                            <div className="hidden md:block text-2xl font-bold text-gray-400 text-center">+</div>
 
-                                            <div>
+                                            <div className="flex justify-between items-center md:block relative">
+                                                <span className="md:hidden text-xl font-bold text-gray-400 mr-2 absolute -left-5 top-1/2 -translate-y-1/2">+</span>
                                                 <p className="text-sm text-gray-500">Battery Charge</p>
                                                 <p className="text-lg font-medium text-purple-700">{(p.battery / 1000).toFixed(2)} kWh</p>
                                             </div>
 
-                                            <div className="text-2xl font-bold text-gray-400 text-center">−</div>
+                                            <div className="hidden md:block text-2xl font-bold text-gray-400 text-center">−</div>
 
-                                            <div>
-                                                {p.sellRate !== undefined && <p className="text-[10px] text-gray-400 mb-0.5">@ ${p.sellRate.toFixed(2)}</p>}
-                                                <p className="text-sm text-gray-500">Solar Production</p>
+                                            <div className="flex justify-between items-center md:block relative">
+                                                <span className="md:hidden text-xl font-bold text-gray-400 mr-2 absolute -left-5 top-1/2 -translate-y-1/2">−</span>
+                                                <div className="md:block">
+                                                    {p.sellRate !== undefined && <p className="text-[10px] text-gray-400 mb-0.5 md:block hidden">@ ${p.sellRate.toFixed(2)}</p>}
+                                                    <p className="text-sm text-gray-500">Solar Production</p>
+                                                    {p.sellRate !== undefined && <p className="text-[10px] text-gray-400 md:hidden">@ ${p.sellRate.toFixed(2)}</p>}
+                                                </div>
                                                 <p className="text-lg font-medium text-amber-700">{(p.solar / 1000).toFixed(2)} kWh</p>
                                             </div>
 
-                                            <div className="text-2xl font-bold text-gray-400 text-center">=</div>
+                                            <div className="hidden md:block text-2xl font-bold text-gray-400 text-center">=</div>
 
-                                            <div>
-                                                {p.buyRate !== undefined && <p className="text-[10px] text-gray-400 mb-0.5">@ ${p.buyRate.toFixed(2)}</p>}
-                                                <p className="text-sm text-gray-500">Grid Usage</p>
+                                            <div className="flex justify-between items-center md:block relative">
+                                                <span className="md:hidden text-xl font-bold text-gray-400 mr-2 absolute -left-5 top-1/2 -translate-y-1/2">=</span>
+                                                <div className="md:block">
+                                                    {p.buyRate !== undefined && <p className="text-[10px] text-gray-400 mb-0.5 md:block hidden">@ ${p.buyRate.toFixed(2)}</p>}
+                                                    <p className="text-sm text-gray-500">Grid Usage</p>
+                                                    {p.buyRate !== undefined && <p className="text-[10px] text-gray-400 md:hidden">@ ${p.buyRate.toFixed(2)}</p>}
+                                                </div>
                                                 <p className="text-lg font-medium text-orange-700">{(p.grid / 1000).toFixed(2)} kWh</p>
                                             </div>
                                         </div>
@@ -141,29 +150,32 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
                                                 </span>
                                             </div>
                                         </div>
-                                        <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] gap-2 items-center">
-                                            <div>
+                                        <div className="flex flex-col md:grid md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] gap-3 md:gap-2 md:items-center">
+                                            <div className="flex justify-between items-center md:block">
                                                 <p className="text-sm text-gray-500">Home Usage</p>
                                                 <p className="text-lg font-bold text-blue-700">{(totalHome / 1000).toFixed(2)} kWh</p>
                                             </div>
 
-                                            <div className="text-2xl font-bold text-gray-400 text-center">+</div>
+                                            <div className="hidden md:block text-2xl font-bold text-gray-400 text-center">+</div>
 
-                                            <div>
+                                            <div className="flex justify-between items-center md:block relative">
+                                                <span className="md:hidden text-xl font-bold text-gray-400 mr-2 absolute -left-5 top-1/2 -translate-y-1/2">+</span>
                                                 <p className="text-sm text-gray-500">Battery Charge</p>
                                                 <p className="text-lg font-bold text-purple-700">{(totalBattery / 1000).toFixed(2)} kWh</p>
                                             </div>
 
-                                            <div className="text-2xl font-bold text-gray-400 text-center">−</div>
+                                            <div className="hidden md:block text-2xl font-bold text-gray-400 text-center">−</div>
 
-                                            <div>
+                                            <div className="flex justify-between items-center md:block relative">
+                                                <span className="md:hidden text-xl font-bold text-gray-400 mr-2 absolute -left-5 top-1/2 -translate-y-1/2">−</span>
                                                 <p className="text-sm text-gray-500">Solar Production</p>
                                                 <p className="text-lg font-bold text-amber-700">{(totalSolar / 1000).toFixed(2)} kWh</p>
                                             </div>
 
-                                            <div className="text-2xl font-bold text-gray-400 text-center">=</div>
+                                            <div className="hidden md:block text-2xl font-bold text-gray-400 text-center">=</div>
 
-                                            <div>
+                                            <div className="flex justify-between items-center md:block relative">
+                                                <span className="md:hidden text-xl font-bold text-gray-400 mr-2 absolute -left-5 top-1/2 -translate-y-1/2">=</span>
                                                 <p className="text-sm text-gray-500">Grid Usage</p>
                                                 <p className="text-lg font-bold text-orange-700">{(totalGrid / 1000).toFixed(2)} kWh</p>
                                             </div>

@@ -110,21 +110,21 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
 
     return (
         <div className={`w-full ${palette.card} p-4 rounded shadow`}>
-            <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-semibold">Hourly Energy (kWh)</h3>
-                <div className="flex items-center gap-4">
+            <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+                <h3 className="text-xl font-semibold w-full md:w-auto text-left">Hourly Energy (kWh)</h3>
+                <div className="flex flex-wrap items-center gap-2 md:gap-4 w-full md:w-auto justify-between md:justify-end">
                     <button
                         onClick={() => navigateDay(-1)}
                         disabled={loading}
-                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300"
+                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 flex-1 md:flex-none"
                     >
-                        ← Previous Day
+                        ← Prev Day
                     </button>
 
-                    <div className="relative group">
+                    <div className="relative group flex-1 md:flex-none text-center">
                         <button
                             onClick={() => dateInputRef.current?.showPicker()}
-                            className="font-medium hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                            className="font-medium hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors w-full"
                             title="Click to pick a date"
                         >
                             {displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
@@ -142,7 +142,7 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
                     <button
                         onClick={() => navigateDay(1)}
                         disabled={loading || isToday}
-                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300"
+                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 flex-1 md:flex-none"
                     >
                         Next Day →
                     </button>
