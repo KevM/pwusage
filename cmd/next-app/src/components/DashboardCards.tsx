@@ -19,8 +19,10 @@ interface ProductWithLiveData {
 export function DashboardCards({ initialProducts }: { initialProducts: ProductWithLiveData[] }) {
     const [products, setProducts] = useState(initialProducts);
     const [lastUpdate, setLastUpdate] = useState(new Date());
+    const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
+        setMounted(true);
         const interval = setInterval(async () => {
             try {
                 // Fetch fresh data from API route
@@ -44,7 +46,7 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                 <h1 className="text-4xl font-bold">Dashboard</h1>
                 <div className="flex gap-4 items-center">
                     <span className="text-xs text-gray-400">
-                        Updated: {lastUpdate.toLocaleTimeString()}
+                        Updated: {mounted ? lastUpdate.toLocaleTimeString() : ''}
                     </span>
                     <Link href="/settings" className="text-blue-600 hover:underline">Settings</Link>
                     <form action="/logout" method="POST">

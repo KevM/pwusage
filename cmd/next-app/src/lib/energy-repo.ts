@@ -206,6 +206,11 @@ export class EnergyRepo {
         return db.prepare('SELECT * FROM Site').all() as Site[];
     }
 
+    hasData(siteId: string): boolean {
+        const row = db.prepare('SELECT 1 FROM EnergyData WHERE site_id = ? LIMIT 1').get(siteId);
+        return !!row;
+    }
+
     getHourlyEnergyData(siteId: string, dateStr: string, timeZone?: string): Array<{
         hour: number;
         homeUsage: number;
