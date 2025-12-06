@@ -1,6 +1,9 @@
 import { db, EnergyUsage, Tariff, Site } from './db';
 import { Schedule } from './schedule';
 
+const siteCache = new Map<string, { data: SiteWithTariffs; expires: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 function formatYMD(date: Date, timeZone: string): string {
     return new Intl.DateTimeFormat('en-CA', {
         timeZone,
@@ -180,6 +183,14 @@ export class EnergyRepo {
     }
 
     getSite(siteId: string): SiteWithTariffs | undefined {
+        const now = Date.now();
+        const cached = siteCache.get(siteId);
+        if (cached && cached.expires > now) {
+            return cached.data;
+        }
+
+        console.log(`[Cache Miss] Fetching tariffs from DB for site ${siteId}`);
+
         const site = db.prepare('SELECT * FROM Site WHERE id = ?').get(siteId) as Site | undefined;
         if (!site) return undefined;
 
@@ -195,10 +206,13 @@ export class EnergyRepo {
             }
         }
 
-        return {
+        const result = {
             ...site,
             tariffs
         };
+
+        siteCache.set(siteId, { data: result, expires: now + CACHE_TTL_MS });
+        return result;
     }
 
     getSiteIds(): string[] {
