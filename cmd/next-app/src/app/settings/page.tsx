@@ -1,15 +1,19 @@
 import { SettingsRepo } from '@/lib/settings-repo';
 import { updateBillingStartDay } from './actions';
 import Link from 'next/link';
+import { Breadcrumbs } from '@/components/Breadcrumbs';
 
 export default async function SettingsPage() {
     const repo = new SettingsRepo();
     const currentDay = repo.getBillingStartDay();
 
     return (
-        <div className="flex min-h-screen flex-col items-center p-24">
+        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
             <div className="w-full max-w-2xl">
-                <Link href="/" className="text-blue-600 hover:underline mb-8 block">&larr; Back to Dashboard</Link>
+                <Breadcrumbs items={[
+                    { label: 'Dashboard', href: '/' },
+                    { label: 'Settings' }
+                ]} />
 
                 <h1 className="text-3xl font-bold mb-8">Settings</h1>
 
@@ -108,6 +112,17 @@ export default async function SettingsPage() {
                             Buy Device
                         </a>
                     </div>
+                </div>
+                <div className="border rounded bg-white dark:bg-slate-900 p-6 shadow-sm">
+                    <h2 className="text-xl font-semibold mb-4 text-red-600">Danger Zone</h2>
+                    <p className="text-sm text-gray-500 mb-4">
+                        Sign out of your session. You will need to log in again to access the dashboard.
+                    </p>
+                    <form action="/logout" method="POST">
+                        <button type="submit" className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition">
+                            Logout
+                        </button>
+                    </form>
                 </div>
             </div>
         </div>

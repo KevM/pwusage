@@ -110,31 +110,42 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
 
     return (
         <div className={`w-full ${palette.card} p-4 rounded shadow`}>
-            <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-                <h3 className="text-xl font-semibold w-full md:w-auto text-left">Hourly Energy (kWh)</h3>
-                <div className="flex flex-wrap items-center gap-2 md:gap-4 w-full md:w-auto justify-between md:justify-end">
+            <div className="flex flex-wrap justify-between items-center mb-4 gap-4">
+                <h3 className="text-xl font-semibold text-left">Hourly Energy (kWh)</h3>
+
+                <div className="flex bg-white dark:bg-slate-900 rounded-lg p-1 shadow-sm border border-slate-200 dark:border-slate-800 items-center justify-between gap-1 shrink-0">
                     <button
                         onClick={() => navigateDay(-1)}
                         disabled={loading}
-                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 flex-1 md:flex-none"
+                        className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
+                        title="Previous Day"
                     >
-                        ← Prev Day
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="m15 18-6-6 6-6" />
+                        </svg>
                     </button>
 
-                    <div className="relative group flex-1 md:flex-none text-center">
-                        <button
-                            onClick={() => dateInputRef.current?.showPicker()}
-                            className="font-medium hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors w-full"
+                    <div className="relative group flex-1 md:flex-none text-center min-w-[140px]">
+                        <div
+                            className="font-semibold text-sm hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center"
                             title="Click to pick a date"
                         >
                             {displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
                             {isToday && ' (Today)'}
-                        </button>
+                        </div>
                         <input
                             ref={dateInputRef}
                             type="date"
-                            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer pointer-events-none"
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                             onChange={handleDateChange}
+                            onClick={() => {
+                                try {
+                                    dateInputRef.current?.showPicker();
+                                } catch (e) {
+                                    // Fallback for browsers that don't support showPicker (though most modern ones do)
+                                    // The input itself is clicked, so the native picker should trigger anyway.
+                                }
+                            }}
                             max={new Date().toISOString().split('T')[0]} // Prevent future dates
                         />
                     </div>
@@ -142,9 +153,12 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
                     <button
                         onClick={() => navigateDay(1)}
                         disabled={loading || isToday}
-                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 flex-1 md:flex-none"
+                        className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
+                        title="Next Day"
                     >
-                        Next Day →
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="m9 18 6-6-6-6" />
+                        </svg>
                     </button>
                 </div>
             </div>
