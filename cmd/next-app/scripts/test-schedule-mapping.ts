@@ -90,7 +90,7 @@ function runTest() {
         seasons: [mockSeason]
     };
 
-    const schedule = new Schedule([mockTariff]);
+    const schedule = new Schedule([mockTariff], 'America/Los_Angeles');
 
     // 2. Define Test Cases
     const testCases = [

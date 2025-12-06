@@ -64,17 +64,9 @@ async function main() {
     // Wait, the site installed date is 2023. That's 2 years of data.
     // Let's just import the last 7 days for verification.
 
-    // Hack: Insert a dummy record for 7 days ago so importSite starts there.
-    // But we need a valid tariff_id.
-    const tariff = db.prepare("SELECT id FROM Tariff WHERE site_id = ?").get(siteId) as { id: number };
-    if (tariff) {
-        db.prepare(`
-            INSERT INTO EnergyData(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc)
-            VALUES (?, ?, ?, 0, 0, 0, 0, 0)
-        `).run(siteId, tariff.id, start.toISOString());
-    }
+    // Hack removed. ensureDataForRange handles gaps.
 
-    await importer.importSite(siteId);
+    await importer.ensureDataForRange(siteId, start, end, (msg) => console.log(msg));
 
     // Verify results
     const rows = db.prepare(`

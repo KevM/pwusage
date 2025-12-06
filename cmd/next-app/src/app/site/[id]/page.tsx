@@ -70,7 +70,7 @@ export default async function SitePage({ params, searchParams }: {
             // Get current tariff
             let currentTariff = 'Unknown';
             if (site.tariffs.length > 0) {
-                const schedule = new Schedule(site.tariffs);
+                const schedule = new Schedule(site.tariffs, site.timezone);
                 const tariffPeriod = schedule.getTariffPeriod(new Date());
                 if (tariffPeriod) {
                     const season = tariffPeriod.season.name || 'Season';
@@ -137,7 +137,7 @@ export default async function SitePage({ params, searchParams }: {
     let activeTariffId: number | undefined;
     let activeTouName: string | undefined;
     if (site.tariffs.length > 0) {
-        const schedule = new Schedule(site.tariffs);
+        const schedule = new Schedule(site.tariffs, site.timezone);
         const tariffPeriod = schedule.getTariffPeriod(new Date());
         if (tariffPeriod) {
             activeTariffId = tariffPeriod.tariff.id;

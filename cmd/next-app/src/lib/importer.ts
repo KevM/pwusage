@@ -153,62 +153,7 @@ export class Importer {
         }
     }
 
-    /**
-     * Automated partial import (e.g. for worker).
-     * @deprecated Use ensureDataForRange instead.
-     */
-    async importSite(siteId: string, period: string = "day", maxDays: number = 7) {
-        let site = this.repo.getSite(siteId);
-        if (!site) {
-            site = await this.ensureSite(siteId);
-            if (!site) {
-                console.error(`Site ${siteId} not found in DB and failed to create`);
-                return;
-            }
-        }
 
-        const retentionDays = process.env.DATA_RETENTION_DAYS ? parseInt(process.env.DATA_RETENTION_DAYS, 10) : 90;
-        const now = new Date();
-        const retentionDate = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
-
-        // Auto-import limit: Only look back 14 days maximum from now.
-        // This prevents the worker from trying to backfill years of history on every run.
-        const autoBackfillLimit = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-
-        // Determine start date from last stored timestamp
-        const lastRow = db.prepare('SELECT timestamp FROM EnergyData WHERE site_id = ? ORDER BY timestamp DESC LIMIT 1').get(siteId) as { timestamp: string } | undefined;
-
-        let startFromDb: Date;
-        if (lastRow) {
-            startFromDb = getStartOfDayInTimeZone(new Date(lastRow.timestamp), site.timezone);
-        } else {
-            // New site (or empty DB): Start from auto-backfill limit or install date, whichever is later
-            const installDate = new Date(site.installed);
-            startFromDb = installDate > autoBackfillLimit ? installDate : autoBackfillLimit;
-        }
-
-        const start = new Date(startFromDb.getTime() - 5 * 60 * 1000); // 5 min overlap
-
-        // Ensure we don't go earlier than retention date or auto-backfill limit
-        const earliestAllowed = new Date(Math.max(
-            retentionDate.getTime(),
-            autoBackfillLimit.getTime(),
-            new Date(site.installed).getTime()
-        ));
-
-        const adjustedStart = start < earliestAllowed ? earliestAllowed : start;
-
-        if (adjustedStart >= now) {
-            console.log(`No new data to import for site ${siteId}`);
-            return;
-        }
-
-        console.log(`[Importer] Auto-importing ${siteId} from ${adjustedStart.toISOString()} to ${now.toISOString()}`);
-        await this.importRange(siteId, adjustedStart, now, period);
-
-        // Prune old data after import
-        await this.pruneOldData(siteId, retentionDays);
-    }
 
     /**
      * Import data for a specific date range.
@@ -515,7 +460,7 @@ export class Importer {
     }
 
     private processHistory(site: SiteWithTariffs, history: EnergyHistoryEntry[], soeByTimestamp: Map<number, number>, period: string = 'day'): any[] {
-        const schedule = new Schedule(site.tariffs);
+        const schedule = new Schedule(site.tariffs, site.timezone);
         const results: any[] = [];
 
         for (let i = 0; i < history.length; i++) {
