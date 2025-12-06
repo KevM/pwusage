@@ -53,11 +53,12 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
                     <p className="text-xl font-semibold text-orange-700">{(stats.gridPower / 1000).toFixed(1)} kW</p>
                 </div>
             </div>
-            <div className="flex justify-between items-center text-sm">
-                <div>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center text-sm gap-2 md:gap-0">
+                <div className="flex flex-col md:block">
                     <span className="text-gray-600">Charge: </span>
                     <span className="font-semibold">{Math.round(stats.percentageCharged)}%</span>
-                    <span className="text-gray-600 ml-4">Tariff: </span>
+                    <span className="hidden md:inline text-gray-600 ml-4">Tariff: </span>
+                    <span className="md:hidden text-gray-600 block mt-1">Tariff: </span>
                     <span className="font-semibold">{formatTouName(stats.currentTariff)}</span>
                 </div>
                 <span className="text-xs text-gray-400">Updated: {lastUpdate.toLocaleTimeString()}</span>
