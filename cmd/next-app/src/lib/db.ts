@@ -126,6 +126,7 @@ if (!hasSiteTable || hasSiteTable.count === 0) {
           grid_power REAL NOT NULL,
           battery_power REAL NOT NULL,
           battery_soc REAL,
+          is_synthetic INTEGER DEFAULT 0,
           FOREIGN KEY (site_id) REFERENCES Site(id) ON DELETE CASCADE,
           FOREIGN KEY (tariff_id) REFERENCES Tariff(id) ON DELETE CASCADE,
           UNIQUE(timestamp, site_id, tariff_id)
@@ -165,6 +166,18 @@ if (!hasSiteTable || hasSiteTable.count === 0) {
           created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
     `);
+
+  // Migration: Check for is_synthetic column in EnergyData
+  try {
+    const hasSyntheticCol = db.prepare("SELECT count(*) as c FROM pragma_table_info('EnergyData') WHERE name='is_synthetic'").get() as { c: number };
+    if (hasSyntheticCol.c === 0) {
+      console.log('Migrating database: Adding is_synthetic column to EnergyData...');
+      db.exec('ALTER TABLE EnergyData ADD COLUMN is_synthetic INTEGER DEFAULT 0');
+    }
+  } catch (e) {
+    console.error('Migration failed:', e);
+  }
+
   console.log('Database schema initialized.');
 }
 
@@ -227,6 +240,7 @@ export interface EnergyData {
   grid_power: number;
   battery_power: number;
   battery_soc: number | null;
+  is_synthetic?: number;
 }
 
 export interface EnergyUsage {

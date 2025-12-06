@@ -55,10 +55,107 @@ export class Importer {
         this.repo = new EnergyRepo();
     }
 
+    async ensureDataForRange(siteId: string, start: Date, end: Date, onProgress?: (msg: string) => void): Promise<void> {
+        // 1. Check coverage
+        if (onProgress) onProgress(`Checking data coverage...`);
+        const site = this.repo.getSite(siteId);
+        if (!site) return;
+
+        let cursor = new Date(start);
+        cursor.setHours(0, 0, 0, 0);
+
+        // Normalize end to cover the full last day if needed, or rely on caller?
+        // Caller usually passes specific range. We will scan roughly from start to end.
+
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        // Optimize: Fetch ALL timestamps in the requested range in one go.
+        // We use the same datetime logic as before to ensure consistency.
+        const rangeStartStr = cursor.toISOString();
+        const rangeEnd = new Date(end);
+        // Add buffer to end to make sure we catch the last day's data if end is inclusive/exclusive boundary
+        rangeEnd.setDate(rangeEnd.getDate() + 1);
+        const rangeEndStr = rangeEnd.toISOString();
+
+        // One query to rule them all
+        const rows = db.prepare(`
+            SELECT timestamp FROM EnergyData 
+            WHERE site_id = ? 
+            AND datetime(timestamp) >= datetime(?) 
+            AND datetime(timestamp) < datetime(?)
+            ORDER BY timestamp ASC
+        `).all(siteId, rangeStartStr, rangeEndStr) as { timestamp: string }[];
+
+        const existingTimestamps = rows.map(r => new Date(r.timestamp).getTime());
+        let tsIndex = 0;
+
+        // Check for gaps
+        while (cursor <= end) {
+            const nextDay = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+
+            // Define the window for this day
+            const windowStart = cursor.getTime();
+            const windowEnd = nextDay.getTime();
+
+            // Advance pointer to start of window
+            while (tsIndex < existingTimestamps.length && existingTimestamps[tsIndex] < windowStart) {
+                tsIndex++;
+            }
+
+            // Check if we have data in the window
+            let hasData = false;
+            if (tsIndex < existingTimestamps.length && existingTimestamps[tsIndex] < windowEnd) {
+                hasData = true;
+            }
+
+            const isToday = cursor.getTime() === todayStart.getTime();
+            let needsImport = false;
+
+            if (!hasData) {
+                // Totally missing day
+                needsImport = true;
+            } else if (isToday) {
+                // It's today, check for staleness
+                // We can find the *last* timestamp in this window (or overall last if sorted)
+                let lastInWindow = existingTimestamps[tsIndex];
+                let tempIdx = tsIndex;
+                while (tempIdx < existingTimestamps.length && existingTimestamps[tempIdx] < windowEnd) {
+                    lastInWindow = existingTimestamps[tempIdx];
+                    tempIdx++;
+                }
+
+                if (lastInWindow) {
+                    const diffMinutes = (now.getTime() - lastInWindow) / (60 * 1000);
+                    if (diffMinutes > 15) {
+                        needsImport = true;
+                        if (onProgress) onProgress(`Refreshing stale data (${diffMinutes.toFixed(0)}m old)...`);
+                        console.log(`[Importer] Data stale (${diffMinutes.toFixed(1)}m old), refreshing...`);
+                    }
+                } else {
+                    // Should be covered by hasData, but safe fallback
+                    needsImport = true;
+                }
+            }
+
+            if (needsImport) {
+                const dateStr = cursor.toLocaleDateString();
+                if (onProgress) onProgress(`Importing ${dateStr}...`);
+                console.log(`[Importer] Gap/Stale detected for ${dateStr}. Importing...`);
+
+                let importEnd = nextDay;
+                if (isToday) importEnd = now;
+
+                await this.importRange(siteId, cursor, importEnd, 'day');
+            }
+
+            cursor = nextDay;
+        }
+    }
+
     /**
      * Automated partial import (e.g. for worker).
-     * Only fills recent data (e.g., last 14 days) to keep the system up to date.
-     * Full history backfill should be triggered manually via importRange.
+     * @deprecated Use ensureDataForRange instead.
      */
     async importSite(siteId: string, period: string = "day", maxDays: number = 7) {
         let site = this.repo.getSite(siteId);
@@ -361,7 +458,37 @@ export class Importer {
         const history = await this.client.getEnergyHistory(site.id, start, actualEnd, period, site.timezone); // Use actualEnd
         fs.appendFileSync('import.log', `[Import] History Rows Fetched: ${history?.length ?? 0}\n`);
 
-        if (!history || history.length === 0) return;
+        if (!history || history.length === 0) {
+            // Fix for infinite backfill loop:
+            // If we requested a specific day and got no data, it means there is no usage for that day (or it's in the future).
+            // We MUST insert a record to "fill the gap" so the ensureDataForRange loop knows we checked this day.
+            if (period === 'day') {
+                const zeroDateStr = start.toISOString();
+                const defaultTariff = site.tariffs[0]?.id || 0;
+
+                console.log(`[Importer] No data from Tesla for ${zeroDateStr}. Inserting zero record to prevent infinite retry.`);
+                fs.appendFileSync('import.log', `[Importer] No data for ${zeroDateStr}. Inserting zero record.\n`);
+
+                db.prepare(`
+                    INSERT INTO EnergyData(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, is_synthetic) 
+                    VALUES (?, ?, ?, 0, 0, 0, 0, null, 1)
+                    ON CONFLICT(timestamp, site_id, tariff_id) DO NOTHING
+                `).run(site.id, defaultTariff, zeroDateStr);
+
+                // Also insert zero usage for the day
+                const usageDate = new Date(start);
+                usageDate.setHours(0, 0, 0, 0);
+
+                if (defaultTariff) {
+                    db.prepare(`
+                        INSERT INTO EnergyUsage(tariff_id, start, load_usage, solar_produced, grid_usage, battery_usage) 
+                        VALUES (?, ?, 0, 0, 0, 0)
+                        ON CONFLICT(tariff_id, start) DO NOTHING
+                    `).run(defaultTariff, usageDate.toISOString());
+                }
+            }
+            return;
+        }
 
         const startStr = start.toISOString();
         const endStr = end.toISOString();

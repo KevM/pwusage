@@ -21,6 +21,8 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
             solar: number;
             battery: number;
             cost: number;
+            buyRate?: number;
+            sellRate?: number;
         }[];
     }>();
 
@@ -37,7 +39,9 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
             grid: u.gridUsage,
             solar: u.solarProduction,
             battery: u.batteryChange,
-            cost: u.cost || 0
+            cost: u.cost || 0,
+            buyRate: u.buyRate,
+            sellRate: u.sellRate
         });
     });
 
@@ -98,6 +102,7 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
                                             <div className="text-2xl font-bold text-gray-400 text-center">−</div>
 
                                             <div>
+                                                {p.sellRate !== undefined && <p className="text-[10px] text-gray-400 mb-0.5">@ ${p.sellRate.toFixed(2)}</p>}
                                                 <p className="text-sm text-gray-500">Solar Production</p>
                                                 <p className="text-lg font-medium text-amber-700">{(p.solar / 1000).toFixed(2)} kWh</p>
                                             </div>
@@ -105,6 +110,7 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
                                             <div className="text-2xl font-bold text-gray-400 text-center">=</div>
 
                                             <div>
+                                                {p.buyRate !== undefined && <p className="text-[10px] text-gray-400 mb-0.5">@ ${p.buyRate.toFixed(2)}</p>}
                                                 <p className="text-sm text-gray-500">Grid Usage</p>
                                                 <p className="text-lg font-medium text-orange-700">{(p.grid / 1000).toFixed(2)} kWh</p>
                                             </div>

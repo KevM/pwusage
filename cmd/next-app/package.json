@@ -7,7 +7,6 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "worker": "tsx scripts/worker.ts",
     "test:fleet": "tsx scripts/fleet-integration.ts"
   },
   "dependencies": {
