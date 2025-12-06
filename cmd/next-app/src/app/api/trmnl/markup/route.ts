@@ -108,7 +108,7 @@ export async function POST(request: Request) {
         const costLabel = isCredit ? 'Est. Credit' : 'Est. Cost';
 
         // Check for active period
-        const schedule = new Schedule(site.tariffs);
+        const schedule = new Schedule(site.tariffs, site.timezone);
         const currentPeriod = schedule.getTariffPeriod(new Date());
         const currentTouName = currentPeriod?.schedule.name;
 

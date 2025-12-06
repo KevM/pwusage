@@ -42,7 +42,7 @@ export async function GET(request: Request) {
         let currentTariff = 'Unknown';
 
         if (site && site.tariffs.length > 0) {
-            const schedule = new Schedule(site.tariffs);
+            const schedule = new Schedule(site.tariffs, site.timezone);
             const tariffPeriod = schedule.getTariffPeriod(new Date());
             if (tariffPeriod) {
                 const season = tariffPeriod.season.name || 'Season';

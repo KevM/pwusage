@@ -43,13 +43,13 @@ export function SiteSetup({ siteId }: SiteSetupProps) {
             const end = now;
 
             const params = new URLSearchParams({
-                granularity: 'day', // API only supports 'day' for calendar_history. We scale values in importer.
+                siteId,
                 start: start.toISOString(),
                 end: end.toISOString()
             });
 
-            const response = await fetch(`/api/import?${params.toString()}`, {
-                method: 'POST',
+            const response = await fetch(`/api/sync?${params.toString()}`, {
+                method: 'GET', // api/sync is a GET request
             });
 
             if (!response.ok) throw new Error('Import failed to start');
@@ -71,16 +71,30 @@ export function SiteSetup({ siteId }: SiteSetupProps) {
 
                 for (const line of lines) {
                     if (line.startsWith('data: ')) {
-                        const data = JSON.parse(line.slice(6));
+                        try {
+                            const data = JSON.parse(line.slice(6));
 
-                        if (data.status === 'progress') {
-                            processedDays++;
-                            const percent = Math.min(100, Math.round((processedDays / totalDays) * 100));
-                            setProgress({ current: data.date, percent });
-                        } else if (data.status === 'complete') {
-                            break;
-                        } else if (data.status === 'error') {
-                            throw new Error(data.message);
+                            if (data.status === 'progress') {
+                                // sync endpoint returns explicit message, but not structured date/percent
+                                // We can just parse the date from the message if needed, or just show the message.
+                                // The message is usually "Importing YYYY-MM-DD..."
+                                const msg = data.message || '';
+                                setProgress({ current: msg, percent: 50 }); // Indeterminate progress for now
+
+                                // enhanced parsing if message contains date
+                                const dateMatch = msg.match(/\d{4}-\d{2}-\d{2}/);
+                                if (dateMatch) {
+                                    processedDays++;
+                                    const percent = Math.min(100, Math.round((processedDays / totalDays) * 100));
+                                    setProgress({ current: dateMatch[0], percent });
+                                }
+                            } else if (data.status === 'complete') {
+                                break;
+                            } else if (data.status === 'error') {
+                                throw new Error(data.message);
+                            }
+                        } catch (e) {
+                            // ignore json parse errors
                         }
                     }
                 }

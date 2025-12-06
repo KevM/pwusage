@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
     cookieStore.set('access_token', authData.access_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: authData.expires_in });
     cookieStore.set('refresh_token', authData.refresh_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
 
-    // Also save to DB for background worker
+    // Also save to DB for use by API routes (e.g. sync, trmnl)
     const settingsRepo = new SettingsRepo();
     settingsRepo.setAccessToken(authData.access_token);
     settingsRepo.setRefreshToken(authData.refresh_token);
