@@ -281,6 +281,15 @@ export class Importer {
             // We use the utility as the name
             const tariffName = tariffContent.utility ?? info.site_name ?? 'Utility Tariff';
 
+            // Heuristic: Fix inverted season names (e.g. Summer starting in October)
+            let fixedSeasonName = seasonName;
+            const sFrom = seasonData.fromMonth;
+            if (seasonName.toLowerCase() === 'summer' && (sFrom >= 10 || sFrom <= 2)) {
+                fixedSeasonName = 'Winter';
+            } else if (seasonName.toLowerCase() === 'winter' && (sFrom >= 5 && sFrom <= 9)) {
+                fixedSeasonName = 'Summer';
+            }
+
             db.prepare(`
                 INSERT INTO Tariff(site_id, name, updated)
                 VALUES (?, ?, datetime('now'))
@@ -300,9 +309,9 @@ export class Importer {
             db.prepare(`
                 INSERT INTO TariffSeason(tariff_id, name, from_month, from_day, to_month, to_day, buy_rate, sell_rate)
                 VALUES (?, ?, ?, ?, ?, ?, 0, 0)
-            `).run(tariffRow.id, seasonName, fromMonth, fromDay, toMonth, toDay);
+            `).run(tariffRow.id, fixedSeasonName, fromMonth, fromDay, toMonth, toDay);
 
-            const seasonRow = db.prepare(`SELECT id FROM TariffSeason WHERE tariff_id = ? AND name = ?`).get(tariffRow.id, seasonName) as { id: number };
+            const seasonRow = db.prepare(`SELECT id FROM TariffSeason WHERE tariff_id = ? AND name = ?`).get(tariffRow.id, fixedSeasonName) as { id: number };
 
             // TOU Periods
             // Rates are in tariffContent.energy_charges[seasonName].rates

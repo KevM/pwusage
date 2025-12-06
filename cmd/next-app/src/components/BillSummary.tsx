@@ -118,6 +118,59 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
                                     </div>
                                 );
                             })}
+
+                            {/* Total Row */}
+                            {(() => {
+                                const totalHome = t.periods.reduce((sum, p) => sum + p.home, 0);
+                                const totalBattery = t.periods.reduce((sum, p) => sum + p.battery, 0);
+                                const totalSolar = t.periods.reduce((sum, p) => sum + p.solar, 0);
+                                const totalGrid = t.periods.reduce((sum, p) => sum + p.grid, 0);
+                                const totalCost = t.periods.reduce((sum, p) => sum + p.cost, 0);
+
+                                return (
+                                    <div className="border-t-2 border-gray-200 dark:border-gray-700 pt-4 mt-2">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <h4 className="font-bold text-lg text-gray-900 dark:text-gray-100">Total</h4>
+                                            <div className="text-right">
+                                                <span className={`font-bold text-lg ${totalCost >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                                    {totalCost >= 0 ? '$' : '-$'}
+                                                    {Math.abs(totalCost).toFixed(2)}
+                                                </span>
+                                                <span className="text-xs text-gray-500 block">
+                                                    {totalCost >= 0 ? 'Est. Cost' : 'Est. Credit'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] gap-2 items-center">
+                                            <div>
+                                                <p className="text-sm text-gray-500">Home Usage</p>
+                                                <p className="text-lg font-bold text-blue-700">{(totalHome / 1000).toFixed(2)} kWh</p>
+                                            </div>
+
+                                            <div className="text-2xl font-bold text-gray-400 text-center">+</div>
+
+                                            <div>
+                                                <p className="text-sm text-gray-500">Battery Charge</p>
+                                                <p className="text-lg font-bold text-purple-700">{(totalBattery / 1000).toFixed(2)} kWh</p>
+                                            </div>
+
+                                            <div className="text-2xl font-bold text-gray-400 text-center">−</div>
+
+                                            <div>
+                                                <p className="text-sm text-gray-500">Solar Production</p>
+                                                <p className="text-lg font-bold text-amber-700">{(totalSolar / 1000).toFixed(2)} kWh</p>
+                                            </div>
+
+                                            <div className="text-2xl font-bold text-gray-400 text-center">=</div>
+
+                                            <div>
+                                                <p className="text-sm text-gray-500">Grid Usage</p>
+                                                <p className="text-lg font-bold text-orange-700">{(totalGrid / 1000).toFixed(2)} kWh</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </div>
                 );
