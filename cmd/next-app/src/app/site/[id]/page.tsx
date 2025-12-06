@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { EnergyChartWithNav } from '@/components/EnergyChartWithNav';
 import { SiteLiveStats } from '@/components/SiteLiveStats';
 import { BillSummary } from '@/components/BillSummary';
+import { Breadcrumbs } from '@/components/Breadcrumbs';
 import { DataSyncer } from '@/components/DataSyncer';
 import { SettingsRepo } from '@/lib/settings-repo';
 import { TeslaClient } from '@/lib/tesla-client';
@@ -10,6 +11,7 @@ import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
 import { cookies } from 'next/headers';
 import { SiteSetup } from '@/components/SiteSetup';
+import { BillDateNav } from '@/components/BillDateNav';
 
 export const dynamic = 'force-dynamic';
 
@@ -160,9 +162,9 @@ export default async function SitePage({ params, searchParams }: {
     const isCurrentPeriod = currentDate >= start && currentDate < end;
 
     return (
-        <div className="flex min-h-screen flex-col items-center px-4 py-8 md:p-24">
+        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
             <div className="w-full max-w-6xl">
-                <Link href="/" className="text-blue-600 hover:underline mb-4 block">&larr; Back to Dashboard</Link>
+                <Breadcrumbs items={[{ label: 'Dashboard', href: '/' }, { label: site.name }]} />
                 <h1 className="text-4xl font-bold mb-4">{site.name}</h1>
 
                 <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />
@@ -178,41 +180,18 @@ export default async function SitePage({ params, searchParams }: {
                     />
                 </div>
 
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
-                    <h2 className="text-2xl font-bold">Usage for {start.toLocaleDateString()} - {end.toLocaleDateString()}</h2>
-                    <div className="flex flex-wrap items-center gap-2 md:gap-4 w-full md:w-auto">
-                        <Link
-                            href={`/site/${id}/usage?date=${fmtDate(prevDate)}`}
-                            className="flex-1 md:flex-none text-center px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-                        >
-                            ← Prev Month
-                        </Link>
-                        {isCurrentPeriod ? (
-                            <span className="flex-1 md:flex-none text-center px-3 py-1 bg-gray-300 text-gray-500 rounded cursor-not-allowed">
-                                Next Month →
-                            </span>
-                        ) : (
-                            <Link
-                                href={`/site/${id}/usage?date=${fmtDate(nextDate)}`}
-                                className="flex-1 md:flex-none text-center px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-                            >
-                                Next Month →
-                            </Link>
-                        )}
-                        <span className="hidden md:inline text-gray-300">|</span>
-                        <Link
-                            href={`/site/${id}/usage?date=${fmtDate(start)}`}
-                            className="flex-1 md:flex-none text-center px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
-                        >
-                            View Full Bill →
-                        </Link>
-                        <Link
-                            href={`/site/${id}/tariffs`}
-                            className="flex-1 md:flex-none text-center px-3 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 font-medium"
-                        >
-                            View Tariffs →
-                        </Link>
-                    </div>
+                <div className="flex flex-wrap justify-between items-center mb-4 gap-4">
+                    <h2 className="text-2xl font-bold">Estimated Monthly Bill</h2>
+
+                    <BillDateNav
+                        siteId={id}
+                        startDate={start}
+                        endDate={end}
+                        billingDay={billingDay}
+                        prevDateStr={fmtDate(prevDate)}
+                        nextDateStr={fmtDate(nextDate)}
+                        isCurrentPeriod={isCurrentPeriod}
+                    />
                 </div>
 
                 <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} />

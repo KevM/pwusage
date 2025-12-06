@@ -1,7 +1,10 @@
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SettingsRepo } from '@/lib/settings-repo';
 import { BillSummary } from '@/components/BillSummary';
+import { BillDateNav } from '@/components/BillDateNav';
 import Link from 'next/link';
+
+import { Breadcrumbs } from '@/components/Breadcrumbs';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,35 +66,28 @@ export default async function UsagePage({ params, searchParams }: {
     const isCurrentPeriod = currentDate >= start && currentDate < end;
 
     return (
-        <div className="flex min-h-screen flex-col items-center p-24">
+        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
             <div className="w-full max-w-6xl">
-                <Link href={`/site/${id}`} className="text-blue-600 hover:underline mb-4 block">&larr; Back to Site Dashboard</Link>
+                <Breadcrumbs items={[
+                    { label: 'Dashboard', href: '/' },
+                    { label: 'Site Details', href: `/site/${id}` },
+                    { label: 'Estimated Bill' }
+                ]} />
 
-                <div className="flex justify-between items-center mb-8">
-                    <h1 className="text-3xl font-bold">Simulated Bill: {startStr} - {endStr}</h1>
-                    <div className="space-x-4">
-                        <Link
-                            href={`/site/${id}/usage?date=${fmtDate(prevDate)}`}
-                            className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 dark:bg-slate-700 dark:hover:bg-slate-600"
-                        >
-                            &larr; Previous Month
-                        </Link>
-                        {isCurrentPeriod ? (
-                            <span className="px-4 py-2 bg-gray-100 rounded text-gray-400 cursor-not-allowed dark:bg-slate-800">
-                                Next Month &rarr;
-                            </span>
-                        ) : (
-                            <Link
-                                href={`/site/${id}/usage?date=${fmtDate(nextDate)}`}
-                                className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 dark:bg-slate-700 dark:hover:bg-slate-600"
-                            >
-                                Next Month &rarr;
-                            </Link>
-                        )}
-                    </div>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
+                    <h1 className="text-3xl font-bold">Estimated Monthly Bill</h1>
+                    <BillDateNav
+                        siteId={id}
+                        startDate={start}
+                        endDate={end}
+                        billingDay={settingsRepo.getBillingStartDay()}
+                        prevDateStr={fmtDate(prevDate)}
+                        nextDateStr={fmtDate(nextDate)}
+                        isCurrentPeriod={isCurrentPeriod}
+                    />
                 </div>
 
-                <BillSummary usage={usage} />
+                <BillSummary usage={usage} alwaysExpanded={true} />
             </div>
         </div>
     );

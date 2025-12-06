@@ -42,19 +42,6 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
 
     return (
         <>
-            <div className="flex justify-between items-center mb-8">
-                <h1 className="text-4xl font-bold">Dashboard</h1>
-                <div className="flex gap-4 items-center">
-                    <span className="text-xs text-gray-400">
-                        Updated: {mounted ? lastUpdate.toLocaleTimeString() : ''}
-                    </span>
-                    <Link href="/settings" className="text-blue-600 hover:underline">Settings</Link>
-                    <form action="/logout" method="POST">
-                        <button type="submit" className="text-red-600 hover:underline">Logout</button>
-                    </form>
-                </div>
-            </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {products.map((product) => (
                     <Link
@@ -84,6 +71,12 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                         </div>
                     </Link>
                 ))}
+            </div>
+
+            <div className="mt-8 text-center">
+                <p className="text-xs text-slate-400 dark:text-slate-600">
+                    Last updated: {mounted ? lastUpdate.toLocaleTimeString() : '...'}
+                </p>
             </div>
         </>
     );

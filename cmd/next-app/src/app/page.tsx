@@ -81,15 +81,15 @@ export default async function Home() {
     }));
 
     return (
-      <div className="flex min-h-screen flex-col items-center p-24">
-        <div className="w-full max-w-4xl">
+      <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
+        <div className="w-full max-w-6xl">
           <DashboardCards initialProducts={productsWithTariff} />
         </div>
       </div>
     );
   } catch (error) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center p-24">
+      <div className="flex min-h-screen flex-col items-center justify-center p-4 md:p-8 lg:p-24">
         <h1 className="text-4xl font-bold mb-8">Error</h1>
         <p className="text-red-500 mb-4">Failed to load products. Your session may have expired.</p>
         <p className="text-gray-500 mb-4">{(error as Error).message}</p>

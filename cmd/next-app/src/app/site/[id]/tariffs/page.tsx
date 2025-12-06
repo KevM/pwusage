@@ -4,6 +4,8 @@ import { formatTouName, formatTimeRange } from '@/lib/format-utils';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { Breadcrumbs } from '@/components/Breadcrumbs';
+
 export const dynamic = 'force-dynamic';
 
 export default async function TariffPage({ params }: { params: Promise<{ id: string }> }) {
@@ -22,9 +24,13 @@ export default async function TariffPage({ params }: { params: Promise<{ id: str
     }
 
     return (
-        <div className="flex min-h-screen flex-col items-center p-24">
+        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
             <div className="w-full max-w-4xl">
-                <Link href={`/site/${id}`} className="text-blue-600 hover:underline mb-4 block">&larr; Back to Site Details</Link>
+                <Breadcrumbs items={[
+                    { label: 'Dashboard', href: '/' },
+                    { label: 'Site Details', href: `/site/${id}` },
+                    { label: 'Tariffs' }
+                ]} />
                 <h1 className="text-4xl font-bold mb-8">Tariffs for {site.name}</h1>
 
                 {site.tariffs.length === 0 ? (
@@ -43,7 +49,7 @@ export default async function TariffPage({ params }: { params: Promise<{ id: str
                                     <div className="space-y-6">
                                         {tariff.seasons.map((season) => (
                                             <div key={season.id} className="bg-gray-50 p-4 rounded-md">
-                                                <div className="flex justify-between items-center mb-3">
+                                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
                                                     <h3 className="text-xl font-medium">{formatTouName(season.name || 'Unnamed Season')}</h3>
                                                     <span className="text-sm text-gray-600 bg-gray-200 px-2 py-1 rounded">
                                                         {season.from_month}/{season.from_day} - {season.to_month}/{season.to_day}
