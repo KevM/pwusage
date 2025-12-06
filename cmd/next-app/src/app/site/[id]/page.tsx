@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { EnergyChartWithNav } from '@/components/EnergyChartWithNav';
 import { SiteLiveStats } from '@/components/SiteLiveStats';
 import { BillSummary } from '@/components/BillSummary';
+import { DataSyncer } from '@/components/DataSyncer';
 import { SettingsRepo } from '@/lib/settings-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { Schedule } from '@/lib/schedule';
@@ -163,6 +164,8 @@ export default async function SitePage({ params, searchParams }: {
             <div className="w-full max-w-6xl">
                 <Link href="/" className="text-blue-600 hover:underline mb-4 block">&larr; Back to Dashboard</Link>
                 <h1 className="text-4xl font-bold mb-4">{site.name}</h1>
+
+                <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />
 
                 {/* Live Stats */}
                 <SiteLiveStats siteId={id} initialStats={initialStats} />

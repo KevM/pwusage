@@ -47,24 +47,6 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Copy scripts for worker
-COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
-COPY --from=builder --chown=nextjs:nodejs /app/src ./src
-COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./tsconfig.json
-COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
-
-# We need node_modules for some dev scripts if they are not bundled in standalone?
-# Standalone includes necessary node_modules.
-# But 'npm run worker' uses 'tsx' which might be a devDependency.
-# If we want to run the worker, we might need the full node_modules or ensure tsx is in dependencies.
-# Let's check package.json later. For now, let's copy node_modules from builder to be safe for the worker.
-# Actually, standalone mode is for the Next.js server. The worker script is separate.
-# To keep it simple, let's copy node_modules.
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
-
-COPY --chown=nextjs:nodejs entrypoint.sh ./
-RUN chmod +x entrypoint.sh
-
 USER nextjs
 
 EXPOSE 3000
@@ -73,4 +55,4 @@ ENV PORT 3000
 # set hostname to localhost
 ENV HOSTNAME "0.0.0.0"
 
-CMD ["./entrypoint.sh"]
+CMD ["node", "server.js"]

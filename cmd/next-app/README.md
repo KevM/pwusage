@@ -16,9 +16,7 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `TRMNL_CLIENT_ID`: Client ID for Trmnl integration.
 - `TRMNL_CLIENT_SECRET`: Client Secret for Trmnl integration.
 
-### Worker Settings (Optional)
-- `IMPORT_GRANULARITY`: Data import granularity (default: `day`).
-- `IMPORT_TIMEOUT_MS`: Import timeout in milliseconds (default: `600000`).
+
 
 ## Getting Started
 

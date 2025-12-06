@@ -3,6 +3,8 @@ import { TrmnlService } from '@/lib/trmnl-service';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { SettingsRepo } from '@/lib/settings-repo';
+import { Importer } from '@/lib/importer';
+import { TeslaClient } from '@/lib/tesla-client';
 
 export async function POST(request: Request) {
     try {
@@ -38,6 +40,22 @@ export async function POST(request: Request) {
 
         // End is now (to show current usage)
         const end = now;
+
+        // Ensure data is up to date
+        // Use Tesla Token from settings for the Importer (not the TRMNL token)
+        const teslaToken = settingsRepo.getAccessToken();
+        if (teslaToken) {
+            try {
+                const client = new TeslaClient({ accessToken: teslaToken });
+                const importer = new Importer(client);
+                // Allow a generous timeout for background sync if needed? POST handlers in App Router have default timeouts.
+                // We sync for the current billing period to ensure accuracy.
+                await importer.ensureDataForRange(site.id, start, end);
+            } catch (e) {
+                console.error("Failed to sync data for TRMNL request", e);
+                // Continue with existing data if sync fails
+            }
+        }
 
         const usageData = repo.getUsageByTOU(site.id, start, end);
 

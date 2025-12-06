@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -24,6 +24,7 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
     const [isDark, setIsDark] = useState(false);
     const router = useRouter();
     const searchParams = useSearchParams();
+    const dateInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -33,31 +34,43 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
         return () => mq.removeEventListener('change', update);
     }, []);
 
-    const navigateDay = async (offset: number) => {
+    useEffect(() => {
+        setChartData(initialData);
+    }, [initialData]);
+
+    const fetchAndSetData = async (dateStr: string) => {
         setLoading(true);
         try {
-            // Parse current date in local timezone
-            const currentDate = new Date(chartData.date + 'T00:00:00');
-            currentDate.setDate(currentDate.getDate() + offset);
-
-            // Format as YYYY-MM-DD using local timezone
-            const year = currentDate.getFullYear();
-            const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-            const day = String(currentDate.getDate()).padStart(2, '0');
-            const dateStr = `${year}-${month}-${day}`;
-
             const response = await fetch(`/api/hourly-data?siteId=${siteId}&date=${dateStr}`);
             if (response.ok) {
                 const data = await response.json();
                 setChartData(data);
-
-                // Update URL with date query parameter
                 router.push(`/site/${siteId}?date=${dateStr}`, { scroll: false });
             }
         } catch (error) {
             console.error('Failed to fetch chart data:', error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const navigateDay = async (offset: number) => {
+        // Parse current date in local timezone
+        const currentDate = new Date(chartData.date + 'T00:00:00');
+        currentDate.setDate(currentDate.getDate() + offset);
+
+        // Format as YYYY-MM-DD using local timezone
+        const year = currentDate.getFullYear();
+        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const day = String(currentDate.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+
+        await fetchAndSetData(dateStr);
+    };
+
+    const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.value) {
+            fetchAndSetData(e.target.value);
         }
     };
 
@@ -107,10 +120,25 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
                     >
                         ← Previous Day
                     </button>
-                    <span className="font-medium">
-                        {displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-                        {isToday && ' (Today)'}
-                    </span>
+
+                    <div className="relative group">
+                        <button
+                            onClick={() => dateInputRef.current?.showPicker()}
+                            className="font-medium hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                            title="Click to pick a date"
+                        >
+                            {displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                            {isToday && ' (Today)'}
+                        </button>
+                        <input
+                            ref={dateInputRef}
+                            type="date"
+                            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer pointer-events-none"
+                            onChange={handleDateChange}
+                            max={new Date().toISOString().split('T')[0]} // Prevent future dates
+                        />
+                    </div>
+
                     <button
                         onClick={() => navigateDay(1)}
                         disabled={loading || isToday}

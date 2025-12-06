@@ -71,6 +71,8 @@ export interface UsageData {
     tariff: Tariff;
     touName?: string;
     cost?: number;
+    buyRate?: number;
+    sellRate?: number;
 }
 
 export interface SiteWithTariffs extends Site {
@@ -101,7 +103,7 @@ export class EnergyRepo {
 
         const site = this.getSite(siteId);
         if (!site) return [];
-        const schedule = new Schedule(site.tariffs);
+        const schedule = new Schedule(site.tariffs, site.timezone);
 
         const startStr = start.toISOString();
         const endStr = end.toISOString();
@@ -147,7 +149,9 @@ export class EnergyRepo {
                     batteryChange: 0,
                     tariff: tp?.tariff || tariffMap.get(row.tariff_id)!,
                     touName: touName,
-                    cost: 0
+                    cost: 0,
+                    buyRate: buyRate,
+                    sellRate: sellRate
                 };
                 aggregation.set(key, data);
             }
