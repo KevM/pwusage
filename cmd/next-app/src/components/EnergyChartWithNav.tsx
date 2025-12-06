@@ -67,7 +67,6 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
         'Solar Production': d.solarProduction.toFixed(2),
         'Grid Usage': d.gridUsage.toFixed(2),
         'Battery': d.batteryUsage.toFixed(2),
-        'Battery SOC': d.batterySoc?.toFixed(1),
     }));
 
     // Parse date in local timezone by appending time component
@@ -99,7 +98,7 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
     return (
         <div className={`w-full ${palette.card} p-4 rounded shadow`}>
             <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-semibold">Hourly Energy (kWh) & Battery SOC (%)</h3>
+                <h3 className="text-xl font-semibold">Hourly Energy (kWh)</h3>
                 <div className="flex items-center gap-4">
                     <button
                         onClick={() => navigateDay(-1)}
@@ -125,19 +124,17 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
                 <LineChart data={formattedData} key={chartData.date}>
                     <CartesianGrid stroke={palette.grid} strokeDasharray="3 3" />
                     <XAxis dataKey="hour" tick={{ fill: palette.axis }} />
-                    <YAxis yAxisId="left" tick={{ fill: palette.axis }} label={{ value: 'Energy (kWh)', angle: -90, position: 'insideLeft', fill: palette.axis }} />
-                    <YAxis yAxisId="right" orientation="right" tick={{ fill: palette.axis }} label={{ value: 'SOC (%)', angle: 90, position: 'insideRight', fill: palette.axis }} />
+                    <YAxis tick={{ fill: palette.axis }} label={{ value: 'Energy (kWh)', angle: -90, position: 'insideLeft', fill: palette.axis }} />
                     <Tooltip
                         contentStyle={{ background: palette.tooltipBg, borderColor: palette.tooltipBorder, color: palette.tooltipText }}
                         labelStyle={{ color: palette.tooltipText }}
                         itemStyle={{ color: palette.tooltipText }}
                     />
                     <Legend />
-                    <Line yAxisId="left" type="monotone" dataKey="Solar Production" stroke="#f59e0b" strokeWidth={2} />
-                    <Line yAxisId="left" type="monotone" dataKey="Home Usage" stroke="#3b82f6" strokeWidth={2} />
-                    <Line yAxisId="left" type="monotone" dataKey="Grid Usage" stroke="#f97316" strokeWidth={2} />
-                    <Line yAxisId="left" type="monotone" dataKey="Battery" stroke="#a855f7" strokeWidth={2} />
-                    <Line yAxisId="right" type="monotone" dataKey="Battery SOC" stroke="#d946ef" strokeWidth={3} strokeDasharray="5 5" />
+                    <Line type="monotone" dataKey="Solar Production" stroke="#f59e0b" strokeWidth={2} />
+                    <Line type="monotone" dataKey="Home Usage" stroke="#3b82f6" strokeWidth={2} />
+                    <Line type="monotone" dataKey="Grid Usage" stroke="#f97316" strokeWidth={2} />
+                    <Line type="monotone" dataKey="Battery" stroke="#a855f7" strokeWidth={2} />
                 </LineChart>
             </ResponsiveContainer>
         </div>

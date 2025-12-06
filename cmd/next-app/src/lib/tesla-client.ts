@@ -174,8 +174,12 @@ export class TeslaClient {
             time_zone: timeZone
         });
 
+        console.log(`[TeslaClient] Fetching ${siteId} history: kind=energy, period=${period}, time_zone=${timeZone}`);
+        console.log(`[TeslaClient] Params: start_date=${s}, end_date=${e}`);
+
         const result = await this.fetch<{ response: { time_series: EnergyHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
-        return result.response.time_series;
+        console.log(`[TeslaClient] History Response for ${start.toISOString()}-${end.toISOString()} (${period}):`, JSON.stringify(result).substring(0, 200));
+        return result.response?.time_series ?? [];
     }
 
     async getSoeHistory(siteId: string, start: Date, end: Date, period: string = "day", timeZone: string): Promise<SoeHistoryEntry[]> {

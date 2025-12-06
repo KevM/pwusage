@@ -217,6 +217,18 @@ export interface TariffSchedule {
   to_minute: number | null;
 }
 
+export interface EnergyData {
+  id: number;
+  timestamp: string;
+  site_id: string;
+  tariff_id: number;
+  load_power: number;
+  solar_power: number;
+  grid_power: number;
+  battery_power: number;
+  battery_soc: number | null;
+}
+
 export interface EnergyUsage {
   id: number;
   tariff_id: number;

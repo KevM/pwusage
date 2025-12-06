@@ -8,6 +8,7 @@ import { TeslaClient } from '@/lib/tesla-client';
 import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
 import { cookies } from 'next/headers';
+import { SiteSetup } from '@/components/SiteSetup';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,9 +41,15 @@ export default async function SitePage({ params, searchParams }: {
     const importer = new Importer(client);
     await importer.ensureSite(id);
 
+    // ... imports
+
     const site = repo.getSite(id);
     if (!site) {
         return <div>Site not found</div>;
+    }
+
+    if (!repo.hasData(id)) {
+        return <SiteSetup siteId={id} />;
     }
 
     // Get live stats for initial render
@@ -125,13 +132,15 @@ export default async function SitePage({ params, searchParams }: {
 
     const usage = repo.getUsageByTOU(id, start, end);
 
-    // Determine active tariff ID
+    // Determine active tariff ID and TOU Name
     let activeTariffId: number | undefined;
+    let activeTouName: string | undefined;
     if (site.tariffs.length > 0) {
         const schedule = new Schedule(site.tariffs);
         const tariffPeriod = schedule.getTariffPeriod(new Date());
         if (tariffPeriod) {
             activeTariffId = tariffPeriod.tariff.id;
+            activeTouName = tariffPeriod.schedule.name || undefined;
         }
     }
 
@@ -203,7 +212,7 @@ export default async function SitePage({ params, searchParams }: {
                     </div>
                 </div>
 
-                <BillSummary usage={usage} activeTariffId={activeTariffId} />
+                <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} />
             </div>
         </div>
     );
