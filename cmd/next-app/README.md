@@ -1,5 +1,6 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Powerwall Usage 
 
+This application helps you track your Powerwall usage and monitor your energy production and consumption. The main goal is for users who have time of use (TOU) rates and want to optimize their energy usage. 
 
 ## Configuration
 
@@ -15,7 +16,6 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 ### Optional / Integrations
 - `TRMNL_CLIENT_ID`: Client ID for Trmnl integration.
 - `TRMNL_CLIENT_SECRET`: Client Secret for Trmnl integration.
-
 
 
 ## Getting Started
