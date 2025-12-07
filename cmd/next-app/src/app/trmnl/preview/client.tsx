@@ -56,7 +56,7 @@ export function PreviewClient({ tokens }: { tokens: { access_token: string, site
                 <>
                     <h2 className="text-lg font-semibold mb-2">Rendered Output:</h2>
                     {/* Trmnl styles won't be exact here without their CSS, but structure is visible */}
-                    <div dangerouslySetInnerHTML={{ __html: html }} className="bg-white p-4 border" />
+                    <div dangerouslySetInnerHTML={{ __html: html }} className="bg-white text-black p-4 border" />
 
                     <h2 className="text-lg font-semibold mt-8 mb-2">Raw HTML:</h2>
                     <pre className="bg-gray-800 text-white p-4 rounded overflow-auto text-xs">

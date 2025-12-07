@@ -40,7 +40,7 @@ export default async function TariffPage({ params }: { params: Promise<{ id: str
                 ) : (
                     <div className="space-y-8">
                         {site.tariffs.map((tariff) => (
-                            <div key={tariff.id} className="border rounded-lg p-6 shadow-sm bg-white">
+                            <div key={tariff.id} className="border rounded-lg p-6 shadow-sm bg-white dark:bg-slate-900 dark:border-slate-700">
                                 <h2 className="text-2xl font-semibold mb-4">{formatTouName(tariff.name || `Tariff #${tariff.id}`)}</h2>
 
                                 {(!tariff.seasons || tariff.seasons.length === 0) ? (
@@ -48,21 +48,21 @@ export default async function TariffPage({ params }: { params: Promise<{ id: str
                                 ) : (
                                     <div className="space-y-6">
                                         {tariff.seasons.map((season) => (
-                                            <div key={season.id} className="bg-gray-50 p-4 rounded-md">
+                                            <div key={season.id} className="bg-gray-50 dark:bg-slate-800 p-4 rounded-md">
                                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
                                                     <h3 className="text-xl font-medium">{formatTouName(season.name || 'Unnamed Season')}</h3>
-                                                    <span className="text-sm text-gray-600 bg-gray-200 px-2 py-1 rounded">
+                                                    <span className="text-sm text-gray-600 dark:text-gray-300 bg-gray-200 dark:bg-slate-700 px-2 py-1 rounded">
                                                         {season.from_month}/{season.from_day} - {season.to_month}/{season.to_day}
                                                     </span>
                                                 </div>
 
                                                 {(!season.schedules || season.schedules.length === 0) ? (
-                                                    <p className="text-gray-500 italic text-sm">No schedules defined.</p>
+                                                    <p className="text-gray-500 dark:text-gray-400 italic text-sm">No schedules defined.</p>
                                                 ) : (
                                                     <div className="overflow-x-auto">
                                                         <table className="min-w-full text-sm">
                                                             <thead>
-                                                                <tr className="bg-gray-200 text-left">
+                                                                <tr className="bg-gray-200 dark:bg-slate-700 text-left dark:text-gray-200">
                                                                     <th className="p-2 rounded-l">Schedule Name</th>
                                                                     <th className="p-2">Time Range</th>
                                                                     <th className="p-2">Days</th>
@@ -72,7 +72,7 @@ export default async function TariffPage({ params }: { params: Promise<{ id: str
                                                             </thead>
                                                             <tbody>
                                                                 {season.schedules.map((schedule) => (
-                                                                    <tr key={schedule.id} className="border-b last:border-0">
+                                                                    <tr key={schedule.id} className="border-b last:border-0 dark:border-slate-600">
                                                                         <td className="p-2 font-medium">{formatTouName(schedule.name || 'Standard')}</td>
                                                                         <td className="p-2">
                                                                             {formatTimeRange(
