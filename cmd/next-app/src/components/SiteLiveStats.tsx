@@ -14,9 +14,11 @@ interface LiveStats {
 
 export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initialStats: LiveStats }) {
     const [stats, setStats] = useState(initialStats);
-    const [lastUpdate, setLastUpdate] = useState(new Date());
+    const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
     useEffect(() => {
+        setLastUpdate(new Date()); // Set initial time on client mount
+
         const interval = setInterval(async () => {
             try {
                 const response = await fetch(`/api/site-live-data?siteId=${siteId}`);
@@ -65,8 +67,7 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
                             `}>
                                 <rect x="2" y="7" width="20" height="10" rx="2" ry="2" />
                                 <line x1="22" y1="11" x2="22" y2="13" />
-                                {/* Fill Level */}
-                                {stats.percentageCharged > 5 && <line x1="6" y1="12" x2={6 + (12 * (Math.min(stats.percentageCharged, 100) / 100))} y2="12" strokeWidth="4" />}
+                                <line x1="6" y1="12" x2={6 + (12 * (Math.min(stats.percentageCharged, 100) / 100))} y2="12" strokeWidth="4" />
                             </svg>
                             {/* Charging Bolt Overlay */}
                             {stats.batteryPower < -100 && (
@@ -89,7 +90,7 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs text-gray-400">Updated: {lastUpdate.toLocaleTimeString()}</span>
+                    <span className="text-xs text-gray-400">Updated: {lastUpdate ? lastUpdate.toLocaleTimeString() : 'Syncing...'}</span>
                 </div>
             </div>
         </div >

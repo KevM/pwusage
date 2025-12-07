@@ -55,36 +55,55 @@ export default async function SettingsPage() {
                     </p>
 
                     <div className="mb-8">
-                        <div className="border-4 border-black rounded-xl p-4 max-w-sm mx-auto bg-white text-black font-mono shadow-xl relative mb-4">
+                        <div className="border-4 border-black rounded-xl p-4 max-w-sm mx-auto bg-white text-black font-sans shadow-xl relative mb-4">
                             {/* Device "Chin" mockup */}
                             <div className="absolute bottom-0 left-0 right-0 h-1 bg-black opacity-10"></div>
 
-                            <div className="flex flex-col gap-4">
-                                <div>
-                                    <h3 className="text-lg font-bold">Home Energy</h3>
-                                    <p className="text-xs uppercase tracking-wider">12/05/2025 - 12/05/2025</p>
+                            <div className="flex flex-col h-full bg-white p-2">
+                                <div className="mb-4">
+                                    <h3 className="text-xl font-bold leading-tight">Harrison</h3>
+                                    <p className="text-xs uppercase tracking-wider text-gray-600">11/10/2025 - 12/05/2025</p>
                                 </div>
 
-                                <div className="space-y-2">
-                                    <div className="border-b border-black pb-1 mb-2">
-                                        <span className="font-bold border-b-2 border-black">On-Peak</span>
+                                <div className="mb-4">
+                                    <div className="border-b-2 border-black mb-1">
+                                        <span className="text-xs font-bold uppercase tracking-wider">Summer - Weekday</span>
                                     </div>
-                                    <div className="grid grid-cols-4 text-xs gap-x-2">
-                                        <div className="text-right">Home</div>
-                                        <div className="text-right">Sol</div>
-                                        <div className="text-right">Grid</div>
-                                        <div className="text-right">$$</div>
-
-                                        <div className="text-right font-bold">12.5</div>
-                                        <div className="text-right font-bold">8.2</div>
-                                        <div className="text-right font-bold">4.3</div>
-                                        <div className="text-right font-bold">$1.20</div>
-                                    </div>
+                                    <table className="w-full text-xs">
+                                        <thead>
+                                            <tr className="border-b border-black">
+                                                <th className="text-left py-1">Period</th>
+                                                <th className="text-right py-1">Home</th>
+                                                <th className="text-right py-1">Sol</th>
+                                                <th className="text-right py-1">Batt</th>
+                                                <th className="text-right py-1">Grid</th>
+                                                <th className="text-right py-1">Cost</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td className="py-1">Off-Peak</td>
+                                                <td className="text-right">12.5</td>
+                                                <td className="text-right">8.2</td>
+                                                <td className="text-right">4.3</td>
+                                                <td className="text-right">0.0</td>
+                                                <td className="text-right">$1.20</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1"><b>On-Peak</b></td>
+                                                <td className="text-right"><b>5.1</b></td>
+                                                <td className="text-right"><b>2.0</b></td>
+                                                <td className="text-right"><b>-1.0</b></td>
+                                                <td className="text-right"><b>4.1</b></td>
+                                                <td className="text-right"><b>$2.50</b></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
                                 </div>
 
-                                <div className="text-center mt-2 border-t border-black pt-4">
-                                    <p className="text-xs uppercase">Est. Cost</p>
-                                    <p className="text-3xl font-bold">$4.52</p>
+                                <div className="text-center mt-auto">
+                                    <p className="text-xs uppercase tracking-wider mb-1">Est. Cost</p>
+                                    <p className="text-4xl font-bold">$3.70</p>
                                 </div>
                             </div>
                         </div>
@@ -113,7 +132,7 @@ export default async function SettingsPage() {
                         </a>
                     </div>
                 </div>
-                <div className="border rounded bg-white dark:bg-slate-900 p-6 shadow-sm">
+                <div className="border rounded bg-white dark:bg-slate-900 p-6 shadow-sm mt-8">
                     <h2 className="text-xl font-semibold mb-4 text-red-600">Danger Zone</h2>
                     <p className="text-sm text-gray-500 mb-4">
                         Sign out of your session. You will need to log in again to access the dashboard.
