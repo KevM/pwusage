@@ -123,8 +123,8 @@ export default async function SitePage({ params, searchParams }: {
 
             // Get current tariff
             let currentTariff = 'Unknown';
-            if (site.tariffs.length > 0) {
-                const schedule = new Schedule(site.tariffs, site.timezone);
+            if (finalSite.tariffs.length > 0) {
+                const schedule = new Schedule(finalSite.tariffs, finalSite.timezone);
                 const tariffPeriod = schedule.getTariffPeriod(new Date());
                 if (tariffPeriod) {
                     const season = tariffPeriod.season.name || 'Season';
@@ -159,7 +159,7 @@ export default async function SitePage({ params, searchParams }: {
         dateStr = `${year}-${month}-${day}`;
     }
 
-    const hourlyData = await repo.getHourlyEnergyData(id, dateStr, site.timezone);
+    const hourlyData = await repo.getHourlyEnergyData(id, dateStr, finalSite.timezone);
 
     // Calculate period based on billing start day
     const billingDay = finalSite.billing_start_day || 1;
