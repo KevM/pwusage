@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
-import { SettingsRepo } from '@/lib/settings-repo';
+
 import { Importer } from '@/lib/importer';
 import { TeslaClient } from '@/lib/tesla-client';
+import QRCode from 'qrcode';
 
-export async function POST(request: Request) {
+export async function GET(request: Request) {
     try {
         const authHeader = request.headers.get('Authorization');
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -28,8 +29,7 @@ export async function POST(request: Request) {
         }
 
         // Calculate bill for current period
-        const settingsRepo = new SettingsRepo();
-        const billingStartDay = settingsRepo.getBillingStartDay();
+        const billingStartDay = site.billing_start_day || 1;
 
         const now = new Date();
         let start = new Date(now.getFullYear(), now.getMonth(), billingStartDay);
@@ -41,20 +41,59 @@ export async function POST(request: Request) {
         // End is now (to show current usage)
         const end = now;
 
-        // Ensure data is up to date
-        // Use Tesla Token from settings for the Importer (not the TRMNL token)
-        const teslaToken = settingsRepo.getAccessToken();
-        if (teslaToken) {
+        // Use centralized Site tokens for sync
+        if (site.refresh_token) {
+            console.log(`[Trmnl] Found refresh token for site ${site.id}, attempting sync...`);
+
+            const client = new TeslaClient({
+                accessToken: site.access_token || 'expired',
+                refreshToken: site.refresh_token,
+                tokenRefreshHandler: repo.getLockedRefreshHandler(site.id),
+                onTokenUpdate: async (newAccess, newRefresh) => {
+                    console.log(`[Trmnl] Token update callback triggered for site ${site.id}`);
+                }
+            });
+
+            // Sync recent data to ensure freshness
             try {
-                const client = new TeslaClient({ accessToken: teslaToken });
                 const importer = new Importer(client);
-                // Allow a generous timeout for background sync if needed? POST handlers in App Router have default timeouts.
-                // We sync for the current billing period to ensure accuracy.
+
+                // Sync current month
                 await importer.ensureDataForRange(site.id, start, end);
-            } catch (e) {
-                console.error("Failed to sync data for TRMNL request", e);
-                // Continue with existing data if sync fails
+                console.log(`[Trmnl] Sync successful for site ${site.id}`);
+            } catch (err: any) {
+                console.error(`[Trmnl] Sync failed for site ${site.id}:`, err);
+
+                // If auth error, show QR code to re-authenticate
+                if (err.message.includes('401') || err.message.includes('refresh token')) {
+                    const host = request.headers.get('host') || 'localhost:3000';
+                    const protocol = host.includes('localhost') ? 'http' : 'https';
+                    const manageUrl = `${protocol}://${host}/trmnl/manage?uuid=${installation.uuid}`;
+
+                    // Generate QR Code
+                    const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
+
+                    const markup = `
+                        <div class="view view--full">
+                             <div class="layout layout--col-center" style="padding: 20px; text-align: center;">
+                                <span class="title title--small">Tesla Auth Expired</span>
+                                <span class="label">Scan to Re-connect</span>
+                                <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px 0;" />
+                                <span class="label label--small">${site.name}</span>
+                             </div>
+                        </div>
+                     `;
+
+                    return NextResponse.json({
+                        markup: markup,
+                        markup_half_vertical: markup,
+                        markup_half_horizontal: markup,
+                        markup_quadrant: markup
+                    });
+                }
             }
+        } else {
+            console.log(`[Trmnl] No refresh token found for site ${site.id} (in Site table), skipping sync.`);
         }
 
         const usageData = repo.getUsageByTOU(site.id, start, end);
@@ -187,3 +226,5 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: (error as Error).message }, { status: 500 });
     }
 }
+
+export { GET as POST };

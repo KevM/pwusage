@@ -1,51 +1,67 @@
-import { SettingsRepo } from '@/lib/settings-repo';
+import { EnergyRepo } from '@/lib/energy-repo';
+import { verifySiteAccess } from '@/lib/auth-checks';
 import { updateBillingStartDay } from './actions';
 import Link from 'next/link';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
+import { notFound, redirect } from 'next/navigation';
 
-export default async function SettingsPage() {
-    const repo = new SettingsRepo();
-    const currentDay = repo.getBillingStartDay();
+export default async function SiteSettingsPage({ params }: { params: Promise<{ id: string }> }) {
+    const { id } = await params;
+
+    if (!await verifySiteAccess(id)) {
+        redirect('/');
+    }
+
+    const repo = new EnergyRepo();
+    const site = repo.getSite(id);
+
+    if (!site) {
+        notFound();
+    }
 
     return (
         <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
             <div className="w-full max-w-2xl">
                 <Breadcrumbs items={[
                     { label: 'Dashboard', href: '/' },
+                    { label: site.name, href: `/site/${id}` },
                     { label: 'Settings' }
                 ]} />
 
-                <h1 className="text-3xl font-bold mb-8">Settings</h1>
+                <h1 className="text-3xl font-bold mb-8">Site Settings</h1>
 
                 <div className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800">
-                    <h2 className="text-xl font-semibold mb-4">Billing Configuration</h2>
+                    <h2 className="text-xl font-semibold mb-6">Billing Configuration</h2>
 
-                    <form action={updateBillingStartDay} className="space-y-4">
-                        <div>
-                            <label htmlFor="billingStartDay" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                Billing Start Day
-                            </label>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
-                                The day of the month your billing cycle begins (1-31).
-                            </p>
-                            <input
-                                type="number"
-                                id="billingStartDay"
-                                name="billingStartDay"
-                                defaultValue={currentDay}
-                                min="1"
-                                max="31"
-                                className="block w-full rounded-md border-gray-300 dark:border-slate-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border dark:bg-slate-800 dark:text-white"
-                            />
-                        </div>
+                    <div className="mb-6">
+                        <form action={updateBillingStartDay} className="flex gap-4 items-end">
+                            <input type="hidden" name="siteId" value={site.id} />
+                            <div className="flex-grow max-w-xs">
+                                <label htmlFor={`billingStartDay-${site.id}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    Billing Cycle Start Day
+                                </label>
+                                <input
+                                    type="number"
+                                    id={`billingStartDay-${site.id}`}
+                                    name="billingStartDay"
+                                    defaultValue={site.billing_start_day || 1}
+                                    min="1"
+                                    max="31"
+                                    className="block w-full rounded-md border-gray-300 dark:border-slate-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border dark:bg-slate-800 dark:text-white"
+                                />
+                            </div>
 
-                        <button
-                            type="submit"
-                            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
-                        >
-                            Save Settings
-                        </button>
-                    </form>
+                            <button
+                                type="submit"
+                                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors h-10 mb-0.5"
+                            >
+                                Save
+                            </button>
+                        </form>
+                        <p className="text-xs text-gray-500 mt-1">
+                            Calculates monthly usage starting from this day.
+                        </p>
+                    </div>
                 </div>
 
                 <div className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800 mt-8">
@@ -131,17 +147,6 @@ export default async function SettingsPage() {
                             Buy Device
                         </a>
                     </div>
-                </div>
-                <div className="border rounded bg-white dark:bg-slate-900 p-6 shadow-sm mt-8">
-                    <h2 className="text-xl font-semibold mb-4 text-red-600">Danger Zone</h2>
-                    <p className="text-sm text-gray-500 mb-4">
-                        Sign out of your session. You will need to log in again to access the dashboard.
-                    </p>
-                    <form action="/logout" method="POST">
-                        <button type="submit" className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition">
-                            Logout
-                        </button>
-                    </form>
                 </div>
             </div>
         </div>

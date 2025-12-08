@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
+import { verifySiteAccess } from '@/lib/auth-checks';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +12,10 @@ export async function GET(request: Request) {
 
         if (!siteId || !dateStr) {
             return NextResponse.json({ error: 'Missing siteId or date' }, { status: 400 });
+        }
+
+        if (!await verifySiteAccess(siteId)) {
+            return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
         }
 
         const repo = new EnergyRepo();

@@ -75,7 +75,8 @@ if (!hasSiteTable || hasSiteTable.count === 0) {
           updated DATETIME NOT NULL,
           installed DATETIME NOT NULL,
           timezone TEXT NOT NULL,
-          json JSON
+          json JSON,
+          billing_start_day INTEGER DEFAULT 1
         );
 
         CREATE TABLE Tariff (
@@ -163,7 +164,11 @@ if (!hasSiteTable || hasSiteTable.count === 0) {
           uuid TEXT UNIQUE,
           site_id TEXT NOT NULL,
           plugin_setting_id INTEGER,
-          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+          refresh_token TEXT,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          json TEXT,
+          is_refreshing INTEGER DEFAULT 0,
+          refresh_lock_expires INTEGER DEFAULT 0
         );
     `);
 
@@ -173,6 +178,41 @@ if (!hasSiteTable || hasSiteTable.count === 0) {
     if (hasSyntheticCol.c === 0) {
       console.log('Migrating database: Adding is_synthetic column to EnergyData...');
       db.exec('ALTER TABLE EnergyData ADD COLUMN is_synthetic INTEGER DEFAULT 0');
+    }
+
+    const hasBillingCol = db.prepare("SELECT count(*) as c FROM pragma_table_info('Site') WHERE name='billing_start_day'").get() as { c: number };
+    if (hasBillingCol.c === 0) {
+      console.log('Migrating database: Adding billing_start_day column to Site...');
+      db.exec('ALTER TABLE Site ADD COLUMN billing_start_day INTEGER DEFAULT 1');
+
+      // Try to migrate from global setting if available
+      const globalSetting = db.prepare("SELECT value FROM AppSettings WHERE key = 'billing_start_day'").get() as { value: string } | undefined;
+      if (globalSetting && globalSetting.value) {
+        const day = parseInt(globalSetting.value);
+        if (!isNaN(day)) {
+          console.log(`Migrating global billing start day (${day}) to all sites...`);
+          db.prepare('UPDATE Site SET billing_start_day = ?').run(day);
+        }
+      }
+    }
+    const hasTrmnlTokenCol = db.prepare("SELECT count(*) as c FROM pragma_table_info('TrmnlInstallation') WHERE name='refresh_token'").get() as { c: number };
+    if (hasTrmnlTokenCol.c === 0) {
+      console.log('Migrating database: Adding refresh_token column to TrmnlInstallation...');
+      db.exec('ALTER TABLE TrmnlInstallation ADD COLUMN refresh_token TEXT');
+    }
+
+    const hasSiteTokenCol = db.prepare("SELECT count(*) as c FROM pragma_table_info('Site') WHERE name='access_token'").get() as { c: number };
+    if (hasSiteTokenCol.c === 0) {
+      console.log('Migrating database: Adding token columns to Site...');
+      db.exec('ALTER TABLE Site ADD COLUMN access_token TEXT');
+      db.exec('ALTER TABLE Site ADD COLUMN refresh_token TEXT');
+    }
+
+    const hasLockCol = db.prepare("SELECT count(*) as c FROM pragma_table_info('Site') WHERE name='is_refreshing'").get() as { c: number };
+    if (hasLockCol.c === 0) {
+      console.log('Migrating database: Adding locking columns to Site...');
+      db.exec('ALTER TABLE Site ADD COLUMN is_refreshing INTEGER DEFAULT 0');
+      db.exec('ALTER TABLE Site ADD COLUMN refresh_lock_expires INTEGER DEFAULT 0');
     }
   } catch (e) {
     console.error('Migration failed:', e);
@@ -193,6 +233,11 @@ export interface Site {
   installed: string;
   timezone: string;
   json: string | null;
+  billing_start_day: number;
+  access_token?: string | null;
+  refresh_token?: string | null;
+  is_refreshing?: number;
+  refresh_lock_expires?: number;
 }
 
 export interface Tariff {
@@ -259,5 +304,6 @@ export interface TrmnlInstallation {
   uuid: string | null;
   site_id: string;
   plugin_setting_id: number | null;
+  refresh_token: string | null;
   created_at: string;
 }

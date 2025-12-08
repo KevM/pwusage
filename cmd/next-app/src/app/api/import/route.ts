@@ -1,6 +1,6 @@
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
-import { SettingsRepo } from '@/lib/settings-repo';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 
@@ -9,9 +9,9 @@ export async function POST(request: Request) {
         const { searchParams } = new URL(request.url);
         const granularity = searchParams.get('granularity') || 'day';
 
-        const settingsRepo = new SettingsRepo();
-        const token = settingsRepo.getAccessToken();
-        const refreshToken = settingsRepo.getRefreshToken();
+        const cookieStore = await cookies();
+        const token = cookieStore.get('access_token')?.value;
+        const refreshToken = cookieStore.get('refresh_token')?.value;
 
         if (!token) {
             return NextResponse.json({ error: 'No access token found' }, { status: 401 });
@@ -24,9 +24,9 @@ export async function POST(request: Request) {
             accessToken: token,
             refreshToken: refreshToken,
             onTokenUpdate: (newAccess, newRefresh) => {
-                console.log('Refreshing tokens in DB');
-                settingsRepo.setAccessToken(newAccess);
-                settingsRepo.setRefreshToken(newRefresh);
+                console.log('Refreshing tokens in Cookies from Import API');
+                cookieStore.set('access_token', newAccess, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+                cookieStore.set('refresh_token', newRefresh, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
             }
         });
 

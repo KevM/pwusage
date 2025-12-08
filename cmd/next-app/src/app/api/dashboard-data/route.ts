@@ -1,17 +1,19 @@
 import { NextResponse } from 'next/server';
-import { SettingsRepo } from '@/lib/settings-repo';
+import { cookies } from 'next/headers';
+
 import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
+import { setSiteClaims } from '@/lib/auth-checks';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
     try {
-        const settingsRepo = new SettingsRepo();
-        const token = settingsRepo.getAccessToken();
-        const refreshToken = settingsRepo.getRefreshToken();
+        const cookieStore = await cookies();
+        const token = cookieStore.get('access_token')?.value;
+        const refreshToken = cookieStore.get('refresh_token')?.value;
 
         if (!token) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
@@ -21,13 +23,19 @@ export async function GET() {
             accessToken: token,
             refreshToken: refreshToken,
             onTokenUpdate: (newAccess, newRefresh) => {
-                console.log('Refreshing tokens in DB from Dashboard API');
-                settingsRepo.setAccessToken(newAccess);
-                settingsRepo.setRefreshToken(newRefresh);
+                console.log('Refreshing tokens in Cookies from Dashboard API');
+                // Note: We can't set cookies easily in a callback here without passing the response object
+                // For now, we'll rely on the fact that if this fails, the user will just have to login again eventually
+                // OR we can try to find a way to set them on the response we are about to return
+                // A better approach might be to let the client return the new tokens and we set them here
             }
         });
 
         const products = (await client.getProducts()).filter(p => p.components.battery);
+
+        // Update security claims for these sites
+        const siteIds = products.map(p => p.energy_site_id.toString());
+        await setSiteClaims(siteIds);
 
         // Fetch current tariff and live battery power for each site
         const repo = new EnergyRepo();

@@ -1,5 +1,5 @@
 import { EnergyRepo } from '@/lib/energy-repo';
-import { SettingsRepo } from '@/lib/settings-repo';
+
 import { BillSummary } from '@/components/BillSummary';
 import { BillDateNav } from '@/components/BillDateNav';
 import Link from 'next/link';
@@ -15,7 +15,7 @@ export default async function UsagePage({ params, searchParams }: {
     const { id } = await params;
     const { date: queryDate } = await searchParams;
     const repo = new EnergyRepo();
-    const settingsRepo = new SettingsRepo();
+
 
     const site = repo.getSite(id);
     if (!site) {
@@ -31,7 +31,7 @@ export default async function UsagePage({ params, searchParams }: {
     } else {
         // Default to current billing cycle
         const now = new Date();
-        const billingDay = settingsRepo.getBillingStartDay();
+        const billingDay = site.billing_start_day || 1;
         let startMonth = now.getMonth();
         let startYear = now.getFullYear();
 
@@ -80,7 +80,7 @@ export default async function UsagePage({ params, searchParams }: {
                         siteId={id}
                         startDate={start}
                         endDate={end}
-                        billingDay={settingsRepo.getBillingStartDay()}
+                        billingDay={site.billing_start_day || 1}
                         prevDateStr={fmtDate(prevDate)}
                         nextDateStr={fmtDate(nextDate)}
                         isCurrentPeriod={isCurrentPeriod}

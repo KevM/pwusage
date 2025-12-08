@@ -1,5 +1,5 @@
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { SettingsRepo } from '@/lib/settings-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
@@ -15,9 +15,9 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Missing siteId' }, { status: 400 });
         }
 
-        const settingsRepo = new SettingsRepo();
-        const token = settingsRepo.getAccessToken();
-        const refreshToken = settingsRepo.getRefreshToken();
+        const cookieStore = await cookies();
+        const token = cookieStore.get('access_token')?.value;
+        const refreshToken = cookieStore.get('refresh_token')?.value;
 
         if (!token) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
@@ -27,9 +27,9 @@ export async function GET(request: Request) {
             accessToken: token,
             refreshToken: refreshToken,
             onTokenUpdate: (newAccess, newRefresh) => {
-                console.log('Refreshing tokens in DB from Site Live Data API');
-                settingsRepo.setAccessToken(newAccess);
-                settingsRepo.setRefreshToken(newRefresh);
+                console.log('Refreshing tokens in Cookies from Site Live Data API');
+                cookieStore.set('access_token', newAccess, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+                cookieStore.set('refresh_token', newRefresh, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
             }
         });
         const repo = new EnergyRepo();

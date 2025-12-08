@@ -2,7 +2,8 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { NextRequest, NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
-import { SettingsRepo } from '@/lib/settings-repo';
+import { EnergyRepo } from '@/lib/energy-repo';
+
 
 export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
@@ -54,10 +55,30 @@ export async function GET(request: NextRequest) {
     cookieStore.set('access_token', authData.access_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: authData.expires_in });
     cookieStore.set('refresh_token', authData.refresh_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
 
-    // Also save to DB for use by API routes (e.g. sync, trmnl)
-    const settingsRepo = new SettingsRepo();
-    settingsRepo.setAccessToken(authData.access_token);
-    settingsRepo.setRefreshToken(authData.refresh_token);
+    // Update DB (Source of Truth) to prevent race conditions/stale data
+    try {
+        // Dynamic import to avoid build issues if mixed environments? No, standard import is fine.
+        // But let's usage require for simplicity in function if needed, or top level if clean.
+        // We will add import at top level.
+        const repo = new EnergyRepo();
+        const sites = repo.getSites();
+        if (sites.length > 0) {
+            console.log(`[AuthCallback] Updating ${sites.length} sites with fresh tokens.`);
+            for (const site of sites) {
+                // We update tokens AND release lock (force reset lock on login)
+                // Actually updateSiteTokens doesn't clear lock? 
+                // Let's manually clear lock too?
+                // repo.updateSiteTokens(...) does not clear lock.
+                // But repo.releaseRefreshLock(site.id) does.
+                // We should clear lock to be safe.
+                await repo.updateSiteTokens(site.id, authData.access_token, authData.refresh_token);
+                repo.releaseRefreshLock(site.id);
+            }
+        }
+    } catch (dbError) {
+        console.error('[AuthCallback] Failed to update sites in DB:', dbError);
+        // Don't fail the request, just log. Cookies are still set.
+    }
 
     // Clean up auth cookies
     cookieStore.delete('auth_state');

@@ -1,18 +1,15 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
-import { SettingsRepo } from '@/lib/settings-repo';
+
 
 export async function POST() {
     const cookieStore = await cookies();
 
     // Clear all auth cookies
+    // Clear all auth cookies
     cookieStore.delete('access_token');
     cookieStore.delete('refresh_token');
-
-    // Clear tokens from DB
-    const settingsRepo = new SettingsRepo();
-    settingsRepo.clearTokens();
 
     redirect('/');
 }
