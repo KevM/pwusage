@@ -8,38 +8,11 @@ const globalForDb = global as unknown as { db: Database.Database };
 import fs from 'fs';
 
 // Default to app-local db; override via DATABASE_URL (file:... or plain path)
-let dbPathEnv = process.env.DATABASE_URL;
-let dbPath = dbPathEnv ? dbPathEnv.replace('file:', '') : './pwusage.db';
-
+const dbPathEnv = process.env.DATABASE_URL;
+const dbPath = dbPathEnv ? dbPathEnv.replace('file:', '') : './pwusage.db';
 // Resolve path relative to cwd if it's relative
-let resolvedPath = path.isAbsolute(dbPath) ? dbPath : path.resolve(process.cwd(), dbPath);
-
-// Vercel / Serverless Environment Handling
-// In production (Vercel), only /tmp is writable.
-if (process.env.NODE_ENV === 'production') {
-  const tmpPath = path.join('/tmp', 'pwusage.db');
-
-  // If the DB doesn't exist in /tmp yet, try to copy it from the project root
-  if (!fs.existsSync(tmpPath)) {
-    if (fs.existsSync(resolvedPath)) {
-      console.log(`[DB] Copying bundled DB from ${resolvedPath} to ${tmpPath} for read-write access.`);
-      try {
-        fs.copyFileSync(resolvedPath, tmpPath);
-        // Also try to copy WAL/SHM if they exist, though less critical for cold start
-        if (fs.existsSync(`${resolvedPath}-wal`)) fs.copyFileSync(`${resolvedPath}-wal`, `${tmpPath}-wal`);
-        if (fs.existsSync(`${resolvedPath}-shm`)) fs.copyFileSync(`${resolvedPath}-shm`, `${tmpPath}-shm`);
-      } catch (e) {
-        console.error('[DB] Failed to copy bundled DB to /tmp:', e);
-      }
-    } else {
-      console.log(`[DB] No bundled DB found at ${resolvedPath}. Creating new empty DB at ${tmpPath}.`);
-    }
-  }
-
-  resolvedPath = tmpPath;
-}
-
-console.log(`[DB] Initialize. Final Path: ${resolvedPath}. CWD: ${process.cwd()}`);
+const resolvedPath = path.isAbsolute(dbPath) ? dbPath : path.resolve(process.cwd(), dbPath);
+console.log(`[DB] Initialize. Resolved Path: ${resolvedPath}. CWD: ${process.cwd()}`);
 
 
 // Cleanup stale WAL files if the main DB file is missing
