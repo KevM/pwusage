@@ -27,7 +27,7 @@ export async function GET() {
             }
         });
 
-        const products = await client.getProducts();
+        const products = (await client.getProducts()).filter(p => p.components.battery);
 
         // Fetch current tariff and live battery power for each site
         const repo = new EnergyRepo();

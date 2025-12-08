@@ -4,6 +4,7 @@ import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { DashboardCards } from '@/components/DashboardCards';
+import { NoSupportedProducts } from '@/components/NoSupportedProducts';
 
 // Force dynamic rendering to always fetch fresh data
 export const dynamic = 'force-dynamic';
@@ -37,7 +38,17 @@ export default async function Home() {
         settingsRepo.setRefreshToken(newRefresh);
       }
     });
-    const products = await client.getProducts();
+    const products = (await client.getProducts()).filter(p => p.components.battery);
+
+    if (products.length === 0) {
+      return (
+        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
+          <div className="w-full max-w-xl mt-12">
+            <NoSupportedProducts />
+          </div>
+        </div>
+      );
+    }
 
     // Fetch current tariff and live battery power for each site
     const repo = new EnergyRepo();
