@@ -42,7 +42,7 @@ export async function GET() {
         const importer = new Importer(client);
 
         const productsWithTariff = await Promise.all(products.map(async (product) => {
-            let site = repo.getSite(product.energy_site_id.toString());
+            let site = await repo.getSite(product.energy_site_id.toString());
             if (!site) {
                 // Upsert the site/tariffs lazily when encountered from Tesla
                 site = await importer.ensureSite(product.energy_site_id.toString());

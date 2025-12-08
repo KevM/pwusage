@@ -21,7 +21,7 @@ export default async function TariffPage({ params }: { params: Promise<{ id: str
         return <div className="p-24 text-center">Not authenticated</div>;
     }
 
-    const site = repo.getSite(id);
+    const site = await repo.getSite(id);
     if (!site) {
         notFound();
     }

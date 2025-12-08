@@ -1,4 +1,4 @@
-import { db, EnergyUsage, Tariff, Site } from './db';
+import { pool, EnergyUsage, Tariff, Site, TariffSeason, TariffSchedule } from './db';
 import { Schedule } from './schedule';
 
 // Use global cache to persist across reloads in dev
@@ -86,39 +86,23 @@ export interface SiteWithTariffs extends Site {
 }
 
 export class EnergyRepo {
-    getUsageByTOU(siteId: string, start: Date, end: Date): UsageData[] {
-        // Get tariffs for the site first to map them
-        const tariffs = db.prepare('SELECT * FROM Tariff WHERE site_id = ?').all(siteId) as Tariff[];
+    async getUsageByTOU(siteId: string, start: Date, end: Date): Promise<UsageData[]> {
+        const tariffsResult = await pool.query('SELECT * FROM "Tariff" WHERE site_id = $1', [siteId]);
+        const tariffs = tariffsResult.rows as Tariff[];
         const tariffMap = new Map<number, Tariff>();
         tariffs.forEach(t => tariffMap.set(t.id, t));
 
-        // Get schedules to map names
-        // We need to join EnergyData -> Tariff -> TariffSeason -> TariffSchedule?
-        // Actually, EnergyData has tariff_id. But it doesn't store which Schedule was active.
-        // The Importer calculates it but doesn't store it in EnergyData (only tariff_id).
-        // Wait, the goal is to aggregate by TOU period (On-Peak, Off-Peak).
-        // Since we don't store the Schedule ID in EnergyData, we have to re-calculate it OR assume the importer did it right?
-        // The importer stores raw data. We need to apply the schedule logic again to group by TOU.
-        // OR, we could have stored the Schedule ID in EnergyData? No, schema has tariff_id.
-
-        // Re-calculating for every query is expensive but accurate if schedules change?
-        // Actually, for "Usage for X - Y", we just want the totals.
-        // The Importer ALREADY aggregated into EnergyUsage table?
-        // No, EnergyUsage table is by Tariff ID. It loses the TOU granularity.
-        // So we MUST query EnergyData (raw 5min/15min/1h intervals) and map each to a TOU period.
-
-        const site = this.getSite(siteId);
+        const site = await this.getSite(siteId);
         if (!site) return [];
         const schedule = new Schedule(site.tariffs, site.timezone);
 
-        const startStr = start.toISOString();
-        const endStr = end.toISOString();
-
-        const rows = db.prepare(`
+        const rowsResult = await pool.query(`
             SELECT timestamp, tariff_id, load_power, solar_power, grid_power, battery_power 
-            FROM EnergyData
-            WHERE site_id = ? AND timestamp >= ? AND timestamp < ?
-        `).all(siteId, startStr, endStr) as any[];
+            FROM "EnergyData"
+            WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
+        `, [siteId, start, end]);
+
+        const rows = rowsResult.rows;
 
         const aggregation = new Map<string, UsageData>();
 
@@ -126,7 +110,6 @@ export class EnergyRepo {
             const ts = new Date(row.timestamp);
             const tp = schedule.getTariffPeriod(ts);
 
-            // Default to "Unknown" if no schedule match, or use the tariff name
             let touName = 'Unknown';
             let tariffName = 'Unknown';
             let buyRate = 0;
@@ -138,7 +121,6 @@ export class EnergyRepo {
                 buyRate = tp.schedule.buy_rate || 0;
                 sellRate = tp.schedule.sell_rate || 0;
             } else {
-                // Fallback to tariff name if available
                 const t = tariffMap.get(row.tariff_id);
                 if (t) tariffName = t.name || 'Unknown';
             }
@@ -148,7 +130,7 @@ export class EnergyRepo {
             let data = aggregation.get(key);
             if (!data) {
                 data = {
-                    start: start, // Just use the query start date for the bucket
+                    start: start,
                     homeUsage: 0,
                     gridUsage: 0,
                     solarProduction: 0,
@@ -168,7 +150,6 @@ export class EnergyRepo {
             data.batteryChange += row.battery_power;
         }
 
-        // Calculate cost based on aggregated usage (Net Metering logic)
         for (const [key, data] of aggregation) {
             const [_, __, buyRateStr, sellRateStr] = key.split('|');
             const buyRate = parseFloat(buyRateStr);
@@ -185,25 +166,27 @@ export class EnergyRepo {
         return Array.from(aggregation.values());
     }
 
-    getSite(siteId: string): SiteWithTariffs | undefined {
+    async getSite(siteId: string): Promise<SiteWithTariffs | undefined> {
         const now = Date.now();
         const cached = siteCache.get(siteId);
         if (cached && cached.expires > now) {
             return cached.data;
         }
 
-        const site = db.prepare('SELECT * FROM Site WHERE id = ?').get(siteId) as Site | undefined;
+        const siteRes = await pool.query('SELECT * FROM "Site" WHERE id = $1', [siteId]);
+        const site = siteRes.rows[0] as Site | undefined;
         if (!site) return undefined;
 
-        const tariffs = db.prepare('SELECT * FROM Tariff WHERE site_id = ?').all(siteId) as Tariff[];
+        const tariffsRes = await pool.query('SELECT * FROM "Tariff" WHERE site_id = $1', [siteId]);
+        const tariffs = tariffsRes.rows as Tariff[];
 
         for (const tariff of tariffs) {
-            const seasons = db.prepare('SELECT * FROM TariffSeason WHERE tariff_id = ?').all(tariff.id) as any[]; // Type cast later
-            tariff.seasons = seasons;
+            const seasonsRes = await pool.query('SELECT * FROM "TariffSeason" WHERE tariff_id = $1', [tariff.id]);
+            tariff.seasons = seasonsRes.rows as TariffSeason[];
 
-            for (const season of seasons) {
-                const schedules = db.prepare('SELECT * FROM TariffSchedule WHERE season_id = ?').all(season.id) as any[];
-                season.schedules = schedules;
+            for (const season of tariff.seasons!) {
+                const schedRes = await pool.query('SELECT * FROM "TariffSchedule" WHERE season_id = $1', [season.id]);
+                season.schedules = schedRes.rows as TariffSchedule[];
             }
         }
 
@@ -216,32 +199,34 @@ export class EnergyRepo {
         return result;
     }
 
-    getSiteIds(): string[] {
-        const rows = db.prepare('SELECT id FROM Site').all() as { id: string }[];
-        return rows.map(r => r.id);
+    async getSiteIds(): Promise<string[]> {
+        const { rows } = await pool.query('SELECT id FROM "Site"');
+        return rows.map((r: any) => r.id);
     }
 
-    getSites(): Site[] {
-        return db.prepare('SELECT * FROM Site').all() as Site[];
+    async getSites(): Promise<Site[]> {
+        const { rows } = await pool.query('SELECT * FROM "Site"');
+        return rows as Site[];
     }
 
-    hasData(siteId: string): boolean {
-        const row = db.prepare('SELECT 1 FROM EnergyData WHERE site_id = ? LIMIT 1').get(siteId);
-        return !!row;
+    async hasData(siteId: string): Promise<boolean> {
+        const { rows } = await pool.query('SELECT 1 FROM "EnergyData" WHERE site_id = $1 LIMIT 1', [siteId]);
+        return rows.length > 0;
     }
 
-    getHourlyEnergyData(siteId: string, dateStr: string, timeZone?: string): Array<{
+    async getHourlyEnergyData(siteId: string, dateStr: string, timeZone?: string): Promise<Array<{
         hour: number;
         homeUsage: number;
         solarProduction: number;
         gridUsage: number;
         batteryUsage: number;
         batterySoc: number | null;
-    }> {
+    }>> {
         const tz = timeZone ?? 'UTC';
         const { start, end } = getUtcRangeForDate(dateStr, tz, false);
 
-        const rows = db.prepare(`
+        // PG timestamp comparison.
+        const rowsResult = await pool.query(`
             SELECT 
                 timestamp,
                 load_power,
@@ -249,10 +234,11 @@ export class EnergyRepo {
                 grid_power,
                 battery_power,
                 battery_soc
-            FROM EnergyData
-            WHERE site_id = ? AND datetime(timestamp) >= datetime(?) AND datetime(timestamp) < datetime(?)
-        `).all(siteId, start.toISOString(), end.toISOString()) as any[];
+            FROM "EnergyData"
+            WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
+        `, [siteId, start, end]);
 
+        const rows = rowsResult.rows;
         const buckets = new Map<number, {
             homeUsage: number;
             solarProduction: number;
@@ -299,52 +285,47 @@ export class EnergyRepo {
             batterySoc: bucket.batterySocCount > 0 ? bucket.batterySocTotal / bucket.batterySocCount : null
         }));
     }
-    updateSiteBillingDay(siteId: string, day: number) {
-        db.prepare('UPDATE Site SET billing_start_day = ? WHERE id = ?').run(day, siteId);
+
+    async updateSiteBillingDay(siteId: string, day: number) {
+        await pool.query('UPDATE "Site" SET billing_start_day = $1 WHERE id = $2', [day, siteId]);
         siteCache.delete(siteId);
     }
 
     async updateSiteTokens(siteId: string, accessToken: string, refreshToken: string) {
-        // Also update the in-memory cache if we have it
         const cached = siteCache.get(siteId);
         if (cached && cached.data) {
-            // Assuming SiteWithTariffs (cached.data) contains the Site properties
-            // and we want to update them in the cached object.
-            // This cast is necessary because SiteWithTariffs doesn't explicitly declare access_token/refresh_token
-            // but the underlying Site object does.
             (cached.data as Site).access_token = accessToken;
             (cached.data as Site).refresh_token = refreshToken;
         }
 
-        db.prepare('UPDATE Site SET access_token = ?, refresh_token = ? WHERE id = ?')
-            .run(accessToken, refreshToken, siteId);
-
+        await pool.query('UPDATE "Site" SET access_token = $1, refresh_token = $2 WHERE id = $3', [accessToken, refreshToken, siteId]);
         console.log(`[EnergyRepo] Updated tokens for site ${siteId}`);
     }
 
-    acquireRefreshLock(siteId: string): boolean {
+    async acquireRefreshLock(siteId: string): Promise<boolean> {
         const now = Date.now();
         const expires = now + 60000; // 1 minute lock duration
 
-        // Try to acquire lock if:
-        // 1. is_refreshing is 0
-        // 2. OR lock is expired (refresh_lock_expires < now)
-        const result = db.prepare(`
-            UPDATE Site 
-            SET is_refreshing = 1, refresh_lock_expires = ?
-            WHERE id = ? AND (is_refreshing = 0 OR refresh_lock_expires < ?)
-        `).run(expires, siteId, now);
+        // Postgres update returning row count logic:
+        // rowCount property on result
+        const result = await pool.query(`
+            UPDATE "Site"
+            SET is_refreshing = 1, refresh_lock_expires = $1
+            WHERE id = $2 AND (is_refreshing = 0 OR refresh_lock_expires < $3)
+        `, [expires, siteId, now]);
 
-        return result.changes > 0;
+        return (result.rowCount ?? 0) > 0;
     }
 
-    releaseRefreshLock(siteId: string) {
-        db.prepare('UPDATE Site SET is_refreshing = 0, refresh_lock_expires = 0 WHERE id = ?').run(siteId);
+    async releaseRefreshLock(siteId: string) {
+        await pool.query('UPDATE "Site" SET is_refreshing = 0, refresh_lock_expires = 0 WHERE id = $1', [siteId]);
     }
+
     async waitForTokenRefresh(siteId: string, timeoutMs = 20000): Promise<{ access_token: string; refresh_token: string }> {
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
-            const site = db.prepare('SELECT access_token, refresh_token, is_refreshing FROM Site WHERE id = ?').get(siteId) as Site;
+            const res = await pool.query('SELECT access_token, refresh_token, is_refreshing FROM "Site" WHERE id = $1', [siteId]);
+            const site = res.rows[0];
             if (!site.is_refreshing) {
                 return { access_token: site.access_token || '', refresh_token: site.refresh_token || '' };
             }
@@ -353,21 +334,23 @@ export class EnergyRepo {
         throw new Error('Timeout waiting for token refresh lock');
     }
 
+    invalidateCache(siteId: string) {
+        siteCache.delete(siteId);
+    }
+
     getLockedRefreshHandler(siteId: string) {
         return async (refreshToken: string) => {
             console.log(`[TokenLock] Attempting to acquire lock for site ${siteId}...`);
-            if (this.acquireRefreshLock(siteId)) {
+            if (await this.acquireRefreshLock(siteId)) {
                 console.log(`[TokenLock] Lock acquired for site ${siteId}. Refreshing...`);
                 try {
-                    // Lazy load to avoid circular dependency issues if any
-                    // But TeslaClient is a class. 
                     const { TeslaClient } = require('./tesla-client');
                     const newTokens = await TeslaClient.refreshAccessToken(refreshToken);
 
                     await this.updateSiteTokens(siteId, newTokens.access_token, newTokens.refresh_token);
                     return newTokens;
                 } finally {
-                    this.releaseRefreshLock(siteId);
+                    await this.releaseRefreshLock(siteId);
                     console.log(`[TokenLock] Lock released for site ${siteId}.`);
                 }
             } else {

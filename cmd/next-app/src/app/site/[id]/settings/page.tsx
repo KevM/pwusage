@@ -13,7 +13,7 @@ export default async function SiteSettingsPage({ params }: { params: Promise<{ i
     }
 
     const repo = new EnergyRepo();
-    const site = repo.getSite(id);
+    const site = await repo.getSite(id);
 
     if (!site) {
         notFound();
@@ -77,7 +77,7 @@ export default async function SiteSettingsPage({ params }: { params: Promise<{ i
 
                             <div className="flex flex-col h-full bg-white p-2">
                                 <div className="mb-4">
-                                    <h3 className="text-xl font-bold leading-tight">Harrison</h3>
+                                    <h3 className="text-xl font-bold leading-tight">{site.name}</h3>
                                     <p className="text-xs uppercase tracking-wider text-gray-600">11/10/2025 - 12/05/2025</p>
                                 </div>
 

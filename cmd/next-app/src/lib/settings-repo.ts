@@ -1,6 +1,8 @@
-import { db } from './db';
+import { pool } from './db';
 
 interface AppSettingsCache {
+  billing_start_day?: string;
+  [key: string]: string | undefined;
 }
 
 export class SettingsRepo {
@@ -9,16 +11,7 @@ export class SettingsRepo {
   private static CACHE_TTL = 60 * 1000; // 1 minute
 
   constructor() {
-    this.init();
-  }
-
-  private init() {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS AppSettings (
-        key TEXT PRIMARY KEY,
-        value TEXT
-      )
-    `);
+    // No sync init needed
   }
 
   static invalidate() {
@@ -27,34 +20,33 @@ export class SettingsRepo {
     console.log('[SettingsRepo] Cache invalidated');
   }
 
-  private ensureCache() {
+  private async ensureCache() {
     const now = Date.now();
     if (SettingsRepo.cache && SettingsRepo.cacheExpires > now) {
       return;
     }
 
     console.log('[SettingsRepo] Loading settings from DB');
-    const rows = db.prepare("SELECT key, value FROM AppSettings").all() as { key: string, value: string }[];
+    const { rows } = await pool.query('SELECT key, value FROM "AppSettings"');
     const newCache: AppSettingsCache = {};
-    rows.forEach(r => {
-      // We can safely cast here or check keys if we want to be very strict
-      (newCache as any)[r.key] = r.value;
+    rows.forEach((r: any) => {
+      newCache[r.key] = r.value;
     });
 
     SettingsRepo.cache = newCache;
     SettingsRepo.cacheExpires = now + SettingsRepo.CACHE_TTL;
   }
 
-  private getCached(key: keyof AppSettingsCache): string | undefined {
-    this.ensureCache();
+  private async getCached(key: string): Promise<string | undefined> {
+    await this.ensureCache();
     return SettingsRepo.cache?.[key];
   }
 
-  private setCached(key: keyof AppSettingsCache, value: string) {
-    db.prepare(`
-      INSERT INTO AppSettings (key, value) VALUES (?, ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(key, value);
+  private async setCached(key: string, value: string) {
+    await pool.query(`
+            INSERT INTO "AppSettings" (key, value) VALUES ($1, $2)
+            ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value
+        `, [key, value]);
 
     // Update cache if it exists
     if (SettingsRepo.cache) {
@@ -62,5 +54,13 @@ export class SettingsRepo {
     }
   }
 
+  async getBillingStartDay(): Promise<number> {
+    const val = await this.getCached('billing_start_day');
+    if (!val) return 1; // Default
+    return parseInt(val, 10);
+  }
 
+  async setBillingStartDay(day: number): Promise<void> {
+    await this.setCached('billing_start_day', day.toString());
+  }
 }

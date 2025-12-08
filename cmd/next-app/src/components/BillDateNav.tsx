@@ -2,7 +2,6 @@
 
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useRef } from 'react';
 
 interface BillDateNavProps {
     siteId: string;
@@ -24,9 +23,8 @@ export function BillDateNav({
     isCurrentPeriod
 }: BillDateNavProps) {
     const router = useRouter();
-    const monthInputRef = useRef<HTMLInputElement>(null);
 
-    const handleMonthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const value = e.target.value; // YYYY-MM
         if (value) {
             // Construct date using the billing day
@@ -63,22 +61,22 @@ export function BillDateNav({
                     <div className="font-semibold text-sm hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center">
                         {startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - {endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                     </div>
-                    {/* Month Picker Overlay */}
-                    <input
-                        ref={monthInputRef}
-                        type="month"
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    {/* Month Picker Overlay (Select for better Safari compatibility) */}
+                    <select
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 appearance-none"
                         onChange={handleMonthChange}
                         value={currentMonthVal}
-                        max={maxMonth}
-                        onClick={() => {
-                            try {
-                                monthInputRef.current?.showPicker();
-                            } catch (e) {
-                                // Fallback
-                            }
-                        }}
-                    />
+                    >
+                        {Array.from({ length: 24 }).map((_, i) => {
+                            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                            const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                            return (
+                                <option key={val} value={val}>
+                                    {d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                                </option>
+                            );
+                        })}
+                    </select>
                 </div>
 
                 {isCurrentPeriod ? (

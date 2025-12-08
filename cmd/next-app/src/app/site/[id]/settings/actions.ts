@@ -21,7 +21,7 @@ export async function updateBillingStartDay(formData: FormData) {
     }
 
     const repo = new EnergyRepo();
-    repo.updateSiteBillingDay(siteId, day);
+    await repo.updateSiteBillingDay(siteId, day);
 
     revalidatePath(`/site/${siteId}/settings`);
     revalidatePath(`/site/${siteId}`);

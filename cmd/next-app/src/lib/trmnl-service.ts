@@ -1,41 +1,44 @@
-import { db, TrmnlInstallation } from './db';
+import { pool, TrmnlInstallation } from './db';
 
 export class TrmnlService {
     async createInstallation(accessToken: string, siteId: string, uuid: string | null = null, refreshToken?: string): Promise<number> {
-        const stmt = db.prepare(`
-            INSERT INTO TrmnlInstallation (access_token, site_id, uuid, refresh_token)
-            VALUES (?, ?, ?, ?)
+        const query = `
+            INSERT INTO "TrmnlInstallation" (access_token, site_id, uuid, refresh_token)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT(access_token) DO UPDATE SET 
-                site_id = excluded.site_id,
-                uuid = COALESCE(excluded.uuid, TrmnlInstallation.uuid),
-                refresh_token = COALESCE(excluded.refresh_token, TrmnlInstallation.refresh_token)
-        `);
-        const result = stmt.run(accessToken, siteId, uuid, refreshToken || null);
-        return result.lastInsertRowid as number;
+                site_id = EXCLUDED.site_id,
+                uuid = COALESCE(EXCLUDED.uuid, "TrmnlInstallation".uuid),
+                refresh_token = COALESCE(EXCLUDED.refresh_token, "TrmnlInstallation".refresh_token)
+            RETURNING id
+        `;
+        const { rows } = await pool.query(query, [accessToken, siteId, uuid, refreshToken || null]);
+        return rows[0].id;
     }
 
     async updateInstallation(accessToken: string, uuid: string, pluginSettingId: number) {
-        db.prepare(`
-            UPDATE TrmnlInstallation
-            SET uuid = ?, plugin_setting_id = ?
-            WHERE access_token = ?
-        `).run(uuid, pluginSettingId, accessToken);
+        await pool.query(`
+            UPDATE "TrmnlInstallation"
+            SET uuid = $1, plugin_setting_id = $2
+            WHERE access_token = $3
+        `, [uuid, pluginSettingId, accessToken]);
     }
 
     async updateRefreshToken(uuid: string, refreshToken: string) {
-        db.prepare('UPDATE TrmnlInstallation SET refresh_token = ? WHERE uuid = ?').run(refreshToken, uuid);
+        await pool.query('UPDATE "TrmnlInstallation" SET refresh_token = $1 WHERE uuid = $2', [refreshToken, uuid]);
     }
 
-    getInstallationByToken(accessToken: string): TrmnlInstallation | undefined {
-        return db.prepare('SELECT * FROM TrmnlInstallation WHERE access_token = ?').get(accessToken) as TrmnlInstallation | undefined;
+    async getInstallationByToken(accessToken: string): Promise<TrmnlInstallation | undefined> {
+        const { rows } = await pool.query('SELECT * FROM "TrmnlInstallation" WHERE access_token = $1', [accessToken]);
+        return rows[0] as TrmnlInstallation | undefined;
     }
 
-    getInstallationByUuid(uuid: string): TrmnlInstallation | undefined {
-        return db.prepare('SELECT * FROM TrmnlInstallation WHERE uuid = ?').get(uuid) as TrmnlInstallation | undefined;
+    async getInstallationByUuid(uuid: string): Promise<TrmnlInstallation | undefined> {
+        const { rows } = await pool.query('SELECT * FROM "TrmnlInstallation" WHERE uuid = $1', [uuid]);
+        return rows[0] as TrmnlInstallation | undefined;
     }
 
     async deleteInstallation(uuid: string) {
-        db.prepare('DELETE FROM TrmnlInstallation WHERE uuid = ?').run(uuid);
+        await pool.query('DELETE FROM "TrmnlInstallation" WHERE uuid = $1', [uuid]);
     }
 
     async exchangeCodeForToken(code: string, clientId: string, clientSecret: string): Promise<string> {

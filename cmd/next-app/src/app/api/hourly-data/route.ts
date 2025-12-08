@@ -19,12 +19,12 @@ export async function GET(request: Request) {
         }
 
         const repo = new EnergyRepo();
-        const site = repo.getSite(siteId);
+        const site = await repo.getSite(siteId);
         if (!site) {
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });
         }
 
-        const hourlyData = repo.getHourlyEnergyData(siteId, dateStr, site.timezone);
+        const hourlyData = await repo.getHourlyEnergyData(siteId, dateStr, site.timezone);
 
         return NextResponse.json(
             {

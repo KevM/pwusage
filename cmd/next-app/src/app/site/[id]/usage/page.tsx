@@ -2,6 +2,7 @@ import { EnergyRepo } from '@/lib/energy-repo';
 
 import { BillSummary } from '@/components/BillSummary';
 import { BillDateNav } from '@/components/BillDateNav';
+import { DataSyncer } from '@/components/DataSyncer';
 import Link from 'next/link';
 
 import { Breadcrumbs } from '@/components/Breadcrumbs';
@@ -17,7 +18,7 @@ export default async function UsagePage({ params, searchParams }: {
     const repo = new EnergyRepo();
 
 
-    const site = repo.getSite(id);
+    const site = await repo.getSite(id);
     if (!site) {
         return <div>Site not found</div>;
     }
@@ -44,7 +45,7 @@ export default async function UsagePage({ params, searchParams }: {
     // End date is start + 1 month
     const end = new Date(start.getFullYear(), start.getMonth() + 1, start.getDate());
 
-    const usage = repo.getUsageByTOU(id, start, end);
+    const usage = await repo.getUsageByTOU(id, start, end);
 
     // Format dates for display
     const startStr = start.toLocaleDateString();
@@ -86,6 +87,8 @@ export default async function UsagePage({ params, searchParams }: {
                         isCurrentPeriod={isCurrentPeriod}
                     />
                 </div>
+
+                <DataSyncer siteId={id} start={start} end={end} viewDate={start} />
 
                 <BillSummary usage={usage} alwaysExpanded={true} />
             </div>
