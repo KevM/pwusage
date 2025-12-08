@@ -18,7 +18,7 @@ export async function POST(request: Request) {
         }
 
         const repo = new EnergyRepo();
-        const siteIds = repo.getSiteIds();
+        const siteIds = await repo.getSiteIds();
 
         const client = new TeslaClient({
             accessToken: token,

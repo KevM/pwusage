@@ -40,7 +40,7 @@ export async function POST(request: Request) {
         await service.createInstallation(accessToken, site_id, uuid, refreshToken);
 
         // update Site tokens (Source of Truth)
-        await repo.updateSiteTokens(site_id, accessToken, refreshToken);
+        await repo.updateSiteTokens(site_id, accessToken, refreshToken || '');
 
         return NextResponse.json({ success: true });
     } catch (error) {

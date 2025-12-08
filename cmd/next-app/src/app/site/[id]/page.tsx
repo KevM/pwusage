@@ -23,18 +23,15 @@ export default async function SitePage({ params, searchParams }: {
     const { id } = await params;
     const { date: queryDate } = await searchParams;
     const repo = new EnergyRepo();
-
-    const site = repo.getSite(id);
-    if (!site) {
-        return <div>Site not found</div>;
-    }
+    let site = await repo.getSite(id);
+    // We don't return early here anymore. We check tokens first to see if we can self-heal.
 
     // ------------------------------------------------------------------------
     // MIGRATION: Centralized Token Storage
     // ------------------------------------------------------------------------
     // 1. Try to get tokens from DB (Site table)
-    let accessToken = site.access_token;
-    let refreshToken = site.refresh_token;
+    let accessToken = site?.access_token;
+    let refreshToken = site?.refresh_token;
 
     // 2. If not in DB, try to move them from cookies (Migration Step)
     const cookieStore = await cookies();
@@ -42,10 +39,19 @@ export default async function SitePage({ params, searchParams }: {
     const cookieRefresh = cookieStore.get('refresh_token')?.value;
 
     if (!accessToken && cookieAccess && cookieRefresh) {
-        console.log(`[Migration] Moving tokens from cookies to DB for site ${id}`);
-        await repo.updateSiteTokens(id, cookieAccess, cookieRefresh);
+        // If we have cookies but no DB record (or no tokens in DB), use cookies
         accessToken = cookieAccess;
         refreshToken = cookieRefresh;
+
+        if (site) {
+            console.log(`[Migration] Moving tokens from cookies to DB for site ${id}`);
+            await repo.updateSiteTokens(id, cookieAccess, cookieRefresh);
+        }
+    }
+
+    if (!site && !accessToken) {
+        // Only error out if we have NEITHER a DB record NOR a valid cookie session
+        return <div>Site not found</div>;
     }
 
     if (!accessToken) {
@@ -66,24 +72,40 @@ export default async function SitePage({ params, searchParams }: {
 
     const importer = new Importer(teslaClient);
     try {
-        await importer.ensureSite(id);
+        // Only run ensureSite if we don't have the site, or if we suspect it's stale/broken
+        // Since AuthCallback runs ensureSite, we generally expect it to exist.
+        if (!site) {
+            console.log(`[SitePage] Site ${id} missing in DB, running ensureSite...`);
+            const ensureResult = await importer.ensureSite(id);
+            if (ensureResult) {
+                site = ensureResult;
+            }
+        }
     } catch (error: any) {
         console.error('Failed to ensure site:', error);
         if (error.message && (error.message.includes('401') || error.message.includes('invalid authentication'))) {
+            // ... (redirect logic)
             console.log('Redirecting to login due to auth failure...');
             redirect('/login');
         }
-        // If it's another error, we might still want to show the page if we have cached data?
-        // But ensureSite is critical for first run.
-        // If we have data, we might be ok. 
-        if (!repo.hasData(id)) {
-            throw error; // Rethrow if we can't show anything
+
+        // If we still don't have data, we can't proceed
+        if (!await repo.hasData(id)) {
+            // But wait, if ensureSite failed, maybe we *can* show SiteSetup if we have the site record?
+            // If ensureSite failed, likely API error.
+            throw error;
         }
     }
 
-    if (!repo.hasData(id)) {
-        return <SiteSetup siteId={id} />;
+    // If we didn't have the site initially, we should found it now after ensureSite
+    const finalSite = site || await repo.getSite(id);
+    if (!finalSite) {
+        // This should theoretically not happen if ensureSite succeeded
+        return <div>Site not found (Post-Import Failure)</div>;
     }
+
+    // Use finalSite for the rest of the render
+    // ... we need to make sure we use finalSite.name instead of site.name below
 
     // Get live stats for initial render
     let initialStats = {
@@ -137,10 +159,10 @@ export default async function SitePage({ params, searchParams }: {
         dateStr = `${year}-${month}-${day}`;
     }
 
-    const hourlyData = repo.getHourlyEnergyData(id, dateStr, site.timezone);
+    const hourlyData = await repo.getHourlyEnergyData(id, dateStr, site.timezone);
 
     // Calculate period based on billing start day
-    const billingDay = site.billing_start_day || 1;
+    const billingDay = finalSite.billing_start_day || 1;
 
     // Determine reference date: queryDate or now
     let refDate = now;
@@ -163,13 +185,13 @@ export default async function SitePage({ params, searchParams }: {
     // End date is start date + 1 month
     const end = new Date(start.getFullYear(), start.getMonth() + 1, billingDay);
 
-    const usage = repo.getUsageByTOU(id, start, end);
+    const usage = await repo.getUsageByTOU(id, start, end);
 
     // Determine active tariff ID and TOU Name
     let activeTariffId: number | undefined;
     let activeTouName: string | undefined;
-    if (site.tariffs.length > 0) {
-        const schedule = new Schedule(site.tariffs, site.timezone);
+    if (finalSite.tariffs.length > 0) {
+        const schedule = new Schedule(finalSite.tariffs, finalSite.timezone);
         const tariffPeriod = schedule.getTariffPeriod(new Date());
         if (tariffPeriod) {
             activeTariffId = tariffPeriod.tariff.id;
@@ -194,9 +216,9 @@ export default async function SitePage({ params, searchParams }: {
     return (
         <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
             <div className="w-full max-w-6xl">
-                <Breadcrumbs items={[{ label: 'Dashboard', href: '/' }, { label: site.name }]} />
+                <Breadcrumbs items={[{ label: 'Dashboard', href: '/' }, { label: finalSite.name }]} />
                 <div className="flex justify-between items-center mb-4">
-                    <h1 className="text-4xl font-bold">{site.name}</h1>
+                    <h1 className="text-4xl font-bold">{finalSite.name}</h1>
                     <Link
                         href={`/site/${id}/settings`}
                         className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors text-gray-600 dark:text-gray-300"

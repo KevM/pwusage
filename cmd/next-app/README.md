@@ -7,7 +7,10 @@ This application helps you track your Powerwall usage and monitor your energy pr
 Create a `.env` file in the root directory (or use `env_file` in Docker) with the following variables:
 
 ### Required
-- `DATABASE_URL`: Path to the SQLite database. Example: `file:pwusage.db`
+- `DATABASE_URL`: Connection string for the PostgreSQL database (Supabase recommended). 
+    - **Important**: Use the **Transaction Pooler (IPv4)** connection string on port `6543` to avoid connection limits and ensure IPv4 compatibility in Docker.
+    - Format: `postgres://[user]:[password]@aws-0-[region].pooler.supabase.com:6543/[dbname]?sslmode=require`
+    - Make sure to explicitly provide the password (do not use the placeholder).
 - `NEXT_PUBLIC_APP_URL`: The base URL of your application. Used for API calls and OAuth redirects. Example: `http://localhost:3000`
 - `PUBLIC_TESLA_OAUTH_CLIENT_ID`: Your Tesla Fleet API Client ID.
 - `TESLA_OAUTH_SECRET`: Your Tesla Fleet API Client Secret.

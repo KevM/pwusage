@@ -38,7 +38,7 @@ export async function GET(request: Request) {
         const liveStatus = await client.getLiveStatus(siteId);
 
         // Get current tariff
-        const site = repo.getSite(siteId);
+        const site = await repo.getSite(siteId);
         let currentTariff = 'Unknown';
 
         if (site && site.tariffs.length > 0) {

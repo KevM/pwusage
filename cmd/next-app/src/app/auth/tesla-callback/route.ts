@@ -55,28 +55,38 @@ export async function GET(request: NextRequest) {
     cookieStore.set('access_token', authData.access_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: authData.expires_in });
     cookieStore.set('refresh_token', authData.refresh_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
 
-    // Update DB (Source of Truth) to prevent race conditions/stale data
+    // Update DB (Source of Truth)
     try {
-        // Dynamic import to avoid build issues if mixed environments? No, standard import is fine.
-        // But let's usage require for simplicity in function if needed, or top level if clean.
-        // We will add import at top level.
-        const repo = new EnergyRepo();
-        const sites = repo.getSites();
-        if (sites.length > 0) {
-            console.log(`[AuthCallback] Updating ${sites.length} sites with fresh tokens.`);
-            for (const site of sites) {
-                // We update tokens AND release lock (force reset lock on login)
-                // Actually updateSiteTokens doesn't clear lock? 
-                // Let's manually clear lock too?
-                // repo.updateSiteTokens(...) does not clear lock.
-                // But repo.releaseRefreshLock(site.id) does.
-                // We should clear lock to be safe.
-                await repo.updateSiteTokens(site.id, authData.access_token, authData.refresh_token);
-                repo.releaseRefreshLock(site.id);
+        const { TeslaClient } = await import('@/lib/tesla-client');
+        const { Importer } = await import('@/lib/importer');
+
+        // Initialize client with fresh tokens
+        const client = new TeslaClient({
+            accessToken: authData.access_token,
+            refreshToken: authData.refresh_token,
+            onTokenUpdate: async () => { } // No-op, we just got them
+        });
+
+        // Fetch products directly from API to find NEW sites
+        console.log('[AuthCallback] Fetching products to ensure sites exist in DB...');
+        const products = await client.getProducts();
+
+        if (products.length > 0) {
+            const importer = new Importer(client);
+            const repo = new EnergyRepo();
+
+            for (const product of products) {
+                const siteId = product.energy_site_id.toString();
+                // Ensure site record exists (synced from API)
+                await importer.ensureSite(siteId);
+                // Ensure tokens are stored/updated
+                await repo.updateSiteTokens(siteId, authData.access_token, authData.refresh_token);
+                await repo.releaseRefreshLock(siteId);
+                console.log(`[AuthCallback] Ensured site ${siteId} and updated tokens.`);
             }
         }
     } catch (dbError) {
-        console.error('[AuthCallback] Failed to update sites in DB:', dbError);
+        console.error('[AuthCallback] Failed to update/import sites in DB:', dbError);
         // Don't fail the request, just log. Cookies are still set.
     }
 

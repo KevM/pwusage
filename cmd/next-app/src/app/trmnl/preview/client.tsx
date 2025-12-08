@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter, usePathname } from 'next/navigation';
+import { useState, useEffect } from 'react';
 
 export function PreviewClient({ tokens, initialSiteId }: { tokens: { access_token: string, site_name: string, site_id: string }[], initialSiteId?: string }) {
     const router = useRouter();

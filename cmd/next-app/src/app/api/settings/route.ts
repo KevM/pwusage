@@ -11,7 +11,7 @@ export async function POST(request: Request) {
         }
 
         const repo = new SettingsRepo();
-        repo.setBillingStartDay(Number(billing_start_day));
+        await repo.setBillingStartDay(Number(billing_start_day));
 
         return NextResponse.json({ success: true, billing_start_day });
     } catch (error) {
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
 export async function GET() {
     try {
         const repo = new SettingsRepo();
-        const day = repo.getBillingStartDay();
+        const day = await repo.getBillingStartDay();
         return NextResponse.json({ billing_start_day: day });
     } catch (error) {
         return NextResponse.json({ error: (error as Error).message }, { status: 500 });

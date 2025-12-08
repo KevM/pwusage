@@ -16,14 +16,14 @@ export async function GET(request: Request) {
 
         const accessToken = authHeader.split(' ')[1];
         const service = new TrmnlService();
-        const installation = service.getInstallationByToken(accessToken);
+        const installation = await service.getInstallationByToken(accessToken);
 
         if (!installation) {
             return NextResponse.json({ error: 'Installation not found' }, { status: 404 });
         }
 
         const repo = new EnergyRepo();
-        const site = repo.getSite(installation.site_id);
+        const site = await repo.getSite(installation.site_id);
         if (!site) {
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });
         }
@@ -96,7 +96,7 @@ export async function GET(request: Request) {
             console.log(`[Trmnl] No refresh token found for site ${site.id} (in Site table), skipping sync.`);
         }
 
-        const usageData = repo.getUsageByTOU(site.id, start, end);
+        const usageData = await repo.getUsageByTOU(site.id, start, end);
 
         // Group by tariff and then by TOU (Logic from BillSummary.tsx)
         const tariffGroups = new Map<string, {
@@ -227,4 +227,6 @@ export async function GET(request: Request) {
     }
 }
 
-export { GET as POST };
+export async function POST(request: Request) {
+    return GET(request);
+}

@@ -4,7 +4,7 @@ import { EnergyRepo } from '@/lib/energy-repo';
 export async function GET() {
     try {
         const repo = new EnergyRepo();
-        const sites = repo.getSites();
+        const sites = await repo.getSites();
 
         // Map to simple structure
         const result = sites.map(s => ({

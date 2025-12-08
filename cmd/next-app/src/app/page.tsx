@@ -53,7 +53,7 @@ export default async function Home() {
     // Fetch current tariff and live battery power for each site
     const repo = new EnergyRepo();
     const productsWithTariff = await Promise.all(products.map(async (product) => {
-      const site = repo.getSite(product.energy_site_id.toString());
+      const site = await repo.getSite(product.energy_site_id.toString());
       let currentTariff = 'Unknown';
       let liveBatteryPower = product.battery_power; // Fallback to products value
       let liveSolarPower = 0;

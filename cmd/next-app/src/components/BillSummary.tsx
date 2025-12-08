@@ -94,13 +94,13 @@ export function BillSummary({ usage, activeTariffId, activeTouName, alwaysExpand
                         <h3 className="text-xl font-semibold mb-4">{t.tariffName}</h3>
 
                         <div className="space-y-2">
-                            {t.periods.sort((a, b) => a.touName.localeCompare(b.touName)).map((p) => {
+                            {t.periods.sort((a, b) => a.touName.localeCompare(b.touName)).map((p, idx) => {
                                 const isActiveTou = isActive && activeTouName && p.touName === activeTouName;
                                 const uniqueKey = `${t.tariffName}-${p.touName}`;
                                 const isExpanded = alwaysExpanded || expandedPeriods.has(uniqueKey);
 
                                 return (
-                                    <div key={p.touName} className={`pt-1`}>
+                                    <div key={`${p.touName}-${idx}`} className={`pt-1`}>
                                         <div
                                             onClick={() => togglePeriod(uniqueKey)}
                                             className={`flex justify-between items-center p-2 -mx-2 rounded transition-colors ${alwaysExpanded ? '' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50'} ${isActiveTou ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''}`}
