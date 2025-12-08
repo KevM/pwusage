@@ -1,13 +1,16 @@
 import { db, TrmnlInstallation } from './db';
 
 export class TrmnlService {
-    async createInstallation(accessToken: string, siteId: string): Promise<number> {
+    async createInstallation(accessToken: string, siteId: string, uuid: string | null = null, refreshToken?: string): Promise<number> {
         const stmt = db.prepare(`
-            INSERT INTO TrmnlInstallation (access_token, site_id)
-            VALUES (?, ?)
-            ON CONFLICT(access_token) DO UPDATE SET site_id = excluded.site_id
+            INSERT INTO TrmnlInstallation (access_token, site_id, uuid, refresh_token)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(access_token) DO UPDATE SET 
+                site_id = excluded.site_id,
+                uuid = COALESCE(excluded.uuid, TrmnlInstallation.uuid),
+                refresh_token = COALESCE(excluded.refresh_token, TrmnlInstallation.refresh_token)
         `);
-        const result = stmt.run(accessToken, siteId);
+        const result = stmt.run(accessToken, siteId, uuid, refreshToken || null);
         return result.lastInsertRowid as number;
     }
 
@@ -17,6 +20,10 @@ export class TrmnlService {
             SET uuid = ?, plugin_setting_id = ?
             WHERE access_token = ?
         `).run(uuid, pluginSettingId, accessToken);
+    }
+
+    async updateRefreshToken(uuid: string, refreshToken: string) {
+        db.prepare('UPDATE TrmnlInstallation SET refresh_token = ? WHERE uuid = ?').run(refreshToken, uuid);
     }
 
     getInstallationByToken(accessToken: string): TrmnlInstallation | undefined {

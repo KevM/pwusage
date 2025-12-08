@@ -8,6 +8,7 @@ function InstallContent() {
     const router = useRouter();
     const code = searchParams.get('code');
     const installationCallbackUrl = searchParams.get('installation_callback_url');
+    const installationUuid = searchParams.get('installation_uuid');
 
     const [sites, setSites] = useState<{ id: string, name: string }[]>([]);
     const [selectedSite, setSelectedSite] = useState('');
@@ -35,7 +36,7 @@ function InstallContent() {
                         // triggerSetup(firstSiteId, code); // Call separate function to avoid stale state issues in effect? 
                         // Actually, we can just call the setup logic here directly or use a ref.
                         // Let's call a minimal version of handleSetup here.
-                        performSetup(firstSiteId, code, installationCallbackUrl);
+                        performSetup(firstSiteId, code, installationCallbackUrl, installationUuid);
                     }
                 }
             })
@@ -43,9 +44,9 @@ function InstallContent() {
             .finally(() => {
                 if (!autoConnecting) setLoading(false);
             });
-    }, [code, installationCallbackUrl]); // Only run once on mount (with code)
+    }, [code, installationCallbackUrl, installationUuid]); // Only run once on mount (with code)
 
-    const performSetup = async (siteId: string, authCode: string, callbackUrl: string | null) => {
+    const performSetup = async (siteId: string, authCode: string, callbackUrl: string | null, uuid: string | null) => {
         try {
             const res = await fetch('/api/trmnl/setup', {
                 method: 'POST',
@@ -53,6 +54,7 @@ function InstallContent() {
                 body: JSON.stringify({
                     code: authCode,
                     site_id: siteId,
+                    uuid: uuid
                 })
             });
 
@@ -72,7 +74,7 @@ function InstallContent() {
     };
 
     const handleSetup = () => {
-        performSetup(selectedSite, code!, installationCallbackUrl);
+        performSetup(selectedSite, code!, installationCallbackUrl, installationUuid);
     };
 
     if (loading || autoConnecting) return (

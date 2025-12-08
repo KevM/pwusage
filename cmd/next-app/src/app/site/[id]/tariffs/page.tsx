@@ -6,14 +6,17 @@ import { notFound } from 'next/navigation';
 
 import { Breadcrumbs } from '@/components/Breadcrumbs';
 
+import { cookies } from 'next/headers';
+
 export const dynamic = 'force-dynamic';
 
 export default async function TariffPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
     const repo = new EnergyRepo();
-    const settingsRepo = new SettingsRepo();
 
-    const token = settingsRepo.getAccessToken();
+    const cookieStore = await cookies();
+    const token = cookieStore.get('access_token')?.value;
+
     if (!token) {
         return <div className="p-24 text-center">Not authenticated</div>;
     }

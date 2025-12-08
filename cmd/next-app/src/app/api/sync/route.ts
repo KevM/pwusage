@@ -1,8 +1,8 @@
 
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
 import { TeslaClient } from '@/lib/tesla-client';
-import { SettingsRepo } from '@/lib/settings-repo';
 
 export async function GET(request: Request) {
     try {
@@ -15,13 +15,23 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
         }
 
-        const settingsRepo = new SettingsRepo();
-        const token = settingsRepo.getAccessToken();
+        const cookieStore = await cookies();
+        const token = cookieStore.get('access_token')?.value;
+        const refreshToken = cookieStore.get('refresh_token')?.value;
+
         if (!token) {
             return NextResponse.json({ error: 'Tesla token not found' }, { status: 401 });
         }
 
-        const client = new TeslaClient({ accessToken: token });
+        const client = new TeslaClient({
+            accessToken: token,
+            refreshToken: refreshToken,
+            onTokenUpdate: (newAccess, newRefresh) => {
+                console.log('Refreshing tokens in Cookies from Sync API');
+                cookieStore.set('access_token', newAccess, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+                cookieStore.set('refresh_token', newRefresh, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+            }
+        });
         const importer = new Importer(client);
 
         const startDate = new Date(startParam);

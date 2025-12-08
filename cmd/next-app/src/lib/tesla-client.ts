@@ -100,6 +100,7 @@ export interface TeslaClientConfig {
     accessToken: string;
     refreshToken?: string;
     onTokenUpdate?: (accessToken: string, refreshToken: string) => void;
+    tokenRefreshHandler?: (refreshToken: string) => Promise<{ access_token: string; refresh_token: string }>;
 }
 
 export class TeslaClient {
@@ -130,7 +131,12 @@ export class TeslaClient {
         if (response.status === 401 && this.config.refreshToken) {
             console.log('Tesla API 401, attempting refresh...');
             try {
-                const newTokens = await TeslaClient.refreshAccessToken(this.config.refreshToken);
+                let newTokens: { access_token: string; refresh_token: string };
+                if (this.config.tokenRefreshHandler) {
+                    newTokens = await this.config.tokenRefreshHandler(this.config.refreshToken);
+                } else {
+                    newTokens = await TeslaClient.refreshAccessToken(this.config.refreshToken);
+                }
                 this.config.accessToken = newTokens.access_token;
                 this.config.refreshToken = newTokens.refresh_token;
 

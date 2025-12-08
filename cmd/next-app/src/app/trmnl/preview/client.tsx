@@ -1,11 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
 
-export function PreviewClient({ tokens }: { tokens: { access_token: string, site_name: string }[] }) {
-    const [selectedToken, setSelectedToken] = useState(tokens[0]?.access_token || '');
+export function PreviewClient({ tokens, initialSiteId }: { tokens: { access_token: string, site_name: string, site_id: string }[], initialSiteId?: string }) {
+    const router = useRouter();
+    const pathname = usePathname();
+    const initialToken = tokens.find(t => t.site_id === initialSiteId)?.access_token || tokens[0]?.access_token;
+    const [selectedToken, setSelectedToken] = useState(initialToken);
     const [html, setHtml] = useState('');
     const [error, setError] = useState('');
+
+    useEffect(() => {
+        const token = tokens.find(t => t.site_id === initialSiteId)?.access_token || tokens[0]?.access_token;
+        if (token) setSelectedToken(token);
+    }, [initialSiteId, tokens]);
 
     useEffect(() => {
         if (!selectedToken) return;
@@ -27,6 +35,15 @@ export function PreviewClient({ tokens }: { tokens: { access_token: string, site
             .catch(err => setError(err.message));
     }, [selectedToken]);
 
+    const handleSiteChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const newToken = e.target.value;
+        setSelectedToken(newToken);
+        const siteId = tokens.find(t => t.access_token === newToken)?.site_id;
+        if (siteId) {
+            router.push(`${pathname}?site_id=${siteId}`);
+        }
+    };
+
     if (!selectedToken) return <div className="text-red-500">No tokens available.</div>;
 
     return (
@@ -37,7 +54,7 @@ export function PreviewClient({ tokens }: { tokens: { access_token: string, site
                     <select
                         className="border p-1 rounded"
                         value={selectedToken}
-                        onChange={(e) => setSelectedToken(e.target.value)}
+                        onChange={handleSiteChange}
                     >
                         {tokens.map((t, i) => (
                             <option key={i} value={t.access_token}>

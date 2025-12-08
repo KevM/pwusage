@@ -1,4 +1,4 @@
-import { SettingsRepo } from '@/lib/settings-repo';
+import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
@@ -10,9 +10,9 @@ import { NoSupportedProducts } from '@/components/NoSupportedProducts';
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
-  const settingsRepo = new SettingsRepo();
-  const token = settingsRepo.getAccessToken();
-  const refreshToken = settingsRepo.getRefreshToken();
+  const cookieStore = await cookies();
+  const token = cookieStore.get('access_token')?.value;
+  const refreshToken = cookieStore.get('refresh_token')?.value;
 
   if (!token) {
     return (
@@ -33,9 +33,9 @@ export default async function Home() {
       accessToken: token,
       refreshToken: refreshToken,
       onTokenUpdate: (newAccess, newRefresh) => {
-        console.log('Refreshing tokens in DB from Dashboard');
-        settingsRepo.setAccessToken(newAccess);
-        settingsRepo.setRefreshToken(newRefresh);
+        console.log('Refreshing tokens in Cookies from Dashboard');
+        // Note: Server components cannot write cookies easily. 
+        // We rely on middleware or API routes for this, or just let the session expire.
       }
     });
     const products = (await client.getProducts()).filter(p => p.components.battery);

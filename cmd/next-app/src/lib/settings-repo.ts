@@ -1,9 +1,6 @@
 import { db } from './db';
 
 interface AppSettingsCache {
-  billing_start_day?: string;
-  access_token?: string;
-  refresh_token?: string;
 }
 
 export class SettingsRepo {
@@ -65,37 +62,5 @@ export class SettingsRepo {
     }
   }
 
-  getBillingStartDay(): number {
-    const val = this.getCached('billing_start_day');
-    if (!val) return 1; // Default to 1st of the month
-    return parseInt(val, 10);
-  }
 
-  setBillingStartDay(day: number) {
-    this.setCached('billing_start_day', day.toString());
-  }
-
-  getAccessToken(): string | undefined {
-    return this.getCached('access_token');
-  }
-
-  setAccessToken(token: string) {
-    this.setCached('access_token', token);
-  }
-
-  getRefreshToken(): string | undefined {
-    return this.getCached('refresh_token');
-  }
-
-  setRefreshToken(token: string) {
-    this.setCached('refresh_token', token);
-  }
-
-  clearTokens() {
-    db.prepare("DELETE FROM AppSettings WHERE key IN ('access_token', 'refresh_token')").run();
-    if (SettingsRepo.cache) {
-      delete SettingsRepo.cache['access_token'];
-      delete SettingsRepo.cache['refresh_token'];
-    }
-  }
 }

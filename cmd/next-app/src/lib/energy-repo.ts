@@ -1,7 +1,10 @@
 import { db, EnergyUsage, Tariff, Site } from './db';
 import { Schedule } from './schedule';
 
-const siteCache = new Map<string, { data: SiteWithTariffs; expires: number }>();
+// Use global cache to persist across reloads in dev
+const globalForCache = global as unknown as { siteCache: Map<string, { data: SiteWithTariffs; expires: number }> };
+const siteCache = globalForCache.siteCache || new Map<string, { data: SiteWithTariffs; expires: number }>();
+if (process.env.NODE_ENV !== 'production') globalForCache.siteCache = siteCache;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 function formatYMD(date: Date, timeZone: string): string {
@@ -189,8 +192,6 @@ export class EnergyRepo {
             return cached.data;
         }
 
-        console.log(`[Cache Miss] Fetching tariffs from DB for site ${siteId}`);
-
         const site = db.prepare('SELECT * FROM Site WHERE id = ?').get(siteId) as Site | undefined;
         if (!site) return undefined;
 
@@ -297,5 +298,82 @@ export class EnergyRepo {
             batteryUsage: bucket.batteryUsage / 1000,
             batterySoc: bucket.batterySocCount > 0 ? bucket.batterySocTotal / bucket.batterySocCount : null
         }));
+    }
+    updateSiteBillingDay(siteId: string, day: number) {
+        db.prepare('UPDATE Site SET billing_start_day = ? WHERE id = ?').run(day, siteId);
+        siteCache.delete(siteId);
+    }
+
+    async updateSiteTokens(siteId: string, accessToken: string, refreshToken: string) {
+        // Also update the in-memory cache if we have it
+        const cached = siteCache.get(siteId);
+        if (cached && cached.data) {
+            // Assuming SiteWithTariffs (cached.data) contains the Site properties
+            // and we want to update them in the cached object.
+            // This cast is necessary because SiteWithTariffs doesn't explicitly declare access_token/refresh_token
+            // but the underlying Site object does.
+            (cached.data as Site).access_token = accessToken;
+            (cached.data as Site).refresh_token = refreshToken;
+        }
+
+        db.prepare('UPDATE Site SET access_token = ?, refresh_token = ? WHERE id = ?')
+            .run(accessToken, refreshToken, siteId);
+
+        console.log(`[EnergyRepo] Updated tokens for site ${siteId}`);
+    }
+
+    acquireRefreshLock(siteId: string): boolean {
+        const now = Date.now();
+        const expires = now + 60000; // 1 minute lock duration
+
+        // Try to acquire lock if:
+        // 1. is_refreshing is 0
+        // 2. OR lock is expired (refresh_lock_expires < now)
+        const result = db.prepare(`
+            UPDATE Site 
+            SET is_refreshing = 1, refresh_lock_expires = ?
+            WHERE id = ? AND (is_refreshing = 0 OR refresh_lock_expires < ?)
+        `).run(expires, siteId, now);
+
+        return result.changes > 0;
+    }
+
+    releaseRefreshLock(siteId: string) {
+        db.prepare('UPDATE Site SET is_refreshing = 0, refresh_lock_expires = 0 WHERE id = ?').run(siteId);
+    }
+    async waitForTokenRefresh(siteId: string, timeoutMs = 20000): Promise<{ access_token: string; refresh_token: string }> {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            const site = db.prepare('SELECT access_token, refresh_token, is_refreshing FROM Site WHERE id = ?').get(siteId) as Site;
+            if (!site.is_refreshing) {
+                return { access_token: site.access_token || '', refresh_token: site.refresh_token || '' };
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        throw new Error('Timeout waiting for token refresh lock');
+    }
+
+    getLockedRefreshHandler(siteId: string) {
+        return async (refreshToken: string) => {
+            console.log(`[TokenLock] Attempting to acquire lock for site ${siteId}...`);
+            if (this.acquireRefreshLock(siteId)) {
+                console.log(`[TokenLock] Lock acquired for site ${siteId}. Refreshing...`);
+                try {
+                    // Lazy load to avoid circular dependency issues if any
+                    // But TeslaClient is a class. 
+                    const { TeslaClient } = require('./tesla-client');
+                    const newTokens = await TeslaClient.refreshAccessToken(refreshToken);
+
+                    await this.updateSiteTokens(siteId, newTokens.access_token, newTokens.refresh_token);
+                    return newTokens;
+                } finally {
+                    this.releaseRefreshLock(siteId);
+                    console.log(`[TokenLock] Lock released for site ${siteId}.`);
+                }
+            } else {
+                console.log(`[TokenLock] Lock busy for site ${siteId}. Waiting...`);
+                return this.waitForTokenRefresh(siteId);
+            }
+        };
     }
 }
