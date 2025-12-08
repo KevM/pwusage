@@ -1,0 +1,19 @@
+services:
+  web:
+    build: .
+    restart: always
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./pwusage.db:/app/pwusage.db
+      - ./pwusage.db-shm:/app/pwusage.db-shm
+      - ./pwusage.db-wal:/app/pwusage.db-wal
+    environment:
+      - DATABASE_URL=file:/app/pwusage.db
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+      - DATABASE_URL="file:pwusage.db"
+      - PUBLIC_TESLA_OAUTH_AUDIENCE="https://fleet-api.prd.na.vn.cloud.tesla.com"
+      - PUBLIC_TESLA_OAUTH_CLIENT_ID="ace37a750639-4a1c-84f7-478569684385"
+      - TRMNL_CLIENT_ID="mvnm4bmamgdnc7kyhi2o_a"

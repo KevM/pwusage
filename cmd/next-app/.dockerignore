@@ -1,0 +1,11 @@
+Dockerfile
+.dockerignore
+node_modules
+npm-debug.log
+README.md
+.next
+.git
+*.db
+*.db-shm
+*.db-wal
+*.db_old*
