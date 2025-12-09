@@ -120,13 +120,24 @@ export class EnergyRepo {
             WHERE site_id = $1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp
         `, [siteId, startStr, endStr]);
 
+
         const rows = rowsResult.rows;
 
         const aggregation = new Map<string, UsageData>();
 
         for (const row of rows) {
+            // ... (Variable declarations were hoisted in valid code, need to ensure they are here or above)
+            // Let's declare them locally for this loop scope
             const ts = new Date(row.timestamp);
-            const tp = schedule.getTariffPeriod(ts);
+
+            const month = ts.getMonth() + 1; // 1-12
+            const day = ts.getDate();
+            const hour = ts.getHours();
+            const weekday = ts.getDay(); // 0=Sun, 1=Mon
+
+            // We bypass the Schedule's built-in "Intl" conversion which tries to shift timezones.
+            // We TRUST that 'ts' represents the Wall Clock time at the site.
+            const tp = schedule.getTariffPeriodForWallClock(month, day, hour, weekday, ts);
 
             let touName = 'Unknown';
             let tariffName = 'Unknown';
