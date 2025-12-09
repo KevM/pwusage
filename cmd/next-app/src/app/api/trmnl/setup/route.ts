@@ -29,18 +29,12 @@ export async function POST(request: Request) {
 
         const accessToken = await service.exchangeCodeForToken(code, clientId, clientSecret);
 
-        // Create installation (we still might want to store refresh_token in installation for redundancy?
-        // No, we decided to centralized. But TrmnlService expects it?
-        // Let's keep it in TrmnlInstallation for now to avoid breaking changes in service,
-        // BUT the markup route will ignore it.
-        // Ideally we should remove it from TrmnlInstallation eventually.
-        // However, for this step, CRITICAL is to update the SITE table.
-
-        // Update signature: accessToken, siteId, uuid, refreshToken
-        await service.createInstallation(accessToken, site_id, uuid, refreshToken);
-
-        // update Site tokens (Source of Truth)
+        // Update Site tokens (Source of Truth)
         await repo.updateSiteTokens(site_id, accessToken, refreshToken || '');
+
+        // Create/Update installation with Site ID and UUID
+        // We do not store tokens here anymore.
+        await service.createInstallation(site_id, uuid);
 
         return NextResponse.json({ success: true });
     } catch (error) {

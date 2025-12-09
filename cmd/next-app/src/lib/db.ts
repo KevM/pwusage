@@ -131,11 +131,9 @@ export async function initDb() {
 
         CREATE TABLE IF NOT EXISTS "TrmnlInstallation" (
           id SERIAL PRIMARY KEY,
-          access_token TEXT UNIQUE NOT NULL,
           uuid TEXT UNIQUE,
           site_id TEXT NOT NULL,
           plugin_setting_id INTEGER,
-          refresh_token TEXT,
           created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
           json JSONB,
           is_refreshing INTEGER DEFAULT 0,
@@ -235,12 +233,11 @@ export interface EnergyUsage {
 
 export interface TrmnlInstallation {
   id: number;
-  access_token: string;
   uuid: string | null;
   site_id: string;
   plugin_setting_id: number | null;
-  refresh_token: string | null;
   created_at: Date;
+  json?: any;
 }
 
 export interface SiteWithTariffs extends Site {
