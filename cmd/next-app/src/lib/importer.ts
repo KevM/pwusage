@@ -34,7 +34,7 @@ export class Importer {
     async ensureDataForRange(siteId: string, start: Date, end: Date, onProgress?: (msg: string) => void): Promise<void> {
         if (onProgress) onProgress(`Checking data coverage...`);
         const site = await this.repo.getSite(siteId);
-        if (!site) return;
+        if (!site) throw new Error(`Site ${siteId} not found in database`);
 
         let cursor = new Date(start);
         cursor.setHours(0, 0, 0, 0);
@@ -99,7 +99,7 @@ export class Importer {
             }
 
             if (needsImport) {
-                const dateStr = cursor.toLocaleDateString();
+                const dateStr = cursor.toISOString().split('T')[0];
                 if (onProgress) onProgress(`Importing ${dateStr}...`);
                 console.log(`[Importer] Gap/Stale detected for ${dateStr}. Importing...`);
 
@@ -117,7 +117,7 @@ export class Importer {
         const site = await this.repo.getSite(siteId);
         if (!site) {
             console.error(`Site ${siteId} not found for importRange`);
-            return;
+            throw new Error(`Site ${siteId} not found in database`);
         }
 
         let cursor = new Date(start);
