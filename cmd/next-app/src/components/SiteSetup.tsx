@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { updateBillingStartDay } from '@/app/site/[id]/settings/actions';
 
 interface SiteSetupProps {
     siteId: string;
@@ -19,14 +20,12 @@ export function SiteSetup({ siteId }: SiteSetupProps) {
         setError('');
 
         try {
-            // 1. Save Billing Day
-            const settingsRes = await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ billing_start_day: billingDay })
-            });
+            // 1. Save Billing Day using Server Action
+            const formData = new FormData();
+            formData.append('siteId', siteId);
+            formData.append('billingStartDay', billingDay.toString());
 
-            if (!settingsRes.ok) throw new Error('Failed to save settings');
+            await updateBillingStartDay(formData);
 
             // 2. Start Import (Current Cycle Only)
             const now = new Date();
