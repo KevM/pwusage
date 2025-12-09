@@ -109,11 +109,12 @@ export default async function SitePage({ params, searchParams }: {
 
     const finalSite = await repo.getSite(id);
 
+    if (!finalSite) {
+        return <div>Site not found</div>;
+    }
+
     // If new site, BLOCK everything else and show setup wizard
     if (!hasData) {
-        if (!finalSite) {
-            return <div>Site not found (Post-Import Failure)</div>;
-        }
         return <SiteSetup siteId={id} />;
     }
 
