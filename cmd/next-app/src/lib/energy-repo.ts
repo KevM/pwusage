@@ -227,10 +227,23 @@ export class EnergyRepo {
         batteryUsage: number;
         batterySoc: number | null;
     }>> {
-        const tz = timeZone ?? 'UTC';
-        const { start, end } = getUtcRangeForDate(dateStr, tz, false);
+        // Since we are storing Wall Clock time in the DB (TIMESTAMP without TZ),
+        // we should query for the literal date range and bucket by the literal hour.
+        // We avoid Date object timezone shifting by working with strings or naive 00:00 UTC Dates.
 
-        // PG timestamp comparison.
+        const start = new Date(dateStr + 'T00:00:00Z'); // Naive 00:00
+        const end = new Date(start.getTime() + 24 * 60 * 60 * 1000); // Naive 00:00 next day
+
+        // When passing a Date object to PG, node-postgres uses the local timezone of the server.
+        // If we want to strictly match "2023-01-01 00:00:00" in the DB, we should pass strings
+        // or ensure the Date stringifies to that.
+        // Safest is to pass ISO strings and let Postgres CAST, but TIMESTAMP w/o TZ might shift.
+        // Actually, passing the date string directly is safest.
+
+        const startStr = dateStr + ' 00:00:00';
+        const endStr = new Date(end).toISOString().split('T')[0] + ' 00:00:00';
+        // Logic check: if dateStr is 2025-12-08. end is 12-09.
+
         const rowsResult = await pool.query(`
             SELECT 
                 timestamp,
@@ -240,8 +253,8 @@ export class EnergyRepo {
                 battery_power,
                 battery_soc
             FROM "EnergyData"
-            WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
-        `, [siteId, start, end]);
+            WHERE site_id = $1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp
+        `, [siteId, startStr, endStr]);
 
         const rows = rowsResult.rows;
         const buckets = new Map<number, {
@@ -254,10 +267,12 @@ export class EnergyRepo {
         }>();
 
         for (const row of rows) {
+            // row.timestamp is a Date object parsed from DB.
+            // If DB says "08:00:00", node-postgres makes a Date where "Local Time" is 08:00.
+            // So .getHours() will return 8 in both Dev (CST) and Vercel (UTC).
             const ts = new Date(row.timestamp);
-            const rowDateStr = formatYMD(ts, tz);
-            if (rowDateStr !== dateStr) continue;
-            const hr = getHourInTimeZone(ts, tz);
+            const hr = ts.getHours();
+
             if (!buckets.has(hr)) {
                 buckets.set(hr, {
                     homeUsage: 0,
