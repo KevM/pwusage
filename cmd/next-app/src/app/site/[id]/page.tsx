@@ -239,6 +239,47 @@ export default async function SitePage({ params, searchParams }: {
         return `${y}-${m}-${day}`;
     };
 
+    // Format for display (Server Side to avoid browser timezone shift)
+    const formatForDisplay = (d: Date) => {
+        return new Intl.DateTimeFormat('en-US', {
+            timeZone: finalSite.timezone,
+            month: 'short',
+            day: 'numeric',
+            year: d === end ? 'numeric' : undefined
+        }).format(d);
+    };
+
+    // We want the Start Date and End Date displayed in the header.
+    // NOTE: 'start' and 'end' are constructed as local midnight at server logic, 
+    // but they effectively represent the billing day.
+    // We can just format them.
+    // However, Intl.DateTimeFormat with timeZone might shift if 'start' (created via new Date(y,m,d))
+    // doesn't align with the timezone.
+    // Actually, we constructed 'start' using getSiteNow logic components?
+    // No, 'start' was constructed via `new Date(startYear, startMonth, billingDay)`.
+    // This is "Server Local Midnight".
+    // If Server is UTC, and Site is CST.
+    // Nov 10 00:00 UTC -> Nov 9 18:00 CST.
+    // If we format with 'timeZone: finalSite.timezone' (CST), it will print "Nov 9".
+    // THIS IS THE PROBLEM.
+
+    // We want to display the "intended" date.
+    // Since we know 'start' year/month/billingDay match the intended Wall Clock date.
+    // We can just construct the string manually.
+
+    const getDisplayLabel = (d: Date, includeYear: boolean) => {
+        const mNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const month = mNames[d.getMonth()];
+        const day = d.getDate();
+        if (includeYear) return `${month} ${day}, ${d.getFullYear()}`;
+        return `${month} ${day}`;
+    };
+
+    const dateRangeLabel = `${getDisplayLabel(start, false)} - ${getDisplayLabel(end, true)}`;
+
+    const currentMonthVal = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
+    const fullBillDateStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(billingDay).padStart(2, '0')}`;
+
     // Check if next month would be in the future
     const isCurrentPeriod = siteNow >= start && siteNow < end;
 
@@ -278,12 +319,13 @@ export default async function SitePage({ params, searchParams }: {
 
                     <BillDateNav
                         siteId={id}
-                        startDate={start}
-                        endDate={end}
                         billingDay={billingDay}
                         prevDateStr={fmtDate(prevDate)}
                         nextDateStr={fmtDate(nextDate)}
                         isCurrentPeriod={isCurrentPeriod}
+                        dateRangeLabel={dateRangeLabel}
+                        currentMonthVal={currentMonthVal}
+                        fullBillDateStr={fullBillDateStr}
                     />
                 </div>
 
