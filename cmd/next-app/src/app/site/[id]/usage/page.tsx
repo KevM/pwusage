@@ -66,6 +66,20 @@ export default async function UsagePage({ params, searchParams }: {
     const currentDate = new Date();
     const isCurrentPeriod = currentDate >= start && currentDate < end;
 
+    const getDisplayLabel = (d: Date, includeYear: boolean) => {
+        const mNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const month = mNames[d.getMonth()];
+        const day = d.getDate();
+        if (includeYear) return `${month} ${day}, ${d.getFullYear()}`;
+        return `${month} ${day}`;
+    };
+
+    const dateRangeLabel = `${getDisplayLabel(start, false)} - ${getDisplayLabel(end, true)}`;
+
+    // Usage Page is always viewing "full bill", so current val matches start
+    const currentMonthVal = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
+    const fullBillDateStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(site.billing_start_day || 1).padStart(2, '0')}`;
+
     return (
         <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
             <div className="w-full max-w-6xl">
@@ -79,12 +93,13 @@ export default async function UsagePage({ params, searchParams }: {
                     <h1 className="text-3xl font-bold">Estimated Monthly Bill</h1>
                     <BillDateNav
                         siteId={id}
-                        startDate={start}
-                        endDate={end}
                         billingDay={site.billing_start_day || 1}
                         prevDateStr={fmtDate(prevDate)}
                         nextDateStr={fmtDate(nextDate)}
                         isCurrentPeriod={isCurrentPeriod}
+                        dateRangeLabel={dateRangeLabel}
+                        currentMonthVal={currentMonthVal}
+                        fullBillDateStr={fullBillDateStr}
                     />
                 </div>
 
