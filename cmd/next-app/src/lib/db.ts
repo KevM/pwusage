@@ -23,6 +23,13 @@ export const pool = globalForDb.pool || new Pool({
   connectionTimeoutMillis: 10000,
 });
 
+// Add error handler to prevent crashing on idle client errors
+pool.on('error', (err, client) => {
+  console.error('Unexpected error on idle client', err);
+  // Don't process.exit() here; just log it. 
+  // The pool will discard the client and create a new one when needed.
+});
+
 if (process.env.NODE_ENV !== 'production') globalForDb.pool = pool;
 
 
