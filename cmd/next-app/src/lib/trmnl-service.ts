@@ -1,35 +1,25 @@
 import { pool, TrmnlInstallation } from './db';
 
 export class TrmnlService {
-    async createInstallation(accessToken: string, siteId: string, uuid: string | null = null, refreshToken?: string): Promise<number> {
+    async createInstallation(siteId: string, uuid: string | null = null, pluginSettingId: number | null = null): Promise<number> {
         const query = `
-            INSERT INTO "TrmnlInstallation" (access_token, site_id, uuid, refresh_token)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT(access_token) DO UPDATE SET 
+            INSERT INTO "TrmnlInstallation" (site_id, uuid, plugin_setting_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT(uuid) DO UPDATE SET 
                 site_id = EXCLUDED.site_id,
-                uuid = COALESCE(EXCLUDED.uuid, "TrmnlInstallation".uuid),
-                refresh_token = COALESCE(EXCLUDED.refresh_token, "TrmnlInstallation".refresh_token)
+                plugin_setting_id = COALESCE(EXCLUDED.plugin_setting_id, "TrmnlInstallation".plugin_setting_id)
             RETURNING id
         `;
-        const { rows } = await pool.query(query, [accessToken, siteId, uuid, refreshToken || null]);
+        const { rows } = await pool.query(query, [siteId, uuid || null, pluginSettingId]);
         return rows[0].id;
     }
 
-    async updateInstallation(accessToken: string, uuid: string, pluginSettingId: number) {
+    async updateInstallation(uuid: string, pluginSettingId: number) {
         await pool.query(`
             UPDATE "TrmnlInstallation"
-            SET uuid = $1, plugin_setting_id = $2
-            WHERE access_token = $3
-        `, [uuid, pluginSettingId, accessToken]);
-    }
-
-    async updateRefreshToken(uuid: string, refreshToken: string) {
-        await pool.query('UPDATE "TrmnlInstallation" SET refresh_token = $1 WHERE uuid = $2', [refreshToken, uuid]);
-    }
-
-    async getInstallationByToken(accessToken: string): Promise<TrmnlInstallation | undefined> {
-        const { rows } = await pool.query('SELECT * FROM "TrmnlInstallation" WHERE access_token = $1', [accessToken]);
-        return rows[0] as TrmnlInstallation | undefined;
+            SET plugin_setting_id = $1
+            WHERE uuid = $2
+        `, [pluginSettingId, uuid]);
     }
 
     async getInstallationByUuid(uuid: string): Promise<TrmnlInstallation | undefined> {
