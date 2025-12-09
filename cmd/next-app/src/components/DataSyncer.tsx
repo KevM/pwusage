@@ -35,20 +35,44 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
             const hotEnd = new Date(centerDate);
             hotEnd.setDate(hotEnd.getDate() + 3);
 
+            // CLAMP TO NOW: Prevent requesting future data
+            const now = new Date();
+            // allow up to "end of today" basically, or just strictly now.
+            // If hotEnd is Dec 12 00:00 and now is Dec 9 10:00, we should cap at Dec 9 (or Dec 10 00:00).
+            // Let's cap at (now + 1 hour) to be safe for slight clock skew, but generally "now".
+            const safeNow = new Date(now.getTime() + 60 * 60 * 1000);
+
+            const cappedHotEnd = hotEnd > safeNow ? safeNow : hotEnd;
+            const cappedEnd = end > safeNow ? safeNow : end;
+            const cappedStart = start > safeNow ? safeNow : start;
+
+            // If start is in future, don't sync.
+            if (cappedStart > safeNow) return;
+
             // Construct a unique key for this configuration to avoid re-runs
+            // Use the capped values for the key to ensure we don't re-run just because the uncapped future changed?
+            // Actually, keep dependent on props but check if we've run this *effective* sync.
             const fullKey = `${siteId}|${start.toISOString()}|${end.toISOString()}|${centerDate.toDateString()}`;
             if (lastSyncKey === fullKey) return;
 
             // 1. STAGE 1: HOT ZONE SYNC
             // Only if it overlaps with the requested range (optimization)
-            if (hotStart < end && hotEnd > start) {
-                await runSyncStep(hotStart, hotEnd, signal, true);
-                if (signal.aborted) return;
+            if (hotStart < cappedEnd && cappedHotEnd > cappedStart) {
+                // Ensure we don't send flipped ranges
+                const s = hotStart < cappedStart ? cappedStart : hotStart;
+                const e = cappedHotEnd;
+                if (s < e) {
+                    await runSyncStep(s, e, signal, true);
+                    if (signal.aborted) return;
+                }
             }
 
             // 2. STAGE 2: FULL PERIOD SYNC
             // Ensure the entire billing period is covered for the Bill Summary
-            await runSyncStep(start, end, signal, false);
+            // Only run if effective end > effective start
+            if (cappedStart < cappedEnd) {
+                await runSyncStep(cappedStart, cappedEnd, signal, false);
+            }
 
             if (!signal.aborted) {
                 setLastSyncKey(fullKey);
