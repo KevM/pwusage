@@ -97,11 +97,28 @@ export class EnergyRepo {
         if (!site) return [];
         const schedule = new Schedule(site.tariffs, site.timezone);
 
+        // PG Query using Strings to ensure strictly Wall Clock comparison
+        // start and end are expected to be "Local Midnight" Date objects (e.g. 2025-11-09 00:00:00 Local)
+        // We convert them to YYYY-MM-DD 00:00:00 strings to pass to SQL.
+
+        const toSqlString = (d: Date) => {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const h = String(d.getHours()).padStart(2, '0');
+            const min = String(d.getMinutes()).padStart(2, '0');
+            const s = String(d.getSeconds()).padStart(2, '0');
+            return `${y}-${m}-${day} ${h}:${min}:${s}`;
+        };
+
+        const startStr = toSqlString(start);
+        const endStr = toSqlString(end);
+
         const rowsResult = await pool.query(`
             SELECT timestamp, tariff_id, load_power, solar_power, grid_power, battery_power 
             FROM "EnergyData"
-            WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
-        `, [siteId, start, end]);
+            WHERE site_id = $1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp
+        `, [siteId, startStr, endStr]);
 
         const rows = rowsResult.rows;
 
