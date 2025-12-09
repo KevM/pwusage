@@ -9,17 +9,47 @@ import QRCode from 'qrcode';
 
 export async function GET(request: Request) {
     try {
-        const authHeader = request.headers.get('Authorization');
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return NextResponse.json({ error: 'Missing or invalid Authorization header' }, { status: 401 });
+        const { searchParams } = new URL(request.url);
+        const uuid = searchParams.get('uuid');
+
+        if (!uuid) {
+            return NextResponse.json({ error: 'Missing uuid parameter' }, { status: 400 });
         }
 
-        const accessToken = authHeader.split(' ')[1];
         const service = new TrmnlService();
-        const installation = await service.getInstallationByToken(accessToken);
+        console.log(`[TrmnlMarkup] Lookup UUID: ${uuid}`);
+        const installation = await service.getInstallationByUuid(uuid);
+        console.log(`[TrmnlMarkup] Found installation: ${installation ? installation.id : 'null'}`);
 
         if (!installation) {
-            return NextResponse.json({ error: 'Installation not found' }, { status: 404 });
+            // New Installation / "Zombie" UUID flow
+            // The UUID is not linked to any site yet. We return the QR code to allow the user to link it manually.
+            const host = request.headers.get('host') || 'localhost:3000';
+            const protocol = host.includes('localhost') ? 'http' : 'https';
+            const manageUrl = `${protocol}://${host}/trmnl/manage?uuid=${uuid}`;
+
+            console.log(`[TrmnlMarkup] UUID ${uuid} not found. Generating setup QR code for ${manageUrl}`);
+
+            // Generate QR Code
+            const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
+
+            const markup = `
+                <div class="view view--full">
+                     <div class="layout layout--col-center" style="padding: 20px; text-align: center;">
+                        <span class="title title--small">Connect to PWUsage</span>
+                        <span class="label">Scan to Setup</span>
+                        <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px 0;" />
+                        <span class="label label--small">ID: ${uuid.substring(0, 8)}...</span>
+                     </div>
+                </div>
+             `;
+
+            return NextResponse.json({
+                markup: markup,
+                markup_half_vertical: markup,
+                markup_half_horizontal: markup,
+                markup_quadrant: markup
+            });
         }
 
         const repo = new EnergyRepo();
@@ -228,5 +258,42 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    // Trmnl might send UUID in the body for POST requests
+    let uuid = new URL(request.url).searchParams.get('uuid');
+
+    if (!uuid) {
+        try {
+            // Clone request because we might need to read body multiple times if first attempt fails
+            const clone = request.clone();
+            const contentType = request.headers.get('content-type') || '';
+
+            if (contentType.includes('application/json')) {
+                const body = await clone.json();
+                uuid = body.uuid || body.user_uuid;
+            } else if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
+                const formData = await clone.formData();
+                uuid = (formData.get('uuid') || formData.get('user_uuid')) as string;
+            } else {
+                // Fallback: try parsing text as query params if headers are missing or weird
+                const text = await clone.text();
+                const params = new URLSearchParams(text);
+                uuid = params.get('uuid') || params.get('user_uuid');
+            }
+        } catch (e) {
+            console.log('[TrmnlMarkup] Failed to parse POST body:', e);
+        }
+    }
+
+    if (uuid) {
+        // But for now, let's just make a new request object with the parameter?
+        // No, that's messy.
+
+        // Let's refactor the standard logic into a handler function.
+        // But to keep it simple with tool edits:
+        const url = new URL(request.url);
+        url.searchParams.set('uuid', uuid);
+        return GET(new Request(url.toString(), request));
+    }
+
     return GET(request);
 }
