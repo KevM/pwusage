@@ -1,4 +1,4 @@
-import { pool, EnergyUsage, Tariff, Site, TariffSeason, TariffSchedule } from './db';
+import { pool, EnergyUsage, Tariff, Site, TariffSeason, TariffSchedule, getDbReady } from './db';
 import { Schedule } from './schedule';
 
 // Use global cache to persist across reloads in dev
@@ -167,6 +167,7 @@ export class EnergyRepo {
     }
 
     async getSite(siteId: string): Promise<SiteWithTariffs | undefined> {
+        await getDbReady();
         const now = Date.now();
         const cached = siteCache.get(siteId);
         if (cached && cached.expires > now) {
@@ -200,16 +201,19 @@ export class EnergyRepo {
     }
 
     async getSiteIds(): Promise<string[]> {
+        await getDbReady();
         const { rows } = await pool.query('SELECT id FROM "Site"');
         return rows.map((r: any) => r.id);
     }
 
     async getSites(): Promise<Site[]> {
+        await getDbReady();
         const { rows } = await pool.query('SELECT * FROM "Site"');
         return rows as Site[];
     }
 
     async hasData(siteId: string): Promise<boolean> {
+        await getDbReady();
         const { rows } = await pool.query('SELECT 1 FROM "EnergyData" WHERE site_id = $1 LIMIT 1', [siteId]);
         return rows.length > 0;
     }
