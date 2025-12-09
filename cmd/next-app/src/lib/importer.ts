@@ -39,8 +39,23 @@ export class Importer {
         let cursor = new Date(start);
         cursor.setHours(0, 0, 0, 0);
 
+        // Determine "Today" in Site Timezone to prevent future lookups
+        const getSiteMidnight = (d: Date, tz: string) => {
+            const fmt = new Intl.DateTimeFormat('en-CA', {
+                timeZone: tz,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            });
+            const parts = fmt.format(d); // YYYY-MM-DD
+            const [y, m, day] = parts.split('-').map(Number);
+            return new Date(y, m - 1, day);
+        };
+
         const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        // todayStart represents 00:00 of the current day in the SITE'S timezone
+        // This is the limit of what we can import.
+        const todayStart = getSiteMidnight(now, site.timezone);
 
         const rangeStartStr = cursor.toISOString();
         const rangeEnd = new Date(end);
