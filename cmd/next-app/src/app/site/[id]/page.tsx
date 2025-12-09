@@ -97,11 +97,25 @@ export default async function SitePage({ params, searchParams }: {
         }
     }
 
-    // If we didn't have the site initially, we should found it now after ensureSite
-    const finalSite = site || await repo.getSite(id);
+    // Check if new site (no data)
+    let hasData = await repo.hasData(id);
+
+    // If we have no data, it's possible the DB was wiped but the cache is stale.
+    // We must ensure the site exists in the DB before proceeding.
+    if (!hasData && site) {
+        // Force ensure site to handle "ghost" site scenario (cached but deleted from DB)
+        await importer.ensureSite(id);
+    }
+
+    const finalSite = await repo.getSite(id);
+
     if (!finalSite) {
-        // This should theoretically not happen if ensureSite succeeded
-        return <div>Site not found (Post-Import Failure)</div>;
+        return <div>Site not found</div>;
+    }
+
+    // If new site, BLOCK everything else and show setup wizard
+    if (!hasData) {
+        return <SiteSetup siteId={id} />;
     }
 
     // Use finalSite for the rest of the render
