@@ -160,16 +160,31 @@ export default async function SitePage({ params, searchParams }: {
         }
     }
 
-    // Get hourly data for the requested date (from query param) or today
-    const now = new Date();
+    // Get hourly data for the requested date (from query param) or today (in site timezone)
+    // We must use the Site's Wall Clock Time to determine "Today", otherwise
+    // Server UTC might be "Tomorrow" while Site is still "Today".
+    const getSiteNow = (tz: string) => {
+        const fmt = new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        });
+        const parts = fmt.format(new Date()); // YYYY-MM-DD
+        const [y, m, d] = parts.split('-').map(Number);
+        return new Date(y, m - 1, d); // Local Midnight Construction
+    };
+
+    const siteNow = getSiteNow(finalSite.timezone);
+
     let dateStr: string;
 
     if (queryDate) {
         dateStr = queryDate;
     } else {
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const day = String(now.getDate()).padStart(2, '0');
+        const year = siteNow.getFullYear();
+        const month = String(siteNow.getMonth() + 1).padStart(2, '0');
+        const day = String(siteNow.getDate()).padStart(2, '0');
         dateStr = `${year}-${month}-${day}`;
     }
 
@@ -178,8 +193,9 @@ export default async function SitePage({ params, searchParams }: {
     // Calculate period based on billing start day
     const billingDay = finalSite.billing_start_day || 1;
 
-    // Determine reference date: queryDate or now
-    let refDate = now;
+    // Determine reference date: queryDate or siteNow
+    // We treat queryDate as a Wall Clock date for the site.
+    let refDate = siteNow;
     if (queryDate) {
         const [y, m, d] = queryDate.split('-').map(Number);
         if (!Number.isNaN(y) && !Number.isNaN(m) && !Number.isNaN(d)) {
@@ -224,8 +240,7 @@ export default async function SitePage({ params, searchParams }: {
     };
 
     // Check if next month would be in the future
-    const currentDate = new Date();
-    const isCurrentPeriod = currentDate >= start && currentDate < end;
+    const isCurrentPeriod = siteNow >= start && siteNow < end;
 
     return (
         <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
