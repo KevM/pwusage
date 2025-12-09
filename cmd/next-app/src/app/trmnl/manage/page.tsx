@@ -23,17 +23,35 @@ function ManageContent() {
         }
 
         // Fetch sites and current installation
-        Promise.all([
-            fetch('/api/sites').then(res => res.json()),
-            fetch(`/api/trmnl/manage?uuid=${uuid}`).then(res => res.json())
-        ])
-            .then(([sitesData, installData]) => {
+        const fetchData = async () => {
+            let redirecting = false;
+            try {
+                const [sitesRes, installRes] = await Promise.all([
+                    fetch('/api/sites'),
+                    fetch(`/api/trmnl/manage?uuid=${uuid}`)
+                ]);
+
+                if (sitesRes.status === 401 || installRes.status === 401) {
+                    redirecting = true;
+                    const callbackUrl = encodeURIComponent(`/trmnl/manage?uuid=${uuid}`);
+                    window.location.href = `/login?callback=${callbackUrl}`;
+                    return;
+                }
+
+                const sitesData = await sitesRes.json();
+                const installData = await installRes.json();
+
                 setSites(sitesData);
                 if (installData.site_id) setSelectedSite(installData.site_id);
                 else if (sitesData.length > 0) setSelectedSite(sitesData[0].id);
-            })
-            .catch(err => setError('Failed to load data'))
-            .finally(() => setLoading(false));
+            } catch (err) {
+                setError('Failed to load data');
+            } finally {
+                if (!redirecting) setLoading(false);
+            }
+        };
+
+        fetchData();
     }, [uuid]);
 
     const handleSave = async () => {
@@ -109,7 +127,15 @@ function ManageContent() {
                             <input type="hidden" value={sites[0].id} />
                         </div>
                     ) : (
-                        <div className="mb-4 text-red-500">No sites found. Please set up a site first.</div>
+                        <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 rounded border border-yellow-200 dark:border-yellow-700">
+                            <h3 className="font-semibold text-yellow-800 dark:text-yellow-200 mb-2">No Energy Sites Found</h3>
+                            <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-4">
+                                We couldn't find any compatible energy sites associated with your account.
+                            </p>
+                            <a href="/" className="text-sm font-medium text-blue-600 hover:text-blue-500 underline">
+                                Return to Dashboard
+                            </a>
+                        </div>
                     )}
 
                     {currentSite && (

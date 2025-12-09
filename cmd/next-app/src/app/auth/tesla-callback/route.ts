@@ -96,7 +96,11 @@ export async function GET(request: NextRequest) {
     cookieStore.delete('auth_callback');
 
     if (savedCallback) {
-        redirect(`${savedCallback}?auth=${authData.access_token}&refresh=${authData.refresh_token}&id=${authData.id_token}`);
+        if (savedCallback.startsWith('/')) {
+            redirect(savedCallback);
+        } else {
+            redirect(`${savedCallback}?auth=${authData.access_token}&refresh=${authData.refresh_token}&id=${authData.id_token}`);
+        }
     } else {
         redirect('/');
     }
