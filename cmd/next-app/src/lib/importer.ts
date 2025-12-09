@@ -2,7 +2,7 @@ import { pool, EnergyData, EnergyUsage, Site, Tariff, TariffSeason, TariffSchedu
 import { Schedule } from './schedule';
 import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, Season, SeasonPeriods } from './tesla-client';
 import { EnergyRepo, UsageData } from './energy-repo';
-import * as fs from 'fs';
+
 import { PoolClient } from 'pg';
 
 function getTimeZoneOffsetMinutes(date: Date, timeZone: string): number | null {
@@ -367,9 +367,9 @@ export class Importer {
             actualEnd = new Date(actualEnd.getTime() - 1000);
         }
 
-        fs.appendFileSync('import.log', `[Import] loadInterval ${start.toISOString()} - ${actualEnd.toISOString()} (${period})\n`);
+        console.log(`[Import] loadInterval ${start.toISOString()} - ${actualEnd.toISOString()} (${period})`);
         const history = await this.client.getEnergyHistory(site.id, start, actualEnd, period, site.timezone);
-        fs.appendFileSync('import.log', `[Import] History Rows Fetched: ${history?.length ?? 0}\n`);
+        console.log(`[Import] History Rows Fetched: ${history?.length ?? 0}`);
 
         if (!history || history.length === 0) {
             if (period === 'day') {
@@ -410,8 +410,7 @@ export class Importer {
 
         const client = await pool.connect();
         try {
-            const msg1 = `[Import] Insert Transaction Start. History Rows: ${history.length}\n`;
-            fs.appendFileSync('import.log', msg1);
+            const msg1 = `[Import] Insert Transaction Start. History Rows: ${history.length}`;
             console.log(msg1);
 
             await client.query('BEGIN');
@@ -419,8 +418,7 @@ export class Importer {
 
             const energyDatas = await this.processHistory(client, site, history, new Map(), period);
 
-            const msg2 = `[Import] Processed EnergyData Rows: ${energyDatas.length}\n`;
-            fs.appendFileSync('import.log', msg2);
+            const msg2 = `[Import] Processed EnergyData Rows: ${energyDatas.length}`;
             console.log(msg2);
 
             const usages = this.aggregateUsage(site, energyDatas);
