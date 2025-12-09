@@ -119,7 +119,13 @@ export function SiteSetup({ siteId }: SiteSetupProps) {
                 </p>
 
                 {status === 'idle' && (
-                    <div className="space-y-4">
+                    <form
+                        className="space-y-4"
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            startSetup();
+                        }}
+                    >
                         <div>
                             <label className="block text-sm font-medium mb-1">Billing Cycle Start Day</label>
                             <input
@@ -134,12 +140,12 @@ export function SiteSetup({ siteId }: SiteSetupProps) {
                         </div>
 
                         <button
-                            onClick={startSetup}
+                            type="submit"
                             className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors"
                         >
                             Initialize & Import Data
                         </button>
-                    </div>
+                    </form>
                 )}
 
                 {status === 'running' && (
