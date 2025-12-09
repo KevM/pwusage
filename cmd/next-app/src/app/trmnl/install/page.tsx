@@ -21,10 +21,24 @@ function InstallContent() {
     useEffect(() => {
         if (!code) return; // Wait for code
 
+        let redirecting = false;
+
         // 1. Fetch sites
         fetch('/api/sites')
-            .then(res => res.json())
+            .then(async res => {
+                if (res.status === 401) {
+                    redirecting = true;
+                    // Construct callback URL with all current parameters
+                    const currentSearch = window.location.search;
+                    const callbackUrl = encodeURIComponent(`/trmnl/install${currentSearch}`);
+                    window.location.href = `/login?callback=${callbackUrl}`;
+                    return null;
+                }
+                return res.json();
+            })
             .then(data => {
+                if (!data) return; // Handled redirect or error
+
                 setSites(data);
                 if (data.length > 0) {
                     const firstSiteId = data[0].id;
@@ -42,7 +56,7 @@ function InstallContent() {
             })
             .catch(err => setError('Failed to load sites'))
             .finally(() => {
-                if (!autoConnecting) setLoading(false);
+                if (!redirecting && !autoConnecting) setLoading(false);
             });
     }, [code, installationCallbackUrl, installationUuid]); // Only run once on mount (with code)
 

@@ -8,6 +8,17 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const uuid = searchParams.get('uuid');
 
+    const cookieStore = await cookies();
+    const token = cookieStore.get('access_token')?.value;
+
+    // Optional: Allow Trmnl bot to manage if identified? No, this is for user UI.
+    // The device (bot) uses /api/trmnl/setup or /api/trmnl/markup?
+    // /manage is strictly for the user management page.
+
+    if (!token) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     if (!uuid) {
         return NextResponse.json({ error: 'Missing UUID' }, { status: 400 });
     }
