@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     const installation = await service.getInstallationByUuid(uuid);
 
     if (!installation) {
-        return NextResponse.json({ error: 'Installation not found' }, { status: 404 });
+        return NextResponse.json({ site_id: null });
     }
 
     return NextResponse.json({ site_id: installation.site_id });
