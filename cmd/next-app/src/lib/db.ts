@@ -20,10 +20,12 @@ export const pool = globalForDb.pool || new Pool({
   },
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000,
 });
 
 if (process.env.NODE_ENV !== 'production') globalForDb.pool = pool;
+
+let dbInitPromise: Promise<void> | null = null;
 
 // Helper to check and init schema
 export async function initDb() {
@@ -39,11 +41,6 @@ export async function initDb() {
         AND table_name = 'Site'
       );
     `);
-
-    // Note: table_name in information_schema is case sensitive if created with quotes
-    // We strictly use quotes for table names in creation to preserve casing if desired,
-    // or we can just rely on lowercase. best practice in PG is lowercase but we have existing casing.
-    // Let's use quoted identifiers to match the existing schema names "Site", "Tariff", etc.
 
     if (!res.rows[0].exists) {
       console.log('[DB] Initializing database schema...');
@@ -153,10 +150,19 @@ export async function initDb() {
   }
 }
 
-// Start Init (this is async, so it runs in background on module load, 
-// strictly speaking we should await it in app entry point, 
-// but for now we follow the pattern of "fire and log")
-initDb().catch(e => console.error('Failed to init DB on load:', e));
+export function getDbReady() {
+  if (!dbInitPromise) {
+    dbInitPromise = initDb().catch(e => {
+      console.error('Failed to init DB lazily:', e);
+      // Reset promise so we retry next time?
+      // Or just fail? If schema init fails, app likely broken.
+      // But we don't want to cache a rejected promise forever if it's transient.
+      dbInitPromise = null;
+      throw e;
+    });
+  }
+  return dbInitPromise;
+}
 
 
 export interface Site {
