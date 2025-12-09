@@ -1,4 +1,5 @@
-import { pool, EnergyUsage, Tariff, Site, TariffSeason, TariffSchedule, getDbReady } from './db';
+import { pool, EnergyUsage, Tariff, Site, TariffSeason, TariffSchedule } from './db';
+import { getDbReady } from './db-init';
 import { Schedule } from './schedule';
 
 // Use global cache to persist across reloads in dev
