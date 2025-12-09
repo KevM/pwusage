@@ -36,31 +36,32 @@ export async function POST(request: Request) {
         const refreshToken = cookieStore.get('refresh_token')?.value;
         const service = new TrmnlService();
 
-        // Update site ID
-        const updateResult = await pool.query('UPDATE "TrmnlInstallation" SET site_id = $1 WHERE uuid = $2', [site_id, uuid]);
+        // Create or Update installation (UPSERT)
+        // We trust the user is authenticated (they access the page which loads sites)
+        // and they are manually linking this UUID to a Site.
 
-        if ((updateResult.rowCount ?? 0) === 0) {
-            // Fallback: If UUID matches nothing, try to match by access_token from cookie (Self-healing)
-            const accessToken = cookieStore.get('access_token')?.value;
-            if (accessToken) {
-                console.log(`[TrmnlManage] UUID ${uuid} not found. Attempting to Attach UUID to existing installation via Access Token.`);
-                const healResult = await pool.query('UPDATE "TrmnlInstallation" SET uuid = $1, site_id = $2 WHERE access_token = $3', [uuid, site_id, accessToken]);
-                if ((healResult.rowCount ?? 0) > 0) {
-                    console.log(`[TrmnlManage] Successfully healed installation record for uuid ${uuid}`);
-                }
-            }
+        const query = `
+            INSERT INTO "TrmnlInstallation" (uuid, site_id)
+            VALUES ($1, $2)
+            ON CONFLICT(uuid) DO UPDATE SET 
+                site_id = EXCLUDED.site_id
+            RETURNING id
+        `;
+
+        const { rows } = await pool.query(query, [uuid, site_id]);
+
+        if (rows.length === 0) {
+            console.log(`[TrmnlManage] Failed to upsert installation for UUID ${uuid}.`);
+            return NextResponse.json({ error: 'Failed to save installation' }, { status: 500 });
         }
 
-        // Update refresh token if available
-        if (refreshToken) {
-            await service.updateRefreshToken(uuid, refreshToken);
-            // Also update Site table (Source of Truth)
-            if (site_id) {
-                const repo = new EnergyRepo();
-                const accessToken = cookieStore.get('access_token')?.value;
-                if (accessToken) {
-                    await repo.updateSiteTokens(site_id, accessToken, refreshToken);
-                }
+        // Update refresh token in Site table (Source of Truth) if available
+        if (refreshToken && site_id) {
+            const repo = new EnergyRepo();
+            const accessToken = cookieStore.get('access_token')?.value;
+            // We use the tokens from cookie (Tesla Auth) to update the Site.
+            if (accessToken) {
+                await repo.updateSiteTokens(site_id, accessToken, refreshToken);
             }
         }
 

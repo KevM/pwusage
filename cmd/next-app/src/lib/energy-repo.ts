@@ -344,8 +344,8 @@ export class EnergyRepo {
             if (await this.acquireRefreshLock(siteId)) {
                 console.log(`[TokenLock] Lock acquired for site ${siteId}. Refreshing...`);
                 try {
-                    const { TeslaClient } = require('./tesla-client');
-                    const newTokens = await TeslaClient.refreshAccessToken(refreshToken);
+                    const { refreshAccessToken } = await import('./tesla-auth');
+                    const newTokens = await refreshAccessToken(refreshToken);
 
                     await this.updateSiteTokens(siteId, newTokens.access_token, newTokens.refresh_token);
                     return newTokens;
