@@ -133,7 +133,7 @@ export default async function SiteSettingsPage({ params }: { params: Promise<{ i
 
                     <div className="flex gap-4 flex-col sm:flex-row">
                         <a
-                            href="https://usetrmnl.com/plugin_settings/new?keyname=test_powerwall_energy&code=72ca99f2132d8cb6d869a9969126faeffdc5dae7"
+                            href="https://usetrmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
                             target="_blank"
                             className="flex-1 bg-black text-white px-4 py-2 rounded text-center hover:bg-gray-800 transition-colors font-semibold"
                         >
