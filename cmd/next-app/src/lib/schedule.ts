@@ -55,35 +55,28 @@ export class Schedule {
 
     getTariffPeriod(t: Date): TariffPeriod | null {
         const local = this.getLocalParts(t);
+        return this.getTariffPeriodForWallClock(local.month, local.day, local.hour, local.weekday, t);
+    }
+
+    getTariffPeriodForWallClock(month: number, day: number, hour: number, weekday: number, originalDate?: Date): TariffPeriod | null {
+        // weekday: 0=Sun, 1=Mon...
 
         for (const tariff of this.tariffs) {
             if (!tariff.seasons) continue;
             for (const season of tariff.seasons) {
-                if (!this.matchSeason(local.month, local.day, season)) {
+                if (!this.matchSeason(month, day, season)) {
                     continue;
                 }
 
                 if (!season.schedules) continue;
                 for (const schedule of season.schedules) {
-                    if (!this.matchSchedule(local.weekday, local.hour, schedule)) {
+                    if (!this.matchSchedule(weekday, hour, schedule)) {
                         continue;
                     }
 
-                    // For the returned start/end, we ideally want the boundary of this period.
-                    // But getTariffPeriod is just used for labeling the specific point 't'.
-                    // We can just return 't' as start/end or boundaries if needed.
-                    // The caller in EnergyRepo just asks "What period is THIS point in?"
-
-                    // Note: original code calculated start/end boundaries, 
-                    // but they were based on `start.setHours(...)` which used Local System Time.
-                    // Since we aren't using start/end for aggregation grouping (we group by name),
-                    // we can keep them approximate or fix them. 
-                    // Fixing them properly requires constructing a Date in the specific timezone.
-                    // For now, let's just return the point itself or similar, as it's not critical for aggregation grouping.
-
                     return {
-                        start: t,
-                        end: t,
+                        start: originalDate || new Date(),
+                        end: originalDate || new Date(),
                         tariff,
                         season,
                         schedule
