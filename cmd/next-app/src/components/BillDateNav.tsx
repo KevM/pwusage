@@ -5,22 +5,26 @@ import Link from 'next/link';
 
 interface BillDateNavProps {
     siteId: string;
-    startDate: Date;
-    endDate: Date;
     billingDay: number;
     prevDateStr: string;
     nextDateStr: string;
     isCurrentPeriod: boolean;
+    dateRangeLabel: string;
+    currentMonthVal: string;
+    fullBillDateStr: string;
 }
 
 export function BillDateNav({
     siteId,
-    startDate,
-    endDate,
+    // startDate, // REMOVED
+    // endDate,   // REMOVED
     billingDay,
     prevDateStr,
     nextDateStr,
-    isCurrentPeriod
+    isCurrentPeriod,
+    dateRangeLabel,
+    currentMonthVal,
+    fullBillDateStr
 }: BillDateNavProps) {
     const router = useRouter();
 
@@ -36,12 +40,12 @@ export function BillDateNav({
     };
 
     // Calculate current month value for the input (YYYY-MM based on start date)
-    const currentMonthVal = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
+    // const currentMonthVal = ... (Passed in prop now)
 
     // Max month should be the current calendar month to prevent picking far future/invalid ranges if desired, 
     // or just let the generic logic handle it. Let's restrict to current month to be safe.
     const now = new Date();
-    const maxMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    // const maxMonth = ... (Unused)
 
     return (
         <div className="flex items-center gap-2">
@@ -59,7 +63,7 @@ export function BillDateNav({
 
                 <div className="relative group text-center min-w-[150px]">
                     <div className="font-semibold text-sm hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center">
-                        {startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - {endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {dateRangeLabel}
                     </div>
                     {/* Month Picker Overlay (Select for better Safari compatibility) */}
                     <select
@@ -108,7 +112,7 @@ export function BillDateNav({
             {/* Action Buttons */}
             <div className='shrink-0 flex items-center'>
                 <Link
-                    href={`/site/${siteId}/usage?date=${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(billingDay).padStart(2, '0')}`}
+                    href={`/site/${siteId}/usage?date=${fullBillDateStr}`}
                     className="p-2 text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-full transition-colors"
                     title="View Full Bill"
                 >
