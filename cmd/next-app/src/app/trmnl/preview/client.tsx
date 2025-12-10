@@ -3,53 +3,51 @@
 import { useRouter, usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 
-export function PreviewClient({ tokens, initialSiteId }: { tokens: { access_token: string, site_name: string, site_id: string }[], initialSiteId?: string }) {
+export function PreviewClient({ tokens, initialSiteId, manualUuid }: { tokens?: { access_token: string, site_name: string, site_id: string }[], initialSiteId?: string, manualUuid?: string }) {
     const router = useRouter();
     const pathname = usePathname();
-    const initialToken = tokens.find(t => t.site_id === initialSiteId)?.access_token || tokens[0]?.access_token;
+    const initialToken = tokens?.find(t => t.site_id === initialSiteId)?.access_token || tokens?.[0]?.access_token;
     const [selectedToken, setSelectedToken] = useState(initialToken);
     const [html, setHtml] = useState('');
     const [error, setError] = useState('');
 
     useEffect(() => {
-        const token = tokens.find(t => t.site_id === initialSiteId)?.access_token || tokens[0]?.access_token;
+        if (manualUuid) return;
+        const token = tokens?.find(t => t.site_id === initialSiteId)?.access_token || tokens?.[0]?.access_token;
         if (token) setSelectedToken(token);
-    }, [initialSiteId, tokens]);
+    }, [initialSiteId, tokens, manualUuid]);
 
     useEffect(() => {
-        if (!selectedToken) return;
+        if (manualUuid) {
+            // Manual UUID fetch (public endpoint)
+            fetch(`/api/trmnl/markup?uuid=${manualUuid}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.markup) setHtml(data.markup);
+                    else setError(JSON.stringify(data));
+                })
+                .catch(err => setError(err.message));
+            return;
+        }
 
-        fetch('/api/trmnl/markup', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${selectedToken}`
-            }
-        })
-            .then(res => res.json())
-            .then(data => {
-                if (data.markup) {
-                    setHtml(data.markup);
-                } else {
-                    setError(JSON.stringify(data));
-                }
-            })
-            .catch(err => setError(err.message));
-    }, [selectedToken]);
+        // TODO: Implement preview for authenticated sites by looking up installation UUID from site_id
+        // For now, we prefer manual UUID entry for testing.
+    }, [selectedToken, manualUuid]);
 
     const handleSiteChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const newToken = e.target.value;
         setSelectedToken(newToken);
-        const siteId = tokens.find(t => t.access_token === newToken)?.site_id;
+        const siteId = tokens?.find(t => t.access_token === newToken)?.site_id;
         if (siteId) {
             router.push(`${pathname}?site_id=${siteId}`);
         }
     };
 
-    if (!selectedToken) return <div className="text-red-500">No tokens available.</div>;
+    if (!selectedToken && !manualUuid) return <div className="text-red-500">No tokens available.</div>;
 
     return (
         <div className="border p-4 rounded shadow-sm bg-gray-50">
-            {tokens.length > 1 && (
+            {tokens && tokens.length > 1 && (
                 <div className="mb-4">
                     <label className="mr-2 font-medium">Select Site:</label>
                     <select
