@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { EnergyRepo } from '@/lib/energy-repo';
-import { verifySiteAccess } from '@/lib/auth-checks';
+import { TeslaClient } from '@/lib/tesla-client';
+import { SiteService } from '@/lib/site-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,11 +16,23 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Missing siteId or date' }, { status: 400 });
         }
 
-        if (!await verifySiteAccess(siteId)) {
+        const cookieStore = await cookies();
+        const token = cookieStore.get('access_token')?.value;
+        const refreshToken = cookieStore.get('refresh_token')?.value;
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
+
+        if (!token) { // Ensure authenticated to even verify access
+            return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+        }
+
+        const client = new TeslaClient({ accessToken: token, refreshToken });
+        const repo = new EnergyRepo();
+        const service = new SiteService({ teslaClient: client, energyRepo: repo, siteAuthToken });
+
+        if (!await service.validateSiteAccess(siteId)) {
             return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
         }
 
-        const repo = new EnergyRepo();
         const site = await repo.getSite(siteId);
         if (!site) {
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });

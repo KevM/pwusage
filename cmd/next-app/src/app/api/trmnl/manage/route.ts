@@ -1,8 +1,11 @@
+
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { pool } from '@/lib/db';
 import { cookies } from 'next/headers';
+import { TeslaClient } from '@/lib/tesla-client';
+import { SiteService } from '@/lib/site-service';
 
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
@@ -44,12 +47,26 @@ export async function POST(request: Request) {
 
         const cookieStore = await cookies();
 
+        const token = cookieStore.get('access_token')?.value;
         const refreshToken = cookieStore.get('refresh_token')?.value;
-        const service = new TrmnlService();
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
+
+        if (!token) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const client = new TeslaClient({ accessToken: token, refreshToken });
+        const repo = new EnergyRepo();
+        const siteService = new SiteService({ teslaClient: client, energyRepo: repo, siteAuthToken });
+
+        if (!await siteService.validateSiteAccess(site_id)) {
+            return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
+        }
+
+        const trmnlService = new TrmnlService();
 
         // Create or Update installation (UPSERT)
-        // We trust the user is authenticated (they access the page which loads sites)
-        // and they are manually linking this UUID to a Site.
+        // We trust the user is authenticated and authorized now.
 
         const query = `
             INSERT INTO "TrmnlInstallation" (uuid, site_id)

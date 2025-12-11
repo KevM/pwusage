@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { cookies } from 'next/headers';
+import { TeslaClient } from '@/lib/tesla-client';
+import { SiteService } from '@/lib/site-service';
 
 export async function POST(request: Request) {
     try {
@@ -21,7 +23,21 @@ export async function POST(request: Request) {
         }
 
         const cookieStore = await cookies();
+        const token = cookieStore.get('access_token')?.value;
         const refreshToken = cookieStore.get('refresh_token')?.value;
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
+
+        if (!token) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const client = new TeslaClient({ accessToken: token, refreshToken });
+        const energyRepo = new EnergyRepo();
+        const siteService = new SiteService({ teslaClient: client, energyRepo, siteAuthToken });
+
+        if (!await siteService.validateSiteAccess(site_id)) {
+            return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
+        }
 
         // Save installation
         const service = new TrmnlService();

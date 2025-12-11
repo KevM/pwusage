@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
+import { SiteService } from '@/lib/site-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,6 +34,11 @@ export async function GET(request: Request) {
             }
         });
         const repo = new EnergyRepo();
+        const service = new SiteService({ teslaClient: client, energyRepo: repo, siteAuthToken: cookieStore.get('site_auth')?.value });
+
+        if (!await service.validateSiteAccess(siteId)) {
+            return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
+        }
 
         // Get live status
         const liveStatus = await client.getLiveStatus(siteId);

@@ -5,7 +5,7 @@ import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
-import { setSiteClaims } from '@/lib/auth-checks';
+import { SiteService } from '@/lib/site-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +14,7 @@ export async function GET() {
         const cookieStore = await cookies();
         const token = cookieStore.get('access_token')?.value;
         const refreshToken = cookieStore.get('refresh_token')?.value;
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
 
         if (!token) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
@@ -23,45 +24,57 @@ export async function GET() {
             accessToken: token,
             refreshToken: refreshToken,
             onTokenUpdate: (newAccess, newRefresh) => {
-                console.log('Refreshing tokens in Cookies from Dashboard API');
-                // Note: We can't set cookies easily in a callback here without passing the response object
-                // For now, we'll rely on the fact that if this fails, the user will just have to login again eventually
-                // OR we can try to find a way to set them on the response we are about to return
-                // A better approach might be to let the client return the new tokens and we set them here
+                // Token handling logic
             }
         });
 
-        const products = (await client.getProducts()).filter(p => p.components.battery);
-
-        // Update security claims for these sites
-        const siteIds = products.map(p => p.energy_site_id.toString());
-        await setSiteClaims(siteIds);
-
-        // Fetch current tariff and live battery power for each site
         const repo = new EnergyRepo();
         const importer = new Importer(client);
+        const service = new SiteService({
+            teslaClient: client,
+            energyRepo: repo,
+            siteAuthToken
+        });
 
-        const productsWithTariff = await Promise.all(products.map(async (product) => {
-            let site = await repo.getSite(product.energy_site_id.toString());
+        // Use cached authorization source of truth
+        const sites = await service.getAuthorizedSites();
+
+        // Filter for battery sites (using DB info if available, or assume yes for now as we only sync battery sites usually?)
+        // Let's check site.json for components.battery
+        const batterySites = sites.filter(s => {
+            const info = s.json as any;
+            return info?.components?.battery === true;
+        });
+
+        const productsWithTariff = await Promise.all(batterySites.map(async (basicSite) => {
+            // Fetch full site details including tariffs (which are not in the basic Site object)
+            let site = await repo.getSite(basicSite.id);
+
             if (!site) {
-                // Upsert the site/tariffs lazily when encountered from Tesla
-                site = await importer.ensureSite(product.energy_site_id.toString());
+                // Should be rare as basicSite came from DB, but possible due to race conditions or partial writes?
+                // Or if getAuthorizedSites used stale cache? 
+                // We can try to repair it.
+                console.warn(`[Dashboard] Site ${basicSite.id} found in list but getSite returned null. Attempting repair.`);
+                site = await importer.ensureSite(basicSite.id);
             }
+
             let currentTariff = 'Unknown';
-            let liveBatteryPower = product.battery_power;
+            let liveBatteryPower = 0;
             let liveSolarPower = 0;
             let liveLoadPower = 0;
             let liveGridPower = 0;
+            let percentageCharged = 0;
 
             // Get live status for real-time data
             try {
-                const liveStatus = await client.getLiveStatus(product.energy_site_id.toString());
+                const liveStatus = await client.getLiveStatus(basicSite.id);
                 liveBatteryPower = liveStatus.battery_power;
                 liveSolarPower = liveStatus.solar_power;
                 liveLoadPower = liveStatus.load_power;
                 liveGridPower = liveStatus.grid_power;
+                percentageCharged = liveStatus.percentage_charged;
             } catch (error) {
-                console.warn(`Failed to fetch live status for site ${product.energy_site_id}:`, error);
+                console.warn(`Failed to fetch live status for site ${basicSite.id}:`, error);
             }
 
             if (site && site.tariffs.length > 0) {
@@ -75,10 +88,10 @@ export async function GET() {
             }
 
             return {
-                id: product.id,
-                site_name: product.site_name,
-                energy_site_id: product.energy_site_id,
-                percentage_charged: product.percentage_charged,
+                id: basicSite.id, // Using site ID as product ID for frontend consistency
+                site_name: basicSite.name,
+                energy_site_id: parseInt(basicSite.id),
+                percentage_charged: percentageCharged,
                 currentTariff,
                 liveBatteryPower,
                 liveSolarPower,
