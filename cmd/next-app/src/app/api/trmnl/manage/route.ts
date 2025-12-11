@@ -63,7 +63,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
         }
 
-        const trmnlService = new TrmnlService();
+
 
         // Create or Update installation (UPSERT)
         // We trust the user is authenticated and authorized now.

@@ -3,7 +3,6 @@ import { EnergyRepo } from '@/lib/energy-repo';
 import { BillSummary } from '@/components/BillSummary';
 import { BillDateNav } from '@/components/BillDateNav';
 import { DataSyncer } from '@/components/DataSyncer';
-import Link from 'next/link';
 
 import { Breadcrumbs } from '@/components/Breadcrumbs';
 
@@ -34,7 +33,7 @@ export default async function UsagePage({ params, searchParams }: {
         const now = new Date();
         const billingDay = site.billing_start_day || 1;
         let startMonth = now.getMonth();
-        let startYear = now.getFullYear();
+        const startYear = now.getFullYear();
 
         if (now.getDate() < billingDay) {
             startMonth--;
@@ -48,8 +47,7 @@ export default async function UsagePage({ params, searchParams }: {
     const usage = await repo.getUsageByTOU(id, start, end);
 
     // Format dates for display
-    const startStr = start.toLocaleDateString();
-    const endStr = end.toLocaleDateString();
+
 
     // Previous and Next month links
     const prevDate = new Date(start.getFullYear(), start.getMonth() - 1, start.getDate());

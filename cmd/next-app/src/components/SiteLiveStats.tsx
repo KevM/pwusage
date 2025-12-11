@@ -17,6 +17,7 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setLastUpdate(new Date()); // Set initial time on client mount
 
         const interval = setInterval(async () => {

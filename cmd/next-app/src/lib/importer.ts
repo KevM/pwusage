@@ -1,26 +1,11 @@
-import { pool, EnergyData, EnergyUsage, Site, Tariff, TariffSeason, TariffSchedule, SiteWithTariffs } from './db';
+import { pool, SiteWithTariffs, TariffSeason, TariffSchedule } from './db';
 import { Schedule } from './schedule';
-import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, Season, SeasonPeriods } from './tesla-client';
+import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo } from './tesla-client';
 import { EnergyRepo, UsageData } from './energy-repo';
 
 import { PoolClient } from 'pg';
 
-function getTimeZoneOffsetMinutes(date: Date, timeZone: string): number | null {
-    const fmt = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        timeZoneName: 'shortOffset',
-        hour: '2-digit',
-        minute: '2-digit',
-        hourCycle: 'h23'
-    });
-    const parts = fmt.formatToParts(date);
-    const tzName = parts.find(p => p.type === 'timeZoneName')?.value ?? '';
-    const match = tzName.match(/GMT([+-]\d{2})(?::?(\d{2}))?/i);
-    if (!match) return null;
-    const hours = Number(match[1]);
-    const minutes = match[2] ? Number(match[2]) : 0;
-    return hours * 60 + Math.sign(hours) * minutes;
-}
+
 
 export class Importer {
     private client: TeslaClient;
@@ -175,7 +160,7 @@ export class Importer {
                     if (canonicalize(existingInfo.tariff_content_v2) === canonicalize(info.tariff_content_v2)) {
                         tariffsChanged = false;
                     }
-                } catch (e) {
+                } catch {
                     // ignore
                 }
             }

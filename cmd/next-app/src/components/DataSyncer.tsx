@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface DataSyncerProps {
@@ -19,14 +19,24 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
     // Track unique sync requests to prevent duplicates
     const [lastSyncKey, setLastSyncKey] = useState<string | null>(null);
 
+    // Stabilize dependencies
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
+    const viewDateIso = viewDate ? viewDate.toDateString() : 'no-view-date';
+
     useEffect(() => {
         const abortController = new AbortController();
         const signal = abortController.signal;
 
+        // Rehydrate
+        const startDate = new Date(startIso);
+        const endDate = new Date(endIso);
+        const currentViewDate = viewDateIso === 'no-view-date' ? undefined : new Date(viewDateIso);
+
         const runSyncSequence = async () => {
             // Determine our "Hot Zone" (User's view date +/- 3 days)
             // This ensures the chart fills in ASAP.
-            const centerDate = viewDate || new Date();
+            const centerDate = currentViewDate || new Date();
             // Normalize to midnight to prevent infinite loops when "now" changes by milliseconds
             centerDate.setHours(0, 0, 0, 0);
 
@@ -43,8 +53,8 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
             const safeNow = new Date(now.getTime() + 60 * 60 * 1000);
 
             const cappedHotEnd = hotEnd > safeNow ? safeNow : hotEnd;
-            const cappedEnd = end > safeNow ? safeNow : end;
-            const cappedStart = start > safeNow ? safeNow : start;
+            const cappedEnd = endDate > safeNow ? safeNow : endDate;
+            const cappedStart = startDate > safeNow ? safeNow : startDate;
 
             // If start is in future, don't sync.
             if (cappedStart > safeNow) return;
@@ -52,7 +62,7 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
             // Construct a unique key for this configuration to avoid re-runs
             // Use the capped values for the key to ensure we don't re-run just because the uncapped future changed?
             // Actually, keep dependent on props but check if we've run this *effective* sync.
-            const fullKey = `${siteId}|${start.toISOString()}|${end.toISOString()}|${centerDate.toDateString()}`;
+            const fullKey = `${siteId}|${startDate.toISOString()}|${endDate.toISOString()}|${centerDate.toDateString()}`;
             if (lastSyncKey === fullKey) return;
 
             // 1. STAGE 1: HOT ZONE SYNC
@@ -123,7 +133,7 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
                                         });
                                     }
                                 }
-                            } catch (e) {
+                            } catch {
                                 // ignore
                             }
                         }
@@ -152,7 +162,7 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
 
         // Auto-refresh for current day
         let intervalId: NodeJS.Timeout | undefined;
-        const targetDate = viewDate || new Date();
+        const targetDate = currentViewDate || new Date();
         const now = new Date();
         const isToday = targetDate.toDateString() === now.toDateString();
 
@@ -176,9 +186,8 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
             abortController.abort();
             if (intervalId) clearInterval(intervalId);
         };
-        // Use primitive values for dependencies to avoid infinite re-renders when Date objects are recreated
-        // Normalize viewDate to a date string (no time) to prevent loops when "now" changes.
-    }, [siteId, start.toISOString(), end.toISOString(), viewDate ? viewDate.toDateString() : 'no-view-date', lastSyncKey]);
+        // Dependencies are now primitives
+    }, [siteId, startIso, endIso, viewDateIso, lastSyncKey, router]);
 
     if (status === 'idle') return null;
 

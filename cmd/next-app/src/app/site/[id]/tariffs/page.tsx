@@ -1,7 +1,5 @@
 import { EnergyRepo } from '@/lib/energy-repo';
-import { SettingsRepo } from '@/lib/settings-repo';
 import { formatTouName, formatTimeRange } from '@/lib/format-utils';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { Breadcrumbs } from '@/components/Breadcrumbs';

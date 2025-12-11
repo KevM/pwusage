@@ -1,0 +1,20 @@
+
+> next-app@0.1.0 lint
+> eslint
+
+
+/Users/kevm/github/pwusage/cmd/next-app/src/app/api/trmnl/markup/route.ts
+  287:15  warning  'repo' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  315:18  warning  'e' is defined but never used              @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/components/DataSyncer.tsx
+  136:38  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/components/EnergyChartWithNav.tsx
+  4:21  warning  'useSearchParams' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/components/SiteSetup.tsx
+  4:10  warning  'useRouter' is defined but never used  @typescript-eslint/no-unused-vars
+
+✖ 5 problems (0 errors, 5 warnings)
+

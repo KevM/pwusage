@@ -63,7 +63,7 @@ export default async function SitePage({ params, searchParams }: {
         accessToken: accessToken!,
         refreshToken: refreshToken!,
         tokenRefreshHandler: repo.getLockedRefreshHandler(id),
-        onTokenUpdate: async (newAccess, newRefresh) => {
+        onTokenUpdate: async () => {
             // This is still useful if we want to log or do side effects, 
             // but the handler updates the DB already.
             console.log('Token update callback triggered (Site Page).');
@@ -98,7 +98,7 @@ export default async function SitePage({ params, searchParams }: {
     }
 
     // Check if new site (no data)
-    let hasData = await repo.hasData(id);
+    const hasData = await repo.hasData(id);
 
     // If we have no data, it's possible the DB was wiped but the cache is stale.
     // We must ensure the site exists in the DB before proceeding.
@@ -204,7 +204,7 @@ export default async function SitePage({ params, searchParams }: {
     }
 
     let startMonth = refDate.getMonth();
-    let startYear = refDate.getFullYear();
+    const startYear = refDate.getFullYear();
 
     // If reference date is before the billing day, we are in the previous month's billing cycle
     if (refDate.getDate() < billingDay) {
@@ -240,14 +240,7 @@ export default async function SitePage({ params, searchParams }: {
     };
 
     // Format for display (Server Side to avoid browser timezone shift)
-    const formatForDisplay = (d: Date) => {
-        return new Intl.DateTimeFormat('en-US', {
-            timeZone: finalSite.timezone,
-            month: 'short',
-            day: 'numeric',
-            year: d === end ? 'numeric' : undefined
-        }).format(d);
-    };
+
 
     // We want the Start Date and End Date displayed in the header.
     // NOTE: 'start' and 'end' are constructed as local midnight at server logic, 

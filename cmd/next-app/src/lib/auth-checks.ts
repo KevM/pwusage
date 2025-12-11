@@ -15,7 +15,7 @@ export async function verifySiteAccess(siteId: string): Promise<boolean> {
             if (decoded.sites.includes(siteId)) {
                 return true;
             }
-        } catch (e) {
+        } catch {
             // Invalid token, ignore and fall back to refresh
         }
     }
@@ -50,7 +50,7 @@ export async function setSiteClaims(siteIds: string[]) {
             secure: process.env.NODE_ENV === 'production',
             maxAge: 3600 // 1 hour
         });
-    } catch (e) {
+    } catch {
         // Ignored: Cannot set cookies in Server Components
         // Ignored: Cannot set cookies in Server Components
         // console.debug('Unable to cache site claims (likely in Server Component)', (e as Error).message);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+
 import { updateBillingStartDay } from '@/app/site/[id]/settings/actions';
 
 interface SiteSetupProps {
@@ -9,7 +9,7 @@ interface SiteSetupProps {
 }
 
 export function SiteSetup({ siteId }: SiteSetupProps) {
-    const router = useRouter();
+
     const [billingDay, setBillingDay] = useState(1);
     const [status, setStatus] = useState<'idle' | 'running' | 'complete' | 'error'>('idle');
     const [progress, setProgress] = useState<{ current: string, percent: number }>({ current: '', percent: 0 });
@@ -30,7 +30,7 @@ export function SiteSetup({ siteId }: SiteSetupProps) {
             // 2. Start Import (Current Cycle Only)
             const now = new Date();
             // Determine start of current billing cycle
-            let currentCycleStart = new Date(now.getFullYear(), now.getMonth(), billingDay);
+            const currentCycleStart = new Date(now.getFullYear(), now.getMonth(), billingDay);
             // If today is before billing day (e.g. today 5th, bill day 10th), we are in the cycle that started last month (Nov 10)
             if (now.getDate() < billingDay) {
                 currentCycleStart.setMonth(currentCycleStart.getMonth() - 1);
@@ -92,7 +92,7 @@ export function SiteSetup({ siteId }: SiteSetupProps) {
                             } else if (data.status === 'error') {
                                 throw new Error(data.message);
                             }
-                        } catch (e) {
+                        } catch {
                             // ignore json parse errors
                         }
                     }
@@ -115,7 +115,7 @@ export function SiteSetup({ siteId }: SiteSetupProps) {
             <div className="bg-white dark:bg-zinc-900 p-8 rounded-xl shadow-2xl max-w-md w-full">
                 <h2 className="text-2xl font-bold mb-4">Welcome to Powerwall Usage</h2>
                 <p className="text-gray-600 dark:text-gray-400 mb-6">
-                    It looks like this is a new site. Let's get things set up.
+                    It looks like this is a new site. Let&apos;s get things set up.
                 </p>
 
                 {status === 'idle' && (
