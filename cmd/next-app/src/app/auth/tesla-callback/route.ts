@@ -74,9 +74,11 @@ export async function GET(request: NextRequest) {
         if (products.length > 0) {
             const importer = new Importer(client);
             const repo = new EnergyRepo();
+            const siteIds: string[] = [];
 
             for (const product of products) {
                 const siteId = product.energy_site_id.toString();
+                siteIds.push(siteId);
                 // Ensure site record exists (synced from API)
                 await importer.ensureSite(siteId);
                 // Ensure tokens are stored/updated
@@ -84,6 +86,18 @@ export async function GET(request: NextRequest) {
                 await repo.releaseRefreshLock(siteId);
                 console.log(`[AuthCallback] Ensured site ${siteId} and updated tokens.`);
             }
+
+            // Generate verified site token
+            const { signSiteToken } = await import('@/lib/auth-jwt');
+            const siteToken = signSiteToken(siteIds);
+
+            // Set 24h cookie (matching our token expiry intent)
+            cookieStore.set('site_auth', siteToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                maxAge: 86400
+            });
+            console.log('[AuthCallback] Set site_auth token.');
         }
     } catch (dbError) {
         console.error('[AuthCallback] Failed to update/import sites in DB:', dbError);

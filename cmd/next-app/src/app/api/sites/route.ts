@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { cookies } from 'next/headers';
+import { TeslaClient } from '@/lib/tesla-client';
+import { SiteService } from '@/lib/site-service';
 
 export async function GET() {
     try {
@@ -11,8 +13,22 @@ export async function GET() {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
+        const refreshToken = cookieStore.get('refresh_token')?.value;
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
+
+        const client = new TeslaClient({
+            accessToken: token,
+            refreshToken
+        });
+
         const repo = new EnergyRepo();
-        const sites = await repo.getSites();
+        const service = new SiteService({
+            teslaClient: client,
+            energyRepo: repo,
+            siteAuthToken
+        });
+
+        const sites = await service.getAuthorizedSites();
 
         // Map to simple structure
         const result = sites.map(s => {
