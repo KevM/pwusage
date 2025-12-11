@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from 'react';
 
+import type { HealthChecks } from '../api/health/route';
+
 export default function HealthPage() {
-    const [data, setData] = useState<any>(null);
+    const [data, setData] = useState<HealthChecks | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
@@ -13,8 +15,8 @@ export default function HealthPage() {
             const res = await fetch('/api/health');
             const json = await res.json();
             setData(json);
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err) {
+            setError((err as Error).message);
         } finally {
             setLoading(false);
         }
@@ -75,15 +77,15 @@ export default function HealthPage() {
                         {data?.schema?.details && (
                             <div className="grid grid-cols-3 gap-4 text-center">
                                 <div className="bg-gray-50 dark:bg-zinc-700 p-3 rounded">
-                                    <div className="text-2xl font-bold dark:text-white">{data.schema.details.sites}</div>
+                                    <div className="text-2xl font-bold dark:text-white">{data.schema.details?.sites as number}</div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400">Sites</div>
                                 </div>
                                 <div className="bg-gray-50 dark:bg-zinc-700 p-3 rounded">
-                                    <div className="text-2xl font-bold dark:text-white">{data.schema.details.energyDataRows}</div>
+                                    <div className="text-2xl font-bold dark:text-white">{data.schema.details?.energyDataRows as number}</div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400">Data Rows</div>
                                 </div>
                                 <div className="bg-gray-50 dark:bg-zinc-700 p-3 rounded">
-                                    <div className="text-2xl font-bold dark:text-white">{data.schema.details.energyUsageRows}</div>
+                                    <div className="text-2xl font-bold dark:text-white">{data.schema.details?.energyUsageRows as number}</div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400">Usage Rows</div>
                                 </div>
                             </div>
@@ -102,7 +104,7 @@ export default function HealthPage() {
                         </p>
                         {data?.tesla?.products && (
                             <ul className="list-disc list-inside text-sm text-gray-500 dark:text-gray-400">
-                                {data.tesla.products.map((p: any) => (
+                                {data.tesla.products.map((p) => (
                                     <li key={p.id}>{p.site_name} (ID: {p.id})</li>
                                 ))}
                             </ul>

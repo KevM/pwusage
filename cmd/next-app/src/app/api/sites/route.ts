@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { cookies } from 'next/headers';
-import { TeslaClient } from '@/lib/tesla-client';
+import { TeslaClient, EnergySiteInfo } from '@/lib/tesla-client';
 import { SiteService } from '@/lib/site-service';
 
 export async function GET() {
@@ -32,7 +32,7 @@ export async function GET() {
 
         // Map to simple structure
         const result = sites.map(s => {
-            const info = s.json as any;
+            const info = s.json as unknown as EnergySiteInfo;
             const utility = info?.tariff_content_v2?.utility ?? 'Unknown Utility';
             return {
                 id: s.id,

@@ -22,8 +22,7 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setMounted(true);
+        const timer = setTimeout(() => setMounted(true), 0);
         const interval = setInterval(async () => {
             try {
                 // Fetch fresh data from API route
@@ -38,7 +37,10 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
             }
         }, 60000); // 60 seconds
 
-        return () => clearInterval(interval);
+        return () => {
+            clearTimeout(timer);
+            clearInterval(interval);
+        };
     }, []);
 
     return (

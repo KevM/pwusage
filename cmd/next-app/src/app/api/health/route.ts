@@ -5,8 +5,22 @@ import { TeslaClient } from '@/lib/tesla-client';
 
 export const dynamic = 'force-dynamic';
 
+export interface HealthCheckStatus {
+    status: 'ok' | 'warning' | 'error' | 'unknown';
+    message?: string;
+    details?: Record<string, unknown>;
+    products?: { id: number; site_name: string }[];
+}
+
+export interface HealthChecks {
+    database: HealthCheckStatus;
+    schema: HealthCheckStatus;
+    tesla: HealthCheckStatus;
+    env: HealthCheckStatus;
+}
+
 export async function GET() {
-    const checks: any = {
+    const checks: HealthChecks = {
         database: { status: 'unknown', message: '' },
         schema: { status: 'unknown', details: {} },
         tesla: { status: 'unknown', message: '' },
@@ -20,8 +34,8 @@ export async function GET() {
             status: 'ok',
             message: `Connected. Server time: ${res.rows[0].time}`
         };
-    } catch (error: any) {
-        checks.database = { status: 'error', message: error.message };
+    } catch (error) {
+        checks.database = { status: 'error', message: (error as Error).message };
     }
 
     // 2. Schema/Data Check
@@ -39,8 +53,8 @@ export async function GET() {
                     energyUsageRows: parseInt(usageCount.rows[0].count)
                 }
             };
-        } catch (error: any) {
-            checks.schema = { status: 'error', message: error.message };
+        } catch (error) {
+            checks.schema = { status: 'error', message: (error as Error).message };
         }
     }
 
@@ -69,8 +83,8 @@ export async function GET() {
                 }))
             };
         }
-    } catch (error: any) {
-        checks.tesla = { status: 'error', message: error.message };
+    } catch (error) {
+        checks.tesla = { status: 'error', message: (error as Error).message };
     }
 
     // 4. Env Check

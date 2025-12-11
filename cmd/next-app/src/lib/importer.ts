@@ -5,6 +5,17 @@ import { EnergyRepo, UsageData } from './energy-repo';
 
 import { PoolClient } from 'pg';
 
+interface EnergyDataRow {
+    site_id: string;
+    tariff_id: number;
+    timestamp: string;
+    load_power: number;
+    solar_power: number;
+    grid_power: number;
+    battery_power: number;
+    battery_soc: number | null;
+}
+
 
 
 export class Importer {
@@ -56,7 +67,7 @@ export class Importer {
             ORDER BY timestamp ASC
         `, [siteId, rangeStartStr, rangeEndStr]);
 
-        const existingTimestamps = rowsRes.rows.map((r: any) => new Date(r.timestamp).getTime());
+        const existingTimestamps = rowsRes.rows.map((r: { timestamp: string | Date }) => new Date(r.timestamp).getTime());
         let tsIndex = 0;
 
         while (cursor <= end) {
@@ -146,15 +157,15 @@ export class Importer {
                     const existingInfo = existingSite.json as EnergySiteInfo;
 
                     // Use canonical stringify to prevent flapping on key order differences
-                    const canonicalize = (obj: any): string => {
+                    const canonicalize = (obj: unknown): string => {
                         if (obj === null || typeof obj !== 'object') {
                             return JSON.stringify(obj);
                         }
                         if (Array.isArray(obj)) {
                             return '[' + obj.map(canonicalize).join(',') + ']';
                         }
-                        const keys = Object.keys(obj).sort();
-                        return '{' + keys.map(k => JSON.stringify(k) + ':' + canonicalize(obj[k])).join(',') + '}';
+                        const keys = Object.keys(obj as object).sort();
+                        return '{' + keys.map(k => JSON.stringify(k) + ':' + canonicalize((obj as Record<string, unknown>)[k])).join(',') + '}';
                     };
 
                     if (canonicalize(existingInfo.tariff_content_v2) === canonicalize(info.tariff_content_v2)) {
@@ -401,9 +412,9 @@ export class Importer {
         }
     }
 
-    private async processHistory(client: PoolClient, site: SiteWithTariffs, history: EnergyHistoryEntry[], soeByTimestamp: Map<number, number>, period: string = 'day'): Promise<any[]> {
+    private async processHistory(client: PoolClient, site: SiteWithTariffs, history: EnergyHistoryEntry[], soeByTimestamp: Map<number, number>, period: string = 'day'): Promise<EnergyDataRow[]> {
         const schedule = new Schedule(site.tariffs, site.timezone);
-        const results: any[] = [];
+        const results: EnergyDataRow[] = [];
 
         for (let i = 0; i < history.length; i++) {
             const h = history[i];
@@ -491,13 +502,15 @@ export class Importer {
         };
     }
 
-    private async insertEnergyData(client: PoolClient, site: SiteWithTariffs, data: any[]) {
-        const validRows: any[] = [];
+
+
+    private async insertEnergyData(client: PoolClient, site: SiteWithTariffs, data: EnergyDataRow[]) {
+        const validRows: EnergyDataRow[] = [];
 
         // 1. Get current DB tariffs (Name -> ID) to handle rotation
         const tariffRes = await client.query('SELECT id, name FROM "Tariff" WHERE site_id = $1', [site.id]);
         const dbTariffMap = new Map<string, number>(); // Name -> New ID
-        tariffRes.rows.forEach((r: any) => {
+        tariffRes.rows.forEach((r) => {
             if (r.name) dbTariffMap.set(r.name, r.id);
         });
 
@@ -560,7 +573,7 @@ export class Importer {
 
         if (validRows.length === 0) return;
 
-        const chunks: any[][] = [];
+        const chunks: EnergyDataRow[][] = [];
         const chunkSize = 1000; // Safe batch size
         for (let i = 0; i < validRows.length; i += chunkSize) {
             chunks.push(validRows.slice(i, i + chunkSize));
@@ -569,7 +582,7 @@ export class Importer {
         console.log(`[Import] Batching ${validRows.length} rows into ${chunks.length} chunks.`);
 
         for (const chunk of chunks) {
-            const values: any[] = [];
+            const values: (string | number | null)[] = [];
             const placeholders: string[] = [];
             let pIdx = 1;
 
@@ -603,7 +616,7 @@ export class Importer {
         }
     }
 
-    private aggregateUsage(site: SiteWithTariffs, data: any[]): UsageData[] {
+    private aggregateUsage(site: SiteWithTariffs, data: EnergyDataRow[]): UsageData[] {
         if (data.length === 0) return [];
 
         const first = new Date(data[0].timestamp);
@@ -650,7 +663,7 @@ export class Importer {
     private async insertEnergyUsage(client: PoolClient, usages: UsageData[]) {
         if (usages.length === 0) return;
 
-        const values: any[] = [];
+        const values: (string | number | Date)[] = [];
         const placeholders: string[] = [];
         let pIdx = 1;
 

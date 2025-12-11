@@ -90,11 +90,12 @@ export async function GET(request: Request) {
                 // Sync current month
                 await importer.ensureDataForRange(site.id, start, end);
                 console.log(`[Trmnl] Sync successful for site ${site.id}`);
-            } catch (err: any) {
+            } catch (err) {
                 console.error(`[Trmnl] Sync failed for site ${site.id}:`, err);
 
                 // If auth error, show QR code to re-authenticate
-                if (err.message.includes('401') || err.message.includes('refresh token')) {
+                const errorMsg = (err instanceof Error) ? err.message : String(err);
+                if (errorMsg.includes('401') || errorMsg.includes('refresh token')) {
                     const host = request.headers.get('host') || 'localhost:3000';
                     const protocol = host.includes('localhost') ? 'http' : 'https';
                     const manageUrl = `${protocol}://${host}/trmnl/manage?uuid=${installation.uuid}`;

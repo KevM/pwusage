@@ -81,9 +81,9 @@ export default async function SitePage({ params, searchParams }: {
                 site = ensureResult;
             }
         }
-    } catch (error: any) {
+    } catch (error) {
         console.error('Failed to ensure site:', error);
-        if (error.message && (error.message.includes('401') || error.message.includes('invalid authentication'))) {
+        if ((error as Error).message && ((error as Error).message.includes('401') || (error as Error).message.includes('invalid authentication'))) {
             // ... (redirect logic)
             console.log('Redirecting to login due to auth failure...');
             redirect('/login');
@@ -188,7 +188,7 @@ export default async function SitePage({ params, searchParams }: {
         dateStr = `${year}-${month}-${day}`;
     }
 
-    const hourlyData = await repo.getHourlyEnergyData(id, dateStr, finalSite.timezone);
+    const hourlyData = await repo.getHourlyEnergyData(id, dateStr);
 
     // Calculate period based on billing start day
     const billingDay = finalSite.billing_start_day || 1;

@@ -1,22 +1,17 @@
 import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import { TeslaClient } from './tesla-client';
+import { signSiteToken, verifySiteToken } from './auth-jwt';
 
-const SITE_CLAIMS_COOKIE = 'site_claims';
-const SECRET = process.env.TESLA_OAUTH_SECRET || 'dev-secret-do-not-use-in-prod';
+const SITE_AUTH_COOKIE = 'site_auth';
 
 export async function verifySiteAccess(siteId: string): Promise<boolean> {
     const cookieStore = await cookies();
-    const token = cookieStore.get(SITE_CLAIMS_COOKIE)?.value;
+    const token = cookieStore.get(SITE_AUTH_COOKIE)?.value;
 
     if (token) {
-        try {
-            const decoded = jwt.verify(token, SECRET) as { sites: string[] };
-            if (decoded.sites.includes(siteId)) {
-                return true;
-            }
-        } catch {
-            // Invalid token, ignore and fall back to refresh
+        const sites = verifySiteToken(token);
+        if (sites && sites.includes(siteId)) {
+            return true;
         }
     }
 
@@ -31,28 +26,29 @@ export async function verifySiteAccess(siteId: string): Promise<boolean> {
             .filter(p => p.energy_site_id)
             .map(p => p.energy_site_id.toString());
 
-        // Update cookie
+        // Update cookie (using centralized auth logic)
         await setSiteClaims(allowedSites);
 
         return allowedSites.includes(siteId);
-    } catch (e) {
-        console.error('Failed to verify site access with Tesla API', e);
+    } catch {
+        // Log error but don't leak details
+        console.error('Failed to verify site access with Tesla API');
         return false;
     }
 }
 
 export async function setSiteClaims(siteIds: string[]) {
-    const token = jwt.sign({ sites: siteIds }, SECRET, { expiresIn: '1h' });
+    // We name this setSiteClaims to keep backward compat if imported elsewhere, 
+    // but it sets the authoritative site_auth cookie.
+    const token = signSiteToken(siteIds);
     const cookieStore = await cookies();
     try {
-        cookieStore.set(SITE_CLAIMS_COOKIE, token, {
+        cookieStore.set(SITE_AUTH_COOKIE, token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            maxAge: 3600 // 1 hour
+            maxAge: 86400 // 24 hours
         });
     } catch {
-        // Ignored: Cannot set cookies in Server Components
-        // Ignored: Cannot set cookies in Server Components
-        // console.debug('Unable to cache site claims (likely in Server Component)', (e as Error).message);
+        // Ignored: Cannot set cookies in Server Components if headers sent
     }
 }
