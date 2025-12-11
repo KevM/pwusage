@@ -23,7 +23,7 @@ export async function GET() {
         const client = new TeslaClient({
             accessToken: token,
             refreshToken: refreshToken,
-            onTokenUpdate: (newAccess, newRefresh) => {
+            onTokenUpdate: () => {
                 // Token handling logic
             }
         });

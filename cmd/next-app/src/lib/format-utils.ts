@@ -23,8 +23,8 @@ export function formatTimeRange(
 
     // If toHour is null, it usually implies the end of the day (midnight)
     // But we need to be careful. If it's 20:00 - null, it likely means 20:00 - 24:00
-    let tH = toHour;
-    let tM = toMinute ?? 0;
+    const tH = toHour;
+    const tM = toMinute ?? 0;
 
     const formatTime = (h: number, m: number) => {
         return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;

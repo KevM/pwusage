@@ -23,7 +23,7 @@ export function EnergyChart({ data }: { data: HourlyData[] }) {
 
     return (
         <div className="w-full bg-white p-4 rounded shadow">
-            <h3 className="text-xl font-semibold mb-4">Today's Hourly Energy (kWh) & Battery SOC (%)</h3>
+            <h3 className="text-xl font-semibold mb-4">Today&apos;s Hourly Energy (kWh) & Battery SOC (%)</h3>
             <ResponsiveContainer width="100%" height={400}>
                 <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" />

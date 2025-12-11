@@ -82,7 +82,7 @@ export async function GET() {
         }
     };
 
-    const overallStatus = Object.values(checks).every((c: any) => c.status === 'ok') ? 200 : 500;
+
     // Allow 200 even if some fail, so frontend can display partial results? 
     // Actually, usually 200 is fine if we return JSON structure describing errors.
 

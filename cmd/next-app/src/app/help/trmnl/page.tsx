@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import Link from 'next/link';
+
 
 export default function TrmnlHelpPage() {
     return (
@@ -11,7 +11,7 @@ export default function TrmnlHelpPage() {
                     Your Energy on Display
                 </h1>
                 <p className="text-xl text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
-                    Visualize your home's energy production and consumption at a glance with Trmnl.
+                    Visualize your home&apos;s energy production and consumption at a glance with Trmnl.
                     Always on, zero distractions.
                 </p>
             </div>

@@ -1,4 +1,4 @@
-import { pool, EnergyUsage, Tariff, Site, TariffSeason, TariffSchedule } from './db';
+import { pool, Tariff, Site, TariffSeason, TariffSchedule } from './db';
 import { getDbReady } from './db-init';
 import { Schedule } from './schedule';
 
@@ -8,66 +8,9 @@ const siteCache = globalForCache.siteCache || new Map<string, { data: SiteWithTa
 if (process.env.NODE_ENV !== 'production') globalForCache.siteCache = siteCache;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-function formatYMD(date: Date, timeZone: string): string {
-    return new Intl.DateTimeFormat('en-CA', {
-        timeZone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-    }).format(date); // YYYY-MM-DD
-}
 
-function getHourInTimeZone(date: Date, timeZone: string): number {
-    const fmt = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        hour: '2-digit',
-        hourCycle: 'h23'
-    });
-    const parts = fmt.formatToParts(date);
-    const hourStr = parts.find(p => p.type === 'hour')?.value;
-    return Number(hourStr);
-}
 
-function getOffsetMinutesForDate(dateStr: string, timeZone: string): number | null {
-    const [y, m, d] = dateStr.split('-').map(Number);
-    if ([y, m, d].some(v => Number.isNaN(v))) return null;
-    const baselineUtc = Date.UTC(y, m - 1, d, 12, 0, 0);
-    const fmt = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        timeZoneName: 'shortOffset'
-    });
-    const parts = fmt.formatToParts(new Date(baselineUtc));
-    const tzName = parts.find(p => p.type === 'timeZoneName')?.value ?? '';
-    const match = tzName.match(/GMT([+-]\d{2})(?::?(\d{2}))?/i);
-    if (!match) return null;
-    const hours = Number(match[1]);
-    const minutes = match[2] ? Number(match[2]) : 0;
-    return hours * 60 + Math.sign(hours) * minutes;
-}
 
-function getUtcRangeForDate(dateStr: string, timeZone: string, clampToNow: boolean): { start: Date; end: Date } {
-    const [y, m, d] = dateStr.split('-').map(Number);
-    const offsetMinutes = getOffsetMinutesForDate(dateStr, timeZone);
-    if ([y, m, d].some(v => Number.isNaN(v)) || offsetMinutes === null) {
-        const fallback = new Date(dateStr + 'T00:00:00');
-        const start = new Date(fallback);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-        return { start, end };
-    }
-    const startUtcMs = Date.UTC(y, m - 1, d, 0, 0, 0) - offsetMinutes * 60 * 1000;
-    let endUtcMs = startUtcMs + 24 * 60 * 60 * 1000;
-
-    if (clampToNow) {
-        const now = new Date();
-        const nowDateStr = formatYMD(now, timeZone);
-        if (nowDateStr === dateStr) {
-            endUtcMs = Math.min(endUtcMs, now.getTime());
-        }
-    }
-
-    return { start: new Date(startUtcMs), end: new Date(endUtcMs) };
-}
 
 export interface UsageData {
     start: Date;
@@ -180,7 +123,7 @@ export class EnergyRepo {
         }
 
         for (const [key, data] of aggregation) {
-            const [_, __, buyRateStr, sellRateStr] = key.split('|');
+            const [, , buyRateStr, sellRateStr] = key.split('|');
             const buyRate = parseFloat(buyRateStr);
             const sellRate = parseFloat(sellRateStr);
 
@@ -247,7 +190,7 @@ export class EnergyRepo {
         return rows.length > 0;
     }
 
-    async getHourlyEnergyData(siteId: string, dateStr: string, timeZone?: string): Promise<Array<{
+    async getHourlyEnergyData(siteId: string, dateStr: string): Promise<Array<{
         hour: number;
         homeUsage: number;
         solarProduction: number;

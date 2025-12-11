@@ -19,7 +19,7 @@ export function verifySiteToken(token: string): string[] | null {
             return decoded.sites;
         }
         return null;
-    } catch (e) {
+    } catch {
         return null;
     }
 }

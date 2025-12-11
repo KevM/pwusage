@@ -1,0 +1,56 @@
+
+> next-app@0.1.0 lint
+> eslint
+
+
+/Users/kevm/github/pwusage/cmd/next-app/src/app/api/health/route.ts
+  85:11  warning  'overallStatus' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/app/api/trmnl/markup/route.ts
+  287:15  warning  'repo' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  315:18  warning  'e' is defined but never used              @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/app/help/trmnl/page.tsx
+  4:8  warning  'Link' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/app/trmnl/install/page.tsx
+  72:8  warning  React Hook useEffect has a missing dependency: 'autoConnecting'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+/Users/kevm/github/pwusage/cmd/next-app/src/components/DataSyncer.tsx
+  126:38  warning  'e' is defined but never used                                                                                                                @typescript-eslint/no-unused-vars
+  181:8   warning  React Hook useEffect has missing dependencies: 'end', 'router', 'start', and 'viewDate'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  181:17  warning  React Hook useEffect has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked     react-hooks/exhaustive-deps
+  181:38  warning  React Hook useEffect has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked     react-hooks/exhaustive-deps
+  181:57  warning  React Hook useEffect has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked     react-hooks/exhaustive-deps
+
+/Users/kevm/github/pwusage/cmd/next-app/src/components/EnergyChartWithNav.tsx
+   26:11  warning  'searchParams' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  144:42  warning  'e' is defined but never used                      @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/components/GlobalHeader.tsx
+  4:8  warning  'Image' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/components/NoSupportedProducts.tsx
+  1:8  warning  'Link' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/components/SiteSetup.tsx
+  12:11  warning  'router' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  95:34  warning  'e' is defined but never used                @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/lib/auth-checks.ts
+  18:18  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+  53:14  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/lib/auth-jwt.ts
+  22:14  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/lib/db.ts
+   1:16  warning  'types' is defined but never used   @typescript-eslint/no-unused-vars
+  27:24  warning  'client' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/kevm/github/pwusage/cmd/next-app/src/lib/energy-repo.ts
+  11:10  warning  'formatYMD' is defined but never used                @typescript-eslint/no-unused-vars
+  22:10  warning  'getOffsetMinutesForDate' is defined but never used  @typescript-eslint/no-unused-vars
+
+✖ 23 problems (0 errors, 23 warnings)
+
