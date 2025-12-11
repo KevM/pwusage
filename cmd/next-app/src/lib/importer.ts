@@ -148,39 +148,6 @@ export class Importer {
         }
     }
 
-    async pruneOldData(siteId: string, retentionDays: number) {
-        const pruneDate = new Date();
-        pruneDate.setDate(pruneDate.getDate() - retentionDays);
-        // PG accepts Date object
-        console.log(`[Importer] Pruning data older than ${pruneDate.toISOString()} for site ${siteId}`);
-
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-
-            const resData = await client.query(`DELETE FROM "EnergyData" WHERE site_id = $1 AND timestamp < $2`, [siteId, pruneDate]);
-            if ((resData.rowCount ?? 0) > 0) {
-                console.log(`[Importer] Deleted ${resData.rowCount} rows from EnergyData`);
-            }
-
-            const resUsage = await client.query(`
-                DELETE FROM "EnergyUsage" 
-                WHERE tariff_id IN (SELECT id FROM "Tariff" WHERE site_id = $1) 
-                AND start < $2
-            `, [siteId, pruneDate]);
-            if ((resUsage.rowCount ?? 0) > 0) {
-                console.log(`[Importer] Deleted ${resUsage.rowCount} rows from EnergyUsage`);
-            }
-
-            await client.query('COMMIT');
-        } catch (e) {
-            await client.query('ROLLBACK');
-            throw e;
-        } finally {
-            client.release();
-        }
-    }
-
     async ensureSite(siteId: string): Promise<SiteWithTariffs | undefined> {
         try {
             const info = await this.client.getEnergySiteInfo(siteId);
