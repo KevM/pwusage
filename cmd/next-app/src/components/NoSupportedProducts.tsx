@@ -1,4 +1,4 @@
-import Link from 'next/link';
+
 
 export function NoSupportedProducts() {
     return (
@@ -23,7 +23,7 @@ export function NoSupportedProducts() {
                 No Powerwalls Found
             </h3>
             <p className="text-slate-500 dark:text-slate-400 max-w-sm mb-6">
-                We couldn't find any Powerwall sites linked to your Tesla account. This dashboard is designed for Powerwall monitoring.
+                We couldn&apos;t find any Powerwall sites linked to your Tesla account. This dashboard is designed for Powerwall monitoring.
             </p>
             <div className="flex gap-4">
                 <a

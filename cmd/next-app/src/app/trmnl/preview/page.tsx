@@ -51,7 +51,7 @@ export default async function Page(props: { searchParams: Promise<any> }) {
 
             <div className="mt-8 pt-8 border-t border-gray-200">
                 <h2 className="text-lg font-semibold mb-4">Manual UUID Preview</h2>
-                <p className="text-sm text-gray-600 mb-4">Enter a random UUID to test the "New Installation" (QR Code) screen.</p>
+                <p className="text-sm text-gray-600 mb-4">Enter a random UUID to test the &quot;New Installation&quot; (QR Code) screen.</p>
                 <form action="/trmnl/preview" method="GET" className="flex gap-4">
                     <input
                         type="text"

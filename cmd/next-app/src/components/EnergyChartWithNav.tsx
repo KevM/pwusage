@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface HourlyData {
@@ -23,7 +23,7 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
     const [loading, setLoading] = useState(false);
     const [isDark, setIsDark] = useState(false);
     const router = useRouter();
-    const searchParams = useSearchParams();
+
     const dateInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -141,7 +141,7 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
                             onClick={() => {
                                 try {
                                     dateInputRef.current?.showPicker();
-                                } catch (e) {
+                                } catch {
                                     // Fallback for browsers that don't support showPicker (though most modern ones do)
                                     // The input itself is clicked, so the native picker should trigger anyway.
                                 }

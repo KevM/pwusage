@@ -78,7 +78,7 @@ export async function GET(request: Request) {
                 accessToken: site.access_token || 'expired',
                 refreshToken: site.refresh_token,
                 tokenRefreshHandler: repo.getLockedRefreshHandler(site.id),
-                onTokenUpdate: async (newAccess, newRefresh) => {
+                onTokenUpdate: async () => {
                     console.log(`[Trmnl] Token update callback triggered for site ${site.id}`);
                 }
             });
@@ -270,8 +270,8 @@ export async function POST(request: Request) {
                 const formData = await clone.formData();
                 uuid = (formData.get('uuid') || formData.get('user_uuid')) as string;
             }
-        } catch (e) {
-            console.log('[TrmnlMarkup] Failed to parse POST body:', e);
+        } catch {
+            console.log('[TrmnlMarkup] Failed to parse POST body');
         }
     }
 
@@ -284,8 +284,6 @@ export async function POST(request: Request) {
     // Fallback: If no UUID, check if we have a Site Token and find installation by Site
     const authHeader = request.headers.get('Authorization');
     if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.split(' ')[1];
-        const repo = new EnergyRepo();
         // We need a method to get Site by Token. 
         // For now, let's just query TrmnlInstallation directly? 
         // No, we need to verify the token matches a site.
@@ -313,7 +311,7 @@ export async function POST(request: Request) {
             // Let's return a specific error that PreviewClient can handle?
             // Or better, update PreviewClient to fetch the UUID first.
             // But this is server-side fix attempt.
-        } catch (e) { }
+        } catch { }
     }
 
     // If we still don't have UUID, return error BUT with 400 so client knows

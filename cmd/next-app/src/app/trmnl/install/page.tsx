@@ -58,16 +58,17 @@ function InstallContent() {
                     // Auto-connect if only one site
                     if (data.length === 1) {
                         setAutoConnecting(true);
-                        // triggerSetup(firstSiteId, code); // Call separate function to avoid stale state issues in effect? 
-                        // Actually, we can just call the setup logic here directly or use a ref.
-                        // Let's call a minimal version of handleSetup here.
                         performSetup(firstSiteId, code, installationCallbackUrl, installationUuid);
+                    } else {
+                        if (!redirecting) setLoading(false);
                     }
+                } else {
+                    if (!redirecting) setLoading(false);
                 }
             })
-            .catch(() => setError('Failed to load sites'))
-            .finally(() => {
-                if (!redirecting && !autoConnecting) setLoading(false);
+            .catch(() => {
+                setError('Failed to load sites');
+                setLoading(false);
             });
     }, [code, installationCallbackUrl, installationUuid]); // Only run once on mount (with code)
 
@@ -146,7 +147,7 @@ function InstallContent() {
                         <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 rounded border border-yellow-200 dark:border-yellow-700">
                             <h3 className="font-semibold text-yellow-800 dark:text-yellow-200 mb-2">No Energy Sites Found</h3>
                             <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-4">
-                                We couldn't find any compatible energy sites associated with your account.
+                                We couldn&apos;t find any compatible energy sites associated with your account.
                             </p>
                         </div>
                     )}

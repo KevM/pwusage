@@ -1,4 +1,4 @@
-import { Pool, types } from 'pg';
+import { Pool } from 'pg';
 
 // Force int8 to be parsed as number (if fits) or string? 
 // By default pg parses bigint as string. We can leave it or force it.
@@ -24,7 +24,7 @@ export const pool = globalForDb.pool || new Pool({
 });
 
 // Add error handler to prevent crashing on idle client errors
-pool.on('error', (err, client) => {
+pool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);
   // Don't process.exit() here; just log it. 
   // The pool will discard the client and create a new one when needed.
