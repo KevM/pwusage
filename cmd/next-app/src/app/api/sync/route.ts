@@ -53,8 +53,9 @@ export async function GET(request: Request) {
 
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: "complete" })}\n\n`));
                     controller.close();
-                } catch (err: any) {
-                    const errJson = JSON.stringify({ status: "error", message: err.message });
+                } catch (err) {
+                    const message = (err instanceof Error) ? err.message : String(err);
+                    const errJson = JSON.stringify({ status: "error", message });
                     controller.enqueue(encoder.encode(`data: ${errJson}\n\n`));
                     controller.close();
                 }

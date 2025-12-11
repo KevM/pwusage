@@ -38,7 +38,7 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });
         }
 
-        const hourlyData = await repo.getHourlyEnergyData(siteId, dateStr, site.timezone);
+        const hourlyData = await repo.getHourlyEnergyData(siteId, dateStr);
 
         return NextResponse.json(
             {

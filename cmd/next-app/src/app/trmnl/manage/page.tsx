@@ -73,8 +73,8 @@ function ManageContent() {
 
             if (!res.ok) throw new Error(await res.text());
             setSuccess('Settings saved!');
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err) {
+            setError((err as Error).message);
         } finally {
             setLoading(false);
         }

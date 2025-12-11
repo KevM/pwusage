@@ -29,6 +29,10 @@ export interface SiteWithTariffs extends Site {
     tariffs: Tariff[];
 }
 
+interface SiteIdRow {
+    id: string;
+}
+
 export class EnergyRepo {
     async getUsageByTOU(siteId: string, start: Date, end: Date): Promise<UsageData[]> {
         const tariffsResult = await pool.query('SELECT * FROM "Tariff" WHERE site_id = $1', [siteId]);
@@ -174,8 +178,8 @@ export class EnergyRepo {
 
     async getSiteIds(): Promise<string[]> {
         await getDbReady();
-        const { rows } = await pool.query('SELECT id FROM "Site"');
-        return rows.map((r: any) => r.id);
+        const { rows } = await pool.query<SiteIdRow>('SELECT id FROM "Site"');
+        return rows.map((r) => r.id);
     }
 
     async getSites(): Promise<Site[]> {

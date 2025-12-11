@@ -103,9 +103,10 @@ export function SiteSetup({ siteId }: SiteSetupProps) {
             setTimeout(() => {
                 window.location.reload();
             }, 1000);
-        } catch (err: any) {
+        } catch (err) {
             console.error(err);
-            setError(err.message || 'An error occurred');
+            const message = (err instanceof Error) ? err.message : String(err);
+            setError(message || 'An error occurred');
             setStatus('error');
         }
     };

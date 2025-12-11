@@ -26,10 +26,15 @@ export class SettingsRepo {
       return;
     }
 
+    interface AppSettingRow {
+      key: string;
+      value: string;
+    }
+
     console.log('[SettingsRepo] Loading settings from DB');
-    const { rows } = await pool.query('SELECT key, value FROM "AppSettings"');
+    const { rows } = await pool.query<AppSettingRow>('SELECT key, value FROM "AppSettings"');
     const newCache: AppSettingsCache = {};
-    rows.forEach((r: any) => {
+    rows.forEach((r) => {
       newCache[r.key] = r.value;
     });
 

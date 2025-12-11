@@ -139,8 +139,8 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
                         }
                     }
                 }
-            } catch (err: any) {
-                if (err.name !== 'AbortError') {
+            } catch (err) {
+                if ((err as Error).name !== 'AbortError') {
                     console.error('Info sync error:', err);
                 }
             } finally {
