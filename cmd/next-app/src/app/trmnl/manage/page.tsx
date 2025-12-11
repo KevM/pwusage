@@ -164,7 +164,7 @@ function ManageContent() {
 
                     <div className="mt-4 text-center">
                         <a href={`https://usetrmnl.com/plugin_settings/${uuid}/edit?force_refresh=true`} target="_blank" rel="noreferrer" className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                            Back to Trmnl Dashboard
+                            Back to Trmnl
                         </a>
                     </div>
                 </div>
