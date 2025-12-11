@@ -1,14 +1,25 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
+
+import { Breadcrumbs } from '@/components/Breadcrumbs';
 
 function InstallContent() {
     const searchParams = useSearchParams();
-    const router = useRouter();
     const code = searchParams.get('code');
     const installationCallbackUrl = searchParams.get('installation_callback_url');
-    const installationUuid = searchParams.get('installation_uuid');
+
+    // detailed_install_url has the uuid in it usually, but we also look for uuid or installation_uuid
+    let installationUuid = searchParams.get('installation_uuid') || searchParams.get('uuid');
+
+    // Fallback: extract from callback URL if present
+    if (!installationUuid && installationCallbackUrl) {
+        const match = installationCallbackUrl.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+        if (match) {
+            installationUuid = match[0];
+        }
+    }
 
     const [sites, setSites] = useState<{ id: string, name: string }[]>([]);
     const [selectedSite, setSelectedSite] = useState('');
@@ -54,7 +65,7 @@ function InstallContent() {
                     }
                 }
             })
-            .catch(err => setError('Failed to load sites'))
+            .catch(() => setError('Failed to load sites'))
             .finally(() => {
                 if (!redirecting && !autoConnecting) setLoading(false);
             });
@@ -102,39 +113,64 @@ function InstallContent() {
     if (error) return <div className="p-8 text-red-500">Error: {error}</div>;
 
     return (
-        <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-md">
-            <h1 className="text-2xl font-bold mb-6">Connect to Trmnl</h1>
+        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
+            <div className="w-full max-w-2xl">
+                <Breadcrumbs items={[
+                    { label: 'Dashboard', href: '/' },
+                    { label: 'Trmnl Connect' }
+                ]} />
 
-            {sites.length > 1 ? (
-                <div className="mb-4">
-                    <label className="block text-sm font-medium mb-2">Select Site to Display</label>
-                    <select
-                        value={selectedSite}
-                        onChange={e => setSelectedSite(e.target.value)}
-                        className="w-full p-2 border rounded"
-                    >
-                        {sites.map(site => (
-                            <option key={site.id} value={site.id}>{site.name}</option>
-                        ))}
-                    </select>
-                </div>
-            ) : sites.length === 1 ? (
-                // Should generally not be reached due to auto-connect, but good fallback
-                <div className="mb-4">
-                    <p className="text-sm font-medium mb-1">Link to Site:</p>
-                    <p className="font-bold">{sites[0].name}</p>
-                </div>
-            ) : (
-                <div className="mb-4 text-red-500">No sites found. Please set up a site first.</div>
-            )}
+                <div className="mt-8 bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800">
+                    <h1 className="text-2xl font-bold mb-6">Connect to Trmnl</h1>
 
-            <button
-                onClick={handleSetup}
-                disabled={!selectedSite || !code}
-                className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:opacity-50"
-            >
-                Connect
-            </button>
+                    {sites.length > 1 ? (
+                        <div className="mb-6">
+                            <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Select Site to Display</label>
+                            <select
+                                value={selectedSite}
+                                onChange={e => setSelectedSite(e.target.value)}
+                                className="w-full p-2 border rounded dark:bg-slate-800 dark:border-slate-700"
+                            >
+                                {sites.map(site => (
+                                    <option key={site.id} value={site.id}>{site.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    ) : sites.length === 1 ? (
+                        // Should generally not be reached due to auto-connect, but good fallback
+                        <div className="mb-6">
+                            <p className="text-sm font-medium mb-1 text-gray-500">Link to Site:</p>
+                            <p className="font-bold text-lg">{sites[0].name}</p>
+                        </div>
+                    ) : (
+                        <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 rounded border border-yellow-200 dark:border-yellow-700">
+                            <h3 className="font-semibold text-yellow-800 dark:text-yellow-200 mb-2">No Energy Sites Found</h3>
+                            <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-4">
+                                We couldn't find any compatible energy sites associated with your account.
+                            </p>
+                        </div>
+                    )}
+
+                    <div className="flex gap-4">
+                        <button
+                            onClick={handleSetup}
+                            disabled={!selectedSite || !code}
+                            className="flex-1 bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                        >
+                            Connect
+                        </button>
+
+                        <a
+                            href="https://usetrmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded hover:bg-gray-200 text-center transition-colors dark:bg-slate-800 dark:text-gray-300 dark:hover:bg-slate-700"
+                        >
+                            Back to Trmnl
+                        </a>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }
