@@ -2,7 +2,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SiteService } from './site-service';
 import { Site } from './db';
-import { FleetProduct } from './tesla-client';
+import { FleetProduct, TeslaClient } from './tesla-client';
+import { EnergyRepo } from './energy-repo';
 import * as authJwt from './auth-jwt';
 
 // Mock auth-jwt to verify it's being called
@@ -31,8 +32,8 @@ describe('SiteService Security', () => {
         mockEnergyRepo.getSites.mockResolvedValue([mockSite, mockUnauthorizedSite]);
 
         const service = new SiteService({
-            teslaClient: mockTeslaClient as any,
-            energyRepo: mockEnergyRepo as any
+            teslaClient: mockTeslaClient as unknown as TeslaClient,
+            energyRepo: mockEnergyRepo as unknown as EnergyRepo
         });
 
         const sites = await service.getAuthorizedSites();
@@ -50,8 +51,8 @@ describe('SiteService Security', () => {
         vi.mocked(authJwt.verifySiteToken).mockReturnValue(['12345']);
 
         const service = new SiteService({
-            teslaClient: mockTeslaClient as any,
-            energyRepo: mockEnergyRepo as any,
+            teslaClient: mockTeslaClient as unknown as TeslaClient,
+            energyRepo: mockEnergyRepo as unknown as EnergyRepo,
             siteAuthToken: 'valid_token'
         });
 
@@ -72,8 +73,8 @@ describe('SiteService Security', () => {
         vi.mocked(authJwt.verifySiteToken).mockReturnValue(null);
 
         const service = new SiteService({
-            teslaClient: mockTeslaClient as any,
-            energyRepo: mockEnergyRepo as any,
+            teslaClient: mockTeslaClient as unknown as TeslaClient,
+            energyRepo: mockEnergyRepo as unknown as EnergyRepo,
             siteAuthToken: 'invalid_token'
         });
 
@@ -91,8 +92,8 @@ describe('SiteService Security', () => {
             vi.mocked(authJwt.verifySiteToken).mockReturnValue(['12345']);
 
             const service = new SiteService({
-                teslaClient: mockTeslaClient as any,
-                energyRepo: mockEnergyRepo as any,
+                teslaClient: mockTeslaClient as unknown as TeslaClient,
+                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
                 siteAuthToken: 'valid_token'
             });
 
@@ -105,8 +106,8 @@ describe('SiteService Security', () => {
             vi.mocked(authJwt.verifySiteToken).mockReturnValue(['12345']);
 
             const service = new SiteService({
-                teslaClient: mockTeslaClient as any,
-                energyRepo: mockEnergyRepo as any,
+                teslaClient: mockTeslaClient as unknown as TeslaClient,
+                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
                 siteAuthToken: 'valid_token'
             });
 
@@ -125,8 +126,8 @@ describe('SiteService Security', () => {
             mockTeslaClient.getProducts.mockResolvedValue([{ energy_site_id: 12345 }]);
 
             const service = new SiteService({
-                teslaClient: mockTeslaClient as any,
-                energyRepo: mockEnergyRepo as any
+                teslaClient: mockTeslaClient as unknown as TeslaClient,
+                energyRepo: mockEnergyRepo as unknown as EnergyRepo
             });
 
             const isValid = await service.validateSiteAccess('12345');

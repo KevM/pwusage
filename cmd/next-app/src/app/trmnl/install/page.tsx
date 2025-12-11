@@ -92,8 +92,8 @@ function InstallContent() {
             } else {
                 alert('Setup complete! You can close this window.');
             }
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err) {
+            setError((err as Error).message);
             setLoading(false);
             setAutoConnecting(false);
         }

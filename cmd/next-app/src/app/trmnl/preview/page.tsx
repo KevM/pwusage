@@ -7,7 +7,13 @@ export const dynamic = 'force-dynamic';
 
 import { cookies } from 'next/headers';
 
-export default async function Page(props: { searchParams: Promise<any> }) {
+// Helper to get first value if array
+function getParam(param: string | string[] | undefined): string | undefined {
+    if (Array.isArray(param)) return param[0];
+    return param;
+}
+
+export default async function Page(props: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
     const cookieStore = await cookies();
     const token = cookieStore.get('access_token');
 
@@ -26,7 +32,7 @@ export default async function Page(props: { searchParams: Promise<any> }) {
         rows = res.rows as { access_token: string; site_name: string; site_id: string }[];
     }
 
-    const searchParams = typeof props?.searchParams?.then === 'function' ? await props.searchParams : props.searchParams;
+    const searchParams = await props.searchParams;
     const activeSiteId = searchParams?.site_id || rows[0]?.site_id;
     const activeSite = rows.find(r => r.site_id === activeSiteId) || rows[0];
 
@@ -44,7 +50,7 @@ export default async function Page(props: { searchParams: Promise<any> }) {
             <Breadcrumbs items={breadcrumbs} />
             <h1 className="text-2xl font-bold mb-6 mt-4">Trmnl View Preview</h1>
             {searchParams?.uuid ? (
-                <PreviewClient manualUuid={searchParams.uuid} />
+                <PreviewClient manualUuid={getParam(searchParams.uuid)} />
             ) : rows.length > 0 ? (
                 <PreviewClient tokens={rows} initialSiteId={activeSite?.site_id} />
             ) : null}
@@ -58,7 +64,7 @@ export default async function Page(props: { searchParams: Promise<any> }) {
                         name="uuid"
                         placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
                         className="flex-1 p-2 border rounded"
-                        defaultValue={searchParams?.uuid}
+                        defaultValue={getParam(searchParams?.uuid)}
                     />
                     <button type="submit" className="bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-700">
                         Preview UUID

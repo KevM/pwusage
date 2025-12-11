@@ -39,7 +39,7 @@ export interface Site {
   updated: Date;
   installed: Date;
   timezone: string;
-  json: any | null; // pg jsonb returns object
+  json: unknown | null; // pg jsonb returns object
   billing_start_day: number;
   access_token?: string | null;
   refresh_token?: string | null;
@@ -111,7 +111,7 @@ export interface TrmnlInstallation {
   site_id: string;
   plugin_setting_id: number | null;
   created_at: Date;
-  json?: any;
+  json?: unknown;
 }
 
 export interface SiteWithTariffs extends Site {

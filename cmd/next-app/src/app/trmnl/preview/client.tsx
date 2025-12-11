@@ -14,8 +14,9 @@ export function PreviewClient({ tokens, initialSiteId, manualUuid }: { tokens?: 
     useEffect(() => {
         if (manualUuid) return;
         const token = tokens?.find(t => t.site_id === initialSiteId)?.access_token || tokens?.[0]?.access_token;
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        if (token) setSelectedToken(token);
+        if (token) {
+            setTimeout(() => setSelectedToken(token), 0);
+        }
     }, [initialSiteId, tokens, manualUuid]);
 
     useEffect(() => {

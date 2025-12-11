@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import Link from 'next/link';
-import { TeslaClient } from '@/lib/tesla-client';
+import { TeslaClient, FleetProduct } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { DashboardCards } from '@/components/DashboardCards';
@@ -28,7 +28,15 @@ export default async function Home() {
     );
   }
 
-  let productsWithTariff: any[] = [];
+  interface ProductWithTariff extends FleetProduct {
+    currentTariff: string;
+    liveBatteryPower: number;
+    liveSolarPower: number;
+    liveLoadPower: number;
+    liveGridPower: number;
+  }
+
+  let productsWithTariff: ProductWithTariff[] = [];
   let hasProducts = false;
   let fetchError = null;
 

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 
 
 export function GlobalHeader() {
@@ -10,8 +11,7 @@ export function GlobalHeader() {
                 <div className="flex flex-row items-center justify-between gap-4">
                     <Link href="/" className="flex items-center gap-3 group">
                         <div className="w-10 h-10 flex-shrink-0 relative overflow-hidden" style={{ width: '40px', height: '40px', minWidth: '40px', maxWidth: '40px' }}>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
+                            <Image
                                 src="/icon.png"
                                 alt="App Icon"
                                 className="w-full h-full block object-cover group-hover:opacity-90 transition-opacity"
