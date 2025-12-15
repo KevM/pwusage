@@ -1,4 +1,4 @@
-import { pool, Tariff, Site, TariffSeason, TariffSchedule, User } from './db';
+import { pool, Tariff, Site, TariffSeason, TariffSchedule } from './db';
 import { getDbReady } from './db-init';
 import { Schedule } from './schedule';
 

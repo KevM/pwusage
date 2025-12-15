@@ -44,7 +44,7 @@ export async function GET(request: Request) {
             accessToken: token,
             refreshToken: refreshToken,
             tokenRefreshHandler: repo.getLockedRefreshHandler(siteId),
-            onTokenUpdate: (newAccess, newRefresh) => {
+            onTokenUpdate: () => {
                 // If using DB tokens, the repo handler updates DB. 
                 // We can optionally update cookies if we wanted to keep them in sync, 
                 // but Server Actions/Routes can't easily set cookies in a streaming response or sometimes restrict it.
