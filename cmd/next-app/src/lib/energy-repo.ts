@@ -86,6 +86,7 @@ export class EnergyRepo {
             // Let's declare them locally for this loop scope
             const ts = new Date(row.timestamp);
 
+            const year = ts.getFullYear();
             const month = ts.getMonth() + 1; // 1-12
             const day = ts.getDate();
             const hour = ts.getHours();
@@ -93,7 +94,7 @@ export class EnergyRepo {
 
             // We bypass the Schedule's built-in "Intl" conversion which tries to shift timezones.
             // We TRUST that 'ts' represents the Wall Clock time at the site.
-            const tp = schedule.getTariffPeriodForWallClock(month, day, hour, weekday, ts);
+            const tp = schedule.getTariffPeriodForWallClock(month, day, hour, weekday, ts, year);
 
             let touName = 'Unknown';
             let tariffName = 'Unknown';
