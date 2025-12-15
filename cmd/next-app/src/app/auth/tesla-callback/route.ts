@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
         // Note: Fleet API might not expose /api/1/users/me easily without specific scopes.
         // Assuming we can get 'email' from ID Token or fetch profile.
         // Let's decode ID token first for email/sub.
-        const idTokenDecoded = jwt.decode(authData.id_token) as any;
+        const idTokenDecoded = jwt.decode(authData.id_token) as { sub?: string; email?: string } | null;
         const userId = idTokenDecoded?.sub || idTokenDecoded?.email || 'unknown_user';
         const userEmail = idTokenDecoded?.email;
 
