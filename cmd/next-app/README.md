@@ -2,6 +2,12 @@
 
 This application helps you track your Powerwall usage and monitor your energy production and consumption. The main goal is for users who have time of use (TOU) rates and want to optimize their energy usage. 
 
+
+## ToDo
+
+* Trmnl markdown is not showing all tariff periods
+* Research how trmnl integration workflow "should" work
+
 ## Configuration
 
 Create a `.env` file in the root directory (or use `env_file` in Docker) with the following variables:

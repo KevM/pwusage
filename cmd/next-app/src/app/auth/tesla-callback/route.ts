@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { NextRequest, NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import { EnergyRepo } from '@/lib/energy-repo';
+import { pool } from '@/lib/db';
 
 
 export async function GET(request: NextRequest) {
@@ -71,6 +72,24 @@ export async function GET(request: NextRequest) {
         console.log('[AuthCallback] Fetching products to ensure sites exist in DB...');
         const products = await client.getProducts();
 
+        // [MIGRATION] Fetch User Profile to get a stable User ID
+        // Note: Fleet API might not expose /api/1/users/me easily without specific scopes.
+        // Assuming we can get 'email' from ID Token or fetch profile.
+        // Let's decode ID token first for email/sub.
+        const idTokenDecoded = jwt.decode(authData.id_token) as any;
+        const userId = idTokenDecoded?.sub || idTokenDecoded?.email || 'unknown_user';
+        const userEmail = idTokenDecoded?.email;
+
+        // Upsert User
+        await pool.query(`
+            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (id) DO UPDATE SET
+                access_token = EXCLUDED.access_token,
+                refresh_token = EXCLUDED.refresh_token,
+                email = COALESCE(EXCLUDED.email, "User".email)
+        `, [userId, userEmail, authData.access_token, authData.refresh_token, Date.now() + (authData.expires_in * 1000)]);
+
         if (products.length > 0) {
             const importer = new Importer(client);
             const repo = new EnergyRepo();
@@ -81,10 +100,21 @@ export async function GET(request: NextRequest) {
                 siteIds.push(siteId);
                 // Ensure site record exists (synced from API)
                 await importer.ensureSite(siteId);
-                // Ensure tokens are stored/updated
+
+                // Link Site to User
+                await pool.query('UPDATE "Site" SET user_id = $1 WHERE id = $2', [userId, siteId]);
+
+                // We no longer need to update SITE tokens explicitly if we are using the User-centric model,
+                // BUT EnergyRepo.updateSiteTokens now handles the redirection to User table anyway.
+                // However, ensureSite might have created it without user_id first.
+                // So we explicitly linked it above.
+
+                // Let's clear legacy tokens to avoid confusion? 
+                // No, keep them for safety during migration phase, but updateSiteTokens will update User now.
+                // Actually, let's just trigger updateSiteTokens to be safe and use its logic.
                 await repo.updateSiteTokens(siteId, authData.access_token, authData.refresh_token);
                 await repo.releaseRefreshLock(siteId);
-                console.log(`[AuthCallback] Ensured site ${siteId} and updated tokens.`);
+                console.log(`[AuthCallback] Linked site ${siteId} to User ${userId} and updated tokens.`);
             }
 
             // Generate verified site token
