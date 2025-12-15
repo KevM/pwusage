@@ -1,4 +1,4 @@
-import { pool, Tariff, Site, TariffSeason, TariffSchedule } from './db';
+import { pool, Tariff, Site, TariffSeason, TariffSchedule, User } from './db';
 import { getDbReady } from './db-init';
 import { Schedule } from './schedule';
 
@@ -27,10 +27,19 @@ export interface UsageData {
 
 export interface SiteWithTariffs extends Site {
     tariffs: Tariff[];
+    access_token?: string | null;
+    refresh_token?: string | null;
 }
 
 interface SiteIdRow {
     id: string;
+}
+
+// User-centric functions
+async function getUserTokens(userId: string): Promise<{ access_token: string, refresh_token: string } | null> {
+    const res = await pool.query('SELECT access_token, refresh_token FROM "User" WHERE id = $1', [userId]);
+    if (res.rows.length === 0) return null;
+    return res.rows[0];
 }
 
 export class EnergyRepo {
@@ -154,6 +163,26 @@ export class EnergyRepo {
         const site = siteRes.rows[0] as Site | undefined;
         if (!site) return undefined;
 
+        // Combine with User tokens
+        // We return a composite object that looks like the old SiteWithTariffs 
+        // but physically the tokens come from User.
+        // To satisfy the type checker (which expects SiteWithTariffs -> Site -> no tokens),
+        // we cast it or extend the type locally if needed.
+        // Wait, Site interface no longer has access_token. 
+        // But the rest of the app (TeslaClient config) needs them.
+        // So we should return a type that HAS tokens, even if the DB Site model doesn't.
+
+        let access_token: string | null = null;
+        let refresh_token: string | null = null;
+
+        if (site.user_id) {
+            const userTokens = await getUserTokens(site.user_id);
+            if (userTokens) {
+                access_token = userTokens.access_token;
+                refresh_token = userTokens.refresh_token;
+            }
+        }
+
         const tariffsRes = await pool.query('SELECT * FROM "Tariff" WHERE site_id = $1', [siteId]);
         const tariffs = tariffsRes.rows as Tariff[];
 
@@ -169,8 +198,10 @@ export class EnergyRepo {
 
         const result = {
             ...site,
+            access_token,
+            refresh_token,
             tariffs
-        };
+        } as SiteWithTariffs; // We cast here because we want to pass tokens along at runtime
 
         siteCache.set(siteId, { data: result, expires: now + CACHE_TTL_MS });
         return result;
@@ -287,42 +318,53 @@ export class EnergyRepo {
     }
 
     async updateSiteTokens(siteId: string, accessToken: string, refreshToken: string) {
-        const cached = siteCache.get(siteId);
-        if (cached && cached.data) {
-            (cached.data as Site).access_token = accessToken;
-            (cached.data as Site).refresh_token = refreshToken;
+        const site = await this.getSite(siteId);
+
+        if (site && site.user_id) {
+            await pool.query('UPDATE "User" SET access_token = $1, refresh_token = $2 WHERE id = $3', [accessToken, refreshToken, site.user_id]);
+            console.log(`[EnergyRepo] Updated tokens for USER ${site.user_id} (via site ${siteId})`);
+        } else {
+            console.warn(`[EnergyRepo] Cannot update tokens for site ${siteId} - No User Linked!`);
         }
 
-        await pool.query('UPDATE "Site" SET access_token = $1, refresh_token = $2 WHERE id = $3', [accessToken, refreshToken, siteId]);
-        console.log(`[EnergyRepo] Updated tokens for site ${siteId}`);
+        // Invalidate cache to force re-read
+        siteCache.delete(siteId);
     }
 
     async acquireRefreshLock(siteId: string): Promise<boolean> {
         const now = Date.now();
-        const expires = now + 60000; // 1 minute lock duration
+        const expires = now + 60000;
 
-        // Postgres update returning row count logic:
-        // rowCount property on result
-        const result = await pool.query(`
-            UPDATE "Site"
-            SET is_refreshing = 1, refresh_lock_expires = $1
-            WHERE id = $2 AND (is_refreshing = 0 OR refresh_lock_expires < $3)
-        `, [expires, siteId, now]);
+        const site = await this.getSite(siteId);
+        if (site && site.user_id) {
+            const result = await pool.query(`
+                UPDATE "User"
+                SET is_refreshing = 1, refresh_lock_expires = $1
+                WHERE id = $2 AND (is_refreshing = 0 OR refresh_lock_expires < $3)
+            `, [expires, site.user_id, now]);
+            return (result.rowCount ?? 0) > 0;
+        }
 
-        return (result.rowCount ?? 0) > 0;
+        return false;
     }
 
     async releaseRefreshLock(siteId: string) {
-        await pool.query('UPDATE "Site" SET is_refreshing = 0, refresh_lock_expires = 0 WHERE id = $1', [siteId]);
+        const site = await this.getSite(siteId);
+        if (site && site.user_id) {
+            await pool.query('UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0 WHERE id = $1', [site.user_id]);
+        }
     }
 
     async waitForTokenRefresh(siteId: string, timeoutMs = 20000): Promise<{ access_token: string; refresh_token: string }> {
         const start = Date.now();
+        const site = await this.getSite(siteId);
+        if (!site || !site.user_id) throw new Error('Site/User not found for refresh wait');
+
         while (Date.now() - start < timeoutMs) {
-            const res = await pool.query('SELECT access_token, refresh_token, is_refreshing FROM "Site" WHERE id = $1', [siteId]);
-            const site = res.rows[0];
-            if (!site.is_refreshing) {
-                return { access_token: site.access_token || '', refresh_token: site.refresh_token || '' };
+            const res = await pool.query(`SELECT access_token, refresh_token, is_refreshing FROM "User" WHERE id = $1`, [site.user_id]);
+            const row = res.rows[0];
+            if (!row.is_refreshing) {
+                return { access_token: row.access_token || '', refresh_token: row.refresh_token || '' };
             }
             await new Promise(resolve => setTimeout(resolve, 1000));
         }

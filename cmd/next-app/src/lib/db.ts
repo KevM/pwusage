@@ -33,18 +33,25 @@ pool.on('error', (err) => {
 if (process.env.NODE_ENV !== 'production') globalForDb.pool = pool;
 
 
+export interface User {
+  id: string; // Tesla User ID or Email
+  email?: string;
+  access_token: string | null;
+  refresh_token: string | null;
+  token_expires_at?: number;
+  is_refreshing?: number;
+  refresh_lock_expires?: number;
+}
+
 export interface Site {
   id: string;
+  user_id?: string | null; // FK to User
   name: string;
   updated: Date;
   installed: Date;
   timezone: string;
   json: unknown | null; // pg jsonb returns object
   billing_start_day: number;
-  access_token?: string | null;
-  refresh_token?: string | null;
-  is_refreshing?: number;
-  refresh_lock_expires?: number; // bigint comes as string usually, need to check
 }
 
 export interface Tariff {

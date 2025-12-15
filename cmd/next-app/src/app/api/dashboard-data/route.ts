@@ -6,25 +6,48 @@ import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
 import { SiteService } from '@/lib/site-service';
+import { verifySiteToken } from '@/lib/auth-jwt';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
     try {
         const cookieStore = await cookies();
-        const token = cookieStore.get('access_token')?.value;
-        const refreshToken = cookieStore.get('refresh_token')?.value;
+        let token = cookieStore.get('access_token')?.value;
+        let refreshToken = cookieStore.get('refresh_token')?.value;
         const siteAuthToken = cookieStore.get('site_auth')?.value;
+
+        let activeSiteId: string | null = null;
+        if (siteAuthToken) {
+            const siteIds = verifySiteToken(siteAuthToken);
+            if (siteIds && siteIds.length > 0) {
+                const repo = new EnergyRepo();
+                const primarySite = await repo.getSite(siteIds[0]);
+                if (primarySite && primarySite.access_token && primarySite.refresh_token) {
+                    token = primarySite.access_token;
+                    refreshToken = primarySite.refresh_token;
+                    activeSiteId = primarySite.id;
+                }
+            }
+        }
 
         if (!token) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
         }
 
+        // Determine refresh handler
+        let refreshHandler;
+        if (activeSiteId) {
+            const repo = new EnergyRepo();
+            refreshHandler = repo.getLockedRefreshHandler(activeSiteId);
+        }
+
         const client = new TeslaClient({
             accessToken: token,
             refreshToken: refreshToken,
+            tokenRefreshHandler: refreshHandler,
             onTokenUpdate: () => {
-                // Token handling logic
+                // Token handling logic handled by repo handler
             }
         });
 

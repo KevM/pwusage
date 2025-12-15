@@ -4,12 +4,12 @@ let dbInitPromise: Promise<void> | null = null;
 
 // Helper to check and init schema
 export async function initDb() {
-    const client = await pool.connect();
-    try {
-        console.log('[DB] Checking schema...');
+  const client = await pool.connect();
+  try {
+    console.log('[DB] Checking schema...');
 
-        // Check if Site table exists
-        const res = await client.query(`
+    // Check if Site table exists
+    const res = await client.query(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables 
         WHERE table_schema = 'public' 
@@ -17,23 +17,44 @@ export async function initDb() {
       );
     `);
 
-        if (!res.rows[0].exists) {
-            console.log('[DB] Initializing database schema...');
-            await client.query('BEGIN');
+    // Always ensure User table exists (Migration)
+    await client.query(`
+        CREATE TABLE IF NOT EXISTS "User" (
+            id TEXT PRIMARY KEY,
+            email TEXT,
+            access_token TEXT,
+            refresh_token TEXT,
+            token_expires_at BIGINT,
+            is_refreshing INTEGER DEFAULT 0,
+            refresh_lock_expires BIGINT DEFAULT 0
+        );
+    `);
 
-            await client.query(`
+    // Ensure user_id column exists on Site (Migration)
+    // Note: We need to do this carefully if Site table might not exist yet, 
+    // but the block below creates Site if not exists.
+    // So we should probably do this AFTER the Site block or inside a check.
+    // However, if Site exists, we still need to add user_id.
+
+    // Let's rely on standard "CREATE IF NOT EXISTS" logic for new installs
+    // and specific migration logic for existing installs.
+
+    if (!res.rows[0].exists) {
+      console.log('[DB] Initializing database schema (First Run)...');
+      await client.query('BEGIN');
+
+
+
+      await client.query(`
         CREATE TABLE IF NOT EXISTS "Site" (
           id TEXT PRIMARY KEY,
+          user_id TEXT REFERENCES "User"(id),
           name TEXT NOT NULL,
           updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
           installed TIMESTAMP NOT NULL,
           timezone TEXT NOT NULL,
           json JSONB,
-          billing_start_day INTEGER DEFAULT 1,
-          access_token TEXT,
-          refresh_token TEXT,
-          is_refreshing INTEGER DEFAULT 0,
-          refresh_lock_expires BIGINT DEFAULT 0
+          billing_start_day INTEGER DEFAULT 1
         );
 
         CREATE TABLE IF NOT EXISTS "Tariff" (
@@ -113,25 +134,50 @@ export async function initDb() {
         );
       `);
 
-            await client.query('COMMIT');
-            console.log('[DB] Database schema initialized.');
-        }
-    } catch (e) {
-        await client.query('ROLLBACK');
-        console.error('[DB] Schema initialization failed:', e);
-        throw e;
-    } finally {
-        client.release();
+      // Migration: Add user_id column if it doesn't exist (for existing DBs)
+      await client.query(`
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='Site' AND column_name='user_id') THEN
+                ALTER TABLE "Site" ADD COLUMN user_id TEXT REFERENCES "User"(id);
+            END IF;
+        END
+        $$;
+      `);
+
+      console.log('[DB] Database schema initialized.');
+    } else {
+      // Run migrations for existing DB
+      await client.query('BEGIN');
+      await client.query(`
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='Site') THEN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='Site' AND column_name='user_id') THEN
+                        ALTER TABLE "Site" ADD COLUMN user_id TEXT REFERENCES "User"(id);
+                    END IF;
+                END IF;
+            END
+            $$;
+        `);
+      await client.query('COMMIT');
     }
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('[DB] Schema initialization failed:', e);
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export function getDbReady() {
-    if (!dbInitPromise) {
-        dbInitPromise = initDb().catch(e => {
-            console.error('Failed to init DB lazily:', e);
-            dbInitPromise = null;
-            throw e;
-        });
-    }
-    return dbInitPromise;
+  if (!dbInitPromise) {
+    dbInitPromise = initDb().catch(e => {
+      console.error('Failed to init DB lazily:', e);
+      dbInitPromise = null;
+      throw e;
+    });
+  }
+  return dbInitPromise;
 }

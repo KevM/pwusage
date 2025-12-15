@@ -5,14 +5,34 @@ import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { DashboardCards } from '@/components/DashboardCards';
 import { NoSupportedProducts } from '@/components/NoSupportedProducts';
+import { verifySiteToken } from '@/lib/auth-jwt';
 
 // Force dynamic rendering to always fetch fresh data
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
   const cookieStore = await cookies();
-  const token = cookieStore.get('access_token')?.value;
-  const refreshToken = cookieStore.get('refresh_token')?.value;
+  let token = cookieStore.get('access_token')?.value;
+  let refreshToken = cookieStore.get('refresh_token')?.value;
+  let activeSiteId: string | null = null;
+
+  // Try to upgrade to fresh DB tokens if we have site access
+  // This prevents issues where the browser cookies are stale because Trmnl/Background service rotated the tokens
+  const siteAuthToken = cookieStore.get('site_auth')?.value;
+  if (siteAuthToken) {
+    const siteIds = verifySiteToken(siteAuthToken);
+    if (siteIds && siteIds.length > 0) {
+      const repo = new EnergyRepo();
+      // Use the first authorized site as the token source of truth
+      const primarySite = await repo.getSite(siteIds[0]);
+      if (primarySite && primarySite.access_token && primarySite.refresh_token) {
+        console.log(`[Dashboard] Using DB tokens from Site ${primarySite.id}`);
+        token = primarySite.access_token;
+        refreshToken = primarySite.refresh_token;
+        activeSiteId = primarySite.id;
+      }
+    }
+  }
 
   if (!token) {
     return (
@@ -41,11 +61,19 @@ export default async function Home() {
   let fetchError = null;
 
   try {
+    // Determine refresh handler if we identified a site
+    let refreshHandler;
+    if (activeSiteId) {
+      const repo = new EnergyRepo();
+      refreshHandler = repo.getLockedRefreshHandler(activeSiteId);
+    }
+
     const client = new TeslaClient({
-      accessToken: token,
+      accessToken: token!,
       refreshToken: refreshToken,
+      tokenRefreshHandler: refreshHandler,
       onTokenUpdate: () => {
-        console.log('Refreshing tokens in Cookies from Dashboard');
+        console.log('Tokens refreshed during Dashboard render');
       }
     });
 

@@ -4,6 +4,7 @@ import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { SiteService } from '@/lib/site-service';
+import { verifySiteToken } from '@/lib/auth-jwt';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,8 +18,23 @@ export async function GET(request: Request) {
         }
 
         const cookieStore = await cookies();
-        const token = cookieStore.get('access_token')?.value;
-        const refreshToken = cookieStore.get('refresh_token')?.value;
+        let token = cookieStore.get('access_token')?.value;
+        let refreshToken = cookieStore.get('refresh_token')?.value;
+
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
+        const repo = new EnergyRepo();
+
+        // Try to use DB tokens if authorized
+        if (siteAuthToken) {
+            const siteIds = verifySiteToken(siteAuthToken);
+            if (siteIds && siteIds.includes(siteId)) {
+                const site = await repo.getSite(siteId);
+                if (site && site.access_token && site.refresh_token) {
+                    token = site.access_token;
+                    refreshToken = site.refresh_token;
+                }
+            }
+        }
 
         if (!token) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
@@ -27,14 +43,15 @@ export async function GET(request: Request) {
         const client = new TeslaClient({
             accessToken: token,
             refreshToken: refreshToken,
+            tokenRefreshHandler: repo.getLockedRefreshHandler(siteId),
             onTokenUpdate: (newAccess, newRefresh) => {
-                console.log('Refreshing tokens in Cookies from Site Live Data API');
-                cookieStore.set('access_token', newAccess, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
-                cookieStore.set('refresh_token', newRefresh, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+                // If using DB tokens, the repo handler updates DB. 
+                // We can optionally update cookies if we wanted to keep them in sync, 
+                // but Server Actions/Routes can't easily set cookies in a streaming response or sometimes restrict it.
+                // For now, logging is sufficient as DB is SOT.
             }
         });
-        const repo = new EnergyRepo();
-        const service = new SiteService({ teslaClient: client, energyRepo: repo, siteAuthToken: cookieStore.get('site_auth')?.value });
+        const service = new SiteService({ teslaClient: client, energyRepo: repo, siteAuthToken });
 
         if (!await service.validateSiteAccess(siteId)) {
             return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
