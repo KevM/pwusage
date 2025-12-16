@@ -46,12 +46,14 @@ async function main() {
         return;
     }
 
-    const client = new TeslaClient(fullSite.access_token, fullSite.refresh_token,
-        async (token) => {
+    const client = new TeslaClient({
+        accessToken: fullSite.access_token,
+        refreshToken: fullSite.refresh_token || undefined,
+        onTokenUpdate: async (token, newRefresh) => {
             console.log('Token refreshed.');
-            await repo.updateSiteTokens(site.id, token.access_token, token.refresh_token);
+            await repo.updateSiteTokens(site.id, token, newRefresh);
         }
-    );
+    });
 
     const importer = new Importer(client);
 
