@@ -5,7 +5,7 @@ import { Schedule } from '@/lib/schedule';
 import { cookies } from 'next/headers';
 
 import { Importer } from '@/lib/importer';
-import { TeslaClient } from '@/lib/tesla-client';
+import { TeslaClient, EnergySiteLiveStatus } from '@/lib/tesla-client';
 import QRCode from 'qrcode';
 
 export async function GET(request: Request) {
@@ -306,73 +306,101 @@ export async function GET(request: Request) {
         const currentTouName = currentPeriod?.schedule.name;
 
         // Generate HTML for each tariff group
-        const tariffHtml = Array.from(tariffGroups.values()).map(group => {
-            // Sort periods by name
-            const periods = group.periods.sort((a, b) => a.touName.localeCompare(b.touName));
+        // Fetch latest SOC (Live from API)
+        let batterySoc: number | null = null;
+        try {
+            // Re-use logic to get a client with refresh capabilities
+            let useToken = site.access_token;
+            if (siteIdParam) { // Preview mode priority
+                const cookieStore = await cookies();
+                const sessionToken = cookieStore.get('access_token')?.value;
+                if (sessionToken) useToken = sessionToken;
+            }
 
-            return `
-                <div class="mb-4">
-                    <span class="label label--underline mb-2">${group.tariffName}</span>
-                    <table class="table table--compact">
-                        <thead>
-                            <tr>
-                                <th>Period</th>
-                                <th class="text--right">Home</th>
-                                <th class="text--right">Sol</th>
-                                <th class="text--right">Batt</th>
-                                <th class="text--right">Grid</th>
-                                <th class="text--right">Cost</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${periods.map(p => {
-                const isCurrent = currentTouName && p.touName === currentTouName;
-                const b = isCurrent ? '<b>' : '';
-                const eb = isCurrent ? '</b>' : '';
-                return `
-                                <tr>
-                                    <td>${b}${p.label}${eb}</td>
-                                    <td class="text--right">${b}${(p.home / 1000).toFixed(1)}${eb}</td>
-                                    <td class="text--right">${b}${(p.solar / 1000).toFixed(1)}${eb}</td>
-                                    <td class="text--right">${b}${(p.battery / 1000).toFixed(1)}${eb}</td>
-                                    <td class="text--right">${b}${(p.grid / 1000).toFixed(1)}${eb}</td>
-                                    <td class="text--right">${b}${currency}${p.cost.toFixed(2)}${eb}</td>
-                                </tr>
-                            `}).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            `;
-        }).join('');
+            if (useToken) {
+                const client = new TeslaClient({
+                    accessToken: useToken,
+                    refreshToken: site.refresh_token,
+                    tokenRefreshHandler: repo.getLockedRefreshHandler(site.id)
+                });
 
-        // Trmnl Markup
-        const markup = `
-            <div class="view view--full">
-                <div class="layout" style="padding: 2.5rem;">
-                    <div class="columns">
-                        <div class="column">
-                            <div class="markdown gap--large">
-                                <span class="title text--left">${site.name}</span>
-                                <span class="label text--left mb-2">${start.toLocaleDateString()} - ${end.toLocaleDateString()}</span>
-                                
-                                ${tariffHtml}
+                // Set a short timeout for live status to avoid hanging the render too long
+                const liveStatusPromise = client.getLiveStatus(site.id);
+                const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000));
 
-                                <div class="content-element content content--center mt-4">
-                                    <span class="label">${costLabel}</span>
-                                    <span class="title title--large">${displayCost}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
+                try {
+                    const liveStatus = await Promise.race([liveStatusPromise, timeoutPromise]) as EnergySiteLiveStatus;
+                    if (liveStatus && typeof liveStatus.percentage_charged === 'number') {
+                        batterySoc = liveStatus.percentage_charged;
+                    }
+                } catch (timeoutErr) {
+                    console.warn('[TrmnlMarkup] Live status fetch timed out or failed', timeoutErr);
+                }
+            }
+        } catch (e) {
+            console.error('[TrmnlMarkup] Failed to fetch live SOC', e);
+        }
+
+        // Fetch Today's Totals (Grid/Solar) for the Status Bar
+        let todayGrid = 0;
+        let todaySolar = 0;
+        try {
+            // Determine "today" in site timezone
+            // helper: formatDateWithTimezone is in tesla-client but not exported? 
+            // We can use Intl.DateTimeFormat
+            const tz = site.timezone || 'UTC';
+            const nowInTz = new Date(); // Use a new Date object for timezone formatting
+            const yyyy = new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric' }).format(nowInTz);
+            const mm = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: '2-digit' }).format(nowInTz);
+            const dd = new Intl.DateTimeFormat('en-US', { timeZone: tz, day: '2-digit' }).format(nowInTz);
+            const todayStr = `${yyyy}-${mm}-${dd}`;
+
+            const hourlyData = await repo.getHourlyEnergyData(site.id, todayStr);
+            hourlyData.forEach(h => {
+                todayGrid += h.gridUsage; // Imported - Exported? Hourly buckets might be net? 
+                // Wait, getHourlyEnergyData buckets are sums of raw columns.
+                // gridUsage in repo is row.grid_power. 
+                // In importer, grid_power is net (Import - Export).
+                // So positive gridUsage is NET grid usage. 
+                // The user asked for "Grid and Solar Kwh usage". 
+                // Usually "Grid Usage" means Net Grid Use (Imported - Exported) or just Import?
+                // Let's assume Net Grid Usage (what we pay for) and Solar Production.
+
+                todaySolar += h.solarProduction;
+            });
+
+        } catch (e) {
+            console.error('[TrmnlMarkup] Failed to fetch today totals', e);
+        }
+
+
+        // Prepare Render Context
+        const { TrmnlRenderer } = await import('@/lib/trmnl-renderer');
+
+        const renderCtx = {
+            siteName: site.name || 'Powerwall', // Retain 'Powerwall' fallback for robustness
+            dateRange: `${start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}`,
+            tariffGroups: Array.from(tariffGroups.values()), // Retain Array.from for consistency
+            totalCost: totalBillCost,
+            costLabel: costLabel, // Use existing 'costLabel'
+            displayCost: displayCost, // Use existing 'displayCost'
+            currency: currency, // Use existing 'currency'
+            currentTouName: currentTouName || undefined, // Retain '|| undefined' for consistency
+            batterySoc: batterySoc,
+            todayGrid: todayGrid,
+            todaySolar: todaySolar
+        };
+
+        const markupFull = TrmnlRenderer.renderFull(renderCtx);
+        const markupHalfVertical = TrmnlRenderer.renderHalfVertical(renderCtx);
+        const markupHalfHorizontal = TrmnlRenderer.renderHalfHorizontal(renderCtx);
+        const markupQuadrant = TrmnlRenderer.renderQuadrant(renderCtx);
 
         return NextResponse.json({
-            markup: markup,
-            markup_half_vertical: markup, // TODO: Optimize for half view
-            markup_half_horizontal: markup, // TODO: Optimize for half view
-            markup_quadrant: markup // TODO: Optimize for quadrant view
+            markup: markupFull,
+            markup_half_vertical: markupHalfVertical,
+            markup_half_horizontal: markupHalfHorizontal,
+            markup_quadrant: markupQuadrant
         });
 
     } catch (error) {

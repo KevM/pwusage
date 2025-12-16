@@ -13,8 +13,9 @@ interface EnergyDataRow {
     solar_power: number;
     grid_power: number;
     battery_power: number;
-    battery_soc: number | null;
 }
+
+
 
 
 
@@ -360,8 +361,8 @@ export class Importer {
                 try {
                     await client.query('BEGIN');
                     await client.query(`
-                        INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, is_synthetic) 
-                        VALUES ($1, $2, $3, 0, 0, 0, 0, null, 1)
+                        INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, is_synthetic) 
+                        VALUES ($1, $2, $3, 0, 0, 0, 0, 1)
                         ON CONFLICT(timestamp, site_id, tariff_id) DO NOTHING
                     `, [site.id, defaultTariff, start]); // passed as Date
 
@@ -383,36 +384,34 @@ export class Importer {
                     client.release();
                 }
             }
-            return;
-        }
+            const client = await pool.connect();
+            try {
+                const msg1 = `[Import] Insert Transaction Start. History Rows: ${history.length}`;
+                console.log(msg1);
 
-        const client = await pool.connect();
-        try {
-            const msg1 = `[Import] Insert Transaction Start. History Rows: ${history.length}`;
-            console.log(msg1);
+                await client.query('BEGIN');
+                await client.query('DELETE FROM "EnergyData" WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3', [site.id, start, end]);
 
-            await client.query('BEGIN');
-            await client.query('DELETE FROM "EnergyData" WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3', [site.id, start, end]);
+                const energyDatas = await this.processHistory(client, site, history, period);
 
-            const energyDatas = await this.processHistory(client, site, history, new Map(), period);
+                const msg2 = `[Import] Processed EnergyData Rows: ${energyDatas.length}`;
+                console.log(msg2);
 
-            const msg2 = `[Import] Processed EnergyData Rows: ${energyDatas.length}`;
-            console.log(msg2);
+                const usages = this.aggregateUsage(site, energyDatas);
+                await this.insertEnergyData(client, site, energyDatas);
+                await this.insertEnergyUsage(client, usages);
 
-            const usages = this.aggregateUsage(site, energyDatas);
-            await this.insertEnergyData(client, site, energyDatas);
-            await this.insertEnergyUsage(client, usages);
-
-            await client.query('COMMIT');
-        } catch (e) {
-            await client.query('ROLLBACK');
-            throw e;
-        } finally {
-            client.release();
+                await client.query('COMMIT');
+            } catch (e) {
+                await client.query('ROLLBACK');
+                throw e;
+            } finally {
+                client.release();
+            }
         }
     }
 
-    private async processHistory(client: PoolClient, site: SiteWithTariffs, history: EnergyHistoryEntry[], soeByTimestamp: Map<number, number>, period: string = 'day'): Promise<EnergyDataRow[]> {
+    private async processHistory(client: PoolClient, site: SiteWithTariffs, history: EnergyHistoryEntry[], period: string = 'day'): Promise<EnergyDataRow[]> {
         const schedule = new Schedule(site.tariffs, site.timezone);
         const results: EnergyDataRow[] = [];
 
@@ -451,8 +450,7 @@ export class Importer {
                 load_power: (h.total_home_usage ?? 0) * scale,
                 solar_power: (h.solar_energy_exported ?? 0) * scale,
                 grid_power: grid * scale,
-                battery_power: battery * scale,
-                battery_soc: soeByTimestamp.get(ts.getTime()) ?? null
+                battery_power: battery * scale
             });
         }
         return results;
@@ -587,7 +585,7 @@ export class Importer {
             let pIdx = 1;
 
             for (const row of chunk) {
-                placeholders.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, $${pIdx + 4}, $${pIdx + 5}, $${pIdx + 6}, $${pIdx + 7})`);
+                placeholders.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, $${pIdx + 4}, $${pIdx + 5}, $${pIdx + 6})`);
                 values.push(
                     row.site_id,
                     row.tariff_id,
@@ -595,21 +593,19 @@ export class Importer {
                     row.load_power,
                     row.solar_power,
                     row.grid_power,
-                    row.battery_power,
-                    row.battery_soc
+                    row.battery_power
                 );
-                pIdx += 8;
+                pIdx += 7;
             }
 
             const query = `
-                INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc) 
+                INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power) 
                 VALUES ${placeholders.join(', ')}
                 ON CONFLICT(timestamp, site_id, tariff_id) DO UPDATE SET
                     load_power=EXCLUDED.load_power,
                     solar_power=EXCLUDED.solar_power,
                     grid_power=EXCLUDED.grid_power,
-                    battery_power=EXCLUDED.battery_power,
-                    battery_soc=EXCLUDED.battery_soc
+                    battery_power=EXCLUDED.battery_power
             `;
 
             await client.query(query, values);

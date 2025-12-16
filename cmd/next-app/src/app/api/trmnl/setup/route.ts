@@ -68,7 +68,7 @@ export async function POST(request: Request) {
                         console.log(`[TrmnlSetup] Extracted UUID from JWT: ${deviceUuid}`);
                     }
                 }
-            } catch (e) {
+            } catch {
                 console.log('[TrmnlSetup] Access token is not a simple JWT');
             }
         }
