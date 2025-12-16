@@ -53,8 +53,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Save tokens
-    cookieStore.set('access_token', authData.access_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: authData.expires_in });
-    cookieStore.set('refresh_token', authData.refresh_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+    cookieStore.set('access_token', authData.access_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: authData.expires_in, sameSite: 'lax' });
+    cookieStore.set('refresh_token', authData.refresh_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
 
     // Update DB (Source of Truth)
     try {

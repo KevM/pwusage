@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
+import { cookies } from 'next/headers';
 
 import { Importer } from '@/lib/importer';
 import { TeslaClient } from '@/lib/tesla-client';
@@ -11,48 +12,126 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const uuid = searchParams.get('uuid');
+        const siteIdParam = searchParams.get('site_id');
 
-        if (!uuid) {
-            return NextResponse.json({ error: 'Missing uuid parameter' }, { status: 400 });
-        }
+        let installation = null;
+        let siteId = '';
 
-        const service = new TrmnlService();
-        console.log(`[TrmnlMarkup] Lookup UUID: ${uuid}`);
-        const installation = await service.getInstallationByUuid(uuid);
-        console.log(`[TrmnlMarkup] Found installation: ${installation ? installation.id : 'null'}`);
+        if (uuid) {
+            const service = new TrmnlService();
+            console.log(`[TrmnlMarkup] Lookup UUID: ${uuid}`);
+            installation = await service.getInstallationByUuid(uuid);
+            console.log(`[TrmnlMarkup] Found installation: ${installation ? installation.id : 'null'}`);
 
-        if (!installation) {
-            // New Installation / "Zombie" UUID flow
-            // The UUID is not linked to any site yet. We return the QR code to allow the user to link it manually.
-            const host = request.headers.get('host') || 'localhost:3000';
-            const protocol = host.includes('localhost') ? 'http' : 'https';
-            const manageUrl = `${protocol}://${host}/trmnl/manage?uuid=${uuid}`;
+            if (!installation) {
+                // New Installation / "Zombie" UUID flow
+                // The UUID is not linked to any site yet. We return the QR code to allow the user to link it manually.
+                const host = request.headers.get('host') || 'localhost:3000';
+                const protocol = host.includes('localhost') ? 'http' : 'https';
+                const manageUrl = `${protocol}://${host}/trmnl/manage?uuid=${uuid}`;
 
-            console.log(`[TrmnlMarkup] UUID ${uuid} not found. Generating setup QR code for ${manageUrl}`);
+                console.log(`[TrmnlMarkup] UUID ${uuid} not found. Generating setup QR code for ${manageUrl}`);
 
-            // Generate QR Code
-            const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
+                // Generate QR Code
+                const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
 
-            const markup = `
-                <div class="view view--full">
-                     <div class="layout layout--col-center" style="padding: 20px; text-align: center;">
-                        <span class="title title--small">Powerwall Energy Usage - Configuration</span>
-                        <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px auto; display: block;" />
-                        <span class="label">Please scan to re-authenticate</span>
-                     </div>
-                </div>
-             `;
+                const markup = `
+                    <div class="view view--full">
+                         <div class="layout layout--col-center" style="padding: 20px; text-align: center;">
+                            <span class="title title--small">Setup Required</span>
+                            <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px auto; display: block;" />
+                            <span class="label">Scan to Configure</span>
+                         </div>
+                    </div>
+                 `;
 
-            return NextResponse.json({
-                markup: markup,
-                markup_half_vertical: markup,
-                markup_half_horizontal: markup,
-                markup_quadrant: markup
-            });
+                return NextResponse.json({
+                    markup: markup,
+                    markup_half_vertical: markup,
+                    markup_half_horizontal: markup,
+                    markup_quadrant: markup
+                });
+            }
+
+            // Verify Bearer Token for UUID access
+            const authHeader = request.headers.get('Authorization');
+            if (installation.access_token) {
+                if (!authHeader || !authHeader.startsWith('Bearer ') || authHeader.split(' ')[1] !== installation.access_token) {
+                    console.warn(`[TrmnlMarkup] Invalid/Missing Bearer token for UUID ${uuid}`);
+
+                    // Show QR Code to re-link/auth
+                    const host = request.headers.get('host') || 'localhost:3000';
+                    const protocol = host.includes('localhost') ? 'http' : 'https';
+                    const manageUrl = `${protocol}://${host}/trmnl/manage?uuid=${uuid}`;
+
+                    // Generate QR Code
+                    const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
+
+                    const markup = `
+                        <div class="view view--full">
+                             <div class="layout layout--col-center" style="padding: 20px; text-align: center;">
+                                <span class="title title--small">Plugin Auth Failed</span>
+                                <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px auto; display: block;" />
+                                <span class="label">Scan to Re-link</span>
+                             </div>
+                        </div>
+                     `;
+
+                    // Return 200 with markup instead of 401 to display the error on the device
+                    return NextResponse.json({
+                        markup: markup,
+                        markup_half_vertical: markup,
+                        markup_half_horizontal: markup,
+                        markup_quadrant: markup
+                    });
+                }
+            } else {
+                console.warn(`[TrmnlMarkup] No access token stored for UUID ${uuid}. Skipping verification.`);
+            }
+
+            siteId = installation.site_id;
+
+        } else if (siteIdParam) {
+            // Preview Mode: Authenticate via Session Cookies
+            const cookieStore = await cookies();
+            const token = cookieStore.get('access_token')?.value;
+            if (!token) {
+                return NextResponse.json({ error: 'Unauthorized preview' }, { status: 401 });
+            }
+
+            // Verify access (basic check: can we fetch site details? strict check: SiteService)
+            // For now, let's assume if they have a valid Tesla token they can see any site? 
+            // Better to check if the site belongs to them?
+            // Since we don't have SiteService here easily without constructing it...
+            // Let's use EnergyRepo to get site and check ownership??
+            // EnergyRepo.getSite doesn't enforce ownership.
+
+            // Re-use logic from Manage route?
+            // Let's construct SiteService.
+            const { SiteService } = await import('@/lib/site-service'); // dynamic import to avoid circular if any
+            // TeslaClient is already imported at the top, but the instruction shows dynamic import.
+            // Sticking to the instruction for dynamic import here to match the provided snippet.
+            const { TeslaClient } = await import('@/lib/tesla-client');
+
+            const client = new TeslaClient({ accessToken: token });
+            // Note: we don't need refresh token just for validation usually, or maybe we do.
+            const siteService = new SiteService({ teslaClient: client, energyRepo: new EnergyRepo() });
+
+            const hasAccess = await siteService.validateSiteAccess(siteIdParam);
+            if (!hasAccess) {
+                return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
+            }
+
+            siteId = siteIdParam;
+            console.log(`[TrmnlMarkup] Previewing for Site ID: ${siteId}`);
+
+        } else {
+            return NextResponse.json({ error: 'Missing uuid or site_id parameter' }, { status: 400 });
         }
 
         const repo = new EnergyRepo();
-        const site = await repo.getSite(installation.site_id);
+        const site = await repo.getSite(siteId);
+
         if (!site) {
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });
         }
@@ -70,12 +149,25 @@ export async function GET(request: Request) {
         // End is now (to show current usage)
         const end = now;
 
-        // Use centralized Site tokens for sync
         if (site.refresh_token) {
             console.log(`[Trmnl] Found refresh token for site ${site.id}, attempting sync...`);
 
+            // Use session token if available (preview mode) OR fallback to site tokens
+            let useToken = site.access_token || 'expired'; // Trigger refresh if null
+
+            const cookieStore = await cookies();
+            const sessionToken = cookieStore.get('access_token')?.value;
+
+            // If we are in preview mode (siteIdParam present) AND have a session token, prefer it.
+            if (siteIdParam && sessionToken) {
+                console.log('[TrmnlMarkup] Using Session Token for sync');
+                useToken = sessionToken;
+            } else {
+                console.log('[TrmnlMarkup] Using Stored Site Token for sync');
+            }
+
             const client = new TeslaClient({
-                accessToken: site.access_token || 'expired',
+                accessToken: useToken,
                 refreshToken: site.refresh_token,
                 tokenRefreshHandler: repo.getLockedRefreshHandler(site.id),
                 onTokenUpdate: async () => {
@@ -86,19 +178,23 @@ export async function GET(request: Request) {
             // Sync recent data to ensure freshness
             try {
                 const importer = new Importer(client);
-
                 // Sync current month
                 await importer.ensureDataForRange(site.id, start, end);
                 console.log(`[Trmnl] Sync successful for site ${site.id}`);
             } catch (err) {
                 console.error(`[Trmnl] Sync failed for site ${site.id}:`, err);
+                // Log the token context
+                console.error(`[Trmnl] Token context - Access available: ${!!useToken}, Refresh available: ${!!site.refresh_token}`);
 
                 // If auth error, show QR code to re-authenticate
                 const errorMsg = (err instanceof Error) ? err.message : String(err);
-                if (errorMsg.includes('401') || errorMsg.includes('refresh token')) {
+                // Broaden the check: 401, 403, refresh token, or just "Tesla API Error" usually implies we need re-auth if manual retry failed.
+                if (errorMsg.includes('401') || errorMsg.includes('refresh token') || errorMsg.includes('403')) {
                     const host = request.headers.get('host') || 'localhost:3000';
                     const protocol = host.includes('localhost') ? 'http' : 'https';
-                    const manageUrl = `${protocol}://${host}/trmnl/manage?uuid=${installation.uuid}`;
+                    const manageUrl = installation
+                        ? `${protocol}://${host}/trmnl/manage?uuid=${installation.uuid}`
+                        : `${protocol}://${host}/site/${site.id}/settings`;
 
                     // Generate QR Code
                     const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
@@ -123,7 +219,35 @@ export async function GET(request: Request) {
                 }
             }
         } else {
-            console.log(`[Trmnl] No refresh token found for site ${site.id} (in Site table), skipping sync.`);
+            console.log(`[Trmnl] No refresh token found for site ${site.id}, showing Auth QR code.`);
+
+            // If we don't have a refresh token, we MUST prompt for auth, otherwise data will be stale forever.
+            const host = request.headers.get('host') || 'localhost:3000';
+            const protocol = host.includes('localhost') ? 'http' : 'https';
+            const manageUrl = installation
+                ? `${protocol}://${host}/trmnl/manage?uuid=${installation.uuid}`
+                : `${protocol}://${host}/site/${site.id}/settings`;
+
+            // Generate QR Code
+            const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
+
+            const markup = `
+                <div class="view view--full">
+                     <div class="layout layout--col-center" style="padding: 20px; text-align: center;">
+                        <span class="title title--small">Tesla Auth Required</span>
+                        <span class="label">Scan to Connect</span>
+                        <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px 0;" />
+                        <span class="label label--small">${site.name}</span>
+                     </div>
+                </div>
+             `;
+
+            return NextResponse.json({
+                markup: markup,
+                markup_half_vertical: markup,
+                markup_half_horizontal: markup,
+                markup_quadrant: markup
+            });
         }
 
         const usageData = await repo.getUsageByTOU(site.id, start, end);

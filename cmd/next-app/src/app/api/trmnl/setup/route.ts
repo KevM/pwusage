@@ -41,16 +41,74 @@ export async function POST(request: Request) {
 
         // Save installation
         const service = new TrmnlService();
-        const repo = new EnergyRepo(); // For site updates
 
-        const accessToken = await service.exchangeCodeForToken(code, clientId, clientSecret);
+        const tokenData = await service.exchangeCodeForToken(code, clientId, clientSecret);
+        const accessToken = tokenData.access_token;
 
-        // Update Site tokens (Source of Truth)
-        await repo.updateSiteTokens(site_id, accessToken, refreshToken || '');
+        // Fetch the UUID from Trmnl using the new token
+        let deviceUuid = uuid;
+
+        // 1. Check if UUID is in the OAuth response directly (some providers do this)
+        if (!deviceUuid) {
+            if (tokenData.user_uuid) deviceUuid = tokenData.user_uuid;
+            else if (tokenData.uuid) deviceUuid = tokenData.uuid;
+            else if (tokenData.user && tokenData.user.uuid) deviceUuid = tokenData.user.uuid;
+
+            if (deviceUuid) console.log(`[TrmnlSetup] Found UUID in OAuth response: ${deviceUuid}`);
+        }
+
+        // 2. Try to extract UUID from JWT first
+        if (!deviceUuid) {
+            try {
+                const parts = accessToken.split('.');
+                if (parts.length === 3) {
+                    const payload = JSON.parse(atob(parts[1]));
+                    if (payload.user_uuid) {
+                        deviceUuid = payload.user_uuid;
+                        console.log(`[TrmnlSetup] Extracted UUID from JWT: ${deviceUuid}`);
+                    }
+                }
+            } catch (e) {
+                console.log('[TrmnlSetup] Access token is not a simple JWT');
+            }
+        }
+
+        // 3. Fallback to API fetch, but include debug info in error if it fails
+        if (!deviceUuid) {
+            try {
+                const me = await service.fetchMe(accessToken);
+                deviceUuid = me.uuid;
+                console.log(`[TrmnlSetup] Fetched UUID from API: ${deviceUuid}`);
+            } catch (err) {
+                console.error('[TrmnlSetup] Failed to fetch UUID from API:', err);
+
+                // If we have a plugin_setting_id (from frontend), we use it.
+                if (body.plugin_setting_id) {
+                    console.log(`[TrmnlSetup] Saving 'Pending' installation linked to Plugin ID: ${body.plugin_setting_id}`);
+                    await service.createInstallation(site_id, null, parseInt(body.plugin_setting_id), null, accessToken);
+                    return NextResponse.json({ success: true, status: 'pending_webhook' });
+                }
+
+                // FALLBACK: Loose Linking
+                // We save a "Pending" record with NO IDs, just the Site ID and Token.
+                // The next Webhook to arrive (which will be for this new plugin) will claim it.
+                // This assumes single-user / sequential installation flow, which is true for this personal app.
+                console.warn('[TrmnlSetup] Unable to identify user/plugin. Saving generic Pending record for Webhook to claim.');
+                await service.createInstallation(site_id, null, null, null, accessToken);
+                return NextResponse.json({ success: true, status: 'pending_loose' });
+
+                /*
+                // CRITICAL DEBUG information is no longer needed to throw, we proceed with Loose Linking.
+                // const keys = Object.keys(tokenData).join(', ');
+                // throw new Error(`Failed to identify user...`);
+                */
+            }
+        }
 
         // Create/Update installation with Site ID and UUID
-        // We do not store tokens here anymore.
-        await service.createInstallation(site_id, uuid);
+        // We store the Trmnl Access Token here for verification, NOT in the Site table.
+        // The Site table stores Tesla Tokens.
+        await service.createInstallation(site_id, deviceUuid, body.plugin_setting_id ? parseInt(body.plugin_setting_id) : null, null, accessToken);
 
         return NextResponse.json({ success: true });
     } catch (error) {

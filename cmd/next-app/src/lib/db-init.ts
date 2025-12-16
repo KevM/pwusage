@@ -129,8 +129,8 @@ export async function initDb() {
           plugin_setting_id INTEGER,
           created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
           json JSONB,
-          is_refreshing INTEGER DEFAULT 0,
-          refresh_lock_expires BIGINT DEFAULT 0
+          access_token TEXT,
+          refresh_token TEXT
         );
       `);
 
@@ -155,6 +155,30 @@ export async function initDb() {
                 IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='Site') THEN
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='Site' AND column_name='user_id') THEN
                         ALTER TABLE "Site" ADD COLUMN user_id TEXT REFERENCES "User"(id);
+                    END IF;
+                END IF;
+
+                -- Ensure TrmnlInstallation has json and plugin_setting_id
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='TrmnlInstallation') THEN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='TrmnlInstallation' AND column_name='json') THEN
+                         ALTER TABLE "TrmnlInstallation" ADD COLUMN json JSONB;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='TrmnlInstallation' AND column_name='plugin_setting_id') THEN
+                         ALTER TABLE "TrmnlInstallation" ADD COLUMN plugin_setting_id INTEGER;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='TrmnlInstallation' AND column_name='access_token') THEN
+                         ALTER TABLE "TrmnlInstallation" ADD COLUMN access_token TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='TrmnlInstallation' AND column_name='refresh_token') THEN
+                         ALTER TABLE "TrmnlInstallation" ADD COLUMN refresh_token TEXT;
+                    END IF;
+
+                    -- Drop unused columns if they exist
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='TrmnlInstallation' AND column_name='is_refreshing') THEN
+                         ALTER TABLE "TrmnlInstallation" DROP COLUMN is_refreshing;
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='TrmnlInstallation' AND column_name='refresh_lock_expires') THEN
+                         ALTER TABLE "TrmnlInstallation" DROP COLUMN refresh_lock_expires;
                     END IF;
                 END IF;
             END

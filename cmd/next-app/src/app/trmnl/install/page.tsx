@@ -35,7 +35,7 @@ function InstallContent() {
         let redirecting = false;
 
         // 1. Fetch sites
-        fetch('/api/sites')
+        fetch('/api/sites', { credentials: 'include' })
             .then(async res => {
                 if (res.status === 401) {
                     redirecting = true;
@@ -58,7 +58,13 @@ function InstallContent() {
                     // Auto-connect if only one site
                     if (data.length === 1) {
                         setAutoConnecting(true);
-                        performSetup(firstSiteId, code, installationCallbackUrl, installationUuid);
+                        // Extract plugin ID here too for auto-connect
+                        let pluginSettingId: string | null = null;
+                        if (installationCallbackUrl) {
+                            const match = installationCallbackUrl.match(/\/plugin_settings\/(\d+)/);
+                            if (match) pluginSettingId = match[1];
+                        }
+                        performSetup(firstSiteId, code, installationCallbackUrl, installationUuid, pluginSettingId);
                     } else {
                         if (!redirecting) setLoading(false);
                     }
@@ -72,7 +78,7 @@ function InstallContent() {
             });
     }, [code, installationCallbackUrl, installationUuid]); // Only run once on mount (with code)
 
-    const performSetup = async (siteId: string, authCode: string, callbackUrl: string | null, uuid: string | null) => {
+    const performSetup = async (siteId: string, authCode: string, callbackUrl: string | null, uuid: string | null, pluginSettingId: string | null = null) => {
         try {
             const res = await fetch('/api/trmnl/setup', {
                 method: 'POST',
@@ -80,7 +86,8 @@ function InstallContent() {
                 body: JSON.stringify({
                     code: authCode,
                     site_id: siteId,
-                    uuid: uuid
+                    uuid: uuid,
+                    plugin_setting_id: pluginSettingId
                 })
             });
 
@@ -100,7 +107,15 @@ function InstallContent() {
     };
 
     const handleSetup = () => {
-        performSetup(selectedSite, code!, installationCallbackUrl, installationUuid);
+        // Extract plugin_setting_id from callback URL if possible for robust linking
+        let pluginSettingId: string | null = null;
+        if (installationCallbackUrl) {
+            const match = installationCallbackUrl.match(/\/plugin_settings\/(\d+)/);
+            if (match) {
+                pluginSettingId = match[1];
+            }
+        }
+        performSetup(selectedSite, code!, installationCallbackUrl, installationUuid, pluginSettingId);
     };
 
     if (loading || autoConnecting) return (

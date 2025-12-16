@@ -119,6 +119,8 @@ export interface TrmnlInstallation {
   plugin_setting_id: number | null;
   created_at: Date;
   json?: unknown;
+  access_token?: string | null;
+  refresh_token?: string | null;
 }
 
 export interface SiteWithTariffs extends Site {

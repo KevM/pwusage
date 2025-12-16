@@ -9,9 +9,12 @@ import { Breadcrumbs } from '@/components/Breadcrumbs';
 function ManageContent() {
     const searchParams = useSearchParams();
     const uuid = searchParams.get('uuid');
+    // Support both 'token' and 'jwt' param names for future proofing
+    const token = searchParams.get('token') || searchParams.get('jwt');
 
     const [sites, setSites] = useState<{ id: string, name: string, utility: string }[]>([]);
     const [selectedSite, setSelectedSite] = useState('');
+    const [pluginSettingId, setPluginSettingId] = useState<number | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
@@ -21,6 +24,14 @@ function ManageContent() {
             setError('Missing UUID');
             setLoading(false);
             return;
+        }
+
+        if (!token) {
+            // Warn user but allow proceed (might be viewing only?) - backend will block saves
+            // Actually, let's allow viewing existing config without token if logged in?
+            // Current API GET /manage doesn't check token. 
+            // Saving requires token.
+            console.warn('Missing Trmnl security token in URL');
         }
 
         // Fetch sites and current installation
@@ -34,7 +45,9 @@ function ManageContent() {
 
                 if (sitesRes.status === 401 || installRes.status === 401) {
                     redirecting = true;
-                    const callbackUrl = encodeURIComponent(`/trmnl/manage?uuid=${uuid}`);
+                    // Preserve token in callback
+                    const tokenParam = token ? `&token=${token}` : '';
+                    const callbackUrl = encodeURIComponent(`/trmnl/manage?uuid=${uuid}${tokenParam}`);
                     window.location.href = `/login?callback=${callbackUrl}`;
                     return;
                 }
@@ -43,8 +56,12 @@ function ManageContent() {
                 const installData = await installRes.json();
 
                 setSites(sitesData);
-                if (installData.site_id) setSelectedSite(installData.site_id);
-                else if (sitesData.length > 0) setSelectedSite(sitesData[0].id);
+                if (installData) {
+                    if (installData.site_id) setSelectedSite(installData.site_id);
+                    if (installData.plugin_setting_id) setPluginSettingId(installData.plugin_setting_id);
+                }
+
+                if (!installData.site_id && sitesData.length > 0) setSelectedSite(sitesData[0].id);
             } catch {
                 setError('Failed to load data');
             } finally {
@@ -53,10 +70,16 @@ function ManageContent() {
         };
 
         fetchData();
-    }, [uuid]);
+    }, [uuid, token]);
 
     const handleSave = async () => {
         if (!selectedSite || !uuid) return;
+
+        if (!token) {
+            setError('Security token missing. Please return to Trmnl and try again.');
+            return;
+        }
+
         setLoading(true);
         setSuccess('');
         setError('');
@@ -67,7 +90,8 @@ function ManageContent() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     uuid,
-                    site_id: selectedSite
+                    site_id: selectedSite,
+                    token
                 })
             });
 
@@ -163,11 +187,19 @@ function ManageContent() {
                         Save Changes
                     </button>
 
-                    <div className="mt-4 text-center">
-                        <a href={`https://usetrmnl.com/plugin_settings/${uuid}/edit?force_refresh=true`} target="_blank" rel="noreferrer" className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                </div>
+
+                <div className="mt-4 text-center">
+                    {pluginSettingId && (
+                        <a
+                            href={`https://usetrmnl.com/plugin_settings/${pluginSettingId}/edit?force_refresh=true`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                        >
                             Back to Trmnl
                         </a>
-                    </div>
+                    )}
                 </div>
             </div>
         </div>
