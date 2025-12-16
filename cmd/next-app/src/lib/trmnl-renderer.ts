@@ -136,10 +136,17 @@ export class TrmnlRenderer {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                z-index: 10;
-                rotate: 180deg;
+                z-index: 20;
+                transform: rotate(180deg);
             }
+            .battery-container, .battery-icon { overflow: visible; }
             .battery-badge svg { width: 12px; height: 12px; display: block; }
+            
+            /* Percent symbol resize */
+            .percent-symbol { font-size: 0.6em; vertical-align: top; margin-left: 1px; }
+
+            /* Cost Box */
+            .cost-box { border: 2px solid black; padding: 10px 20px; border-radius: 8px; }
         `;
     }
 
@@ -226,8 +233,10 @@ export class TrmnlRenderer {
                             <div class="markdown gap--medium" style="display: flex; flex-direction: column; flex-grow: 1;">
                                 ${tariffHtml}
                                 <div class="content-element content content--center mt-4" style="margin-top: auto; padding-bottom: 10px;">
-                                    <span class="label mb-2">${ctx.costLabel}</span>
-                                    <span class="title title--large">${ctx.displayCost}</span>
+                                    <div class="content--center cost-box">
+                                        <span class="label mb-2">${ctx.costLabel}</span>
+                                        <span class="title title--large">${ctx.displayCost}</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -329,9 +338,10 @@ export class TrmnlRenderer {
         // For now, let's show it even if null so the user sees the element.
         const hasData = soc !== undefined && soc !== null;
         const level = hasData ? Math.max(0, Math.min(100, soc!)) : 0;
-        const text = hasData ? `${Math.round(level)}%` : '--%';
+        const text = hasData ? `${Math.round(level)}<span class="percent-symbol">%</span>` : '--<span class="percent-symbol">%</span>';
 
         let badge = '';
+
         if (status === 'charging') {
             badge = `<div class="battery-badge">${this.CHARGING_ICON}</div>`;
         } else if (status === 'discharging') {
