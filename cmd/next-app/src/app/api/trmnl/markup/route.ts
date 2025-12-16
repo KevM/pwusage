@@ -6,6 +6,7 @@ import { cookies } from 'next/headers';
 
 import { Importer } from '@/lib/importer';
 import { TeslaClient, EnergySiteLiveStatus } from '@/lib/tesla-client';
+import { verifySiteToken } from '@/lib/auth-jwt';
 import QRCode from 'qrcode';
 
 export async function GET(request: Request) {
@@ -95,31 +96,32 @@ export async function GET(request: Request) {
             // Preview Mode: Authenticate via Session Cookies
             const cookieStore = await cookies();
             const token = cookieStore.get('access_token')?.value;
-            if (!token) {
-                return NextResponse.json({ error: 'Unauthorized preview' }, { status: 401 });
+            const siteAuth = cookieStore.get('site_auth')?.value;
+
+            let hasAccess = false;
+
+            // Check site_auth first (local verification, fastest)
+            if (siteAuth) {
+                const authorizedSites = verifySiteToken(siteAuth);
+                if (authorizedSites && authorizedSites.includes(siteIdParam)) {
+                    hasAccess = true;
+                    console.log(`[TrmnlMarkup] Authorized via site_auth cookie for site ${siteIdParam}`);
+                }
             }
 
-            // Verify access (basic check: can we fetch site details? strict check: SiteService)
-            // For now, let's assume if they have a valid Tesla token they can see any site? 
-            // Better to check if the site belongs to them?
-            // Since we don't have SiteService here easily without constructing it...
-            // Let's use EnergyRepo to get site and check ownership??
-            // EnergyRepo.getSite doesn't enforce ownership.
+            // Fallback to strict Tesla API check if not authorized by local token AND we have an access token
+            if (!hasAccess && token) {
+                const { SiteService } = await import('@/lib/site-service');
+                const { TeslaClient } = await import('@/lib/tesla-client');
 
-            // Re-use logic from Manage route?
-            // Let's construct SiteService.
-            const { SiteService } = await import('@/lib/site-service'); // dynamic import to avoid circular if any
-            // TeslaClient is already imported at the top, but the instruction shows dynamic import.
-            // Sticking to the instruction for dynamic import here to match the provided snippet.
-            const { TeslaClient } = await import('@/lib/tesla-client');
+                const client = new TeslaClient({ accessToken: token });
+                const siteService = new SiteService({ teslaClient: client, energyRepo: new EnergyRepo() });
 
-            const client = new TeslaClient({ accessToken: token });
-            // Note: we don't need refresh token just for validation usually, or maybe we do.
-            const siteService = new SiteService({ teslaClient: client, energyRepo: new EnergyRepo() });
+                hasAccess = await siteService.validateSiteAccess(siteIdParam);
+            }
 
-            const hasAccess = await siteService.validateSiteAccess(siteIdParam);
             if (!hasAccess) {
-                return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
+                return NextResponse.json({ error: 'Unauthorized preview' }, { status: 401 });
             }
 
             siteId = siteIdParam;
