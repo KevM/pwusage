@@ -1,4 +1,5 @@
 import { EnergyRepo } from '@/lib/energy-repo';
+import { TrmnlService } from '@/lib/trmnl-service';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { updateBillingStartDay } from './actions';
 import Link from 'next/link';
@@ -18,6 +19,9 @@ export default async function SiteSettingsPage({ params }: { params: Promise<{ i
     if (!site) {
         notFound();
     }
+
+    const trmnlService = new TrmnlService();
+    const installation = await trmnlService.getInstallationBySiteId(site.id);
 
     return (
         <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
@@ -125,20 +129,32 @@ export default async function SiteSettingsPage({ params }: { params: Promise<{ i
                         </div>
 
                         <div className="text-center">
-                            <Link href="/trmnl/preview" className="text-blue-600 hover:underline font-medium text-sm" target="_blank">
+                            <Link href={`/site/${site.id}/trmnl/preview`} className="text-blue-600 hover:underline font-medium text-sm" target="_blank">
                                 View Live Device Preview &rarr;
                             </Link>
                         </div>
                     </div>
 
                     <div className="flex gap-4 flex-col sm:flex-row">
-                        <a
-                            href="https://usetrmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
-                            target="_blank"
-                            className="flex-1 bg-black text-white px-4 py-2 rounded text-center hover:bg-gray-800 transition-colors font-semibold"
-                        >
-                            Add Trmnl Plugin
-                        </a>
+                        {installation ? (
+                            <a
+                                href={installation.plugin_setting_id
+                                    ? `https://usetrmnl.com/plugin_settings/${installation.plugin_setting_id}/edit`
+                                    : 'https://usetrmnl.com/dashboard'}
+                                target="_blank"
+                                className="flex-1 bg-gray-800 text-white px-4 py-2 rounded text-center hover:bg-gray-700 transition-colors font-semibold"
+                            >
+                                Manage Trmnl Plugin
+                            </a>
+                        ) : (
+                            <a
+                                href="https://usetrmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
+                                target="_blank"
+                                className="flex-1 bg-black text-white px-4 py-2 rounded text-center hover:bg-gray-800 transition-colors font-semibold"
+                            >
+                                Add Trmnl Plugin
+                            </a>
+                        )}
                         <a
                             href="https://usetrmnl.com"
                             target="_blank"
