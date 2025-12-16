@@ -111,7 +111,7 @@ export default async function UsagePage({ params, searchParams }: {
             <div className="w-full max-w-6xl">
                 <Breadcrumbs items={[
                     { label: 'Dashboard', href: '/' },
-                    { label: 'Site Details', href: `/site/${id}` },
+                    { label: site.name, href: `/site/${id}` },
                     { label: 'Estimated Bill' }
                 ]} />
 

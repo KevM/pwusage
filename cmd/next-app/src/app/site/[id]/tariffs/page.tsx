@@ -29,8 +29,8 @@ export default async function TariffPage({ params }: { params: Promise<{ id: str
             <div className="w-full max-w-4xl">
                 <Breadcrumbs items={[
                     { label: 'Dashboard', href: '/' },
-                    { label: 'Site Details', href: `/site/${id}` },
-                    { label: 'Tariffs' }
+                    { label: site.name, href: `/site/${id}` },
+                    { label: 'Tariff Schedule' }
                 ]} />
                 <h1 className="text-4xl font-bold mb-8">Tariffs for {site.name}</h1>
 
