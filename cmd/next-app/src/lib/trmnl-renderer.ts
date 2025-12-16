@@ -23,6 +23,7 @@ export interface RenderContext {
     costLabel: string;
     currentTouName?: string;
     batterySoc?: number | null;
+    batteryStatus?: 'charging' | 'discharging' | 'idle';
     todayGrid?: number;
     todaySolar?: number;
 }
@@ -37,6 +38,16 @@ export class TrmnlRenderer {
     static get GRID_ICON() {
         // Zoomed bolt (viewBox 6 0 12 24) to reduce side whitespace and match Sun's visual weight
         return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="6 0 12 24" width="24" height="24"><path d="M7 2v11h3v9l7-12h-4l4-8z" fill="black"/></svg>`;
+    }
+
+    static get CHARGING_ICON() {
+        // Sideways Lightning Bolt (Charging)
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="black"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" transform="rotate(-90, 12, 12)"/></svg>`;
+    }
+
+    static get DISCHARGING_ICON() {
+        // Ground Symbol (Discharging) -- Rotated -90 degrees (Flipped)
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10M3 12h18M7 16h10M10 20h4" transform="rotate(-90, 12, 12)" /></svg>`;
     }
 
     // Shared Styles
@@ -88,6 +99,8 @@ export class TrmnlRenderer {
             /* Status Bar (Top Right) */
             .status-bar { display: flex; align-items: center; gap: 32px; margin-left: auto; }
             .status-item { display: flex; align-items: center; gap: 6px; }
+            .status-value-group { display: flex; flex-direction: column; align-items: flex-end; line-height: 1; }
+            .status-unit { font-size: 10px; font-weight: bold; margin-top: 2px; }
             .status-icon svg { width: 28px; height: 28px; display: block; }
             
             /* High Contrast Labels (Replacement for Glyphs) */
@@ -109,6 +122,24 @@ export class TrmnlRenderer {
             .battery-icon::after { content: ''; position: absolute; top: 6px; right: -5px; width: 3px; height: 8px; background: #000; border-radius: 0 2px 2px 0; }
             .battery-level { height: 100%; background: #000; transition: width 0.3s; }
             .battery-text { font-size: 18px; font-weight: bold; color: black; }
+            
+            /* Battery Badges */
+            .battery-badge {
+                position: absolute;
+                bottom: -8px; /* Slightly adjusted to center on corner with new size */
+                left: -8px;
+                background: white;
+                border: 1px dotted black;
+                border-radius: 50%;
+                width: 18px;
+                height: 18px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10;
+                rotate: 180deg;
+            }
+            .battery-badge svg { width: 12px; height: 12px; display: block; }
         `;
     }
 
@@ -155,7 +186,7 @@ export class TrmnlRenderer {
             <style>${this.styles}</style>
             <div class="view view--full layout flex--col">
                 <!-- Header with Site Name and Status Bar -->
-                <div class="flex flex--row items--center justify--between" style="padding: 15px 20px 25px 20px; width: 100%; box-sizing: border-box;">
+                <div class="flex flex--row items--center justify--between" style="padding: 20px 20px 25px 20px; width: 100%; box-sizing: border-box;">
                     <div class="flex flex--col text--left">
                         <span class="title title--medium" style="line-height: 1.2;">${ctx.siteName}</span>
                         <span class="date" style="line-height: 1.2;">${ctx.dateRange}</span>
@@ -165,7 +196,10 @@ export class TrmnlRenderer {
                         <!-- Grid Today -->
                          ${ctx.todayGrid !== undefined ? `
                         <div class="status-item">
-                            <span class="stat-value">${(ctx.todayGrid).toFixed(1)}</span>
+                            <div class="status-value-group">
+                                <span class="stat-value">${(ctx.todayGrid).toFixed(1)}</span>
+                                <span class="status-unit">kWh</span>
+                            </div>
                             <span class="status-icon">${TrmnlRenderer.GRID_ICON}</span>
                         </div>
                          ` : ''}
@@ -173,13 +207,16 @@ export class TrmnlRenderer {
                          <!-- Solar Today -->
                         ${ctx.todaySolar !== undefined ? `
                         <div class="status-item">
-                            <span class="stat-value">${(ctx.todaySolar).toFixed(1)}</span>
+                             <div class="status-value-group">
+                                <span class="stat-value">${(ctx.todaySolar).toFixed(1)}</span>
+                                <span class="status-unit">kWh</span>
+                            </div>
                             <span class="status-icon">${TrmnlRenderer.SUN_ICON}</span>
                         </div>
                         ` : ''}
 
                         <!-- Battery SOC -->
-                         ${this.renderBatteryIcon(ctx.batterySoc)}
+                         ${this.renderBatteryIcon(ctx.batterySoc, ctx.batteryStatus)}
                     </div>
                 </div>
 
@@ -206,7 +243,7 @@ export class TrmnlRenderer {
             <style>${this.styles}</style>
             <div class="view view--half-vertical">
                 <div style="position: absolute; top: 10px; right: 10px;">
-                    ${this.renderBatteryIcon(ctx.batterySoc)}
+                    ${this.renderBatteryIcon(ctx.batterySoc, ctx.batteryStatus)}
                 </div>
                 <div class="layout flex--col items--center" style="padding: 15px;">
                     <span class="title title--small mb-4">${ctx.siteName}</span>
@@ -229,7 +266,7 @@ export class TrmnlRenderer {
         return `
             <style>${this.styles}</style>
              <div class="view view--half-horizontal">
-                ${this.renderBatteryIcon(ctx.batterySoc)}
+                ${this.renderBatteryIcon(ctx.batterySoc, ctx.batteryStatus)}
                 <div class="layout layout--row-between" style="padding: 15px; align-items: center;">
                     <div class="flex flex--col">
                         <span class="title title--small">${ctx.siteName}</span>
@@ -287,18 +324,26 @@ export class TrmnlRenderer {
         `;
     }
 
-    private static renderBatteryIcon(soc?: number | null): string {
+    private static renderBatteryIcon(soc?: number | null, status?: 'charging' | 'discharging' | 'idle'): string {
         // If SOC is missing, we defaults to 0 but maybe show differently? 
         // For now, let's show it even if null so the user sees the element.
         const hasData = soc !== undefined && soc !== null;
         const level = hasData ? Math.max(0, Math.min(100, soc!)) : 0;
         const text = hasData ? `${Math.round(level)}%` : '--%';
 
+        let badge = '';
+        if (status === 'charging') {
+            badge = `<div class="battery-badge">${this.CHARGING_ICON}</div>`;
+        } else if (status === 'discharging') {
+            badge = `<div class="battery-badge">${this.DISCHARGING_ICON}</div>`;
+        }
+
         return `
             <div class="battery-container">
                 <span class="stat-value">${text}</span>
                 <div class="battery-icon">
                     <div class="battery-level" style="width: ${level}%"></div>
+                    ${badge}
                 </div>
             </div>
         `;

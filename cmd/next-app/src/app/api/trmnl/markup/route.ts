@@ -181,7 +181,7 @@ export async function GET(request: Request) {
             try {
                 const importer = new Importer(client);
                 // Sync current month
-                await importer.ensureDataForRange(site.id, start, end);
+                await importer.ensureDataForRange(site.id, start, end, undefined, { force: true });
                 console.log(`[Trmnl] Sync successful for site ${site.id}`);
             } catch (err) {
                 console.error(`[Trmnl] Sync failed for site ${site.id}:`, err);
@@ -310,6 +310,7 @@ export async function GET(request: Request) {
         // Generate HTML for each tariff group
         // Fetch latest SOC (Live from API)
         let batterySoc: number | null = null;
+        let batteryStatus: 'charging' | 'discharging' | 'idle' = 'idle';
         try {
             // Re-use logic to get a client with refresh capabilities
             let useToken = site.access_token;
@@ -332,8 +333,18 @@ export async function GET(request: Request) {
 
                 try {
                     const liveStatus = await Promise.race([liveStatusPromise, timeoutPromise]) as EnergySiteLiveStatus;
-                    if (liveStatus && typeof liveStatus.percentage_charged === 'number') {
-                        batterySoc = liveStatus.percentage_charged;
+                    if (liveStatus) {
+                        if (typeof liveStatus.percentage_charged === 'number') {
+                            batterySoc = liveStatus.percentage_charged;
+                        }
+
+                        const power = liveStatus.battery_power || 0;
+                        // battery_power: Positive = Discharging, Negative = Charging
+                        if (power < -50) {
+                            batteryStatus = 'charging';
+                        } else if (power > 50) {
+                            batteryStatus = 'discharging';
+                        }
                     }
                 } catch (timeoutErr) {
                     console.warn('[TrmnlMarkup] Live status fetch timed out or failed', timeoutErr);
@@ -389,6 +400,7 @@ export async function GET(request: Request) {
             currency: currency, // Use existing 'currency'
             currentTouName: currentTouName || undefined, // Retain '|| undefined' for consistency
             batterySoc: batterySoc,
+            batteryStatus: batteryStatus,
             todayGrid: todayGrid,
             todaySolar: todaySolar
         };

@@ -28,8 +28,9 @@ export class Importer {
         this.repo = new EnergyRepo();
     }
 
-    async ensureDataForRange(siteId: string, start: Date, end: Date, onProgress?: (msg: string) => void): Promise<void> {
+    async ensureDataForRange(siteId: string, start: Date, end: Date, onProgress?: (msg: string) => void, options?: { force?: boolean }): Promise<void> {
         if (onProgress) onProgress(`Checking data coverage...`);
+        const force = options?.force ?? false;
         const site = await this.repo.getSite(siteId);
         if (!site) throw new Error(`Site ${siteId} not found in database`);
 
@@ -88,7 +89,7 @@ export class Importer {
             const isToday = cursor.getTime() === todayStart.getTime();
             let needsImport = false;
 
-            if (!hasData) {
+            if (!hasData || force) {
                 needsImport = true;
             } else if (isToday) {
                 let lastInWindow = existingTimestamps[tsIndex];
@@ -383,7 +384,9 @@ export class Importer {
                 } finally {
                     client.release();
                 }
+
             }
+        } else {
             const client = await pool.connect();
             try {
                 const msg1 = `[Import] Insert Transaction Start. History Rows: ${history.length}`;
@@ -431,7 +434,9 @@ export class Importer {
             const scale = (period === 'day' && durationHours > 20) ? 1000 : 1;
 
             const tp = this.getTariffPeriodOrFallback(site, schedule, ts);
-            if (!tp) continue;
+            if (!tp) {
+                continue;
+            }
 
             const gridImported = h.grid_energy_imported ?? 0;
             const gridExported = h.total_grid_energy_exported ?? 0;
@@ -448,7 +453,7 @@ export class Importer {
                 tariff_id: Number(tp.tariff.id),
                 timestamp: h.timestamp, // string from API
                 load_power: (h.total_home_usage ?? 0) * scale,
-                solar_power: (h.solar_energy_exported ?? 0) * scale,
+                solar_power: ((h.total_solar_generation || h.solar_energy_exported) ?? 0) * scale,
                 grid_power: grid * scale,
                 battery_power: battery * scale
             });
