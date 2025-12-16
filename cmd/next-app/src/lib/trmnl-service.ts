@@ -6,7 +6,7 @@ export class TrmnlService {
         // But table has UNIQUE constraint on UUID? (It allows multiple nulls? Yes standard SQL does, but let's be safe).
 
         let query = '';
-        const params: any[] = [siteId, uuid || null, pluginSettingId, details, accessToken];
+        const params: (string | number | unknown | null)[] = [siteId, uuid || null, pluginSettingId, details, accessToken];
 
         if (uuid) {
             query = `
@@ -65,7 +65,7 @@ export class TrmnlService {
         await pool.query('DELETE FROM "TrmnlInstallation" WHERE uuid = $1', [uuid]);
     }
 
-    async exchangeCodeForToken(code: string, clientId: string, clientSecret: string): Promise<any> {
+    async exchangeCodeForToken(code: string, clientId: string, clientSecret: string): Promise<{ access_token: string, user_uuid?: string, uuid?: string, user?: { uuid?: string } }> {
         const response = await fetch('https://usetrmnl.com/oauth/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

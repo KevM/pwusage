@@ -269,8 +269,6 @@ export class EnergyRepo {
             solarProduction: number;
             gridUsage: number;
             batteryUsage: number;
-            batterySocTotal: number;
-            batterySocCount: number;
         }>();
 
         for (const row of rows) {
@@ -280,26 +278,16 @@ export class EnergyRepo {
             const ts = new Date(row.timestamp);
             const hr = ts.getHours();
 
-            if (!buckets.has(hr)) {
-                buckets.set(hr, {
-                    homeUsage: 0,
-                    solarProduction: 0,
-                    gridUsage: 0,
-                    batteryUsage: 0,
-                    batterySocTotal: 0,
-                    batterySocCount: 0
-                });
+            let bucket = buckets.get(hr);
+            if (!bucket) {
+                bucket = { homeUsage: 0, solarProduction: 0, gridUsage: 0, batteryUsage: 0 };
+                buckets.set(hr, bucket);
             }
 
-            const bucket = buckets.get(hr)!;
             bucket.homeUsage += row.load_power;
             bucket.solarProduction += row.solar_power;
             bucket.gridUsage += row.grid_power;
             bucket.batteryUsage += row.battery_power;
-            if (row.battery_soc !== null && row.battery_soc !== undefined) {
-                bucket.batterySocTotal += row.battery_soc;
-                bucket.batterySocCount += 1;
-            }
         }
 
         const sortedHours = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]);
@@ -309,8 +297,24 @@ export class EnergyRepo {
             solarProduction: bucket.solarProduction / 1000,
             gridUsage: bucket.gridUsage / 1000,
             batteryUsage: bucket.batteryUsage / 1000,
-            batterySoc: bucket.batterySocCount > 0 ? bucket.batterySocTotal / bucket.batterySocCount : null
+            batterySoc: null // batterySoc is no longer aggregated, return null or remove if type allows
         }));
+    }
+
+    async getLatestEnergyData(siteId: string): Promise<{ timestamp: Date } | null> {
+        await getDbReady();
+        const { rows } = await pool.query(`
+            SELECT timestamp
+            FROM "EnergyData" 
+            WHERE site_id = $1 
+            ORDER BY timestamp DESC 
+            LIMIT 1
+        `, [siteId]);
+
+        if (rows.length === 0) return null;
+        return {
+            timestamp: new Date(rows[0].timestamp)
+        };
     }
 
     async updateSiteBillingDay(siteId: string, day: number) {
