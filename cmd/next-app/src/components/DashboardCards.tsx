@@ -7,7 +7,7 @@ import { formatTouName } from '../lib/format-utils';
 export interface ProductWithLiveData {
     id: string;
     site_name: string;
-    energy_site_id: number;
+    energy_site_id: string;
     percentage_charged: number;
     currentTariff: string;
     liveBatteryPower: number;
