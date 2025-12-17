@@ -2,8 +2,8 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { verifySiteToken } from '@/lib/auth-jwt';
 import { EnergyRepo } from '@/lib/energy-repo';
-import { DashboardCards } from '@/components/DashboardCards';
-import { TeslaClient, FleetProduct } from '@/lib/tesla-client'; // Import FleetProduct
+import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards';
+import { TeslaClient, FleetProduct } from '@/lib/tesla-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,8 +17,8 @@ export default async function ProductsPage() {
     }
 
     const repo = new EnergyRepo();
-    let energyProducts: any[] = [];
-    let vehicleProducts: any[] = []; // Store vehicles
+    let energyProducts: ProductWithLiveData[] = [];
+    let vehicleProducts: ProductWithLiveData[] = []; // Store vehicles
 
     if (siteAuthToken) {
         const siteIds = verifySiteToken(siteAuthToken);
@@ -29,7 +29,7 @@ export default async function ProductsPage() {
             energyProducts = validSites.map(s => ({
                 id: s.id,
                 site_name: s.name,
-                energy_site_id: s.id,
+                energy_site_id: parseInt(s.id),
                 percentage_charged: 0,
                 currentTariff: 'Loading...',
                 liveBatteryPower: 0,
@@ -45,7 +45,7 @@ export default async function ProductsPage() {
         energyProducts = sites.map(s => ({
             id: s.id,
             site_name: s.name,
-            energy_site_id: s.id,
+            energy_site_id: parseInt(s.id),
             percentage_charged: 0,
             currentTariff: 'Loading...',
             liveBatteryPower: 0,
@@ -61,7 +61,7 @@ export default async function ProductsPage() {
         try {
             const client = new TeslaClient(token);
             // Now getProducts returns everything
-            const allRaw = await client.getProducts();
+            const allRaw: FleetProduct[] = await client.getProducts();
 
             // Filter for vehicles (no energy_site_id or resource_type starts with 'battery'/'solar' check?)
             // Usually vehicles have 'vin' or 'vehicle_id'. FleetProduct interface might need update.
@@ -78,7 +78,7 @@ export default async function ProductsPage() {
             }
 
             vehicleProducts = vehicles.map(v => ({
-                id: v.id || v.id_s || 'unknown', // Vehicles use 'id_s' often
+                id: v.id_s || v.id || 'unknown',
                 site_name: v.display_name || 'Tesla Vehicle',
                 energy_site_id: v.vehicle_id || 0, // Use vehicle_id as placeholder
                 percentage_charged: 0, // Would need vehicle_data to get real %

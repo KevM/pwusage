@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { useParams } from 'next/navigation';
-import { SiteSwitcher } from './SiteSwitcher';
+// SiteSwitcher import removed
 import { HeaderLiveStats } from './HeaderLiveStats';
 
 interface Site {

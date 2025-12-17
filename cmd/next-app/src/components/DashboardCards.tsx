@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { formatTouName } from '../lib/format-utils';
 
-interface ProductWithLiveData {
+export interface ProductWithLiveData {
     id: string;
     site_name: string;
     energy_site_id: number;
@@ -15,22 +15,27 @@ interface ProductWithLiveData {
     liveLoadPower: number;
     liveGridPower: number;
     type?: 'energy' | 'vehicle';
-    meta?: any;
+    meta?: unknown;
+}
+
+interface VehicleMeta {
+    state?: string;
+    vehicle_id?: number;
+    option_codes?: string;
 }
 
 export function DashboardCards({ initialProducts }: { initialProducts: ProductWithLiveData[] }) {
     const [products, setProducts] = useState(initialProducts);
-    const [lastUpdate, setLastUpdate] = useState(new Date());
-    const [mounted, setMounted] = useState(false);
+    const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
     useEffect(() => {
-        setMounted(true);
+        // Initial update
+        setTimeout(() => setLastUpdate(new Date()), 0);
 
         async function fetchLiveForProduct(p: ProductWithLiveData) {
-            if (p.type === 'vehicle') return; // Skip vehicles for now (or implement vehicle live data later)
+            if (p.type === 'vehicle') return;
 
             try {
-                // Use the same API as HeaderLiveStats
                 const res = await fetch(`/api/site-live-data?siteId=${p.energy_site_id}`);
                 if (res.ok) {
                     const data = await res.json();
@@ -44,10 +49,6 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                                 liveGridPower: data.gridPower,
                                 liveLoadPower: data.loadPower,
                                 percentage_charged: data.percentageCharged,
-                                // We might want tariff name too if available in data? 
-                                // HeaderLiveStats data interface doesn't have tariff name usually.
-                                // But let's check if we can get it or if we need another call.
-                                // For now, let's just update the powers.
                                 currentTariff: prod.currentTariff === 'Loading...' ? (data.tariffName || 'Standard') : prod.currentTariff
                             };
                         }
@@ -75,13 +76,14 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
         }, 60000);
 
         return () => clearInterval(interval);
-    }, []); // Run once on mount (and setup interval)
+    }, [initialProducts, products]); // Added dependency products
 
     return (
         <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {products.map((product) => {
                     if (product.type === 'vehicle') {
+                        const meta = product.meta as VehicleMeta | undefined;
                         return (
                             <div key={product.id} className="border p-4 rounded shadow hover:shadow-lg transition bg-slate-50 dark:bg-slate-800">
                                 <div className="flex items-center justify-between mb-3">
@@ -91,8 +93,8 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                                         </svg>
                                         <h2 className="text-xl font-semibold">{product.site_name}</h2>
                                     </div>
-                                    <span className={`text-xs font-mono px-2 py-1 rounded ${product.meta?.state === 'online' ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
-                                        {product.meta?.state || 'Unknown'}
+                                    <span className={`text-xs font-mono px-2 py-1 rounded ${meta?.state === 'online' ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
+                                        {meta?.state || 'Unknown'}
                                     </span>
                                 </div>
                                 <div className="space-y-2 text-sm text-gray-600 dark:text-gray-300">
@@ -102,11 +104,11 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                                     </div>
                                     <div className="flex justify-between border-b pb-1">
                                         <span className="text-gray-500">ID</span>
-                                        <span className="font-mono">{product.meta?.vehicle_id}</span>
+                                        <span className="font-mono">{meta?.vehicle_id}</span>
                                     </div>
-                                    {product.meta?.option_codes && (
-                                        <div className="text-xs text-gray-400 truncate" title={product.meta.option_codes}>
-                                            Options: {product.meta.option_codes}
+                                    {meta?.option_codes && (
+                                        <div className="text-xs text-gray-400 truncate" title={meta.option_codes}>
+                                            Options: {meta.option_codes}
                                         </div>
                                     )}
                                 </div>
@@ -153,7 +155,7 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
 
             <div className="mt-8 text-center">
                 <p className="text-xs text-slate-400 dark:text-slate-600">
-                    Last updated: {mounted ? lastUpdate.toLocaleTimeString() : '...'}
+                    Last updated: {lastUpdate ? lastUpdate.toLocaleTimeString() : '...'}
                 </p>
             </div>
         </>

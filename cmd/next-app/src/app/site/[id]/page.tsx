@@ -13,8 +13,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { SiteSetup } from '@/components/SiteSetup';
 import { BillDateNav } from '@/components/BillDateNav';
-import { verifySiteToken } from '@/lib/auth-jwt';
-import { SiteSwitcher } from '@/components/SiteSwitcher';
+
 
 export const dynamic = 'force-dynamic';
 
@@ -123,44 +122,8 @@ export default async function SitePage({ params, searchParams }: {
     // Use finalSite for the rest of the render
     // ... we need to make sure we use finalSite.name instead of site.name below
 
-    // Get live stats for initial render
-    let initialStats = {
-        solarPower: 0,
-        loadPower: 0,
-        batteryPower: 0,
-        gridPower: 0,
-        percentageCharged: 0,
-        currentTariff: 'Unknown'
-    };
+    // Live stats fetch removed as it was unused
 
-    if (accessToken) {
-        try {
-            const liveStatus = await teslaClient.getLiveStatus(id);
-
-            // Get current tariff
-            let currentTariff = 'Unknown';
-            if (finalSite.tariffs.length > 0) {
-                const schedule = new Schedule(finalSite.tariffs, finalSite.timezone);
-                const tariffPeriod = schedule.getTariffPeriod(new Date());
-                if (tariffPeriod) {
-                    const season = tariffPeriod.season.name || 'Season';
-                    const tariffName = tariffPeriod.tariff.name || 'Unknown';
-                    currentTariff = `${season} - ${tariffName}`;
-                }
-            }
-
-            initialStats = {
-                solarPower: liveStatus.solar_power,
-                loadPower: liveStatus.load_power,
-                batteryPower: liveStatus.battery_power,
-                gridPower: liveStatus.grid_power,
-                percentageCharged: liveStatus.percentage_charged,
-                currentTariff
-            };
-        } catch (error) {
-            console.error('Failed to fetch initial live stats:', error);
-        }
-    }
 
     // Get hourly data for the requested date (from query param) or today (in site timezone)
     // We must use the Site's Wall Clock Time to determine "Today", otherwise
@@ -278,23 +241,8 @@ export default async function SitePage({ params, searchParams }: {
     // Check if next month would be in the future
     const isCurrentPeriod = siteNow >= start && siteNow < end;
 
-    // Fetch all sites for the switcher (replicating logic from layout.tsx)
-    const siteAuthToken = cookieStore.get('site_auth')?.value;
-    let allowedSites: { id: string; name: string }[] = [];
-    if (siteAuthToken) {
-        const siteIds = verifySiteToken(siteAuthToken);
-        if (siteIds && siteIds.length > 0) {
-            const sitePromises = siteIds.map(id => repo.getSite(id));
-            const sitesResults = await Promise.all(sitePromises);
-            allowedSites = sitesResults
-                .filter((s): s is NonNullable<typeof s> => !!s)
-                .map(s => ({ id: s.id, name: s.name }));
-        }
-    } else {
-        // Fallback legacy
-        const allSites = await repo.getSites();
-        allowedSites = allSites.map(s => ({ id: s.id, name: s.name }));
-    }
+    // Site switcher logic removed as it was unused
+
 
     const breadcrumbRootLabel = (
         <Link href="/products" className="flex items-center gap-1 hover:bg-gray-100 dark:hover:bg-slate-800 px-2 py-1 rounded transition-colors group">
