@@ -40,20 +40,25 @@ export default async function ProductsPage() {
             }));
         }
     } else if (token) {
-        // Legacy: Fetch from Repo
-        const sites = await repo.getSites();
-        energyProducts = sites.map(s => ({
-            id: s.id,
-            site_name: s.name,
-            energy_site_id: s.id,
-            percentage_charged: 0,
-            currentTariff: 'Loading...',
-            liveBatteryPower: 0,
-            liveSolarPower: 0,
-            liveLoadPower: 0,
-            liveGridPower: 0,
-            type: 'energy'
-        }));
+        // User login
+        const { getUserByToken } = await import('@/lib/energy-repo');
+        const user = await getUserByToken(token);
+
+        if (user) {
+            const sites = await repo.getSitesForUser(user.id);
+            energyProducts = sites.map(s => ({
+                id: s.id,
+                site_name: s.name,
+                energy_site_id: s.id,
+                percentage_charged: 0,
+                currentTariff: 'Loading...',
+                liveBatteryPower: 0,
+                liveSolarPower: 0,
+                liveLoadPower: 0,
+                liveGridPower: 0,
+                type: 'energy'
+            }));
+        }
     }
 
     // Fetch Vehicles if we have a main access token
