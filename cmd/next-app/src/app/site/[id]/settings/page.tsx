@@ -27,7 +27,6 @@ export default async function SiteSettingsPage({ params }: { params: Promise<{ i
         <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
             <div className="w-full max-w-2xl">
                 <Breadcrumbs items={[
-                    { label: 'Dashboard', href: '/' },
                     { label: site.name, href: `/site/${id}` },
                     { label: 'Settings' }
                 ]} />

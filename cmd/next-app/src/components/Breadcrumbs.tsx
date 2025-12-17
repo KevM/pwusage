@@ -3,7 +3,7 @@
 import Link from 'next/link';
 
 export interface BreadcrumbItem {
-    label: string;
+    label: string | React.ReactNode;
     href?: string;
 }
 
@@ -41,9 +41,9 @@ export function Breadcrumbs({ items }: { items: BreadcrumbItem[] }) {
                                     {item.label}
                                 </Link>
                             ) : (
-                                <span className={`${isLast ? 'font-semibold text-gray-900 dark:text-white' : ''}`}>
+                                <div className={`${isLast ? 'font-semibold text-gray-900 dark:text-white' : ''}`}>
                                     {item.label}
-                                </span>
+                                </div>
                             )}
                         </li>
                     );

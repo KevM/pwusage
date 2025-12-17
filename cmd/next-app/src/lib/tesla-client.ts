@@ -14,6 +14,13 @@ export interface FleetProduct {
     storm_mode_enabled: boolean;
     sync_grid_alert_enabled: boolean;
     breaker_alert_enabled: boolean;
+    id_s?: string;
+    vehicle_id?: number;
+    vin?: string;
+    display_name?: string;
+    color?: string;
+    option_codes?: string;
+    state?: string;
     components: {
         battery: boolean;
         battery_type: string;
@@ -167,7 +174,8 @@ export class TeslaClient {
 
     async getProducts(): Promise<FleetProduct[]> {
         const result = await this.fetch<{ response: FleetProduct[], count: number }>("/api/1/products");
-        return result.response.filter(p => p.energy_site_id !== undefined && p.energy_site_id !== 0);
+        // Return ALL products, but we might want to distinguish them
+        return result.response;
     }
 
     async getEnergySiteInfo(siteId: string): Promise<EnergySiteInfo> {

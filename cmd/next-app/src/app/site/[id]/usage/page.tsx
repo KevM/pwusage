@@ -110,9 +110,8 @@ export default async function UsagePage({ params, searchParams }: {
         <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
             <div className="w-full max-w-6xl">
                 <Breadcrumbs items={[
-                    { label: 'Dashboard', href: '/' },
                     { label: site.name, href: `/site/${id}` },
-                    { label: 'Estimated Bill' }
+                    { label: 'Usage' }
                 ]} />
 
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
