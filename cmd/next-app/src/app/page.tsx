@@ -2,9 +2,8 @@ import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { verifySiteToken } from '@/lib/auth-jwt';
-import { NoSupportedProducts } from '@/components/NoSupportedProducts';
 import { EnergyRepo } from '@/lib/energy-repo';
-import { DashboardCards } from '@/components/DashboardCards';
+import { ProductWithLiveData } from '@/components/DashboardCards';
 
 // Force dynamic rendering to always fetch fresh data
 export const dynamic = 'force-dynamic';
@@ -32,7 +31,7 @@ export default async function Home() {
   // If we have site auth, but we want to show the Dashboard (Products Page) instead of redirecting
   // we should check if we have sites to show.
 
-  let products: any[] = []; // We will map this to ProductWithLiveData
+  let products: ProductWithLiveData[] = []; // We will map this to ProductWithLiveData
   const repo = new EnergyRepo();
 
   if (siteAuthToken) {
@@ -72,13 +71,6 @@ export default async function Home() {
       liveLoadPower: 0,
       liveGridPower: 0
     }));
-  }
-
-  // Check for Vehicles too to determine if we should show products page
-  let hasVehicles = false;
-  if (token) {
-    // We can't easily check for vehicles without fetching them, which is slow.
-    // But we can check if we have multiple energy sites first.
   }
 
   // Logic: 
