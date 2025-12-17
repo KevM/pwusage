@@ -41,7 +41,6 @@ export default async function Page(props: { params: Promise<{ id: string }>, sea
     const installation = res.rows[0];
 
     const breadcrumbs = [
-        { label: 'Dashboard', href: '/' },
         { label: site.name, href: `/site/${site.id}` },
         { label: 'Settings', href: `/site/${site.id}/settings` },
         { label: 'Trmnl Preview' }

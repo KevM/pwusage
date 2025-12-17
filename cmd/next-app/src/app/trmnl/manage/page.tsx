@@ -114,7 +114,7 @@ function ManageContent() {
             <div className="w-full max-w-2xl">
                 {currentSite && (
                     <Breadcrumbs items={[
-                        { label: 'Dashboard', href: '/' },
+                        { label: 'Manage' },
                         { label: currentSite.name, href: `/site/${currentSite.id}` },
                         { label: 'Settings', href: `/site/${currentSite.id}/settings` },
                         { label: 'Trmnl Connect' }
@@ -122,7 +122,7 @@ function ManageContent() {
                 )}
                 {!currentSite && (
                     <Breadcrumbs items={[
-                        { label: 'Dashboard', href: '/' },
+                        { label: 'Manage' },
                         { label: 'Trmnl Connect' }
                     ]} />
                 )}

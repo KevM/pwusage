@@ -1,39 +1,20 @@
 import { cookies } from 'next/headers';
 import Link from 'next/link';
-import { TeslaClient, FleetProduct } from '@/lib/tesla-client';
-import { EnergyRepo } from '@/lib/energy-repo';
-import { Schedule } from '@/lib/schedule';
-import { DashboardCards } from '@/components/DashboardCards';
-import { NoSupportedProducts } from '@/components/NoSupportedProducts';
+import { redirect } from 'next/navigation';
 import { verifySiteToken } from '@/lib/auth-jwt';
+import { NoSupportedProducts } from '@/components/NoSupportedProducts';
+import { EnergyRepo } from '@/lib/energy-repo';
+import { DashboardCards } from '@/components/DashboardCards';
 
 // Force dynamic rendering to always fetch fresh data
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
   const cookieStore = await cookies();
-  let token = cookieStore.get('access_token')?.value;
-  let refreshToken = cookieStore.get('refresh_token')?.value;
-  let activeSiteId: string | null = null;
-
-  // Try to upgrade to fresh DB tokens if we have site access
-  // This prevents issues where the browser cookies are stale because Trmnl/Background service rotated the tokens
+  const token = cookieStore.get('access_token')?.value;
   const siteAuthToken = cookieStore.get('site_auth')?.value;
-  if (siteAuthToken) {
-    const siteIds = verifySiteToken(siteAuthToken);
-    if (siteIds && siteIds.length > 0) {
-      const repo = new EnergyRepo();
-      // Use the first authorized site as the token source of truth
-      const primarySite = await repo.getSite(siteIds[0]);
-      if (primarySite && primarySite.access_token && primarySite.refresh_token) {
-        console.log(`[Dashboard] Using DB tokens from Site ${primarySite.id}`);
-        token = primarySite.access_token;
-        refreshToken = primarySite.refresh_token;
-        activeSiteId = primarySite.id;
-      }
-    }
-  }
 
+  // If no token at all, show login screen
   if (!token) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center p-24">
@@ -48,116 +29,80 @@ export default async function Home() {
     );
   }
 
-  interface ProductWithTariff extends FleetProduct {
-    currentTariff: string;
-    liveBatteryPower: number;
-    liveSolarPower: number;
-    liveLoadPower: number;
-    liveGridPower: number;
-  }
+  // If we have site auth, but we want to show the Dashboard (Products Page) instead of redirecting
+  // we should check if we have sites to show.
 
-  let productsWithTariff: ProductWithTariff[] = [];
-  let hasProducts = false;
-  let fetchError = null;
+  let products: any[] = []; // We will map this to ProductWithLiveData
+  const repo = new EnergyRepo();
 
-  try {
-    // Determine refresh handler if we identified a site
-    let refreshHandler;
-    if (activeSiteId) {
-      const repo = new EnergyRepo();
-      refreshHandler = repo.getLockedRefreshHandler(activeSiteId);
-    }
+  if (siteAuthToken) {
+    const siteIds = verifySiteToken(siteAuthToken);
+    if (siteIds && siteIds.length > 0) {
+      // We have sites! Fetch them.
+      // We don't have "live data" here yet efficiently without making N API calls or reusing the internal API logic.
+      // For now, let's just fetch the Sites from repo using the authorized IDs.
+      const sitePromises = siteIds.map(id => repo.getSite(id));
+      const sitesResults = await Promise.all(sitePromises);
+      const validSites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
 
-    const client = new TeslaClient({
-      accessToken: token!,
-      refreshToken: refreshToken,
-      tokenRefreshHandler: refreshHandler,
-      onTokenUpdate: () => {
-        console.log('Tokens refreshed during Dashboard render');
-      }
-    });
-
-    const products = (await client.getProducts()).filter(p => p.components.battery);
-
-    if (products.length > 0) {
-      hasProducts = true;
-
-      // Fetch current tariff and live battery power for each site
-      const repo = new EnergyRepo();
-      productsWithTariff = await Promise.all(products.map(async (product) => {
-        const site = await repo.getSite(product.energy_site_id.toString());
-        let currentTariff = 'Unknown';
-        let liveBatteryPower = product.battery_power; // Fallback to products value
-        let liveSolarPower = 0;
-        let liveLoadPower = 0;
-        let liveGridPower = 0;
-
-        // Get live status for real-time battery power
-        try {
-          const liveStatus = await client.getLiveStatus(product.energy_site_id.toString());
-          liveBatteryPower = liveStatus.battery_power;
-          liveSolarPower = liveStatus.solar_power;
-          liveLoadPower = liveStatus.load_power;
-          liveGridPower = liveStatus.grid_power;
-        } catch (error) {
-          console.warn(`Failed to fetch live status for site ${product.energy_site_id}:`, error);
-        }
-
-        if (site && site.tariffs.length > 0) {
-          const schedule = new Schedule(site.tariffs, site.timezone);
-          const tariffPeriod = schedule.getTariffPeriod(new Date());
-          if (tariffPeriod) {
-            const season = tariffPeriod.season.name || 'Season';
-            const tariffName = tariffPeriod.tariff.name || 'Unknown';
-            currentTariff = `${season} - ${tariffName}`;
-          }
-        }
-
-        return {
-          ...product,
-          currentTariff,
-          liveBatteryPower,
-          liveSolarPower,
-          liveLoadPower,
-          liveGridPower
-        };
+      // Map to structure expected by DashboardCards (even if live data is initially empty/zero)
+      products = validSites.map(s => ({
+        id: s.id,
+        site_name: s.name,
+        energy_site_id: s.id, // Keeping compatibility
+        percentage_charged: 0,
+        currentTariff: 'Loading...',
+        liveBatteryPower: 0,
+        liveSolarPower: 0,
+        liveLoadPower: 0,
+        liveGridPower: 0
       }));
     }
-  } catch (error) {
-    fetchError = error;
+  } else if (token) {
+    // Legacy token fallback
+    const sites = await repo.getSites();
+    products = sites.map(s => ({
+      id: s.id,
+      site_name: s.name,
+      energy_site_id: s.id,
+      percentage_charged: 0,
+      currentTariff: 'Loading...',
+      liveBatteryPower: 0,
+      liveSolarPower: 0,
+      liveLoadPower: 0,
+      liveGridPower: 0
+    }));
   }
 
-  if (fetchError) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center p-4 md:p-8 lg:p-24">
-        <h1 className="text-4xl font-bold mb-8">Error</h1>
-        <p className="text-red-500 mb-4">Failed to load products. Your session may have expired.</p>
-        <p className="text-gray-500 mb-4">{(fetchError as Error).message}</p>
-        <Link
-          href="/login"
-          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-        >
-          Re-Login
-        </Link>
-      </div>
-    );
+  // Check for Vehicles too to determine if we should show products page
+  let hasVehicles = false;
+  if (token) {
+    // We can't easily check for vehicles without fetching them, which is slow.
+    // But we can check if we have multiple energy sites first.
   }
 
-  if (!hasProducts) {
-    return (
-      <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
-        <div className="w-full max-w-xl mt-12">
-          <NoSupportedProducts />
-        </div>
-      </div>
-    );
+  // Logic: 
+  // 1. If > 1 Energy Site -> Products
+  // 2. If 1 Energy Site -> Redirect to Site (UNLESS we have vehicles?)
+  //    User said: "if there is only one energy site they will automatically be redirected to that site's page. Otherwise redirect them to the product page so they can pick one."
+  //    "Please add support to the product page for Tesla car products."
+  //    If I have 1 Powerwall and 1 Car, I probably want to see the product page to pick the Car?
+  //    But the user strictly said "If they have only one energy site they will automatically be redirected to that site's page."
+  //    So even if I have a car, I go to the Energy Site page? And then maybe I can click "Products" to go back?
+  //    "Otherwise redirect them to the product page so they can pick one." -> This implies if I have multiple *options* to pick.
+  //    Let's stick to the strict rule: "If they have only one energy site -> redirect to it".
+  //    This implies Vehicles are secondary. The user can navigate back to Products from the site page if they want to see the car.
+
+  if (products.length === 1) {
+    redirect(`/site/${products[0].id}`);
+  } else if (products.length > 1) {
+    redirect('/products');
+  } else {
+    // 0 energy sites.
+    // Redirect to products page (it will try to show vehicles or "No Products")
+    redirect('/products');
   }
 
-  return (
-    <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
-      <div className="w-full max-w-6xl">
-        <DashboardCards initialProducts={productsWithTariff} />
-      </div>
-    </div>
-  );
+  // This code below is unreachable now due to redirects, but kept for type safety if logic changes
+  return null;
 }
