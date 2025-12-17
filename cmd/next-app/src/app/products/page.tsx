@@ -29,7 +29,7 @@ export default async function ProductsPage() {
             energyProducts = validSites.map(s => ({
                 id: s.id,
                 site_name: s.name,
-                energy_site_id: parseInt(s.id),
+                energy_site_id: s.id,
                 percentage_charged: 0,
                 currentTariff: 'Loading...',
                 liveBatteryPower: 0,
@@ -45,7 +45,7 @@ export default async function ProductsPage() {
         energyProducts = sites.map(s => ({
             id: s.id,
             site_name: s.name,
-            energy_site_id: parseInt(s.id),
+            energy_site_id: s.id,
             percentage_charged: 0,
             currentTariff: 'Loading...',
             liveBatteryPower: 0,
