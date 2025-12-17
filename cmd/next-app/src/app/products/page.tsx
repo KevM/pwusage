@@ -80,7 +80,7 @@ export default async function ProductsPage() {
             vehicleProducts = vehicles.map(v => ({
                 id: v.id_s || v.id || 'unknown',
                 site_name: v.display_name || 'Tesla Vehicle',
-                energy_site_id: v.vehicle_id || 0, // Use vehicle_id as placeholder
+                energy_site_id: (v.vehicle_id || 0).toString(), // Use vehicle_id as placeholder
                 percentage_charged: 0, // Would need vehicle_data to get real %
                 currentTariff: v.vin || 'Unknown VIN', // Store VIN here for display
                 liveBatteryPower: 0,
