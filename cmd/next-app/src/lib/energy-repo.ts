@@ -36,6 +36,12 @@ interface SiteIdRow {
 }
 
 // User-centric functions
+export async function getUserByToken(token: string): Promise<{ id: string, email?: string } | null> {
+    const res = await pool.query('SELECT id, email FROM "User" WHERE access_token = $1', [token]);
+    if (res.rows.length === 0) return null;
+    return res.rows[0];
+}
+
 async function getUserTokens(userId: string): Promise<{ access_token: string, refresh_token: string } | null> {
     const res = await pool.query('SELECT access_token, refresh_token FROM "User" WHERE id = $1', [userId]);
     if (res.rows.length === 0) return null;
@@ -43,6 +49,12 @@ async function getUserTokens(userId: string): Promise<{ access_token: string, re
 }
 
 export class EnergyRepo {
+    async getSitesForUser(userId: string): Promise<Site[]> {
+        await getDbReady();
+        const { rows } = await pool.query('SELECT * FROM "Site" WHERE user_id = $1', [userId]);
+        return rows as Site[];
+    }
+
     async getUsageByTOU(siteId: string, start: Date, end: Date): Promise<UsageData[]> {
         const tariffsResult = await pool.query('SELECT * FROM "Tariff" WHERE site_id = $1', [siteId]);
         const tariffs = tariffsResult.rows as Tariff[];

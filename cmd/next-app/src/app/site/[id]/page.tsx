@@ -1,4 +1,5 @@
 import { EnergyRepo } from '@/lib/energy-repo';
+import { pool } from '@/lib/db';
 import Link from 'next/link';
 import { EnergyChartWithNav } from '@/components/EnergyChartWithNav';
 
@@ -30,13 +31,41 @@ export default async function SitePage({ params, searchParams }: {
     // ------------------------------------------------------------------------
     // MIGRATION: Centralized Token Storage
     // ------------------------------------------------------------------------
-    // 1. Try to get tokens from DB (Site table)
+    // Verify ownership
+    const cookieStore = await cookies();
+    const cookieAccess = cookieStore.get('access_token')?.value;
+
+    if (!cookieAccess) {
+        redirect('/login');
+    }
+
+    const { getUserByToken } = await import('@/lib/energy-repo');
+    const currentUser = await getUserByToken(cookieAccess);
+
+    if (!currentUser) {
+        redirect('/login');
+    }
+
+    if (site && site.user_id && site.user_id !== currentUser.id) {
+        return (
+            <div className="flex min-h-screen flex-col items-center justify-center p-8">
+                <h1 className="text-2xl font-bold text-red-600 mb-4">Unauthorized</h1>
+                <p className="text-gray-600 mb-6">You do not have permission to view this site.</p>
+                <Link href="/products" className="text-blue-600 hover:underline">
+                    Return to My Products
+                </Link>
+            </div>
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // MIGRATION: Centralized Token Storage
+    // ------------------------------------------------------------------------
+    // 1. Try to get tokens from DB (Site table -> User table)
     let accessToken = site?.access_token;
     let refreshToken = site?.refresh_token;
 
-    // 2. If not in DB, try to move them from cookies (Migration Step)
-    const cookieStore = await cookies();
-    const cookieAccess = cookieStore.get('access_token')?.value;
+    // 2. If not in DB (or site orphaned), try to move them from cookies (Migration Step)
     const cookieRefresh = cookieStore.get('refresh_token')?.value;
 
     if (!accessToken && cookieAccess && cookieRefresh) {
@@ -44,20 +73,18 @@ export default async function SitePage({ params, searchParams }: {
         accessToken = cookieAccess;
         refreshToken = cookieRefresh;
 
-        if (site) {
+        if (site && !site.user_id) {
+            // Claim orphaned site
+            console.log(`[Migration] Claiming orphaned site ${id} for user ${currentUser.id}`);
+            await pool.query('UPDATE "Site" SET user_id = $1 WHERE id = $2', [currentUser.id, id]);
+            // Now update tokens (which will now work because user is linked)
+            await repo.updateSiteTokens(id, cookieAccess, cookieRefresh);
+            // Reload site to get fresh state
+            site = await repo.getSite(id);
+        } else if (site) {
             console.log(`[Migration] Moving tokens from cookies to DB for site ${id}`);
             await repo.updateSiteTokens(id, cookieAccess, cookieRefresh);
         }
-    }
-
-    if (!site && !accessToken) {
-        // Only error out if we have NEITHER a DB record NOR a valid cookie session
-        return <div>Site not found</div>;
-    }
-
-    if (!accessToken) {
-        // Force re-login if we have no tokens anywhere
-        redirect('/login');
     }
 
     const teslaClient = new TeslaClient({

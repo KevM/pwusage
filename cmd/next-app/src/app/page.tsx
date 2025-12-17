@@ -35,20 +35,20 @@ export default async function Home() {
   const repo = new EnergyRepo();
 
   if (siteAuthToken) {
+    // ... existing siteAuthToken logic (this is for shared/embedded views, safe to keep?)
+    // Actually, siteAuthToken is for Trmnl/Share access. If siteAuthToken is present, 
+    // it entitles access to specific sites regardless of user login.
+    // So we keep this block as is.
     const siteIds = verifySiteToken(siteAuthToken);
     if (siteIds && siteIds.length > 0) {
-      // We have sites! Fetch them.
-      // We don't have "live data" here yet efficiently without making N API calls or reusing the internal API logic.
-      // For now, let's just fetch the Sites from repo using the authorized IDs.
       const sitePromises = siteIds.map(id => repo.getSite(id));
       const sitesResults = await Promise.all(sitePromises);
       const validSites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
 
-      // Map to structure expected by DashboardCards (even if live data is initially empty/zero)
       products = validSites.map(s => ({
         id: s.id,
         site_name: s.name,
-        energy_site_id: s.id, // Keeping compatibility
+        energy_site_id: s.id,
         percentage_charged: 0,
         currentTariff: 'Loading...',
         liveBatteryPower: 0,
@@ -58,19 +58,26 @@ export default async function Home() {
       }));
     }
   } else if (token) {
-    // Legacy token fallback
-    const sites = await repo.getSites();
-    products = sites.map(s => ({
-      id: s.id,
-      site_name: s.name,
-      energy_site_id: s.id,
-      percentage_charged: 0,
-      currentTariff: 'Loading...',
-      liveBatteryPower: 0,
-      liveSolarPower: 0,
-      liveLoadPower: 0,
-      liveGridPower: 0
-    }));
+    // User login fallback
+    // Identify user from legacy token (which is actually an access_token now)
+    const { getUserByToken } = await import('@/lib/energy-repo');
+    const user = await getUserByToken(token);
+
+    if (user) {
+      const sites = await repo.getSitesForUser(user.id);
+      products = sites.map(s => ({
+        id: s.id,
+        site_name: s.name,
+        energy_site_id: s.id,
+        percentage_charged: 0,
+        currentTariff: 'Loading...',
+        liveBatteryPower: 0,
+        liveSolarPower: 0,
+        liveLoadPower: 0,
+        liveGridPower: 0
+      }));
+    }
+    // If no user found or no sites, products remains []
   }
 
   // Logic: 
