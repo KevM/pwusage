@@ -6,12 +6,7 @@ import { useParams } from 'next/navigation';
 // SiteSwitcher import removed
 import { HeaderLiveStats } from './HeaderLiveStats';
 
-interface Site {
-    id: string;
-    name: string;
-}
-
-export function GlobalHeader({ sites = [] }: { sites?: Site[] }) {
+export function GlobalHeader() {
     const params = useParams();
     const currentSiteId = params?.id as string | undefined;
 
@@ -31,8 +26,8 @@ export function GlobalHeader({ sites = [] }: { sites?: Site[] }) {
                                     height={40}
                                 />
                             </div>
-                            {/* Hide Title on mobile if we have sites, to make room for switcher */}
-                            <h1 className={`text-2xl md:text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 ${sites.length > 1 ? 'hidden md:block' : ''}`}>
+                            {/* Hide Title on mobile always, to make room for switcher/actions */}
+                            <h1 className="hidden md:block text-2xl md:text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300">
                                 Powerwall Usage
                             </h1>
 
