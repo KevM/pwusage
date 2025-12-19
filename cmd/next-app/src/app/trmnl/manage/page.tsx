@@ -52,16 +52,32 @@ function ManageContent() {
                     return;
                 }
 
+                if (!sitesRes.ok) {
+                    throw new Error(`Failed to fetch sites: ${sitesRes.status}`);
+                }
                 const sitesData = await sitesRes.json();
-                const installData = await installRes.json();
 
-                setSites(sitesData);
-                if (installData) {
-                    if (installData.site_id) setSelectedSite(installData.site_id);
-                    if (installData.plugin_setting_id) setPluginSettingId(installData.plugin_setting_id);
+                if (!Array.isArray(sitesData)) {
+                    throw new Error('Invalid sites data received');
                 }
 
-                if (!installData.site_id && sitesData.length > 0) setSelectedSite(sitesData[0].id);
+                setSites(sitesData);
+
+                // Install data is optional (might be 404 if not found? actually existing API might return null or empty)
+                // Let's handle installRes carefully
+                if (installRes.ok) {
+                    const installData = await installRes.json();
+                    if (installData) {
+                        if (installData.site_id) setSelectedSite(installData.site_id);
+                        if (installData.plugin_setting_id) setPluginSettingId(installData.plugin_setting_id);
+                    }
+                    if ((!installData || !installData.site_id) && sitesData.length > 0) {
+                        setSelectedSite(sitesData[0].id);
+                    }
+                } else if (sitesData.length > 0) {
+                    // If install fetch fails but we have sites, just default to first site
+                    setSelectedSite(sitesData[0].id);
+                }
             } catch {
                 setError('Failed to load data');
             } finally {

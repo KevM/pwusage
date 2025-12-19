@@ -54,6 +54,10 @@ export class SiteService {
 
     private async fetchSitesFromApi(): Promise<Set<string>> {
         const products = await this.deps.teslaClient.getProducts();
-        return new Set(products.map(p => p.energy_site_id.toString()));
+        return new Set(
+            products
+                .filter(p => p.energy_site_id !== undefined && p.energy_site_id !== null)
+                .map(p => p.energy_site_id.toString())
+        );
     }
 }
