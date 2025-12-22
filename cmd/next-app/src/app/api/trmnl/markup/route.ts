@@ -38,7 +38,7 @@ export async function GET(request: Request) {
 
                 const markup = `
                     <div class="view view--full">
-                         <div class="layout layout--col-center" style="padding: 20px; text-align: center;">
+                         <div class="layout layout--col layout--center" style="padding: 20px; text-align: center;">
                             <span class="title title--small">Setup Required</span>
                             <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px auto; display: block;" />
                             <span class="label">Scan to Configure</span>
@@ -70,7 +70,7 @@ export async function GET(request: Request) {
 
                     const markup = `
                         <div class="view view--full">
-                             <div class="layout layout--col-center" style="padding: 20px; text-align: center;">
+                             <div class="layout layout--col layout--center" style="padding: 20px; text-align: center;">
                                 <span class="title title--small">Plugin Auth Failed</span>
                                 <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px auto; display: block;" />
                                 <span class="label">Scan to Re-link</span>
@@ -181,8 +181,8 @@ export async function GET(request: Request) {
             try {
                 const importer = new Importer(client);
                 // Sync current month
-                await importer.ensureDataForRange(site.id, start, end, undefined, { force: true });
-                console.log(`[Trmnl] Sync successful for site ${site.id}`);
+                await importer.ensureDataForRange(site.id, start, end, (msg) => console.log(`[Trmnl] ${msg}`));
+                console.log(`[Trmnl] Sync check complete for site ${site.id}`);
             } catch (err) {
                 console.error(`[Trmnl] Sync failed for site ${site.id}:`, err);
                 // Log the token context
@@ -203,7 +203,7 @@ export async function GET(request: Request) {
 
                     const markup = `
                         <div class="view view--full">
-                             <div class="layout layout--col-center" style="padding: 20px; text-align: center;">
+                             <div class="layout layout--col layout--center" style="padding: 20px; text-align: center;">
                                 <span class="title title--small">Tesla Auth Expired</span>
                                 <span class="label">Scan to Re-connect</span>
                                 <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px 0;" />
@@ -235,7 +235,7 @@ export async function GET(request: Request) {
 
             const markup = `
                 <div class="view view--full">
-                     <div class="layout layout--col-center" style="padding: 20px; text-align: center;">
+                     <div class="layout layout--col layout--center" style="padding: 20px; text-align: center;">
                         <span class="title title--small">Tesla Auth Required</span>
                         <span class="label">Scan to Connect</span>
                         <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px 0;" />

@@ -111,6 +111,7 @@ export class Importer {
                 }
             }
 
+
             if (needsImport) {
                 const dateStr = cursor.toISOString().split('T')[0];
                 if (onProgress) onProgress(`Importing ${dateStr}...`);
