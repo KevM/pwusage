@@ -95,7 +95,6 @@ export async function GET(request: Request) {
         } else if (siteIdParam) {
             // Preview Mode: Authenticate via Session Cookies
             const cookieStore = await cookies();
-            const token = cookieStore.get('access_token')?.value;
             const siteAuth = cookieStore.get('site_auth')?.value;
 
             let hasAccess = false;
@@ -107,17 +106,6 @@ export async function GET(request: Request) {
                     hasAccess = true;
                     console.log(`[TrmnlMarkup] Authorized via site_auth cookie for site ${siteIdParam}`);
                 }
-            }
-
-            // Fallback to strict Tesla API check if not authorized by local token AND we have an access token
-            if (!hasAccess && token) {
-                const { SiteService } = await import('@/lib/site-service');
-                const { TeslaClient } = await import('@/lib/tesla-client');
-
-                const client = new TeslaClient({ accessToken: token });
-                const siteService = new SiteService({ teslaClient: client, energyRepo: new EnergyRepo() });
-
-                hasAccess = await siteService.validateSiteAccess(siteIdParam);
             }
 
             if (!hasAccess) {
@@ -448,38 +436,7 @@ export async function POST(request: Request) {
         return GET(new Request(url.toString(), request));
     }
 
-    // Fallback: If no UUID, check if we have a Site Token and find installation by Site
-    const authHeader = request.headers.get('Authorization');
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-        // We need a method to get Site by Token. 
-        // For now, let's just query TrmnlInstallation directly? 
-        // No, we need to verify the token matches a site.
-        // Let's assume the token is the site's access_token.
-        // Since we don't have a direct "getSiteByToken" helper easily exposed here without DB query duplication...
-        // Actually, TrmnlService might have getInstallationBySiteId?
 
-        // Let's try to verify token and get site ID first?
-        // This is getting complicated for a quick fix.
-        // Let's at least handle the error gracefully or return the "Not Linked" state?
-        // No, we want to show the site's data.
-
-        /* 
-           Simplified approach:
-           If we are authenticated, we are likely the Site Owner.
-           But which Site? The token belongs to A site.
-           We can query "Site" where access_token = token.
-        */
-        try {
-            // Quick DB lookup to find site by token (using Importer/Repo logic ideally, but direct query is safer for now to avoid circular deps or complex refactor)
-            // Actually, we can just use EnergyRepo if we add a method, but tool limits...
-            // Let's do a direct look up using the Service if possible?
-            // TrmnlService doesn't deal with Site Tokens.
-
-            // Let's return a specific error that PreviewClient can handle?
-            // Or better, update PreviewClient to fetch the UUID first.
-            // But this is server-side fix attempt.
-        } catch { }
-    }
 
     // If we still don't have UUID, return error BUT with 400 so client knows
     return NextResponse.json({ error: 'Missing uuid parameter' }, { status: 400 });

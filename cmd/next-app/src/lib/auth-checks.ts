@@ -24,7 +24,7 @@ export async function verifySiteAccess(siteId: string): Promise<boolean> {
         const products = await client.getProducts();
         const allowedSites = products
             .filter(p => p.energy_site_id)
-            .map(p => p.energy_site_id.toString());
+            .map(p => p.energy_site_id!.toString());
 
         // Update cookie (using centralized auth logic)
         await setSiteClaims(allowedSites);

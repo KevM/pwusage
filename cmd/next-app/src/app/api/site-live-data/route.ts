@@ -18,8 +18,8 @@ export async function GET(request: Request) {
         }
 
         const cookieStore = await cookies();
-        let token = cookieStore.get('access_token')?.value;
-        let refreshToken = cookieStore.get('refresh_token')?.value;
+        let token: string | undefined;
+        let refreshToken: string | undefined;
 
         const siteAuthToken = cookieStore.get('site_auth')?.value;
         const repo = new EnergyRepo();

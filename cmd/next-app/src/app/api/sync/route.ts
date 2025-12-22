@@ -3,6 +3,8 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
 import { TeslaClient } from '@/lib/tesla-client';
+import { EnergyRepo } from '@/lib/energy-repo';
+import { verifySiteToken } from '@/lib/auth-jwt';
 
 export async function GET(request: Request) {
     try {
@@ -16,20 +18,30 @@ export async function GET(request: Request) {
         }
 
         const cookieStore = await cookies();
-        const token = cookieStore.get('access_token')?.value;
-        const refreshToken = cookieStore.get('refresh_token')?.value;
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
 
-        if (!token) {
-            return NextResponse.json({ error: 'Tesla token not found' }, { status: 401 });
+        if (!siteAuthToken) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const siteIds = verifySiteToken(siteAuthToken);
+        if (!siteIds || !siteIds.includes(siteId)) {
+            return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
+        }
+
+        const repo = new EnergyRepo();
+        const site = await repo.getSite(siteId);
+
+        if (!site || !site.access_token) {
+            return NextResponse.json({ error: 'Tesla token not found for site' }, { status: 401 });
         }
 
         const client = new TeslaClient({
-            accessToken: token,
-            refreshToken: refreshToken,
-            onTokenUpdate: (newAccess, newRefresh) => {
-                console.log('Refreshing tokens in Cookies from Sync API');
-                cookieStore.set('access_token', newAccess, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
-                cookieStore.set('refresh_token', newRefresh, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+            accessToken: site.access_token,
+            refreshToken: site.refresh_token || undefined,
+            tokenRefreshHandler: repo.getLockedRefreshHandler(siteId),
+            onTokenUpdate: () => {
+                console.log('Refreshing tokens via Sync API');
             }
         });
         const importer = new Importer(client);

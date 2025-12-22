@@ -77,10 +77,12 @@ export async function GET() {
             checks.tesla = {
                 status: 'ok',
                 message: `Connected. Found ${products.length} products.`,
-                products: products.map(p => ({
-                    id: p.energy_site_id,
-                    site_name: p.site_name
-                }))
+                products: products
+                    .filter(p => p.energy_site_id !== undefined)
+                    .map(p => ({
+                        id: p.energy_site_id!,
+                        site_name: p.site_name
+                    }))
             };
         }
     } catch (error) {

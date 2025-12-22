@@ -10,11 +10,10 @@ export const dynamic = 'force-dynamic';
 
 export default async function Home() {
   const cookieStore = await cookies();
-  const token = cookieStore.get('access_token')?.value;
   const siteAuthToken = cookieStore.get('site_auth')?.value;
 
   // If no token at all, show login screen
-  if (!token) {
+  if (!siteAuthToken) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center p-24">
         <h1 className="text-4xl font-bold mb-8">Powerwall Usage</h1>
@@ -35,10 +34,7 @@ export default async function Home() {
   const repo = new EnergyRepo();
 
   if (siteAuthToken) {
-    // ... existing siteAuthToken logic (this is for shared/embedded views, safe to keep?)
-    // Actually, siteAuthToken is for Trmnl/Share access. If siteAuthToken is present, 
-    // it entitles access to specific sites regardless of user login.
-    // So we keep this block as is.
+    // ... existing siteAuthToken logic
     const siteIds = verifySiteToken(siteAuthToken);
     if (siteIds && siteIds.length > 0) {
       const sitePromises = siteIds.map(id => repo.getSite(id));
@@ -56,29 +52,12 @@ export default async function Home() {
         liveLoadPower: 0,
         liveGridPower: 0
       }));
+    } else {
+      // Token invalid or empty
+      redirect('/login');
     }
-  } else if (token) {
-    // User login fallback
-    // Identify user from legacy token (which is actually an access_token now)
-    const { getUserByToken } = await import('@/lib/energy-repo');
-    const user = await getUserByToken(token);
-
-    if (user) {
-      const sites = await repo.getSitesForUser(user.id);
-      products = sites.map(s => ({
-        id: s.id,
-        site_name: s.name,
-        energy_site_id: s.id,
-        percentage_charged: 0,
-        currentTariff: 'Loading...',
-        liveBatteryPower: 0,
-        liveSolarPower: 0,
-        liveLoadPower: 0,
-        liveGridPower: 0
-      }));
-    }
-    // If no user found or no sites, products remains []
   }
+
 
   // Logic: 
   // 1. If > 1 Energy Site -> Products

@@ -13,8 +13,8 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
     try {
         const cookieStore = await cookies();
-        let token = cookieStore.get('access_token')?.value;
-        let refreshToken = cookieStore.get('refresh_token')?.value;
+        let token: string | undefined;
+        let refreshToken: string | undefined;
         const siteAuthToken = cookieStore.get('site_auth')?.value;
 
         let activeSiteId: string | null = null;
