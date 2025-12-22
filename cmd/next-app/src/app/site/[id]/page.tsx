@@ -16,6 +16,8 @@ import { SiteSetup } from '@/components/SiteSetup';
 import { BillDateNav } from '@/components/BillDateNav';
 
 
+import { verifySiteToken } from '@/lib/auth-jwt';
+
 export const dynamic = 'force-dynamic';
 
 export default async function SitePage({ params, searchParams }: {
@@ -26,27 +28,17 @@ export default async function SitePage({ params, searchParams }: {
     const { date: queryDate } = await searchParams;
     const repo = new EnergyRepo();
     let site = await repo.getSite(id);
-    // We don't return early here anymore. We check tokens first to see if we can self-heal.
 
-    // ------------------------------------------------------------------------
-    // MIGRATION: Centralized Token Storage
-    // ------------------------------------------------------------------------
-    // Verify ownership
+    // Verify ownership via JWT
     const cookieStore = await cookies();
-    const cookieAccess = cookieStore.get('access_token')?.value;
+    const siteAuthToken = cookieStore.get('site_auth')?.value;
 
-    if (!cookieAccess) {
+    if (!siteAuthToken) {
         redirect('/login');
     }
 
-    const { getUserByToken } = await import('@/lib/energy-repo');
-    const currentUser = await getUserByToken(cookieAccess);
-
-    if (!currentUser) {
-        redirect('/login');
-    }
-
-    if (site && site.user_id && site.user_id !== currentUser.id) {
+    const authorizedSites = verifySiteToken(siteAuthToken);
+    if (!authorizedSites || !authorizedSites.includes(id)) {
         return (
             <div className="flex min-h-screen flex-col items-center justify-center p-8">
                 <h1 className="text-2xl font-bold text-red-600 mb-4">Unauthorized</h1>
@@ -58,42 +50,15 @@ export default async function SitePage({ params, searchParams }: {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // MIGRATION: Centralized Token Storage
-    // ------------------------------------------------------------------------
-    // 1. Try to get tokens from DB (Site table -> User table)
-    let accessToken = site?.access_token;
-    let refreshToken = site?.refresh_token;
-
-    // 2. If not in DB (or site orphaned), try to move them from cookies (Migration Step)
-    const cookieRefresh = cookieStore.get('refresh_token')?.value;
-
-    if (!accessToken && cookieAccess && cookieRefresh) {
-        // If we have cookies but no DB record (or no tokens in DB), use cookies
-        accessToken = cookieAccess;
-        refreshToken = cookieRefresh;
-
-        if (site && !site.user_id) {
-            // Claim orphaned site
-            console.log(`[Migration] Claiming orphaned site ${id} for user ${currentUser.id}`);
-            await pool.query('UPDATE "Site" SET user_id = $1 WHERE id = $2', [currentUser.id, id]);
-            // Now update tokens (which will now work because user is linked)
-            await repo.updateSiteTokens(id, cookieAccess, cookieRefresh);
-            // Reload site to get fresh state
-            site = await repo.getSite(id);
-        } else if (site) {
-            console.log(`[Migration] Moving tokens from cookies to DB for site ${id}`);
-            await repo.updateSiteTokens(id, cookieAccess, cookieRefresh);
-        }
-    }
+    // 1. Get tokens from DB
+    const accessToken = site?.access_token;
+    const refreshToken = site?.refresh_token;
 
     const teslaClient = new TeslaClient({
         accessToken: accessToken!,
-        refreshToken: refreshToken!,
+        refreshToken: refreshToken!, // Type assertion as we expect valid sites to have tokens
         tokenRefreshHandler: repo.getLockedRefreshHandler(id),
         onTokenUpdate: async () => {
-            // This is still useful if we want to log or do side effects, 
-            // but the handler updates the DB already.
             console.log('Token update callback triggered (Site Page).');
         }
     });

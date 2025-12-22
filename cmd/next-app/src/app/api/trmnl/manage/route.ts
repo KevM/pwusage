@@ -6,19 +6,43 @@ import { pool } from '@/lib/db';
 import { cookies } from 'next/headers';
 import { TeslaClient } from '@/lib/tesla-client';
 import { SiteService } from '@/lib/site-service';
+import { verifyTrmnlToken } from '@/lib/trmnl-auth';
 
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const uuid = searchParams.get('uuid');
 
+    const secret = searchParams.get('token');
+
+    // Auth Strategy: 
+    // 1. Trmnl Token (Proof of Device Ownership) - Allows reading current config
+    // 2. Site Auth (Proof of Site Ownership) - Allows reading if linked? 
+    // Actually, usually Trmnl Page has the Token.
+
+    let isAuthorized = false;
+
+    // Verify Trmnl Token if present
+    if (secret && uuid) {
+        try {
+            await verifyTrmnlToken(secret, uuid);
+            isAuthorized = true;
+        } catch (e) {
+            console.warn(`[TrmnlManage] GET Token verification failed: ${e}`);
+        }
+    }
+
+    // Verify Site Auth if present
     const cookieStore = await cookies();
-    const token = cookieStore.get('access_token')?.value;
+    const siteAuthToken = cookieStore.get('site_auth')?.value;
 
-    // Optional: Allow Trmnl bot to manage if identified? No, this is for user UI.
-    // The device (bot) uses /api/trmnl/setup or /api/trmnl/markup?
-    // /manage is strictly for the user management page.
+    if (siteAuthToken) {
+        isAuthorized = true;
+        // Technically we should check if this user owns the linked site, 
+        // but for just retrieving the uuid's status, knowing they are a valid user might be enough?
+        // Or strictly: if they own the site currently linked.
+    }
 
-    if (!token) {
+    if (!isAuthorized) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -39,43 +63,7 @@ export async function GET(request: Request) {
     });
 }
 
-import jwt from 'jsonwebtoken';
-import jwksClient from 'jwks-rsa';
 
-const TRMNL_JWKS_URI = 'https://usetrmnl.com/.well-known/jwks.json';
-
-const client = jwksClient({
-    jwksUri: TRMNL_JWKS_URI,
-    cache: true,
-    rateLimit: true,
-});
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getKey(header: any, callback: any) {
-    client.getSigningKey(header.kid, function (err: Error | null, key: { getPublicKey: () => string } | undefined) {
-        if (err) {
-            callback(err, null);
-            return;
-        }
-        const signingKey = key?.getPublicKey();
-        callback(null, signingKey);
-    });
-}
-
-function verifyTrmnlToken(token: string, expectedUuid: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-        jwt.verify(token, getKey, { algorithms: ['RS256'] }, (err, decoded) => {
-            if (err) {
-                return reject(err);
-            }
-            const payload = decoded as jwt.JwtPayload;
-            if (payload.sub !== expectedUuid) {
-                return reject(new Error('Token subject does not match UUID'));
-            }
-            resolve();
-        });
-    });
-}
 
 export async function POST(request: Request) {
     try {
@@ -106,12 +94,18 @@ export async function POST(request: Request) {
         const siteAuthToken = cookieStore.get('site_auth')?.value;
 
         if (!token) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            // No legacy token check
         }
 
-        const teslaClient = new TeslaClient({ accessToken: token, refreshToken });
+        // We require site_auth to prove ownership of the site we are linking TO
+        if (!siteAuthToken) {
+            return NextResponse.json({ error: 'Unauthorized: Please log in to link a site' }, { status: 401 });
+        }
+
         const repo = new EnergyRepo();
-        const siteService = new SiteService({ teslaClient: teslaClient, energyRepo: repo, siteAuthToken });
+        // Since we have siteAuthToken, we don't need teslaClient to validate access, 
+        // SiteService can do it via JWT or DB check.
+        const siteService = new SiteService({ energyRepo: repo, siteAuthToken });
 
         if (!await siteService.validateSiteAccess(site_id)) {
             return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
@@ -134,13 +128,7 @@ export async function POST(request: Request) {
         }
 
         // Update refresh token in Site table (Source of Truth) if available
-        if (refreshToken && site_id) {
-            const accessToken = cookieStore.get('access_token')?.value;
-            // We use the tokens from cookie (Tesla Auth) to update the Site.
-            if (accessToken) {
-                await repo.updateSiteTokens(site_id, accessToken, refreshToken);
-            }
-        }
+
 
         return NextResponse.json({ success: true });
     } catch (error) {

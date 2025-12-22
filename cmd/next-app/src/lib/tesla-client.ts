@@ -1,6 +1,6 @@
 import { SettingsRepo } from './settings-repo';
 export interface FleetProduct {
-    energy_site_id: number;
+    energy_site_id?: number;
     resource_type: string;
     site_name: string;
     id: string;

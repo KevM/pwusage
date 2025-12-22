@@ -53,8 +53,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Save tokens
-    cookieStore.set('access_token', authData.access_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: authData.expires_in, sameSite: 'lax', path: '/' });
-    cookieStore.set('refresh_token', authData.refresh_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' });
+    // cookieStore.set('access_token', authData.access_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: authData.expires_in, sameSite: 'lax', path: '/' });
+    // cookieStore.set('refresh_token', authData.refresh_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' });
 
     // Update DB (Source of Truth)
     try {
@@ -96,6 +96,10 @@ export async function GET(request: NextRequest) {
             const siteIds: string[] = [];
 
             for (const product of products) {
+                if (!product.energy_site_id) {
+                    // Skip vehicles or other products without energy_site_id
+                    continue;
+                }
                 const siteId = product.energy_site_id.toString();
                 siteIds.push(siteId);
                 // Ensure site record exists (synced from API)

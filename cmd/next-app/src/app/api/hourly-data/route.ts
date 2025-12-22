@@ -17,17 +17,10 @@ export async function GET(request: Request) {
         }
 
         const cookieStore = await cookies();
-        const token = cookieStore.get('access_token')?.value;
-        const refreshToken = cookieStore.get('refresh_token')?.value;
         const siteAuthToken = cookieStore.get('site_auth')?.value;
 
-        if (!token) { // Ensure authenticated to even verify access
-            return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-        }
-
-        const client = new TeslaClient({ accessToken: token, refreshToken });
         const repo = new EnergyRepo();
-        const service = new SiteService({ teslaClient: client, energyRepo: repo, siteAuthToken });
+        const service = new SiteService({ energyRepo: repo, siteAuthToken });
 
         if (!await service.validateSiteAccess(siteId)) {
             return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });

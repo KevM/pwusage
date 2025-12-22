@@ -4,7 +4,7 @@ import { EnergyRepo } from './energy-repo';
 import { verifySiteToken } from './auth-jwt';
 
 export interface SiteServiceDeps {
-    teslaClient: Pick<TeslaClient, 'getProducts'>;
+    teslaClient?: Pick<TeslaClient, 'getProducts'>;
     energyRepo: Pick<EnergyRepo, 'getSites'>;
     siteAuthToken?: string;
 }
@@ -19,15 +19,25 @@ export class SiteService {
         if (this.deps.siteAuthToken) {
             const sites = verifySiteToken(this.deps.siteAuthToken);
             if (sites) {
-                console.log('[SiteService] Using JWT for authorization');
+                // console.log('[SiteService] Using JWT for authorization');
                 authorizedSiteIds = new Set(sites);
             } else {
-                console.warn('[SiteService] Invalid or expired siteAuthToken, falling back to API');
-                authorizedSiteIds = await this.fetchSitesFromApi();
+                console.warn('[SiteService] Invalid or expired siteAuthToken');
+                // If we have a client (e.g. legacy/preview flow), we could fallback, but for strict JWT mode we might fail.
+                // For smooth migration, if client exists, try it.
+                if (this.deps.teslaClient) {
+                    authorizedSiteIds = await this.fetchSitesFromApi();
+                } else {
+                    throw new Error('Unauthorized: Invalid site token');
+                }
             }
         } else {
-            console.log('[SiteService] No siteAuthToken provided, falling back to API');
-            authorizedSiteIds = await this.fetchSitesFromApi();
+            if (this.deps.teslaClient) {
+                console.log('[SiteService] No siteAuthToken provided, falling back to API');
+                authorizedSiteIds = await this.fetchSitesFromApi();
+            } else {
+                throw new Error('Unauthorized: No authentication provided');
+            }
         }
 
         // Fetch all known sites from DB
@@ -53,11 +63,15 @@ export class SiteService {
     }
 
     private async fetchSitesFromApi(): Promise<Set<string>> {
+        if (!this.deps.teslaClient) {
+            throw new Error('Internal Error: Attempted to fetch from API without Tesla Client');
+        }
         const products = await this.deps.teslaClient.getProducts();
         return new Set(
             products
                 .filter(p => p.energy_site_id !== undefined && p.energy_site_id !== null)
-                .map(p => p.energy_site_id.toString())
+                .map(p => p.energy_site_id?.toString() || '')
+                .filter(id => id !== '')
         );
     }
 }

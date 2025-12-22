@@ -40,10 +40,11 @@ function ManageContent() {
             try {
                 const [sitesRes, installRes] = await Promise.all([
                     fetch('/api/sites'),
-                    fetch(`/api/trmnl/manage?uuid=${uuid}`)
+                    fetch(`/api/trmnl/manage?uuid=${uuid}&token=${encodeURIComponent(token || '')}`)
                 ]);
 
-                if (sitesRes.status === 401 || installRes.status === 401) {
+                // Check installRes first. If it is 401, we must redirect (if no token was provided or invalid)
+                if (installRes.status === 401) {
                     redirecting = true;
                     // Preserve token in callback
                     const tokenParam = token ? `&token=${token}` : '';
@@ -52,19 +53,15 @@ function ManageContent() {
                     return;
                 }
 
-                if (!sitesRes.ok) {
-                    throw new Error(`Failed to fetch sites: ${sitesRes.status}`);
+                // If installRes is OK, we can show something. 
+                // If sitesRes is 401, we just can't show the sites list.
+
+                let sitesData: { id: string, name: string, utility: string }[] = [];
+                if (sitesRes.ok) {
+                    sitesData = await sitesRes.json();
+                    setSites(sitesData);
                 }
-                const sitesData = await sitesRes.json();
 
-                if (!Array.isArray(sitesData)) {
-                    throw new Error('Invalid sites data received');
-                }
-
-                setSites(sitesData);
-
-                // Install data is optional (might be 404 if not found? actually existing API might return null or empty)
-                // Let's handle installRes carefully
                 if (installRes.ok) {
                     const installData = await installRes.json();
                     if (installData) {
