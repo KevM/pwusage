@@ -11,6 +11,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{ access
         body: JSON.stringify({
             grant_type: 'refresh_token',
             client_id: clientId,
+            client_secret: process.env.TESLA_OAUTH_SECRET,
             refresh_token: refreshToken,
             scope: 'openid email offline_access'
         })
