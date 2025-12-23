@@ -3,7 +3,6 @@ import { redirect } from 'next/navigation';
 import { verifySiteToken } from '@/lib/auth-jwt';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards';
-import { TeslaClient, FleetProduct } from '@/lib/tesla-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +16,7 @@ export default async function ProductsPage() {
 
     const repo = new EnergyRepo();
     let energyProducts: ProductWithLiveData[] = [];
-    let vehicleProducts: ProductWithLiveData[] = []; // Store vehicles
+    const vehicleProducts: ProductWithLiveData[] = []; // Store vehicles
 
     if (siteAuthToken) {
         const siteIds = verifySiteToken(siteAuthToken);

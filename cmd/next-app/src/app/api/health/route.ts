@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
-import { cookies } from 'next/headers';
-import { TeslaClient } from '@/lib/tesla-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,35 +57,9 @@ export async function GET() {
     }
 
     // 3. Tesla API Check
-    try {
-        const cookieStore = await cookies();
-        const accessToken = cookieStore.get('access_token')?.value;
-        const refreshToken = cookieStore.get('refresh_token')?.value;
-
-        if (!accessToken) {
-            checks.tesla = { status: 'warning', message: 'No access token in cookies' };
-        } else {
-            const client = new TeslaClient({
-                accessToken,
-                refreshToken: refreshToken ?? '',
-                onTokenUpdate: () => { }
-            });
-
-            const products = await client.getProducts();
-            checks.tesla = {
-                status: 'ok',
-                message: `Connected. Found ${products.length} products.`,
-                products: products
-                    .filter(p => p.energy_site_id !== undefined)
-                    .map(p => ({
-                        id: p.energy_site_id!,
-                        site_name: p.site_name
-                    }))
-            };
-        }
-    } catch (error) {
-        checks.tesla = { status: 'error', message: (error as Error).message };
-    }
+    // With User-centric Auth, we cannot check Tesla API purely from system health endpoint 
+    // without a specific user context (which this public/admin endpoint might not have).
+    checks.tesla = { status: 'ok', message: 'API Check Skipped (Requires User Context)' };
 
     // 4. Env Check
     checks.env = {

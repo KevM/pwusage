@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { EnergyRepo } from '@/lib/energy-repo';
-import { TeslaClient } from '@/lib/tesla-client';
 import { SiteService } from '@/lib/site-service';
 
 export const dynamic = 'force-dynamic';

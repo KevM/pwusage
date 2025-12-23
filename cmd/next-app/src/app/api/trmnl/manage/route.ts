@@ -4,7 +4,6 @@ import { TrmnlService } from '@/lib/trmnl-service';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { pool } from '@/lib/db';
 import { cookies } from 'next/headers';
-import { TeslaClient } from '@/lib/tesla-client';
 import { SiteService } from '@/lib/site-service';
 import { verifyTrmnlToken } from '@/lib/trmnl-auth';
 
@@ -88,14 +87,7 @@ export async function POST(request: Request) {
         }
 
         const cookieStore = await cookies();
-
-        const token = cookieStore.get('access_token')?.value;
-        const refreshToken = cookieStore.get('refresh_token')?.value;
         const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-        if (!token) {
-            // No legacy token check
-        }
 
         // We require site_auth to prove ownership of the site we are linking TO
         if (!siteAuthToken) {
