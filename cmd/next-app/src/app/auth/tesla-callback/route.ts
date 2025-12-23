@@ -122,14 +122,14 @@ export async function GET(request: NextRequest) {
             }
 
             // Generate verified site token
-            const { signSiteToken } = await import('@/lib/auth-jwt');
+            const { signSiteToken, COOKIE_MAX_AGE_SECONDS } = await import('@/lib/auth-jwt');
             const siteToken = signSiteToken(siteIds);
 
             // Set 24h cookie (matching our token expiry intent)
             cookieStore.set('site_auth', siteToken, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
-                maxAge: 86400,
+                maxAge: COOKIE_MAX_AGE_SECONDS,
                 path: '/'
             });
             console.log('[AuthCallback] Set site_auth token.');
