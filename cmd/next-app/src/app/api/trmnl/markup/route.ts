@@ -142,19 +142,9 @@ export async function GET(request: Request) {
         if (site.refresh_token) {
             console.log(`[Trmnl] Found refresh token for site ${site.id}, attempting sync...`);
 
-            // Use session token if available (preview mode) OR fallback to site tokens
-            let useToken = site.access_token || 'expired'; // Trigger refresh if null
+            const useToken = site.access_token || 'expired'; // Trigger refresh if null
 
-            const cookieStore = await cookies();
-            const sessionToken = cookieStore.get('access_token')?.value;
-
-            // If we are in preview mode (siteIdParam present) AND have a session token, prefer it.
-            if (siteIdParam && sessionToken) {
-                console.log('[TrmnlMarkup] Using Session Token for sync');
-                useToken = sessionToken;
-            } else {
-                console.log('[TrmnlMarkup] Using Stored Site Token for sync');
-            }
+            console.log('[TrmnlMarkup] Using Stored Site Token for sync');
 
             const client = new TeslaClient({
                 accessToken: useToken,
@@ -301,12 +291,8 @@ export async function GET(request: Request) {
         let batteryStatus: 'charging' | 'discharging' | 'idle' = 'idle';
         try {
             // Re-use logic to get a client with refresh capabilities
-            let useToken = site.access_token;
-            if (siteIdParam) { // Preview mode priority
-                const cookieStore = await cookies();
-                const sessionToken = cookieStore.get('access_token')?.value;
-                if (sessionToken) useToken = sessionToken;
-            }
+            const useToken = site.access_token;
+            // Removed: Preview mode using 'access_token' cookie. Now relies on site.access_token.
 
             if (useToken) {
                 const client = new TeslaClient({

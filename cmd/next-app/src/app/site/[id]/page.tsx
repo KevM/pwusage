@@ -1,5 +1,4 @@
 import { EnergyRepo } from '@/lib/energy-repo';
-import { pool } from '@/lib/db';
 import Link from 'next/link';
 import { EnergyChartWithNav } from '@/components/EnergyChartWithNav';
 

@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
-import { EnergyRepo } from '@/lib/energy-repo';
 import { cookies } from 'next/headers';
-import { TeslaClient } from '@/lib/tesla-client';
-import { SiteService } from '@/lib/site-service';
 
 export async function POST(request: Request) {
     try {
@@ -23,21 +20,33 @@ export async function POST(request: Request) {
         }
 
         const cookieStore = await cookies();
-        const token = cookieStore.get('access_token')?.value;
-        const refreshToken = cookieStore.get('refresh_token')?.value;
         const siteAuthToken = cookieStore.get('site_auth')?.value;
 
-        if (!token) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        // [TrmnlSetup] Authorization: Now solely based on verifySiteToken (site_auth cookie)
+        // We no longer require the 'access_token' cookie to be present.
+
+        if (!siteAuthToken) {
+            console.log('[TrmnlSetup] Missing site_auth cookie');
+            return NextResponse.json({ error: 'Unauthorized: No site access token' }, { status: 401 });
         }
 
-        const client = new TeslaClient({ accessToken: token, refreshToken });
-        const energyRepo = new EnergyRepo();
-        const siteService = new SiteService({ teslaClient: client, energyRepo, siteAuthToken });
+        const { verifySiteToken } = await import('@/lib/auth-jwt');
+        const authorizedSites = verifySiteToken(siteAuthToken);
 
-        if (!await siteService.validateSiteAccess(site_id)) {
+        if (!authorizedSites || !authorizedSites.includes(site_id)) {
+            console.log(`[TrmnlSetup] Unauthorized access to site ${site_id}. Authorized:`, authorizedSites);
             return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
         }
+
+        // We act on behalf of the site using its stored credentials (if needed later),
+        // but for setup we mainly just need to create the TrmnlInstallation in the DB
+        // which links site_id <> trmnl_id. We don't interact with Tesla API here except maybe to
+        // verify the site exists (database check).
+
+        // TODO: Could verify site exists in DB to be safe
+        // const repo = new EnergyRepo();
+        // const site = await repo.getSite(site_id);
+        // if (!site) ...
 
         // Save installation
         const service = new TrmnlService();

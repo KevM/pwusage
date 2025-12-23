@@ -83,6 +83,7 @@ function InstallContent() {
             const res = await fetch('/api/trmnl/setup', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify({
                     code: authCode,
                     site_id: siteId,
