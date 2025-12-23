@@ -278,7 +278,7 @@ export async function GET(request: Request) {
         const costStr = totalBillCost.toFixed(2);
         const isCredit = totalBillCost < 0;
         const displayCost = isCredit ? `+${currency}${Math.abs(totalBillCost).toFixed(2)}` : `${currency}${costStr}`;
-        const costLabel = isCredit ? 'Est. Credit' : 'Est. Cost';
+        const costLabel = isCredit ? 'Total Credit' : 'Total Cost';
 
         // Check for active period
         const schedule = new Schedule(site.tariffs, site.timezone);

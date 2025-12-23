@@ -4,11 +4,7 @@ import { checkRefreshNeeded, COOKIE_MAX_AGE_SECONDS } from './lib/auth-jwt';
 
 // Define paths that do not require auth check/refresh overhead
 // (Static files, images, favicon are usually excluded by matcher, but good to be safe)
-const PROTECTED_PATHS = [
-    '/products',
-    '/site',
-    '/api',
-];
+
 
 export async function middleware(request: NextRequest) {
     const { pathname } = request.nextUrl;

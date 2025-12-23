@@ -95,11 +95,12 @@ export class TrmnlRenderer {
                                 `;
             }).join('')}
                             <tr>
-                                <td class="table-col text--center" style="padding: 1px 2px;">
-                                    <span class="label text--center" style="display: block; margin: 0 auto;">${ctx.costLabel}</span>
+                                <td class="table-col" style="padding: 1px 2px;">
+                                    <span class="value value--xsmall" style="font-weight: bold;" data-value-fit="true">${ctx.costLabel}</span>
                                 </td>
-                                <td colspan="5" class="table-col" style="padding: 1px 2px; align-items: right;">
-                                    <span class="value value--small">${ctx.displayCost}</span>
+                                <td colspan="4"></td>
+                                <td class="table-col" style="padding: 1px 2px;">
+                                    <span class="value value--small" style="font-weight: bold;">${ctx.displayCost}</span>
                                 </td>
                             </tr>
                         </tbody>
