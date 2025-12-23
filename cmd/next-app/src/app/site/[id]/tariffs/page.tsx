@@ -1,10 +1,9 @@
 import { EnergyRepo } from '@/lib/energy-repo';
 import { formatTouName, formatTimeRange } from '@/lib/format-utils';
 import { notFound } from 'next/navigation';
-
 import { Breadcrumbs } from '@/components/Breadcrumbs';
-
 import { cookies } from 'next/headers';
+import { verifySiteToken } from '@/lib/auth-jwt';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,10 +12,15 @@ export default async function TariffPage({ params }: { params: Promise<{ id: str
     const repo = new EnergyRepo();
 
     const cookieStore = await cookies();
-    const token = cookieStore.get('access_token')?.value;
+    const siteAuthToken = cookieStore.get('site_auth')?.value;
 
-    if (!token) {
+    if (!siteAuthToken) {
         return <div className="p-24 text-center">Not authenticated</div>;
+    }
+
+    const allowedSites = verifySiteToken(siteAuthToken);
+    if (!allowedSites || !allowedSites.includes(id)) {
+        return <div className="p-24 text-center">Not authorized for this site</div>;
     }
 
     const site = await repo.getSite(id);
