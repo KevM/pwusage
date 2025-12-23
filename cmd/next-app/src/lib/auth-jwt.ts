@@ -6,7 +6,7 @@ const AUTH_SECRET = process.env.AUTH_SECRET || 'default-dev-secret-do-not-use-in
 const EXPIRY_DAYS = parseInt(process.env.JWT_EXPIRY_DAYS || '7', 10);
 const REFRESH_HOURS = parseInt(process.env.JWT_REFRESH_THRESHOLD_HOURS || '24', 10);
 
-const TOKEN_EXPIRY = `${EXPIRY_DAYS}d`;
+
 export const COOKIE_MAX_AGE_SECONDS = EXPIRY_DAYS * 24 * 60 * 60;
 const REFRESH_THRESHOLD_SECONDS = REFRESH_HOURS * 60 * 60;
 
