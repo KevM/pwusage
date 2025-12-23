@@ -21,10 +21,13 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `PUBLIC_TESLA_OAUTH_CLIENT_ID`: Your Tesla Fleet API Client ID.
 - `TESLA_OAUTH_SECRET`: Your Tesla Fleet API Client Secret.
 - `PUBLIC_TESLA_OAUTH_AUDIENCE`: The Tesla API audience. Example: `https://fleet-api.prd.na.vn.cloud.tesla.com`
+- `AUTH_SECRET`: A strong, random string used to sign session tokens. **Crucial for security and session persistence across deployments.**
 
 ### Optional / Integrations
 - `TRMNL_CLIENT_ID`: Client ID for Trmnl integration.
 - `TRMNL_CLIENT_SECRET`: Client Secret for Trmnl integration.
+- `JWT_EXPIRY_DAYS`: Session duration in days (default: `7`).
+- `JWT_REFRESH_THRESHOLD_HOURS`: Refresh token if expiration is within this many hours (default: `24`).
 
 
 ## Getting Started
