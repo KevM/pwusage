@@ -158,11 +158,43 @@ export async function GET(request: Request) {
             // Sync recent data to ensure freshness
             try {
                 const importer = new Importer(client);
-                // Sync current month
-                await importer.ensureDataForRange(site.id, start, end, (msg) => console.log(`[Trmnl] ${msg}`));
+
+                // 1. Sync RECENT data (Yesterday to Now) - Priority: HIGH
+                // We ensure the last 48 hours are fresh so the display shows correct "Today" numbers and Battery status.
+                const yesterday = new Date(now);
+                yesterday.setDate(yesterday.getDate() - 1);
+                yesterday.setHours(0, 0, 0, 0); // Start of yesterday
+
+                console.log(`[Trmnl] Syncing recent data (Priority) for site ${site.id} from ${yesterday.toISOString()}...`);
+                await importer.ensureDataForRange(site.id, yesterday, end, (msg) => console.log(`[Trmnl] ${msg}`));
+
+
+                // 2. Sync HISTORICAL data (Start of Bill to Yesterday) - Priority: LOW (Background)
+                // If there's a huge gap, this might take too long and cause Vercel 504.
+                // We wrap this in a strict timeout. If it fails, we log it but continue rendering so the user sees *something*
+                // rather than a timeout error.
+                if (start < yesterday) {
+                    const historyEnd = new Date(yesterday.getTime() - 1000); // Up to yesterday
+                    console.log(`[Trmnl] Attempting background sync for historical data: ${start.toISOString()} to ${historyEnd.toISOString()}...`);
+
+                    const historySyncPromise = importer.ensureDataForRange(site.id, start, historyEnd, (msg) => console.log(`[Trmnl-History] ${msg}`));
+
+                    // 4-second strict timeout for history (Vercel max is usually 10s, we leave buffer for rendering)
+                    const timeoutPromise = new Promise<void>((_, reject) => setTimeout(() => reject(new Error('Historical Sync Timeout')), 4000));
+
+                    try {
+                        await Promise.race([historySyncPromise, timeoutPromise]);
+                        console.log(`[Trmnl] Historical sync completed.`);
+                    } catch (timeoutErr) {
+                        console.warn(`[Trmnl] Historical sync timed out or failed (Non-fatal):`, timeoutErr);
+                        // Intentional: Swallowing error to ensure markup renders. 
+                        // The totals might be off if data is missing, but display will work.
+                    }
+                }
+
                 console.log(`[Trmnl] Sync check complete for site ${site.id}`);
             } catch (err) {
-                console.error(`[Trmnl] Sync failed for site ${site.id}:`, err);
+                console.error(`[Trmnl] Critical Sync failed for site ${site.id}:`, err);
                 // Log the token context
                 console.error(`[Trmnl] Token context - Access available: ${!!useToken}, Refresh available: ${!!site.refresh_token}`);
 
