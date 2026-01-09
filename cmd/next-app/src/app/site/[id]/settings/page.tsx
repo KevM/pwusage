@@ -1,7 +1,7 @@
 import { EnergyRepo } from '@/lib/energy-repo';
 import { TrmnlService } from '@/lib/trmnl-service';
 import { verifySiteAccess } from '@/lib/auth-checks';
-import { updateBillingStartDay } from './actions';
+import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import Link from 'next/link';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
 import { notFound, redirect } from 'next/navigation';
@@ -37,35 +37,13 @@ export default async function SiteSettingsPage({ params }: { params: Promise<{ i
                     <h2 className="text-xl font-semibold mb-6">Billing Configuration</h2>
 
                     <div className="mb-6">
-                        <form action={updateBillingStartDay} className="flex gap-4 items-end">
-                            <input type="hidden" name="siteId" value={site.id} />
-                            <div className="flex-grow max-w-xs">
-                                <label htmlFor={`billingStartDay-${site.id}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    Billing Cycle Start Day
-                                </label>
-                                <input
-                                    type="number"
-                                    id={`billingStartDay-${site.id}`}
-                                    name="billingStartDay"
-                                    defaultValue={site.billing_start_day || 1}
-                                    min="1"
-                                    max="31"
-                                    className="block w-full rounded-md border-gray-300 dark:border-slate-700 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border dark:bg-slate-800 dark:text-white"
-                                />
-                            </div>
-
-                            <button
-                                type="submit"
-                                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors h-10 mb-0.5"
-                            >
-                                Save
-                            </button>
-                        </form>
+                        <BillingStartDayForm siteId={site.id} initialDay={site.billing_start_day || 1} />
                         <p className="text-xs text-gray-500 mt-1">
                             Calculates monthly usage starting from this day.
                         </p>
                     </div>
                 </div>
+
 
                 <div className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800 mt-8">
                     <h2 className="text-xl font-semibold mb-4">Trmnl E-Ink Display</h2>
@@ -164,6 +142,6 @@ export default async function SiteSettingsPage({ params }: { params: Promise<{ i
                     </div>
                 </div>
             </div>
-        </div>
+        </div >
     );
 }

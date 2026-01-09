@@ -6,7 +6,7 @@ import { checkRefreshNeeded, COOKIE_MAX_AGE_SECONDS } from './lib/auth-jwt';
 // (Static files, images, favicon are usually excluded by matcher, but good to be safe)
 
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
     const { pathname } = request.nextUrl;
 
     // Only run on relevant paths to save performance
