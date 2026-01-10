@@ -97,8 +97,8 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
 
                 // Extent by 1 extra index to visually seal the ramp down
                 const finalIdx = Math.min(data.length - 1, endIdx + 1);
-                const endTime = data[finalIdx].timestamp;
-                const durationMs = endTime.getTime() - load.startTime.getTime();
+                const endTime = new Date(data[finalIdx].timestamp); // Ensure Date
+                const durationMs = endTime.getTime() - new Date(load.startTime).getTime();
                 const durationMinutes = durationMs / (1000 * 60);
 
                 // If duration is too short (<5m) and we are only "returning to baseline" right after start?
@@ -224,9 +224,9 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
 
                 // Pad by 1 index to ensure visual containment of the slope
                 const finalIdx = Math.min(data.length - 1, endIdx + 1);
-                const endTime = data[finalIdx].timestamp;
+                const endTime = new Date(data[finalIdx].timestamp); // Ensure Date
 
-                const durationMs = endTime.getTime() - load.startTime.getTime();
+                const durationMs = endTime.getTime() - new Date(load.startTime).getTime();
                 const durationMinutes = durationMs / (1000 * 60);
 
                 const averagePower = (load.magnitude + dropMag) / 2;
@@ -258,5 +258,5 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
         }
     }
 
-    return events.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+    return events.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 }

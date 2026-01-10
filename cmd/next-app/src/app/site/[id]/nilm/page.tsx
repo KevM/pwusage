@@ -16,6 +16,7 @@ export default function NILMPage() {
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<PowerData[]>([]);
     const [events, setEvents] = useState<LoadEvent[]>([]);
+    const [tariffMap, setTariffMap] = useState<Record<number, string>>({});
 
     const fetchData = React.useCallback(async () => {
         if (!siteId) return;
@@ -26,6 +27,7 @@ export default function NILMPage() {
             const json = await res.json();
             setData(json.data);
             setEvents(json.events);
+            setTariffMap(json.tariffs || {});
         } catch (err) {
             console.error(err);
         } finally {
@@ -103,7 +105,7 @@ export default function NILMPage() {
                         <span className="text-gray-400 animate-pulse">Loading High-Fidelity Data...</span>
                     </div>
                 ) : (
-                    <NILMChart data={data} events={events} />
+                    <NILMChart data={data} events={events} tariffs={tariffMap} />
                 )}
             </div>
 

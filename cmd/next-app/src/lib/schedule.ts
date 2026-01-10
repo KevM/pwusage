@@ -88,7 +88,17 @@ export class Schedule {
                 }
 
                 if (!season.schedules) continue;
-                for (const schedule of season.schedules) {
+
+                // Sort schedules: Specific time windows first, then broad (24h) windows
+                const sortedSchedules = [...season.schedules].sort((a, b) => {
+                    const aSpecific = a.from_hour !== null || a.to_hour !== null;
+                    const bSpecific = b.from_hour !== null || b.to_hour !== null;
+                    if (aSpecific && !bSpecific) return -1;
+                    if (!aSpecific && bSpecific) return 1;
+                    return 0;
+                });
+
+                for (const schedule of sortedSchedules) {
                     if (!this.matchSchedule(effectiveWeekday, hour, schedule)) {
                         continue;
                     }

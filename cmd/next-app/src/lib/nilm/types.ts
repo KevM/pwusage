@@ -1,6 +1,7 @@
 
 export interface PowerData {
-    timestamp: Date;
+    timestamp: Date | string;
     powerWatts: number;
     tariffId?: number;
+    touName?: string;
 }
