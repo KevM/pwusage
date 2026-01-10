@@ -80,8 +80,24 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
 
             if (grad.postMean <= (load.baseline + tolerance)) {
                 // Event Ended via Baseline Return
-                // Use current time as end time
-                const endTime = point.timestamp;
+                // Scan forward to find strict touchdown (just like in Falling Edge)
+                let endIdx = grad.index;
+                const noiseFloor = 200;
+                const base = load.baseline;
+
+                for (let f = 0; f <= windowSize * 3; f++) {
+                    const testIdx = grad.index + f;
+                    if (testIdx >= data.length) break;
+                    if (data[testIdx].powerWatts <= base + noiseFloor) {
+                        endIdx = testIdx;
+                        break;
+                    }
+                    endIdx = testIdx;
+                }
+
+                // Extent by 1 extra index to visually seal the ramp down
+                const finalIdx = Math.min(data.length - 1, endIdx + 1);
+                const endTime = data[finalIdx].timestamp;
                 const durationMs = endTime.getTime() - load.startTime.getTime();
                 const durationMinutes = durationMs / (1000 * 60);
 
@@ -134,9 +150,32 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
 
         if (val > 0) {
             // RISING EDGE
+            // Scan backwards to find the true start of the ramp (departure from baseline).
+            // We look for where power was close to baseline (e.g., within 200W or 10%).
+            let startIdx = grad.index;
+            const noiseFloor = 200;
+            const baseline = grad.preMean;
+
+            // Search back up to windowSize * 3 (e.g. 45 mins) to find the foot of the hill
+            // Stop if we hit 0 or if we find a point close to baseline
+            for (let b = 1; b <= windowSize * 3; b++) {
+                const testIdx = grad.index - b;
+                if (testIdx < 0) break;
+
+                const pwr = data[testIdx].powerWatts;
+                // If we return to baseline level (or below), we found the start point (it's the point AFTER this one)
+                if (pwr <= baseline + noiseFloor) {
+                    startIdx = testIdx;
+                    break;
+                }
+                // If we didn't hit baseline, assume this point is part of the ramp, keep going back.
+                // Default to testIdx if we run out of loop
+                startIdx = testIdx;
+            }
+
             activeLoads.push({
-                startIndex: grad.index,
-                startTime: point.timestamp,
+                startIndex: startIdx,
+                startTime: data[startIdx].timestamp,
                 magnitude: val,
                 baseline: grad.preMean,
                 tariffId: point.tariffId
@@ -163,7 +202,30 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
             if (matchIndex !== -1) {
                 // Close Event
                 const load = activeLoads[matchIndex];
-                const endTime = point.timestamp;
+
+                // Scan forward to find the true "touchdown" (return to baseline)
+                // This handles tails/ramp downs that continue after the steepest gradient point.
+                let endIdx = grad.index;
+                const noiseFloor = 200;
+                // Use the baseline recorded at start of event
+                const baseline = load.baseline;
+
+                for (let f = 0; f <= windowSize * 3; f++) {
+                    const testIdx = grad.index + f;
+                    if (testIdx >= data.length) break;
+
+                    if (data[testIdx].powerWatts <= baseline + noiseFloor) {
+                        endIdx = testIdx;
+                        break;
+                    }
+                    // Keep extending if we haven't hit baseline
+                    endIdx = testIdx;
+                }
+
+                // Pad by 1 index to ensure visual containment of the slope
+                const finalIdx = Math.min(data.length - 1, endIdx + 1);
+                const endTime = data[finalIdx].timestamp;
+
                 const durationMs = endTime.getTime() - load.startTime.getTime();
                 const durationMinutes = durationMs / (1000 * 60);
 

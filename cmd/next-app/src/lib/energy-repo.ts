@@ -1,4 +1,4 @@
-import { pool, Tariff, Site, TariffSeason, TariffSchedule } from './db';
+import { pool, Tariff, Site, TariffSeason, TariffSchedule, EnergyData } from './db';
 import { getDbReady } from './db-init';
 import { Schedule } from './schedule';
 
@@ -97,6 +97,8 @@ export class EnergyRepo {
             // ... (Variable declarations were hoisted in valid code, need to ensure they are here or above)
             // Let's declare them locally for this loop scope
             const ts = new Date(row.timestamp);
+
+
 
             const year = ts.getFullYear();
             const month = ts.getMonth() + 1; // 1-12
@@ -412,5 +414,43 @@ export class EnergyRepo {
                 return this.waitForTokenRefresh(siteId);
             }
         };
+    }
+
+    /**
+     * Fetches raw, unaggregated 5-minute energy data for high fidelity analysis.
+     */
+    async getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
+        await getDbReady();
+
+        const toSqlString = (d: Date) => {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const h = String(d.getHours()).padStart(2, '0');
+            const min = String(d.getMinutes()).padStart(2, '0');
+            const s = String(d.getSeconds()).padStart(2, '0');
+            return `${y}-${m}-${day} ${h}:${min}:${s}`;
+        };
+
+        const startStr = toSqlString(start);
+        const endStr = toSqlString(end);
+
+        const res = await pool.query(`
+            SELECT * FROM "EnergyData"
+            WHERE site_id = $1 
+            AND timestamp >= $2::timestamp 
+            AND timestamp < $3::timestamp
+            ORDER BY timestamp ASC
+        `, [siteId, startStr, endStr]);
+
+        return res.rows.map(row => ({
+            ...row,
+            timestamp: new Date(row.timestamp), // Ensure JS Date
+            site_id: row.site_id.toString(), // Ensure string
+            load_power: Number(row.load_power),
+            solar_power: Number(row.solar_power),
+            grid_power: Number(row.grid_power),
+            battery_power: Number(row.battery_power),
+        })) as EnergyData[];
     }
 }
