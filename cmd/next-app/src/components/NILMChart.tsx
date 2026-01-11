@@ -23,6 +23,7 @@ interface NILMChartProps {
     highlightedEvent?: LoadEvent | null;
     selectedEvent?: LoadEvent | null;
     onEventClick?: (event: LoadEvent) => void;
+    isDarkMode?: boolean;
 }
 
 // Helper to format tariff names (e.g., SUPER_OFF_PEAK -> Super Off-Peak)
@@ -48,7 +49,7 @@ const parseDate = (val: string | Date | number) => {
     return new Date(String(val).replace(' ', 'T'));
 };
 
-const TooltipContent = ({ active, payload, label, events, tariffs }: { active?: boolean; payload?: { value: number | string, payload?: any }[]; label?: string | number, events?: any[], tariffs?: Record<number, string> }) => {
+const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode }: { active?: boolean; payload?: { value: number | string, payload?: any }[]; label?: string | number, events?: any[], tariffs?: Record<number, string>, isDarkMode?: boolean }) => {
     if (active && payload && payload.length) {
         const time = new Date(label!).getTime();
         const dataPoint = payload[0].payload;
@@ -69,21 +70,32 @@ const TooltipContent = ({ active, payload, label, events, tariffs }: { active?: 
         // Find active event
         const activeEvent = events?.find(e => time >= e.startMs && time <= e.endMs);
 
+        const colors = {
+            bg: isDarkMode ? 'rgba(17, 24, 39, 1)' : 'rgba(255, 255, 255, 1)',
+            border: isDarkMode ? '#374151' : '#e5e7eb',
+            text: isDarkMode ? '#f3f4f6' : '#111827',
+            subText: isDarkMode ? '#d1d5db' : '#374151',
+            dateText: isDarkMode ? '#9ca3af' : '#6b7280',
+            loadBg: isDarkMode ? 'rgba(147, 51, 234, 0.1)' : 'rgba(147, 51, 234, 0.05)',
+            loadText: isDarkMode ? '#c084fc' : '#9333ea',
+            kWVal: isDarkMode ? '#22d3ee' : '#0891b2',
+        };
+
         // STYLING NOTE: Using inline styles for background AND TEXT to force compliance on Safari
         return (
             <div
                 className="rounded-xl shadow-2xl z-50 min-w-[200px]"
                 style={{
-                    backgroundColor: 'rgba(17, 24, 39, 1)', // Solid Dark Gray (Tailwind gray-900)
-                    border: '1px solid #374151',           // Tailwind gray-700
+                    backgroundColor: colors.bg,
+                    border: `1px solid ${colors.border}`,
                     padding: '12px',
-                    color: '#f3f4f6'                       // Force White Text
+                    color: colors.text
                 }}
             >
-                <div className="flex justify-between items-start mb-3 border-b border-gray-700 pb-2">
+                <div className="flex justify-between items-start mb-3 border-b pb-2" style={{ borderColor: colors.border }}>
                     <div>
-                        <p style={{ color: '#d1d5db', fontWeight: 500 }}>{new Date(label!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                        <p style={{ color: '#9ca3af', fontSize: '10px' }}>{new Date(label!).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                        <p style={{ color: colors.subText, fontWeight: 500 }}>{new Date(label!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                        <p style={{ color: colors.dateText, fontSize: '10px' }}>{new Date(label!).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</p>
                     </div>
                     {displayName && (
                         <div className="text-right">
@@ -102,26 +114,26 @@ const TooltipContent = ({ active, payload, label, events, tariffs }: { active?: 
                 </div>
 
                 <div className="flex items-center justify-between gap-4 mb-2">
-                    <span style={{ color: '#9ca3af' }}>Power</span>
-                    <span style={{ color: '#22d3ee', fontWeight: 'bold', fontSize: '16px' }}>{(Number(payload[0].value) / 1000).toFixed(2)} <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#22d3ee' }}>kW</span></span>
+                    <span style={{ color: colors.dateText }}>Power</span>
+                    <span style={{ color: colors.kWVal, fontWeight: 'bold', fontSize: '16px' }}>{(Number(payload[0].value) / 1000).toFixed(2)} <span style={{ fontSize: '12px', fontWeight: 'normal' }}>kW</span></span>
                 </div>
 
                 {activeEvent && (
-                    <div className="mt-3 pt-3 border-t border-gray-700 -mx-4 px-4 pb-1" style={{ backgroundColor: 'rgba(147, 51, 234, 0.1)' }}>
+                    <div className="mt-3 pt-3 border-t -mx-4 px-4 pb-1" style={{ backgroundColor: colors.loadBg, borderColor: colors.border }}>
                         <div className="flex justify-between items-center mb-2">
-                            <span style={{ color: '#c084fc', fontWeight: 'bold' }}>Load #{activeEvent.index + 1}</span>
-                            <span style={{ fontSize: '10px', color: 'rgba(192, 132, 252, 0.7)', borderColor: 'rgba(192, 132, 252, 0.3)', borderWidth: '1px', padding: '0 4px', borderRadius: '4px' }}>DETECTED LOAD</span>
+                            <span style={{ color: colors.loadText, fontWeight: 'bold' }}>Load #{activeEvent.index + 1}</span>
+                            <span style={{ fontSize: '10px', color: colors.loadText, borderColor: colors.loadText, borderWidth: '1px', padding: '0 4px', borderRadius: '4px', opacity: 0.7 }}>DETECTED LOAD</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1" style={{ color: '#9ca3af' }}>
-                            <span>Duration</span> <span style={{ color: '#e5e7eb', textAlign: 'right' }}>{activeEvent.durationMinutes}m</span>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1" style={{ color: colors.dateText }}>
+                            <span>Duration</span> <span style={{ color: colors.text, textAlign: 'right' }}>{activeEvent.durationMinutes}m</span>
                             <span>Energy</span> <span style={{ color: '#4ade80', textAlign: 'right' }}>{activeEvent.kwh} kWh</span>
-                            <span>Avg Pwr</span> <span style={{ color: '#e5e7eb', textAlign: 'right' }}>{(activeEvent.averagePower / 1000).toFixed(1)} kW</span>
+                            <span>Avg Pwr</span> <span style={{ color: colors.text, textAlign: 'right' }}>{(activeEvent.averagePower / 1000).toFixed(1)} kW</span>
                         </div>
 
                         {activeEvent.tags && activeEvent.tags.length > 0 && (
                             <div className="mt-3 text-xs flex flex-wrap gap-1">
                                 {activeEvent.tags.map((tag: string) => (
-                                    <span key={tag} className="px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-200 border border-blue-800">
+                                    <span key={tag} className="px-1.5 py-0.5 rounded bg-blue-900/10 text-blue-600 dark:text-blue-200 border border-blue-200 dark:border-blue-800">
                                         {tag}
                                     </span>
                                 ))}
@@ -135,8 +147,17 @@ const TooltipContent = ({ active, payload, label, events, tariffs }: { active?: 
     return null;
 };
 
-export default function NILMChart({ data, events, tariffs, highlightedEvent, selectedEvent, onEventClick }: NILMChartProps) {
+export default function NILMChart({ data, events, tariffs, highlightedEvent, selectedEvent, onEventClick, isDarkMode = true }: NILMChartProps) {
     const [hoverTime, setHoverTime] = React.useState<number | null>(null);
+
+    // Theme Colors
+    const themeColors = React.useMemo(() => ({
+        grid: isDarkMode ? "#374151" : "#e5e7eb",
+        axis: isDarkMode ? "#9CA3AF" : "#6B7280",
+        line: isDarkMode ? "#22d3ee" : "#0891b2", // Cyan-400 vs Cyan-600
+        cursor: isDarkMode ? "#6B7280" : "#9CA3AF",
+        text: isDarkMode ? "#9CA3AF" : "#6B7280"
+    }), [isDarkMode]);
 
     // Pre-process events for performance
     const processedEvents = React.useMemo(() => {
@@ -153,6 +174,8 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         time: parseDate(d.timestamp).getTime(),
         datetime: parseDate(d.timestamp).toLocaleString(),
     })), [data]);
+
+    // ... tariffRegions and xAxisConfig logic unchanged ...
 
     // Calculate Tariff Regions
     const tariffRegions = React.useMemo(() => {
@@ -224,6 +247,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         };
     }, [formattedData, tariffRegions]);
 
+
     // Custom Tick Component
     const CustomTick = (props: any) => {
         const { x, y, mapPayload, payload, index } = props;
@@ -264,13 +288,13 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
 
         return (
             <g transform={`translate(${x},${y})`}>
-                <line x1={0} y1={0} x2={0} y2={lineHeight} stroke="#9CA3AF" strokeOpacity={lineOpacity} />
+                <line x1={0} y1={0} x2={0} y2={lineHeight} stroke={themeColors.axis} strokeOpacity={lineOpacity} />
                 {label && (
                     <text
                         x={0}
                         y={lineHeight + 12}
                         textAnchor="middle"
-                        fill="#9CA3AF"
+                        fill={themeColors.text}
                         fontSize={10}
                         fontWeight={isTransition ? "bold" : "normal"}
                     >
@@ -283,14 +307,14 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
 
     if (!data || data.length === 0) {
         return (
-            <div className="w-full h-[500px] flex items-center justify-center bg-gray-900/50 rounded-xl border border-gray-800 text-gray-500">
+            <div className={`w-full h-[500px] flex items-center justify-center rounded-xl border ${isDarkMode ? 'bg-gray-900/50 border-gray-800 text-gray-500' : 'bg-gray-50 border-gray-200 text-gray-400'}`}>
                 No graph data available to display.
             </div>
         );
     }
 
     return (
-        <div style={{ width: '100%', height: 500 }} className="bg-gray-900/50 p-4 rounded-xl border border-gray-800 outline-none ring-0 focus:outline-none">
+        <div style={{ width: '100%', height: 500 }} className={`p-4 rounded-xl border outline-none ring-0 focus:outline-none ${isDarkMode ? 'bg-gray-900/50 border-gray-800' : 'bg-white border-gray-200 shadow-sm'}`}>
             <style>{`
                 .recharts-wrapper, .recharts-surface, .recharts-layer {
                     outline: none !important;
@@ -308,7 +332,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                     }}
                     onMouseLeave={() => setHoverTime(null)}
                 >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={themeColors.grid} vertical={false} />
                     <XAxis
                         dataKey="time"
                         type="number"
@@ -316,11 +340,11 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                         ticks={xAxisConfig.ticks}
                         tick={<CustomTick />}
                         interval={0} // Force render all custom ticks
-                        stroke="#9CA3AF"
+                        stroke={themeColors.axis}
                         height={40}
                     />
                     <YAxis
-                        stroke="#9CA3AF"
+                        stroke={themeColors.axis}
                         tickFormatter={(val) => `${(val / 1000).toFixed(1)} kW`}
                     />
 
@@ -342,7 +366,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                             <ReferenceLine
                                 key={`trans-line-${i}`}
                                 x={region.start}
-                                stroke="#9CA3AF"
+                                stroke={themeColors.axis}
                                 strokeWidth={2}
                                 strokeDasharray="5 5"
                                 strokeOpacity={0.8}
@@ -355,7 +379,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                         const isPeak = region.name?.toLowerCase().includes('peak') && !region.name?.toLowerCase().includes('off');
                         const isOffPeak = region.name?.toLowerCase().includes('off');
                         // Peak = Red-400, Off-Peak = Emerald-400, Else = Gray-400
-                        const labelColor = isPeak ? '#f87171' : (isOffPeak ? '#34d399' : '#9ca3af');
+                        const labelColor = isPeak ? '#f87171' : (isOffPeak ? '#34d399' : themeColors.text);
 
                         return (
                             <ReferenceArea
@@ -407,7 +431,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                                 label={{
                                     value: "Load",
                                     position: 'insideBottom',
-                                    fill: active ? '#fdf2f8' : '#c084fc',
+                                    fill: active ? (isDarkMode ? '#fdf2f8' : '#faf5ff') : '#c084fc',
                                     fontSize: 12,
                                     fontWeight: 'bold',
                                     offset: 5
@@ -417,8 +441,8 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                     })}
 
                     <Tooltip
-                        content={<TooltipContent events={processedEvents} tariffs={tariffs} />}
-                        cursor={{ stroke: '#6B7280', strokeWidth: 1, strokeDasharray: '3 3' }}
+                        content={<TooltipContent events={processedEvents} tariffs={tariffs} isDarkMode={isDarkMode} />}
+                        cursor={{ stroke: themeColors.cursor, strokeWidth: 1, strokeDasharray: '3 3' }}
                         wrapperStyle={{ outline: 'none' }}
                     />
                     <Legend />
@@ -427,7 +451,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                         type="linear"
                         dataKey="powerWatts"
                         name="Load Power (kW)"
-                        stroke="#22d3ee" // Cyan
+                        stroke={themeColors.line} // Cyan
                         dot={false}
                         strokeWidth={2}
                         animationDuration={500}

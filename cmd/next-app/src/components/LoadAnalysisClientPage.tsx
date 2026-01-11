@@ -1,20 +1,38 @@
-
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
 import NILMChart from '@/components/NILMChart';
 import { PowerData } from '@/lib/nilm/types';
 import { LoadEvent } from '@/lib/nilm/load-detection';
 import Link from 'next/link';
+import { Breadcrumbs } from './Breadcrumbs';
+import { useSearchParams } from 'next/navigation';
 
 import TagModal from '@/components/TagModal';
 
-export default function NILMPage() {
-    const params = useParams(); // { id: string }
-    const siteId = params?.id as string;
+interface LoadAnalysisClientPageProps {
+    siteId: string;
+    siteName: string;
+}
 
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysisClientPageProps) {
+    const searchParams = useSearchParams();
+    const initialDate = searchParams.get('date') || new Date().toISOString().split('T')[0];
+
+    // Initialize date from URL or Today
+    const [date, setDate] = useState<string>(initialDate);
+
+    // Update date if URL changes? 
+    // Usually standard pattern is: URL drives state. 
+    // But here we want local state to drive URL or just sync?
+    // Let's stick to local state initialized from URL for now. 
+    // Changing date using `setDate` won't update URL unless we push router.
+    // For now, let's just initialize. The user can refresh or click "Back" to reset.
+    // Or we should update URL on change? 
+    // The requirement was: "Analysis button next to the date selection...". 
+    // If I select a date there and click Analysis, it opens this page with that date. 
+    // That's satisfied by initialization.
+
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<PowerData[]>([]);
     const [events, setEvents] = useState<(LoadEvent & { tags?: string[] })[]>([]);
@@ -28,6 +46,28 @@ export default function NILMPage() {
     const [availableTags, setAvailableTags] = useState<string[]>([
         'EV', 'Oven', 'Dryer', 'HVAC', 'Microwave'
     ]);
+
+    const dateInputRef = React.useRef<HTMLInputElement>(null);
+    const displayDate = new Date(date + 'T00:00:00');
+    const isToday = displayDate.toDateString() === new Date().toDateString();
+
+    // Theme Detection Hook
+    const useThemeDetector = () => {
+        const getCurrentTheme = () => typeof window !== 'undefined' ? window.matchMedia("(prefers-color-scheme: dark)").matches : false;
+        const [isDarkTheme, setIsDarkTheme] = useState(getCurrentTheme());
+
+        useEffect(() => {
+            const darkThemeMq = window.matchMedia("(prefers-color-scheme: dark)");
+            const mqListener = (e: MediaQueryListEvent) => {
+                setIsDarkTheme(e.matches);
+            };
+            darkThemeMq.addEventListener("change", mqListener);
+            return () => darkThemeMq.removeEventListener("change", mqListener);
+        }, []);
+        return isDarkTheme;
+    };
+
+    const isDarkMode = useThemeDetector();
 
     const handleEventClick = (ev: LoadEvent) => {
         if (selectedEvent === ev) {
@@ -57,6 +97,17 @@ export default function NILMPage() {
     useEffect(() => {
         fetchData();
     }, [fetchData]);
+
+    // Live Refresh for Today
+    useEffect(() => {
+        if (!isToday) return;
+
+        const interval = setInterval(() => {
+            fetchData();
+        }, 60000); // 1 minute
+
+        return () => clearInterval(interval);
+    }, [isToday, fetchData]);
 
     const handleAddTag = async (tag: string) => {
         if (!taggingEvent) return;
@@ -123,7 +174,7 @@ export default function NILMPage() {
     };
 
     return (
-        <div className="min-h-screen bg-gray-950 text-gray-100 p-6 font-sans">
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 p-6 font-sans transition-colors duration-300">
             <TagModal
                 isOpen={!!taggingEvent}
                 onClose={() => setTaggingEvent(null)}
@@ -133,54 +184,75 @@ export default function NILMPage() {
             />
 
             {/* Header */}
+            <div className="mb-2">
+                <Breadcrumbs items={[
+                    { label: siteName, href: `/site/${siteId}` },
+                    { label: 'Analysis' }
+                ]} />
+            </div>
+
             <div className="mb-6 flex justify-between items-center">
-                <div>
-                    <Link href={`/site/${siteId}`} className="text-gray-400 hover:text-white text-sm mb-1 inline-block">
-                        &larr; Back to Dashboard
-                    </Link>
-                    <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-500">
-                        NILM High-Fidelity Analysis
-                    </h1>
-                </div>
+                <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-cyan-500 dark:from-cyan-400 dark:to-blue-500">
+                    High-Fidelity Load Analysis
+                </h1>
 
                 <div className="flex gap-2 items-center">
-                    <button
-                        onClick={() => changeDate(-1)}
-                        className="bg-gray-800 hover:bg-gray-700 text-white px-3 py-2 rounded-lg transition-colors border border-gray-700"
-                        title="Previous Day"
-                    >
-                        &larr;
-                    </button>
+                    <div className="flex bg-white dark:bg-slate-900 rounded-lg p-1 shadow-sm border border-slate-200 dark:border-slate-800 items-center justify-between gap-1 shrink-0">
+                        <button
+                            onClick={() => changeDate(-1)}
+                            disabled={loading}
+                            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
+                            title="Previous Day"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="m15 18-6-6 6-6" />
+                            </svg>
+                        </button>
 
-                    <input
-                        type="date"
-                        value={date}
-                        onChange={(e) => setDate(e.target.value)}
-                        className="bg-gray-800 border border-gray-700 text-white px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
+                        <div className="relative group flex-1 md:flex-none text-center min-w-[140px]">
+                            <div
+                                className="font-semibold text-sm hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center text-gray-900 dark:text-white"
+                                title="Click to pick a date"
+                            >
+                                {displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                                {isToday && ' (Today)'}
+                            </div>
+                            <input
+                                ref={dateInputRef}
+                                type="date"
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                value={date}
+                                onChange={(e) => setDate(e.target.value)}
+                                onClick={() => {
+                                    try {
+                                        dateInputRef.current?.showPicker();
+                                    } catch {
+                                        // Fallback
+                                    }
+                                }}
+                                max={new Date().toISOString().split('T')[0]}
+                            />
+                        </div>
 
-                    <button
-                        onClick={() => changeDate(1)}
-                        className="bg-gray-800 hover:bg-gray-700 text-white px-3 py-2 rounded-lg transition-colors border border-gray-700"
-                        title="Next Day"
-                    >
-                        &rarr;
-                    </button>
-
-                    <button
-                        onClick={fetchData}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors ml-2"
-                    >
-                        Refresh
-                    </button>
+                        <button
+                            onClick={() => changeDate(1)}
+                            disabled={loading || isToday}
+                            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
+                            title="Next Day"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="m9 18 6-6-6-6" />
+                            </svg>
+                        </button>
+                    </div>
                 </div>
             </div>
 
             {/* Chart Section */}
             <div className="mb-8">
                 {loading ? (
-                    <div className="h-[500px] w-full flex items-center justify-center bg-gray-900/50 rounded-xl border border-gray-800">
-                        <span className="text-gray-400 animate-pulse">Loading High-Fidelity Data...</span>
+                    <div className="h-[500px] w-full flex items-center justify-center bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-200 dark:border-gray-800">
+                        <span className="text-gray-500 dark:text-gray-400 animate-pulse">Loading High-Fidelity Data...</span>
                     </div>
                 ) : (
                     <NILMChart
@@ -190,18 +262,19 @@ export default function NILMPage() {
                         highlightedEvent={hoveredEvent}
                         selectedEvent={selectedEvent}
                         onEventClick={handleEventClick}
+                        isDarkMode={isDarkMode}
                     />
                 )}
             </div>
 
             {/* Event Table */}
-            <div className="bg-gray-900/50 border border-gray-800 rounded-xl overflow-hidden">
-                <div className="p-4 border-b border-gray-800 bg-gray-900">
-                    <h3 className="font-semibold text-lg text-gray-200">Detected Load Events</h3>
+            <div className="bg-white dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
+                    <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">Detected Load Events</h3>
                 </div>
                 <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm text-gray-400">
-                        <thead className="bg-gray-800/50 text-gray-300 uppercase tracking-wider text-xs font-medium">
+                    <table className="w-full text-left text-sm text-gray-600 dark:text-gray-400">
+                        <thead className="bg-gray-100 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 uppercase tracking-wider text-xs font-medium">
                             <tr>
                                 <th className="px-6 py-3">#</th>
                                 <th className="px-6 py-3">Start Time</th>
@@ -214,7 +287,7 @@ export default function NILMPage() {
                                 <th className="px-6 py-3 text-center">Actions</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-800">
+                        <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
                             {events.length === 0 ? (
                                 <tr>
                                     <td colSpan={9} className="px-6 py-8 text-center text-gray-500 italic">
@@ -230,11 +303,11 @@ export default function NILMPage() {
                                     // Base + Selection/Hover States
                                     let rowClass = "transition-colors cursor-pointer border-l-4 ";
                                     if (isSelected) {
-                                        rowClass += "bg-gray-800 border-cyan-400 ";
+                                        rowClass += "bg-blue-50 dark:bg-gray-800 border-blue-500 dark:border-cyan-400 ";
                                     } else if (isHovered) {
-                                        rowClass += "bg-gray-800/50 border-gray-700 ";
+                                        rowClass += "bg-gray-50 dark:bg-gray-800/50 border-gray-300 dark:border-gray-700 ";
                                     } else {
-                                        rowClass += "hover:bg-gray-800/30 border-transparent ";
+                                        rowClass += "hover:bg-gray-50 dark:hover:bg-gray-800/30 border-transparent ";
                                     }
 
                                     return (
@@ -245,26 +318,26 @@ export default function NILMPage() {
                                             onMouseLeave={() => setHoveredEvent(null)}
                                             onClick={() => handleEventClick(ev)}
                                         >
-                                            <td className="px-6 py-4 font-medium text-white">{i + 1}</td>
-                                            <td className="px-6 py-4 text-cyan-300">{formatTime(ev.startTime.toString())}</td>
+                                            <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">{i + 1}</td>
+                                            <td className="px-6 py-4 text-cyan-600 dark:text-cyan-300">{formatTime(ev.startTime.toString())}</td>
                                             <td className="px-6 py-4">{formatTime(ev.endTime.toString())}</td>
                                             <td className="px-6 py-4 text-right">{formatDuration(ev.durationMinutes)}</td>
                                             <td className="px-6 py-4 text-right font-medium">{(ev.averagePower / 1000).toFixed(2)} kW</td>
-                                            <td className="px-6 py-4 text-right text-amber-400">{(ev.maxPower / 1000).toFixed(2)} kW</td>
-                                            <td className="px-6 py-4 text-right text-green-400">{ev.kwh} kWh</td>
+                                            <td className="px-6 py-4 text-right text-amber-600 dark:text-amber-400">{(ev.maxPower / 1000).toFixed(2)} kW</td>
+                                            <td className="px-6 py-4 text-right text-green-600 dark:text-green-400">{ev.kwh} kWh</td>
                                             <td className="px-6 py-4">
                                                 <div className="flex flex-wrap gap-2">
                                                     {ev.tags?.map(tag => (
                                                         <span key={tag} className={`px-2 py-0.5 rounded textxs border flex items-center gap-1
                                                         ${tag === 'Arbitrage Candidate'
-                                                                ? 'bg-red-900/30 border-red-800 text-red-300'
-                                                                : 'bg-blue-900/30 border-blue-800 text-blue-300'
+                                                                ? 'bg-red-100 dark:bg-red-900/30 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300'
+                                                                : 'bg-blue-100 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300'
                                                             }`}>
                                                             {tag}
                                                             {tag !== 'Arbitrage Candidate' && (
                                                                 <button
                                                                     onClick={(e) => handleRemoveTag(e, ev, tag)}
-                                                                    className="hover:text-white"
+                                                                    className="hover:text-black dark:hover:text-white"
                                                                 >
                                                                     &times;
                                                                 </button>
@@ -276,7 +349,7 @@ export default function NILMPage() {
                                             <td className="px-6 py-4 text-center">
                                                 <button
                                                     onClick={() => setTaggingEvent(ev)}
-                                                    className="bg-gray-700 text-white text-xs px-2 py-1 rounded inline-block whitespace-nowrap"
+                                                    className="bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-white text-xs px-2 py-1 rounded inline-block whitespace-nowrap hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
                                                     title="Tag Event"
                                                 >
                                                     ✏️ Tag
@@ -291,9 +364,9 @@ export default function NILMPage() {
                 </div>
             </div>
 
-            <div className="mt-8 p-4 bg-gray-900/30 rounded-lg text-xs text-gray-500">
+            <div className="mt-8 p-4 bg-gray-100 dark:bg-gray-900/30 rounded-lg text-xs text-gray-500 dark:text-gray-500">
                 <p>NILM Algorithm: Sliding Window Gradient (15m window) + Baseline Return Closure. Source: Total Home Load.</p>
             </div>
-        </div>
+        </div >
     );
 }
