@@ -10,7 +10,8 @@ import {
     Tooltip,
     Legend,
     ResponsiveContainer,
-    ReferenceArea
+    ReferenceArea,
+    ReferenceLine
 } from 'recharts';
 import { PowerData } from '@/lib/nilm/types';
 import { LoadEvent } from '@/lib/nilm/load-detection';
@@ -19,6 +20,9 @@ interface NILMChartProps {
     data: PowerData[];
     events: LoadEvent[];
     tariffs?: Record<number, string>;
+    highlightedEvent?: LoadEvent | null;
+    selectedEvent?: LoadEvent | null;
+    onEventClick?: (event: LoadEvent) => void;
 }
 
 // Helper to format tariff names (e.g., SUPER_OFF_PEAK -> Super Off-Peak)
@@ -79,7 +83,7 @@ const TooltipContent = ({ active, payload, label, events, tariffs }: { active?: 
                 <div className="flex justify-between items-start mb-3 border-b border-gray-700 pb-2">
                     <div>
                         <p style={{ color: '#d1d5db', fontWeight: 500 }}>{new Date(label!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                        <p style={{ color: '#9ca3af', fontSize: '10px' }}>{new Date(label!).toLocaleDateString()}</p>
+                        <p style={{ color: '#9ca3af', fontSize: '10px' }}>{new Date(label!).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</p>
                     </div>
                     {displayName && (
                         <div className="text-right">
@@ -113,6 +117,16 @@ const TooltipContent = ({ active, payload, label, events, tariffs }: { active?: 
                             <span>Energy</span> <span style={{ color: '#4ade80', textAlign: 'right' }}>{activeEvent.kwh} kWh</span>
                             <span>Avg Pwr</span> <span style={{ color: '#e5e7eb', textAlign: 'right' }}>{(activeEvent.averagePower / 1000).toFixed(1)} kW</span>
                         </div>
+
+                        {activeEvent.tags && activeEvent.tags.length > 0 && (
+                            <div className="mt-3 text-xs flex flex-wrap gap-1">
+                                {activeEvent.tags.map((tag: string) => (
+                                    <span key={tag} className="px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-200 border border-blue-800">
+                                        {tag}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -121,7 +135,7 @@ const TooltipContent = ({ active, payload, label, events, tariffs }: { active?: 
     return null;
 };
 
-export default function NILMChart({ data, events, tariffs }: NILMChartProps) {
+export default function NILMChart({ data, events, tariffs, highlightedEvent, selectedEvent, onEventClick }: NILMChartProps) {
     const [hoverTime, setHoverTime] = React.useState<number | null>(null);
 
     // Pre-process events for performance
@@ -166,18 +180,105 @@ export default function NILMChart({ data, events, tariffs }: NILMChartProps) {
         }
         // Push last region
         if (formattedData.length > 0) {
-            const lastName = formattedData[formattedData.length - 1].touName || (formattedData[formattedData.length - 1].tariffId ? tariffs?.[formattedData[formattedData.length - 1].tariffId] : 'Unknown');
+            const lastPoint = formattedData[formattedData.length - 1];
+            const lastName = lastPoint.touName || (lastPoint.tariffId != null ? tariffs?.[lastPoint.tariffId] : undefined) || 'Unknown';
             regions.push({
                 start: currentStart,
-                end: formattedData[formattedData.length - 1].time,
-                name: lastName || 'Unknown'
+                end: lastPoint.time,
+                name: lastName
             });
         }
         return regions;
     }, [formattedData, tariffs]);
 
-    const formatXAxis = (tick: number) => {
-        return new Date(tick).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const xAxisConfig = React.useMemo(() => {
+        if (!formattedData.length) return { ticks: [], transitionTimes: new Set<number>() };
+
+        const start = formattedData[0].time;
+        const end = formattedData[formattedData.length - 1].time;
+        const ticks = new Set<number>();
+        const transitionTimes = new Set<number>();
+
+        // 1. Add Tariff Transitions
+        tariffRegions.forEach(r => {
+            ticks.add(r.start);
+            transitionTimes.add(r.start);
+            // We usually don't label 'end' of last region if it's just end of data
+        });
+
+        // 2. Add Whole Hours
+        const startDate = new Date(start);
+        startDate.setMinutes(0, 0, 0);
+        // If start was past the hour, move to next hour
+        if (startDate.getTime() < start) startDate.setHours(startDate.getHours() + 1);
+
+        let current = startDate.getTime();
+        while (current <= end) {
+            ticks.add(current);
+            current += 3600 * 1000;
+        }
+
+        return {
+            ticks: Array.from(ticks).sort((a, b) => a - b),
+            transitionTimes
+        };
+    }, [formattedData, tariffRegions]);
+
+    // Custom Tick Component
+    const CustomTick = (props: any) => {
+        const { x, y, mapPayload, payload, index } = props;
+        const time = payload.value;
+        const date = new Date(time);
+        const isTransition = xAxisConfig.transitionTimes.has(time);
+        const hour = date.getHours();
+        const minute = date.getMinutes();
+        const isWholeHour = minute === 0;
+        const isMajorHour = isWholeHour && (hour % 4 === 0); // 12am, 4am, 8am...
+
+        // Determine Tick Style
+        const isMajor = isTransition || isMajorHour;
+        const isMinor = isWholeHour && !isMajor;
+
+        // Label Logic: Show if Transition OR (Major Hour AND not close to transition)
+        // Simple heuristic: Show labels for Transitions and Major Hours. 
+        // Recharts handles overlap if we let it, but we want to force specific ones.
+        // Let's rely on visual hierarchy.
+
+        // Tick Line
+        const lineY = y;
+        const lineHeight = isMajor ? 10 : 5;
+        const lineOpacity = isMajor ? 0.6 : 0.2;
+
+        let label = null;
+
+        if (isTransition) {
+            label = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase().replace(' ', '');
+        } else if (isMajorHour) {
+            label = date.toLocaleTimeString([], { hour: 'numeric' }).toLowerCase().replace(' ', ''); // 4am
+        }
+
+        // Avoid labeling major hour if it's very close to a transition? 
+        // For now, let's render all and let user judge.
+
+        if (!isMajor && !isMinor) return null; // Shouldn't happen given our ticks gen
+
+        return (
+            <g transform={`translate(${x},${y})`}>
+                <line x1={0} y1={0} x2={0} y2={lineHeight} stroke="#9CA3AF" strokeOpacity={lineOpacity} />
+                {label && (
+                    <text
+                        x={0}
+                        y={lineHeight + 12}
+                        textAnchor="middle"
+                        fill="#9CA3AF"
+                        fontSize={10}
+                        fontWeight={isTransition ? "bold" : "normal"}
+                    >
+                        {label}
+                    </text>
+                )}
+            </g>
+        );
     };
 
     if (!data || data.length === 0) {
@@ -189,7 +290,12 @@ export default function NILMChart({ data, events, tariffs }: NILMChartProps) {
     }
 
     return (
-        <div style={{ width: '100%', height: 500 }} className="bg-gray-900/50 p-4 rounded-xl border border-gray-800">
+        <div style={{ width: '100%', height: 500 }} className="bg-gray-900/50 p-4 rounded-xl border border-gray-800 outline-none ring-0 focus:outline-none">
+            <style>{`
+                .recharts-wrapper, .recharts-surface, .recharts-layer {
+                    outline: none !important;
+                }
+            `}</style>
             <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                     data={formattedData}
@@ -202,14 +308,16 @@ export default function NILMChart({ data, events, tariffs }: NILMChartProps) {
                     }}
                     onMouseLeave={() => setHoverTime(null)}
                 >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                     <XAxis
                         dataKey="time"
                         type="number"
                         domain={['dataMin', 'dataMax']}
-                        tickFormatter={formatXAxis}
+                        ticks={xAxisConfig.ticks}
+                        tick={<CustomTick />}
+                        interval={0} // Force render all custom ticks
                         stroke="#9CA3AF"
-                        minTickGap={50}
+                        height={40}
                     />
                     <YAxis
                         stroke="#9CA3AF"
@@ -227,18 +335,17 @@ export default function NILMChart({ data, events, tariffs }: NILMChartProps) {
                         />
                     ))}
 
-                    {/* Explicit Vertical Transition Lines - Neutral Gray */}
+                    {/* Explicit Vertical Transition Lines */}
                     {tariffRegions.map((region, i) => {
                         if (i === 0) return null;
                         return (
-                            <ReferenceArea
+                            <ReferenceLine
                                 key={`trans-line-${i}`}
-                                x1={region.start}
-                                x2={region.start}
-                                stroke="#6B7280" // Gray-500
-                                strokeWidth={1}
-                                strokeDasharray="3 3"
-                                strokeOpacity={1}
+                                x={region.start}
+                                stroke="#9CA3AF"
+                                strokeWidth={2}
+                                strokeDasharray="5 5"
+                                strokeOpacity={0.8}
                             />
                         );
                     })}
@@ -271,20 +378,36 @@ export default function NILMChart({ data, events, tariffs }: NILMChartProps) {
 
                     {/* Active Event Highlight - Pop Color: Purple */}
                     {processedEvents.map((event, index) => {
-                        const isHovered = hoverTime && hoverTime >= event.startMs && hoverTime <= event.endMs;
+                        // isHighlighted triggers the visual POP (solid stroke, higher opacity)
+                        // Triggered by:
+                        // 1. Mouse hover on chart (time match)
+                        // 2. Mouse hover on table (highlightedEvent prop)
+                        // 3. Selection (selectedEvent prop)
+                        const isHovered = (hoverTime && hoverTime >= event.startMs && hoverTime <= event.endMs) ||
+                            (highlightedEvent && new Date(highlightedEvent.startTime).getTime() === event.startMs);
+
+                        const isSelected = selectedEvent && new Date(selectedEvent.startTime).getTime() === event.startMs;
+
+                        // If selected, we might want a distinct style, but for now we reuse the "Pop" style as requested.
+                        // "When the user clicks the row. The row and the region are highlighted." -> Persistent Highlight.
+                        const active = isHovered || isSelected;
+
                         return (
                             <ReferenceArea
                                 key={index}
                                 x1={event.startMs}
                                 x2={event.endMs}
-                                stroke={isHovered ? "#fff" : "transparent"}
-                                strokeOpacity={0.8}
+                                stroke={active ? "#db2777" : "transparent"} // Pink-600
+                                strokeWidth={active ? 2 : 0}
+                                strokeOpacity={1}
                                 fill="#a855f7" // Purple-500
-                                fillOpacity={isHovered ? 0.5 : 0.25} // Increased opacity for pop vs background
+                                fillOpacity={active ? 0.6 : 0.25}
+                                onClick={() => onEventClick && onEventClick(event)}
+                                className="cursor-pointer" // Show pointer to indicate clickable
                                 label={{
                                     value: "Load",
                                     position: 'insideBottom',
-                                    fill: '#c084fc', // Purple-400 text
+                                    fill: active ? '#fdf2f8' : '#c084fc',
                                     fontSize: 12,
                                     fontWeight: 'bold',
                                     offset: 5

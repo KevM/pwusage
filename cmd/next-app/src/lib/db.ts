@@ -126,3 +126,12 @@ export interface TrmnlInstallation {
 export interface SiteWithTariffs extends Site {
   tariffs: Tariff[];
 }
+
+export interface LoadTag {
+  id: number;
+  site_id: string; // references Site(id)
+  start_time: Date;
+  end_time: Date;
+  tag: string;
+  created_at: Date;
+}

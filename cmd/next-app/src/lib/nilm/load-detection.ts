@@ -10,6 +10,7 @@ export interface LoadEvent {
     maxPower: number;
     minPower: number;
     tariffId?: number;
+    tags?: string[];
 }
 
 /**
@@ -175,7 +176,7 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
 
             activeLoads.push({
                 startIndex: startIdx,
-                startTime: data[startIdx].timestamp,
+                startTime: new Date(data[startIdx].timestamp),
                 magnitude: val,
                 baseline: grad.preMean,
                 tariffId: point.tariffId

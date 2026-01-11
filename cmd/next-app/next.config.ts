@@ -12,3 +12,6 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+
+// Forced reload timestamp: 1
+

@@ -48,6 +48,17 @@ async function getUserTokens(userId: string): Promise<{ access_token: string, re
     return res.rows[0];
 }
 
+export async function getUserTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string } | null> {
+    const res = await pool.query(`
+        SELECT u.access_token, u.refresh_token, u.id as user_id 
+        FROM "User" u
+        JOIN "Site" s ON s.user_id = u.id
+        WHERE s.id = $1
+    `, [siteId]);
+    if (res.rows.length === 0) return null;
+    return res.rows[0];
+}
+
 export class EnergyRepo {
     async getSitesForUser(userId: string): Promise<Site[]> {
         await getDbReady();
@@ -452,5 +463,60 @@ export class EnergyRepo {
             grid_power: Number(row.grid_power),
             battery_power: Number(row.battery_power),
         })) as EnergyData[];
+    }
+
+    // Tagging Methods
+    private toSqlString(d: Date) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const h = String(d.getHours()).padStart(2, '0');
+        const min = String(d.getMinutes()).padStart(2, '0');
+        const s = String(d.getSeconds()).padStart(2, '0');
+        return `${y}-${m}-${day} ${h}:${min}:${s}`;
+    }
+
+    async getLoadTags(siteId: string, start: Date, end: Date): Promise<import('./db').LoadTag[]> {
+        await getDbReady();
+        const res = await pool.query(`
+            SELECT * FROM "LoadTag"
+            WHERE site_id = $1
+            AND start_time >= $2::timestamp
+            AND end_time <= $3::timestamp
+        `, [siteId, this.toSqlString(start), this.toSqlString(end)]);
+
+        return res.rows.map(r => ({
+            ...r,
+            start_time: new Date(r.start_time),
+            end_time: new Date(r.end_time),
+            created_at: new Date(r.created_at)
+        }));
+    }
+
+    async addLoadTag(siteId: string, start: Date, end: Date, tag: string) {
+        await getDbReady();
+        const startStr = this.toSqlString(start);
+        const endStr = this.toSqlString(end);
+
+        // Prevent duplicates
+        const exists = await pool.query(`
+            SELECT 1 FROM "LoadTag" 
+            WHERE site_id = $1 AND start_time = $2::timestamp AND end_time = $3::timestamp AND tag = $4
+        `, [siteId, startStr, endStr, tag]);
+
+        if (exists.rowCount && exists.rowCount > 0) return;
+
+        await pool.query(`
+            INSERT INTO "LoadTag" (site_id, start_time, end_time, tag)
+            VALUES ($1, $2::timestamp, $3::timestamp, $4)
+        `, [siteId, startStr, endStr, tag]);
+    }
+
+    async removeLoadTag(siteId: string, start: Date, end: Date, tag: string) {
+        await getDbReady();
+        await pool.query(`
+            DELETE FROM "LoadTag"
+            WHERE site_id = $1 AND start_time = $2::timestamp AND end_time = $3::timestamp AND tag = $4
+         `, [siteId, this.toSqlString(start), this.toSqlString(end), tag]);
     }
 }

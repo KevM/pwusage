@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { TeslaClient } from '@/lib/tesla-client';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { EnergyRepo, getUserTokensForSite } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { SiteService } from '@/lib/site-service';
 import { verifySiteToken } from '@/lib/auth-jwt';
@@ -27,10 +27,11 @@ export async function GET(request: Request) {
         if (siteAuthToken) {
             const siteIds = verifySiteToken(siteAuthToken);
             if (siteIds && siteIds.includes(siteId)) {
-                const site = await repo.getSite(siteId);
-                if (site && site.access_token && site.refresh_token) {
-                    token = site.access_token;
-                    refreshToken = site.refresh_token;
+                // Fetch tokens from User table via Site relationship
+                const userTokens = await getUserTokensForSite(siteId);
+                if (userTokens) {
+                    token = userTokens.access_token;
+                    refreshToken = userTokens.refresh_token;
                 }
             }
         }
