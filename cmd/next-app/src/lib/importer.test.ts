@@ -2,7 +2,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Importer } from './importer';
 import { TeslaClient } from './tesla-client';
-import { EnergyRepo } from './energy-repo';
 import { pool } from './db';
 
 // Mock dependencies
@@ -12,8 +11,8 @@ vi.mock('./tesla-client');
 
 describe('Importer Sync Logic', () => {
     let importer: Importer;
-    let mockClient: any;
-    let mockRepo: any;
+    let mockClient: TeslaClient;
+    let mockRepo: unknown;
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -28,13 +27,13 @@ describe('Importer Sync Logic', () => {
                 tariffs: []
             })
         };
-        (importer as any).repo = mockRepo;
+        (importer as unknown as { repo: unknown }).repo = mockRepo;
     });
 
     it('should trigger import when data is missing', async () => {
         // Mock DB query to return NO rows (gap)
         const mockQuery = vi.fn().mockResolvedValue({ rows: [] });
-        (pool.query as any) = mockQuery;
+        (pool.query as unknown) = mockQuery;
 
         // Mock Import Call
         const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue(undefined);
@@ -57,9 +56,9 @@ describe('Importer Sync Logic', () => {
         }
 
         const mockQuery = vi.fn().mockResolvedValue({ rows });
-        (pool.query as any) = mockQuery;
+        (pool.query as unknown) = mockQuery;
 
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue(undefined);
+        vi.spyOn(importer, 'importRange').mockResolvedValue(undefined);
 
         const s = new Date('2026-01-10T00:00:00Z');
         const e = new Date('2026-01-10T23:59:59Z');

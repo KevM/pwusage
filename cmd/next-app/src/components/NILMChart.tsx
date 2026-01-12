@@ -49,9 +49,26 @@ const parseDate = (val: string | Date | number) => {
     return new Date(String(val).replace(' ', 'T'));
 };
 
-const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode }: { active?: boolean; payload?: { value: number | string, payload?: any }[]; label?: string | number, events?: any[], tariffs?: Record<number, string>, isDarkMode?: boolean }) => {
+interface CustomTickProps {
+    x?: number;
+    y?: number;
+    payload?: { value: number };
+    xAxisConfig: { transitionTimes: Set<number> };
+    themeColors: { axis: string; text: string };
+}
+
+interface TooltipProps {
+    active?: boolean;
+    payload?: { value: number | string; payload: PowerData & { touName?: string; tariffId?: number } }[];
+    label?: string | number;
+    events?: (LoadEvent & { index: number; startMs: number; endMs: number })[];
+    tariffs?: Record<number, string>;
+    isDarkMode?: boolean;
+}
+
+const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode }: TooltipProps) => {
     if (active && payload && payload.length) {
-        const time = new Date(label!).getTime();
+        const time = new Date(Number(label)).getTime();
         const dataPoint = payload[0].payload;
 
         // Use pre-calculated touName from backend if available, otherwise fallback
@@ -60,7 +77,7 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode }:
 
         const rawName = touName || (
             (tariffs && tariffId !== undefined)
-                ? (tariffs[tariffId] || tariffs[String(tariffId) as any] || `Tariff ${tariffId}`)
+                ? (tariffs[tariffId] || `Tariff ${tariffId}`)
                 : undefined
         );
 
@@ -94,8 +111,8 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode }:
             >
                 <div className="flex justify-between items-start mb-3 border-b pb-2" style={{ borderColor: colors.border }}>
                     <div>
-                        <p style={{ color: colors.subText, fontWeight: 500 }}>{new Date(label!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                        <p style={{ color: colors.dateText, fontSize: '10px' }}>{new Date(label!).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                        <p style={{ color: colors.subText, fontWeight: 500 }}>{new Date(Number(label)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                        <p style={{ color: colors.dateText, fontSize: '10px' }}>{new Date(Number(label)).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</p>
                     </div>
                     {displayName && (
                         <div className="text-right">
@@ -145,6 +162,51 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode }:
         );
     }
     return null;
+};
+
+const CustomTick = ({ x, y, payload, xAxisConfig, themeColors }: CustomTickProps) => {
+    if (!payload || x === undefined || y === undefined) return null;
+    const time = payload.value;
+    const date = new Date(time);
+    const isTransition = xAxisConfig.transitionTimes.has(time);
+    const hour = date.getHours();
+    const minute = date.getMinutes();
+    const isWholeHour = minute === 0;
+    const isMajorHour = isWholeHour && (hour % 4 === 0);
+
+    const isMajor = isTransition || isMajorHour;
+    const isMinor = isWholeHour && !isMajor;
+
+    const lineHeight = isMajor ? 10 : 5;
+    const lineOpacity = isMajor ? 0.6 : 0.2;
+
+    let label = null;
+
+    if (isTransition) {
+        label = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase().replace(' ', '');
+    } else if (isMajorHour) {
+        label = date.toLocaleTimeString([], { hour: 'numeric' }).toLowerCase().replace(' ', '');
+    }
+
+    if (!isMajor && !isMinor) return null;
+
+    return (
+        <g transform={`translate(${x},${y})`}>
+            <line x1={0} y1={0} x2={0} y2={lineHeight} stroke={themeColors.axis} strokeOpacity={lineOpacity} />
+            {label && (
+                <text
+                    x={0}
+                    y={lineHeight + 12}
+                    textAnchor="middle"
+                    fill={themeColors.text}
+                    fontSize={10}
+                    fontWeight={isTransition ? "bold" : "normal"}
+                >
+                    {label}
+                </text>
+            )}
+        </g>
+    );
 };
 
 export default function NILMChart({ data, events, tariffs, highlightedEvent, selectedEvent, onEventClick, isDarkMode = true }: NILMChartProps) {
@@ -248,62 +310,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
     }, [formattedData, tariffRegions]);
 
 
-    // Custom Tick Component
-    const CustomTick = (props: any) => {
-        const { x, y, mapPayload, payload, index } = props;
-        const time = payload.value;
-        const date = new Date(time);
-        const isTransition = xAxisConfig.transitionTimes.has(time);
-        const hour = date.getHours();
-        const minute = date.getMinutes();
-        const isWholeHour = minute === 0;
-        const isMajorHour = isWholeHour && (hour % 4 === 0); // 12am, 4am, 8am...
 
-        // Determine Tick Style
-        const isMajor = isTransition || isMajorHour;
-        const isMinor = isWholeHour && !isMajor;
-
-        // Label Logic: Show if Transition OR (Major Hour AND not close to transition)
-        // Simple heuristic: Show labels for Transitions and Major Hours. 
-        // Recharts handles overlap if we let it, but we want to force specific ones.
-        // Let's rely on visual hierarchy.
-
-        // Tick Line
-        const lineY = y;
-        const lineHeight = isMajor ? 10 : 5;
-        const lineOpacity = isMajor ? 0.6 : 0.2;
-
-        let label = null;
-
-        if (isTransition) {
-            label = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase().replace(' ', '');
-        } else if (isMajorHour) {
-            label = date.toLocaleTimeString([], { hour: 'numeric' }).toLowerCase().replace(' ', ''); // 4am
-        }
-
-        // Avoid labeling major hour if it's very close to a transition? 
-        // For now, let's render all and let user judge.
-
-        if (!isMajor && !isMinor) return null; // Shouldn't happen given our ticks gen
-
-        return (
-            <g transform={`translate(${x},${y})`}>
-                <line x1={0} y1={0} x2={0} y2={lineHeight} stroke={themeColors.axis} strokeOpacity={lineOpacity} />
-                {label && (
-                    <text
-                        x={0}
-                        y={lineHeight + 12}
-                        textAnchor="middle"
-                        fill={themeColors.text}
-                        fontSize={10}
-                        fontWeight={isTransition ? "bold" : "normal"}
-                    >
-                        {label}
-                    </text>
-                )}
-            </g>
-        );
-    };
 
     if (!data || data.length === 0) {
         return (
@@ -338,7 +345,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                         type="number"
                         domain={['dataMin', 'dataMax']}
                         ticks={xAxisConfig.ticks}
-                        tick={<CustomTick />}
+                        tick={<CustomTick xAxisConfig={xAxisConfig} themeColors={themeColors} />}
                         interval={0} // Force render all custom ticks
                         stroke={themeColors.axis}
                         height={40}

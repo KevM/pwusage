@@ -4,7 +4,6 @@ import React, { useState, useEffect } from 'react';
 import NILMChart from '@/components/NILMChart';
 import { PowerData } from '@/lib/nilm/types';
 import { LoadEvent } from '@/lib/nilm/load-detection';
-import Link from 'next/link';
 import { Breadcrumbs } from './Breadcrumbs';
 import { useSearchParams } from 'next/navigation';
 

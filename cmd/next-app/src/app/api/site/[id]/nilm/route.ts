@@ -91,13 +91,11 @@ export async function GET(
 
         // 4. Enrich with TOU Names
         if (schedule) {
-            let matches = 0;
             powerData.forEach(point => {
                 const dateObj = new Date(point.timestamp);
                 const tp = schedule!.getTariffPeriod(dateObj);
                 if (tp && tp.schedule.name) {
                     point.touName = tp.schedule.name;
-                    matches++;
                 } else if (point.tariffId != null) {
                     const name = tariffMap[point.tariffId];
                     if (name) point.touName = name;

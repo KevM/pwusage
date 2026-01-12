@@ -139,6 +139,10 @@ export async function GET(request: Request) {
         // End is now (to show current usage)
         const end = now;
 
+        // Calculate Cycle End for Display (Start + 1 Month)
+        const cycleEnd = new Date(start);
+        cycleEnd.setMonth(cycleEnd.getMonth() + 1);
+
         if (site.refresh_token) {
             console.log(`[Trmnl] Found refresh token for site ${site.id}, attempting sync...`);
 
@@ -398,7 +402,7 @@ export async function GET(request: Request) {
 
         const renderCtx = {
             siteName: site.name || 'Powerwall', // Retain 'Powerwall' fallback for robustness
-            dateRange: `${start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}`,
+            dateRange: `${start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })} - ${cycleEnd.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}`,
             tariffGroups: Array.from(tariffGroups.values()), // Retain Array.from for consistency
             totalCost: totalBillCost,
             costLabel: costLabel, // Use existing 'costLabel'
