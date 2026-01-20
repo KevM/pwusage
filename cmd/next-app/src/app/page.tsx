@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import Link from 'next/link';
+import Image from 'next/image';
 import { redirect } from 'next/navigation';
 import { verifySiteToken } from '@/lib/auth-jwt';
 import { EnergyRepo } from '@/lib/energy-repo';
@@ -15,13 +16,26 @@ export default async function Home() {
   // If no token at all, show login screen
   if (!siteAuthToken) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center p-24">
+      <div className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24">
         <h1 className="text-4xl font-bold mb-8">Powerwall Usage</h1>
+        <Image
+          src="/login-summary-v2.png"
+          alt="Monitor Usage, Track Costs, Maximize Savings"
+          width={930}
+          height={375}
+          className="mb-8"
+        />
         <Link
           href="/login"
           className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
         >
           Login with Tesla
+        </Link>
+        <Link
+          href="/about"
+          className="mt-4 text-blue-600 hover:text-blue-800 underline"
+        >
+          Learn More
         </Link>
       </div>
     );
