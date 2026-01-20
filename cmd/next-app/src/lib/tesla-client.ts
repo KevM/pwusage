@@ -227,6 +227,18 @@ export class TeslaClient {
         const { refreshAccessToken } = await import('./tesla-auth');
         return refreshAccessToken(refreshToken);
     }
+
+    async getUserInfo(): Promise<TeslaUserInfo> {
+        const result = await this.fetch<{ response: TeslaUserInfo }>("/api/1/users/me");
+        return result.response;
+    }
+}
+
+export interface TeslaUserInfo {
+    email: string;
+    full_name: string;
+    profile_image_url: string;
+    vault_uuid?: string;
 }
 
 export interface EnergySiteLiveStatus {

@@ -9,6 +9,16 @@ const nextConfig: NextConfig = {
       "entodermal-unswatheable-diana.ngrok-free.dev"
     ]
   },
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'vehicle-files.prd.usw2.vn.cloud.tesla.com',
+        port: '',
+        pathname: '/profile_images/**',
+      },
+    ],
+  },
 };
 
 export default nextConfig;
