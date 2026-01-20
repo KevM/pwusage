@@ -28,6 +28,24 @@ export async function GET(
             date = new Date(y, m - 1, d);
         }
 
+        // AUTH CHECK
+        const { cookies } = await import('next/headers');
+
+        const { SiteService } = await import('@/lib/site-service');
+
+        const cookieStore = await cookies();
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
+
+        if (!siteAuthToken) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        // Validate access to THIS specific site
+        const siteService = new SiteService({ energyRepo: repo, siteAuthToken });
+        if (!await siteService.validateSiteAccess(siteId)) {
+            return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
+        }
+
         // Set range to full day
         const start = new Date(date);
         start.setHours(0, 0, 0, 0);
@@ -167,6 +185,23 @@ export async function POST(
         const { id: siteId } = await params;
         const body = await request.json();
         const { action, start_time, end_time, tag } = body;
+
+
+        const { cookies } = await import('next/headers');
+
+        const { SiteService } = await import('@/lib/site-service');
+
+        const cookieStore = await cookies();
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
+
+        if (!siteAuthToken) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const siteService = new SiteService({ energyRepo: repo, siteAuthToken });
+        if (!await siteService.validateSiteAccess(siteId)) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
 
         if (!action || !start_time || !end_time || !tag) {
             return NextResponse.json({ error: 'Missing fields' }, { status: 400 });

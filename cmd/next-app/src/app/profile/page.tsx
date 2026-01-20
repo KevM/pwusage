@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Image from 'next/image';
 import { verifySiteToken } from '@/lib/auth-jwt';
-import { EnergyRepo, getUserTokensForSite } from '@/lib/energy-repo';
+import { EnergyRepo } from '@/lib/energy-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { pool, User } from '@/lib/db';
 import { Breadcrumbs } from '@/components/Breadcrumbs';

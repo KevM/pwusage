@@ -80,7 +80,7 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
         if (!siteId) return;
         setLoading(true);
         try {
-            const res = await fetch(`/api/site/${siteId}/nilm?date=${date}`);
+            const res = await fetch(`/api/site/${siteId}/analysis?date=${date}`);
             if (!res.ok) throw new Error('Failed to fetch data');
             const json = await res.json();
             setData(json.data);
@@ -117,7 +117,7 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
         }
 
         try {
-            await fetch(`/api/site/${siteId}/nilm`, {
+            await fetch(`/api/site/${siteId}/analysis`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -137,7 +137,7 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
         e.stopPropagation();
         if (!confirm(`Remove tag "${tag}"?`)) return;
         try {
-            await fetch(`/api/site/${siteId}/nilm`, {
+            await fetch(`/api/site/${siteId}/analysis`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
