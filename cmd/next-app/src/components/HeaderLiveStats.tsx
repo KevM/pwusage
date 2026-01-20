@@ -72,7 +72,7 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
     const fmtKw = (w: number) => (Math.abs(w) / 1000).toFixed(1);
 
     return (
-        <div className="flex items-center gap-6 text-sm">
+        <div className="flex items-center justify-between w-full md:w-auto md:justify-start md:gap-6 text-sm">
             {/* Solar */}
             <div className="flex flex-col items-center" title="Solar Production">
                 <span className="text-xs text-gray-500 uppercase font-medium">Solar</span>

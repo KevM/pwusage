@@ -190,12 +190,12 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
                 ]} />
             </div>
 
-            <div className="mb-6 flex justify-between items-center">
+            <div className="mb-6 flex flex-col sm:flex-row gap-4 sm:justify-between sm:items-center">
                 <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-cyan-500 dark:from-cyan-400 dark:to-blue-500">
-                    High-Fidelity Load Analysis
+                    Load Analysis
                 </h1>
 
-                <div className="flex gap-2 items-center">
+                <div className="flex gap-2 items-center self-end sm:self-auto">
                     <div className="flex bg-white dark:bg-slate-900 rounded-lg p-1 shadow-sm border border-slate-200 dark:border-slate-800 items-center justify-between gap-1 shrink-0">
                         <button
                             onClick={() => changeDate(-1)}
@@ -266,100 +266,102 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
                 )}
             </div>
 
-            {/* Event Table */}
+            {/* Event List (Card View) */}
             <div className="bg-white dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm">
                 <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
                     <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">Detected Load Events</h3>
                 </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm text-gray-600 dark:text-gray-400">
-                        <thead className="bg-gray-100 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 uppercase tracking-wider text-xs font-medium">
-                            <tr>
-                                <th className="px-6 py-3">#</th>
-                                <th className="px-6 py-3">Start Time</th>
-                                <th className="px-6 py-3">End Time</th>
-                                <th className="px-6 py-3 text-right">Duration</th>
-                                <th className="px-6 py-3 text-right">Avg Power</th>
-                                <th className="px-6 py-3 text-right">Max Power</th>
-                                <th className="px-6 py-3 text-right">Energy</th>
-                                <th className="px-6 py-3">Tags & Annotations</th>
-                                <th className="px-6 py-3 text-center">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                            {events.length === 0 ? (
-                                <tr>
-                                    <td colSpan={9} className="px-6 py-8 text-center text-gray-500 italic">
-                                        No significant load events detected for this day.
-                                    </td>
-                                </tr>
-                            ) : (
-                                events.map((ev, i) => {
-                                    const isSelected = selectedEvent === ev;
-                                    const isHovered = hoveredEvent === ev;
 
-                                    // Row Style Logic
-                                    // Base + Selection/Hover States
-                                    let rowClass = "transition-colors cursor-pointer border-l-4 ";
-                                    if (isSelected) {
-                                        rowClass += "bg-blue-50 dark:bg-gray-800 border-blue-500 dark:border-cyan-400 ";
-                                    } else if (isHovered) {
-                                        rowClass += "bg-gray-50 dark:bg-gray-800/50 border-gray-300 dark:border-gray-700 ";
-                                    } else {
-                                        rowClass += "hover:bg-gray-50 dark:hover:bg-gray-800/30 border-transparent ";
-                                    }
+                <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                    {events.length === 0 ? (
+                        <div className="p-8 text-center text-gray-500 italic">
+                            No significant load events detected for this day.
+                        </div>
+                    ) : (
+                        events.map((ev, i) => {
+                            const isSelected = selectedEvent === ev;
+                            let cardClass = "p-4 transition-colors cursor-pointer active:bg-gray-50 dark:active:bg-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30 ";
+                            if (isSelected) {
+                                cardClass += "bg-blue-50 dark:bg-gray-800/30 border-l-4 border-blue-500 dark:border-cyan-400 ";
+                            } else {
+                                cardClass += "border-l-4 border-transparent ";
+                            }
 
-                                    return (
-                                        <tr
-                                            key={i}
-                                            className={rowClass}
-                                            onMouseEnter={() => setHoveredEvent(ev)}
-                                            onMouseLeave={() => setHoveredEvent(null)}
-                                            onClick={() => handleEventClick(ev)}
+                            return (
+                                <div
+                                    key={i}
+                                    className={cardClass}
+                                    onClick={() => handleEventClick(ev)}
+                                >
+                                    {/* Header: Time & Duration */}
+                                    <div className="flex justify-between items-start mb-3">
+                                        <div>
+                                            <div className="text-lg font-semibold text-cyan-600 dark:text-cyan-300">
+                                                {formatTime(ev.startTime.toString())} - {formatTime(ev.endTime.toString())}
+                                            </div>
+                                            <div className="text-sm text-gray-500">
+                                                Duration: {formatDuration(ev.durationMinutes)}
+                                            </div>
+                                        </div>
+                                        <div className="text-xs font-mono text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+                                            #{i + 1}
+                                        </div>
+                                    </div>
+
+                                    {/* Stats Grid */}
+                                    <div className="grid grid-cols-3 gap-4 mb-4 text-sm">
+                                        <div>
+                                            <div className="text-xs text-gray-500 uppercase">Avg Power</div>
+                                            <div className="font-medium">{(ev.averagePower / 1000).toFixed(2)} kW</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-xs text-gray-500 uppercase">Max Power</div>
+                                            <div className="font-medium text-amber-600 dark:text-amber-400">{(ev.maxPower / 1000).toFixed(2)} kW</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-xs text-gray-500 uppercase">Energy</div>
+                                            <div className="font-medium text-green-600 dark:text-green-400">{ev.kwh} kWh</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Tags & Actions */}
+                                    <div className="flex items-center justify-between mt-2">
+                                        <div className="flex flex-wrap gap-2">
+                                            {ev.tags?.map(tag => (
+                                                <span key={tag} className={`px-2 py-0.5 rounded text-xs border flex items-center gap-1
+                                                 ${tag === 'Arbitrage Candidate'
+                                                        ? 'bg-red-100 dark:bg-red-900/30 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300'
+                                                        : 'bg-blue-100 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300'
+                                                    }`}>
+                                                    {tag}
+                                                    {tag !== 'Arbitrage Candidate' && (
+                                                        <button
+                                                            onClick={(e) => handleRemoveTag(e, ev, tag)}
+                                                            className="ml-1 hover:text-black dark:hover:text-white"
+                                                            title="Remove Tag"
+                                                        >
+                                                            &times;
+                                                        </button>
+                                                    )}
+                                                </span>
+                                            ))}
+                                            {(!ev.tags || ev.tags.length === 0) && <span className="text-xs text-gray-400 italic">No tags</span>}
+                                        </div>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setTaggingEvent(ev);
+                                            }}
+                                            className="ml-2 p-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors text-gray-600 dark:text-gray-300"
+                                            title="Tag Event"
                                         >
-                                            <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">{i + 1}</td>
-                                            <td className="px-6 py-4 text-cyan-600 dark:text-cyan-300">{formatTime(ev.startTime.toString())}</td>
-                                            <td className="px-6 py-4">{formatTime(ev.endTime.toString())}</td>
-                                            <td className="px-6 py-4 text-right">{formatDuration(ev.durationMinutes)}</td>
-                                            <td className="px-6 py-4 text-right font-medium">{(ev.averagePower / 1000).toFixed(2)} kW</td>
-                                            <td className="px-6 py-4 text-right text-amber-600 dark:text-amber-400">{(ev.maxPower / 1000).toFixed(2)} kW</td>
-                                            <td className="px-6 py-4 text-right text-green-600 dark:text-green-400">{ev.kwh} kWh</td>
-                                            <td className="px-6 py-4">
-                                                <div className="flex flex-wrap gap-2">
-                                                    {ev.tags?.map(tag => (
-                                                        <span key={tag} className={`px-2 py-0.5 rounded textxs border flex items-center gap-1
-                                                        ${tag === 'Arbitrage Candidate'
-                                                                ? 'bg-red-100 dark:bg-red-900/30 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300'
-                                                                : 'bg-blue-100 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300'
-                                                            }`}>
-                                                            {tag}
-                                                            {tag !== 'Arbitrage Candidate' && (
-                                                                <button
-                                                                    onClick={(e) => handleRemoveTag(e, ev, tag)}
-                                                                    className="hover:text-black dark:hover:text-white"
-                                                                >
-                                                                    &times;
-                                                                </button>
-                                                            )}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </td>
-                                            <td className="px-6 py-4 text-center">
-                                                <button
-                                                    onClick={() => setTaggingEvent(ev)}
-                                                    className="bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-white text-xs px-2 py-1 rounded inline-block whitespace-nowrap hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-                                                    title="Tag Event"
-                                                >
-                                                    ✏️ Tag
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    );
-                                })
-                            )}
-                        </tbody>
-                    </table>
+                                            ✏️
+                                        </button>
+                                    </div>
+                                </div>
+                            )
+                        })
+                    )}
                 </div>
             </div>
 
