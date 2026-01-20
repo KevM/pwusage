@@ -519,4 +519,25 @@ export class EnergyRepo {
             WHERE site_id = $1 AND start_time = $2::timestamp AND end_time = $3::timestamp AND tag = $4
          `, [siteId, this.toSqlString(start), this.toSqlString(end), tag]);
     }
+    async cleanupOldData(cutoffDate: Date): Promise<{ energyDeleted: number; tagsDeleted: number }> {
+        await getDbReady();
+        const cutoffStr = this.toSqlString(cutoffDate);
+
+        // Delete from EnergyData
+        const energyRes = await pool.query(`
+            DELETE FROM "EnergyData"
+            WHERE timestamp < $1::timestamp
+        `, [cutoffStr]);
+
+        // Delete from LoadTag
+        const tagsRes = await pool.query(`
+            DELETE FROM "LoadTag"
+            WHERE end_time < $1::timestamp
+        `, [cutoffStr]);
+
+        return {
+            energyDeleted: energyRes.rowCount || 0,
+            tagsDeleted: tagsRes.rowCount || 0
+        };
+    }
 }
