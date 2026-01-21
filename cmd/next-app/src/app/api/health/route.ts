@@ -41,14 +41,13 @@ export async function GET() {
         try {
             const siteCount = await pool.query('SELECT COUNT(*) FROM "Site"');
             const dataCount = await pool.query('SELECT COUNT(*) FROM "EnergyData"');
-            const usageCount = await pool.query('SELECT COUNT(*) FROM "EnergyUsage"');
+
 
             checks.schema = {
                 status: 'ok',
                 details: {
                     sites: parseInt(siteCount.rows[0].count),
-                    energyDataRows: parseInt(dataCount.rows[0].count),
-                    energyUsageRows: parseInt(usageCount.rows[0].count)
+                    energyDataRows: parseInt(dataCount.rows[0].count)
                 }
             };
         } catch (error) {

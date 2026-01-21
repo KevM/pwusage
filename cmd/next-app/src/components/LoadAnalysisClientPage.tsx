@@ -38,7 +38,7 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
     const [tariffMap, setTariffMap] = useState<Record<number, string>>({});
 
     const [taggingEvent, setTaggingEvent] = useState<(LoadEvent & { tags?: string[] }) | null>(null);
-    const [hoveredEvent, setHoveredEvent] = useState<LoadEvent | null>(null);
+    const [hoveredEvent] = useState<LoadEvent | null>(null);
     const [selectedEvent, setSelectedEvent] = useState<LoadEvent | null>(null);
 
     // Default tags requested by user
@@ -76,9 +76,9 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
         }
     };
 
-    const fetchData = React.useCallback(async () => {
+    const fetchData = React.useCallback(async (showLoading = true) => {
         if (!siteId) return;
-        setLoading(true);
+        if (showLoading) setLoading(true);
         try {
             const res = await fetch(`/api/site/${siteId}/analysis?date=${date}`);
             if (!res.ok) throw new Error('Failed to fetch data');
@@ -102,8 +102,8 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
         if (!isToday) return;
 
         const interval = setInterval(() => {
-            fetchData();
-        }, 60000); // 1 minute
+            fetchData(false);
+        }, 300000); // 5 minutes
 
         return () => clearInterval(interval);
     }, [isToday, fetchData]);

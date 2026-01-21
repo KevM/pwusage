@@ -24,6 +24,9 @@ export function adaptTeslaData(data: EnergyData[]): PowerData[] {
             // Convert decawatts (10W) to Watts.
             // Using load_power (Total Home Load) as requested.
             powerWatts: point.load_power * 10,
+            solarWatts: point.solar_power * 10,
+            batteryWatts: point.battery_power * 10,
+            gridWatts: point.grid_power * 10,
             tariffId: point.tariff_id
         };
     });

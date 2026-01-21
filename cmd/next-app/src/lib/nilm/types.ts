@@ -4,4 +4,7 @@ export interface PowerData {
     powerWatts: number;
     tariffId?: number;
     touName?: string;
+    solarWatts?: number;
+    batteryWatts?: number;
+    gridWatts?: number;
 }

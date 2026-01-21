@@ -103,15 +103,7 @@ export interface EnergyData {
   is_synthetic?: number;
 }
 
-export interface EnergyUsage {
-  id: number;
-  tariff_id: number;
-  start: Date;
-  load_usage: number;
-  solar_produced: number;
-  grid_usage: number;
-  battery_usage: number;
-}
+
 
 export interface TrmnlInstallation {
   id: number;

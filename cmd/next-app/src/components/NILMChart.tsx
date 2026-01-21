@@ -8,7 +8,6 @@ import {
     YAxis,
     CartesianGrid,
     Tooltip,
-    Legend,
     ResponsiveContainer,
     ReferenceArea,
     ReferenceLine
@@ -57,6 +56,18 @@ interface CustomTickProps {
     themeColors: { axis: string; text: string };
 }
 
+interface ThemeColors {
+    gridLines: string;
+    axis: string;
+    line: string;
+    cursor: string;
+    text: string;
+    solar: string;
+    battery: string;
+    load: string;
+    gridTrace: string;
+}
+
 interface TooltipProps {
     active?: boolean;
     payload?: { value: number | string; payload: PowerData & { touName?: string; tariffId?: number } }[];
@@ -64,9 +75,11 @@ interface TooltipProps {
     events?: (LoadEvent & { index: number; startMs: number; endMs: number })[];
     tariffs?: Record<number, string>;
     isDarkMode?: boolean;
+
+    themeColors?: ThemeColors;
 }
 
-const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode }: TooltipProps) => {
+const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, themeColors }: TooltipProps) => {
     if (active && payload && payload.length) {
         const time = new Date(Number(label)).getTime();
         const dataPoint = payload[0].payload;
@@ -96,6 +109,11 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode }:
             loadBg: isDarkMode ? 'rgba(147, 51, 234, 0.1)' : 'rgba(147, 51, 234, 0.05)',
             loadText: isDarkMode ? '#c084fc' : '#9333ea',
             kWVal: isDarkMode ? '#22d3ee' : '#0891b2',
+            solar: isDarkMode ? '#fbbf24' : '#d97706', // Amber-400 / Amber-600
+            battery: isDarkMode ? '#4ade80' : '#10b981', // Green-400 / Green-500
+            load: isDarkMode ? '#c084fc' : '#9333ea', // Purple-400 / Purple-600
+
+            grid: themeColors ? themeColors.gridTrace : (isDarkMode ? '#A67B5B' : '#6F4E37'), // Fallback to avoid crash if themeColors missing
         };
 
         // STYLING NOTE: Using inline styles for background AND TEXT to force compliance on Safari
@@ -130,10 +148,28 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode }:
                     )}
                 </div>
 
-                <div className="flex items-center justify-between gap-4 mb-2">
-                    <span style={{ color: colors.dateText }}>Power</span>
-                    <span style={{ color: colors.kWVal, fontWeight: 'bold', fontSize: '16px' }}>{(Number(payload[0].value) / 1000).toFixed(2)} <span style={{ fontSize: '12px', fontWeight: 'normal' }}>kW</span></span>
+                <div className="flex items-center justify-between gap-4 mb-1">
+                    <span style={{ color: colors.load }}>Load</span>
+                    <span style={{ color: colors.load, fontWeight: 'bold', fontSize: '14px' }}>{(Number(payload[0].value) / 1000).toFixed(2)} kW</span>
                 </div>
+                {payload[0].payload.solarWatts !== undefined && (
+                    <div className="flex items-center justify-between gap-4 mb-1">
+                        <span style={{ color: colors.solar }}>Solar</span>
+                        <span style={{ color: colors.solar, fontWeight: 'bold', fontSize: '14px' }}>{(Number(payload[0].payload.solarWatts) / 1000).toFixed(2)} kW</span>
+                    </div>
+                )}
+                {payload[0].payload.batteryWatts !== undefined && (
+                    <div className="flex items-center justify-between gap-4 mb-1">
+                        <span style={{ color: colors.battery }}>Battery</span>
+                        <span style={{ color: colors.battery, fontWeight: 'bold', fontSize: '14px' }}>{(Number(payload[0].payload.batteryWatts) / 1000).toFixed(2)} kW</span>
+                    </div>
+                )}
+                {payload[0].payload.gridWatts !== undefined && (
+                    <div className="flex items-center justify-between gap-4 mb-1">
+                        <span style={{ color: colors.grid }}>Grid</span>
+                        <span style={{ color: colors.grid, fontWeight: 'bold', fontSize: '14px' }}>{(Number(payload[0].payload.gridWatts) / 1000).toFixed(2)} kW</span>
+                    </div>
+                )}
 
                 {activeEvent && (
                     <div className="mt-3 pt-3 border-t -mx-4 px-4 pb-1" style={{ backgroundColor: colors.loadBg, borderColor: colors.border }}>
@@ -211,14 +247,38 @@ const CustomTick = ({ x, y, payload, xAxisConfig, themeColors }: CustomTickProps
 
 export default function NILMChart({ data, events, tariffs, highlightedEvent, selectedEvent, onEventClick, isDarkMode = true }: NILMChartProps) {
     const [hoverTime, setHoverTime] = React.useState<number | null>(null);
+    const [visibleSeries, setVisibleSeries] = React.useState({
+        load: true,
+        solar: true,
+        battery: true,
+        grid: true
+    });
+
+    const toggleSeries = (key: keyof typeof visibleSeries) => {
+        setVisibleSeries(prev => {
+            // Prevent disabling the last visible series
+            if (prev[key] && Object.values(prev).filter(Boolean).length <= 1) {
+                return prev;
+            }
+            return { ...prev, [key]: !prev[key] };
+        });
+    };
+
+    const isToggleDisabled = (key: keyof typeof visibleSeries) => {
+        return visibleSeries[key] && Object.values(visibleSeries).filter(Boolean).length <= 1;
+    };
 
     // Theme Colors
     const themeColors = React.useMemo(() => ({
-        grid: isDarkMode ? "#374151" : "#e5e7eb",
+        gridLines: isDarkMode ? "#374151" : "#e5e7eb",
         axis: isDarkMode ? "#9CA3AF" : "#6B7280",
         line: isDarkMode ? "#22d3ee" : "#0891b2", // Cyan-400 vs Cyan-600
         cursor: isDarkMode ? "#6B7280" : "#9CA3AF",
-        text: isDarkMode ? "#9CA3AF" : "#6B7280"
+        text: isDarkMode ? "#9CA3AF" : "#6B7280",
+        solar: isDarkMode ? "#fbbf24" : "#f59e0b",
+        battery: isDarkMode ? "#4ade80" : "#10b981",
+        load: isDarkMode ? "#c084fc" : "#9333ea", // Purple-400 / Purple-600
+        gridTrace: isDarkMode ? "#A67B5B" : "#6F4E37"  // Cocoa Brown (Dark/Light)
     }), [isDarkMode]);
 
     // Pre-process events for performance
@@ -321,152 +381,267 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
     }
 
     return (
-        <div style={{ width: '100%', height: 500 }} className={`p-4 rounded-xl border outline-none ring-0 focus:outline-none ${isDarkMode ? 'bg-gray-900/50 border-gray-800' : 'bg-white border-gray-200 shadow-sm'}`}>
-            <style>{`
+        <div className={`p-4 rounded-xl border outline-none ring-0 focus:outline-none ${isDarkMode ? 'bg-gray-900/50 border-gray-800' : 'bg-white border-gray-200 shadow-sm'}`}>
+            {/* Custom Legend / Toggles */}
+            <div className="flex flex-wrap items-center gap-4 mb-4 text-xs font-medium select-none">
+                <label
+                    className={`flex items-center gap-2 cursor-pointer transition-opacity ${visibleSeries.load ? 'opacity-100' : 'opacity-40 hover:opacity-60'} ${isToggleDisabled('load') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        if (!isToggleDisabled('load')) toggleSeries('load');
+                    }}
+                >
+                    <div className={`w-3 h-3 rounded-full ${visibleSeries.load ? '' : 'ring-1 ring-offset-1 ring-offset-transparent'}`}
+                        style={{
+                            backgroundColor: visibleSeries.load ? themeColors.load : 'transparent',
+                            borderColor: themeColors.load,
+                            borderWidth: visibleSeries.load ? 0 : 1
+                        }}
+                    />
+                    <input type="checkbox" className="hidden" checked={visibleSeries.load} readOnly />
+                    <span style={{ color: themeColors.text }}>Load</span>
+                </label>
+
+                <label
+                    className={`flex items-center gap-2 cursor-pointer transition-opacity ${visibleSeries.solar ? 'opacity-100' : 'opacity-40 hover:opacity-60'} ${isToggleDisabled('solar') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        if (!isToggleDisabled('solar')) toggleSeries('solar');
+                    }}
+                >
+                    <div className={`w-3 h-3 rounded-full ${visibleSeries.solar ? '' : 'ring-1 ring-offset-1 ring-offset-transparent'}`}
+                        style={{
+                            backgroundColor: visibleSeries.solar ? themeColors.solar : 'transparent',
+                            borderColor: themeColors.solar,
+                            borderWidth: visibleSeries.solar ? 0 : 1
+                        }}
+                    />
+                    <input type="checkbox" className="hidden" checked={visibleSeries.solar} readOnly />
+                    <span style={{ color: themeColors.text }}>Solar</span>
+                </label>
+
+                <label
+                    className={`flex items-center gap-2 cursor-pointer transition-opacity ${visibleSeries.battery ? 'opacity-100' : 'opacity-40 hover:opacity-60'} ${isToggleDisabled('battery') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        if (!isToggleDisabled('battery')) toggleSeries('battery');
+                    }}
+                >
+                    <div className={`w-3 h-3 rounded-full ${visibleSeries.battery ? '' : 'ring-1 ring-offset-1 ring-offset-transparent'}`}
+                        style={{
+                            backgroundColor: visibleSeries.battery ? themeColors.battery : 'transparent',
+                            borderColor: themeColors.battery,
+                            borderWidth: visibleSeries.battery ? 0 : 1
+                        }}
+                    />
+                    <input type="checkbox" className="hidden" checked={visibleSeries.battery} readOnly />
+                    <span style={{ color: themeColors.text }}>Battery</span>
+                </label>
+
+                <label
+                    className={`flex items-center gap-2 cursor-pointer transition-opacity ${visibleSeries.grid ? 'opacity-100' : 'opacity-40 hover:opacity-60'} ${isToggleDisabled('grid') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        if (!isToggleDisabled('grid')) toggleSeries('grid');
+                    }}
+                >
+                    <div className={`w-3 h-3 rounded-full ${visibleSeries.grid ? '' : 'ring-1 ring-offset-1 ring-offset-transparent'}`}
+                        style={{
+                            backgroundColor: visibleSeries.grid ? themeColors.gridTrace : 'transparent',
+                            borderColor: themeColors.gridTrace,
+                            borderWidth: visibleSeries.grid ? 0 : 1
+                        }}
+                    />
+                    <input type="checkbox" className="hidden" checked={visibleSeries.grid} readOnly />
+                    <span style={{ color: themeColors.text }}>Grid</span>
+                </label>
+            </div>
+
+            <div style={{ width: '100%', height: 460 }}>
+                <style>{`
                 .recharts-wrapper, .recharts-surface, .recharts-layer {
                     outline: none !important;
                 }
             `}</style>
-            <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                    data={formattedData}
-                    onMouseMove={(state) => {
-                        if (state.isTooltipActive && state.activeLabel) {
-                            setHoverTime(Number(state.activeLabel));
-                        } else {
-                            setHoverTime(null);
-                        }
-                    }}
-                    onMouseLeave={() => setHoverTime(null)}
-                >
-                    <CartesianGrid strokeDasharray="3 3" stroke={themeColors.grid} vertical={false} />
-                    <XAxis
-                        dataKey="time"
-                        type="number"
-                        domain={['dataMin', 'dataMax']}
-                        ticks={xAxisConfig.ticks}
-                        tick={<CustomTick xAxisConfig={xAxisConfig} themeColors={themeColors} />}
-                        interval={0} // Force render all custom ticks
-                        stroke={themeColors.axis}
-                        height={40}
-                    />
-                    <YAxis
-                        stroke={themeColors.axis}
-                        tickFormatter={(val) => `${(val / 1000).toFixed(1)} kW`}
-                    />
-
-                    {/* Tariff Background Regions - Rendered FIRST to be behind lines */}
-                    {tariffRegions.map((region, i) => (
-                        <ReferenceArea
-                            key={`tariff-${i}`}
-                            x1={region.start}
-                            x2={region.end}
-                            fill={region.name?.toLowerCase().includes('peak') && !region.name?.toLowerCase().includes('off') ? '#ef4444' : '#10b981'}
-                            fillOpacity={0.15}
+                <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                        data={formattedData}
+                        onMouseMove={(state) => {
+                            if (state.isTooltipActive && state.activeLabel) {
+                                setHoverTime(Number(state.activeLabel));
+                            } else {
+                                setHoverTime(null);
+                            }
+                        }}
+                        onMouseLeave={() => setHoverTime(null)}
+                    >
+                        <CartesianGrid strokeDasharray="3 3" stroke={themeColors.gridLines} vertical={false} />
+                        <XAxis
+                            dataKey="time"
+                            type="number"
+                            domain={['dataMin', 'dataMax']}
+                            ticks={xAxisConfig.ticks}
+                            tick={<CustomTick xAxisConfig={xAxisConfig} themeColors={themeColors} />}
+                            interval={0} // Force render all custom ticks
+                            stroke={themeColors.axis}
+                            height={40}
                         />
-                    ))}
+                        <YAxis
+                            stroke={themeColors.axis}
+                            tickFormatter={(val) => `${(val / 1000).toFixed(1)} kW`}
+                        />
 
-                    {/* Explicit Vertical Transition Lines */}
-                    {tariffRegions.map((region, i) => {
-                        if (i === 0) return null;
-                        return (
-                            <ReferenceLine
-                                key={`trans-line-${i}`}
-                                x={region.start}
-                                stroke={themeColors.axis}
-                                strokeWidth={2}
-                                strokeDasharray="5 5"
-                                strokeOpacity={0.8}
-                            />
-                        );
-                    })}
-
-                    {/* Centered Labels for Tariff Regions - Context Aware Colors */}
-                    {tariffRegions.map((region, i) => {
-                        const isPeak = region.name?.toLowerCase().includes('peak') && !region.name?.toLowerCase().includes('off');
-                        const isOffPeak = region.name?.toLowerCase().includes('off');
-                        // Peak = Red-400, Off-Peak = Emerald-400, Else = Gray-400
-                        const labelColor = isPeak ? '#f87171' : (isOffPeak ? '#34d399' : themeColors.text);
-
-                        return (
+                        {/* Tariff Background Regions - Rendered FIRST to be behind lines */}
+                        {tariffRegions.map((region, i) => (
                             <ReferenceArea
-                                key={`label-${i}`}
+                                key={`tariff-${i}`}
                                 x1={region.start}
                                 x2={region.end}
-                                fillOpacity={0}
-                                stroke="none"
-                                label={{
-                                    value: formatTariffName(region.name),
-                                    position: 'insideTop',
-                                    fill: labelColor,
-                                    fontSize: 12,
-                                    fontWeight: 'bold',
-                                    offset: 10
-                                }}
+                                fill={region.name?.toLowerCase().includes('peak') && !region.name?.toLowerCase().includes('off') ? '#ef4444' : '#10b981'}
+                                fillOpacity={0.15}
                             />
-                        );
-                    })}
+                        ))}
 
-                    {/* Active Event Highlight - Pop Color: Purple */}
-                    {processedEvents.map((event, index) => {
-                        // isHighlighted triggers the visual POP (solid stroke, higher opacity)
-                        // Triggered by:
-                        // 1. Mouse hover on chart (time match)
-                        // 2. Mouse hover on table (highlightedEvent prop)
-                        // 3. Selection (selectedEvent prop)
-                        const isHovered = (hoverTime && hoverTime >= event.startMs && hoverTime <= event.endMs) ||
-                            (highlightedEvent && new Date(highlightedEvent.startTime).getTime() === event.startMs);
+                        {/* Explicit Vertical Transition Lines */}
+                        {tariffRegions.map((region, i) => {
+                            if (i === 0) return null;
+                            return (
+                                <ReferenceLine
+                                    key={`trans-line-${i}`}
+                                    x={region.start}
+                                    stroke={themeColors.axis}
+                                    strokeWidth={2}
+                                    strokeDasharray="5 5"
+                                    strokeOpacity={0.8}
+                                />
+                            );
+                        })}
 
-                        const isSelected = selectedEvent && new Date(selectedEvent.startTime).getTime() === event.startMs;
+                        {/* Centered Labels for Tariff Regions - Context Aware Colors */}
+                        {tariffRegions.map((region, i) => {
+                            const isPeak = region.name?.toLowerCase().includes('peak') && !region.name?.toLowerCase().includes('off');
+                            const isOffPeak = region.name?.toLowerCase().includes('off');
+                            // Peak = Red-400, Off-Peak = Emerald-400, Else = Gray-400
+                            const labelColor = isPeak ? '#f87171' : (isOffPeak ? '#34d399' : themeColors.text);
 
-                        // If selected, we might want a distinct style, but for now we reuse the "Pop" style as requested.
-                        // "When the user clicks the row. The row and the region are highlighted." -> Persistent Highlight.
-                        const active = isHovered || isSelected;
+                            return (
+                                <ReferenceArea
+                                    key={`label-${i}`}
+                                    x1={region.start}
+                                    x2={region.end}
+                                    fillOpacity={0}
+                                    stroke="none"
+                                    label={{
+                                        value: formatTariffName(region.name),
+                                        position: 'insideTop',
+                                        fill: labelColor,
+                                        fontSize: 12,
+                                        fontWeight: 'bold',
+                                        offset: 10
+                                    }}
+                                />
+                            );
+                        })}
 
-                        return (
-                            <ReferenceArea
-                                key={index}
-                                x1={event.startMs}
-                                x2={event.endMs}
-                                stroke={active ? "#db2777" : "transparent"} // Pink-600
-                                strokeWidth={active ? 2 : 0}
-                                strokeOpacity={1}
-                                fill="#a855f7" // Purple-500
-                                fillOpacity={active ? 0.6 : 0.25}
-                                onClick={() => onEventClick && onEventClick(event)}
-                                className="cursor-pointer" // Show pointer to indicate clickable
-                                label={{
-                                    value: "Load",
-                                    position: 'insideBottom',
-                                    fill: active ? (isDarkMode ? '#fdf2f8' : '#faf5ff') : '#c084fc',
-                                    fontSize: 12,
-                                    fontWeight: 'bold',
-                                    offset: 5
-                                }}
-                            />
-                        );
-                    })}
+                        {/* Active Event Highlight - Pop Color: Purple */}
+                        {processedEvents.map((event, index) => {
+                            // isHighlighted triggers the visual POP (solid stroke, higher opacity)
+                            // Triggered by:
+                            // 1. Mouse hover on chart (time match)
+                            // 2. Mouse hover on table (highlightedEvent prop)
+                            // 3. Selection (selectedEvent prop)
+                            const isHovered = (hoverTime && hoverTime >= event.startMs && hoverTime <= event.endMs) ||
+                                (highlightedEvent && new Date(highlightedEvent.startTime).getTime() === event.startMs);
 
-                    <Tooltip
-                        content={<TooltipContent events={processedEvents} tariffs={tariffs} isDarkMode={isDarkMode} />}
-                        cursor={{ stroke: themeColors.cursor, strokeWidth: 1, strokeDasharray: '3 3' }}
-                        wrapperStyle={{ outline: 'none' }}
-                    />
-                    <Legend />
+                            const isSelected = selectedEvent && new Date(selectedEvent.startTime).getTime() === event.startMs;
 
-                    <Line
-                        type="linear"
-                        dataKey="powerWatts"
-                        name="Load Power (kW)"
-                        stroke={themeColors.line} // Cyan
-                        dot={false}
-                        strokeWidth={2}
-                        animationDuration={500}
-                        isAnimationActive={false} // Disable animation for improved responsiveness
-                    />
+                            // If selected, we might want a distinct style, but for now we reuse the "Pop" style as requested.
+                            // "When the user clicks the row. The row and the region are highlighted." -> Persistent Highlight.
+                            const active = isHovered || isSelected;
 
-                </LineChart>
-            </ResponsiveContainer>
+                            return (
+                                <ReferenceArea
+                                    key={index}
+                                    x1={event.startMs}
+                                    x2={event.endMs}
+                                    stroke={active ? "#db2777" : "transparent"} // Pink-600
+                                    strokeWidth={active ? 2 : 0}
+                                    strokeOpacity={1}
+                                    fill="#a855f7" // Purple-500
+                                    fillOpacity={active ? 0.6 : 0.25}
+                                    onClick={() => onEventClick && onEventClick(event)}
+                                    className="cursor-pointer" // Show pointer to indicate clickable
+                                    label={{
+                                        value: "Load",
+                                        position: 'insideBottom',
+                                        fill: active ? (isDarkMode ? '#fdf2f8' : '#faf5ff') : '#c084fc',
+                                        fontSize: 12,
+                                        fontWeight: 'bold',
+                                        offset: 5
+                                    }}
+                                />
+                            );
+                        })}
+
+                        <Tooltip
+                            content={<TooltipContent events={processedEvents} tariffs={tariffs} isDarkMode={isDarkMode} themeColors={themeColors} />}
+                            cursor={{ stroke: themeColors.cursor, strokeWidth: 1, strokeDasharray: '3 3' }}
+                            wrapperStyle={{ outline: 'none' }}
+                        />
+                        {/* Hiding default Legend since we have custom controls */}
+                        {/* <Legend /> */}
+
+                        <Line
+                            type="linear"
+                            dataKey="powerWatts"
+                            name="Load Power (kW)"
+                            stroke={themeColors.load} // Purple
+                            dot={false}
+                            strokeWidth={2}
+                            animationDuration={500}
+                            hide={!visibleSeries.load}
+                            isAnimationActive={false} // Disable animation for improved responsiveness
+                        />
+
+                        <Line
+                            type="linear"
+                            dataKey="solarWatts"
+                            name="Solar (kW)"
+                            stroke={themeColors.solar}
+                            dot={false}
+                            strokeWidth={2}
+                            animationDuration={500}
+                            hide={!visibleSeries.solar}
+                            isAnimationActive={false}
+                        />
+
+                        <Line
+                            type="linear"
+                            dataKey="batteryWatts"
+                            name="Battery (kW)"
+                            stroke={themeColors.battery}
+                            dot={false}
+                            strokeWidth={2}
+                            animationDuration={500}
+                            hide={!visibleSeries.battery}
+                            isAnimationActive={false}
+                        />
+
+                        <Line
+                            type="linear"
+                            dataKey="gridWatts"
+                            name="Grid (kW)"
+                            stroke={themeColors.gridTrace}
+                            dot={false}
+                            strokeWidth={2}
+                            animationDuration={500}
+                            hide={!visibleSeries.grid}
+                            isAnimationActive={false}
+                        />
+
+                    </LineChart>
+                </ResponsiveContainer>
+            </div>
         </div>
     );
 }
