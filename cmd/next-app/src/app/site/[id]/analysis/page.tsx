@@ -1,6 +1,4 @@
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { verifySiteAccess } from '@/lib/auth-checks';
 import Link from 'next/link';
 import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
 import { EnergyRepo } from '@/lib/energy-repo';
@@ -10,16 +8,8 @@ export const dynamic = 'force-dynamic';
 export default async function AnalysisPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
 
-    // Verify ownership via JWT
-    const cookieStore = await cookies();
-    const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-    if (!siteAuthToken) {
-        redirect('/login');
-    }
-
-    const authorizedSites = verifySiteToken(siteAuthToken);
-    if (!authorizedSites || !authorizedSites.includes(id)) {
+    const hasAccess = await verifySiteAccess(id);
+    if (!hasAccess) {
         return (
             <div className="flex min-h-screen flex-col items-center justify-center p-8 text-gray-100 bg-gray-950">
                 <h1 className="text-2xl font-bold text-red-500 mb-4">Unauthorized</h1>

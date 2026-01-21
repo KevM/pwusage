@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { getAuthorizedSiteIds } from '@/lib/auth-checks';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards';
 
@@ -18,25 +18,24 @@ export default async function ProductsPage() {
     let energyProducts: ProductWithLiveData[] = [];
     const vehicleProducts: ProductWithLiveData[] = []; // Store vehicles
 
-    if (siteAuthToken) {
-        const siteIds = verifySiteToken(siteAuthToken);
-        if (siteIds && siteIds.length > 0) {
-            const sitePromises = siteIds.map(id => repo.getSite(id));
-            const sitesResults = await Promise.all(sitePromises);
-            const validSites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
-            energyProducts = validSites.map(s => ({
-                id: s.id,
-                site_name: s.name,
-                energy_site_id: s.id,
-                percentage_charged: 0,
-                currentTariff: 'Loading...',
-                liveBatteryPower: 0,
-                liveSolarPower: 0,
-                liveLoadPower: 0,
-                liveGridPower: 0,
-                type: 'energy' // Marker
-            }));
-        }
+    const targetSiteIds = await getAuthorizedSiteIds();
+
+    if (targetSiteIds.length > 0) {
+        const sitePromises = targetSiteIds.map(id => repo.getSite(id));
+        const sitesResults = await Promise.all(sitePromises);
+        const validSites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
+        energyProducts = validSites.map(s => ({
+            id: s.id,
+            site_name: s.name,
+            energy_site_id: s.id,
+            percentage_charged: 0,
+            currentTariff: 'Loading...',
+            liveBatteryPower: 0,
+            liveSolarPower: 0,
+            liveLoadPower: 0,
+            liveGridPower: 0,
+            type: 'energy' // Marker
+        }));
     }
 
     const products = [...energyProducts, ...vehicleProducts];

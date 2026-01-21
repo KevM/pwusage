@@ -2,11 +2,11 @@ import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
-import { cookies } from 'next/headers';
+
 
 import { Importer } from '@/lib/importer';
 import { TeslaClient, EnergySiteLiveStatus } from '@/lib/tesla-client';
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { verifySiteAccess } from '@/lib/auth-checks';
 import QRCode from 'qrcode';
 
 export async function GET(request: Request) {
@@ -93,20 +93,9 @@ export async function GET(request: Request) {
             siteId = installation.site_id;
 
         } else if (siteIdParam) {
-            // Preview Mode: Authenticate via Session Cookies
-            const cookieStore = await cookies();
-            const siteAuth = cookieStore.get('site_auth')?.value;
-
-            let hasAccess = false;
-
-            // Check site_auth first (local verification, fastest)
-            if (siteAuth) {
-                const authorizedSites = verifySiteToken(siteAuth);
-                if (authorizedSites && authorizedSites.includes(siteIdParam)) {
-                    hasAccess = true;
-                    console.log(`[TrmnlMarkup] Authorized via site_auth cookie for site ${siteIdParam}`);
-                }
-            }
+            // Preview Mode: Authenticate via Cookie/API check logic
+            // Use verifySiteAccess helper for consistency
+            const hasAccess = await verifySiteAccess(siteIdParam);
 
             if (!hasAccess) {
                 return NextResponse.json({ error: 'Unauthorized preview' }, { status: 401 });

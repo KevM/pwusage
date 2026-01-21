@@ -47,8 +47,8 @@ describe('SiteService Security', () => {
         mockTeslaClient.getProducts.mockClear();
         mockEnergyRepo.getSites.mockResolvedValue([mockSite, mockUnauthorizedSite]);
 
-        // Mock verify to return authorized ID
-        vi.mocked(authJwt.verifySiteToken).mockReturnValue(['12345']);
+        // Mock verify to return authorized object
+        vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [] });
 
         const service = new SiteService({
             teslaClient: mockTeslaClient as unknown as TeslaClient,
@@ -89,7 +89,7 @@ describe('SiteService Security', () => {
     describe('validateSiteAccess', () => {
         it('should return true if JWT validates site', async () => {
             mockTeslaClient.getProducts.mockClear();
-            vi.mocked(authJwt.verifySiteToken).mockReturnValue(['12345']);
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [] });
 
             const service = new SiteService({
                 teslaClient: mockTeslaClient as unknown as TeslaClient,
@@ -103,7 +103,8 @@ describe('SiteService Security', () => {
         });
 
         it('should return false if JWT does not contain site', async () => {
-            vi.mocked(authJwt.verifySiteToken).mockReturnValue(['12345']);
+            // Mock verify to return authorized object
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [] });
 
             const service = new SiteService({
                 teslaClient: mockTeslaClient as unknown as TeslaClient,

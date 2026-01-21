@@ -9,13 +9,12 @@ import { DataSyncer } from '@/components/DataSyncer';
 import { TeslaClient } from '@/lib/tesla-client';
 import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
-import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { SiteSetup } from '@/components/SiteSetup';
 import { BillDateNav } from '@/components/BillDateNav';
 
 
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { verifySiteAccess } from '@/lib/auth-checks';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,16 +27,8 @@ export default async function SitePage({ params, searchParams }: {
     const repo = new EnergyRepo();
     let site = await repo.getSite(id);
 
-    // Verify ownership via JWT
-    const cookieStore = await cookies();
-    const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-    if (!siteAuthToken) {
-        redirect('/login');
-    }
-
-    const authorizedSites = verifySiteToken(siteAuthToken);
-    if (!authorizedSites || !authorizedSites.includes(id)) {
+    const hasAccess = await verifySiteAccess(id);
+    if (!hasAccess) {
         return (
             <div className="flex min-h-screen flex-col items-center justify-center p-8">
                 <h1 className="text-2xl font-bold text-red-600 mb-4">Unauthorized</h1>

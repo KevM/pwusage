@@ -2,7 +2,7 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Image from 'next/image';
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { getDefaultSiteId } from '@/lib/auth-checks';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { pool, User } from '@/lib/db';
@@ -19,16 +19,19 @@ export default async function ProfilePage() {
         redirect('/login');
     }
 
-    const siteIds = verifySiteToken(siteAuthToken);
-    if (!siteIds || siteIds.length === 0) {
-        redirect('/login');
+    const defaultSiteId = await getDefaultSiteId();
+    if (!defaultSiteId) {
+        // If user has no sites (even if admin), redirect to products or show empty
+        redirect('/products');
     }
+
+    const siteId = defaultSiteId;
 
     // Resolve User from the first site (assuming all sites belong to the same user in current context)
     // Or we find the user via token, but we don't store user_id in cookie directly yet.
     // We can lookup any site in DB to get user_id.
     const repo = new EnergyRepo();
-    const firstSite = await repo.getSite(siteIds[0]);
+    const firstSite = await repo.getSite(siteId);
 
     if (!firstSite || !firstSite.user_id) {
         return <div className="p-8">Could not resolve user profile.</div>;

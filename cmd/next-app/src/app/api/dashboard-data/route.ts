@@ -1,66 +1,45 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 
 import { TeslaClient, EnergySiteInfo } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
-import { SiteService } from '@/lib/site-service';
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { getTeslaCredentials, getAuthorizedSiteIds } from '@/lib/auth-checks';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
     try {
-        const cookieStore = await cookies();
-        let token: string | undefined;
-        let refreshToken: string | undefined;
-        const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-        let activeSiteId: string | null = null;
-        if (siteAuthToken) {
-            const siteIds = verifySiteToken(siteAuthToken);
-            if (siteIds && siteIds.length > 0) {
-                const repo = new EnergyRepo();
-                const primarySite = await repo.getSite(siteIds[0]);
-                if (primarySite && primarySite.access_token && primarySite.refresh_token) {
-                    token = primarySite.access_token;
-                    refreshToken = primarySite.refresh_token;
-                    activeSiteId = primarySite.id;
-                }
-            }
+        const authorizedSiteIds = await getAuthorizedSiteIds();
+        if (authorizedSiteIds.length === 0) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        if (!token) {
+        const credentials = await getTeslaCredentials();
+        if (!credentials) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
         }
 
-        // Determine refresh handler
-        let refreshHandler;
-        if (activeSiteId) {
-            const repo = new EnergyRepo();
-            refreshHandler = repo.getLockedRefreshHandler(activeSiteId);
-        }
+        const activeSiteId = authorizedSiteIds[0];
+        const repo = new EnergyRepo();
+        const refreshHandler = repo.getLockedRefreshHandler(activeSiteId);
 
         const client = new TeslaClient({
-            accessToken: token,
-            refreshToken: refreshToken,
+            accessToken: credentials.access_token,
+            refreshToken: credentials.refresh_token || undefined,
             tokenRefreshHandler: refreshHandler,
             onTokenUpdate: () => {
                 // Token handling logic handled by repo handler
             }
         });
 
-        const repo = new EnergyRepo();
         const importer = new Importer(client);
-        const service = new SiteService({
-            teslaClient: client,
-            energyRepo: repo,
-            siteAuthToken
-        });
 
         // Use cached authorization source of truth
-        const sites = await service.getAuthorizedSites();
+        // Fetch sites directly from repo using the authorized IDs we already validated
+        const sitesPromises = authorizedSiteIds.map(id => repo.getSite(id));
+        const sitesResults = await Promise.all(sitesPromises);
+        const sites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
 
         // Filter for battery sites (using DB info if available, or assume yes for now as we only sync battery sites usually?)
         // Let's check site.json for components.battery

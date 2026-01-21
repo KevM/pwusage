@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
-import { cookies } from 'next/headers';
+import { verifySiteAccess } from '@/lib/auth-checks';
 
 export async function POST(request: Request) {
     try {
@@ -19,22 +19,8 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Server misconfigured: Missing Trmnl credentials' }, { status: 500 });
         }
 
-        const cookieStore = await cookies();
-        const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-        // [TrmnlSetup] Authorization: Now solely based on verifySiteToken (site_auth cookie)
-        // We no longer require the 'access_token' cookie to be present.
-
-        if (!siteAuthToken) {
-            console.log('[TrmnlSetup] Missing site_auth cookie');
-            return NextResponse.json({ error: 'Unauthorized: No site access token' }, { status: 401 });
-        }
-
-        const { verifySiteToken } = await import('@/lib/auth-jwt');
-        const authorizedSites = verifySiteToken(siteAuthToken);
-
-        if (!authorizedSites || !authorizedSites.includes(site_id)) {
-            console.log(`[TrmnlSetup] Unauthorized access to site ${site_id}. Authorized:`, authorizedSites);
+        if (!await verifySiteAccess(site_id)) {
+            console.log(`[TrmnlSetup] Unauthorized access to site ${site_id}`);
             return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
         }
 

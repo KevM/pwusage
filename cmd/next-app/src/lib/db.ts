@@ -41,7 +41,8 @@ export interface User {
   token_expires_at?: number;
   is_refreshing?: number;
   refresh_lock_expires?: number;
-  created_at?: Date; // Added via migration
+  created_at?: number | string; // Added via migration
+  roles?: string[]; // Added: 'admin' | 'user'
 }
 
 export interface Site {

@@ -1,10 +1,9 @@
 
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
 import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { getTeslaCredentials, getAuthorizedSiteIds } from '@/lib/auth-checks';
 
 export async function GET(request: Request) {
     try {
@@ -17,29 +16,23 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
         }
 
-        const cookieStore = await cookies();
-        const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-        if (!siteAuthToken) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const siteIds = verifySiteToken(siteAuthToken);
-        if (!siteIds || !siteIds.includes(siteId)) {
+        const authorizedSites = await getAuthorizedSiteIds();
+        if (!authorizedSites.includes(siteId)) {
             return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
         }
 
-        const repo = new EnergyRepo();
-        const site = await repo.getSite(siteId);
-
-        if (!site || !site.access_token) {
-            return NextResponse.json({ error: 'Tesla token not found for site' }, { status: 401 });
+        const credentials = await getTeslaCredentials();
+        if (!credentials) {
+            return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
         }
 
+        const repo = new EnergyRepo();
         const client = new TeslaClient({
-            accessToken: site.access_token,
-            refreshToken: site.refresh_token || undefined,
-            tokenRefreshHandler: repo.getLockedRefreshHandler(siteId),
+            accessToken: credentials.access_token,
+            refreshToken: credentials.refresh_token || undefined,
+            tokenRefreshHandler: repo.getLockedRefreshHandler(siteId), // Can we use siteId specific lock? Yes, credentials are User-wide, but lock is by User ID which getLockedRefreshHandler handles if site is linked to User.
+            // Wait, getLockedRefreshHandler(siteId) -> getSite(siteId) -> gets User.
+            // Since we validated request for siteId, passing siteId is correct.
             onTokenUpdate: () => {
                 console.log('Refreshing tokens via Sync API');
             }

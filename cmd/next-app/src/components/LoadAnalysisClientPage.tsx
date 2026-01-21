@@ -52,10 +52,12 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
 
     // Theme Detection Hook
     const useThemeDetector = () => {
-        const getCurrentTheme = () => typeof window !== 'undefined' ? window.matchMedia("(prefers-color-scheme: dark)").matches : false;
-        const [isDarkTheme, setIsDarkTheme] = useState(getCurrentTheme());
+        const [isDarkTheme, setIsDarkTheme] = useState(false);
 
         useEffect(() => {
+            const getCurrentTheme = () => typeof window !== 'undefined' ? window.matchMedia("(prefers-color-scheme: dark)").matches : false;
+            setIsDarkTheme(getCurrentTheme());
+
             const darkThemeMq = window.matchMedia("(prefers-color-scheme: dark)");
             const mqListener = (e: MediaQueryListEvent) => {
                 setIsDarkTheme(e.matches);

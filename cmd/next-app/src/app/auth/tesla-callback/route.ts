@@ -68,17 +68,40 @@ export async function GET(request: NextRequest) {
             onTokenUpdate: async () => { } // No-op, we just got them
         });
 
+        // Fetch User Info (Email, Name, etc.)
+        let userEmail: string | undefined;
+        let userId: string = 'unknown_user';
+
+        try {
+            const userInfo = await client.getUserInfo();
+            if (userInfo) {
+                userEmail = userInfo.email;
+                if (userInfo.email) {
+                    userId = userInfo.email; // Use email as ID if available and stable? 
+                    // Actually, let's stick to the previous logic IF possible, but 'sub' from ID token is safer for ID.
+                    // But for EMAIL, definitely use this.
+                }
+            }
+        } catch (e) {
+            console.error('[AuthCallback] Failed to fetch user info:', e);
+        }
+
+        // Fallback to ID Token for ID if valid
+        const idTokenDecoded = jwt.decode(authData.id_token) as { sub?: string; email?: string } | null;
+        if (!userEmail && idTokenDecoded?.email) {
+            userEmail = idTokenDecoded.email;
+        }
+
+        // Use 'sub' as stable ID if available, otherwise email
+        if (idTokenDecoded?.sub) {
+            userId = idTokenDecoded.sub;
+        } else if (userEmail) {
+            userId = userEmail;
+        }
+
         // Fetch products directly from API to find NEW sites
         console.log('[AuthCallback] Fetching products to ensure sites exist in DB...');
         const products = await client.getProducts();
-
-        // [MIGRATION] Fetch User Profile to get a stable User ID
-        // Note: Fleet API might not expose /api/1/users/me easily without specific scopes.
-        // Assuming we can get 'email' from ID Token or fetch profile.
-        // Let's decode ID token first for email/sub.
-        const idTokenDecoded = jwt.decode(authData.id_token) as { sub?: string; email?: string } | null;
-        const userId = idTokenDecoded?.sub || idTokenDecoded?.email || 'unknown_user';
-        const userEmail = idTokenDecoded?.email;
 
         // Upsert User
         await pool.query(`
@@ -121,9 +144,13 @@ export async function GET(request: NextRequest) {
                 console.log(`[AuthCallback] Linked site ${siteId} to User ${userId} and updated tokens.`);
             }
 
+            // Retrieve Roles
+            const userRes = await pool.query('SELECT roles FROM "User" WHERE id = $1', [userId]);
+            const roles = userRes.rows[0]?.roles || [];
+
             // Generate verified site token
             const { signSiteToken, COOKIE_MAX_AGE_SECONDS } = await import('@/lib/auth-jwt');
-            const siteToken = signSiteToken(siteIds);
+            const siteToken = signSiteToken(siteIds, roles);
 
             // Set 24h cookie (matching our token expiry intent)
             cookieStore.set('site_auth', siteToken, {

@@ -49,9 +49,12 @@ export default async function Home() {
 
   if (siteAuthToken) {
     // ... existing siteAuthToken logic
-    const siteIds = verifySiteToken(siteAuthToken);
-    if (siteIds && siteIds.length > 0) {
-      const sitePromises = siteIds.map(id => repo.getSite(id));
+    const decoded = verifySiteToken(siteAuthToken);
+
+
+
+    if (decoded && decoded.sites.length > 0) {
+      const sitePromises = decoded.sites.map(id => repo.getSite(id));
       const sitesResults = await Promise.all(sitePromises);
       const validSites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
 
