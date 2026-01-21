@@ -8,6 +8,42 @@ export async function initDb() {
   console.log('[DB] initDb called: Skipping (Logic moved to migrations)');
 }
 
+async function secureTables(client: any) {
+  const TABLES = [
+    'User',
+    'Site',
+    'Tariff',
+    'TariffSeason',
+    'TariffSchedule',
+    'EnergyData',
+    'TrmnlInstallation',
+    'LoadTag'
+  ];
+
+  console.log('[DB] Securing tables (RLS)...');
+  for (const table of TABLES) {
+    // Enable RLS
+    await client.query(`ALTER TABLE IF EXISTS public."${table}" ENABLE ROW LEVEL SECURITY;`);
+
+    // Revoke all access from PUBLIC
+    await client.query(`REVOKE ALL ON public."${table}" FROM PUBLIC;`);
+
+    // Revoke all access from anon (Supabase specific role often used for unauth access)
+    await client.query(`
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+                    REVOKE ALL ON public."${table}" FROM anon;
+                END IF;
+                IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+                    REVOKE ALL ON public."${table}" FROM authenticated;
+                END IF;
+            END
+            $$;
+        `);
+  }
+}
+
 export function getDbReady() {
   return Promise.resolve();
 }
