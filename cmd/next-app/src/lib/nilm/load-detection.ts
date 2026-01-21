@@ -97,7 +97,7 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
                 }
 
                 // Extent by 1 extra index to visually seal the ramp down
-                const finalIdx = Math.min(data.length - 1, endIdx + 1);
+                const finalIdx = endIdx;
                 const endTime = new Date(data[finalIdx].timestamp); // Ensure Date
                 const durationMs = endTime.getTime() - new Date(load.startTime).getTime();
                 const durationMinutes = durationMs / (1000 * 60);
@@ -166,7 +166,7 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
                 const pwr = data[testIdx].powerWatts;
                 // If we return to baseline level (or below), we found the start point (it's the point AFTER this one)
                 if (pwr <= baseline + noiseFloor) {
-                    startIdx = testIdx;
+                    startIdx = testIdx + 1;
                     break;
                 }
                 // If we didn't hit baseline, assume this point is part of the ramp, keep going back.
@@ -224,7 +224,7 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
                 }
 
                 // Pad by 1 index to ensure visual containment of the slope
-                const finalIdx = Math.min(data.length - 1, endIdx + 1);
+                const finalIdx = endIdx;
                 const endTime = new Date(data[finalIdx].timestamp); // Ensure Date
 
                 const durationMs = endTime.getTime() - new Date(load.startTime).getTime();
