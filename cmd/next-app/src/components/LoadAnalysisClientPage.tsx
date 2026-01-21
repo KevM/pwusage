@@ -70,13 +70,28 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
 
     const isDarkMode = useThemeDetector();
 
+    // Refs for scrolling
+    const eventRefs = React.useRef<Record<number, HTMLDivElement | null>>({});
+
     const handleEventClick = (ev: LoadEvent) => {
-        if (selectedEvent === ev) {
+        // Compare by startTime instead of object identity
+        if (selectedEvent && new Date(selectedEvent.startTime).getTime() === new Date(ev.startTime).getTime()) {
             setSelectedEvent(null);
         } else {
             setSelectedEvent(ev);
         }
     };
+
+    // Auto-scroll when an event is selected
+    useEffect(() => {
+        if (selectedEvent) {
+            // Find matching index in current events list
+            const index = events.findIndex(e => new Date(e.startTime).getTime() === new Date(selectedEvent.startTime).getTime());
+            if (index >= 0 && eventRefs.current[index]) {
+                eventRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+    }, [selectedEvent, events]);
 
     const fetchData = React.useCallback(async (showLoading = true) => {
         if (!siteId) return;
@@ -281,7 +296,7 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
                         </div>
                     ) : (
                         events.map((ev, i) => {
-                            const isSelected = selectedEvent === ev;
+                            const isSelected = selectedEvent && new Date(selectedEvent.startTime).getTime() === new Date(ev.startTime).getTime();
                             let cardClass = "p-4 transition-colors cursor-pointer active:bg-gray-50 dark:active:bg-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30 ";
                             if (isSelected) {
                                 cardClass += "bg-blue-50 dark:bg-gray-800/30 border-l-4 border-blue-500 dark:border-cyan-400 ";
@@ -292,6 +307,7 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
                             return (
                                 <div
                                     key={i}
+                                    ref={el => { eventRefs.current[i] = el }}
                                     className={cardClass}
                                     onClick={() => handleEventClick(ev)}
                                 >
