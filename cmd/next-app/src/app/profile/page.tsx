@@ -1,8 +1,8 @@
-
+import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Image from 'next/image';
-import { getDefaultSiteId } from '@/lib/auth-checks';
+import { getDefaultSiteId, isUserAdmin } from '@/lib/auth-checks';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { pool, User } from '@/lib/db';
@@ -43,6 +43,9 @@ export default async function ProfilePage() {
     if (!user) {
         return <div className="p-8">User detailed record not found.</div>;
     }
+
+    // Check Admin Status
+    const isAdmin = await isUserAdmin();
 
     // Fetch info from Tesla
     let teslaUser = null;
@@ -107,6 +110,18 @@ export default async function ProfilePage() {
                         </p>
                     </div>
                 </div>
+
+                {isAdmin && (
+                    <div className="border-t pt-4">
+                        <h3 className="text-sm font-medium text-muted-foreground mb-3">Administration</h3>
+                        <Link
+                            href="/admin"
+                            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+                        >
+                            Access Admin Dashboard
+                        </Link>
+                    </div>
+                )}
 
             </div>
         </div>

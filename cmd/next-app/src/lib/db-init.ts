@@ -8,7 +8,10 @@ export async function initDb() {
   console.log('[DB] initDb called: Skipping (Logic moved to migrations)');
 }
 
-async function secureTables(client: any) {
+
+import { PoolClient } from 'pg';
+
+async function secureTables(client: PoolClient) {
   const TABLES = [
     'User',
     'Site',

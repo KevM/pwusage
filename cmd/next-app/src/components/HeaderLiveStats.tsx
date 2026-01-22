@@ -21,20 +21,26 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
 
         async function fetchStats() {
             try {
-                console.log('[HeaderLiveStats] Fetching stats for site:', siteId);
                 const response = await fetch(`/api/site-live-data?siteId=${siteId}`);
-                if (response.ok && isMounted) {
-                    const data = await response.json();
-                    console.log('[HeaderLiveStats] Received data:', data);
-                    setStats(data);
-                    setLoading(false);
-                } else {
+
+                if (!isMounted) return;
+
+                if (!response.ok) {
                     console.error('[HeaderLiveStats] Fetch failed:', response.status, response.statusText);
                     setLoading(false);
+                    return;
                 }
+
+                const data = await response.json();
+                if (!isMounted) return;
+
+                setStats(data);
+                setLoading(false);
             } catch (error) {
-                console.error('Failed to refresh header stats:', error);
-                if (isMounted) setLoading(false);
+                if (isMounted) {
+                    console.error('Failed to refresh header stats:', error);
+                    setLoading(false);
+                }
             }
         }
 
