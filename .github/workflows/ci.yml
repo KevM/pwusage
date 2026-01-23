@@ -86,9 +86,39 @@ jobs:
           destination: "db-backup/${{ steps.create_backup.outputs.filename }}"
           read-write-token: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
 
+  migrate:
+    name: Run Migrations
+    needs: backup
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cmd/next-app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      
+      - name: Prepare Migrations
+        run: |
+          if [ -d "db-migrations" ]; then
+            echo "Found db-migrations folder. Moving to supabase/migrations..."
+            mkdir -p supabase/migrations
+            cp db-migrations/*.sql supabase/migrations/ 2>/dev/null || :
+          else
+            echo "No db-migrations folder found. Skipping migration copy."
+          fi
+
+      - name: Run Migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          supabase migration up --db-url "$DATABASE_URL"
+
   deploy:
     name: Deploy to Vercel
-    needs: backup
+    needs: migrate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
