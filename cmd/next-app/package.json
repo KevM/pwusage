@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest",
-    "test:fleet": "tsx scripts/fleet-integration.ts"
+    "test:fleet": "tsx scripts/fleet-integration.ts",
+    "rotate-backups": "tsx scripts/rotate-backups.ts"
   },
   "dependencies": {
     "@types/cookie": "^0.6.0",
