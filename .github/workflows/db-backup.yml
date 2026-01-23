@@ -19,10 +19,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
+      - name: Ensure PostgreSQL Client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
 
       - name: Create Backup
         id: create_backup
@@ -31,7 +31,7 @@ jobs:
         run: |
           TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
           FILENAME="backup-${TIMESTAMP}.sql"
-          supabase db dump --db-url "$DATABASE_URL" -f "${FILENAME}"
+          pg_dump "$DATABASE_URL" -f "${FILENAME}"
           echo "filename=${FILENAME}" >> $GITHUB_OUTPUT
 
       - name: Upload to Vercel Blob
