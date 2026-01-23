@@ -32,6 +32,10 @@ pool.on('error', (err) => {
 
 if (process.env.NODE_ENV !== 'production') globalForDb.pool = pool;
 
+export function getDb() {
+  return pool;
+}
+
 
 export interface User {
   id: string; // Tesla User ID or Email

@@ -9,11 +9,10 @@ const client = jwksClient({
     rateLimit: true,
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getKey(header: any, callback: any) {
+function getKey(header: jwt.JwtHeader, callback: jwt.SigningKeyCallback) {
     client.getSigningKey(header.kid, function (err: Error | null, key: { getPublicKey: () => string } | undefined) {
         if (err) {
-            callback(err, null);
+            callback(err, undefined);
             return;
         }
         const signingKey = key?.getPublicKey();

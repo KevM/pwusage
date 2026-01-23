@@ -20,7 +20,8 @@ async function secureTables(client: PoolClient) {
     'TariffSchedule',
     'EnergyData',
     'TrmnlInstallation',
-    'LoadTag'
+    'LoadTag',
+    'SystemAnnouncement'
   ];
 
   console.log('[DB] Securing tables (RLS)...');

@@ -26,6 +26,23 @@ export async function isUserAdmin(): Promise<boolean> {
         }
     }
     return false;
+    return false;
+}
+
+export async function getCurrentUser(): Promise<{ id: string, email?: string } | null> {
+    const cookieStore = await cookies();
+    const token = cookieStore.get(SITE_AUTH_COOKIE)?.value;
+
+    if (token) {
+        const decoded = verifySiteToken(token);
+        // Assuming the ID is in the subject 'sub' claim or similar. 
+        // Based on `signSiteToken`, verify what's actually in there. 
+        // The `verifySiteToken` usually returns { sites: [], roles: [], sub: 'userid', ... }
+        if (decoded && decoded.sub) {
+            return { id: decoded.sub };
+        }
+    }
+    return null;
 }
 
 export async function verifySiteAccess(siteId: string): Promise<boolean> {

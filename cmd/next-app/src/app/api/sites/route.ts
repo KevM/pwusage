@@ -3,6 +3,7 @@ import { EnergyRepo } from '@/lib/energy-repo';
 import { cookies } from 'next/headers';
 import { EnergySiteInfo } from '@/lib/tesla-client';
 import { SiteService } from '@/lib/site-service';
+import { Site } from '@/lib/db';
 
 export async function GET(request: Request) {
     try {
@@ -18,8 +19,7 @@ export async function GET(request: Request) {
         // 2. Trmnl Token (Device) - Returns ONLY the linked site (if any)
 
         const repo = new EnergyRepo();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let sites: { id: string; name: string; json: any }[] = [];
+        let sites: Site[] = [];
 
         if (token && uuid) {
             // Check Trmnl Auth

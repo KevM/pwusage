@@ -5,6 +5,8 @@ import { redirect } from 'next/navigation';
 import { verifySiteToken } from '@/lib/auth-jwt';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { ProductWithLiveData } from '@/components/DashboardCards';
+import { AnnouncementRepo } from '@/lib/announcement-repo';
+import { LoginAnnouncement } from '@/components/LoginAnnouncement';
 
 // Force dynamic rendering to always fetch fresh data
 export const dynamic = 'force-dynamic';
@@ -13,9 +15,13 @@ export default async function Home() {
   const cookieStore = await cookies();
   const siteAuthToken = cookieStore.get('site_auth')?.value;
 
+  const announcementRepo = new AnnouncementRepo();
+  const latestAnnouncement = await announcementRepo.getLatest();
+
   // If no token at all, show login screen
   if (!siteAuthToken) {
     return (
+      // ... (inside the if (!siteAuthToken) block)
       <div className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24">
         <h1 className="text-4xl font-bold mb-8">Powerwall Usage</h1>
         <Image
@@ -23,7 +29,16 @@ export default async function Home() {
           alt="Monitor Usage, Track Costs, Maximize Savings"
           width={930}
           height={375}
-          className="mb-8"
+          className="mb-8 block dark:hidden"
+          priority
+        />
+        <Image
+          src="/login-summary-dark-v2.png"
+          alt="Monitor Usage, Track Costs, Maximize Savings"
+          width={930}
+          height={375}
+          className="mb-8 hidden dark:block"
+          priority
         />
         <Link
           href="/login"
@@ -37,6 +52,9 @@ export default async function Home() {
         >
           Learn More
         </Link>
+
+        {/* Latest Announcement */}
+        <LoginAnnouncement announcement={latestAnnouncement} />
       </div>
     );
   }
