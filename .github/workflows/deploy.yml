@@ -1,4 +1,4 @@
-name: Database Backup
+name: Deploy
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
         with:
           version: latest
 
-      - name: Create Backup
+      - name: Create DB Backup
         id: create_backup
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -49,3 +49,18 @@ jobs:
           source: "./cmd/next-app/${{ steps.create_backup.outputs.filename }}"
           destination: "db-backup/${{ steps.create_backup.outputs.filename }}"
           read-write-token: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+
+  deploy:
+    name: Deploy to Vercel
+    needs: backup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: ./cmd/next-app
+          vercel-args: '--prod'
