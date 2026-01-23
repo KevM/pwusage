@@ -8,7 +8,6 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest",
-    "test": "vitest",
     "test:fleet": "tsx scripts/fleet-integration.ts"
   },
   "dependencies": {
