@@ -41,6 +41,16 @@ jobs:
           destination: "db-backup/${{ steps.create_backup.outputs.filename }}"
           read-write-token: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: ./cmd/next-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Rotate Backups
         run: npm run rotate-backups
         env:
