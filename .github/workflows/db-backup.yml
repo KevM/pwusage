@@ -1,0 +1,47 @@
+name: Database Backup
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  backup:
+    name: Backup Database
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: ./cmd/next-app
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Create Backup
+        id: create_backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+          FILENAME="backup-${TIMESTAMP}.sql"
+          supabase db dump --db-url "$DATABASE_URL" -f "${FILENAME}"
+          echo "filename=${FILENAME}" >> $GITHUB_OUTPUT
+
+      - name: Upload to Vercel Blob
+        uses: dartilesm/vercel-blob-action@v2
+        with:
+          source: "./cmd/next-app/${{ steps.create_backup.outputs.filename }}"
+          destination: "db-backup/${{ steps.create_backup.outputs.filename }}"
+          read-write-token: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+
+      - name: Rotate Backups
+        run: npx tsx scripts/rotate-backups.ts
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
