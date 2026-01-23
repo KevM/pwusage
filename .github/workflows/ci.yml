@@ -1,4 +1,4 @@
-name: Deploy
+name: CI
 
 on:
   push:
@@ -25,9 +25,26 @@ jobs:
       - run: npm run lint
       - run: npm test
 
+  build:
+    name: Build App
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cmd/next-app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: ./cmd/next-app/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
   backup:
     name: Backup Database
-    needs: test
+    needs: [test, build]
     runs-on: ubuntu-latest
     
     defaults:
@@ -83,3 +100,4 @@ jobs:
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           working-directory: ./cmd/next-app
           vercel-args: '--prod'
+          vercel-version: 'latest'
