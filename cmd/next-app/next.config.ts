@@ -4,10 +4,13 @@ const nextConfig: NextConfig = {
   output: "standalone",
 
   experimental: {
-    allowedDevOrigins: [
-      "localhost:5173",
-      "entodermal-unswatheable-diana.ngrok-free.dev"
-    ]
+    // allowedDevOrigins: [
+    //   "localhost:5173",
+    //   "entodermal-unswatheable-diana.ngrok-free.dev"
+    // ],
+    serverActions: {
+      bodySizeLimit: '2mb',
+    },
   },
   images: {
     remotePatterns: [
