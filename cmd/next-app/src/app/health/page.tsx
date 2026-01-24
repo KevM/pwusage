@@ -84,10 +84,6 @@ export default function HealthPage() {
                                     <div className="text-2xl font-bold dark:text-white">{data.schema.details?.energyDataRows as number}</div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400">Data Rows</div>
                                 </div>
-                                <div className="bg-gray-50 dark:bg-zinc-700 p-3 rounded">
-                                    <div className="text-2xl font-bold dark:text-white">{data.schema.details?.energyUsageRows as number}</div>
-                                    <div className="text-xs text-gray-500 dark:text-gray-400">Usage Rows</div>
-                                </div>
                             </div>
                         )}
                         <p className="text-red-500 mt-2 text-sm">{data?.schema?.message}</p>

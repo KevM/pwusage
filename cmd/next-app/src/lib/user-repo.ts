@@ -1,5 +1,4 @@
 import { pool, User, Site } from './db';
-import { getDbReady } from './db-init';
 
 export interface UserWithSites extends User {
     sites: Site[];
@@ -7,8 +6,6 @@ export interface UserWithSites extends User {
 
 export class UserRepo {
     async getAllUsers(): Promise<UserWithSites[]> {
-        await getDbReady();
-
         // Fetch users
         const userRes = await pool.query('SELECT * FROM "User" ORDER BY created_at DESC');
         const users = userRes.rows as User[];

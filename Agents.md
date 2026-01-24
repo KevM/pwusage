@@ -25,7 +25,7 @@
 ## Development
 - **Linting**: `npm run lint` must pass.
 - **Build**: `npm run build` must pass before finishing tasks.
-- **Migrations**: Manual SQL migrations in `src/lib/db-init.ts` (for schema structure) or ad-hoc scripts in `scripts/` (for data migration).
+- **Migrations**: SQL migrations in `cmd/next-app/db-migrations/`. Create a new `.sql` file with a timestamp prefix for schema changes.
 
 ## Communication Style
 - **Task Management**: Use `task.md` to track huge chunks of work.

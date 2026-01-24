@@ -1,5 +1,5 @@
 import { pool, Tariff, Site, TariffSeason, TariffSchedule, EnergyData } from './db';
-import { getDbReady } from './db-init';
+
 import { Schedule } from './schedule';
 
 // Use global cache to persist across reloads in dev
@@ -61,7 +61,6 @@ export async function getUserTokensForSite(siteId: string): Promise<{ access_tok
 
 export class EnergyRepo {
     async getSitesForUser(userId: string): Promise<Site[]> {
-        await getDbReady();
         const { rows } = await pool.query('SELECT * FROM "Site" WHERE user_id = $1', [userId]);
         return rows as Site[];
     }
@@ -178,7 +177,6 @@ export class EnergyRepo {
     }
 
     async getSite(siteId: string): Promise<SiteWithTariffs | undefined> {
-        await getDbReady();
         const now = Date.now();
         const cached = siteCache.get(siteId);
         if (cached && cached.expires > now) {
@@ -234,19 +232,16 @@ export class EnergyRepo {
     }
 
     async getSiteIds(): Promise<string[]> {
-        await getDbReady();
         const { rows } = await pool.query<SiteIdRow>('SELECT id FROM "Site"');
         return rows.map((r) => r.id);
     }
 
     async getSites(): Promise<Site[]> {
-        await getDbReady();
         const { rows } = await pool.query('SELECT * FROM "Site"');
         return rows as Site[];
     }
 
     async hasData(siteId: string): Promise<boolean> {
-        await getDbReady();
         const { rows } = await pool.query('SELECT 1 FROM "EnergyData" WHERE site_id = $1 LIMIT 1', [siteId]);
         return rows.length > 0;
     }
@@ -327,7 +322,6 @@ export class EnergyRepo {
     }
 
     async getLatestEnergyData(siteId: string): Promise<{ timestamp: Date } | null> {
-        await getDbReady();
         const { rows } = await pool.query(`
             SELECT timestamp
             FROM "EnergyData" 
@@ -431,7 +425,6 @@ export class EnergyRepo {
      * Fetches raw, unaggregated 5-minute energy data for high fidelity analysis.
      */
     async getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
-        await getDbReady();
 
         const toSqlString = (d: Date) => {
             const y = d.getFullYear();
@@ -477,7 +470,6 @@ export class EnergyRepo {
     }
 
     async getLoadTags(siteId: string, start: Date, end: Date): Promise<import('./db').LoadTag[]> {
-        await getDbReady();
         const res = await pool.query(`
             SELECT * FROM "LoadTag"
             WHERE site_id = $1
@@ -494,7 +486,6 @@ export class EnergyRepo {
     }
 
     async addLoadTag(siteId: string, start: Date, end: Date, tag: string) {
-        await getDbReady();
         const startStr = this.toSqlString(start);
         const endStr = this.toSqlString(end);
 
@@ -513,14 +504,12 @@ export class EnergyRepo {
     }
 
     async removeLoadTag(siteId: string, start: Date, end: Date, tag: string) {
-        await getDbReady();
         await pool.query(`
             DELETE FROM "LoadTag"
             WHERE site_id = $1 AND start_time = $2::timestamp AND end_time = $3::timestamp AND tag = $4
          `, [siteId, this.toSqlString(start), this.toSqlString(end), tag]);
     }
     async cleanupOldData(cutoffDate: Date): Promise<{ energyDeleted: number; tagsDeleted: number }> {
-        await getDbReady();
         const cutoffStr = this.toSqlString(cutoffDate);
 
         // Delete from EnergyData
