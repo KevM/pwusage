@@ -1,0 +1,60 @@
+name: Verify Migrations
+
+on:
+  pull_request:
+    paths:
+      - 'cmd/next-app/db-migrations/**'
+
+jobs:
+  verify-migration:
+    name: Verify Migrations (Prod -> Dev)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cmd/next-app
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Dump Production DB
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Dump Schema
+          supabase db dump --db-url "$DATABASE_URL" -f schema.sql
+          # Dump Data
+          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy
+          # roles are skipped to avoid conflicts with existing system roles in Dev
+
+      - name: Restore to Dev DB
+        env:
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+        run: |
+          # Reset Dev DB public schema
+          psql "$DEV_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO postgres; GRANT ALL ON SCHEMA public TO public;"
+          
+          # Restore Schema
+          psql "$DEV_DATABASE_URL" -f schema.sql
+          
+          # Restore Data
+          psql "$DEV_DATABASE_URL" -f data.sql
+
+      - name: Prepare Local Migrations
+        run: |
+          if [ -d "db-migrations" ]; then
+            echo "Found db-migrations folder. Moving to supabase/migrations..."
+            mkdir -p supabase/migrations
+            cp db-migrations/*.sql supabase/migrations/ 2>/dev/null || :
+          else
+            echo "No db-migrations folder found. Skipping migration copy."
+          fi
+
+      - name: Run Migrations on Dev
+        env:
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+        run: |
+          supabase migration up --db-url "$DEV_DATABASE_URL"
