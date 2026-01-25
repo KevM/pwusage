@@ -1,28 +1,6 @@
-import { verifySiteAccess } from '@/lib/auth-checks';
-import Link from 'next/link';
-import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
-import { EnergyRepo } from '@/lib/energy-repo';
-
-export const dynamic = 'force-dynamic';
+import { redirect } from 'next/navigation';
 
 export default async function AnalysisPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
-
-    const hasAccess = await verifySiteAccess(id);
-    if (!hasAccess) {
-        return (
-            <div className="flex min-h-screen flex-col items-center justify-center p-8 text-gray-100 bg-gray-950">
-                <h1 className="text-2xl font-bold text-red-500 mb-4">Unauthorized</h1>
-                <p className="text-gray-400 mb-6">You do not have permission to view high-fidelity data for this site.</p>
-                <Link href="/products" className="text-blue-400 hover:text-blue-300 hover:underline">
-                    Return to My Products
-                </Link>
-            </div>
-        );
-    }
-
-    const repo = new EnergyRepo();
-    const site = await repo.getSite(id);
-
-    return <LoadAnalysisClientPage siteId={id} siteName={site?.name || 'Site'} />;
+    redirect(`/site/${id}?view=history`);
 }

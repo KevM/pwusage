@@ -12,11 +12,12 @@ import TagModal from '@/components/TagModal';
 interface LoadAnalysisClientPageProps {
     siteId: string;
     siteName: string;
+    defaultDate?: string;
 }
 
-export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysisClientPageProps) {
+export default function LoadAnalysisClientPage({ siteId, siteName, defaultDate }: LoadAnalysisClientPageProps) {
     const searchParams = useSearchParams();
-    const initialDate = searchParams.get('date') || new Date().toISOString().split('T')[0];
+    const initialDate = searchParams.get('date') || defaultDate || new Date().toISOString().split('T')[0];
 
     // Initialize date from URL or Today
     const [date, setDate] = useState<string>(initialDate);
@@ -190,7 +191,7 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
     };
 
     return (
-        <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 p-6 font-sans transition-colors duration-300">
+        <div className="text-gray-900 dark:text-gray-100 font-sans transition-colors duration-300">
             <TagModal
                 isOpen={!!taggingEvent}
                 onClose={() => setTaggingEvent(null)}
@@ -200,108 +201,110 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
             />
 
             {/* Header */}
-            <div className="mb-2">
-                <Breadcrumbs items={[
-                    { label: siteName, href: `/site/${siteId}` },
-                    { label: 'Analysis' }
-                ]} />
-            </div>
+            {/* Breadcrumbs removed as requested */}
 
-            <div className="mb-6 flex flex-col sm:flex-row gap-4 sm:justify-between sm:items-center">
-                <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-cyan-500 dark:from-cyan-400 dark:to-blue-500">
-                    Load Analysis
-                </h1>
+            {/* Breadcrumbs removed as requested */}
 
-                <div className="flex gap-2 items-center self-end sm:self-auto">
-                    <div className="flex bg-white dark:bg-slate-900 rounded-lg p-1 shadow-sm border border-slate-200 dark:border-slate-800 items-center justify-between gap-1 shrink-0">
-                        <button
-                            onClick={() => changeDate(-1)}
-                            disabled={loading}
-                            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
-                            title="Previous Day"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="m15 18-6-6 6-6" />
-                            </svg>
-                        </button>
+            {/* Unified History Card */}
+            <div className="mb-8 bg-white dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm">
+                {/* Header: Title & Controls */}
+                <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 flex flex-col sm:flex-row gap-4 sm:justify-between sm:items-center">
+                    <h2 className="text-xl font-semibold dark:text-gray-200">
+                        Usage History
+                    </h2>
 
-                        <div className="relative group flex-1 md:flex-none text-center min-w-[140px]">
-                            <div
-                                className="font-semibold text-sm hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center text-gray-900 dark:text-white"
-                                title="Click to pick a date"
+                    <div className="flex gap-2 items-center self-end sm:self-auto">
+                        <div className="flex bg-white dark:bg-slate-800 rounded-lg p-1 shadow-sm border border-gray-200 dark:border-slate-700 items-center justify-between gap-1 shrink-0">
+                            <button
+                                onClick={() => changeDate(-1)}
+                                disabled={loading}
+                                className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
+                                title="Previous Day"
                             >
-                                {displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-                                {isToday && ' (Today)'}
-                            </div>
-                            <input
-                                ref={dateInputRef}
-                                type="date"
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                                value={date}
-                                onChange={(e) => setDate(e.target.value)}
-                                onClick={() => {
-                                    try {
-                                        dateInputRef.current?.showPicker();
-                                    } catch {
-                                        // Fallback
-                                    }
-                                }}
-                                max={new Date().toISOString().split('T')[0]}
-                            />
-                        </div>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="m15 18-6-6 6-6" />
+                                </svg>
+                            </button>
 
-                        <button
-                            onClick={() => changeDate(1)}
-                            disabled={loading || isToday}
-                            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
-                            title="Next Day"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="m9 18 6-6-6-6" />
-                            </svg>
-                        </button>
+                            <div className="relative group flex-1 md:flex-none text-center min-w-[140px]">
+                                <div
+                                    className="font-semibold text-sm hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center text-gray-900 dark:text-white"
+                                    title="Click to pick a date"
+                                >
+                                    {displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                                    {isToday && ' (Today)'}
+                                </div>
+                                <input
+                                    ref={dateInputRef}
+                                    type="date"
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                    value={date}
+                                    onChange={(e) => setDate(e.target.value)}
+                                    onClick={() => {
+                                        try {
+                                            dateInputRef.current?.showPicker();
+                                        } catch {
+                                            // Fallback
+                                        }
+                                    }}
+                                    max={new Date().toISOString().split('T')[0]}
+                                />
+                            </div>
+
+                            <button
+                                onClick={() => changeDate(1)}
+                                disabled={loading || isToday}
+                                className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
+                                title="Next Day"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="m9 18 6-6-6-6" />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            {/* Chart Section */}
-            <div className="mb-8">
-                {loading ? (
-                    <div className="h-[500px] w-full flex items-center justify-center bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-200 dark:border-gray-800">
-                        <span className="text-gray-500 dark:text-gray-400 animate-pulse">Loading High-Fidelity Data...</span>
-                    </div>
-                ) : (
-                    <NILMChart
-                        data={data}
-                        events={events}
-                        tariffs={tariffMap}
-                        highlightedEvent={hoveredEvent}
-                        selectedEvent={selectedEvent}
-                        onEventClick={handleEventClick}
-                        isDarkMode={isDarkMode}
-                    />
-                )}
+                {/* Chart Body */}
+                <div className="p-4">
+                    {loading ? (
+                        <div className="h-[500px] w-full flex items-center justify-center">
+                            <span className="text-gray-500 dark:text-gray-400 animate-pulse">Loading High-Fidelity Data...</span>
+                        </div>
+                    ) : (
+                        <NILMChart
+                            data={data}
+                            events={events}
+                            tariffs={tariffMap}
+                            highlightedEvent={hoveredEvent}
+                            selectedEvent={selectedEvent}
+                            onEventClick={handleEventClick}
+                            isDarkMode={isDarkMode}
+                        />
+                    )}
+                </div>
             </div>
 
             {/* Event List (Card View) */}
             <div className="bg-white dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
                     <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">Detected Load Events</h3>
                 </div>
 
-                <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-4">
                     {events.length === 0 ? (
-                        <div className="p-8 text-center text-gray-500 italic">
+                        <div className="col-span-full p-8 text-center text-gray-500 italic">
                             No significant load events detected for this day.
                         </div>
                     ) : (
                         events.map((ev, i) => {
                             const isSelected = selectedEvent && new Date(selectedEvent.startTime).getTime() === new Date(ev.startTime).getTime();
-                            let cardClass = "p-4 transition-colors cursor-pointer active:bg-gray-50 dark:active:bg-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30 ";
+                            // Compact Card Styles
+                            let cardClass = "p-2 rounded-lg border transition-all cursor-pointer shadow-sm hover:shadow-md active:scale-95 ";
                             if (isSelected) {
-                                cardClass += "bg-blue-50 dark:bg-gray-800/30 border-l-4 border-blue-500 dark:border-cyan-400 ";
+                                cardClass += "bg-blue-50 dark:bg-blue-900/20 border-blue-500 ring-1 ring-blue-500 dark:border-blue-400 ";
                             } else {
-                                cardClass += "border-l-4 border-transparent ";
+                                cardClass += "bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 ";
                             }
 
                             return (
@@ -311,69 +314,65 @@ export default function LoadAnalysisClientPage({ siteId, siteName }: LoadAnalysi
                                     className={cardClass}
                                     onClick={() => handleEventClick(ev)}
                                 >
-                                    {/* Header: Time & Duration */}
-                                    <div className="flex justify-between items-start mb-3">
+                                    {/* Header: Compact Time & Id */}
+                                    <div className="flex justify-between items-start mb-1.5">
                                         <div>
-                                            <div className="text-lg font-semibold text-cyan-600 dark:text-cyan-300">
+                                            <div className="text-base font-bold text-gray-900 dark:text-gray-100">
                                                 {formatTime(ev.startTime.toString())} - {formatTime(ev.endTime.toString())}
                                             </div>
-                                            <div className="text-sm text-gray-500">
-                                                Duration: {formatDuration(ev.durationMinutes)}
+                                            <div className="text-xs text-gray-500">
+                                                {formatDuration(ev.durationMinutes)}
                                             </div>
                                         </div>
-                                        <div className="text-xs font-mono text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+                                        <div className="text-[10px] font-mono text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">
                                             #{i + 1}
                                         </div>
                                     </div>
 
-                                    {/* Stats Grid */}
-                                    <div className="grid grid-cols-3 gap-4 mb-4 text-sm">
+                                    {/* Stats Grid: Compact */}
+                                    <div className="grid grid-cols-3 gap-2 mb-2 text-xs p-1">
                                         <div>
-                                            <div className="text-xs text-gray-500 uppercase">Avg Power</div>
-                                            <div className="font-medium">{(ev.averagePower / 1000).toFixed(2)} kW</div>
+                                            <div className="text-[10px] text-gray-500 uppercase font-semibold">Avg</div>
+                                            <div className="font-semibold text-sm text-gray-700 dark:text-gray-300">{(ev.averagePower / 1000).toFixed(1)}kW</div>
                                         </div>
                                         <div>
-                                            <div className="text-xs text-gray-500 uppercase">Max Power</div>
-                                            <div className="font-medium text-amber-600 dark:text-amber-400">{(ev.maxPower / 1000).toFixed(2)} kW</div>
+                                            <div className="text-[10px] text-gray-500 uppercase font-semibold">Max</div>
+                                            <div className="font-semibold text-sm text-amber-600 dark:text-amber-400">{(ev.maxPower / 1000).toFixed(1)}kW</div>
                                         </div>
                                         <div>
-                                            <div className="text-xs text-gray-500 uppercase">Energy</div>
-                                            <div className="font-medium text-green-600 dark:text-green-400">{ev.kwh} kWh</div>
+                                            <div className="text-[10px] text-gray-500 uppercase font-semibold">kWh</div>
+                                            <div className="font-semibold text-sm text-green-600 dark:text-green-400">{ev.kwh.toFixed(1)}</div>
                                         </div>
                                     </div>
 
                                     {/* Tags & Actions */}
-                                    <div className="flex items-center justify-between mt-2">
-                                        <div className="flex flex-wrap gap-2">
-                                            {ev.tags?.map(tag => (
-                                                <span key={tag} className={`px-2 py-0.5 rounded text-xs border flex items-center gap-1
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="flex flex-wrap gap-1 min-h-[1.25rem]">
+                                            {ev.tags?.slice(0, 3).map(tag => (
+                                                <span key={tag} className={`px-1.5 py-0.5 rounded-[4px] text-[10px] border flex items-center gap-0.5
                                                  ${tag === 'Arbitrage Candidate'
-                                                        ? 'bg-red-100 dark:bg-red-900/30 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300'
-                                                        : 'bg-blue-100 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300'
+                                                        ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-900 text-red-700 dark:text-red-300'
+                                                        : 'bg-blue-50 dark:bg-blue-900/20 border-blue-100 dark:border-blue-900 text-blue-700 dark:text-blue-300'
                                                     }`}>
-                                                    {tag}
-                                                    {tag !== 'Arbitrage Candidate' && (
-                                                        <button
-                                                            onClick={(e) => handleRemoveTag(e, ev, tag)}
-                                                            className="ml-1 hover:text-black dark:hover:text-white"
-                                                            title="Remove Tag"
-                                                        >
-                                                            &times;
-                                                        </button>
-                                                    )}
+                                                    <span className="truncate max-w-[60px]">{tag}</span>
                                                 </span>
                                             ))}
-                                            {(!ev.tags || ev.tags.length === 0) && <span className="text-xs text-gray-400 italic">No tags</span>}
+                                            {(ev.tags?.length || 0) > 3 && (
+                                                <span className="text-[10px] text-gray-400">+{ev.tags!.length - 3}</span>
+                                            )}
                                         </div>
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation();
                                                 setTaggingEvent(ev);
                                             }}
-                                            className="ml-2 p-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors text-gray-600 dark:text-gray-300"
-                                            title="Tag Event"
+                                            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                                            title="Edit Tags"
                                         >
-                                            ✏️
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                                <path d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z" />
+                                                <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z" />
+                                            </svg>
                                         </button>
                                     </div>
                                 </div>

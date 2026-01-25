@@ -381,7 +381,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
     }
 
     return (
-        <div className={`p-4 rounded-xl border outline-none ring-0 focus:outline-none ${isDarkMode ? 'bg-gray-900/50 border-gray-800' : 'bg-white border-gray-200 shadow-sm'}`}>
+        <div className="w-full h-full">
             {/* Custom Legend / Toggles */}
             <div className="flex flex-wrap items-center gap-4 mb-4 text-xs font-medium select-none">
                 <label
