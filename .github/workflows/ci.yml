@@ -237,6 +237,6 @@ jobs:
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-version: 'latest'
-          vercel-args: '--env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }} --build-env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }}'
+          vercel-args: '--env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }} --build-env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }} --env NEXT_PUBLIC_APP_URL=https://pwusagebeta.fm.rodeo --build-env NEXT_PUBLIC_APP_URL=https://pwusagebeta.fm.rodeo'
           alias-domains: 'pwusagebeta.fm.rodeo'
 
