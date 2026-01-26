@@ -41,8 +41,8 @@ jobs:
           # Dump Data
           supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy
           
-          # Clean DB URL for pg_dump (strip pgbouncer param)
-          CLEAN_DB_URL=$(echo "$DATABASE_URL" | sed 's/[?&]pgbouncer=true//g')
+          # Clean DB URL for pg_dump (strip pgbouncer param) using Node for safety
+          CLEAN_DB_URL=$(node -e 'try { const u = new URL(process.env.DATABASE_URL); u.searchParams.delete("pgbouncer"); console.log(u.toString()); } catch (e) { console.error(e); process.exit(1); }')
           
           # Dump Migration History (to ensure Dev "knows" what Prod has already run)
           pg_dump "$CLEAN_DB_URL" --data-only --table supabase_migrations.schema_migrations > migration_history.sql
