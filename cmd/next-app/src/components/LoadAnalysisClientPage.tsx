@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import NILMChart from '@/components/NILMChart';
 import { PowerData } from '@/lib/nilm/types';
 import { LoadEvent } from '@/lib/nilm/load-detection';
-import { Breadcrumbs } from './Breadcrumbs';
+
 import { useSearchParams } from 'next/navigation';
 
 import TagModal from '@/components/TagModal';
@@ -15,7 +15,7 @@ interface LoadAnalysisClientPageProps {
     defaultDate?: string;
 }
 
-export default function LoadAnalysisClientPage({ siteId, siteName, defaultDate }: LoadAnalysisClientPageProps) {
+export default function LoadAnalysisClientPage({ siteId, defaultDate }: LoadAnalysisClientPageProps) {
     const searchParams = useSearchParams();
     const initialDate = searchParams.get('date') || defaultDate || new Date().toISOString().split('T')[0];
 
@@ -151,25 +151,7 @@ export default function LoadAnalysisClientPage({ siteId, siteName, defaultDate }
         }
     };
 
-    const handleRemoveTag = async (e: React.MouseEvent, event: LoadEvent, tag: string) => {
-        e.stopPropagation();
-        if (!confirm(`Remove tag "${tag}"?`)) return;
-        try {
-            await fetch(`/api/site/${siteId}/analysis`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'remove_tag',
-                    start_time: event.startTime,
-                    end_time: event.endTime,
-                    tag
-                })
-            });
-            fetchData();
-        } catch (e) {
-            console.error(e);
-        }
-    };
+    // const handleRemoveTag = async (e: React.MouseEvent, event: LoadEvent, tag: string) => { ... } // Unused
 
     // Formatting Helpers
     const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

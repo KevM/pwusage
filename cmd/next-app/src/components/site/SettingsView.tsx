@@ -4,10 +4,13 @@ import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import Link from 'next/link';
 import Image from 'next/image';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
+import { Site, TrmnlInstallation } from '@/lib/db';
+
 interface SettingsViewProps {
-    site: any; // Using any for now to avoid duplicate type definitions, relying on passed props valid
-    installation: any;
+    site: Site;
+    // TrmnlInstallation can be undefined if not found
+    installation: TrmnlInstallation | undefined;
 }
 
 export function SettingsView({ site, installation }: SettingsViewProps) {

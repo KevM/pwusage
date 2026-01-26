@@ -1,9 +1,9 @@
 import { EnergyRepo } from '@/lib/energy-repo';
 import Link from 'next/link';
-import { EnergyChartWithNav } from '@/components/EnergyChartWithNav';
+
 
 import { BillSummary } from '@/components/BillSummary';
-import { Breadcrumbs } from '@/components/Breadcrumbs';
+
 import { DataSyncer } from '@/components/DataSyncer';
 
 import { TeslaClient } from '@/lib/tesla-client';
@@ -141,7 +141,7 @@ export default async function SitePage({ params, searchParams }: {
         dateStr = `${year}-${month}-${day}`;
     }
 
-    const hourlyData = await repo.getHourlyEnergyData(id, dateStr);
+    // const hourlyData = await repo.getHourlyEnergyData(id, dateStr); // Unused
 
     // Calculate period based on billing start day
     const billingDay = finalSite.billing_start_day || 1;
