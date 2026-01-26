@@ -151,24 +151,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # Check if migrations have changed
-      - uses: dorny/paths-filter@v2
-        id: filter
-        with:
-          filters: |
-            migrations:
-              - 'cmd/next-app/db-migrations/**'
-
-
-
       - name: Install Supabase CLI
-        if: steps.filter.outputs.migrations == 'true'
         uses: supabase/setup-cli@v1
         with:
           version: latest
 
       - name: Dump Production DB
-        if: steps.filter.outputs.migrations == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
@@ -187,7 +175,6 @@ jobs:
           fi
 
       - name: Restore to Dev DB
-        if: steps.filter.outputs.migrations == 'true'
         env:
           DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
         run: |
@@ -206,7 +193,6 @@ jobs:
           psql "$DEV_DATABASE_URL" -f migration_history.sql
 
       - name: Prepare Local Migrations
-        if: steps.filter.outputs.migrations == 'true'
         run: |
           if [ -d "db-migrations" ]; then
             echo "Found db-migrations folder. Moving to supabase/migrations..."
@@ -217,7 +203,6 @@ jobs:
           fi
 
       - name: Run Migrations on Dev
-        if: steps.filter.outputs.migrations == 'true'
         env:
           DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
         run: |
