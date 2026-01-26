@@ -28,7 +28,8 @@ jobs:
           supabase db dump --db-url "$DATABASE_URL" -f schema.sql
           # Dump Data
           supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy
-          # roles are skipped to avoid conflicts with existing system roles in Dev
+          # Dump Migration History (to ensure Dev "knows" what Prod has already run)
+          pg_dump "$DATABASE_URL" --data-only --table supabase_migrations.schema_migrations > migration_history.sql
 
       - name: Restore to Dev DB
         env:
@@ -42,6 +43,11 @@ jobs:
           
           # Restore Data
           psql "$DEV_DATABASE_URL" -f data.sql
+          
+          # Restore Migration History
+          # (We truncate first to remove any stale Dev history, then apply Prod's history)
+          psql "$DEV_DATABASE_URL" -c "TRUNCATE supabase_migrations.schema_migrations"
+          psql "$DEV_DATABASE_URL" -f migration_history.sql
 
       - name: Prepare Local Migrations
         run: |
