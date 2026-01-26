@@ -227,19 +227,26 @@ jobs:
 
   notify:
     name: Discord Notification
-    needs: deploy
-    if: github.ref == 'refs/heads/main'
+    needs: [deploy, deploy-preview]
+    if: always() && (needs.deploy.result == 'success' || needs.deploy-preview.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Fetch PR Description
         id: pr_info
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_PAYLOAD_BODY: ${{ github.event.pull_request.body }}
         run: |
-          PR_BODY=$(gh api repos/${{ github.repository }}//commits/${{ github.sha }}/pulls --jq '.[0].body')
-          echo "PR_BODY<<EOF" >> $GITHUB_ENV
-          echo "$PR_BODY" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+             echo "PR_BODY<<EOF" >> $GITHUB_ENV
+             echo "$PR_PAYLOAD_BODY" >> $GITHUB_ENV
+             echo "EOF" >> $GITHUB_ENV
+          else
+             PR_BODY=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/pulls --jq '.[0].body' || echo "No associated PR found.")
+             echo "PR_BODY<<EOF" >> $GITHUB_ENV
+             echo "$PR_BODY" >> $GITHUB_ENV
+             echo "EOF" >> $GITHUB_ENV
+          fi
 
       - name: Send Discord Webhook
         env:
