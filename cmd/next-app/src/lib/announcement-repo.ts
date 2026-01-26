@@ -2,7 +2,7 @@
 import { getDb } from './db';
 
 export interface SystemAnnouncement {
-    id: number;
+    id: string;
     title: string;
     content: string;
     created_at: Date;
@@ -31,12 +31,12 @@ export class AnnouncementRepo {
         return result.rows;
     }
 
-    async delete(id: number): Promise<void> {
+    async delete(id: string): Promise<void> {
         const query = `DELETE FROM "SystemAnnouncement" WHERE id = $1`;
         await getDb().query(query, [id]);
     }
 
-    async update(id: number, title: string, content: string): Promise<SystemAnnouncement | null> {
+    async update(id: string, title: string, content: string): Promise<SystemAnnouncement | null> {
         const query = `
             UPDATE "SystemAnnouncement"
             SET title = $2, content = $3, created_at = NOW()

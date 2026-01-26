@@ -11,7 +11,7 @@ export function SystemAnnouncementsManager() {
     const [content, setContent] = useState('');
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
-    const [editingId, setEditingId] = useState<number | null>(null);
+    const [editingId, setEditingId] = useState<string | null>(null);
     const [previewMode, setPreviewMode] = useState(false);
 
     useEffect(() => {
@@ -64,7 +64,7 @@ export function SystemAnnouncementsManager() {
         setContent('');
     }
 
-    async function handleDelete(id: number) {
+    async function handleDelete(id: string) {
         if (!confirm('Are you sure you want to delete this announcement?')) return;
 
         const res = await fetch(`/api/announcements?id=${id}`, { method: 'DELETE' });
@@ -240,7 +240,7 @@ function AnnouncementListItem({
 }: {
     item: SystemAnnouncement;
     onEdit: (item: SystemAnnouncement) => void;
-    onDelete: (id: number) => void;
+    onDelete: (id: string) => void;
 }) {
     return (
         <li className="p-4 hover:bg-gray-50 dark:hover:bg-gray-750">
