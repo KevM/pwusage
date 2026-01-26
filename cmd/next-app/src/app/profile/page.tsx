@@ -98,22 +98,22 @@ export default async function ProfilePage() {
                     </div>
                 )}
 
-                <div className="border-t pt-4">
-                    <div>
-                        <h3 className="text-sm font-medium text-muted-foreground">User ID</h3>
-                        <p className="text-sm font-mono bg-slate-100 dark:bg-slate-800 p-1 rounded inline-block select-all">
-                            {user.id}
-                        </p>
-                    </div>
-
+                <div className="border-t pt-4 space-y-4">
                     <div>
                         <h3 className="text-sm font-medium text-muted-foreground">Member Since</h3>
                         <p className="text-sm">
-                            {user.created_at ? new Date(user.created_at).toLocaleDateString(undefined, {
+                            {user.created_at ? new Date(Number(user.created_at)).toLocaleDateString(undefined, {
                                 year: 'numeric',
                                 month: 'long',
                                 day: 'numeric'
                             }) : <span className="italic text-muted-foreground">Unknown</span>}
+                        </p>
+                    </div>
+
+                    <div>
+                        <h3 className="text-sm font-medium text-muted-foreground">User ID</h3>
+                        <p className="text-sm font-mono bg-slate-100 dark:bg-slate-800 p-1 rounded inline-block select-all">
+                            {user.id}
                         </p>
                     </div>
                 </div>
