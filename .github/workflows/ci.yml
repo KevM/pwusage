@@ -1,5 +1,5 @@
 name: CI
-run-name: ${{ github.event_name == 'push' && '🚀 Production Deploy' || format('👀 Preview PR #{0}', github.event.pull_request.number) }}
+run-name: ${{ github.event_name == 'push' && 'Production Deploy' || 'Preview Deploy' }}
 
 on:
   push:
