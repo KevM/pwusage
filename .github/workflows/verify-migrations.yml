@@ -15,6 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install PostgreSQL 17 Client
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> $GITHUB_PATH
+
       - name: Cache Supabase Docker Image
         id: cache-docker
         uses: actions/cache@v3
@@ -32,6 +40,19 @@ jobs:
         with:
           version: latest
 
+      - name: Debug Prod DB Info (Check Schemas)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Clean DB URL
+          CLEAN_DB_URL=$(node -e 'try { const u = new URL(process.env.DATABASE_URL); u.searchParams.delete("pgbouncer"); console.log(u.toString()); } catch (e) { console.error(e); process.exit(1); }')
+          
+          echo "Checking schemas on Prod..."
+          psql "$CLEAN_DB_URL" -c "SELECT schema_name FROM information_schema.schemata;" || echo "Failed to list schemas"
+          
+          echo "Checking for schema_migrations table..."
+          psql "$CLEAN_DB_URL" -c "SELECT table_schema, table_name FROM information_schema.tables WHERE table_name = 'schema_migrations';" || echo "Failed to find schema_migrations"
+
       - name: Dump Production DB
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -41,8 +62,18 @@ jobs:
           # Dump Data
           supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy
           
-          # Dump Migration History (using Supabase CLI for reliability)
-          supabase db dump --db-url "$DATABASE_URL" --data-only --schema supabase_migrations > migration_history.sql
+          # Clean DB URL for pg_dump (strip pgbouncer param) using Node for safety
+          CLEAN_DB_URL=$(node -e 'try { const u = new URL(process.env.DATABASE_URL); u.searchParams.delete("pgbouncer"); console.log(u.toString()); } catch (e) { console.error(e); process.exit(1); }')
+          
+          # Attempt to dump migration history
+          echo "Attempting to dump supabase_migrations.schema_migrations..."
+          if pg_dump "$CLEAN_DB_URL" --data-only --table supabase_migrations.schema_migrations > migration_history.sql; then
+            echo "Successfully dumped migration history."
+          else
+            echo "Failed to dump migration history. It might not exist."
+            echo "PROD_MIGRATIONS_MISSING=true" >> $GITHUB_ENV
+            touch migration_history.sql
+          fi
 
       - name: Save Docker Image to Cache
         if: steps.cache-docker.outputs.cache-hit != 'true'
