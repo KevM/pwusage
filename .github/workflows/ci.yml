@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -44,6 +45,7 @@ jobs:
 
   backup:
     name: Backup Database
+    if: github.ref == 'refs/heads/main'
     needs: [test, build]
     runs-on: ubuntu-latest
     
@@ -88,6 +90,7 @@ jobs:
 
   migrate:
     name: Run Migrations
+    if: github.ref == 'refs/heads/main'
     needs: backup
     runs-on: ubuntu-latest
     defaults:
@@ -118,6 +121,7 @@ jobs:
 
   deploy:
     name: Deploy to Vercel
+    if: github.ref == 'refs/heads/main'
     needs: migrate
     runs-on: ubuntu-latest
     steps:
@@ -130,4 +134,20 @@ jobs:
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-args: '--prod'
           vercel-version: 'latest'
+
+  deploy-preview:
+    name: Deploy to Vercel (Preview)
+    needs: [test, build]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-version: 'latest'
+          vercel-args: '--env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }} --build-env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }}'
 
