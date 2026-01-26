@@ -135,9 +135,86 @@ jobs:
           vercel-args: '--prod'
           vercel-version: 'latest'
 
+  verify-db:
+    name: Verify Migrations (Prod -> Dev)
+    needs: [test, build]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cmd/next-app
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Check if migrations have changed
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            migrations:
+              - 'cmd/next-app/db-migrations/**'
+
+
+
+      - name: Install Supabase CLI
+        if: steps.filter.outputs.migrations == 'true'
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Dump Production DB
+        if: steps.filter.outputs.migrations == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Dump Schema
+          supabase db dump --db-url "$DATABASE_URL" -f schema.sql
+          # Dump Data
+          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy
+          
+          # Dump Migration History (using Supabase CLI for reliability)
+          supabase db dump --db-url "$DATABASE_URL" --data-only --schema supabase_migrations > migration_history.sql
+
+      - name: Restore to Dev DB
+        if: steps.filter.outputs.migrations == 'true'
+        env:
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+        run: |
+          # Reset Dev DB public schema
+          psql "$DEV_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO postgres; GRANT ALL ON SCHEMA public TO public;"
+          
+          # Restore Schema
+          psql "$DEV_DATABASE_URL" -f schema.sql
+          
+          # Restore Data
+          psql "$DEV_DATABASE_URL" -f data.sql
+          
+          # Restore Migration History
+          # (We truncate first to remove any stale Dev history, then apply Prod's history)
+          psql "$DEV_DATABASE_URL" -c "TRUNCATE supabase_migrations.schema_migrations"
+          psql "$DEV_DATABASE_URL" -f migration_history.sql
+
+      - name: Prepare Local Migrations
+        if: steps.filter.outputs.migrations == 'true'
+        run: |
+          if [ -d "db-migrations" ]; then
+            echo "Found db-migrations folder. Moving to supabase/migrations..."
+            mkdir -p supabase/migrations
+            cp db-migrations/*.sql supabase/migrations/ 2>/dev/null || :
+          else
+            echo "No db-migrations folder found. Skipping migration copy."
+          fi
+
+      - name: Run Migrations on Dev
+        if: steps.filter.outputs.migrations == 'true'
+        env:
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+        run: |
+          supabase migration up --db-url "$DEV_DATABASE_URL"
+
   deploy-preview:
     name: Deploy to Vercel (Preview)
-    needs: [test, build]
+    needs: [test, build, verify-db]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
