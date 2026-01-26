@@ -103,7 +103,7 @@ export async function DELETE(request: Request) {
             return NextResponse.json({ error: 'ID is required' }, { status: 400 });
         }
 
-        await repo.delete(Number(id));
+        await repo.delete(id);
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error('Failed to delete announcement:', error);

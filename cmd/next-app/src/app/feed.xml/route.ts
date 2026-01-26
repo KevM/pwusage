@@ -12,7 +12,10 @@ export async function GET() {
   const newsUrl = `${baseUrl}/news`;
 
   const items = await Promise.all(announcements.map(async (a) => {
-    const htmlContent = await marked(a.content);
+    let htmlContent = await marked(a.content);
+    // Replace relative links (href="/...") with absolute links
+    htmlContent = htmlContent.replace(/href="\//g, `href="${baseUrl}/`);
+
     return `
     <item>
       <title><![CDATA[${a.title}]]></title>
@@ -24,12 +27,13 @@ export async function GET() {
   }));
 
   const rss = `<?xml version="1.0" encoding="UTF-8" ?>
-<rss version="2.0">
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>Powerwall Usage System Announcements</title>
     <link>${newsUrl}</link>
     <description>Latest updates and announcements from Powerwall Usage.</description>
     <language>en-us</language>
+    <atom:link href="${baseUrl}/feed.xml" rel="self" type="application/rss+xml" />
     ${items.join('')}
   </channel>
 </rss>`;
