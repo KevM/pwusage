@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import { GlobalHeader } from "@/components/GlobalHeader";
+import { Footer } from "@/components/Footer";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,7 +17,36 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Powerwall Usage",
-  description: "Tesla Powerwall Usage Monitor",
+  description: "Powerwall insights for smarter energy savings.",
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL
+      ? process.env.NEXT_PUBLIC_APP_URL
+      : (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
+  ),
+  openGraph: {
+    title: "Powerwall Usage",
+    description: "Powerwall insights for smarter energy savings.",
+    siteName: "Powerwall Usage",
+    images: [
+      {
+        url: "/opengraph-image",
+        width: 1200,
+        height: 630,
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Powerwall Usage",
+    description: "Powerwall insights for smarter energy savings.",
+  },
+  alternates: {
+    types: {
+      'application/rss+xml': '/feed.xml',
+    },
+  },
 };
 
 export default async function RootLayout({
@@ -44,12 +74,13 @@ export default async function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body
         suppressHydrationWarning
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased flex flex-col min-h-screen`}
       >
         <GlobalHeader />
-        <main className="min-h-screen">
+        <main className="flex-grow min-h-screen">
           {children}
         </main>
+        <Footer />
       </body>
     </html>
   );

@@ -1,4 +1,4 @@
-import { SettingsRepo } from './settings-repo';
+
 export interface FleetProduct {
     energy_site_id?: number;
     resource_type: string;
@@ -161,10 +161,6 @@ export class TeslaClient {
 
 
         if (!response.ok) {
-            if (response.status === 400) {
-                console.warn('Tesla API 400 Bad Request - Invalidating Settings Cache');
-                SettingsRepo.invalidate();
-            }
             const body = await response.text();
             throw new Error(`Tesla API Error: ${response.status} ${body}`);
         }
@@ -227,6 +223,18 @@ export class TeslaClient {
         const { refreshAccessToken } = await import('./tesla-auth');
         return refreshAccessToken(refreshToken);
     }
+
+    async getUserInfo(): Promise<TeslaUserInfo> {
+        const result = await this.fetch<{ response: TeslaUserInfo }>("/api/1/users/me");
+        return result.response;
+    }
+}
+
+export interface TeslaUserInfo {
+    email: string;
+    full_name: string;
+    profile_image_url: string;
+    vault_uuid?: string;
 }
 
 export interface EnergySiteLiveStatus {

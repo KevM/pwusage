@@ -21,20 +21,26 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
 
         async function fetchStats() {
             try {
-                console.log('[HeaderLiveStats] Fetching stats for site:', siteId);
                 const response = await fetch(`/api/site-live-data?siteId=${siteId}`);
-                if (response.ok && isMounted) {
-                    const data = await response.json();
-                    console.log('[HeaderLiveStats] Received data:', data);
-                    setStats(data);
-                    setLoading(false);
-                } else {
+
+                if (!isMounted) return;
+
+                if (!response.ok) {
                     console.error('[HeaderLiveStats] Fetch failed:', response.status, response.statusText);
                     setLoading(false);
+                    return;
                 }
+
+                const data = await response.json();
+                if (!isMounted) return;
+
+                setStats(data);
+                setLoading(false);
             } catch (error) {
-                console.error('Failed to refresh header stats:', error);
-                if (isMounted) setLoading(false);
+                if (isMounted) {
+                    console.error('Failed to refresh header stats:', error);
+                    setLoading(false);
+                }
             }
         }
 
@@ -72,7 +78,7 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
     const fmtKw = (w: number) => (Math.abs(w) / 1000).toFixed(1);
 
     return (
-        <div className="flex items-center gap-6 text-sm">
+        <div className="flex items-center justify-between w-full md:w-auto md:justify-start md:gap-6 text-sm">
             {/* Solar */}
             <div className="flex flex-col items-center" title="Solar Production">
                 <span className="text-xs text-gray-500 uppercase font-medium">Solar</span>

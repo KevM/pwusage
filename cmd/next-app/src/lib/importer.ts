@@ -1,7 +1,7 @@
 import { pool, SiteWithTariffs, TariffSeason, TariffSchedule } from './db';
 import { Schedule } from './schedule';
 import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo } from './tesla-client';
-import { EnergyRepo, UsageData } from './energy-repo';
+import { EnergyRepo } from './energy-repo';
 
 import { PoolClient } from 'pg';
 
@@ -371,13 +371,7 @@ export class Importer {
                     const usageDate = new Date(start);
                     usageDate.setHours(0, 0, 0, 0);
 
-                    if (defaultTariff) {
-                        await client.query(`
-                            INSERT INTO "EnergyUsage"(tariff_id, start, load_usage, solar_produced, grid_usage, battery_usage) 
-                            VALUES ($1, $2, 0, 0, 0, 0)
-                            ON CONFLICT(tariff_id, start) DO NOTHING
-                        `, [defaultTariff, usageDate]);
-                    }
+
                     await client.query('COMMIT');
                 } catch (e) {
                     await client.query('ROLLBACK');
@@ -401,9 +395,7 @@ export class Importer {
                 const msg2 = `[Import] Processed EnergyData Rows: ${energyDatas.length}`;
                 console.log(msg2);
 
-                const usages = this.aggregateUsage(site, energyDatas);
                 await this.insertEnergyData(client, site, energyDatas);
-                await this.insertEnergyUsage(client, usages);
 
                 await client.query('COMMIT');
             } catch (e) {
@@ -618,80 +610,6 @@ export class Importer {
         }
     }
 
-    private aggregateUsage(site: SiteWithTariffs, data: EnergyDataRow[]): UsageData[] {
-        if (data.length === 0) return [];
 
-        const first = new Date(data[0].timestamp);
-        const usageDate = new Date(first.getFullYear(), first.getMonth(), first.getDate());
 
-        const tariffMap = new Map<number, UsageData>();
-
-        for (const t of site.tariffs) {
-            tariffMap.set(t.id, {
-                start: usageDate,
-                homeUsage: 0,
-                gridUsage: 0,
-                solarProduction: 0,
-                batteryChange: 0,
-                tariff: t
-            });
-        }
-
-        for (const d of data) {
-            let ud = tariffMap.get(d.tariff_id);
-            if (!ud) {
-                const t = site.tariffs.find(t => t.id === d.tariff_id);
-                if (!t) continue;
-                ud = {
-                    start: usageDate,
-                    homeUsage: 0,
-                    gridUsage: 0,
-                    solarProduction: 0,
-                    batteryChange: 0,
-                    tariff: t
-                };
-                tariffMap.set(d.tariff_id, ud);
-            }
-
-            ud.homeUsage += d.load_power;
-            ud.gridUsage += d.grid_power;
-            ud.solarProduction += d.solar_power;
-            ud.batteryChange += d.battery_power;
-        }
-
-        return Array.from(tariffMap.values());
-    }
-
-    private async insertEnergyUsage(client: PoolClient, usages: UsageData[]) {
-        if (usages.length === 0) return;
-
-        const values: (string | number | Date)[] = [];
-        const placeholders: string[] = [];
-        let pIdx = 1;
-
-        for (const row of usages) {
-            placeholders.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, $${pIdx + 4}, $${pIdx + 5})`);
-            values.push(
-                row.tariff.id,
-                row.start,
-                row.homeUsage,
-                row.solarProduction,
-                row.gridUsage,
-                row.batteryChange
-            );
-            pIdx += 6;
-        }
-
-        const query = `
-            INSERT INTO "EnergyUsage"(tariff_id, start, load_usage, solar_produced, grid_usage, battery_usage) 
-            VALUES ${placeholders.join(', ')}
-            ON CONFLICT(tariff_id, start) DO UPDATE SET 
-                load_usage = EXCLUDED.load_usage, 
-                solar_produced = EXCLUDED.solar_produced, 
-                grid_usage = EXCLUDED.grid_usage, 
-                battery_usage = EXCLUDED.battery_usage
-        `;
-
-        await client.query(query, values);
-    }
 }
