@@ -1,7 +1,9 @@
+import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { ImageResponse } from 'next/og'
 
 // Route segment config
-export const runtime = 'edge'
+export const runtime = 'nodejs'
 
 // Image metadata
 export const alt = 'Powerwall Usage'
@@ -17,9 +19,9 @@ export default async function Image() {
     // Font loading (optional, using system sans-serif for now for speed/simplicity)
 
     // Load the icon
-    const iconData = await fetch(new URL('./icon.png', import.meta.url)).then((res) =>
-        res.arrayBuffer()
-    )
+    const iconPath = join(process.cwd(), 'src/app/icon.png')
+    const iconBuffer = readFileSync(iconPath)
+    const iconData = iconBuffer.buffer.slice(iconBuffer.byteOffset, iconBuffer.byteOffset + iconBuffer.byteLength)
 
     return new ImageResponse(
         (
