@@ -38,8 +38,9 @@ export default async function Image() {
             >
                 {/* Icon */}
                 <img
-                    // @ts-ignore
+                    // @ts-expect-error - ImageResponse supports buffer as src
                     src={iconData}
+                    alt="Powerwall Usage Icon"
                     width="200"
                     height="200"
                     style={{
