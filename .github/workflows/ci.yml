@@ -1,4 +1,5 @@
 name: CI
+run-name: ${{ github.event_name == 'push' && '🚀 Production Deploy' || format('👀 Preview PR #{0}', github.event.pull_request.number) }}
 
 on:
   push:
@@ -177,7 +178,13 @@ jobs:
           supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy
           
           # Dump Migration History (using Supabase CLI for reliability)
-          supabase db dump --db-url "$DATABASE_URL" --data-only --schema supabase_migrations > migration_history.sql
+          # We use "|| true" to prevent failure if the schema doesn't exist yet (soft fail)
+          supabase db dump --db-url "$DATABASE_URL" --data-only --schema supabase_migrations > migration_history.sql || echo "Warning: Failed to dump migration history. Proceeding with empty history."
+          
+          # Ensure file exists even if dump failed
+          if [ ! -s migration_history.sql ]; then
+            touch migration_history.sql
+          fi
 
       - name: Restore to Dev DB
         if: steps.filter.outputs.migrations == 'true'
