@@ -42,6 +42,11 @@ export const metadata: Metadata = {
     title: "Powerwall Usage",
     description: "Powerwall insights for smarter energy savings.",
   },
+  alternates: {
+    types: {
+      'application/rss+xml': '/feed.xml',
+    },
+  },
 };
 
 export default async function RootLayout({
