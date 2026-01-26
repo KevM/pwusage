@@ -12,21 +12,26 @@ const REFRESH_THRESHOLD_SECONDS = REFRESH_HOURS * 60 * 60;
 
 export interface SiteAuthClaims {
     sites: string[];
+    roles?: string[]; // Added roles
+    sub?: string;     // User ID (Standard JWT Subject claim)
     iat?: number;
     exp?: number;
 }
 
-export function signSiteToken(siteIds: string[]): string {
-    return jwt.sign({ sites: siteIds }, AUTH_SECRET, {
+export function signSiteToken(siteIds: string[], roles: string[] = [], userId?: string): string {
+    const payload: Record<string, unknown> = { sites: siteIds, roles };
+    if (userId) payload.sub = userId;
+
+    return jwt.sign(payload, AUTH_SECRET, {
         expiresIn: COOKIE_MAX_AGE_SECONDS
     });
 }
 
-export function verifySiteToken(token: string): string[] | null {
+export function verifySiteToken(token: string): { sites: string[], roles: string[], sub?: string } | null {
     try {
         const decoded = jwt.verify(token, AUTH_SECRET) as SiteAuthClaims;
         if (decoded && Array.isArray(decoded.sites)) {
-            return decoded.sites;
+            return { sites: decoded.sites, roles: decoded.roles || [], sub: decoded.sub };
         }
         return null;
     } catch {
@@ -48,7 +53,7 @@ export function checkRefreshNeeded(token: string): string | null {
 
         if (timeRemaining < REFRESH_THRESHOLD_SECONDS) {
             // Token is valid but expiring soon -> Refresh
-            return signSiteToken(decoded.sites);
+            return signSiteToken(decoded.sites, decoded.roles || [], decoded.sub);
         }
 
         return null;

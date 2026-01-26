@@ -1,25 +1,22 @@
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { TeslaClient } from '@/lib/tesla-client';
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { getTeslaCredentials, getAuthorizedSiteIds } from '@/lib/auth-checks';
 
 export async function POST(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const granularity = searchParams.get('granularity') || 'day';
 
-        const cookieStore = await cookies();
-        const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-        if (!siteAuthToken) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        const authorizedSites = await getAuthorizedSiteIds();
+        if (authorizedSites.length === 0) {
+            return NextResponse.json({ error: 'No sites authorized' }, { status: 403 });
         }
 
-        const authorizedSites = verifySiteToken(siteAuthToken);
-        if (!authorizedSites || authorizedSites.length === 0) {
-            return NextResponse.json({ error: 'No sites authorized' }, { status: 403 });
+        const credentials = await getTeslaCredentials();
+        if (!credentials) {
+            return NextResponse.json({ error: 'Unauthorized or no credentials found' }, { status: 401 });
         }
 
         const repo = new EnergyRepo();
@@ -28,22 +25,18 @@ export async function POST(request: Request) {
         const now = new Date();
         const autoBackfillLimit = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
+        // Instantiate client once using the credentials
+        // We use the first site ID for the refresh handler context (locks the User)
+        const client = new TeslaClient({
+            accessToken: credentials.access_token,
+            refreshToken: credentials.refresh_token || undefined,
+            tokenRefreshHandler: repo.getLockedRefreshHandler(authorizedSites[0]),
+            onTokenUpdate: () => console.log(`Tokens refreshed during import`)
+        });
+
+        const importer = new Importer(client);
+
         for (const siteId of authorizedSites) {
-            const site = await repo.getSite(siteId);
-            if (!site || !site.access_token) {
-                console.warn(`Skipping import for site ${siteId} - No tokens found`);
-                continue;
-            }
-
-            const client = new TeslaClient({
-                accessToken: site.access_token,
-                refreshToken: site.refresh_token || undefined,
-                tokenRefreshHandler: repo.getLockedRefreshHandler(siteId),
-                onTokenUpdate: () => console.log(`Tokens refreshed for site ${siteId} during import`)
-            });
-
-            const importer = new Importer(client);
-
             console.log(`Auto-importing site ${siteId} (last 14 days)`);
             await importer.ensureDataForRange(siteId, autoBackfillLimit, now);
         }

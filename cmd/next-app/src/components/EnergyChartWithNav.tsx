@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface HourlyData {
@@ -113,53 +114,64 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
             <div className="flex flex-wrap justify-between items-center mb-4 gap-4">
                 <h3 className="text-xl font-semibold text-left">Hourly Energy (kWh)</h3>
 
-                <div className="flex bg-white dark:bg-slate-900 rounded-lg p-1 shadow-sm border border-slate-200 dark:border-slate-800 items-center justify-between gap-1 shrink-0">
-                    <button
-                        onClick={() => navigateDay(-1)}
-                        disabled={loading}
-                        className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
-                        title="Previous Day"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="m15 18-6-6 6-6" />
-                        </svg>
-                    </button>
-
-                    <div className="relative group flex-1 md:flex-none text-center min-w-[140px]">
-                        <div
-                            className="font-semibold text-sm hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center"
-                            title="Click to pick a date"
+                <div className="flex items-center gap-2">
+                    <div className="flex bg-white dark:bg-slate-900 rounded-lg p-1 shadow-sm border border-slate-200 dark:border-slate-800 items-center justify-between gap-1 shrink-0">
+                        <button
+                            onClick={() => navigateDay(-1)}
+                            disabled={loading}
+                            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
+                            title="Previous Day"
                         >
-                            {displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-                            {isToday && ' (Today)'}
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="m15 18-6-6 6-6" />
+                            </svg>
+                        </button>
+
+                        <div className="relative group flex-1 md:flex-none text-center min-w-[140px]">
+                            <div
+                                className="font-semibold text-sm hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center"
+                                title="Click to pick a date"
+                            >
+                                {displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                                {isToday && ' (Today)'}
+                            </div>
+                            <input
+                                ref={dateInputRef}
+                                type="date"
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                onChange={handleDateChange}
+                                onClick={() => {
+                                    try {
+                                        dateInputRef.current?.showPicker();
+                                    } catch {
+                                        // Fallback
+                                    }
+                                }}
+                                max={new Date().toISOString().split('T')[0]}
+                            />
                         </div>
-                        <input
-                            ref={dateInputRef}
-                            type="date"
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            onChange={handleDateChange}
-                            onClick={() => {
-                                try {
-                                    dateInputRef.current?.showPicker();
-                                } catch {
-                                    // Fallback for browsers that don't support showPicker (though most modern ones do)
-                                    // The input itself is clicked, so the native picker should trigger anyway.
-                                }
-                            }}
-                            max={new Date().toISOString().split('T')[0]} // Prevent future dates
-                        />
+
+                        <button
+                            onClick={() => navigateDay(1)}
+                            disabled={loading || isToday}
+                            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
+                            title="Next Day"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="m9 18 6-6-6-6" />
+                            </svg>
+                        </button>
                     </div>
 
-                    <button
-                        onClick={() => navigateDay(1)}
-                        disabled={loading || isToday}
-                        className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
-                        title="Next Day"
+                    <Link
+                        href={`/site/${siteId}/analysis?date=${chartData.date}`}
+                        className="p-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-colors shadow-sm flex items-center justify-center shrink-0"
+                        title="High-Fidelity Load Analysis"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="m9 18 6-6-6-6" />
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
                         </svg>
-                    </button>
+                    </Link>
                 </div>
             </div>
             <ResponsiveContainer width="100%" height={400}>

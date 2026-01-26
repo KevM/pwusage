@@ -17,10 +17,10 @@ export class SiteService {
 
         // 1. Try to use cached JWT source of truth
         if (this.deps.siteAuthToken) {
-            const sites = verifySiteToken(this.deps.siteAuthToken);
-            if (sites) {
+            const decoded = verifySiteToken(this.deps.siteAuthToken);
+            if (decoded) {
                 // console.log('[SiteService] Using JWT for authorization');
-                authorizedSiteIds = new Set(sites);
+                authorizedSiteIds = new Set(decoded.sites);
             } else {
                 console.warn('[SiteService] Invalid or expired siteAuthToken');
                 // If we have a client (e.g. legacy/preview flow), we could fallback, but for strict JWT mode we might fail.
@@ -43,6 +43,8 @@ export class SiteService {
         // Fetch all known sites from DB
         const allSites = await this.deps.energyRepo.getSites();
 
+
+
         // Filter sites to only those the user is authorized for
         return allSites.filter(s => authorizedSiteIds.has(s.id));
     }
@@ -50,9 +52,14 @@ export class SiteService {
     async validateSiteAccess(siteId: string): Promise<boolean> {
         // 1. Fast, offline check
         if (this.deps.siteAuthToken) {
-            const sites = verifySiteToken(this.deps.siteAuthToken);
-            if (sites && sites.includes(siteId)) {
-                return true;
+            const decoded = verifySiteToken(this.deps.siteAuthToken);
+            if (decoded) {
+                if (decoded.roles.includes('admin')) {
+                    return true;
+                }
+                if (decoded.sites.includes(siteId)) {
+                    return true;
+                }
             }
         }
 

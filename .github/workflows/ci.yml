@@ -1,10 +1,16 @@
 name: CI
+run-name: ${{ github.event_name == 'push' && 'Production Deploy' || 'Preview Deploy' }}
 
 on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
   test:
@@ -44,6 +50,7 @@ jobs:
 
   backup:
     name: Backup Database
+    if: github.ref == 'refs/heads/main'
     needs: [test, build]
     runs-on: ubuntu-latest
     
@@ -88,6 +95,7 @@ jobs:
 
   migrate:
     name: Run Migrations
+    if: github.ref == 'refs/heads/main'
     needs: backup
     runs-on: ubuntu-latest
     defaults:
@@ -118,6 +126,7 @@ jobs:
 
   deploy:
     name: Deploy to Vercel
+    if: github.ref == 'refs/heads/main'
     needs: migrate
     runs-on: ubuntu-latest
     steps:
@@ -130,3 +139,135 @@ jobs:
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-args: '--prod'
           vercel-version: 'latest'
+
+  verify-db:
+    name: Verify Migrations (Prod -> Dev)
+    needs: [test, build]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cmd/next-app
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Dump Production DB
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Dump Schema
+          supabase db dump --db-url "$DATABASE_URL" -f schema.sql
+          # Dump Data
+          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy
+          
+          # Dump Migration History (using Supabase CLI for reliability)
+          # We use "|| true" to prevent failure if the schema doesn't exist yet (soft fail)
+          supabase db dump --db-url "$DATABASE_URL" --data-only --schema supabase_migrations > migration_history.sql || echo "Warning: Failed to dump migration history. Proceeding with empty history."
+          
+          # Ensure file exists even if dump failed
+          if [ ! -s migration_history.sql ]; then
+            touch migration_history.sql
+          fi
+
+      - name: Restore to Dev DB
+        env:
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+        run: |
+          # Reset Dev DB public schema
+          psql "$DEV_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO postgres; GRANT ALL ON SCHEMA public TO public;"
+          
+          # Restore Schema
+          psql "$DEV_DATABASE_URL" -f schema.sql
+          
+          # Restore Data
+          psql "$DEV_DATABASE_URL" -f data.sql
+          
+          # Restore Migration History
+          # (We truncate first to remove any stale Dev history, then apply Prod's history)
+          psql "$DEV_DATABASE_URL" -c "TRUNCATE supabase_migrations.schema_migrations"
+          psql "$DEV_DATABASE_URL" -f migration_history.sql
+
+      - name: Prepare Local Migrations
+        run: |
+          if [ -d "db-migrations" ]; then
+            echo "Found db-migrations folder. Moving to supabase/migrations..."
+            mkdir -p supabase/migrations
+            cp db-migrations/*.sql supabase/migrations/ 2>/dev/null || :
+          else
+            echo "No db-migrations folder found. Skipping migration copy."
+          fi
+
+      - name: Run Migrations on Dev
+        env:
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+        run: |
+          supabase migration up --db-url "$DEV_DATABASE_URL"
+
+  deploy-preview:
+    name: Deploy to Vercel (Preview)
+    needs: [test, build, verify-db]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-version: 'latest'
+          vercel-args: '--env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }} --build-env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }} --env NEXT_PUBLIC_APP_URL=https://pwusagebeta.fm.rodeo --build-env NEXT_PUBLIC_APP_URL=https://pwusagebeta.fm.rodeo'
+          alias-domains: 'pwusagebeta.fm.rodeo'
+
+  notify:
+    name: Discord Notification
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch PR Description
+        id: pr_info
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_BODY=$(gh api repos/${{ github.repository }}//commits/${{ github.sha }}/pulls --jq '.[0].body')
+          echo "PR_BODY<<EOF" >> $GITHUB_ENV
+          echo "$PR_BODY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Send Discord Webhook
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          PR_BODY: ${{ env.PR_BODY }}
+        run: |
+          # Use jq to safely construct the JSON with correct escaping
+          jq -n \
+            --arg repo "${{ github.repository }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg actor "${{ github.actor }}" \
+            --arg commit "${{ github.event.head_commit.message }}" \
+            --arg body "${PR_BODY:-No description provided}" \
+            '{
+              embeds: [{
+                title: "Success: Build Complete",
+                color: 3066993,
+                fields: [
+                  { name: "Branch", value: $branch, inline: true },
+                  { name: "Author", value: $actor, inline: true },
+                  { name: "Commit", value: $commit, inline: false },
+                  { name: "Description", value: $body, inline: false }
+                ],
+                footer: { text: "Powered by GitHub Actions" }
+              }]
+            }' > discord_payload.json
+
+          curl -H "Content-Type: application/json" \
+               -d @discord_payload.json \
+               "$DISCORD_WEBHOOK"
+

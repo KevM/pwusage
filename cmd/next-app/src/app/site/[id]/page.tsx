@@ -1,43 +1,40 @@
 import { EnergyRepo } from '@/lib/energy-repo';
 import Link from 'next/link';
-import { EnergyChartWithNav } from '@/components/EnergyChartWithNav';
+
 
 import { BillSummary } from '@/components/BillSummary';
-import { Breadcrumbs } from '@/components/Breadcrumbs';
+
 import { DataSyncer } from '@/components/DataSyncer';
 
 import { TeslaClient } from '@/lib/tesla-client';
 import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
-import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { SiteSetup } from '@/components/SiteSetup';
 import { BillDateNav } from '@/components/BillDateNav';
 
 
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { verifySiteAccess } from '@/lib/auth-checks';
+import { TrmnlService } from '@/lib/trmnl-service';
+import { SiteTabs } from '@/components/site/SiteTabs';
+import { HistoryView } from '@/components/site/HistoryView';
+import { EstimatedBillView } from '@/components/site/EstimatedBillView';
+import { SettingsView } from '@/components/site/SettingsView';
+import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SitePage({ params, searchParams }: {
     params: Promise<{ id: string }>;
-    searchParams: Promise<{ date?: string }>;
+    searchParams: Promise<{ date?: string; view?: string }>;
 }) {
     const { id } = await params;
     const { date: queryDate } = await searchParams;
     const repo = new EnergyRepo();
     let site = await repo.getSite(id);
 
-    // Verify ownership via JWT
-    const cookieStore = await cookies();
-    const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-    if (!siteAuthToken) {
-        redirect('/login');
-    }
-
-    const authorizedSites = verifySiteToken(siteAuthToken);
-    if (!authorizedSites || !authorizedSites.includes(id)) {
+    const hasAccess = await verifySiteAccess(id);
+    if (!hasAccess) {
         return (
             <div className="flex min-h-screen flex-col items-center justify-center p-8">
                 <h1 className="text-2xl font-bold text-red-600 mb-4">Unauthorized</h1>
@@ -144,7 +141,7 @@ export default async function SitePage({ params, searchParams }: {
         dateStr = `${year}-${month}-${day}`;
     }
 
-    const hourlyData = await repo.getHourlyEnergyData(id, dateStr);
+    // const hourlyData = await repo.getHourlyEnergyData(id, dateStr); // Unused
 
     // Calculate period based on billing start day
     const billingDay = finalSite.billing_start_day || 1;
@@ -232,52 +229,49 @@ export default async function SitePage({ params, searchParams }: {
     // Check if next month would be in the future
     const isCurrentPeriod = siteNow >= start && siteNow < end;
 
-    // Site switcher logic removed as it was unused
-
-
-    const breadcrumbRootLabel = (
-        <Link href="/products" className="flex items-center gap-1 hover:bg-gray-100 dark:hover:bg-slate-800 px-2 py-1 rounded transition-colors group">
-            <span className="font-semibold">{finalSite.name}</span>
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-gray-500 group-hover:text-gray-700 dark:text-gray-400">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-            </svg>
-        </Link>
-    );
+    // Additional Fetch for Settings View (Trmnl)
+    const trmnlService = new TrmnlService();
+    const installation = await trmnlService.getInstallationBySiteId(finalSite.id);
 
     return (
         <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
-            <div className="w-full max-w-6xl">
-                <Breadcrumbs items={[{ label: breadcrumbRootLabel }]} />
-
+            <div className="w-full">
                 <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />
 
-                {/* Live Stats */}
-
-
-                {/* Hourly Chart with Navigation */}
-                <div className="mb-8">
-                    <EnergyChartWithNav
-                        initialData={{ date: dateStr, data: hourlyData }}
-                        siteId={id}
-                    />
-                </div>
-
-                <div className="flex flex-wrap justify-between items-center mb-4 gap-4">
-                    <h2 className="text-2xl font-bold">Estimated Monthly Bill</h2>
-
-                    <BillDateNav
-                        siteId={id}
-                        billingDay={billingDay}
-                        prevDateStr={fmtDate(prevDate)}
-                        nextDateStr={fmtDate(nextDate)}
-                        isCurrentPeriod={isCurrentPeriod}
-                        dateRangeLabel={dateRangeLabel}
-                        currentMonthVal={currentMonthVal}
-                        fullBillDateStr={fullBillDateStr}
-                    />
-                </div>
-
-                <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} />
+                <SiteTabs
+                    historySlot={
+                        <HistoryView
+                            chartNavSlot={null}
+                            analysisSlot={
+                                <LoadAnalysisClientPage siteId={id} siteName={finalSite.name} defaultDate={dateStr} />
+                            }
+                        />
+                    }
+                    billSlot={
+                        <EstimatedBillView
+                            billNavSlot={
+                                <BillDateNav
+                                    siteId={id}
+                                    billingDay={billingDay}
+                                    prevDateStr={fmtDate(prevDate)}
+                                    nextDateStr={fmtDate(nextDate)}
+                                    isCurrentPeriod={isCurrentPeriod}
+                                    dateRangeLabel={dateRangeLabel}
+                                    currentMonthVal={currentMonthVal}
+                                    fullBillDateStr={fullBillDateStr}
+                                />
+                            }
+                            billSummarySlot={
+                                <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} />
+                            }
+                        />
+                    }
+                    settingsSlot={
+                        <SettingsView site={finalSite} installation={installation} />
+                    }
+                >
+                    {/* Fallback or shared content could go here if needed */}
+                </SiteTabs>
             </div>
         </div>
     );

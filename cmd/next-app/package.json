@@ -2,6 +2,9 @@
   "name": "next-app",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "next dev -p 5173",
     "build": "next build",
@@ -11,26 +14,32 @@
     "test:fleet": "tsx scripts/fleet-integration.ts"
   },
   "dependencies": {
+    "@tailwindcss/typography": "^0.5.19",
     "@types/cookie": "^0.6.0",
     "@types/jsonwebtoken": "^9.0.10",
+    "@types/marked": "^5.0.2",
     "@types/pg": "^8.15.6",
+    "@vercel/blob": "^2.0.0",
     "cookie": "^1.0.2",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.2.0",
+    "marked": "^17.0.1",
     "next": "^16.0.7",
     "pg": "^8.16.3",
     "qrcode": "^1.5.4",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
+    "react-markdown": "^10.1.0",
     "recharts": "^3.4.1",
     "saslprep": "^1.0.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^17.2.3",
     "eslint": "^9",
     "eslint-config-next": "^16.0.7",
     "tailwindcss": "^4",

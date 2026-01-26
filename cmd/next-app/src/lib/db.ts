@@ -32,6 +32,10 @@ pool.on('error', (err) => {
 
 if (process.env.NODE_ENV !== 'production') globalForDb.pool = pool;
 
+export function getDb() {
+  return pool;
+}
+
 
 export interface User {
   id: string; // Tesla User ID or Email
@@ -41,6 +45,8 @@ export interface User {
   token_expires_at?: number;
   is_refreshing?: number;
   refresh_lock_expires?: number;
+  created_at?: number | string; // Added via migration
+  roles?: string[]; // Added: 'admin' | 'user'
 }
 
 export interface Site {
@@ -102,15 +108,7 @@ export interface EnergyData {
   is_synthetic?: number;
 }
 
-export interface EnergyUsage {
-  id: number;
-  tariff_id: number;
-  start: Date;
-  load_usage: number;
-  solar_produced: number;
-  grid_usage: number;
-  battery_usage: number;
-}
+
 
 export interface TrmnlInstallation {
   id: number;
@@ -125,4 +123,13 @@ export interface TrmnlInstallation {
 
 export interface SiteWithTariffs extends Site {
   tariffs: Tariff[];
+}
+
+export interface LoadTag {
+  id: number;
+  site_id: string; // references Site(id)
+  start_time: Date;
+  end_time: Date;
+  tag: string;
+  created_at: Date;
 }

@@ -1,5 +1,5 @@
-import { pool, Tariff, Site, TariffSeason, TariffSchedule } from './db';
-import { getDbReady } from './db-init';
+import { pool, Tariff, Site, TariffSeason, TariffSchedule, EnergyData } from './db';
+
 import { Schedule } from './schedule';
 
 // Use global cache to persist across reloads in dev
@@ -48,9 +48,19 @@ async function getUserTokens(userId: string): Promise<{ access_token: string, re
     return res.rows[0];
 }
 
+export async function getUserTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string } | null> {
+    const res = await pool.query(`
+        SELECT u.access_token, u.refresh_token, u.id as user_id 
+        FROM "User" u
+        JOIN "Site" s ON s.user_id = u.id
+        WHERE s.id = $1
+    `, [siteId]);
+    if (res.rows.length === 0) return null;
+    return res.rows[0];
+}
+
 export class EnergyRepo {
     async getSitesForUser(userId: string): Promise<Site[]> {
-        await getDbReady();
         const { rows } = await pool.query('SELECT * FROM "Site" WHERE user_id = $1', [userId]);
         return rows as Site[];
     }
@@ -97,6 +107,8 @@ export class EnergyRepo {
             // ... (Variable declarations were hoisted in valid code, need to ensure they are here or above)
             // Let's declare them locally for this loop scope
             const ts = new Date(row.timestamp);
+
+
 
             const year = ts.getFullYear();
             const month = ts.getMonth() + 1; // 1-12
@@ -165,7 +177,6 @@ export class EnergyRepo {
     }
 
     async getSite(siteId: string): Promise<SiteWithTariffs | undefined> {
-        await getDbReady();
         const now = Date.now();
         const cached = siteCache.get(siteId);
         if (cached && cached.expires > now) {
@@ -221,19 +232,16 @@ export class EnergyRepo {
     }
 
     async getSiteIds(): Promise<string[]> {
-        await getDbReady();
         const { rows } = await pool.query<SiteIdRow>('SELECT id FROM "Site"');
         return rows.map((r) => r.id);
     }
 
     async getSites(): Promise<Site[]> {
-        await getDbReady();
         const { rows } = await pool.query('SELECT * FROM "Site"');
         return rows as Site[];
     }
 
     async hasData(siteId: string): Promise<boolean> {
-        await getDbReady();
         const { rows } = await pool.query('SELECT 1 FROM "EnergyData" WHERE site_id = $1 LIMIT 1', [siteId]);
         return rows.length > 0;
     }
@@ -314,7 +322,6 @@ export class EnergyRepo {
     }
 
     async getLatestEnergyData(siteId: string): Promise<{ timestamp: Date } | null> {
-        await getDbReady();
         const { rows } = await pool.query(`
             SELECT timestamp
             FROM "EnergyData" 
@@ -411,6 +418,115 @@ export class EnergyRepo {
                 console.log(`[TokenLock] Lock busy for site ${siteId}. Waiting...`);
                 return this.waitForTokenRefresh(siteId);
             }
+        };
+    }
+
+    /**
+     * Fetches raw, unaggregated 5-minute energy data for high fidelity analysis.
+     */
+    async getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
+
+        const toSqlString = (d: Date) => {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const h = String(d.getHours()).padStart(2, '0');
+            const min = String(d.getMinutes()).padStart(2, '0');
+            const s = String(d.getSeconds()).padStart(2, '0');
+            return `${y}-${m}-${day} ${h}:${min}:${s}`;
+        };
+
+        const startStr = toSqlString(start);
+        const endStr = toSqlString(end);
+
+        const res = await pool.query(`
+            SELECT * FROM "EnergyData"
+            WHERE site_id = $1 
+            AND timestamp >= $2::timestamp 
+            AND timestamp < $3::timestamp
+            ORDER BY timestamp ASC
+        `, [siteId, startStr, endStr]);
+
+        return res.rows.map(row => ({
+            ...row,
+            timestamp: new Date(row.timestamp), // Ensure JS Date
+            site_id: row.site_id.toString(), // Ensure string
+            load_power: Number(row.load_power),
+            solar_power: Number(row.solar_power),
+            grid_power: Number(row.grid_power),
+            battery_power: Number(row.battery_power),
+        })) as EnergyData[];
+    }
+
+    // Tagging Methods
+    private toSqlString(d: Date) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const h = String(d.getHours()).padStart(2, '0');
+        const min = String(d.getMinutes()).padStart(2, '0');
+        const s = String(d.getSeconds()).padStart(2, '0');
+        return `${y}-${m}-${day} ${h}:${min}:${s}`;
+    }
+
+    async getLoadTags(siteId: string, start: Date, end: Date): Promise<import('./db').LoadTag[]> {
+        const res = await pool.query(`
+            SELECT * FROM "LoadTag"
+            WHERE site_id = $1
+            AND start_time >= $2::timestamp
+            AND end_time <= $3::timestamp
+        `, [siteId, this.toSqlString(start), this.toSqlString(end)]);
+
+        return res.rows.map(r => ({
+            ...r,
+            start_time: new Date(r.start_time),
+            end_time: new Date(r.end_time),
+            created_at: new Date(r.created_at)
+        }));
+    }
+
+    async addLoadTag(siteId: string, start: Date, end: Date, tag: string) {
+        const startStr = this.toSqlString(start);
+        const endStr = this.toSqlString(end);
+
+        // Prevent duplicates
+        const exists = await pool.query(`
+            SELECT 1 FROM "LoadTag" 
+            WHERE site_id = $1 AND start_time = $2::timestamp AND end_time = $3::timestamp AND tag = $4
+        `, [siteId, startStr, endStr, tag]);
+
+        if (exists.rowCount && exists.rowCount > 0) return;
+
+        await pool.query(`
+            INSERT INTO "LoadTag" (site_id, start_time, end_time, tag)
+            VALUES ($1, $2::timestamp, $3::timestamp, $4)
+        `, [siteId, startStr, endStr, tag]);
+    }
+
+    async removeLoadTag(siteId: string, start: Date, end: Date, tag: string) {
+        await pool.query(`
+            DELETE FROM "LoadTag"
+            WHERE site_id = $1 AND start_time = $2::timestamp AND end_time = $3::timestamp AND tag = $4
+         `, [siteId, this.toSqlString(start), this.toSqlString(end), tag]);
+    }
+    async cleanupOldData(cutoffDate: Date): Promise<{ energyDeleted: number; tagsDeleted: number }> {
+        const cutoffStr = this.toSqlString(cutoffDate);
+
+        // Delete from EnergyData
+        const energyRes = await pool.query(`
+            DELETE FROM "EnergyData"
+            WHERE timestamp < $1::timestamp
+        `, [cutoffStr]);
+
+        // Delete from LoadTag
+        const tagsRes = await pool.query(`
+            DELETE FROM "LoadTag"
+            WHERE end_time < $1::timestamp
+        `, [cutoffStr]);
+
+        return {
+            energyDeleted: energyRes.rowCount || 0,
+            tagsDeleted: tagsRes.rowCount || 0
         };
     }
 }
