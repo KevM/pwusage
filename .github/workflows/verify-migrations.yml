@@ -23,35 +23,10 @@ jobs:
           sudo apt-get install -y postgresql-client-17
           echo "/usr/lib/postgresql/17/bin" >> $GITHUB_PATH
 
-      - name: Cache Supabase Docker Image
-        id: cache-docker
-        uses: actions/cache@v3
-        with:
-          path: ~/supabase-docker-images.tar
-          key: supabase-docker-images-${{ runner.os }}
-
-      - name: Load Cached Docker Image
-        if: steps.cache-docker.outputs.cache-hit == 'true'
-        run: |
-          docker load -i ~/supabase-docker-images.tar || echo "Failed to load docker cache, proceeding..."
-
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
         with:
           version: latest
-
-      - name: Debug Prod DB Info (Check Schemas)
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          # Clean DB URL
-          CLEAN_DB_URL=$(node -e 'try { const u = new URL(process.env.DATABASE_URL); u.searchParams.delete("pgbouncer"); console.log(u.toString()); } catch (e) { console.error(e); process.exit(1); }')
-          
-          echo "Checking schemas on Prod..."
-          psql "$CLEAN_DB_URL" -c "SELECT schema_name FROM information_schema.schemata;" || echo "Failed to list schemas"
-          
-          echo "Checking for schema_migrations table..."
-          psql "$CLEAN_DB_URL" -c "SELECT table_schema, table_name FROM information_schema.tables WHERE table_name = 'schema_migrations';" || echo "Failed to find schema_migrations"
 
       - name: Dump Production DB
         env:
@@ -62,30 +37,9 @@ jobs:
           # Dump Data
           supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy
           
-          # Clean DB URL for pg_dump (strip pgbouncer param) using Node for safety
-          CLEAN_DB_URL=$(node -e 'try { const u = new URL(process.env.DATABASE_URL); u.searchParams.delete("pgbouncer"); console.log(u.toString()); } catch (e) { console.error(e); process.exit(1); }')
-          
-          # Attempt to dump migration history
-          echo "Attempting to dump supabase_migrations.schema_migrations..."
-          if pg_dump "$CLEAN_DB_URL" --data-only --table supabase_migrations.schema_migrations > migration_history.sql; then
-            echo "Successfully dumped migration history."
-          else
-            echo "Failed to dump migration history. It might not exist."
-            echo "PROD_MIGRATIONS_MISSING=true" >> $GITHUB_ENV
-            touch migration_history.sql
-          fi
+          # Dump Migration History (using Supabase CLI for reliability)
+          supabase db dump --db-url "$DATABASE_URL" --data-only --schema supabase_migrations > migration_history.sql
 
-      - name: Save Docker Image to Cache
-        if: steps.cache-docker.outputs.cache-hit != 'true'
-        run: |
-          # Capture the pulled image (assuming it's the only supabase/postgres one)
-          IMAGE_ID=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "supabase/postgres" | head -n 1)
-          if [ -n "$IMAGE_ID" ]; then
-            echo "Saving image $IMAGE_ID to cache..."
-            docker save "$IMAGE_ID" -o ~/supabase-docker-images.tar
-          else
-            echo "No supabase/postgres image found to cache."
-          fi
 
       - name: Restore to Dev DB
         env:
