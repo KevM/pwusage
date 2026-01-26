@@ -238,4 +238,5 @@ jobs:
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-version: 'latest'
           vercel-args: '--env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }} --build-env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }}'
+          alias-domains: 'pwusagebeta.fm.rodeo'
 

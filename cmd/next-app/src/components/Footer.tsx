@@ -25,6 +25,11 @@ export function Footer() {
 
                 <div className="border-t border-gray-800 mt-8 pt-8 text-center text-sm" style={{ color: '#6b7280' }}>
                     &copy; {new Date().getFullYear()} Powerwall Usage. All rights reserved.
+                    {process.env.VERCEL_GIT_COMMIT_SHA && (
+                        <span className="ml-4 font-mono text-xs opacity-50">
+                            v:{process.env.VERCEL_GIT_COMMIT_SHA.substring(0, 7)}
+                        </span>
+                    )}
                 </div>
             </div>
         </footer>
