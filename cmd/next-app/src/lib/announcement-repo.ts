@@ -7,16 +7,17 @@ export interface SystemAnnouncement {
     content: string;
     created_at: Date;
     author_id?: string;
+    discord_message_id?: string;
 }
 
 export class AnnouncementRepo {
-    async create(title: string, content: string, authorId?: string): Promise<SystemAnnouncement> {
+    async create(title: string, content: string, authorId?: string, discordMessageId?: string): Promise<SystemAnnouncement> {
         const query = `
-            INSERT INTO "SystemAnnouncement" (title, content, author_id)
-            VALUES ($1, $2, $3)
+            INSERT INTO "SystemAnnouncement" (title, content, author_id, discord_message_id)
+            VALUES ($1, $2, $3, $4)
             RETURNING *
         `;
-        const values = [title, content, authorId];
+        const values = [title, content, authorId, discordMessageId];
         const result = await getDb().query(query, values);
         return result.rows[0];
     }
@@ -36,14 +37,14 @@ export class AnnouncementRepo {
         await getDb().query(query, [id]);
     }
 
-    async update(id: string, title: string, content: string): Promise<SystemAnnouncement | null> {
+    async update(id: string, title: string, content: string, discordMessageId?: string): Promise<SystemAnnouncement | null> {
         const query = `
             UPDATE "SystemAnnouncement"
-            SET title = $2, content = $3, created_at = NOW()
+            SET title = $2, content = $3, discord_message_id = COALESCE($4, discord_message_id), created_at = NOW()
             WHERE id = $1
             RETURNING *
         `;
-        const result = await getDb().query(query, [id, title, content]);
+        const result = await getDb().query(query, [id, title, content, discordMessageId]);
         return result.rows[0] || null;
     }
 
@@ -54,6 +55,12 @@ export class AnnouncementRepo {
             LIMIT 1
         `;
         const result = await getDb().query(query);
+        return result.rows[0] || null;
+    }
+
+    async getById(id: string): Promise<SystemAnnouncement | null> {
+        const query = `SELECT * FROM "SystemAnnouncement" WHERE id = $1`;
+        const result = await getDb().query(query, [id]);
         return result.rows[0] || null;
     }
 }

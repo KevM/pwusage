@@ -68,7 +68,11 @@ export async function verifySiteAccess(siteId: string): Promise<boolean> {
             .map(p => p.energy_site_id!.toString());
 
         // Update cookie (using centralized auth logic)
-        await setSiteClaims(allowedSites);
+        // Fetch user roles to preserve them
+        const { getUserByToken } = await import('./energy-repo');
+        const user = await getUserByToken(accessToken);
+
+        await setSiteClaims(allowedSites, user?.roles || [], user?.id);
 
         return allowedSites.includes(siteId);
     } catch {
@@ -102,7 +106,9 @@ export async function getAuthorizedSiteIds(): Promise<string[]> {
 
             if (allowedSites.length > 0) {
                 // Update cookie cache
-                await setSiteClaims(allowedSites);
+                const { getUserByToken } = await import('./energy-repo');
+                const user = await getUserByToken(accessToken);
+                await setSiteClaims(allowedSites, user?.roles || [], user?.id);
                 return allowedSites;
             }
         } catch (e) {
@@ -118,10 +124,10 @@ export async function getDefaultSiteId(): Promise<string | null> {
     return siteIds.length > 0 ? siteIds[0] : null;
 }
 
-export async function setSiteClaims(siteIds: string[]) {
+export async function setSiteClaims(siteIds: string[], roles: string[] = [], userId?: string) {
     // We name this setSiteClaims to keep backward compat if imported elsewhere, 
     // but it sets the authoritative site_auth cookie.
-    const token = signSiteToken(siteIds);
+    const token = signSiteToken(siteIds, roles, userId);
     const cookieStore = await cookies();
     try {
         cookieStore.set(SITE_AUTH_COOKIE, token, {

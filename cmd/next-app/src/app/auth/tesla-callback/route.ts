@@ -113,46 +113,34 @@ export async function GET(request: NextRequest) {
                 email = COALESCE(EXCLUDED.email, "User".email)
         `, [userId, userEmail, authData.access_token, authData.refresh_token, Date.now() + (authData.expires_in * 1000), Date.now()]);
 
-        if (products.length > 0) {
+        // Retrieve Roles immediately
+        const userRes = await pool.query('SELECT roles FROM "User" WHERE id = $1', [userId]);
+        const roles = userRes.rows[0]?.roles || [];
+
+        if (products.length > 0 || roles.includes('admin')) {
             const importer = new Importer(client);
             const repo = new EnergyRepo();
             const siteIds: string[] = [];
 
             for (const product of products) {
                 if (!product.energy_site_id) {
-                    // Skip vehicles or other products without energy_site_id
                     continue;
                 }
                 const siteId = product.energy_site_id.toString();
                 siteIds.push(siteId);
-                // Ensure site record exists (synced from API)
+
                 await importer.ensureSite(siteId);
-
-                // Link Site to User
                 await pool.query('UPDATE "Site" SET user_id = $1 WHERE id = $2', [userId, siteId]);
-
-                // We no longer need to update SITE tokens explicitly if we are using the User-centric model,
-                // BUT EnergyRepo.updateSiteTokens now handles the redirection to User table anyway.
-                // However, ensureSite might have created it without user_id first.
-                // So we explicitly linked it above.
-
-                // Let's clear legacy tokens to avoid confusion? 
-                // No, keep them for safety during migration phase, but updateSiteTokens will update User now.
-                // Actually, let's just trigger updateSiteTokens to be safe and use its logic.
                 await repo.updateSiteTokens(siteId, authData.access_token, authData.refresh_token);
                 await repo.releaseRefreshLock(siteId);
                 console.log(`[AuthCallback] Linked site ${siteId} to User ${userId} and updated tokens.`);
             }
 
-            // Retrieve Roles
-            const userRes = await pool.query('SELECT roles FROM "User" WHERE id = $1', [userId]);
-            const roles = userRes.rows[0]?.roles || [];
-
             // Generate verified site token
             const { signSiteToken, COOKIE_MAX_AGE_SECONDS } = await import('@/lib/auth-jwt');
-            const siteToken = signSiteToken(siteIds, roles);
+            const siteToken = signSiteToken(siteIds, roles, userId);
 
-            // Set 24h cookie (matching our token expiry intent)
+            // Set 24h cookie
             cookieStore.set('site_auth', siteToken, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
