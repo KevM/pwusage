@@ -36,8 +36,8 @@ interface SiteIdRow {
 }
 
 // User-centric functions
-export async function getUserByToken(token: string): Promise<{ id: string, email?: string } | null> {
-    const res = await pool.query('SELECT id, email FROM "User" WHERE access_token = $1', [token]);
+export async function getUserByToken(token: string): Promise<{ id: string, email?: string, roles?: string[] } | null> {
+    const res = await pool.query('SELECT id, email, roles FROM "User" WHERE access_token = $1', [token]);
     if (res.rows.length === 0) return null;
     return res.rows[0];
 }

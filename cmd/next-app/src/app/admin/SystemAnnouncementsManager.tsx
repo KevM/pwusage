@@ -243,7 +243,7 @@ function AnnouncementListItem({
     onDelete: (id: string) => void;
 }) {
     return (
-        <li className="p-4 hover:bg-gray-50 dark:hover:bg-gray-750">
+        <li className="p-4 hover:bg-gray-50 dark:hover:bg-gray-700">
             <div className="flex justify-between items-start">
                 <div className="flex-1 mr-4">
                     <h3 className="text-sm font-bold text-gray-900 dark:text-white">{item.title}</h3>

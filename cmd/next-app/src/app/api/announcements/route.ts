@@ -32,6 +32,15 @@ export async function GET(request: Request) {
 /**
  * POST: Create announcement (Admin only)
  */
+import { sendDiscordAnnouncement, updateDiscordAnnouncement, deleteDiscordAnnouncement } from '@/lib/discord';
+
+// ... existing imports
+
+// ... existing GET ...
+
+/**
+ * POST: Create announcement (Admin only)
+ */
 export async function POST(request: Request) {
     const isAdmin = await isUserAdmin();
     if (!isAdmin) {
@@ -49,7 +58,21 @@ export async function POST(request: Request) {
         // Get current user ID to set as author
         const user = await getCurrentUser();
 
-        const announcement = await repo.create(title, content, user?.id);
+        let announcement = await repo.create(title, content, user?.id);
+
+        // Send Discord notification and update DB with the message ID
+        try {
+            const discordId = await sendDiscordAnnouncement(announcement);
+            if (discordId) {
+                const updated = await repo.update(announcement.id, announcement.title, announcement.content, discordId);
+                if (updated) {
+                    announcement = updated;
+                }
+            }
+        } catch (err) {
+            console.error('Failed to send/save Discord notification:', err);
+        }
+
         return NextResponse.json(announcement, { status: 201 });
     } catch (error) {
         console.error('Failed to create announcement:', error);
@@ -72,6 +95,14 @@ export async function PUT(request: Request) {
 
         if (!id || !title || !content) {
             return NextResponse.json({ error: 'ID, title, and content are required' }, { status: 400 });
+        }
+
+        // Check for existing Discord message ID
+        const existing = await repo.getById(id);
+        if (existing?.discord_message_id) {
+            // Update Discord message in background
+            updateDiscordAnnouncement(existing.discord_message_id, { ...existing, title, content })
+                .catch(err => console.error('Failed to update Discord message:', err));
         }
 
         const updated = await repo.update(id, title, content);
@@ -101,6 +132,12 @@ export async function DELETE(request: Request) {
 
         if (!id) {
             return NextResponse.json({ error: 'ID is required' }, { status: 400 });
+        }
+
+        const existing = await repo.getById(id);
+        if (existing?.discord_message_id) {
+            deleteDiscordAnnouncement(existing.discord_message_id)
+                .catch(err => console.error('Failed to delete Discord message:', err));
         }
 
         await repo.delete(id);
