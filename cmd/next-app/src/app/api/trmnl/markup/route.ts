@@ -9,6 +9,8 @@ import { TeslaClient, EnergySiteLiveStatus } from '@/lib/tesla-client';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import QRCode from 'qrcode';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -298,7 +300,8 @@ export async function GET(request: Request) {
             try {
                 // Set a short timeout for live status to avoid hanging the render too long
                 const liveStatusPromise = trmnlClient.getLiveStatus(site.id);
-                const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000));
+                // Increased timeout to 5s to reduce flakiness
+                const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000));
 
                 try {
                     const liveStatus = await Promise.race([liveStatusPromise, timeoutPromise]) as EnergySiteLiveStatus;
