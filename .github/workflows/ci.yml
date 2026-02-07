@@ -50,8 +50,8 @@ jobs:
 
   backup:
     name: Backup Database
-    if: github.ref == 'refs/heads/main'
-    needs: [test, build]
+    if: github.ref == 'refs/heads/main' && needs.check-db-changes.outputs.migrations == 'true'
+    needs: [test, build, check-db-changes]
     runs-on: ubuntu-latest
     
     defaults:
@@ -95,8 +95,8 @@ jobs:
 
   migrate:
     name: Run Migrations
-    if: github.ref == 'refs/heads/main'
-    needs: backup
+    if: github.ref == 'refs/heads/main' && needs.check-db-changes.outputs.migrations == 'true'
+    needs: [backup, check-db-changes]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -126,8 +126,13 @@ jobs:
 
   deploy:
     name: Deploy to Vercel
-    if: github.ref == 'refs/heads/main'
-    needs: migrate
+    if: |
+      github.ref == 'refs/heads/main' &&
+      always() &&
+      needs.test.result == 'success' &&
+      needs.build.result == 'success' &&
+      (needs.migrate.result == 'success' || needs.migrate.result == 'skipped')
+    needs: [test, build, migrate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -142,7 +147,7 @@ jobs:
 
   check-db-changes:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     outputs:
       migrations: ${{ steps.filter.outputs.migrations }}
     steps:
