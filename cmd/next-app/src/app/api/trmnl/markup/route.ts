@@ -86,6 +86,13 @@ export async function GET(request: Request) {
                         markup_half_vertical: markup,
                         markup_half_horizontal: markup,
                         markup_quadrant: markup
+                    }, {
+                        headers: {
+                            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                            'Pragma': 'no-cache',
+                            'Expires': '0',
+                            'Surrogate-Control': 'no-store'
+                        }
                     });
                 }
             } else {
@@ -134,17 +141,14 @@ export async function GET(request: Request) {
         const cycleEnd = new Date(start);
         cycleEnd.setMonth(cycleEnd.getMonth() + 1);
 
-        // --- AUTH & SYNC ---
+        // --- AUTH & CLIENT INIT ---
         let trmnlClient: TeslaClient | null = null;
         let clientError: string | null = null;
 
         if (site.refresh_token) {
-            console.log(`[Trmnl] Found refresh token for site ${site.id}, attempting sync...`);
+            console.log(`[Trmnl] Found refresh token for site ${site.id}, initializing client...`);
+            const useToken = site.access_token || 'expired';
 
-            const useToken = site.access_token || 'expired'; // Trigger refresh if null
-            console.log('[TrmnlMarkup] Using Stored Site Token for sync');
-
-            // Initialize Client ONCE
             trmnlClient = new TeslaClient({
                 accessToken: useToken,
                 refreshToken: site.refresh_token,
@@ -153,59 +157,60 @@ export async function GET(request: Request) {
                     console.log(`[Trmnl] Token update callback triggered for site ${site.id}`);
                 }
             });
-
-            // Sync recent data to ensure freshness
-            try {
-                const importer = new Importer(trmnlClient);
-
-                // 1. Sync RECENT data (Yesterday to Now) - Priority: HIGH
-                // We ensure the last 48 hours are fresh so the display shows correct "Today" numbers and Battery status.
-                const yesterday = new Date(now);
-                yesterday.setDate(yesterday.getDate() - 1);
-                yesterday.setHours(0, 0, 0, 0); // Start of yesterday
-
-                console.log(`[Trmnl] Syncing recent data (Priority) for site ${site.id} from ${yesterday.toISOString()}...`);
-                await importer.ensureDataForRange(site.id, yesterday, end, (msg) => console.log(`[Trmnl] ${msg}`));
-
-
-                // 2. Sync HISTORICAL data (Start of Bill to Yesterday) - Priority: LOW (Background)
-                // If there's a huge gap, this might take too long and cause Vercel 504.
-                // We wrap this in a strict timeout. If it fails, we log it but continue rendering so the user sees *something*
-                // rather than a timeout error.
-                if (start < yesterday) {
-                    const historyEnd = new Date(yesterday.getTime() - 1000); // Up to yesterday
-                    console.log(`[Trmnl] Attempting background sync for historical data: ${start.toISOString()} to ${historyEnd.toISOString()}...`);
-
-                    const historySyncPromise = importer.ensureDataForRange(site.id, start, historyEnd, (msg) => console.log(`[Trmnl-History] ${msg}`));
-
-                    // 4-second strict timeout for history (Vercel max is usually 10s, we leave buffer for rendering)
-                    const timeoutPromise = new Promise<void>((_, reject) => setTimeout(() => reject(new Error('Historical Sync Timeout')), 4000));
-
-                    try {
-                        await Promise.race([historySyncPromise, timeoutPromise]);
-                        console.log(`[Trmnl] Historical sync completed.`);
-                    } catch (timeoutErr) {
-                        console.warn(`[Trmnl] Historical sync timed out or failed (Non-fatal):`, timeoutErr);
-                        // Intentional: Swallowing error to ensure markup renders. 
-                        // The totals might be off if data is missing, but display will work.
-                    }
-                }
-
-                console.log(`[Trmnl] Sync check complete for site ${site.id}`);
-            } catch (err) {
-                console.error(`[Trmnl] Critical Sync failed for site ${site.id}:`, err);
-                clientError = (err instanceof Error) ? err.message : String(err);
-            }
         } else {
             console.log(`[Trmnl] No refresh token found for site ${site.id}`);
             clientError = 'No refresh token available';
         }
 
+        // --- PARALLEL LIVE STATUS FETCH ---
+        let liveStatusPromise: Promise<EnergySiteLiveStatus | undefined> = Promise.resolve(undefined);
+        if (trmnlClient) {
+            // Set a 5s timeout for live status
+            const fetchOp = trmnlClient.getLiveStatus(site.id);
+            const timeoutOp = new Promise<undefined>((_, reject) => setTimeout(() => reject(new Error('Live Status Timeout')), 5000));
+            // We catch errors here to avoid unhandled rejection, returning undefined on fail
+            liveStatusPromise = Promise.race([fetchOp, timeoutOp]).catch(e => {
+                console.warn('[TrmnlMarkup] Live status fetch failed/timed out:', e);
+                return undefined;
+            }) as Promise<EnergySiteLiveStatus | undefined>;
+        }
+
+        // --- SYNC LOGIC (Blocking for integrity) ---
+        if (trmnlClient) {
+            try {
+                const importer = new Importer(trmnlClient);
+
+                // 1. Sync RECENT data (Last 24-48h)
+                const yesterday = new Date(now);
+                yesterday.setDate(yesterday.getDate() - 1);
+                yesterday.setHours(0, 0, 0, 0);
+
+                console.log(`[Trmnl] Syncing recent data for site ${site.id}...`);
+                await importer.ensureDataForRange(site.id, yesterday, end, (msg) => console.log(`[Trmnl] ${msg}`));
+
+                // 2. Sync HISTORICAL data (Background/Best Effort)
+                if (start < yesterday) {
+                    const historyEnd = new Date(yesterday.getTime() - 1000);
+                    console.log(`[Trmnl] Syncing historical data...`);
+
+                    const historySyncPromise = importer.ensureDataForRange(site.id, start, historyEnd, (msg) => console.log(`[Trmnl-History] ${msg}`));
+                    const timeoutPromise = new Promise<void>((_, reject) => setTimeout(() => reject(new Error('Historical Sync Timeout')), 4000));
+
+                    try {
+                        await Promise.race([historySyncPromise, timeoutPromise]);
+                    } catch (timeoutErr) {
+                        console.warn(`[Trmnl] Historical sync timed out (Non-fatal)`);
+                    }
+                }
+            } catch (err) {
+                console.error(`[Trmnl] Sync failed:`, err);
+                clientError = (err instanceof Error) ? err.message : String(err);
+            }
+        }
+
         // Handle Auth/Sync Errors with QR Code
         if (clientError) {
-            console.error(`[Trmnl] Token context - Access available: ${!!site.access_token}, Refresh available: ${!!site.refresh_token}`);
-
-            // Broaden the check: 401, 403, refresh token, or just "Tesla API Error" usually implies we need re-auth if manual retry failed.
+            // Broaden the check
             if (clientError.includes('401') || clientError.includes('refresh token') || clientError.includes('403') || clientError === 'No refresh token available') {
                 const host = request.headers.get('host') || 'localhost:3000';
                 const protocol = host.includes('localhost') ? 'http' : 'https';
@@ -213,7 +218,6 @@ export async function GET(request: Request) {
                     ? `${protocol}://${host}/trmnl/manage?uuid=${installation.uuid}`
                     : `${protocol}://${host}/site/${site.id}/settings`;
 
-                // Generate QR Code
                 const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
 
                 const markup = `
@@ -286,45 +290,10 @@ export async function GET(request: Request) {
         const displayCost = isCredit ? `+${currency}${Math.abs(totalBillCost).toFixed(2)}` : `${currency}${costStr}`;
         const costLabel = isCredit ? 'Total Credit' : 'Total Cost';
 
-        // Check for active period
+        // Check for active period (needed for highlighting current TOU)
         const schedule = new Schedule(site.tariffs, site.timezone);
         const currentPeriod = schedule.getTariffPeriod(new Date());
         const currentTouName = currentPeriod?.schedule.name;
-
-        // Generate HTML for each tariff group
-        // Fetch latest SOC (Live from API)
-        let batterySoc: number | null = null;
-        let batteryStatus: 'charging' | 'discharging' | 'idle' = 'idle';
-
-        if (trmnlClient) {
-            try {
-                // Set a short timeout for live status to avoid hanging the render too long
-                const liveStatusPromise = trmnlClient.getLiveStatus(site.id);
-                // Increased timeout to 5s to reduce flakiness
-                const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000));
-
-                try {
-                    const liveStatus = await Promise.race([liveStatusPromise, timeoutPromise]) as EnergySiteLiveStatus;
-                    if (liveStatus) {
-                        if (typeof liveStatus.percentage_charged === 'number') {
-                            batterySoc = liveStatus.percentage_charged;
-                        }
-
-                        const power = liveStatus.battery_power || 0;
-                        // battery_power: Positive = Discharging, Negative = Charging
-                        if (power < -50) {
-                            batteryStatus = 'charging';
-                        } else if (power > 50) {
-                            batteryStatus = 'discharging';
-                        }
-                    }
-                } catch (timeoutErr) {
-                    console.warn('[TrmnlMarkup] Live status fetch timed out or failed', timeoutErr);
-                }
-            } catch (e) {
-                console.error('[TrmnlMarkup] Failed to fetch live SOC', e);
-            }
-        }
 
         // Fetch Today's Totals (Grid/Solar) for the Status Bar
         let todayGrid = 0;
@@ -345,19 +314,33 @@ export async function GET(request: Request) {
             console.error('[TrmnlMarkup] Failed to fetch today totals', e);
         }
 
+        // Await Live Status (which started earlier)
+        // Since we caught errors in the promise definition, this shouldn't throw.
+        const liveStatus = await liveStatusPromise;
+        let batterySoc: number | null = null;
+        let batteryStatus: 'charging' | 'discharging' | 'idle' = 'idle';
+
+        if (liveStatus) {
+            if (typeof liveStatus.percentage_charged === 'number') {
+                batterySoc = liveStatus.percentage_charged;
+            }
+            const power = liveStatus.battery_power || 0;
+            if (power < -50) batteryStatus = 'charging';
+            else if (power > 50) batteryStatus = 'discharging';
+        }
 
         // Prepare Render Context
         const { TrmnlRenderer } = await import('@/lib/trmnl-renderer');
 
         const renderCtx = {
-            siteName: site.name || 'Powerwall', // Retain 'Powerwall' fallback for robustness
+            siteName: site.name || 'Powerwall',
             dateRange: `${start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })} - ${cycleEnd.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}`,
-            tariffGroups: Array.from(tariffGroups.values()), // Retain Array.from for consistency
+            tariffGroups: Array.from(tariffGroups.values()),
             totalCost: totalBillCost,
-            costLabel: costLabel, // Use existing 'costLabel'
-            displayCost: displayCost, // Use existing 'displayCost'
-            currency: currency, // Use existing 'currency'
-            currentTouName: currentTouName || undefined, // Retain '|| undefined' for consistency
+            costLabel: costLabel,
+            displayCost: displayCost,
+            currency: currency,
+            currentTouName: currentTouName || undefined,
             batterySoc: batterySoc,
             batteryStatus: batteryStatus,
             todayGrid: todayGrid,
@@ -374,7 +357,15 @@ export async function GET(request: Request) {
             markup_half_vertical: markupHalfVertical,
             markup_half_horizontal: markupHalfHorizontal,
             markup_quadrant: markupQuadrant
+        }, {
+            headers: {
+                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+                'Surrogate-Control': 'no-store'
+            }
         });
+
 
     } catch (error) {
         console.error('Markup error:', error);
