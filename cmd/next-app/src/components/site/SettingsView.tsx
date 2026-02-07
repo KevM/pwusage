@@ -1,14 +1,16 @@
 'use client';
 
 import { BillingStartDayForm } from '@/components/BillingStartDayForm';
+import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
 import Link from 'next/link';
 import Image from 'next/image';
+import { TariffList } from './TariffList';
 
 
-import { Site, TrmnlInstallation } from '@/lib/db';
+import { SiteWithTariffs, TrmnlInstallation } from '@/lib/db';
 
 interface SettingsViewProps {
-    site: Site;
+    site: SiteWithTariffs;
     // TrmnlInstallation can be undefined if not found
     installation: TrmnlInstallation | undefined;
 }
@@ -16,7 +18,7 @@ interface SettingsViewProps {
 export function SettingsView({ site, installation }: SettingsViewProps) {
     // Trmnl Preview logic extracted from Settings Page
     return (
-        <div className="w-full max-w-2xl mx-auto">
+        <div className="w-full max-w-5xl mx-auto">
             <h1 className="text-3xl font-bold mb-8">Site Settings</h1>
 
             <div className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800">
@@ -27,6 +29,9 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                     <p className="text-xs text-gray-500 mt-1">
                         Calculates monthly usage starting from this day.
                     </p>
+                </div>
+                <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
+                    <TimezoneDisplayForm siteId={site.id} initialMode={site.timezone_display_mode || 'SITE'} />
                 </div>
             </div>
 
@@ -81,6 +86,13 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                     >
                         Buy Device
                     </a>
+                </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800 mt-8">
+                <h2 className="text-xl font-semibold mb-4">Tariff Information</h2>
+                <div className="mb-6">
+                    <TariffList tariffs={site.tariffs} />
                 </div>
             </div>
         </div>

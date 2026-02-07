@@ -19,7 +19,7 @@ interface DailyChartData {
     data: HourlyData[];
 }
 
-export function EnergyChartWithNav({ initialData, siteId }: { initialData: DailyChartData; siteId: string }) {
+export function EnergyChartWithNav({ initialData, siteId, siteTimezone, displayMode = 'SITE' }: { initialData: DailyChartData; siteId: string; siteTimezone: string; displayMode?: 'SITE' | 'BROWSER' }) {
     const [chartData, setChartData] = useState(initialData);
     const [loading, setLoading] = useState(false);
     const [isDark, setIsDark] = useState(false);
@@ -42,7 +42,8 @@ export function EnergyChartWithNav({ initialData, siteId }: { initialData: Daily
     const fetchAndSetData = async (dateStr: string) => {
         setLoading(true);
         try {
-            const response = await fetch(`/api/hourly-data?siteId=${siteId}&date=${dateStr}`);
+            const targetTz = displayMode === 'BROWSER' ? Intl.DateTimeFormat().resolvedOptions().timeZone : siteTimezone;
+            const response = await fetch(`/api/hourly-data?siteId=${siteId}&date=${dateStr}&tz=${encodeURIComponent(targetTz)}`);
             if (response.ok) {
                 const data = await response.json();
                 setChartData(data);

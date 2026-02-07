@@ -18,6 +18,9 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // Disable font optimization in CI to avoid fetch errors
+  // @ts-expect-error: optimizeFonts is valid but missing in NextConfig type definition in some versions
+  optimizeFonts: !process.env.CI,
 };
 
 export default nextConfig;

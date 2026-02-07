@@ -246,7 +246,7 @@ export class EnergyRepo {
         return rows.length > 0;
     }
 
-    async getHourlyEnergyData(siteId: string, dateStr: string): Promise<Array<{
+    async getHourlyEnergyData(siteId: string, dateStr: string, targetTimezone?: string): Promise<Array<{
         hour: number;
         homeUsage: number;
         solarProduction: number;
@@ -254,49 +254,89 @@ export class EnergyRepo {
         batteryUsage: number;
         batterySoc: number | null;
     }>> {
-        // Since we are storing Wall Clock time in the DB (TIMESTAMP without TZ),
-        // we should query for the literal date range and bucket by the literal hour.
-        // We avoid Date object timezone shifting by working with strings or naive 00:00 UTC Dates.
+        if (!targetTimezone) {
+            // Fast path: assumes Site Wall Clock is the desired display time
+            const startStr = dateStr + ' 00:00:00';
+            // We fetch up to the next day's 00:00
+            const end = new Date(dateStr + 'T00:00:00Z');
+            end.setDate(end.getDate() + 1);
+            const endStr = new Date(end).toISOString().split('T')[0] + ' 00:00:00';
 
-        const start = new Date(dateStr + 'T00:00:00Z'); // Naive 00:00
-        const end = new Date(start.getTime() + 24 * 60 * 60 * 1000); // Naive 00:00 next day
+            const rowsResult = await pool.query(`
+                SELECT timestamp, load_power, solar_power, grid_power, battery_power, battery_soc
+                FROM "EnergyData"
+                WHERE site_id = $1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp
+            `, [siteId, startStr, endStr]);
 
-        // When passing a Date object to PG, node-postgres uses the local timezone of the server.
-        // If we want to strictly match "2023-01-01 00:00:00" in the DB, we should pass strings
-        // or ensure the Date stringifies to that.
-        // Safest is to pass ISO strings and let Postgres CAST, but TIMESTAMP w/o TZ might shift.
-        // Actually, passing the date string directly is safest.
+            const buckets = new Map<number, {
+                homeUsage: number;
+                solarProduction: number;
+                gridUsage: number;
+                batteryUsage: number;
+            }>();
 
-        const startStr = dateStr + ' 00:00:00';
-        const endStr = new Date(end).toISOString().split('T')[0] + ' 00:00:00';
-        // Logic check: if dateStr is 2025-12-08. end is 12-09.
+            for (const row of rowsResult.rows) {
+                const ts = new Date(row.timestamp);
+                const hr = ts.getHours();
 
-        const rowsResult = await pool.query(`
+                let bucket = buckets.get(hr);
+                if (!bucket) {
+                    bucket = { homeUsage: 0, solarProduction: 0, gridUsage: 0, batteryUsage: 0 };
+                    buckets.set(hr, bucket);
+                }
+
+                bucket.homeUsage += row.load_power;
+                bucket.solarProduction += row.solar_power;
+                bucket.gridUsage += row.grid_power;
+                bucket.batteryUsage += row.battery_power;
+            }
+
+            const sortedHours = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]);
+            return sortedHours.map(([hour, bucket]) => ({
+                hour,
+                homeUsage: bucket.homeUsage / 1000,
+                solarProduction: bucket.solarProduction / 1000,
+                gridUsage: bucket.gridUsage / 1000,
+                batteryUsage: bucket.batteryUsage / 1000,
+                batterySoc: null
+            }));
+        }
+
+        // Timezone-aware path
+        // We use Postgres to convert the "Wall Clock" timestamp (stored in DB) 
+        // back to an absolute timestamp using the Site's timezone,
+        // then convert it to the User's target timezone.
+
+        const site = await this.getSite(siteId);
+        if (!site) throw new Error('Site not found');
+
+        const sql = `
+            WITH converted AS (
+                SELECT 
+                    timestamp,
+                    timestamp AT TIME ZONE 'UTC' AT TIME ZONE $3 as target_ts,
+                    load_power, solar_power, grid_power, battery_power
+                FROM "EnergyData"
+                WHERE site_id = $1
+                -- Optimization: Filter on raw timestamp roughly to speed up 
+                AND timestamp >= ($2::date - INTERVAL '2 day')::timestamp
+                AND timestamp <= ($2::date + INTERVAL '2 day')::timestamp
+            )
             SELECT 
-                timestamp,
-                load_power,
-                solar_power,
-                grid_power,
-                battery_power,
-                battery_soc
-            FROM "EnergyData"
-            WHERE site_id = $1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp
-        `, [siteId, startStr, endStr]);
+                EXTRACT(HOUR FROM target_ts) as hour,
+                load_power, solar_power, grid_power, battery_power
+            FROM converted
+            WHERE date_trunc('day', target_ts)::date = $2::date
+        `;
 
-        const rows = rowsResult.rows;
+        const qRes = await pool.query(sql, [siteId, dateStr, targetTimezone]);
+
         const buckets = new Map<number, {
-            homeUsage: number;
-            solarProduction: number;
-            gridUsage: number;
-            batteryUsage: number;
+            homeUsage: number; solarProduction: number; gridUsage: number; batteryUsage: number;
         }>();
 
-        for (const row of rows) {
-            // row.timestamp is a Date object parsed from DB.
-            // If DB says "08:00:00", node-postgres makes a Date where "Local Time" is 08:00.
-            // So .getHours() will return 8 in both Dev (CST) and Vercel (UTC).
-            const ts = new Date(row.timestamp);
-            const hr = ts.getHours();
+        for (const row of qRes.rows) {
+            const hr = parseInt(row.hour);
 
             let bucket = buckets.get(hr);
             if (!bucket) {
@@ -313,11 +353,11 @@ export class EnergyRepo {
         const sortedHours = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]);
         return sortedHours.map(([hour, bucket]) => ({
             hour,
-            homeUsage: bucket.homeUsage / 1000, // Convert to kWh
+            homeUsage: bucket.homeUsage / 1000,
             solarProduction: bucket.solarProduction / 1000,
             gridUsage: bucket.gridUsage / 1000,
             batteryUsage: bucket.batteryUsage / 1000,
-            batterySoc: null // batterySoc is no longer aggregated, return null or remove if type allows
+            batterySoc: null
         }));
     }
 
@@ -338,6 +378,11 @@ export class EnergyRepo {
 
     async updateSiteBillingDay(siteId: string, day: number) {
         await pool.query('UPDATE "Site" SET billing_start_day = $1 WHERE id = $2', [day, siteId]);
+        siteCache.delete(siteId);
+    }
+
+    async updateSiteTimezoneDisplayMode(siteId: string, mode: 'SITE' | 'BROWSER') {
+        await pool.query('UPDATE "Site" SET timezone_display_mode = $1 WHERE id = $2', [mode, siteId]);
         siteCache.delete(siteId);
     }
 
@@ -451,6 +496,61 @@ export class EnergyRepo {
             ...row,
             timestamp: new Date(row.timestamp), // Ensure JS Date
             site_id: row.site_id.toString(), // Ensure string
+            load_power: Number(row.load_power),
+            solar_power: Number(row.solar_power),
+            grid_power: Number(row.grid_power),
+            battery_power: Number(row.battery_power),
+        })) as EnergyData[];
+    }
+
+    async getRawEnergyDataWithTz(siteId: string, start: Date, end: Date, targetTimezone?: string): Promise<EnergyData[]> {
+        if (!targetTimezone) {
+            return this.getRawEnergyData(siteId, start, end);
+        }
+
+        const site = await this.getSite(siteId);
+        if (!site) throw new Error('Site not found');
+
+        // We want data where the "Target Time" falls between start and end.
+        // And we want the timestamps returned to be "Target Time encoded as UTC".
+        // e.g. If event is at 12:00 Site Time -> 08:00 Target Time.
+        // We want to return 08:00 (as a Date object).
+
+        // Logic:
+        // 1. Convert DB Timestamp (Site Wall Clock) -> Real Timestamp (UTC) using Site TZ.
+        // 2. Convert Real Timestamp (UTC) -> Target Wall Clock (Timestamp) using Target TZ.
+        // 3. Select this as `target_ts`.
+        // 4. Filter where `target_ts` is between start and end.
+
+        const sql = `
+            WITH converted AS (
+                SELECT 
+                    *,
+                    timestamp AT TIME ZONE $5 AT TIME ZONE $4 as target_ts
+                FROM "EnergyData"
+                WHERE site_id = $1
+                -- Optimization: Filter roughly on raw timestamp 
+                AND timestamp >= ($2::timestamp - INTERVAL '1 day')
+                AND timestamp <= ($3::timestamp + INTERVAL '1 day')
+            )
+            SELECT * FROM converted
+            WHERE target_ts >= $2::timestamp 
+            AND target_ts < $3::timestamp
+            ORDER BY target_ts ASC
+        `;
+
+        const res = await pool.query(sql, [
+            siteId,
+            this.toSqlString(start),
+            this.toSqlString(end),
+            targetTimezone,
+            site.timezone
+        ]);
+
+        return res.rows.map(row => ({
+            ...row,
+            timestamp: new Date(row.target_ts), // This is now "Target Wall Clock"
+            site_id: row.site_id.toString(),
             load_power: Number(row.load_power),
             solar_power: Number(row.solar_power),
             grid_power: Number(row.grid_power),

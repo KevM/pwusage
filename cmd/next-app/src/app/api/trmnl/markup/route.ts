@@ -132,14 +132,18 @@ export async function GET(request: Request) {
         const cycleEnd = new Date(start);
         cycleEnd.setMonth(cycleEnd.getMonth() + 1);
 
+        // --- AUTH & SYNC ---
+        let trmnlClient: TeslaClient | null = null;
+        let clientError: string | null = null;
+
         if (site.refresh_token) {
             console.log(`[Trmnl] Found refresh token for site ${site.id}, attempting sync...`);
 
             const useToken = site.access_token || 'expired'; // Trigger refresh if null
-
             console.log('[TrmnlMarkup] Using Stored Site Token for sync');
 
-            const client = new TeslaClient({
+            // Initialize Client ONCE
+            trmnlClient = new TeslaClient({
                 accessToken: useToken,
                 refreshToken: site.refresh_token,
                 tokenRefreshHandler: repo.getLockedRefreshHandler(site.id),
@@ -150,7 +154,7 @@ export async function GET(request: Request) {
 
             // Sync recent data to ensure freshness
             try {
-                const importer = new Importer(client);
+                const importer = new Importer(trmnlClient);
 
                 // 1. Sync RECENT data (Yesterday to Now) - Priority: HIGH
                 // We ensure the last 48 hours are fresh so the display shows correct "Today" numbers and Battery status.
@@ -188,71 +192,46 @@ export async function GET(request: Request) {
                 console.log(`[Trmnl] Sync check complete for site ${site.id}`);
             } catch (err) {
                 console.error(`[Trmnl] Critical Sync failed for site ${site.id}:`, err);
-                // Log the token context
-                console.error(`[Trmnl] Token context - Access available: ${!!useToken}, Refresh available: ${!!site.refresh_token}`);
-
-                // If auth error, show QR code to re-authenticate
-                const errorMsg = (err instanceof Error) ? err.message : String(err);
-                // Broaden the check: 401, 403, refresh token, or just "Tesla API Error" usually implies we need re-auth if manual retry failed.
-                if (errorMsg.includes('401') || errorMsg.includes('refresh token') || errorMsg.includes('403')) {
-                    const host = request.headers.get('host') || 'localhost:3000';
-                    const protocol = host.includes('localhost') ? 'http' : 'https';
-                    const manageUrl = installation
-                        ? `${protocol}://${host}/trmnl/manage?uuid=${installation.uuid}`
-                        : `${protocol}://${host}/site/${site.id}/settings`;
-
-                    // Generate QR Code
-                    const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
-
-                    const markup = `
-                        <div class="view view--full">
-                             <div class="layout layout--col layout--center" style="padding: 20px; text-align: center;">
-                                <span class="title title--small">Tesla Auth Expired</span>
-                                <span class="label">Scan to Re-connect</span>
-                                <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px 0;" />
-                                <span class="label label--small">${site.name}</span>
-                             </div>
-                        </div>
-                     `;
-
-                    return NextResponse.json({
-                        markup: markup,
-                        markup_half_vertical: markup,
-                        markup_half_horizontal: markup,
-                        markup_quadrant: markup
-                    });
-                }
+                clientError = (err instanceof Error) ? err.message : String(err);
             }
         } else {
-            console.log(`[Trmnl] No refresh token found for site ${site.id}, showing Auth QR code.`);
+            console.log(`[Trmnl] No refresh token found for site ${site.id}`);
+            clientError = 'No refresh token available';
+        }
 
-            // If we don't have a refresh token, we MUST prompt for auth, otherwise data will be stale forever.
-            const host = request.headers.get('host') || 'localhost:3000';
-            const protocol = host.includes('localhost') ? 'http' : 'https';
-            const manageUrl = installation
-                ? `${protocol}://${host}/trmnl/manage?uuid=${installation.uuid}`
-                : `${protocol}://${host}/site/${site.id}/settings`;
+        // Handle Auth/Sync Errors with QR Code
+        if (clientError) {
+            console.error(`[Trmnl] Token context - Access available: ${!!site.access_token}, Refresh available: ${!!site.refresh_token}`);
 
-            // Generate QR Code
-            const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
+            // Broaden the check: 401, 403, refresh token, or just "Tesla API Error" usually implies we need re-auth if manual retry failed.
+            if (clientError.includes('401') || clientError.includes('refresh token') || clientError.includes('403') || clientError === 'No refresh token available') {
+                const host = request.headers.get('host') || 'localhost:3000';
+                const protocol = host.includes('localhost') ? 'http' : 'https';
+                const manageUrl = installation
+                    ? `${protocol}://${host}/trmnl/manage?uuid=${installation.uuid}`
+                    : `${protocol}://${host}/site/${site.id}/settings`;
 
-            const markup = `
-                <div class="view view--full">
-                     <div class="layout layout--col layout--center" style="padding: 20px; text-align: center;">
-                        <span class="title title--small">Tesla Auth Required</span>
-                        <span class="label">Scan to Connect</span>
-                        <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px 0;" />
-                        <span class="label label--small">${site.name}</span>
-                     </div>
-                </div>
-             `;
+                // Generate QR Code
+                const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
 
-            return NextResponse.json({
-                markup: markup,
-                markup_half_vertical: markup,
-                markup_half_horizontal: markup,
-                markup_quadrant: markup
-            });
+                const markup = `
+                    <div class="view view--full">
+                         <div class="layout layout--col layout--center" style="padding: 20px; text-align: center;">
+                            <span class="title title--small">Tesla Auth Required</span>
+                            <span class="label">Scan to Connect</span>
+                            <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px 0;" />
+                            <span class="label label--small">${site.name}</span>
+                         </div>
+                    </div>
+                 `;
+
+                return NextResponse.json({
+                    markup: markup,
+                    markup_half_vertical: markup,
+                    markup_half_horizontal: markup,
+                    markup_quadrant: markup
+                });
+            }
         }
 
         const usageData = await repo.getUsageByTOU(site.id, start, end);
@@ -314,20 +293,11 @@ export async function GET(request: Request) {
         // Fetch latest SOC (Live from API)
         let batterySoc: number | null = null;
         let batteryStatus: 'charging' | 'discharging' | 'idle' = 'idle';
-        try {
-            // Re-use logic to get a client with refresh capabilities
-            const useToken = site.access_token;
-            // Removed: Preview mode using 'access_token' cookie. Now relies on site.access_token.
 
-            if (useToken) {
-                const client = new TeslaClient({
-                    accessToken: useToken,
-                    refreshToken: site.refresh_token,
-                    tokenRefreshHandler: repo.getLockedRefreshHandler(site.id)
-                });
-
+        if (trmnlClient) {
+            try {
                 // Set a short timeout for live status to avoid hanging the render too long
-                const liveStatusPromise = client.getLiveStatus(site.id);
+                const liveStatusPromise = trmnlClient.getLiveStatus(site.id);
                 const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000));
 
                 try {
@@ -348,9 +318,9 @@ export async function GET(request: Request) {
                 } catch (timeoutErr) {
                     console.warn('[TrmnlMarkup] Live status fetch timed out or failed', timeoutErr);
                 }
+            } catch (e) {
+                console.error('[TrmnlMarkup] Failed to fetch live SOC', e);
             }
-        } catch (e) {
-            console.error('[TrmnlMarkup] Failed to fetch live SOC', e);
         }
 
         // Fetch Today's Totals (Grid/Solar) for the Status Bar
@@ -358,26 +328,13 @@ export async function GET(request: Request) {
         let todaySolar = 0;
         try {
             // Determine "today" in site timezone
-            // helper: formatDateWithTimezone is in tesla-client but not exported? 
-            // We can use Intl.DateTimeFormat
             const tz = site.timezone || 'UTC';
-            const nowInTz = new Date(); // Use a new Date object for timezone formatting
-            const yyyy = new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric' }).format(nowInTz);
-            const mm = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: '2-digit' }).format(nowInTz);
-            const dd = new Intl.DateTimeFormat('en-US', { timeZone: tz, day: '2-digit' }).format(nowInTz);
-            const todayStr = `${yyyy}-${mm}-${dd}`;
+            // Use en-CA for ISO-like format (YYYY-MM-DD) which matches DB expectation
+            const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
 
             const hourlyData = await repo.getHourlyEnergyData(site.id, todayStr);
             hourlyData.forEach(h => {
-                todayGrid += h.gridUsage; // Imported - Exported? Hourly buckets might be net? 
-                // Wait, getHourlyEnergyData buckets are sums of raw columns.
-                // gridUsage in repo is row.grid_power. 
-                // In importer, grid_power is net (Import - Export).
-                // So positive gridUsage is NET grid usage. 
-                // The user asked for "Grid and Solar Kwh usage". 
-                // Usually "Grid Usage" means Net Grid Use (Imported - Exported) or just Import?
-                // Let's assume Net Grid Usage (what we pay for) and Solar Production.
-
+                todayGrid += h.gridUsage; // Net Grid Usage
                 todaySolar += h.solarProduction;
             });
 

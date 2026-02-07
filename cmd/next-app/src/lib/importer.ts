@@ -81,24 +81,27 @@ export class Importer {
                 tsIndex++;
             }
 
-            let hasData = false;
-            if (tsIndex < existingTimestamps.length && existingTimestamps[tsIndex] < windowEnd) {
-                hasData = true;
+            // Find min/max timestamps in this window to determine coverage
+            let firstInWindow: number | null = null;
+            let lastInWindow: number | null = null;
+            let countInWindow = 0;
+
+            let tempIdx = tsIndex;
+            while (tempIdx < existingTimestamps.length && existingTimestamps[tempIdx] < windowEnd) {
+                if (firstInWindow === null) firstInWindow = existingTimestamps[tempIdx];
+                lastInWindow = existingTimestamps[tempIdx];
+                countInWindow++;
+                tempIdx++;
             }
 
+            const hasAnyData = countInWindow > 0;
             const isToday = cursor.getTime() === todayStart.getTime();
             let needsImport = false;
 
-            if (!hasData || force) {
+            if (!hasAnyData || force) {
                 needsImport = true;
             } else if (isToday) {
-                let lastInWindow = existingTimestamps[tsIndex];
-                let tempIdx = tsIndex;
-                while (tempIdx < existingTimestamps.length && existingTimestamps[tempIdx] < windowEnd) {
-                    lastInWindow = existingTimestamps[tempIdx];
-                    tempIdx++;
-                }
-
+                // For today, check staleness against NOW
                 if (lastInWindow) {
                     const diffMinutes = (now.getTime() - lastInWindow) / (60 * 1000);
                     if (diffMinutes > 15) {
@@ -106,8 +109,23 @@ export class Importer {
                         if (onProgress) onProgress(`Refreshing stale data (${diffMinutes.toFixed(0)}m old)...`);
                         console.log(`[Importer] Data stale (${diffMinutes.toFixed(1)}m old), refreshing...`);
                     }
-                } else {
+                }
+            } else {
+                // For past days, check completeness
+                // 1. Check if we cover the full range (start near beginning, end near end)
+                // Tolerance: 30 minutes (to catch missing evening data like 11pm cutoff)
+                const missingStart = firstInWindow && (firstInWindow - windowStart > 30 * 60 * 1000);
+                const missingEnd = lastInWindow && (windowEnd - lastInWindow > 30 * 60 * 1000);
+
+                // 2. Check density (expected ~288 points/day for 5m interval)
+                // If we have very few points, re-fetch.
+                // const sparseData = countInWindow < 50; // Very rough check, maybe user had outage? 
+
+                if (missingStart || missingEnd) {
                     needsImport = true;
+                    console.log(`[Importer] Incomplete data for ${cursor.toISOString().split('T')[0]}. ` +
+                        `Missing Start: ${missingStart} (${((firstInWindow! - windowStart) / 60000).toFixed(0)}m), ` +
+                        `Missing End: ${missingEnd} (${((windowEnd - lastInWindow!) / 60000).toFixed(0)}m). Refreshing...`);
                 }
             }
 
@@ -337,15 +355,18 @@ export class Importer {
     }
 
     private async loadInterval(site: SiteWithTariffs, start: Date, end: Date, period: string) {
-        let actualEnd = new Date(end);
+        const actualEnd = new Date(end);
         const diffMs = end.getTime() - start.getTime();
         const oneDayMs = 24 * 60 * 60 * 1000;
 
         if (period === 'day' && diffMs <= oneDayMs && diffMs > (oneDayMs - 60000)) {
-            actualEnd = new Date(actualEnd.getTime() - 1000);
+            // Keep full range? 
+            // Previous logic subtracted 1s. This might be causing the 11pm cutoff if Tesla treats end_date as exclusive/inclusive strangely.
+            // Let's TRY sending the exact next midnight.
+            // actualEnd = new Date(actualEnd.getTime() - 1000); 
         }
         if (period === 'day' && actualEnd.getHours() === 0 && actualEnd.getMinutes() === 0 && actualEnd.getSeconds() === 0) {
-            actualEnd = new Date(actualEnd.getTime() - 1000);
+            // actualEnd = new Date(actualEnd.getTime() - 1000);
         }
 
         console.log(`[Import] loadInterval ${start.toISOString()} - ${actualEnd.toISOString()} (${period})`);

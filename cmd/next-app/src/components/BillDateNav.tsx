@@ -237,16 +237,7 @@ export function BillDateNav({
                         <path d="M10 16h-6" />
                     </svg>
                 </Link>
-                <Link
-                    href={`/site/${siteId}/tariffs`}
-                    className="p-2 text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-full transition-colors"
-                    title="View Tariffs"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l5 5a2 2 0 0 0 2.828 0l7.172-7.172a2 2 0 0 0 0-2.828l-5-5Z" />
-                        <circle cx="7.5" cy="7.5" r=".5" fill="currentColor" />
-                    </svg>
-                </Link>
+
             </div>
         </div>
     );

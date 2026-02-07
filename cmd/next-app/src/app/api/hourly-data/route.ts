@@ -10,6 +10,7 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const siteId = searchParams.get('siteId');
         const dateStr = searchParams.get('date');
+        const tz = searchParams.get('tz') || undefined;
 
         if (!siteId || !dateStr) {
             return NextResponse.json({ error: 'Missing siteId or date' }, { status: 400 });
@@ -30,13 +31,13 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });
         }
 
-        const hourlyData = await repo.getHourlyEnergyData(siteId, dateStr);
+        const hourlyData = await repo.getHourlyEnergyData(siteId, dateStr, tz);
 
         return NextResponse.json(
             {
                 date: dateStr,
                 data: hourlyData,
-                timezone: site.timezone
+                timezone: tz || site.timezone // Return the effective timezone
             },
             {
                 headers: {

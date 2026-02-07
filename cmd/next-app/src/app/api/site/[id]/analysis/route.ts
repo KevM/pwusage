@@ -20,12 +20,27 @@ export async function GET(
         const { id: siteId } = await params; // Await params
         const searchParams = request.nextUrl.searchParams;
         const dateParam = searchParams.get('date');
+        const tzParam = searchParams.get('tz');
 
         let date = new Date();
         if (dateParam) {
             // Parse 'YYYY-MM-DD' strictly as local time parts
             const [y, m, d] = dateParam.split('-').map(Number);
             date = new Date(y, m - 1, d);
+        } else if (tzParam) {
+            // If no date provided, use "Today" in the requested timezone
+            try {
+                const parts = new Intl.DateTimeFormat('en-CA', {
+                    timeZone: tzParam,
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                }).format(new Date()).split('-').map(Number);
+                date = new Date(parts[0], parts[1] - 1, parts[2]);
+            } catch (e) {
+                console.error('[Analysis] Invalid timezone:', tzParam, e);
+                // Fallback to server time
+            }
         }
 
         // AUTH CHECK
@@ -51,6 +66,11 @@ export async function GET(
         start.setHours(0, 0, 0, 0);
         const end = new Date(date);
         end.setHours(23, 59, 59, 999);
+
+        // For querying the DB, we want exclusive upper bound of Next Midnight to capture everything in the day
+        const queryEnd = new Date(date);
+        queryEnd.setDate(queryEnd.getDate() + 1);
+        queryEnd.setHours(0, 0, 0, 0);
 
         if (isNaN(start.getTime())) {
             return NextResponse.json({ error: 'Invalid date' }, { status: 400 });
@@ -83,7 +103,8 @@ export async function GET(
         }
 
         // 1. Fetch Raw Data (Potential re-fetch if sync happened inside ensureDataForRange)
-        const rawData = await repo.getRawEnergyData(siteId, start, end);
+        // Check for tz param (now defined above)
+        const rawData = await repo.getRawEnergyDataWithTz(siteId, start, queryEnd, tzParam || undefined);
 
         // 2. Fetch Tariff Definitions & Schedule
         const site = await repo.getSite(siteId);

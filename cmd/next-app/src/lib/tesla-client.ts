@@ -316,7 +316,9 @@ function formatDateWithTimezone(date: Date, timeZone: string): string {
         // Fallback to local offset in the target timezone via toLocaleString
         const localMs = date.getTime();
         const loc = new Date(date.toLocaleString('en-US', { timeZone })).getTime();
-        offsetMinutes = Math.round((localMs - loc) / (60 * 1000));
+        // offsetMinutes should be (WallClock - UTC) / 60000.
+        // e.g. 00:00 Wall - 07:00 UTC = -420 mins (-7h).
+        offsetMinutes = Math.round((loc - localMs) / (60 * 1000));
     }
 
     const offH = Math.floor(Math.abs(offsetMinutes) / 60)

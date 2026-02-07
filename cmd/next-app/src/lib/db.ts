@@ -58,6 +58,7 @@ export interface Site {
   timezone: string;
   json: unknown | null; // pg jsonb returns object
   billing_start_day: number;
+  timezone_display_mode?: 'SITE' | 'BROWSER';
 }
 
 export interface Tariff {

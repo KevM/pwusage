@@ -243,7 +243,13 @@ export default async function SitePage({ params, searchParams }: {
                         <HistoryView
                             chartNavSlot={null}
                             analysisSlot={
-                                <LoadAnalysisClientPage siteId={id} siteName={finalSite.name} defaultDate={dateStr} />
+                                <LoadAnalysisClientPage
+                                    siteId={id}
+                                    siteName={finalSite.name}
+                                    defaultDate={dateStr}
+                                    siteTimezone={finalSite.timezone}
+                                    displayMode={finalSite.timezone_display_mode || 'SITE'}
+                                />
                             }
                         />
                     }

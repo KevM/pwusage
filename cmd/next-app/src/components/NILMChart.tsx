@@ -23,6 +23,8 @@ interface NILMChartProps {
     selectedEvent?: LoadEvent | null;
     onEventClick?: (event: LoadEvent) => void;
     isDarkMode?: boolean;
+    siteTimezone?: string;
+    displayMode?: 'SITE' | 'BROWSER';
 }
 
 // Helper to format tariff names (e.g., SUPER_OFF_PEAK -> Super Off-Peak)
@@ -281,21 +283,34 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         gridTrace: isDarkMode ? "#A67B5B" : "#6F4E37"  // Cocoa Brown (Dark/Light)
     }), [isDarkMode]);
 
+    // Helper to get effective time for display
+    const getDisplayTime = React.useCallback((val: string | Date | number) => {
+        // Backend now handles timezone conversion.
+        // We receive data where the timestamp component is already wall-clock time 
+        // encoded as UTC/ISO. 
+        // e.g. "2023-01-01T12:00:00.000Z" means 12:00 Wall Clock.
+        // We just parse it.
+        return parseDate(val);
+    }, []);
+
     // Pre-process events for performance
     const processedEvents = React.useMemo(() => {
         return events.map((e, index) => ({
             ...e,
             index,
-            startMs: parseDate(e.startTime).getTime(),
-            endMs: parseDate(e.endTime).getTime()
+            startMs: getDisplayTime(e.startTime).getTime(),
+            endMs: getDisplayTime(e.endTime).getTime()
         }));
-    }, [events]);
+    }, [events, getDisplayTime]);
 
-    const formattedData = React.useMemo(() => data.map(d => ({
-        ...d,
-        time: parseDate(d.timestamp).getTime(),
-        datetime: parseDate(d.timestamp).toLocaleString(),
-    })), [data]);
+    const formattedData = React.useMemo(() => data.map(d => {
+        const dt = getDisplayTime(d.timestamp);
+        return {
+            ...d,
+            time: dt.getTime(),
+            datetime: dt.toLocaleString(),
+        };
+    }), [data, getDisplayTime]);
 
     // ... tariffRegions and xAxisConfig logic unchanged ...
 

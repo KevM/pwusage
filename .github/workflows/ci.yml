@@ -140,10 +140,25 @@ jobs:
           vercel-args: '--prod'
           vercel-version: 'latest'
 
+  check-db-changes:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      migrations: ${{ steps.filter.outputs.migrations }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            migrations:
+              - 'cmd/next-app/db-migrations/**'
+              - 'cmd/next-app/supabase/migrations/**'
+
   verify-db:
     name: Verify Migrations (Prod -> Dev)
-    needs: [test, build]
-    if: github.event_name == 'pull_request'
+    needs: [test, build, check-db-changes]
+    if: github.event_name == 'pull_request' && needs.check-db-changes.outputs.migrations == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -211,7 +226,12 @@ jobs:
   deploy-preview:
     name: Deploy to Vercel (Preview)
     needs: [test, build, verify-db]
-    if: github.event_name == 'pull_request'
+    if: |
+      github.event_name == 'pull_request' && 
+      always() && 
+      needs.test.result == 'success' && 
+      needs.build.result == 'success' && 
+      (needs.verify-db.result == 'success' || needs.verify-db.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

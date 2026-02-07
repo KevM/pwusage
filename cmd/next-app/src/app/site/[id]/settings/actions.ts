@@ -26,3 +26,25 @@ export async function updateBillingStartDay(formData: FormData) {
     revalidatePath(`/site/${siteId}/settings`);
     revalidatePath(`/site/${siteId}`);
 }
+
+export async function updateTimezoneDisplayMode(formData: FormData) {
+    const siteId = formData.get('siteId') as string;
+    const mode = formData.get('displayMode') as string;
+
+    if (!siteId || (mode !== 'SITE' && mode !== 'BROWSER')) {
+        throw new Error('Invalid arguments');
+    }
+
+    if (!await verifySiteAccess(siteId)) {
+        throw new Error('Unauthorized');
+    }
+
+    const repo = new EnergyRepo();
+    // We need to add this method to EnergyRepo or just run query here?
+    // Let's run query here directly via repo helper or direct db access?
+    // Converting to repo method is cleaner.
+    await repo.updateSiteTimezoneDisplayMode(siteId, mode as 'SITE' | 'BROWSER');
+
+    revalidatePath(`/site/${siteId}/settings`);
+    revalidatePath(`/site/${siteId}`);
+}

@@ -13,9 +13,11 @@ interface LoadAnalysisClientPageProps {
     siteId: string;
     siteName: string;
     defaultDate?: string;
+    siteTimezone: string;
+    displayMode: 'SITE' | 'BROWSER';
 }
 
-export default function LoadAnalysisClientPage({ siteId, defaultDate }: LoadAnalysisClientPageProps) {
+export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezone, displayMode }: LoadAnalysisClientPageProps) {
     const searchParams = useSearchParams();
     const initialDate = searchParams.get('date') || defaultDate || new Date().toISOString().split('T')[0];
 
@@ -98,7 +100,9 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate }: LoadAnal
         if (!siteId) return;
         if (showLoading) setLoading(true);
         try {
-            const res = await fetch(`/api/site/${siteId}/analysis?date=${date}`);
+            // Determine target timezone
+            const targetTz = displayMode === 'BROWSER' ? Intl.DateTimeFormat().resolvedOptions().timeZone : siteTimezone;
+            const res = await fetch(`/api/site/${siteId}/analysis?date=${date}&tz=${targetTz}`);
             if (!res.ok) throw new Error('Failed to fetch data');
             const json = await res.json();
             setData(json.data);
@@ -109,7 +113,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate }: LoadAnal
         } finally {
             setLoading(false);
         }
-    }, [siteId, date]);
+    }, [siteId, date, displayMode, siteTimezone]);
 
     useEffect(() => {
         fetchData();
@@ -262,6 +266,8 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate }: LoadAnal
                             selectedEvent={selectedEvent}
                             onEventClick={handleEventClick}
                             isDarkMode={isDarkMode}
+                            siteTimezone={siteTimezone}
+                            displayMode={displayMode}
                         />
                     )}
                 </div>
