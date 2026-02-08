@@ -112,30 +112,34 @@ export class TrmnlRenderer {
         <div class="screen">
             <div class="view view--full">
                 <div class="layout layout--col">
-                        <!-- Live Stats -->
-                        <div class="layout layout--row" style="display: flex; width: 100%; justify-content: space-between; align-items: center; margin-bottom: 1px;">
-                            ${ctx.todayGrid !== undefined ? `
-                            <div style="flex: 1; display: flex; justify-content: center;">
-                                <div class="layout layout--row layout--center-x layout--center-y gap--xsmall" style="display: flex; flex-direction: row; align-items: center;">
-                                    <span class="value value--large">${(ctx.todayGrid).toFixed(1)}</span>
-                                    ${TrmnlRenderer.GRID_ICON_LARGE}
-                                </div>
-                            </div>
-                            ` : ''}
+                        <!-- Live Stats (Table Layout for Stability) -->
+                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 5px;">
+                            <tr>
+                                ${ctx.todayGrid !== undefined ? `
+                                <td style="width: 33%; text-align: center; vertical-align: middle;">
+                                    <div class="layout layout--row layout--center-x layout--center-y gap--xsmall" style="display: flex; flex-direction: row; align-items: center; justify-content: center;">
+                                        <span class="value value--large">${(ctx.todayGrid).toFixed(1)}</span>
+                                        ${TrmnlRenderer.GRID_ICON_LARGE}
+                                    </div>
+                                </td>
+                                ` : ''}
 
-                            ${ctx.todaySolar !== undefined ? `
-                            <div style="flex: 1; display: flex; justify-content: center;">
-                                <div class="layout layout--row layout--center-x layout--center-y gap--xsmall" style="display: flex; flex-direction: row; align-items: center;">
-                                    <span class="value value--large">${(ctx.todaySolar).toFixed(1)}</span>
-                                    ${TrmnlRenderer.SUN_ICON_LARGE}
-                                </div>
-                            </div>
-                            ` : ''}
+                                ${ctx.todaySolar !== undefined ? `
+                                <td style="width: 33%; text-align: center; vertical-align: middle;">
+                                    <div class="layout layout--row layout--center-x layout--center-y gap--xsmall" style="display: flex; flex-direction: row; align-items: center; justify-content: center;">
+                                        <span class="value value--large">${(ctx.todaySolar).toFixed(1)}</span>
+                                        ${TrmnlRenderer.SUN_ICON_LARGE}
+                                    </div>
+                                </td>
+                                ` : ''}
 
-                            <div style="flex: 1; display: flex; justify-content: center;">
-                                ${this.renderBatteryStatusLarge(ctx.batterySoc, ctx.batteryStatus)}
-                            </div>
-                        </div>
+                                <td style="width: 33%; text-align: center; vertical-align: middle;">
+                                    <div style="display: flex; justify-content: center;">
+                                        ${this.renderBatteryStatusLarge(ctx.batterySoc, ctx.batteryStatus)}
+                                    </div>
+                                </td>
+                            </tr>
+                        </table>
 
                     ${tariffTables}
 
