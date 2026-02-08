@@ -88,10 +88,8 @@ function ManageContent() {
     const handleSave = async () => {
         if (!selectedSite || !uuid) return;
 
-        if (!token) {
-            setError('Security token missing. Please return to Trmnl and try again.');
-            return;
-        }
+        // Relaxed check: We allow missing token if user is authenticated (backend will verify)
+        // if (!token) { ... } -> Removed
 
         setLoading(true);
         setSuccess('');
@@ -104,7 +102,7 @@ function ManageContent() {
                 body: JSON.stringify({
                     uuid,
                     site_id: selectedSite,
-                    token
+                    token: token || null // Pass null if missing
                 })
             });
 

@@ -73,34 +73,56 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Missing uuid or site_id' }, { status: 400 });
         }
 
-        // Verify Trmnl JWT
-        if (!trmnlToken) {
-            console.warn(`[TrmnlManage] Missing JWT for UUID ${uuid}`);
-            return NextResponse.json({ error: 'Missing security token' }, { status: 401 });
-        }
+        // Authentication Strategy:
+        // 1. Trmnl JWT (Proof of Device Ownership) - Strongest
+        // 2. Site Auth (Proof of User/Site Ownership) - Contingency for Re-auth/loss of token
 
-        try {
-            await verifyTrmnlToken(trmnlToken, uuid);
-        } catch (err) {
-            console.error(`[TrmnlManage] JWT Verification Failed for ${uuid}:`, err);
-            return NextResponse.json({ error: 'Invalid security token' }, { status: 403 });
+        let isAuthorized = false;
+
+        // 1. Verify Trmnl JWT if present
+        if (trmnlToken) {
+            try {
+                await verifyTrmnlToken(trmnlToken, uuid);
+                isAuthorized = true;
+            } catch (err) {
+                console.warn(`[TrmnlManage] JWT Verification Failed for ${uuid}:`, err);
+                // Don't return error yet, try method 2
+            }
         }
 
         const cookieStore = await cookies();
         const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-        // We require site_auth to prove ownership of the site we are linking TO
-        if (!siteAuthToken) {
-            return NextResponse.json({ error: 'Unauthorized: Please log in to link a site' }, { status: 401 });
-        }
-
         const repo = new EnergyRepo();
-        // Since we have siteAuthToken, we don't need teslaClient to validate access, 
-        // SiteService can do it via JWT or DB check.
         const siteService = new SiteService({ energyRepo: repo, siteAuthToken });
 
+        // 2. Fallback to Site Auth (Only for EXISTING installations)
+        if (!isAuthorized && siteAuthToken) {
+            // Check if this UUID is already linked to a site this user owns
+            const tService = new TrmnlService();
+            const existing = await tService.getInstallationByUuid(uuid);
+
+            if (existing && existing.site_id) {
+                // Verify user owns the CURRENTLY linked site
+                // This proves they are authorized to manage the device already
+                const hasAccessToOldSite = await siteService.validateSiteAccess(existing.site_id);
+                if (hasAccessToOldSite) {
+                    console.log(`[TrmnlManage] Authorized via Site Ownership (Re-auth) for ${uuid}`);
+                    isAuthorized = true;
+                } else {
+                    console.warn(`[TrmnlManage] User tried to manage ${uuid} but does not own current site ${existing.site_id}`);
+                }
+            } else {
+                console.warn(`[TrmnlManage] Cannot use Site Auth for NEW/Unlinked installation ${uuid}. Trmnl Token required.`);
+            }
+        }
+
+        if (!isAuthorized) {
+            return NextResponse.json({ error: 'Unauthorized: Missing or invalid security token' }, { status: 401 });
+        }
+
+        // Validate target site access (always required if changing link)
         if (!await siteService.validateSiteAccess(site_id)) {
-            return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
+            return NextResponse.json({ error: 'Unauthorized access to target site' }, { status: 403 });
         }
 
         // Create or Update installation (UPSERT)

@@ -164,13 +164,17 @@ export async function GET(request: Request) {
 
         // --- PARALLEL LIVE STATUS FETCH ---
         let liveStatusPromise: Promise<EnergySiteLiveStatus | undefined> = Promise.resolve(undefined);
+        let fetchStatus = 'skipped';
+
         if (trmnlClient) {
-            // Set a 5s timeout for live status
+            // Set a 8s timeout for live status
+            fetchStatus = 'pending';
             const fetchOp = trmnlClient.getLiveStatus(site.id);
-            const timeoutOp = new Promise<undefined>((_, reject) => setTimeout(() => reject(new Error('Live Status Timeout')), 5000));
-            // We catch errors here to avoid unhandled rejection, returning undefined on fail
+            const timeoutOp = new Promise<undefined>((_, reject) => setTimeout(() => reject(new Error('Live Status Timeout')), 8000));
+
             liveStatusPromise = Promise.race([fetchOp, timeoutOp]).catch(e => {
                 console.warn('[TrmnlMarkup] Live status fetch failed/timed out:', e);
+                fetchStatus = (e instanceof Error) ? e.message : 'error';
                 return undefined;
             }) as Promise<EnergySiteLiveStatus | undefined>;
         }
@@ -362,7 +366,9 @@ export async function GET(request: Request) {
                 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
                 'Pragma': 'no-cache',
                 'Expires': '0',
-                'Surrogate-Control': 'no-store'
+                'Surrogate-Control': 'no-store',
+                'X-Debug-Live-Status': fetchStatus,
+                'X-Debug-Battery-SOC': batterySoc?.toString() ?? 'null'
             }
         });
 
