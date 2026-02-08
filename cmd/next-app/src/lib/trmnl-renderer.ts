@@ -118,8 +118,8 @@ export class TrmnlRenderer {
                                 ${ctx.todayGrid !== undefined ? `
                                 <td style="width: 33%; text-align: center; vertical-align: middle;">
                                     <div class="layout layout--row layout--center-x layout--center-y gap--xsmall" style="display: flex; flex-direction: row; align-items: center; justify-content: center;">
-                                        <span class="value value--large">${(ctx.todayGrid).toFixed(1)}</span>
-                                        ${TrmnlRenderer.GRID_ICON_LARGE}
+                                        <span class="value" style="font-size: 24px;">${(ctx.todayGrid).toFixed(1)}</span>
+                                        <div style="transform: scale(0.8);">${TrmnlRenderer.GRID_ICON}</div>
                                     </div>
                                 </td>
                                 ` : ''}
@@ -127,15 +127,15 @@ export class TrmnlRenderer {
                                 ${ctx.todaySolar !== undefined ? `
                                 <td style="width: 33%; text-align: center; vertical-align: middle;">
                                     <div class="layout layout--row layout--center-x layout--center-y gap--xsmall" style="display: flex; flex-direction: row; align-items: center; justify-content: center;">
-                                        <span class="value value--large">${(ctx.todaySolar).toFixed(1)}</span>
-                                        ${TrmnlRenderer.SUN_ICON_LARGE}
+                                        <span class="value" style="font-size: 24px;">${(ctx.todaySolar).toFixed(1)}</span>
+                                        <div style="transform: scale(0.8);">${TrmnlRenderer.SUN_ICON}</div>
                                     </div>
                                 </td>
                                 ` : ''}
 
                                 <td style="width: 33%; text-align: center; vertical-align: middle;">
                                     <div style="display: flex; justify-content: center;">
-                                        ${this.renderBatteryStatusLarge(ctx.batterySoc, ctx.batteryStatus)}
+                                        ${this.renderBatteryStatus(ctx.batterySoc, ctx.batteryStatus)}
                                     </div>
                                 </td>
                             </tr>
