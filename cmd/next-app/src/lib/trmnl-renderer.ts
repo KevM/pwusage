@@ -112,30 +112,44 @@ export class TrmnlRenderer {
         <div class="screen">
             <div class="view view--full">
                 <div class="layout layout--col">
-                        <!-- Live Stats (Table Layout for Stability) -->
-                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 5px;">
+                        <!-- Live Stats (Table Layout - Vertical Stack for Space) -->
+                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 8px;">
                             <tr>
                                 ${ctx.todayGrid !== undefined ? `
-                                <td style="width: 33%; text-align: center; vertical-align: middle;">
-                                    <div class="layout layout--row layout--center-x layout--center-y gap--xsmall" style="display: flex; flex-direction: row; align-items: center; justify-content: center;">
-                                        <span class="value" style="font-size: 24px;">${(ctx.todayGrid).toFixed(1)}</span>
-                                        <div style="transform: scale(0.8);">${TrmnlRenderer.GRID_ICON}</div>
-                                    </div>
+                                <td style="width: 33%; text-align: center; vertical-align: bottom;">
+                                    <div style="margin-bottom: 2px;">${TrmnlRenderer.GRID_ICON}</div>
+                                    <span class="value" style="font-size: 20px; display: block;">${(ctx.todayGrid).toFixed(1)}</span>
                                 </td>
                                 ` : ''}
 
                                 ${ctx.todaySolar !== undefined ? `
-                                <td style="width: 33%; text-align: center; vertical-align: middle;">
-                                    <div class="layout layout--row layout--center-x layout--center-y gap--xsmall" style="display: flex; flex-direction: row; align-items: center; justify-content: center;">
-                                        <span class="value" style="font-size: 24px;">${(ctx.todaySolar).toFixed(1)}</span>
-                                        <div style="transform: scale(0.8);">${TrmnlRenderer.SUN_ICON}</div>
-                                    </div>
+                                <td style="width: 33%; text-align: center; vertical-align: bottom;">
+                                    <div style="margin-bottom: 2px;">${TrmnlRenderer.SUN_ICON}</div>
+                                    <span class="value" style="font-size: 20px; display: block;">${(ctx.todaySolar).toFixed(1)}</span>
                                 </td>
                                 ` : ''}
 
-                                <td style="width: 33%; text-align: center; vertical-align: middle;">
-                                    <div style="display: flex; justify-content: center;">
-                                        ${this.renderBatteryStatus(ctx.batterySoc, ctx.batteryStatus)}
+                                <td style="width: 33%; text-align: center; vertical-align: bottom;">
+                                    <div style="display: flex; flex-direction: column; align-items: center;">
+                                        ${(() => {
+                const soc = ctx.batterySoc;
+                const hasData = soc !== undefined && soc !== null;
+                const level = hasData ? Math.max(0, Math.min(100, soc!)) : 0;
+                const text = hasData ? Math.round(level).toString() + '%' : '--';
+                const fillWidth = (level / 100) * 18;
+                // Compact Battery SVG
+                const startX = 2.5;
+                const svg = `
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="36" height="20" viewBox="0 0 26 14">
+                                                <rect x="0.5" y="0.5" width="22" height="13" rx="2" fill="none" stroke="black" stroke-width="1.5" />
+                                                <path d="M23 4h1.5a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5H23V4z" fill="black" />
+                                                <rect x="${startX}" y="2.5" width="${fillWidth}" height="9" rx="0.5" fill="black" />
+                                            </svg>`;
+                return `
+                                                <div style="margin-bottom: 2px;">${svg}</div>
+                                                <span class="value" style="font-size: 20px; display: block;">${text}</span>
+                                            `;
+            })()}
                                     </div>
                                 </td>
                             </tr>
