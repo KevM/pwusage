@@ -16,6 +16,30 @@
     - **Token Storage**: Access/Refresh tokens stored in `User` table, linked to `Site` via `user_id`.
     - **API Security**: All sensitive routes must verify `site_auth` and use `SiteService.validateSiteAccess(siteId)`.
 
+## Authentication & Security
+
+### 1. Site Authorization (`site_auth`)
+- **Mechanism**: JWT stored in an HTTP-only cookie named `site_auth`.
+- **Payload**: Contains the authenticated `sub` (User ID), `roles` (e.g., admin), and the list of authorized `sites` (legacy claim, moving towards validation via User ID).
+- **Purpose**: Identifies the currently logged-in user and their active session. **This is NOT the Tesla Access Token.**
+
+### 2. Tesla Token Storage
+- **Storage**: Tesla `access_token` and `refresh_token` are stored securely in the `User` database table, keyed by the User ID.
+- **Retrieval**: To make Tesla API calls:
+    1.  Validate `site_auth` JWT to get the `userId`.
+    2.  Query `EnergyRepo.getUserTokens(userId)` to get the actual `access_token`.
+    3.  Initialize `TeslaClient` with this token.
+- **Security**: The raw Tesla `access_token` is **NEVER** exposed in cookies or client-side storage to prevent theft.
+
+### 3. Trmnl Integration Auth
+- **Primary**: Authenticated via a unique Trmnl `uuid` and `token` (Trmnl-specific secret).
+- **Re-Authentication Fallback**: If the Trmnl secret is missing (e.g., re-scanning QR code):
+    1.  App verifies the user has a valid `site_auth` session.
+    2.  App retrieves the user's Tesla `access_token` from the DB.
+    3.  App verifies against the Tesla API that the user owns the site linked to the Trmnl UUID.
+    4.  If owned, access is granted to update the integration.
+
+
 ## Conventions
 - **Files**: Use `kebab-case` for filenames.
 - **Components**: Functional components, stored in `src/components`.
@@ -24,6 +48,7 @@
 
 ## Development
 - **Linting**: `npm run lint` must pass.
+- **Typing**: STRICTLY avoid the `any` type. Explicitly define interfaces or types for all variables and function parameters.
 - **Build**: `npm run build` must pass before finishing tasks.
 - **Migrations**: SQL migrations in `cmd/next-app/db-migrations/`. Create a new `.sql` file with a timestamp prefix for schema changes.
 

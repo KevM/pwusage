@@ -20,6 +20,9 @@ export function Footer() {
                         <Link href="/about" className="hover:text-white transition-colors">
                             About
                         </Link>
+                        <a href="https://discord.gg/KCweVtVNAB" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+                            Discord
+                        </a>
                     </div>
                 </div>
 

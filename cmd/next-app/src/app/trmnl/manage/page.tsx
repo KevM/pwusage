@@ -106,7 +106,15 @@ function ManageContent() {
                 })
             });
 
-            if (!res.ok) throw new Error(await res.text());
+            if (!res.ok) {
+                const text = await res.text();
+                try {
+                    const json = JSON.parse(text);
+                    throw new Error(json.error || text);
+                } catch {
+                    throw new Error(text);
+                }
+            }
             setSuccess('Settings saved!');
         } catch (err) {
             setError((err as Error).message);
@@ -203,7 +211,7 @@ function ManageContent() {
                 <div className="mt-4 text-center">
                     {pluginSettingId && (
                         <a
-                            href={`https://usetrmnl.com/plugin_settings/${pluginSettingId}/edit?force_refresh=true`}
+                            href={`https://trmnl.com/plugin_settings/${pluginSettingId}/edit?force_refresh=true`}
                             target="_blank"
                             rel="noreferrer"
                             className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"

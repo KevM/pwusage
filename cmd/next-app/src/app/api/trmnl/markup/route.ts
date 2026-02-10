@@ -203,7 +203,7 @@ export async function GET(request: Request) {
 
                     try {
                         await Promise.race([historySyncPromise, timeoutPromise]);
-                    } catch (timeoutErr) {
+                    } catch {
                         console.warn(`[Trmnl] Historical sync timed out (Non-fatal)`);
                     }
                 }
@@ -337,8 +337,13 @@ export async function GET(request: Request) {
         // Prepare Render Context
         const { TrmnlRenderer } = await import('@/lib/trmnl-renderer');
 
+        let displayName = site.name || 'Powerwall';
+        if (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== 'production') {
+            displayName += ' (Preview)';
+        }
+
         const renderCtx = {
-            siteName: site.name || 'Powerwall',
+            siteName: displayName,
             dateRange: `${start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })} - ${cycleEnd.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}`,
             tariffGroups: Array.from(tariffGroups.values()),
             totalCost: totalBillCost,

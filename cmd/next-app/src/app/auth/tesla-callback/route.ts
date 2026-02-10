@@ -105,13 +105,13 @@ export async function GET(request: NextRequest) {
 
         // Upsert User
         await pool.query(`
-            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at)
+            VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (id) DO UPDATE SET
                 access_token = EXCLUDED.access_token,
                 refresh_token = EXCLUDED.refresh_token,
                 email = COALESCE(EXCLUDED.email, "User".email)
-        `, [userId, userEmail, authData.access_token, authData.refresh_token, Date.now() + (authData.expires_in * 1000), Date.now()]);
+        `, [userId, userEmail, authData.access_token, authData.refresh_token, Date.now() + (authData.expires_in * 1000)]);
 
         // Retrieve Roles immediately
         const userRes = await pool.query('SELECT roles FROM "User" WHERE id = $1', [userId]);

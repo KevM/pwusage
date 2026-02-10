@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
 
-const TRMNL_JWKS_URI = 'https://usetrmnl.com/.well-known/jwks.json';
+const TRMNL_JWKS_URI = 'https://trmnl.com/.well-known/jwks.json';
 
 const client = jwksClient({
     jwksUri: TRMNL_JWKS_URI,

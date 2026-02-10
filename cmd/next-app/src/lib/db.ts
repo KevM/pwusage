@@ -47,6 +47,9 @@ export interface User {
   refresh_lock_expires?: number;
   created_at?: number | string; // Added via migration
   roles?: string[]; // Added: 'admin' | 'user'
+  is_active?: boolean;
+  auth_status?: string;
+  last_checked_at?: Date | string;
 }
 
 export interface Site {

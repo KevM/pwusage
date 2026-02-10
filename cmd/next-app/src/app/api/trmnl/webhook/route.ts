@@ -31,6 +31,25 @@ export async function POST(request: Request) {
         if (existing) {
             // Update with new details
             await service.createInstallation(existing.site_id, user.uuid, user.plugin_setting_id, user);
+
+            // Update user email if not present
+            if (user.email && existing.site_id) {
+                const { pool } = await import('@/lib/db');
+
+                // Get the user_id from the site
+                const siteRes = await pool.query('SELECT user_id FROM "Site" WHERE id = $1', [existing.site_id]);
+                if (siteRes.rows.length > 0 && siteRes.rows[0].user_id) {
+                    const userId = siteRes.rows[0].user_id;
+
+                    // Check if user already has an email
+                    const userRes = await pool.query('SELECT email FROM "User" WHERE id = $1', [userId]);
+                    if (userRes.rows.length > 0 && !userRes.rows[0].email) {
+                        // Update user with email from Trmnl
+                        await pool.query('UPDATE "User" SET email = $1 WHERE id = $2', [user.email, userId]);
+                        console.log(`[TrmnlWebhook] Updated user ${userId} with email from Trmnl: ${user.email}`);
+                    }
+                }
+            }
         } else {
             // 1. Check for Pending installation by plugin_setting_id (Strong Link)
             let pending = await service.getInstallationByPendingPluginId(user.plugin_setting_id);
@@ -49,6 +68,25 @@ export async function POST(request: Request) {
                 // OR we rely on claimPending... but claimPendingPluginId queries by plugin_setting_id.
                 // We need a new method to claim by Row ID.
                 await service.claimPendingInstallationById(pending.id, user.uuid, user.plugin_setting_id, user);
+
+                // Update user email if not present
+                if (user.email && pending.site_id) {
+                    const { pool } = await import('@/lib/db');
+
+                    // Get the user_id from the site
+                    const siteRes = await pool.query('SELECT user_id FROM "Site" WHERE id = $1', [pending.site_id]);
+                    if (siteRes.rows.length > 0 && siteRes.rows[0].user_id) {
+                        const userId = siteRes.rows[0].user_id;
+
+                        // Check if user already has an email
+                        const userRes = await pool.query('SELECT email FROM "User" WHERE id = $1', [userId]);
+                        if (userRes.rows.length > 0 && !userRes.rows[0].email) {
+                            // Update user with email from Trmnl
+                            await pool.query('UPDATE "User" SET email = $1 WHERE id = $2', [user.email, userId]);
+                            console.log(`[TrmnlWebhook] Updated user ${userId} with email from Trmnl: ${user.email}`);
+                        }
+                    }
+                }
             } else {
                 console.warn(`[TrmnlWebhook] Received success webhook for unknown UUID: ${user.uuid} and unknown Plugin ID: ${user.plugin_setting_id}. details ignored.`);
             }

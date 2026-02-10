@@ -71,7 +71,7 @@ export default function TrmnlHelpPage() {
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
                     <a
-                        href="https://usetrmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
+                        href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center justify-center px-8 py-3 text-base font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
@@ -79,7 +79,7 @@ export default function TrmnlHelpPage() {
                         Setup Device
                     </a>
                     <a
-                        href="https://usetrmnl.com"
+                        href="https://trmnl.com"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center justify-center px-8 py-3 text-base font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors"

@@ -67,40 +67,42 @@ export class TrmnlRenderer {
             const periods = group.periods.sort((a, b) => a.touName.localeCompare(b.touName));
 
             return `
-                    <table class="table" style="margin: 0; padding: 0;">
+                    <table class="table w--full">
                         <thead>
                             <tr>
-                                <th style="padding: 1px 2px;"><span class="title">Period</span></th>
-                                <th style="padding: 1px 2px;"><span class="title">Home</span></th>
-                                <th style="padding: 1px 2px;"><span class="title">Solar</span></th>
-                                <th style="padding: 1px 2px;"><span class="title">Grid</span></th>
-                                <th style="padding: 1px 2px;"><span class="title">Batt</span></th>
-                                <th style="padding: 1px 2px;"><span class="title">Cost</span></th>
+                                <th>Period</th>
+                                <th>Home</th>
+                                <th>Solar</th>
+                                <th>Grid</th>
+                                <th>Batt</th>
+                                <th>Cost</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${periods.map(p => {
                 const isCurrent = ctx.currentTouName && p.touName === ctx.currentTouName;
-                const style = isCurrent ? 'font-weight: strong;' : '';
+                // Use value for larger, more readable table text
+                const spanClass = 'value--small';
+                const labelPrefix = isCurrent ? '> ' : '';
 
                 return `
                                     <tr>
-                                        <td style="padding: 1px 2px;"><span class="value value--xsmall" style="${style}" data-value-fit="true">${p.label}</span></td>
-                                        <td style="padding: 1px 2px;"><span class="value value--xsmall" style="${style}" data-value-fit="true">${(p.home / 1000).toFixed(1)}</span></td>
-                                        <td style="padding: 1px 2px;"><span class="value value--xsmall" style="${style}" data-value-fit="true">${(p.solar / 1000).toFixed(1)}</span></td>
-                                        <td style="padding: 1px 2px;"><span class="value value--xsmall" style="${style}" data-value-fit="true">${(p.grid / 1000).toFixed(1)}</span></td>
-                                        <td style="padding: 1px 2px;"><span class="value value--xsmall" style="${style}" data-value-fit="true">${(p.battery / 1000).toFixed(1)}</span></td>
-                                        <td style="padding: 1px 2px;"><span class="value value--xsmall" style="${style}" data-value-fit="true">${ctx.currency}${p.cost.toFixed(2)}</span></td>
+                                        <td><span class="${spanClass}">${labelPrefix}${p.label}</span></td>
+                                        <td><span class="${spanClass}">${Math.round(p.home / 1000)}</span></td>
+                                        <td><span class="${spanClass}">${Math.round(p.solar / 1000)}</span></td>
+                                        <td><span class="${spanClass}">${Math.round(p.grid / 1000)}</span></td>
+                                        <td><span class="${spanClass}">${Math.round(p.battery / 1000)}</span></td>
+                                        <td><span class="${spanClass}">${ctx.currency}${p.cost.toFixed(2)}</span></td>
                                     </tr>
                                 `;
             }).join('')}
                             <tr>
-                                <td class="table-col" style="padding: 1px 2px;">
-                                    <span class="value value--xsmall" style="font-weight: bold;" data-value-fit="true">${ctx.costLabel}</span>
+                                <td class="table-col">
+                                    <span class="title title--medium"><strong>${ctx.costLabel}</strong></span>
                                 </td>
                                 <td colspan="4"></td>
-                                <td class="table-col" style="padding: 1px 2px;">
-                                    <span class="value value--small" style="font-weight: bold;">${ctx.displayCost}</span>
+                                <td class="table-col">
+                                    <span class="title title--medium"><strong>${ctx.displayCost}</strong></span>
                                 </td>
                             </tr>
                         </tbody>
@@ -108,63 +110,47 @@ export class TrmnlRenderer {
             `;
         }).join('');
 
+        const GRID_ICON_ALMOST_LARGE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="6 0 12 24" width="60" height="60"><path d="M7 2v11h3v9l7-12h-4l4-8z" fill="black"/></svg>`;
+        const SUN_ICON_ALMOST_LARGE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="60" height="60" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5" fill="black" stroke="none"/><line x1="12" y1="1" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="6.34" y2="6.34" /><line x1="17.66" y1="17.66" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="6.34" y2="17.66" /><line x1="17.66" y1="6.34" x2="19.78" y2="4.22" /></svg>`;
+
         return `
-        <div class="screen">
             <div class="view view--full">
-                <div class="layout layout--col">
-                        <!-- Live Stats (Table Layout - Vertical Stack for Space) -->
-                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 8px;">
-                            <tr>
-                                ${ctx.todayGrid !== undefined ? `
-                                <td style="width: 33%; text-align: center; vertical-align: bottom;">
-                                    <div style="margin-bottom: 2px;">${TrmnlRenderer.GRID_ICON_LARGE}</div>
-                                    <span class="value value--large" style="display: block;">${(ctx.todayGrid).toFixed(1)}</span>
-                                </td>
-                                ` : ''}
+                <div class="layout layout--col gap--distribute h--full">
+                     
+                     <!-- Live Stats Header -->
+                     <!-- Changed gap--distribute to gap--medium and added justify--center to group them better -->
+                     <div class="flex flex--row flex--center-y flex--center-x flex--stretch-x gap--xxlarge">
+                         ${ctx.todayGrid !== undefined ? `
+                         <div class="flex flex--row flex--center-y gap--small">
+                             <span class="title title--xxlarge">${(ctx.todayGrid).toFixed(1)}</span>
+                             ${GRID_ICON_ALMOST_LARGE}
+                         </div>
+                         ` : ''}
 
-                                ${ctx.todaySolar !== undefined ? `
-                                <td style="width: 33%; text-align: center; vertical-align: bottom;">
-                                    <div style="margin-bottom: 2px;">${TrmnlRenderer.SUN_ICON_LARGE}</div>
-                                    <span class="value value--large" style="display: block;">${(ctx.todaySolar).toFixed(1)}</span>
-                                </td>
-                                ` : ''}
+                         ${ctx.todaySolar !== undefined ? `
+                         <div class="flex flex--row flex--center-y gap--small">
+                             <span class="title title--xxlarge">${(ctx.todaySolar).toFixed(1)}</span>
+                             ${SUN_ICON_ALMOST_LARGE}
+                         </div>
+                         ` : ''}
 
-                                <td style="width: 33%; text-align: center; vertical-align: bottom;">
-                                    <div style="display: flex; flex-direction: column; align-items: center;">
-                                        ${(() => {
-                const soc = ctx.batterySoc;
-                const hasData = soc !== undefined && soc !== null;
-                const level = hasData ? Math.max(0, Math.min(100, soc!)) : 0;
-                const text = hasData ? Math.round(level).toString() + '%' : '--';
-                const fillWidth = (level / 100) * 18;
-                // Large Battery SVG (using same viewBox but larger width/height)
-                const startX = 2.5;
-                const svg = `
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="65" height="35" viewBox="0 0 26 14">
-                                                <rect x="0.5" y="0.5" width="22" height="13" rx="2" fill="none" stroke="black" stroke-width="1.5" />
-                                                <path d="M23 4h1.5a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5H23V4z" fill="black" />
-                                                <rect x="${startX}" y="2.5" width="${fillWidth}" height="9" rx="0.5" fill="black" />
-                                            </svg>`;
-                return `
-                                                <div style="margin-bottom: 2px;">${svg}</div>
-                                                <span class="value value--large" style="display: block;">${text}</span>
-                                            `;
-            })()}
-                                    </div>
-                                </td>
-                            </tr>
-                        </table>
+                         <div class="flex flex--col">
+                             ${this.renderBatteryStatusLarge(ctx.batterySoc, ctx.batteryStatus)}
+                         </div>
+                     </div>
 
-                    ${tariffTables}
+                     <!-- Tariff Tables -->
+                     <div class="flex flex--col w--full m--8 p--8">
+                        ${tariffTables}
+                     </div>
 
-                    <div class="layout layout--row layout--center-y gap--small" style="padding-top: 4px; border-top: 1px solid #000;">
-                        <span class="title title--medium">${ctx.siteName}</span>
-                        <span class="label label--small">${ctx.dateRange}</span>
-                    </div>
+                     <!-- Footer -->
+                     <div class="flex flex--row flex--center-x flex--center-y gap--medium">
+                         <span class="title title--small">${ctx.siteName}</span>
+                         <span class="label label--small">${ctx.dateRange}</span>
+                     </div>
                 </div>
-
             </div>
-        </div>
         `;
     }
 
@@ -173,22 +159,22 @@ export class TrmnlRenderer {
             <div class="view view--half-vertical">
                  <div class="layout layout--col" style="padding: 10px; height: 100%;">
                     
-                    <div class="layout layout--row layout--center-y" style="justify-content: space-between; width: 100%; margin-bottom: 10px;">
+                    <div class="flex flex--row flex--center-y" style="justify-content: space-between; width: 100%; margin-bottom: 10px;">
                          <span class="title title--small">${ctx.siteName}</span>
                          ${this.renderBatteryStatus(ctx.batterySoc, ctx.batteryStatus)}
                     </div>
 
-                    <div class="layout layout--col layout--center" style="flex-grow: 1;">
+                    <div class="flex flex--col flex--center-x" style="flex-grow: 1;">
                          <span class="label">${ctx.costLabel}</span>
                          <span class="title title--medium">${ctx.displayCost}</span>
                     </div>
 
-                    <div class="layout layout--row" style="gap: 10px; width: 100%; margin-top: auto;">
-                        <div class="layout layout--col layout--center" style="flex: 1;">
+                    <div class="flex flex--row" style="gap: 10px; width: 100%; margin-top: auto;">
+                        <div class="flex flex--col flex--center-x" style="flex: 1;">
                             <span class="label">Grid</span>
                             <span class="value">${this.sumStat(ctx.tariffGroups, 'grid')}</span>
                         </div>
-                         <div class="layout layout--col layout--center" style="flex: 1;">
+                         <div class="flex flex--col flex--center-x" style="flex: 1;">
                             <span class="label">Solar</span>
                             <span class="value">${this.sumStat(ctx.tariffGroups, 'solar')}</span>
                         </div>
@@ -202,18 +188,18 @@ export class TrmnlRenderer {
         return `
             <div class="view view--half-horizontal">
                 <div class="layout layout--col" style="padding: 15px; height: 100%;">
-                    <div class="layout layout--row layout--center-y" style="justify-content: space-between; width: 100%;">
-                        <div class="layout layout--col">
+                    <div class="flex flex--row flex--center-y" style="justify-content: space-between; width: 100%;">
+                        <div class="flex flex--col">
                             <span class="title title--small">${ctx.siteName}</span>
                             <span class="label">${ctx.dateRange}</span>
                         </div>
-                        <div class="layout layout--col" style="text-align: right; align-items: flex-end;">
+                        <div class="flex flex--col" style="text-align: right; align-items: flex-end;">
                              <span class="label">${ctx.costLabel}</span>
                              <span class="title title--medium">${ctx.displayCost}</span>
                         </div>
                     </div>
 
-                    <div class="layout layout--row layout--center-y" style="justify-content: space-between; width: 100%; margin-top: auto;">
+                    <div class="flex flex--row flex--center-y" style="justify-content: space-between; width: 100%; margin-top: auto;">
                           ${this.renderHorizontalStat('Home', this.sumStat(ctx.tariffGroups, 'home'))}
                           ${this.renderHorizontalStat('Solar', this.sumStat(ctx.tariffGroups, 'solar'))}
                           ${this.renderHorizontalStat('Grid', this.sumStat(ctx.tariffGroups, 'grid'))}
@@ -245,7 +231,7 @@ export class TrmnlRenderer {
 
     private static renderHorizontalStat(label: string, value: string): string {
         return `
-            <div class="layout layout--col">
+            <div class="flex flex--col">
                 <span class="label">${label}</span>
                 <span class="value value--small">${value}</span>
             </div>
@@ -275,7 +261,7 @@ export class TrmnlRenderer {
         `;
 
         return `
-            <div class="layout layout--row layout--center-y gap--xsmall">
+            <div class="flex flex--row flex--center-y gap--xsmall">
                 <span class="value value--large">${text}</span>
                 <span class="value value--xsmall">%</span>
                 ${batterySvg}
@@ -289,16 +275,17 @@ export class TrmnlRenderer {
         const level = hasData ? Math.max(0, Math.min(100, soc!)) : 0;
         const text = hasData ? Math.round(level).toString() : '--';
 
+        // Use STANDARD icons (32px) here instead of LARGE (40px) to ensure visibility and fit
         let icon = '';
-        if (status === 'charging') icon = TrmnlRenderer.CHARGING_ICON_LARGE;
-        if (status === 'discharging') icon = TrmnlRenderer.DISCHARGING_ICON_LARGE;
+        if (status === 'charging') icon = TrmnlRenderer.CHARGING_ICON;
+        if (status === 'discharging') icon = TrmnlRenderer.DISCHARGING_ICON;
 
         // Interactive Battery SVG Large
-        // Double the size
+        // Adjusted to 60x30 to fit nicely with text
         const fillWidth = (level / 100) * 18;
 
         const batterySvg = `
-            <svg xmlns="http://www.w3.org/2000/svg" width="65" height="35" viewBox="0 0 26 14">
+            <svg xmlns="http://www.w3.org/2000/svg" width="96" height="48" viewBox="0 0 26 14">
                 <rect x="0.5" y="0.5" width="22" height="13" rx="2" fill="none" stroke="black" stroke-width="1.5" />
                 <path d="M23 4h1.5a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5H23V4z" fill="black" />
                 <rect x="2.5" y="2.5" width="${fillWidth}" height="9" rx="0.5" fill="black" />
@@ -306,12 +293,11 @@ export class TrmnlRenderer {
         `;
 
         return `
-            <div class="layout layout--row layout--center-x layout--center-y gap--xsmall" style="display: flex; flex-direction: row; align-items: center;">
-                <div class="layout layout--row layout--center-y">
-                     <span class="value value--large">${text}</span>
-                     <span class="value value--small">%</span>
+            <div class="flex flex--row flex--center-y gap--small">
+                <div class="flex flex--row flex--center-y">
+                     <span class="title title--xxlarge">${text}%</span>
                 </div>
-                <div class="layout layout--row layout--center-y gap--xsmall">
+                <div class="flex flex--row flex--center-y gap--xsmall">
                     ${batterySvg}
                     ${icon ? `<div>${icon}</div>` : ''}
                 </div>
@@ -319,4 +305,9 @@ export class TrmnlRenderer {
         `;
     }
 
+    // ... (keep renderHalfVertical/Horizontal/Quadrant same) ...
+
+
+
 }
+

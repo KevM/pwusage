@@ -59,7 +59,7 @@ export default async function Page(props: { params: Promise<{ id: string }>, sea
                         <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800">
                             <p className="mb-2 font-semibold">Preview Mode</p>
                             <p className="text-sm">You are previewing the Trmnl view for this site. No physical Trmnl device is linked yet.</p>
-                            <a href="https://usetrmnl.com/plugin_settings/new?keyname=powerwall_energy_usage" target="_blank" className="text-sm underline hover:text-blue-900 dark:hover:text-blue-100 mt-2 inline-block">Link a Trmnl device &rarr;</a>
+                            <a href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage" target="_blank" className="text-sm underline hover:text-blue-900 dark:hover:text-blue-100 mt-2 inline-block">Link a Trmnl device &rarr;</a>
                         </div>
                         <PreviewClient siteId={siteId} />
                     </div>

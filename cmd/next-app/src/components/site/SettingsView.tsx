@@ -63,8 +63,8 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                     {installation ? (
                         <a
                             href={installation.plugin_setting_id
-                                ? `https://usetrmnl.com/plugin_settings/${installation.plugin_setting_id}/edit`
-                                : 'https://usetrmnl.com/dashboard'}
+                                ? `https://trmnl.com/plugin_settings/${installation.plugin_setting_id}/edit`
+                                : 'https://trmnl.com/dashboard'}
                             target="_blank"
                             className="flex-1 bg-gray-800 text-white px-4 py-2 rounded text-center hover:bg-gray-700 transition-colors font-semibold"
                         >
@@ -72,7 +72,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                         </a>
                     ) : (
                         <a
-                            href="https://usetrmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
+                            href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
                             target="_blank"
                             className="flex-1 bg-black text-white px-4 py-2 rounded text-center hover:bg-gray-800 transition-colors font-semibold"
                         >
@@ -80,7 +80,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                         </a>
                     )}
                     <a
-                        href="https://usetrmnl.com"
+                        href="https://trmnl.com"
                         target="_blank"
                         className="flex-1 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-200 px-4 py-2 rounded text-center hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
                     >

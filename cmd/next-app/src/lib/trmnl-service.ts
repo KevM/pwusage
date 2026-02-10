@@ -66,7 +66,7 @@ export class TrmnlService {
     }
 
     async exchangeCodeForToken(code: string, clientId: string, clientSecret: string): Promise<{ access_token: string, user_uuid?: string, uuid?: string, user?: { uuid?: string } }> {
-        const response = await fetch('https://usetrmnl.com/oauth/token', {
+        const response = await fetch('https://trmnl.com/oauth/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -119,7 +119,7 @@ export class TrmnlService {
     }
 
     async fetchMe(accessToken: string): Promise<{ uuid: string }> {
-        const response = await fetch('https://usetrmnl.com/api/me', {
+        const response = await fetch('https://trmnl.com/api/me', {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         });
 

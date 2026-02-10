@@ -42,7 +42,7 @@ export async function getUserByToken(token: string): Promise<{ id: string, email
     return res.rows[0];
 }
 
-async function getUserTokens(userId: string): Promise<{ access_token: string, refresh_token: string } | null> {
+export async function getUserTokens(userId: string): Promise<{ access_token: string, refresh_token: string } | null> {
     const res = await pool.query('SELECT access_token, refresh_token FROM "User" WHERE id = $1', [userId]);
     if (res.rows.length === 0) return null;
     return res.rows[0];

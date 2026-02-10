@@ -177,7 +177,7 @@ function InstallContent() {
                         </button>
 
                         <a
-                            href="https://usetrmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
+                            href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
                             target="_blank"
                             rel="noreferrer"
                             className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded hover:bg-gray-200 text-center transition-colors dark:bg-slate-800 dark:text-gray-300 dark:hover:bg-slate-700"
