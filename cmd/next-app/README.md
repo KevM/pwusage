@@ -28,7 +28,17 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `TRMNL_CLIENT_SECRET`: Client Secret for Trmnl integration.
 - `JWT_EXPIRY_DAYS`: Session duration in days (default: `7`).
 - `JWT_REFRESH_THRESHOLD_HOURS`: Refresh token if expiration is within this many hours (default: `24`).
+- `CRON_SECRET`: Secret key used to authorize Vercel Cron Job requests.
+- `DATA_RETENTION_DAYS`: Number of days to keep energy data before cleanup (default: `365`).
 
+
+
+## Cron Jobs
+
+The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for background maintenance. These are configured in `vercel.json`:
+
+- **User Status Check** (`/api/cron/check-users`): Runs daily at 08:00 UTC. Verifies Tesla Fleet API credentials for all users to ensure tokens are valid and active. Updates `last_checked_at` and `auth_status`.
+- **Data Cleanup** (`/api/cron/cleanup`): Runs daily at 09:00 UTC. Automatically removes historical `EnergyData` and `LoadTag` records older than `DATA_RETENTION_DAYS` to manage database growth.
 
 ## Getting Started
 

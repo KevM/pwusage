@@ -26,25 +26,6 @@ interface AdminDashboardProps {
 
 export function AdminDashboard({ users }: AdminDashboardProps) {
     const [activeTab, setActiveTab] = useState<'users' | 'announcements'>('users');
-    const [isChecking, setIsChecking] = useState(false);
-
-    const handleCheckStatus = async () => {
-        setIsChecking(true);
-        try {
-            const res = await fetch('/api/admin/users/check-status', { method: 'POST' });
-            if (res.ok) {
-                // Refresh the page data
-                window.location.reload();
-            } else {
-                alert('Failed to check status');
-            }
-        } catch (e) {
-            console.error(e);
-            alert('Error checking status');
-        } finally {
-            setIsChecking(false);
-        }
-    };
 
     return (
         <div className="p-8 max-w-7xl mx-auto">
@@ -84,13 +65,6 @@ export function AdminDashboard({ users }: AdminDashboardProps) {
                     <div>
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-xl font-semibold">Users ({users.length})</h2>
-                            <button
-                                onClick={handleCheckStatus}
-                                disabled={isChecking}
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
-                            >
-                                {isChecking ? 'Checking...' : 'Check Status'}
-                            </button>
                         </div>
                         <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
                             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">

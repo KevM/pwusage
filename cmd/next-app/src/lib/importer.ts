@@ -2,6 +2,7 @@ import { pool, SiteWithTariffs, TariffSeason, TariffSchedule } from './db';
 import { Schedule } from './schedule';
 import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo } from './tesla-client';
 import { EnergyRepo } from './energy-repo';
+import { UserRepo } from './user-repo';
 
 import { PoolClient } from 'pg';
 
@@ -22,10 +23,12 @@ interface EnergyDataRow {
 export class Importer {
     private client: TeslaClient;
     private repo: EnergyRepo;
+    private userRepo: UserRepo;
 
     constructor(client: TeslaClient) {
         this.client = client;
         this.repo = new EnergyRepo();
+        this.userRepo = new UserRepo();
     }
 
     async ensureDataForRange(siteId: string, start: Date, end: Date, onProgress?: (msg: string) => void, options?: { force?: boolean }): Promise<void> {
@@ -169,6 +172,12 @@ export class Importer {
         try {
             const info = await this.client.getEnergySiteInfo(siteId);
 
+            // Update last_checked_at since we successfully called the API
+            const siteForUser = await this.repo.getSite(siteId);
+            if (siteForUser?.user_id) {
+                await this.userRepo.updateLastChecked(siteForUser.user_id);
+            }
+
             const existingSiteRes = await pool.query('SELECT json FROM "Site" WHERE id = $1', [siteId]);
             const existingSite = existingSiteRes.rows[0];
             let tariffsChanged = true;
@@ -236,7 +245,15 @@ export class Importer {
             this.repo.invalidateCache(siteId);
 
             return this.repo.getSite(siteId);
-        } catch (e) {
+        } catch (e: unknown) {
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            if (errorMsg.includes('401') || errorMsg.includes('login_required')) {
+                const siteForUser = await this.repo.getSite(siteId);
+                if (siteForUser?.user_id) {
+                    console.warn(`[Import] Auth error in ensureSite for user ${siteForUser.user_id}, marking revoked`);
+                    await this.userRepo.updateUserStatus(siteForUser.user_id, 'revoked', false);
+                }
+            }
             console.error(`Error ensuring site ${siteId}`, e);
             throw e;
         }
@@ -370,7 +387,25 @@ export class Importer {
         }
 
         console.log(`[Import] loadInterval ${start.toISOString()} - ${actualEnd.toISOString()} (${period})`);
-        const history = await this.client.getEnergyHistory(site.id, start, actualEnd, period, site.timezone);
+        let history;
+        try {
+            history = await this.client.getEnergyHistory(site.id, start, actualEnd, period, site.timezone);
+        } catch (err: unknown) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            if (errorMsg.includes('401') || errorMsg.includes('login_required')) {
+                console.warn(`[Import] Auth error for user ${site.user_id}, marking as revoked`);
+                if (site.user_id) {
+                    await this.userRepo.updateUserStatus(site.user_id, 'revoked', false);
+                }
+            }
+            throw err;
+        }
+
+        // Update last_checked_at if we successfully called the API
+        if (history && site.user_id) {
+            await this.userRepo.updateLastChecked(site.user_id);
+        }
+
         console.log(`[Import] History Rows Fetched: ${history?.length ?? 0}`);
 
         if (!history || history.length === 0) {
