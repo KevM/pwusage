@@ -253,7 +253,7 @@ jobs:
   notify:
     name: Discord Notification
     needs: deploy
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.deploy.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch PR Description
@@ -261,33 +261,52 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PR_BODY=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/pulls --jq '.[0].body' || echo "No associated PR found.")
+          # Fetch PR body associated with the merged commit
+          PR_JSON=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/pulls --jq '.[0] | {body: .body, html_url: .html_url}' || echo "null")
+          PR_BODY=$(echo "$PR_JSON" | jq -r '.body // "No description provided."')
+          PR_URL=$(echo "$PR_JSON" | jq -r '.html_url // ""')
+          
+          # Extract first image URL: ![alt](url)
+          IMG_URL=$(echo "$PR_BODY" | grep -oE '!\[[^]]*\]\(https?://[^)]+\)' | head -n 1 | sed -E 's/!\[.*\]\((.*)\)/\1/' || echo "")
+          
+          # Clean body (strip images, truncate to 1000 chars)
+          CLEAN_BODY=$(echo "$PR_BODY" | sed -E 's/!\[[^]]*\]\(https?://[^)]+\)//g' | tr -s '\n' | head -c 1000)
+          
           echo "PR_BODY<<EOF" >> $GITHUB_ENV
-          echo "$PR_BODY" >> $GITHUB_ENV
+          echo "$CLEAN_BODY" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
+          
+          echo "IMG_URL=$IMG_URL" >> $GITHUB_ENV
+          echo "PR_URL=$PR_URL" >> $GITHUB_ENV
 
       - name: Send Discord Webhook
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           PR_BODY: ${{ env.PR_BODY }}
+          IMG_URL: ${{ env.IMG_URL }}
+          PR_URL: ${{ env.PR_URL }}
         run: |
-          # Use jq to safely construct the JSON with correct escaping
+          # Use jq to safely construct the JSON
           jq -n \
             --arg repo "${{ github.repository }}" \
             --arg branch "${{ github.ref_name }}" \
             --arg actor "${{ github.actor }}" \
             --arg commit "${{ github.event.head_commit.message }}" \
-            --arg body "${PR_BODY:-No description provided}" \
+            --arg body "$PR_BODY" \
+            --arg img "$IMG_URL" \
+            --arg url "$PR_URL" \
             '{
               embeds: [{
-                title: "Success: Build Complete",
+                title: "Success: Production Deploy",
+                url: $url,
                 color: 3066993,
                 fields: [
                   { name: "Branch", value: $branch, inline: true },
                   { name: "Author", value: $actor, inline: true },
-                  { name: "Commit", value: $commit, inline: false },
-                  { name: "Description", value: $body, inline: false }
+                  { name: "Commit", value: ($commit | if . == "" then "N/A" else . end), inline: false },
+                  { name: "Description", value: (if $body == "" then "No description provided." else $body end), inline: false }
                 ],
+                image: (if $img != "" then { url: $img } else null end),
                 footer: { text: "Powered by GitHub Actions" }
               }]
             }' > discord_payload.json
