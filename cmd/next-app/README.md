@@ -32,7 +32,6 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `DATA_RETENTION_DAYS`: Number of days to keep energy data before cleanup (default: `365`).
 
 
-
 ## Cron Jobs
 
 The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for background maintenance. These are configured in `vercel.json`:
@@ -45,20 +44,14 @@ The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for b
 First, run the development server:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:5173](http://localhost:5173) with your browser to see the result. We also use ngrok to expose the application to the internet for testing purposes. You can find the ngrok URL in the terminal output.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash 
+ngrok http 5173
+```
 
 ## Learn More
 
