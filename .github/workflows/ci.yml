@@ -253,7 +253,7 @@ jobs:
   notify:
     name: Discord Notification
     needs: deploy
-    if: github.ref == 'refs/heads/main' && needs.deploy.result == 'success'
+    if: always() && github.ref == 'refs/heads/main' && needs.deploy.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch PR Description
