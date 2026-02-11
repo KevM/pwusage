@@ -4,6 +4,15 @@ import { SystemAnnouncement } from './announcement-repo';
 const WEBHOOK_URL = process.env.DISCORD_ANNOUNCEMENTS_WEBHOOK_URL;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
 
+function extractFirstImage(content: string): string | undefined {
+    const match = content.match(/!\[.*?\]\((https?:\/\/.*?)\)/);
+    return match ? match[1] : undefined;
+}
+
+function stripImages(content: string): string {
+    return content.replace(/!\[.*?\]\(https?:\/\/.*?\)/g, '').trim();
+}
+
 export async function sendDiscordAnnouncement(announcement: SystemAnnouncement): Promise<string | undefined> {
     if (!WEBHOOK_URL) {
         console.warn('DISCORD_ANNOUNCEMENTS_WEBHOOK_URL is not set. Skipping Discord notification.');
@@ -12,12 +21,12 @@ export async function sendDiscordAnnouncement(announcement: SystemAnnouncement):
 
     const newsUrl = `${APP_URL}/news`;
 
-    // Create a plain text summary for the embed (strip basic markdown if possible, or just use content)
-    // For now, we will use the content directly. Discord renders restricted markdown.
-    // Truncate if too long (Discord limits description to 4096, but for readability maybe less)
-    const description = announcement.content.length > 500
-        ? announcement.content.substring(0, 497) + '...'
-        : announcement.content;
+    const imageUrl = extractFirstImage(announcement.content);
+    const cleanContent = stripImages(announcement.content);
+
+    const description = cleanContent.length > 500
+        ? cleanContent.substring(0, 497) + '...'
+        : cleanContent;
 
     const payload = {
         username: "Powerwall Usage Announcements",
@@ -26,6 +35,7 @@ export async function sendDiscordAnnouncement(announcement: SystemAnnouncement):
             url: newsUrl,
             description: description,
             color: 0x5865F2, // Discord Blurple
+            image: imageUrl ? { url: imageUrl } : undefined,
             footer: {
                 text: "Powerwall Usage Admin"
             },
@@ -68,9 +78,12 @@ export async function updateDiscordAnnouncement(messageId: string, announcement:
     if (!WEBHOOK_URL) return;
 
     const newsUrl = `${APP_URL}/news`;
-    const description = announcement.content.length > 500
-        ? announcement.content.substring(0, 497) + '...'
-        : announcement.content;
+    const imageUrl = extractFirstImage(announcement.content);
+    const cleanContent = stripImages(announcement.content);
+
+    const description = cleanContent.length > 500
+        ? cleanContent.substring(0, 497) + '...'
+        : cleanContent;
 
     const payload = {
         embeds: [{
@@ -78,6 +91,7 @@ export async function updateDiscordAnnouncement(messageId: string, announcement:
             url: newsUrl,
             description: description,
             color: 0x5865F2,
+            image: imageUrl ? { url: imageUrl } : undefined,
             footer: {
                 text: "Powerwall Usage Admin"
             },
