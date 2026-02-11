@@ -2,12 +2,6 @@
 
 This application helps you track your Powerwall usage and monitor your energy production and consumption. The main goal is for users who have time of use (TOU) rates and want to optimize their energy usage. 
 
-
-## ToDo
-
-* Trmnl markdown is not showing all tariff periods
-* Research how trmnl integration workflow "should" work
-
 ## Configuration
 
 Create a `.env` file in the root directory (or use `env_file` in Docker) with the following variables:
@@ -24,6 +18,7 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `AUTH_SECRET`: A strong, random string used to sign session tokens. **Crucial for security and session persistence across deployments.**
 
 ### Optional / Integrations
+- `DISCORD_ANNOUNCEMENTS_WEBHOOK_URL`: Discord webhook URL for sending system announcements.
 - `TRMNL_CLIENT_ID`: Client ID for Trmnl integration.
 - `TRMNL_CLIENT_SECRET`: Client Secret for Trmnl integration.
 - `JWT_EXPIRY_DAYS`: Session duration in days (default: `7`).
@@ -31,6 +26,14 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `CRON_SECRET`: Secret key used to authorize Vercel Cron Job requests.
 - `DATA_RETENTION_DAYS`: Number of days to keep energy data before cleanup (default: `365`).
 
+### Deployment & CI (GitHub Actions Secrets)
+These variables are typically set as Secrets in your GitHub repository for automated deployments and backups:
+- `DISCORD_WEBHOOK`: Webhook URL for Build/Deploy status notifications.
+- `BLOB_READ_WRITE_TOKEN`: Vercel Blob token used for daily database backups.
+- `DEV_DATABASE_URL`: Connection string for the preview/staging database (used for migration verification).
+- `VERCEL_TOKEN`: Vercel Personal Access Token for CLI-based deployments.
+- `VERCEL_ORG_ID`: Your Vercel Organization/Team ID.
+- `VERCEL_PROJECT_ID`: Your Vercel Project ID.
 
 ## Cron Jobs
 
@@ -53,17 +56,3 @@ Open [http://localhost:5173](http://localhost:5173) with your browser to see the
 ngrok http 5173
 ```
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
