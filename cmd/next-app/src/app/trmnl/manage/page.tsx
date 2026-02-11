@@ -43,11 +43,12 @@ function ManageContent() {
                     fetch(`/api/trmnl/manage?uuid=${uuid}&token=${encodeURIComponent(token || '')}`)
                 ]);
 
-                // Check installRes first. If it is 401, we must redirect (if no token was provided or invalid)
-                if (installRes.status === 401) {
+                // Check if user is unauthorized for either the installation or the sites list
+                if (installRes.status === 401 || sitesRes.status === 401) {
                     redirecting = true;
-                    // Preserve token in callback
-                    const tokenParam = token ? `&token=${token}` : '';
+                    // Preserve token in callback. Check both jwt and token source
+                    const siteToken = token || searchParams.get('jwt') || searchParams.get('token');
+                    const tokenParam = siteToken ? `&jwt=${encodeURIComponent(siteToken)}` : '';
                     const callbackUrl = encodeURIComponent(`/trmnl/manage?uuid=${uuid}${tokenParam}`);
                     window.location.href = `/login?callback=${callbackUrl}`;
                     return;
