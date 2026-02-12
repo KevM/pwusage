@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useRef } from 'react';
 
 type TabId = 'history' | 'bill' | 'settings';
 
@@ -24,8 +24,26 @@ export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: S
     // maybe 'bill' is a safer default for existing users, or 'history'.
     // Let's default to 'bill' as it feels like the "Dashboard".
     const activeTab = (searchParams.get('view') as TabId) || 'bill';
+    const initialized = useRef(false);
+
+    useEffect(() => {
+        // Only run once on mount
+        if (initialized.current) return;
+        initialized.current = true;
+
+        // If no view is specified in URL, check localStorage
+        if (!searchParams.has('view')) {
+            const lastTab = localStorage.getItem('pwusage_last_site_tab') as TabId;
+            if (lastTab && ['history', 'bill', 'settings'].includes(lastTab) && lastTab !== 'bill') {
+                const params = new URLSearchParams(searchParams);
+                params.set('view', lastTab);
+                router.replace(`${pathname}?${params.toString()}`);
+            }
+        }
+    }, [pathname, router, searchParams]);
 
     const setTab = (tab: TabId) => {
+        localStorage.setItem('pwusage_last_site_tab', tab);
         const params = new URLSearchParams(searchParams);
         params.set('view', tab);
         router.push(`${pathname}?${params.toString()}`);
