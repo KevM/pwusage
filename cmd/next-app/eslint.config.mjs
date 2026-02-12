@@ -13,7 +13,9 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "scripts/**",
-    "*.js"
+    "*.js",
+    ".vitest_cache/**",
+    ".vitest_tmp/**"
   ]),
   {
     rules: {

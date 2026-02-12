@@ -1,5 +1,5 @@
-
 import { PowerData } from './types';
+import { wattsToKilowatts } from '../energy-utils';
 
 export interface LoadEvent {
     startTime: Date;
@@ -108,7 +108,7 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
 
                 // Calculate Stats
                 const averagePower = load.magnitude; // Approx
-                const kwh = (averagePower / 1000) * (durationMinutes / 60);
+                const kwh = wattsToKilowatts(averagePower) * (durationMinutes / 60);
 
                 let maxP = -Infinity;
                 let minP = Infinity;
@@ -231,7 +231,7 @@ export function detectLoads(data: PowerData[], thresholdPower: number = 1000): L
                 const durationMinutes = durationMs / (1000 * 60);
 
                 const averagePower = (load.magnitude + dropMag) / 2;
-                const kwh = (averagePower / 1000) * (durationMinutes / 60);
+                const kwh = wattsToKilowatts(averagePower) * (durationMinutes / 60);
 
                 let maxP = -Infinity;
                 let minP = Infinity;

@@ -6,10 +6,10 @@ import { UserRepo } from './user-repo';
 
 import { PoolClient } from 'pg';
 
-interface EnergyDataRow {
+export interface EnergyDataRow {
     site_id: string;
     tariff_id: number;
-    timestamp: string;
+    timestamp: Date;
     load_power: number;
     solar_power: number;
     grid_power: number;
@@ -25,46 +25,170 @@ export class Importer {
     private repo: EnergyRepo;
     private userRepo: UserRepo;
 
+    // Prevent multiple simultaneous syncs (persist across HMR in dev)
+    private static get pendingSyncs(): Set<string> {
+        return (global as unknown as { importerPendingSyncs?: Set<string> }).importerPendingSyncs ??= new Set<string>();
+    }
+
+    private static get maintenanceCache(): Map<string, number> {
+        return (global as unknown as { importerMaintenanceCache?: Map<string, number> }).importerMaintenanceCache ??= new Map<string, number>();
+    }
+
     constructor(client: TeslaClient) {
         this.client = client;
         this.repo = new EnergyRepo();
         this.userRepo = new UserRepo();
     }
 
-    async ensureDataForRange(siteId: string, start: Date, end: Date, onProgress?: (msg: string) => void, options?: { force?: boolean }): Promise<void> {
-        if (onProgress) onProgress(`Checking data coverage...`);
-        const force = options?.force ?? false;
+    async getTodayData(siteId: string): Promise<EnergyDataRow[]> {
         const site = await this.repo.getSite(siteId);
-        if (!site) throw new Error(`Site ${siteId} not found in database`);
-
-        let cursor = new Date(start);
-        cursor.setHours(0, 0, 0, 0);
-
-        // Determine "Today" in Site Timezone to prevent future lookups
-        const getSiteMidnight = (d: Date, tz: string) => {
-            const fmt = new Intl.DateTimeFormat('en-CA', {
-                timeZone: tz,
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit'
-            });
-            const parts = fmt.format(d); // YYYY-MM-DD
-            const [y, m, day] = parts.split('-').map(Number);
-            return new Date(y, m - 1, day);
-        };
+        if (!site) return [];
 
         const now = new Date();
-        // todayStart represents 00:00 of the current day in the SITE'S timezone
-        // This is the limit of what we can import.
-        const todayStart = getSiteMidnight(now, site.timezone);
+        const start = EnergyRepo.getSiteMidnight(now, site.timezone);
 
-        const rangeStartStr = cursor.toISOString();
-        const rangeEnd = new Date(end);
-        rangeEnd.setDate(rangeEnd.getDate() + 1);
-        const rangeEndStr = rangeEnd.toISOString();
+        console.log(`[Importer] Fetching today's data: ${start.toISOString()} to ${now.toISOString()}`);
 
-        // One query to rule them all
-        const rowsRes = await pool.query(`
+        // We fetch from Tesla. We don't write to DB yet.
+        return this.fetchRange(site, start, now, 'day');
+    }
+
+    async persistHistory(siteId: string, rows: EnergyDataRow[], latestTimestamp: Date | null) {
+        if (rows.length === 0) return;
+
+        const site = await this.repo.getSite(siteId);
+        if (!site) return;
+
+        // Surgical Filter: only insert rows around or newer than what we have.
+        // We allow a 10-minute overlap to catch any points that might have changed or were synthetic.
+        let filteredRows = rows;
+        if (latestTimestamp) {
+            const threshold = latestTimestamp.getTime() - 10 * 60 * 1000;
+            filteredRows = rows.filter(r => r.timestamp.getTime() >= threshold);
+        }
+
+        if (filteredRows.length === 0) {
+            console.log(`[Importer] No new or updated rows to persist for site ${siteId}`);
+            return;
+        }
+
+        console.log(`[Importer] Background persisting ${filteredRows.length} rows for site ${siteId} (Filtered from ${rows.length})`);
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await this.insertEnergyData(client, site, filteredRows);
+            await client.query('COMMIT');
+            console.log(`[Importer] Background persistence complete for site ${siteId}`);
+        } catch (e) {
+            await client.query('ROLLBACK');
+            console.error(`[Importer] Background persistence failed for site ${siteId}`, e);
+        } finally {
+            client.release();
+        }
+    }
+
+    /**
+     * Lightweight version of ensureDataForRange for active dashboard users.
+     * Only checks the last ~1 hour of data to ensure the 'Today' chart and totals are fresh.
+     * Avoids full-day coverage checks and gap loops for historical data.
+     */
+    async ensureRecentData(siteId: string, onProgress?: (msg: string) => void, latestKnown?: Date): Promise<{ rows: EnergyDataRow[], latestTimestamp: Date | null }> {
+        if (Importer.pendingSyncs.has(siteId)) {
+            if (onProgress) onProgress(`Skip: Sync already in progress.`);
+            return { rows: [], latestTimestamp: null };
+        }
+        Importer.pendingSyncs.add(siteId);
+
+        try {
+            const site = await this.repo.getSite(siteId);
+            if (!site) return { rows: [], latestTimestamp: null };
+
+            const now = new Date();
+
+            let fetchStart: Date;
+            let latest: Date | null = null;
+
+            if (latestKnown) {
+                latest = latestKnown;
+            } else {
+                const latestRes = await pool.query(`
+                    SELECT timestamp FROM "EnergyData"
+                    WHERE site_id = $1
+                    AND timestamp <= NOW()
+                    ORDER BY timestamp DESC LIMIT 1
+                `, [siteId]);
+                if (latestRes.rows.length > 0) {
+                    latest = new Date(latestRes.rows[0].timestamp);
+                }
+            }
+
+            if (!latest) {
+                // No data at all? Start from site midnight (UTC)
+                fetchStart = EnergyRepo.getSiteMidnight(now, site.timezone);
+            } else {
+                const diffMinutes = (now.getTime() - latest.getTime()) / (60 * 1000);
+
+                console.log(`[Importer] Latest data point: ${latest.toISOString()}. Age: ${diffMinutes.toFixed(1)}m`);
+
+                if (diffMinutes <= 15) {
+                    // Already fresh
+                    if (onProgress) onProgress(`Data is fresh (${diffMinutes.toFixed(1)}m old).`);
+                    return { rows: [], latestTimestamp: latest };
+                }
+
+                // SURGICAL: Fetch from the last point we have, with a 10 min overlap to catch updates
+                fetchStart = new Date(latest.getTime() - 10 * 60 * 1000);
+            }
+
+            // 2. Data is stale, fetch just the surgical slice
+            const sliceStr = latest ? "surgical slice" : "initial daily sweep";
+            if (onProgress) onProgress(`Refreshing ${sliceStr} (${fetchStart.toISOString().substring(11, 16)} to now)...`);
+
+            // We fetch from the gap start to NOW.
+            const rows = await this.importRange(siteId, fetchStart, now, 'day');
+            return { rows, latestTimestamp: latest };
+        } finally {
+            Importer.pendingSyncs.delete(siteId);
+        }
+    }
+
+    async ensureDataForRange(siteId: string, start: Date, end: Date, onProgress?: (msg: string) => void, options?: { force?: boolean }): Promise<EnergyDataRow[]> {
+        if (Importer.pendingSyncs.has(siteId)) {
+            console.log(`[Importer] Skip: Data for range already being synced for site ${siteId}`);
+            return [];
+        }
+        Importer.pendingSyncs.add(siteId);
+
+        try {
+            const allRows: EnergyDataRow[] = [];
+            if (onProgress) onProgress(`Checking data coverage...`);
+            const force = options?.force ?? false;
+            const site = await this.repo.getSite(siteId);
+            if (!site) throw new Error(`Site ${siteId} not found in database`);
+
+            // Initialize cursor to site-timezone midnight (matching todayStart logic)
+            let cursor = EnergyRepo.getSiteMidnight(start, site.timezone);
+
+            // Clamp cursor to installation date
+            const installDate = new Date(site.installed);
+            const installMidnight = EnergyRepo.getSiteMidnight(installDate, site.timezone);
+            if (cursor.getTime() < installMidnight.getTime()) {
+                console.log(`[Importer] Clamping start date to installation: ${installMidnight.toISOString()}`);
+                cursor = installMidnight;
+            }
+
+            const now = new Date();
+            // todayStart represents 00:00 of the current day in the SITE'S timezone
+            const todayStart = EnergyRepo.getSiteMidnight(now, site.timezone);
+
+            const rangeStartStr = cursor.toISOString();
+            const rangeEnd = new Date(end);
+            rangeEnd.setDate(rangeEnd.getDate() + 1);
+            const rangeEndStr = rangeEnd.toISOString();
+
+            // One query to rule them all
+            const rowsRes = await pool.query(`
             SELECT timestamp FROM "EnergyData" 
             WHERE site_id = $1 
             AND timestamp >= $2 
@@ -72,83 +196,109 @@ export class Importer {
             ORDER BY timestamp ASC
         `, [siteId, rangeStartStr, rangeEndStr]);
 
-        const existingTimestamps = rowsRes.rows.map((r: { timestamp: string | Date }) => new Date(r.timestamp).getTime());
-        let tsIndex = 0;
+            const existingTimestamps = rowsRes.rows.map((r: { timestamp: string | Date }) => new Date(r.timestamp).getTime());
+            let tsIndex = 0;
 
-        while (cursor <= end) {
-            const nextDay = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
-            const windowStart = cursor.getTime();
-            const windowEnd = nextDay.getTime();
+            const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: site.timezone }).format(todayStart);
 
-            while (tsIndex < existingTimestamps.length && existingTimestamps[tsIndex] < windowStart) {
-                tsIndex++;
-            }
+            while (cursor.getTime() <= end.getTime()) {
+                const dateKey = new Intl.DateTimeFormat('en-CA', { timeZone: site.timezone }).format(cursor);
+                const isToday = dateKey === todayKey;
 
-            // Find min/max timestamps in this window to determine coverage
-            let firstInWindow: number | null = null;
-            let lastInWindow: number | null = null;
-            let countInWindow = 0;
+                const windowStart = cursor.getTime();
+                const nextDay = EnergyRepo.getSiteMidnight(new Date(windowStart + 30 * 60 * 60 * 1000), site.timezone);
+                const windowEnd = nextDay.getTime();
 
-            let tempIdx = tsIndex;
-            while (tempIdx < existingTimestamps.length && existingTimestamps[tempIdx] < windowEnd) {
-                if (firstInWindow === null) firstInWindow = existingTimestamps[tempIdx];
-                lastInWindow = existingTimestamps[tempIdx];
-                countInWindow++;
-                tempIdx++;
-            }
+                while (tsIndex < existingTimestamps.length && existingTimestamps[tsIndex] < windowStart) {
+                    tsIndex++;
+                }
 
-            const hasAnyData = countInWindow > 0;
-            const isToday = cursor.getTime() === todayStart.getTime();
-            let needsImport = false;
+                // Find min/max timestamps in this window to determine coverage
+                let firstInWindow: number | null = null;
+                let lastInWindow: number | null = null;
+                let countInWindow = 0;
 
-            if (!hasAnyData || force) {
-                needsImport = true;
-            } else if (isToday) {
-                // For today, check staleness against NOW
-                if (lastInWindow) {
-                    const diffMinutes = (now.getTime() - lastInWindow) / (60 * 1000);
-                    if (diffMinutes > 15) {
+                let tempIdx = tsIndex;
+                while (tempIdx < existingTimestamps.length && existingTimestamps[tempIdx] < windowEnd) {
+                    if (firstInWindow === null) firstInWindow = existingTimestamps[tempIdx];
+                    lastInWindow = existingTimestamps[tempIdx];
+                    countInWindow++;
+                    tempIdx++;
+                }
+
+                const hasAnyData = countInWindow > 0;
+
+                let needsImport = false;
+
+                if (!hasAnyData || force) {
+                    needsImport = true;
+                } else if (isToday) {
+                    // Today is managed by ensureRecentData/Freshness-First logic in the route.
+                    // We skip historical gap detection here to avoid dual syncs.
+                    needsImport = false;
+                } else {
+                    // For past days, check completeness
+                    const threshold = 30 * 60 * 1000; // 30 mins
+                    const missingStart = firstInWindow && (firstInWindow - windowStart > threshold);
+                    const missingEnd = lastInWindow && (windowEnd - lastInWindow > threshold);
+
+                    if (missingStart) {
+                        const startGap = new Date(windowStart);
+                        const endGap = new Date(firstInWindow!);
+                        console.log(`[Importer] Surgical Gap at start of ${cursor.toISOString().split('T')[0]}: ${startGap.toISOString().substring(11, 16)} - ${endGap.toISOString().substring(11, 16)}`);
+                        const rows = await this.importRange(siteId, startGap, endGap, 'day');
+                        allRows.push(...rows);
+                    }
+
+                    if (missingEnd) {
+                        const startGap = new Date(lastInWindow!);
+                        const endGap = new Date(windowEnd);
+                        console.log(`[Importer] Surgical Gap at end of ${cursor.toISOString().split('T')[0]}: ${startGap.toISOString().substring(11, 16)} - ${endGap.toISOString().substring(11, 16)}`);
+                        const rows = await this.importRange(siteId, startGap, endGap, 'day');
+                        allRows.push(...rows);
+                    }
+
+                    // If it was completely empty (and not synthetic), mark for full import
+                    if (!hasAnyData) {
                         needsImport = true;
-                        if (onProgress) onProgress(`Refreshing stale data (${diffMinutes.toFixed(0)}m old)...`);
-                        console.log(`[Importer] Data stale (${diffMinutes.toFixed(1)}m old), refreshing...`);
                     }
                 }
-            } else {
-                // For past days, check completeness
-                // 1. Check if we cover the full range (start near beginning, end near end)
-                // Tolerance: 30 minutes (to catch missing evening data like 11pm cutoff)
-                const missingStart = firstInWindow && (firstInWindow - windowStart > 30 * 60 * 1000);
-                const missingEnd = lastInWindow && (windowEnd - lastInWindow > 30 * 60 * 1000);
 
-                // 2. Check density (expected ~288 points/day for 5m interval)
-                // If we have very few points, re-fetch.
-                // const sparseData = countInWindow < 50; // Very rough check, maybe user had outage? 
 
-                if (missingStart || missingEnd) {
-                    needsImport = true;
-                    console.log(`[Importer] Incomplete data for ${cursor.toISOString().split('T')[0]}. ` +
-                        `Missing Start: ${missingStart} (${((firstInWindow! - windowStart) / 60000).toFixed(0)}m), ` +
-                        `Missing End: ${missingEnd} (${((windowEnd - lastInWindow!) / 60000).toFixed(0)}m). Refreshing...`);
+                if (needsImport) {
+                    const dateStr = cursor.toISOString().split('T')[0];
+                    if (onProgress) onProgress(`Importing ${dateStr}...`);
+                    console.log(`[Importer] Gap/Stale detected for ${dateStr}. Importing...`);
+
+                    let importEnd = nextDay;
+                    if (isToday) importEnd = now;
+
+                    const rows = await this.importRange(siteId, cursor, importEnd, 'day');
+                    allRows.push(...rows);
                 }
+
+                cursor = nextDay;
             }
 
-
-            if (needsImport) {
-                const dateStr = cursor.toISOString().split('T')[0];
-                if (onProgress) onProgress(`Importing ${dateStr}...`);
-                console.log(`[Importer] Gap/Stale detected for ${dateStr}. Importing...`);
-
-                let importEnd = nextDay;
-                if (isToday) importEnd = now;
-
-                await this.importRange(siteId, cursor, importEnd, 'day');
-            }
-
-            cursor = nextDay;
+            // Store maintenance time
+            Importer.maintenanceCache.set(siteId, Date.now());
+            return allRows;
+        } finally {
+            Importer.pendingSyncs.delete(siteId);
         }
     }
 
-    async importRange(siteId: string, start: Date, end: Date, period: string = "day", onProgress?: (date: Date) => void) {
+    /**
+     * Helper to check if maintenance is needed
+     */
+    static shouldRunMaintenance(siteId: string): boolean {
+        const last = Importer.maintenanceCache.get(siteId) || 0;
+        const oneHour = 60 * 60 * 1000;
+        return (Date.now() - last) > oneHour;
+    }
+
+    async importRange(siteId: string, start: Date, end: Date, period: string = "day", onProgress?: (date: Date) => void): Promise<EnergyDataRow[]> {
+        const allRows: EnergyDataRow[] = [];
         const site = await this.repo.getSite(siteId);
         if (!site) {
             console.error(`Site ${siteId} not found for importRange`);
@@ -163,9 +313,29 @@ export class Importer {
 
             if (onProgress) onProgress(cursor);
 
-            await this.loadInterval(site, cursor, next, period);
+            const rows = await this.loadInterval(site, cursor, next, period);
+            allRows.push(...rows);
             cursor = next;
         }
+        return allRows;
+    }
+
+    async fetchRange(site: SiteWithTariffs, start: Date, end: Date, period: string = "day"): Promise<EnergyDataRow[]> {
+        const allRows: EnergyDataRow[] = [];
+        let cursor = new Date(start);
+        const chunkMs = 24 * 60 * 60 * 1000;
+
+        while (cursor < end) {
+            const next = new Date(Math.min(cursor.getTime() + chunkMs, end.getTime()));
+
+            const history = await this.client.getEnergyHistory(site.id, cursor, next, period, site.timezone);
+            if (history && history.length > 0) {
+                const rows = await this.processHistory(null as unknown as PoolClient, site, history, period);
+                allRows.push(...rows);
+            }
+            cursor = next;
+        }
+        return allRows;
     }
 
     async ensureSite(siteId: string): Promise<SiteWithTariffs | undefined> {
@@ -371,7 +541,7 @@ export class Importer {
         }
     }
 
-    private async loadInterval(site: SiteWithTariffs, start: Date, end: Date, period: string) {
+    private async loadInterval(site: SiteWithTariffs, start: Date, end: Date, period: string): Promise<EnergyDataRow[]> {
         const actualEnd = new Date(end);
         const diffMs = end.getTime() - start.getTime();
         const oneDayMs = 24 * 60 * 60 * 1000;
@@ -396,6 +566,7 @@ export class Importer {
                 console.warn(`[Import] Auth error for user ${site.user_id}, marking as revoked`);
                 if (site.user_id) {
                     await this.userRepo.updateUserStatus(site.user_id, 'revoked', false);
+                    this.repo.invalidateCache(site.id);
                 }
             }
             throw err;
@@ -408,52 +579,39 @@ export class Importer {
 
         console.log(`[Import] History Rows Fetched: ${history?.length ?? 0}`);
 
+
         if (!history || history.length === 0) {
-            if (period === 'day') {
-                const zeroDateStr = start.toISOString();
-                const defaultTariff = site.tariffs[0]?.id || 0;
-                console.log(`[Importer] No data from Tesla for ${zeroDateStr}. Inserting zero record.`);
-
-                // DB operations
-                const client = await pool.connect();
-                try {
-                    await client.query('BEGIN');
-                    await client.query(`
-                        INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, is_synthetic) 
-                        VALUES ($1, $2, $3, 0, 0, 0, 0, 1)
-                        ON CONFLICT(timestamp, site_id, tariff_id) DO NOTHING
-                    `, [site.id, defaultTariff, start]); // passed as Date
-
-                    const usageDate = new Date(start);
-                    usageDate.setHours(0, 0, 0, 0);
-
-
-                    await client.query('COMMIT');
-                } catch (e) {
-                    await client.query('ROLLBACK');
-                    throw e;
-                } finally {
-                    client.release();
-                }
-
-            }
-        } else {
+            // No data from Tesla - just return empty array
+            // Installation date clamping prevents unnecessary requests
+            console.log(`[Importer] No data from Tesla for ${start.toISOString()}.`);
+            return [];
+        }
+        else {
             const client = await pool.connect();
             try {
                 const msg1 = `[Import] Insert Transaction Start. History Rows: ${history.length}`;
                 console.log(msg1);
 
                 await client.query('BEGIN');
-                await client.query('DELETE FROM "EnergyData" WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3', [site.id, start, end]);
 
+                // SURGICAL: We no longer delete the whole day. 
+                // We rely on ON CONFLICT DO UPDATE to refresh points and overwrite synthetic zeros.
                 const energyDatas = await this.processHistory(client, site, history, period);
 
-                const msg2 = `[Import] Processed EnergyData Rows: ${energyDatas.length}`;
+                // Surgical Filter: Tesla often returns more data than requested (e.g., the whole day).
+                // We only want to write the rows that fall within our requested window.
+                const filteredDatas = energyDatas.filter(d =>
+                    d.timestamp.getTime() >= start.getTime() &&
+                    d.timestamp.getTime() <= actualEnd.getTime()
+                );
+
+                const msg2 = `[Import] Processed EnergyData Rows: ${filteredDatas.length} (Filtered from ${energyDatas.length})`;
                 console.log(msg2);
 
-                await this.insertEnergyData(client, site, energyDatas);
+                await this.insertEnergyData(client, site, filteredDatas);
 
                 await client.query('COMMIT');
+                return energyDatas;
             } catch (e) {
                 await client.query('ROLLBACK');
                 throw e;
@@ -482,6 +640,10 @@ export class Importer {
 
             const scale = (period === 'day' && durationHours > 20) ? 1000 : 1;
 
+            // Map historical energy fields
+            const hSolar = (h.total_solar_generation || h.solar_energy_exported) ?? 0;
+            const hHome = h.total_home_usage ?? 0;
+
             const tp = this.getTariffPeriodOrFallback(site, schedule, ts);
             if (!tp) {
                 continue;
@@ -500,15 +662,16 @@ export class Importer {
             results.push({
                 site_id: site.id,
                 tariff_id: Number(tp.tariff.id),
-                timestamp: h.timestamp, // string from API
-                load_power: (h.total_home_usage ?? 0) * scale,
-                solar_power: ((h.total_solar_generation || h.solar_energy_exported) ?? 0) * scale,
+                timestamp: ts, // We'll format this for DB later
+                load_power: hHome * scale,
+                solar_power: hSolar * scale,
                 grid_power: grid * scale,
                 battery_power: battery * scale
             });
         }
         return results;
     }
+
 
     private getTariffPeriodOrFallback(site: SiteWithTariffs, schedule: Schedule, ts: Date) {
         const tp = schedule.getTariffPeriod(ts);
@@ -634,7 +797,7 @@ export class Importer {
         console.log(`[Import] Batching ${validRows.length} rows into ${chunks.length} chunks.`);
 
         for (const chunk of chunks) {
-            const values: (string | number | null)[] = [];
+            const values: (string | number | Date | null)[] = [];
             const placeholders: string[] = [];
             let pIdx = 1;
 

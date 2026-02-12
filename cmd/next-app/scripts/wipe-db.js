@@ -57,7 +57,7 @@ rl.question('Are you sure you want to WIPE the database? This cannot be undone. 
         await client.query('BEGIN');
 
         // Truncate tables with CASCADE to handle foreign keys
-        await client.query('TRUNCATE TABLE "EnergyUsage", "EnergyData", "TariffSchedule", "TariffSeason", "Tariff", "Site", "TrmnlInstallation" RESTART IDENTITY CASCADE');
+        await client.query('TRUNCATE TABLE "EnergyData", "TariffSchedule", "TariffSeason", "Tariff", "Site", "TrmnlInstallation" RESTART IDENTITY CASCADE');
 
         await client.query('COMMIT');
         console.log('Database wiped successfully.');

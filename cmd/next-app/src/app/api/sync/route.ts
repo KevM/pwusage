@@ -27,12 +27,12 @@ export async function GET(request: Request) {
         }
 
         const repo = new EnergyRepo();
+        const handlers = repo.getLockedRefreshHandler(siteId);
         const client = new TeslaClient({
             accessToken: credentials.access_token,
             refreshToken: credentials.refresh_token || undefined,
-            tokenRefreshHandler: repo.getLockedRefreshHandler(siteId), // Can we use siteId specific lock? Yes, credentials are User-wide, but lock is by User ID which getLockedRefreshHandler handles if site is linked to User.
-            // Wait, getLockedRefreshHandler(siteId) -> getSite(siteId) -> gets User.
-            // Since we validated request for siteId, passing siteId is correct.
+            tokenRefreshHandler: handlers.refreshHandler,
+            onTokenError: handlers.errorHandler,
             onTokenUpdate: () => {
                 console.log('Refreshing tokens via Sync API');
             }

@@ -288,7 +288,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         // Backend now handles timezone conversion.
         // We receive data where the timestamp component is already wall-clock time 
         // encoded as UTC/ISO. 
-        // e.g. "2023-01-01T12:00:00.000Z" means 12:00 Wall Clock.
+        // e.g. "2023-01-01T12:00:00.000Z" means 12:00 Site Time.
         // We just parse it.
         return parseDate(val);
     }, []);

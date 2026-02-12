@@ -44,7 +44,10 @@
 - **Files**: Use `kebab-case` for filenames.
 - **Components**: Functional components, stored in `src/components`.
 - **Scripts**: Standalone maintenance scripts in `scripts/`, runnable via `npx tsx scripts/script-name.ts`.
+    - **Environment Variables**: Scripts must explicitly load the `.env` file using `dotenv` or similar at the very beginning to ensure correct configuration when run from the CLI.
 - **Cron Jobs**: Vercel Cron Jobs configured in `vercel.json` and implemented in `src/app/api/cron/*`.
+
+## Database Timezone Handling
 
 ## Development
 - **Linting**: `npm run lint` must pass.
@@ -54,5 +57,5 @@
 
 ## Communication Style
 - **Task Management**: Use `task.md` to track huge chunks of work.
-- **Verification**: Always verify builds and logic after changes.
+- **Verification**: Always verify builds, lint, and run tests before finishing tasks.
 - **Persona**: Helpful, competent software engineer pair programmer.

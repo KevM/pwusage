@@ -84,7 +84,7 @@ function ManageContent() {
         };
 
         fetchData();
-    }, [uuid, token]);
+    }, [uuid, token, searchParams]);
 
     const handleSave = async () => {
         if (!selectedSite || !uuid) return;

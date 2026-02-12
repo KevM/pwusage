@@ -6,7 +6,26 @@ import { pool } from './db';
 
 // Mock dependencies
 vi.mock('./db');
-vi.mock('./energy-repo');
+vi.mock('./energy-repo', () => {
+    class EnergyRepo {
+        getSite = vi.fn();
+        getRawEnergyData = vi.fn();
+        getLatestEnergyData = vi.fn();
+        static getSiteMidnight = vi.fn((d: Date) => {
+            const date = new Date(d);
+            date.setUTCHours(0, 0, 0, 0);
+            return date;
+        });
+    }
+    return { EnergyRepo };
+});
+vi.mock('./user-repo', () => {
+    class UserRepo {
+        updateLastChecked = vi.fn();
+        updateUserStatus = vi.fn();
+    }
+    return { UserRepo };
+});
 vi.mock('./tesla-client');
 
 describe('Importer Sync Logic', () => {
@@ -24,6 +43,7 @@ describe('Importer Sync Logic', () => {
             getSite: vi.fn().mockResolvedValue({
                 id: 'site-123',
                 timezone: 'America/Chicago',
+                installed: new Date('2025-01-01T00:00:00Z'),
                 tariffs: []
             })
         };
@@ -36,7 +56,7 @@ describe('Importer Sync Logic', () => {
         (pool.query as unknown) = mockQuery;
 
         // Mock Import Call
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue(undefined);
+        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
 
         const start = new Date('2026-01-10T00:00:00Z');
         const end = new Date('2026-01-10T23:59:59Z');
@@ -58,23 +78,31 @@ describe('Importer Sync Logic', () => {
         const mockQuery = vi.fn().mockResolvedValue({ rows });
         (pool.query as unknown) = mockQuery;
 
-        vi.spyOn(importer, 'importRange').mockResolvedValue(undefined);
+        vi.spyOn(importer, 'importRange').mockResolvedValue([]);
 
         const s = new Date('2026-01-10T00:00:00Z');
         const e = new Date('2026-01-10T23:59:59Z');
 
-        // We need to ensure logic considers this "full"
-        // Importer logic is complex (checks 15m gaps). 
-        // 24 hours of data (hourly) might be enough? 
-        // Logic checks: existingTimestamps[tsIndex] < windowEnd
-
         await importer.ensureDataForRange('site-123', s, e);
+    });
 
-        // If data is contiguous, it should not import
-        // NOTE: Importer implementation might need checking details.
-        // It iterates day by day.
+    it('should handle ensureRecentData with pre-fetched timestamp', async () => {
+        const latestKnown = new Date(Date.now() - 5 * 60 * 1000); // 5 mins ago (Fresh)
+        const result = await importer.ensureRecentData('site-123', undefined, latestKnown);
 
-        // For this test, assume it passes if no gap found.
-        // Actually, let's keep it simple: finding gaps is the critical part.
+        expect(result.rows).toHaveLength(0);
+        expect(result.latestTimestamp).toEqual(latestKnown);
+    });
+
+    it('should trigger surgical sync in ensureRecentData when stale', async () => {
+        const latestKnown = new Date(Date.now() - 30 * 60 * 1000); // 30 mins ago (Stale)
+        const mockRows = [{ timestamp: new Date(), site_id: '123', tariff_id: 1, load_power: 100, solar_power: 0, grid_power: 100, battery_power: 0, battery_soc: 50 }];
+        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue(mockRows);
+
+        const result = await importer.ensureRecentData('site-123', undefined, latestKnown);
+
+        expect(importSpy).toHaveBeenCalled();
+        expect(result.rows).toHaveLength(1);
+        expect(result.latestTimestamp).toEqual(latestKnown);
     });
 });

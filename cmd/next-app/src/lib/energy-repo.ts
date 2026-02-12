@@ -1,4 +1,5 @@
-import { pool, Tariff, Site, TariffSeason, TariffSchedule, EnergyData } from './db';
+import { pool, Site, SiteWithTariffs, Tariff, EnergyData, TrmnlInstallation, TariffSeason, TariffSchedule } from './db';
+import { wattsToKilowatts } from './energy-utils';
 
 import { Schedule } from './schedule';
 
@@ -6,11 +7,7 @@ import { Schedule } from './schedule';
 const globalForCache = global as unknown as { siteCache: Map<string, { data: SiteWithTariffs; expires: number }> };
 const siteCache = globalForCache.siteCache || new Map<string, { data: SiteWithTariffs; expires: number }>();
 if (process.env.NODE_ENV !== 'production') globalForCache.siteCache = siteCache;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-
-
-
+const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 export interface UsageData {
     start: Date;
@@ -25,11 +22,7 @@ export interface UsageData {
     sellRate?: number;
 }
 
-export interface SiteWithTariffs extends Site {
-    tariffs: Tariff[];
-    access_token?: string | null;
-    refresh_token?: string | null;
-}
+// SiteWithTariffs is now imported from db.ts
 
 interface SiteIdRow {
     id: string;
@@ -60,65 +53,103 @@ export async function getUserTokensForSite(siteId: string): Promise<{ access_tok
 }
 
 export class EnergyRepo {
+    /**
+     * Helper to get site-timezone midnight as a global Date object (UTC timestamp)
+     */
+    static getSiteMidnight(d: Date, tz: string): Date {
+        if (isNaN(d.getTime())) {
+            console.error(`[EnergyRepo] getSiteMidnight: Invalid Date received`);
+            return new Date();
+        }
+
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz,
+            year: 'numeric', month: 'numeric', day: 'numeric',
+            hour: 'numeric', minute: 'numeric', second: 'numeric',
+            hour12: false
+        });
+
+        const parts = formatter.formatToParts(d);
+        const partValues: Record<string, number> = {};
+        for (const part of parts) {
+            if (part.type !== 'literal') {
+                partValues[part.type] = parseInt(part.value);
+            }
+        }
+
+        const { year, month, day, hour, minute, second } = partValues;
+        const siteLocalAsUTC = Date.UTC(year, month - 1, day, hour, minute, second);
+        const offset = siteLocalAsUTC - d.getTime();
+        const siteMidnightUTC = Date.UTC(year, month - 1, day, 0, 0, 0) - offset;
+
+        return new Date(siteMidnightUTC);
+    }
+
+    async getInstallationAndSite(uuid: string): Promise<{ installation: TrmnlInstallation, site: SiteWithTariffs } | undefined> {
+        const sql = `
+            SELECT 
+                i.*,
+                s.name as site_name, s.updated as site_updated, s.installed as site_installed, s.timezone as site_timezone, 
+                s.billing_start_day, s.json as site_json,
+                u.access_token as tesla_access_token, u.refresh_token as tesla_refresh_token, u.auth_status as tesla_auth_status
+            FROM "TrmnlInstallation" i
+            JOIN "Site" s ON i.site_id = s.id
+            LEFT JOIN "User" u ON s.user_id = u.id
+            WHERE i.uuid = $1
+            LIMIT 1
+        `;
+
+        const res = await pool.query(sql, [uuid]);
+        const row = res.rows[0];
+        if (!row) return undefined;
+
+        const installation: TrmnlInstallation = {
+            id: row.id,
+            uuid: row.uuid,
+            site_id: row.site_id,
+            plugin_setting_id: row.plugin_setting_id,
+            created_at: new Date(row.created_at),
+            json: row.json,
+            access_token: row.access_token,
+            refresh_token: row.refresh_token
+        };
+
+        const siteWithTariffs = await this.getSite(row.site_id);
+        if (!siteWithTariffs) return undefined;
+
+        siteWithTariffs.access_token = row.tesla_access_token;
+        siteWithTariffs.refresh_token = row.tesla_refresh_token;
+        siteWithTariffs.auth_status = row.tesla_auth_status;
+
+        return { installation, site: siteWithTariffs };
+    }
+
     async getSitesForUser(userId: string): Promise<Site[]> {
         const { rows } = await pool.query('SELECT * FROM "Site" WHERE user_id = $1', [userId]);
         return rows as Site[];
     }
 
     async getUsageByTOU(siteId: string, start: Date, end: Date): Promise<UsageData[]> {
-        const tariffsResult = await pool.query('SELECT * FROM "Tariff" WHERE site_id = $1', [siteId]);
-        const tariffs = tariffsResult.rows as Tariff[];
-        const tariffMap = new Map<number, Tariff>();
-        tariffs.forEach(t => tariffMap.set(t.id, t));
-
         const site = await this.getSite(siteId);
         if (!site) return [];
+
+        const tariffMap = new Map<number, Tariff>();
+        site.tariffs.forEach(t => tariffMap.set(t.id, t));
+
         const schedule = new Schedule(site.tariffs, site.timezone);
-
-        // PG Query using Strings to ensure strictly Wall Clock comparison
-        // start and end are expected to be "Local Midnight" Date objects (e.g. 2025-11-09 00:00:00 Local)
-        // We convert them to YYYY-MM-DD 00:00:00 strings to pass to SQL.
-
-        const toSqlString = (d: Date) => {
-            const y = d.getFullYear();
-            const m = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            const h = String(d.getHours()).padStart(2, '0');
-            const min = String(d.getMinutes()).padStart(2, '0');
-            const s = String(d.getSeconds()).padStart(2, '0');
-            return `${y}-${m}-${day} ${h}:${min}:${s}`;
-        };
-
-        const startStr = toSqlString(start);
-        const endStr = toSqlString(end);
 
         const rowsResult = await pool.query(`
             SELECT timestamp, tariff_id, load_power, solar_power, grid_power, battery_power 
             FROM "EnergyData"
-            WHERE site_id = $1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp
-        `, [siteId, startStr, endStr]);
-
-
+            WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
+            ORDER BY timestamp ASC
+        `, [siteId, start, end]);
         const rows = rowsResult.rows;
-
         const aggregation = new Map<string, UsageData>();
 
         for (const row of rows) {
-            // ... (Variable declarations were hoisted in valid code, need to ensure they are here or above)
-            // Let's declare them locally for this loop scope
             const ts = new Date(row.timestamp);
-
-
-
-            const year = ts.getFullYear();
-            const month = ts.getMonth() + 1; // 1-12
-            const day = ts.getDate();
-            const hour = ts.getHours();
-            const weekday = ts.getDay(); // 0=Sun, 1=Mon
-
-            // We bypass the Schedule's built-in "Intl" conversion which tries to shift timezones.
-            // We TRUST that 'ts' represents the Wall Clock time at the site.
-            const tp = schedule.getTariffPeriodForWallClock(month, day, hour, weekday, ts, year);
+            const tp = schedule.getTariffPeriod(ts);
 
             let touName = 'Unknown';
             let tariffName = 'Unknown';
@@ -165,7 +196,7 @@ export class EnergyRepo {
             const buyRate = parseFloat(buyRateStr);
             const sellRate = parseFloat(sellRateStr);
 
-            const gridKwh = data.gridUsage / 1000;
+            const gridKwh = wattsToKilowatts(data.gridUsage);
             if (gridKwh >= 0) {
                 data.cost = gridKwh * buyRate;
             } else {
@@ -187,23 +218,16 @@ export class EnergyRepo {
         const site = siteRes.rows[0] as Site | undefined;
         if (!site) return undefined;
 
-        // Combine with User tokens
-        // We return a composite object that looks like the old SiteWithTariffs 
-        // but physically the tokens come from User.
-        // To satisfy the type checker (which expects SiteWithTariffs -> Site -> no tokens),
-        // we cast it or extend the type locally if needed.
-        // Wait, Site interface no longer has access_token. 
-        // But the rest of the app (TeslaClient config) needs them.
-        // So we should return a type that HAS tokens, even if the DB Site model doesn't.
-
         let access_token: string | null = null;
         let refresh_token: string | null = null;
+        let auth_status: string | null = null;
 
         if (site.user_id) {
-            const userTokens = await getUserTokens(site.user_id);
-            if (userTokens) {
-                access_token = userTokens.access_token;
-                refresh_token = userTokens.refresh_token;
+            const userRes = await pool.query('SELECT access_token, refresh_token, auth_status FROM "User" WHERE id = $1', [site.user_id]);
+            if (userRes.rows.length > 0) {
+                access_token = userRes.rows[0].access_token;
+                refresh_token = userRes.rows[0].refresh_token;
+                auth_status = userRes.rows[0].auth_status;
             }
         }
 
@@ -224,8 +248,9 @@ export class EnergyRepo {
             ...site,
             access_token,
             refresh_token,
+            auth_status,
             tariffs
-        } as SiteWithTariffs; // We cast here because we want to pass tokens along at runtime
+        } as SiteWithTariffs;
 
         siteCache.set(siteId, { data: result, expires: now + CACHE_TTL_MS });
         return result;
@@ -255,29 +280,22 @@ export class EnergyRepo {
         batterySoc: number | null;
     }>> {
         if (!targetTimezone) {
-            // Fast path: assumes Site Wall Clock is the desired display time
-            const startStr = dateStr + ' 00:00:00';
-            // We fetch up to the next day's 00:00
-            const end = new Date(dateStr + 'T00:00:00Z');
-            end.setDate(end.getDate() + 1);
-            const endStr = new Date(end).toISOString().split('T')[0] + ' 00:00:00';
+            const start = new Date(dateStr + 'T00:00:00Z');
+            const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
 
             const rowsResult = await pool.query(`
                 SELECT timestamp, load_power, solar_power, grid_power, battery_power, battery_soc
                 FROM "EnergyData"
-                WHERE site_id = $1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp
-            `, [siteId, startStr, endStr]);
+                WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
+            `, [siteId, start, end]);
 
             const buckets = new Map<number, {
-                homeUsage: number;
-                solarProduction: number;
-                gridUsage: number;
-                batteryUsage: number;
+                homeUsage: number; solarProduction: number; gridUsage: number; batteryUsage: number;
             }>();
 
             for (const row of rowsResult.rows) {
                 const ts = new Date(row.timestamp);
-                const hr = ts.getHours();
+                const hr = ts.getUTCHours();
 
                 let bucket = buckets.get(hr);
                 if (!bucket) {
@@ -294,39 +312,30 @@ export class EnergyRepo {
             const sortedHours = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]);
             return sortedHours.map(([hour, bucket]) => ({
                 hour,
-                homeUsage: bucket.homeUsage / 1000,
-                solarProduction: bucket.solarProduction / 1000,
-                gridUsage: bucket.gridUsage / 1000,
-                batteryUsage: bucket.batteryUsage / 1000,
+                homeUsage: wattsToKilowatts(bucket.homeUsage),
+                solarProduction: wattsToKilowatts(bucket.solarProduction),
+                gridUsage: wattsToKilowatts(bucket.gridUsage),
+                batteryUsage: wattsToKilowatts(bucket.batteryUsage),
                 batterySoc: null
             }));
         }
-
-        // Timezone-aware path
-        // We use Postgres to convert the "Wall Clock" timestamp (stored in DB) 
-        // back to an absolute timestamp using the Site's timezone,
-        // then convert it to the User's target timezone.
-
-        const site = await this.getSite(siteId);
-        if (!site) throw new Error('Site not found');
 
         const sql = `
             WITH converted AS (
                 SELECT 
                     timestamp,
-                    timestamp AT TIME ZONE 'UTC' AT TIME ZONE $3 as target_ts,
+                    timestamp AT TIME ZONE $3 as target_ts,
                     load_power, solar_power, grid_power, battery_power
                 FROM "EnergyData"
                 WHERE site_id = $1
-                -- Optimization: Filter on raw timestamp roughly to speed up 
-                AND timestamp >= ($2::date - INTERVAL '2 day')::timestamp
-                AND timestamp <= ($2::date + INTERVAL '2 day')::timestamp
+                AND timestamp >= ($2::timestamptz - INTERVAL '1 day')
+                AND timestamp <= ($2::timestamptz + INTERVAL '1 day')
             )
-            SELECT 
+            SELECT
                 EXTRACT(HOUR FROM target_ts) as hour,
                 load_power, solar_power, grid_power, battery_power
             FROM converted
-            WHERE date_trunc('day', target_ts)::date = $2::date
+            WHERE (target_ts AT TIME ZONE $3)::date = $2::date
         `;
 
         const qRes = await pool.query(sql, [siteId, dateStr, targetTimezone]);
@@ -353,10 +362,10 @@ export class EnergyRepo {
         const sortedHours = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]);
         return sortedHours.map(([hour, bucket]) => ({
             hour,
-            homeUsage: bucket.homeUsage / 1000,
-            solarProduction: bucket.solarProduction / 1000,
-            gridUsage: bucket.gridUsage / 1000,
-            batteryUsage: bucket.batteryUsage / 1000,
+            homeUsage: wattsToKilowatts(bucket.homeUsage),
+            solarProduction: wattsToKilowatts(bucket.solarProduction),
+            gridUsage: wattsToKilowatts(bucket.gridUsage),
+            batteryUsage: wattsToKilowatts(bucket.batteryUsage),
             batterySoc: null
         }));
     }
@@ -396,7 +405,6 @@ export class EnergyRepo {
             console.warn(`[EnergyRepo] Cannot update tokens for site ${siteId} - No User Linked!`);
         }
 
-        // Invalidate cache to force re-read
         siteCache.delete(siteId);
     }
 
@@ -445,57 +453,56 @@ export class EnergyRepo {
     }
 
     getLockedRefreshHandler(siteId: string) {
-        return async (refreshToken: string) => {
-            console.log(`[TokenLock] Attempting to acquire lock for site ${siteId}...`);
-            if (await this.acquireRefreshLock(siteId)) {
-                console.log(`[TokenLock] Lock acquired for site ${siteId}. Refreshing...`);
-                try {
-                    const { refreshAccessToken } = await import('./tesla-auth');
-                    const newTokens = await refreshAccessToken(refreshToken);
+        return {
+            refreshHandler: async (refreshToken: string) => {
+                console.log(`[TokenLock] Attempting to acquire lock for site ${siteId}...`);
+                if (await this.acquireRefreshLock(siteId)) {
+                    console.log(`[TokenLock] Lock acquired for site ${siteId}. Refreshing...`);
+                    try {
+                        const { refreshAccessToken } = await import('./tesla-auth');
+                        const newTokens = await refreshAccessToken(refreshToken);
 
-                    await this.updateSiteTokens(siteId, newTokens.access_token, newTokens.refresh_token);
-                    return newTokens;
-                } finally {
-                    await this.releaseRefreshLock(siteId);
-                    console.log(`[TokenLock] Lock released for site ${siteId}.`);
+                        await this.updateSiteTokens(siteId, newTokens.access_token, newTokens.refresh_token);
+                        return newTokens;
+                    } finally {
+                        await this.releaseRefreshLock(siteId);
+                        console.log(`[TokenLock] Lock released for site ${siteId}.`);
+                    }
+                } else {
+                    console.log(`[TokenLock] Lock busy for site ${siteId}. Waiting...`);
+                    return this.waitForTokenRefresh(siteId);
                 }
-            } else {
-                console.log(`[TokenLock] Lock busy for site ${siteId}. Waiting...`);
-                return this.waitForTokenRefresh(siteId);
+            },
+            errorHandler: async (error: Error) => {
+                const msg = error.message;
+                if (msg.includes('401') || msg.includes('login_required') || msg.includes('invalid_grant')) {
+                    const site = await this.getSite(siteId);
+                    if (site && site.user_id) {
+                        console.warn(`[TokenLock] Terminal auth failure for site ${siteId} (User ${site.user_id}). Marking revoked.`);
+                        await pool.query('UPDATE "User" SET auth_status = $1, is_active = $2 WHERE id = $3', ['revoked', false, site.user_id]);
+                        this.invalidateCache(siteId);
+                    }
+                }
             }
         };
     }
 
-    /**
-     * Fetches raw, unaggregated 5-minute energy data for high fidelity analysis.
-     */
     async getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
-
-        const toSqlString = (d: Date) => {
-            const y = d.getFullYear();
-            const m = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            const h = String(d.getHours()).padStart(2, '0');
-            const min = String(d.getMinutes()).padStart(2, '0');
-            const s = String(d.getSeconds()).padStart(2, '0');
-            return `${y}-${m}-${day} ${h}:${min}:${s}`;
-        };
-
-        const startStr = toSqlString(start);
-        const endStr = toSqlString(end);
-
+        const queryStart = Date.now();
         const res = await pool.query(`
             SELECT * FROM "EnergyData"
             WHERE site_id = $1 
-            AND timestamp >= $2::timestamp 
-            AND timestamp < $3::timestamp
+            AND timestamp >= $2
+            AND timestamp < $3
             ORDER BY timestamp ASC
-        `, [siteId, startStr, endStr]);
+        `, [siteId, start, end]);
+        const queryDuration = Date.now() - queryStart;
+        console.log(`[EnergyRepo] getRawEnergyData: Query = ${queryDuration}ms, Rows = ${res.rows.length}`);
 
         return res.rows.map(row => ({
             ...row,
-            timestamp: new Date(row.timestamp), // Ensure JS Date
-            site_id: row.site_id.toString(), // Ensure string
+            timestamp: new Date(row.timestamp),
+            site_id: row.site_id.toString(),
             load_power: Number(row.load_power),
             solar_power: Number(row.solar_power),
             grid_power: Number(row.grid_power),
@@ -508,48 +515,32 @@ export class EnergyRepo {
             return this.getRawEnergyData(siteId, start, end);
         }
 
-        const site = await this.getSite(siteId);
-        if (!site) throw new Error('Site not found');
-
-        // We want data where the "Target Time" falls between start and end.
-        // And we want the timestamps returned to be "Target Time encoded as UTC".
-        // e.g. If event is at 12:00 Site Time -> 08:00 Target Time.
-        // We want to return 08:00 (as a Date object).
-
-        // Logic:
-        // 1. Convert DB Timestamp (Site Wall Clock) -> Real Timestamp (UTC) using Site TZ.
-        // 2. Convert Real Timestamp (UTC) -> Target Wall Clock (Timestamp) using Target TZ.
-        // 3. Select this as `target_ts`.
-        // 4. Filter where `target_ts` is between start and end.
-
         const sql = `
             WITH converted AS (
-                SELECT 
+                SELECT
                     *,
-                    timestamp AT TIME ZONE $5 AT TIME ZONE $4 as target_ts
+                    timestamp AT TIME ZONE $4 as target_ts
                 FROM "EnergyData"
                 WHERE site_id = $1
-                -- Optimization: Filter roughly on raw timestamp 
-                AND timestamp >= ($2::timestamp - INTERVAL '1 day')
-                AND timestamp <= ($3::timestamp + INTERVAL '1 day')
+                AND timestamp >= ($2::timestamptz - INTERVAL '1 day')
+                AND timestamp <= ($3::timestamptz + INTERVAL '1 day')
             )
             SELECT * FROM converted
-            WHERE target_ts >= $2::timestamp 
-            AND target_ts < $3::timestamp
+            WHERE target_ts >= $2::timestamptz 
+            AND target_ts < $3::timestamptz
             ORDER BY target_ts ASC
         `;
 
         const res = await pool.query(sql, [
             siteId,
-            this.toSqlString(start),
-            this.toSqlString(end),
-            targetTimezone,
-            site.timezone
+            start,
+            end,
+            targetTimezone
         ]);
 
         return res.rows.map(row => ({
             ...row,
-            timestamp: new Date(row.target_ts), // This is now "Target Wall Clock"
+            timestamp: new Date(row.target_ts),
             site_id: row.site_id.toString(),
             load_power: Number(row.load_power),
             solar_power: Number(row.solar_power),
@@ -558,24 +549,13 @@ export class EnergyRepo {
         })) as EnergyData[];
     }
 
-    // Tagging Methods
-    private toSqlString(d: Date) {
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        const h = String(d.getHours()).padStart(2, '0');
-        const min = String(d.getMinutes()).padStart(2, '0');
-        const s = String(d.getSeconds()).padStart(2, '0');
-        return `${y}-${m}-${day} ${h}:${min}:${s}`;
-    }
-
     async getLoadTags(siteId: string, start: Date, end: Date): Promise<import('./db').LoadTag[]> {
         const res = await pool.query(`
             SELECT * FROM "LoadTag"
             WHERE site_id = $1
-            AND start_time >= $2::timestamp
-            AND end_time <= $3::timestamp
-        `, [siteId, this.toSqlString(start), this.toSqlString(end)]);
+            AND start_time >= $2
+            AND end_time <= $3
+        `, [siteId, start, end]);
 
         return res.rows.map(r => ({
             ...r,
@@ -586,43 +566,36 @@ export class EnergyRepo {
     }
 
     async addLoadTag(siteId: string, start: Date, end: Date, tag: string) {
-        const startStr = this.toSqlString(start);
-        const endStr = this.toSqlString(end);
-
-        // Prevent duplicates
         const exists = await pool.query(`
             SELECT 1 FROM "LoadTag" 
-            WHERE site_id = $1 AND start_time = $2::timestamp AND end_time = $3::timestamp AND tag = $4
-        `, [siteId, startStr, endStr, tag]);
+            WHERE site_id = $1 AND start_time = $2 AND end_time = $3 AND tag = $4
+        `, [siteId, start, end, tag]);
 
         if (exists.rowCount && exists.rowCount > 0) return;
 
         await pool.query(`
             INSERT INTO "LoadTag" (site_id, start_time, end_time, tag)
-            VALUES ($1, $2::timestamp, $3::timestamp, $4)
-        `, [siteId, startStr, endStr, tag]);
+            VALUES ($1, $2, $3, $4)
+        `, [siteId, start, end, tag]);
     }
 
     async removeLoadTag(siteId: string, start: Date, end: Date, tag: string) {
         await pool.query(`
             DELETE FROM "LoadTag"
-            WHERE site_id = $1 AND start_time = $2::timestamp AND end_time = $3::timestamp AND tag = $4
-         `, [siteId, this.toSqlString(start), this.toSqlString(end), tag]);
+            WHERE site_id = $1 AND start_time = $2 AND end_time = $3 AND tag = $4
+        `, [siteId, start, end, tag]);
     }
-    async cleanupOldData(cutoffDate: Date): Promise<{ energyDeleted: number; tagsDeleted: number }> {
-        const cutoffStr = this.toSqlString(cutoffDate);
 
-        // Delete from EnergyData
+    async cleanupOldData(cutoffDate: Date): Promise<{ energyDeleted: number; tagsDeleted: number }> {
         const energyRes = await pool.query(`
             DELETE FROM "EnergyData"
-            WHERE timestamp < $1::timestamp
-        `, [cutoffStr]);
+            WHERE timestamp < $1
+        `, [cutoffDate]);
 
-        // Delete from LoadTag
         const tagsRes = await pool.query(`
             DELETE FROM "LoadTag"
-            WHERE end_time < $1::timestamp
-        `, [cutoffStr]);
+            WHERE end_time < $1
+        `, [cutoffDate]);
 
         return {
             energyDeleted: energyRes.rowCount || 0,

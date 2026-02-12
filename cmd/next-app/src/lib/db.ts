@@ -13,6 +13,7 @@ if (connStr.includes('sslmode=require')) {
   connStr = connStr.replace('sslmode=require', '');
 }
 
+const needsSetup = !globalForDb.pool;
 export const pool = globalForDb.pool || new Pool({
   connectionString: connStr,
   ssl: {
@@ -23,14 +24,19 @@ export const pool = globalForDb.pool || new Pool({
   connectionTimeoutMillis: 10000,
 });
 
-// Add error handler to prevent crashing on idle client errors
-pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  // Don't process.exit() here; just log it. 
-  // The pool will discard the client and create a new one when needed.
-});
+if (needsSetup) {
+  // Add error handler to prevent crashing on idle client errors
+  pool.on('error', (err) => {
+    console.error('Unexpected error on idle client', err);
+    // Don't process.exit() here; just log it. 
+    // The pool will discard the client and create a new one when needed.
+  });
 
-if (process.env.NODE_ENV !== 'production') globalForDb.pool = pool;
+  // Increase max listeners for parallel query operations
+  pool.setMaxListeners(30); // Increased a bit more for safety
+
+  if (process.env.NODE_ENV !== 'production') globalForDb.pool = pool;
+}
 
 export function getDb() {
   return pool;
@@ -109,7 +115,6 @@ export interface EnergyData {
   grid_power: number;
   battery_power: number;
   battery_soc: number | null;
-  is_synthetic?: number;
 }
 
 
@@ -127,6 +132,9 @@ export interface TrmnlInstallation {
 
 export interface SiteWithTariffs extends Site {
   tariffs: Tariff[];
+  access_token?: string | null;
+  refresh_token?: string | null;
+  auth_status?: string | null;
 }
 
 export interface LoadTag {

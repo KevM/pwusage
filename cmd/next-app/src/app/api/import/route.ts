@@ -27,10 +27,12 @@ export async function POST(request: Request) {
 
         // Instantiate client once using the credentials
         // We use the first site ID for the refresh handler context (locks the User)
+        const handlers = repo.getLockedRefreshHandler(authorizedSites[0]);
         const client = new TeslaClient({
             accessToken: credentials.access_token,
             refreshToken: credentials.refresh_token || undefined,
-            tokenRefreshHandler: repo.getLockedRefreshHandler(authorizedSites[0]),
+            tokenRefreshHandler: handlers.refreshHandler,
+            onTokenError: handlers.errorHandler,
             onTokenUpdate: () => console.log(`Tokens refreshed during import`)
         });
 

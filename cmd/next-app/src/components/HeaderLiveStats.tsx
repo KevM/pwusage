@@ -26,6 +26,11 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                 if (!isMounted) return;
 
                 if (!response.ok) {
+                    if (response.status === 401) {
+                        console.warn('[HeaderLiveStats] Unauthorized. Redirecting to login...');
+                        window.location.href = '/login';
+                        return;
+                    }
                     console.error('[HeaderLiveStats] Fetch failed:', response.status, response.statusText);
                     setLoading(false);
                     return;

@@ -87,14 +87,12 @@ export async function GET(
             // Or just always ensure. ensureDataForRange is smart.
 
             // We need to initialize TeslaClient with token refresh logic
+            const handlers = repo.getLockedRefreshHandler(siteId);
             const teslaClient = new TeslaClient({
                 accessToken: tokens.access_token,
                 refreshToken: tokens.refresh_token,
-                tokenRefreshHandler: async (rt) => {
-                    console.log('[NILM API] Refreshing token for Auto-Heal...');
-                    const newTokens = await TeslaClient.refreshAccessToken(rt);
-                    return newTokens;
-                }
+                tokenRefreshHandler: handlers.refreshHandler,
+                onTokenError: handlers.errorHandler
             });
 
             const importer = new Importer(teslaClient);

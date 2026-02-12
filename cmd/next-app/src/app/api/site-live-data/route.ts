@@ -33,10 +33,12 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
         }
 
+        const handlers = repo.getLockedRefreshHandler(siteId);
         const client = new TeslaClient({
             accessToken: token,
             refreshToken: refreshToken,
-            tokenRefreshHandler: repo.getLockedRefreshHandler(siteId),
+            tokenRefreshHandler: handlers.refreshHandler,
+            onTokenError: handlers.errorHandler,
             onTokenUpdate: () => {
             }
         });
@@ -69,6 +71,12 @@ export async function GET(request: Request) {
         });
     } catch (error) {
         console.error('Site live data error:', error);
+        const msg = error instanceof Error ? error.message : String(error);
+
+        if (msg.includes('401') || msg.includes('login_required') || msg.includes('Tesla API Error: 401')) {
+            return NextResponse.json({ error: 'Authentication failed' }, { status: 401 });
+        }
+
         return NextResponse.json({ error: 'Failed to fetch site live data' }, { status: 500 });
     }
 }

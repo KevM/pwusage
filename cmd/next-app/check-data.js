@@ -58,9 +58,6 @@ const pool = new Pool({
                 console.log('Rows:', rows.rows);
             }
 
-            // Check EnergyUsage count
-            const usageRes = await client.query('SELECT count(*) FROM "EnergyUsage" u JOIN "Tariff" t ON u.tariff_id = t.id WHERE t.site_id = $1', [siteId]);
-            console.log('Total EnergyUsage Rows:', usageRes.rows[0].count);
         }
 
 

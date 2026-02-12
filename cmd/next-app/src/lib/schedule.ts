@@ -11,15 +11,13 @@ export interface TariffPeriod {
 export class Schedule {
     private tariffs: Tariff[];
     private timeZone: string;
+    private formatter: Intl.DateTimeFormat;
+    private memo: Map<string, { month: number, day: number, hour: number, weekday: number, year: number }> = new Map();
 
     constructor(tariffs: Tariff[], timeZone: string) {
         this.tariffs = tariffs;
         this.timeZone = timeZone;
-    }
-
-    private getLocalParts(d: Date): { month: number, day: number, hour: number, weekday: number, year: number } {
-        // Use Intl to get parts according to timezone
-        const parts = new Intl.DateTimeFormat('en-US', {
+        this.formatter = new Intl.DateTimeFormat('en-US', {
             timeZone: this.timeZone,
             year: 'numeric',
             month: 'numeric',
@@ -27,47 +25,51 @@ export class Schedule {
             hour: 'numeric',
             weekday: 'short',
             hour12: false
-        }).formatToParts(d);
+        });
+    }
+
+    private getLocalParts(d: Date): { month: number, day: number, hour: number, weekday: number, year: number } {
+        // Memoize based on hour-level timestamp to handle 5-min intervals efficiently
+        // We use YYYY-MM-DD-HH as a key.
+        // Actually, just round to the hour.
+        const hourTs = new Date(d);
+        hourTs.setMinutes(0, 0, 0);
+        const memoKey = hourTs.getTime().toString();
+
+        const cached = this.memo.get(memoKey);
+        if (cached) return cached;
+
+        // Use cached Intl formatter to get parts according to timezone
+        const parts = this.formatter.formatToParts(d);
 
         const p: Record<string, string> = {};
         for (const part of parts) {
             p[part.type] = part.value;
         }
 
-        // month: 1-12
-        // day: 1-31
-        // hour: 0-23
-        // weekday: Sun, Mon...
-        // year: YYYY
-
         const month = parseInt(p.month, 10);
         const day = parseInt(p.day, 10);
         const year = parseInt(p.year, 10);
 
-        // Hour in 24h format from "24" or "0" etc? 
-        // With hour12: false, it might return "24" for midnight in some implementations or "0".
-        // Usually 0-23. Let's verify standard behavior or handle it safely.
-        // Actually Intl usually returns 0-23. 
         let hour = parseInt(p.hour, 10);
         if (hour === 24) hour = 0;
 
-        // The original toTeslaWeekday expects a number (0-6).
-        // The new implementation passes a string ("Sun", "Mon", etc.).
-        // We need to map the string weekday to a number (0-6) first, then pass it to toTeslaWeekday.
         const wdMap: Record<string, number> = {
             'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6
         };
         const weekday = wdMap[p.weekday] ?? 0;
 
-        return { month, day, hour, weekday, year };
+        const result = { month, day, hour, weekday, year };
+        this.memo.set(memoKey, result);
+        return result;
     }
 
     getTariffPeriod(t: Date): TariffPeriod | null {
         const local = this.getLocalParts(t);
-        return this.getTariffPeriodForWallClock(local.month, local.day, local.hour, local.weekday, t, local.year);
+        return this.getTariffPeriodByComponents(local.month, local.day, local.hour, local.weekday, t, local.year);
     }
 
-    getTariffPeriodForWallClock(month: number, day: number, hour: number, weekday: number, originalDate?: Date, year?: number): TariffPeriod | null {
+    getTariffPeriodByComponents(month: number, day: number, hour: number, weekday: number, originalDate?: Date, year?: number): TariffPeriod | null {
         // Check for holidays
         // If year is provided, we can calculate dynamic holidays (Thanksgiving, Memorial Day, Labor Day)
         // If not, we might miss them, but getTariffPeriod passes it.

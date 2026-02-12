@@ -22,12 +22,13 @@ export async function GET() {
 
         const activeSiteId = authorizedSiteIds[0];
         const repo = new EnergyRepo();
-        const refreshHandler = repo.getLockedRefreshHandler(activeSiteId);
+        const handlers = repo.getLockedRefreshHandler(activeSiteId);
 
         const client = new TeslaClient({
             accessToken: credentials.access_token,
             refreshToken: credentials.refresh_token || undefined,
-            tokenRefreshHandler: refreshHandler,
+            tokenRefreshHandler: handlers.refreshHandler,
+            onTokenError: handlers.errorHandler,
             onTokenUpdate: () => {
                 // Token handling logic handled by repo handler
             }

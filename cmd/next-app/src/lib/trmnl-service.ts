@@ -35,20 +35,41 @@ export class TrmnlService {
         return rows[0].id;
     }
 
+    // Simplified in-memory cache for installations to avoid redundant DB hits during high-frequency polling
+    private static getCache(): Map<string, { data: TrmnlInstallation, expires: number }> {
+        const globalForTrmnl = global as unknown as { installationCache: Map<string, { data: TrmnlInstallation, expires: number }> };
+        if (!globalForTrmnl.installationCache) {
+            globalForTrmnl.installationCache = new Map();
+        }
+        return globalForTrmnl.installationCache;
+    }
+
+    private static readonly CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes for polled installations
+
     async updateInstallation(uuid: string, pluginSettingId: number) {
         await pool.query(`
             UPDATE "TrmnlInstallation"
             SET plugin_setting_id = $1
             WHERE uuid = $2
         `, [pluginSettingId, uuid]);
+        TrmnlService.getCache().delete(uuid);
     }
 
     async getInstallationByUuid(uuid: string): Promise<TrmnlInstallation | undefined> {
-        // Prioritize installations that have a site_id if multiples exist (though uuid should be unique, "zombies" might share it if my logic was flawed, or just hygiene)
-        // Actually, UUID is unique constraint in DB? Let's check schema later.
-        // Assuming UUID is unique, but let's be safe.
+        const now = Date.now();
+        const cached = TrmnlService.getCache().get(uuid);
+        if (cached && cached.expires > now) {
+            return cached.data;
+        }
+
         const { rows } = await pool.query('SELECT * FROM "TrmnlInstallation" WHERE uuid = $1', [uuid]);
-        return rows[0] as TrmnlInstallation | undefined;
+        const installation = rows[0] as TrmnlInstallation | undefined;
+
+        if (installation) {
+            TrmnlService.getCache().set(uuid, { data: installation, expires: now + TrmnlService.CACHE_TTL_MS });
+        }
+
+        return installation;
     }
 
     async getInstallationBySiteId(siteId: string): Promise<TrmnlInstallation | undefined> {

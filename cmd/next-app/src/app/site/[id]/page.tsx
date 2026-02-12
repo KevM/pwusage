@@ -50,10 +50,12 @@ export default async function SitePage({ params, searchParams }: {
     const accessToken = site?.access_token;
     const refreshToken = site?.refresh_token;
 
+    const handlers = repo.getLockedRefreshHandler(id);
     const teslaClient = new TeslaClient({
         accessToken: accessToken!,
         refreshToken: refreshToken!, // Type assertion as we expect valid sites to have tokens
-        tokenRefreshHandler: repo.getLockedRefreshHandler(id),
+        tokenRefreshHandler: handlers.refreshHandler,
+        onTokenError: handlers.errorHandler,
         onTokenUpdate: async () => {
             console.log('Token update callback triggered (Site Page).');
         }
@@ -72,7 +74,7 @@ export default async function SitePage({ params, searchParams }: {
         }
     } catch (error) {
         console.error('Failed to ensure site:', error);
-        if ((error as Error).message && ((error as Error).message.includes('401') || (error as Error).message.includes('invalid authentication'))) {
+        if ((error as Error).message && ((error as Error).message.includes('401') || (error as Error).message.includes('invalid authentication') || (error as Error).message.includes('Tesla API Error: 401'))) {
             // ... (redirect logic)
             console.log('Redirecting to login due to auth failure...');
             redirect('/login');
@@ -114,7 +116,7 @@ export default async function SitePage({ params, searchParams }: {
 
 
     // Get hourly data for the requested date (from query param) or today (in site timezone)
-    // We must use the Site's Wall Clock Time to determine "Today", otherwise
+    // We must use the Site's Time to determine "Today", otherwise
     // Server UTC might be "Tomorrow" while Site is still "Today".
     const getSiteNow = (tz: string) => {
         const fmt = new Intl.DateTimeFormat('en-CA', {
@@ -147,7 +149,7 @@ export default async function SitePage({ params, searchParams }: {
     const billingDay = finalSite.billing_start_day || 1;
 
     // Determine reference date: queryDate or siteNow
-    // We treat queryDate as a Wall Clock date for the site.
+    // We treat queryDate as a Site-local date for the site.
     let refDate = siteNow;
     if (queryDate) {
         const [y, m, d] = queryDate.split('-').map(Number);
@@ -210,7 +212,7 @@ export default async function SitePage({ params, searchParams }: {
     // THIS IS THE PROBLEM.
 
     // We want to display the "intended" date.
-    // Since we know 'start' year/month/billingDay match the intended Wall Clock date.
+    // Since we know 'start' year/month/billingDay match the intended Site Time.
     // We can just construct the string manually.
 
     const getDisplayLabel = (d: Date, includeYear: boolean) => {

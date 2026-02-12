@@ -10,11 +10,7 @@ export function adaptTeslaData(data: EnergyData[]): PowerData[] {
     return data.map(point => {
         let tsStr: string;
         if (point.timestamp instanceof Date) {
-            // Manually construct ISO-like string from LOCAL components to preserve Wall Clock time
-            // (e.g. 20:20 in DB -> 20:20 in string, regardless of UTC shift)
-            const d = point.timestamp;
-            const pad = (n: number) => n.toString().padStart(2, '0');
-            tsStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+            tsStr = point.timestamp.toISOString();
         } else {
             tsStr = String(point.timestamp);
         }

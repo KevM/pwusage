@@ -105,12 +105,14 @@ export async function GET(request: NextRequest) {
 
         // Upsert User
         await pool.query(`
-            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active)
+            VALUES ($1, $2, $3, $4, $5, 'active', true)
             ON CONFLICT (id) DO UPDATE SET
                 access_token = EXCLUDED.access_token,
                 refresh_token = EXCLUDED.refresh_token,
-                email = COALESCE(EXCLUDED.email, "User".email)
+                email = COALESCE(EXCLUDED.email, "User".email),
+                auth_status = 'active',
+                is_active = true
         `, [userId, userEmail, authData.access_token, authData.refresh_token, Date.now() + (authData.expires_in * 1000)]);
 
         // Retrieve Roles immediately

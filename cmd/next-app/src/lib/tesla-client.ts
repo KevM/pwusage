@@ -107,6 +107,7 @@ export interface TeslaClientConfig {
     accessToken: string;
     refreshToken?: string;
     onTokenUpdate?: (accessToken: string, refreshToken: string) => void;
+    onTokenError?: (error: Error) => void;
     tokenRefreshHandler?: (refreshToken: string) => Promise<{ access_token: string; refresh_token: string }>;
 }
 
@@ -155,6 +156,9 @@ export class TeslaClient {
                 response = await makeRequest(this.config.accessToken);
             } catch (refreshError) {
                 console.error('Token refresh failed:', refreshError);
+                if (this.config.onTokenError && refreshError instanceof Error) {
+                    await this.config.onTokenError(refreshError);
+                }
                 // Fall through to original error
             }
         }
@@ -162,7 +166,8 @@ export class TeslaClient {
 
         if (!response.ok) {
             const body = await response.text();
-            throw new Error(`Tesla API Error: ${response.status} ${body}`);
+            const shortBody = body.length > 200 ? body.substring(0, 200) + '...' : body;
+            throw new Error(`Tesla API Error: ${response.status} ${shortBody}`);
         }
 
         return response.json();
@@ -193,7 +198,9 @@ export class TeslaClient {
         console.log(`[TeslaClient] Fetching ${siteId} history: kind=energy, period=${period}, time_zone=${timeZone}`);
         console.log(`[TeslaClient] Params: start_date=${s}, end_date=${e}`);
 
+        const teslaStart = Date.now();
         const result = await this.fetch<{ response: { time_series: EnergyHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
+        console.log(`[TeslaClient] History fetch duration: ${Date.now() - teslaStart}ms`);
         console.log(`[TeslaClient] History Response for ${start.toISOString()}-${end.toISOString()} (${period}):`, JSON.stringify(result).substring(0, 200));
         return result.response?.time_series ?? [];
     }
@@ -214,7 +221,9 @@ export class TeslaClient {
     }
 
     async getLiveStatus(siteId: string): Promise<EnergySiteLiveStatus> {
+        const teslaStart = Date.now();
         const result = await this.fetch<{ response: EnergySiteLiveStatus }>(`/api/1/energy_sites/${siteId}/live_status`);
+        console.log(`[TeslaClient] Live Status fetch duration: ${Date.now() - teslaStart}ms`);
         return result.response;
     }
 
@@ -316,7 +325,7 @@ function formatDateWithTimezone(date: Date, timeZone: string): string {
         // Fallback to local offset in the target timezone via toLocaleString
         const localMs = date.getTime();
         const loc = new Date(date.toLocaleString('en-US', { timeZone })).getTime();
-        // offsetMinutes should be (WallClock - UTC) / 60000.
+        // offsetMinutes should be (SiteTime - UTC) / 60000.
         // e.g. 00:00 Wall - 07:00 UTC = -420 mins (-7h).
         offsetMinutes = Math.round((loc - localMs) / (60 * 1000));
     }
