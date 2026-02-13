@@ -84,6 +84,7 @@ export function SystemAnnouncementsManager() {
     }
 
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [uploading, setUploading] = useState(false);
 
     async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -110,7 +111,32 @@ export function SystemAnnouncementsManager() {
             const blob = await res.json();
             const markdownImage = `\n![${file.name}](${blob.url})\n`;
 
-            setContent(prev => prev + markdownImage);
+            if (textareaRef.current) {
+                const start = textareaRef.current.selectionStart;
+                const end = textareaRef.current.selectionEnd;
+                const text = content;
+                const before = text.substring(0, start);
+                const after = text.substring(end);
+
+                // Ensure there's a newline before and after if needed
+                const prefix = before.endsWith('\n') || before === '' ? '' : '\n';
+                const suffix = after.startsWith('\n') || after === '' ? '' : '\n';
+                const finalMarkdown = `${prefix}![${file.name}](${blob.url})${suffix}`;
+
+                const newContent = before + finalMarkdown + after;
+                setContent(newContent);
+
+                // Move cursor after insertion in next render
+                setTimeout(() => {
+                    if (textareaRef.current) {
+                        const newCursorPos = start + finalMarkdown.length;
+                        textareaRef.current.focus();
+                        textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+                    }
+                }, 0);
+            } else {
+                setContent(prev => prev + markdownImage);
+            }
         } catch (error) {
             console.error('Upload error:', error);
             alert('Failed to upload image');
@@ -211,6 +237,7 @@ export function SystemAnnouncementsManager() {
                         </div>
                     ) : (
                         <textarea
+                            ref={textareaRef}
                             value={content}
                             onChange={(e) => setContent(e.target.value)}
                             rows={4}
