@@ -17,60 +17,57 @@ export async function GET(
     { params }: { params: Promise<{ id: string }> } // Params is a Promise in Next 15+
 ) {
     try {
-        const { id: siteId } = await params; // Await params
+        const { id: siteId } = await params;
         const searchParams = request.nextUrl.searchParams;
         const dateParam = searchParams.get('date');
         const tzParam = searchParams.get('tz');
 
-        let date = new Date();
+        const site = await repo.getSite(siteId);
+        if (!site) {
+            return NextResponse.json({ error: 'Site not found' }, { status: 404 });
+        }
+
+        const tz = tzParam || site.timezone;
+        let refDate = new Date();
+
         if (dateParam) {
-            // Parse 'YYYY-MM-DD' strictly as local time parts
             const [y, m, d] = dateParam.split('-').map(Number);
-            date = new Date(y, m - 1, d);
-        } else if (tzParam) {
-            // If no date provided, use "Today" in the requested timezone
+            // Use mid-day to avoid edge cases when calculating midnight
+            refDate = new Date(y, m - 1, d, 12, 0, 0);
+        } else {
+            // "Today" in the target timezone
             try {
                 const parts = new Intl.DateTimeFormat('en-CA', {
-                    timeZone: tzParam,
+                    timeZone: tz,
                     year: 'numeric',
                     month: '2-digit',
                     day: '2-digit'
                 }).format(new Date()).split('-').map(Number);
-                date = new Date(parts[0], parts[1] - 1, parts[2]);
+                refDate = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0);
             } catch (e) {
-                console.error('[Analysis] Invalid timezone:', tzParam, e);
-                // Fallback to server time
+                console.error('[Analysis] Invalid timezone:', tz, e);
             }
         }
 
+        const start = EnergyRepo.getSiteMidnight(refDate, tz);
+        const queryEnd = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+        const end = new Date(queryEnd.getTime() - 1); // 23:59:59.999
+
         // AUTH CHECK
         const { cookies } = await import('next/headers');
-
         const { SiteService } = await import('@/lib/site-service');
 
         const cookieStore = await cookies();
         const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-        if (!siteAuthToken) {
+        if (siteAuthToken) {
+            // Validate access to THIS specific site
+            const siteService = new SiteService({ energyRepo: repo, siteAuthToken });
+            if (!await siteService.validateSiteAccess(siteId)) {
+                return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
+            }
+        } else {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
-
-        // Validate access to THIS specific site
-        const siteService = new SiteService({ energyRepo: repo, siteAuthToken });
-        if (!await siteService.validateSiteAccess(siteId)) {
-            return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
-        }
-
-        // Set range to full day
-        const start = new Date(date);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(date);
-        end.setHours(23, 59, 59, 999);
-
-        // For querying the DB, we want exclusive upper bound of Next Midnight to capture everything in the day
-        const queryEnd = new Date(date);
-        queryEnd.setDate(queryEnd.getDate() + 1);
-        queryEnd.setHours(0, 0, 0, 0);
 
         if (isNaN(start.getTime())) {
             return NextResponse.json({ error: 'Invalid date' }, { status: 400 });
@@ -78,14 +75,9 @@ export async function GET(
 
         // 0. Auto-Heal / Sync Check
         const tokens = await getUserTokensForSite(siteId);
+        let importer = new Importer(null as any); // Fallback for audit
+
         if (tokens) {
-            // Check if we need to sync. 
-            // We can be optimistic and just check if we have ANY data for this day first?
-            // Or just call ensureDataForRange which does the check efficiently.
-
-            // Only sync if we are looking at specific date (not just "now" default?)
-            // Or just always ensure. ensureDataForRange is smart.
-
             // We need to initialize TeslaClient with token refresh logic
             const handlers = repo.getLockedRefreshHandler(siteId);
             const teslaClient = new TeslaClient({
@@ -95,17 +87,18 @@ export async function GET(
                 onTokenError: handlers.errorHandler
             });
 
+            const force = searchParams.get('force') === 'true';
             const importer = new Importer(teslaClient);
-            // Don't force, let it detect gaps.
-            await importer.ensureDataForRange(siteId, start, end);
+            console.error(`[Analysis] Calling ensureDataForRange for ${siteId}, force=${force}`);
+            await importer.ensureDataForRange(siteId, start, queryEnd, (msg) => {
+                console.error(`[Analysis Progress] ${msg}`);
+            }, { force });
         }
 
         // 1. Fetch Raw Data (Potential re-fetch if sync happened inside ensureDataForRange)
-        // Check for tz param (now defined above)
-        const rawData = await repo.getRawEnergyDataWithTz(siteId, start, queryEnd, tzParam || undefined);
+        const rawData = await repo.getRawEnergyData(siteId, start, queryEnd);
 
         // 2. Fetch Tariff Definitions & Schedule
-        const site = await repo.getSite(siteId);
         let schedule: Schedule | null = null;
         const tariffMap: Record<number, string> = {};
 
@@ -182,12 +175,15 @@ export async function GET(
             return { ...event, tags };
         });
 
+        const audit = await importer.auditRange(siteId, start, queryEnd);
+
         return NextResponse.json({
             siteId,
-            date: date.toISOString(),
+            date: start.toISOString(),
             data: powerData,
             events: enrichedEvents,
-            tariffs: tariffMap
+            tariffs: tariffMap,
+            audit
         });
 
     } catch (error) {

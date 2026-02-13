@@ -1,4 +1,3 @@
-
 export interface FleetProduct {
     energy_site_id?: number;
     resource_type: string;
@@ -201,6 +200,7 @@ export class TeslaClient {
         const teslaStart = Date.now();
         const result = await this.fetch<{ response: { time_series: EnergyHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
         console.log(`[TeslaClient] History fetch duration: ${Date.now() - teslaStart}ms`);
+
         console.log(`[TeslaClient] History Response for ${start.toISOString()}-${end.toISOString()} (${period}):`, JSON.stringify(result).substring(0, 200));
         return result.response?.time_series ?? [];
     }

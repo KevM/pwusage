@@ -5,7 +5,7 @@ import NILMChart from '@/components/NILMChart';
 import { PowerData } from '@/lib/nilm/types';
 import { LoadEvent } from '@/lib/nilm/load-detection';
 
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 
 import TagModal from '@/components/TagModal';
 
@@ -18,11 +18,28 @@ interface LoadAnalysisClientPageProps {
 }
 
 export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezone, displayMode }: LoadAnalysisClientPageProps) {
+    const router = useRouter();
+    const pathname = usePathname();
     const searchParams = useSearchParams();
+
     const initialDate = searchParams.get('date') || defaultDate || new Date().toISOString().split('T')[0];
 
     // Initialize date from URL or Today
     const [date, setDate] = useState<string>(initialDate);
+
+    // Sync state with URL
+    useEffect(() => {
+        const urlDate = searchParams.get('date');
+        if (urlDate && urlDate !== date) {
+            setDate(urlDate);
+        }
+    }, [searchParams, date]);
+
+    const updateUrl = (newDate: string) => {
+        const params = new URLSearchParams(searchParams);
+        params.set('date', newDate);
+        router.push(`${pathname}?${params.toString()}`);
+    };
 
     // Update date if URL changes? 
     // Usually standard pattern is: URL drives state. 
@@ -50,8 +67,23 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
     ]);
 
     const dateInputRef = React.useRef<HTMLInputElement>(null);
-    const displayDate = new Date(date + 'T00:00:00');
-    const isToday = displayDate.toDateString() === new Date().toDateString();
+    const displayDateStr = React.useMemo(() => {
+        const [y, m, d] = date.split('-').map(Number);
+        const dt = new Date(y, m - 1, d, 12, 0, 0);
+        return new Intl.DateTimeFormat('en-US', {
+            weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+            timeZone: displayMode === 'SITE' ? siteTimezone : undefined
+        }).format(dt);
+    }, [date, siteTimezone, displayMode]);
+
+    const isToday = React.useMemo(() => {
+        const now = new Date();
+        const todayStr = new Intl.DateTimeFormat('en-CA', {
+            timeZone: displayMode === 'SITE' ? siteTimezone : undefined,
+            year: 'numeric', month: '2-digit', day: '2-digit'
+        }).format(now);
+        return date === todayStr;
+    }, [date, siteTimezone, displayMode]);
 
     // Theme Detection Hook
     const useThemeDetector = () => {
@@ -173,7 +205,9 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
-        setDate(`${y}-${m}-${day}`);
+        const newDate = `${y}-${m}-${day}`;
+        setDate(newDate);
+        updateUrl(newDate);
     };
 
     return (
@@ -217,7 +251,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                                     className="font-semibold text-sm hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center text-gray-900 dark:text-white"
                                     title="Click to pick a date"
                                 >
-                                    {displayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                                    {displayDateStr}
                                     {isToday && ' (Today)'}
                                 </div>
                                 <input
@@ -225,7 +259,10 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                                     type="date"
                                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                                     value={date}
-                                    onChange={(e) => setDate(e.target.value)}
+                                    onChange={(e) => {
+                                        setDate(e.target.value);
+                                        updateUrl(e.target.value);
+                                    }}
                                     onClick={() => {
                                         try {
                                             dateInputRef.current?.showPicker();

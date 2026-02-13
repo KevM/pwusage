@@ -81,9 +81,24 @@ interface TooltipProps {
     themeColors?: ThemeColors;
 }
 
-const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, themeColors }: TooltipProps) => {
+const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, themeColors, siteTimezone, displayMode }: TooltipProps & { siteTimezone?: string, displayMode?: string }) => {
     if (active && payload && payload.length) {
-        const time = new Date(Number(label)).getTime();
+        const time = Number(label);
+        const options: Intl.DateTimeFormatOptions = {
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: (displayMode === 'SITE' && siteTimezone) ? siteTimezone : undefined
+        };
+        const dateOptions: Intl.DateTimeFormatOptions = {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            timeZone: (displayMode === 'SITE' && siteTimezone) ? siteTimezone : undefined
+        };
+        const timeStr = new Intl.DateTimeFormat([], options).format(time);
+        const dateStr = new Intl.DateTimeFormat([], dateOptions).format(time);
+
         const dataPoint = payload[0].payload;
 
         // Use pre-calculated touName from backend if available, otherwise fallback
@@ -131,8 +146,8 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, t
             >
                 <div className="flex justify-between items-start mb-3 border-b pb-2" style={{ borderColor: colors.border }}>
                     <div>
-                        <p style={{ color: colors.subText, fontWeight: 500 }}>{new Date(Number(label)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                        <p style={{ color: colors.dateText, fontSize: '10px' }}>{new Date(Number(label)).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                        <p style={{ color: colors.subText, fontWeight: 500 }}>{timeStr}</p>
+                        <p style={{ color: colors.dateText, fontSize: '10px' }}>{dateStr}</p>
                     </div>
                     {displayName && (
                         <div className="text-right">
@@ -202,13 +217,26 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, t
     return null;
 };
 
-const CustomTick = ({ x, y, payload, xAxisConfig, themeColors }: CustomTickProps) => {
+const CustomTick = ({ x, y, payload, xAxisConfig, themeColors, siteTimezone, displayMode }: CustomTickProps & { siteTimezone?: string, displayMode?: string }) => {
     if (!payload || x === undefined || y === undefined) return null;
     const time = payload.value;
-    const date = new Date(time);
+    const tz = (displayMode === 'SITE' && siteTimezone) ? siteTimezone : undefined;
+
+    // We need the hour/minute in the target timezone to determine if it's a major/whole hour
+    const fmt = new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: false,
+        timeZone: tz
+    });
+    const parts = fmt.formatToParts(time);
+    const p: Record<string, string> = {};
+    parts.forEach(part => p[part.type] = part.value);
+
+    const hour = parseInt(p.hour);
+    const minute = parseInt(p.minute);
+
     const isTransition = xAxisConfig.transitionTimes.has(time);
-    const hour = date.getHours();
-    const minute = date.getMinutes();
     const isWholeHour = minute === 0;
     const isMajorHour = isWholeHour && (hour % 4 === 0);
 
@@ -221,9 +249,9 @@ const CustomTick = ({ x, y, payload, xAxisConfig, themeColors }: CustomTickProps
     let label = null;
 
     if (isTransition) {
-        label = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase().replace(' ', '');
+        label = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit', timeZone: tz }).format(time).toLowerCase().replace(' ', '');
     } else if (isMajorHour) {
-        label = date.toLocaleTimeString([], { hour: 'numeric' }).toLowerCase().replace(' ', '');
+        label = new Intl.DateTimeFormat([], { hour: 'numeric', timeZone: tz }).format(time).toLowerCase().replace(' ', '');
     }
 
     if (!isMajor && !isMinor) return null;
@@ -247,7 +275,7 @@ const CustomTick = ({ x, y, payload, xAxisConfig, themeColors }: CustomTickProps
     );
 };
 
-export default function NILMChart({ data, events, tariffs, highlightedEvent, selectedEvent, onEventClick, isDarkMode = true }: NILMChartProps) {
+export default function NILMChart({ data, events, tariffs, highlightedEvent, selectedEvent, onEventClick, isDarkMode = true, siteTimezone, displayMode }: NILMChartProps) {
     const [hoverTime, setHoverTime] = React.useState<number | null>(null);
     const [visibleSeries, setVisibleSeries] = React.useState({
         load: true,
@@ -285,11 +313,8 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
 
     // Helper to get effective time for display
     const getDisplayTime = React.useCallback((val: string | Date | number) => {
-        // Backend now handles timezone conversion.
-        // We receive data where the timestamp component is already wall-clock time 
-        // encoded as UTC/ISO. 
-        // e.g. "2023-01-01T12:00:00.000Z" means 12:00 Site Time.
-        // We just parse it.
+        // We receive real UTC timestamps (e.g. "2023-01-01T12:00:00.000Z").
+        // We just parse it. The formatting hooks will handle the timezone conversion.
         return parseDate(val);
     }, []);
 
@@ -367,12 +392,27 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         });
 
         // 2. Add Whole Hours
+        // We want whole hours IN THE SITE TIMEZONE
+        const tz = (displayMode === 'SITE' && siteTimezone) ? siteTimezone : undefined;
         const startDate = new Date(start);
-        startDate.setMinutes(0, 0, 0);
-        // If start was past the hour, move to next hour
-        if (startDate.getTime() < start) startDate.setHours(startDate.getHours() + 1);
 
-        let current = startDate.getTime();
+        // Adjust to previous whole hour in TZ
+        const fmt = new Intl.DateTimeFormat('en-US', {
+            year: 'numeric', month: 'numeric', day: 'numeric',
+            hour: 'numeric', minute: 'numeric', second: 'numeric',
+            hour12: false, timeZone: tz
+        });
+        const parts = fmt.formatToParts(startDate);
+        const p: Record<string, number> = {};
+        parts.forEach(part => { if (part.type !== 'literal') p[part.type] = parseInt(part.value); });
+
+        // Create a date that is midnight UTC, then shift it?
+        // Actually, easier to just iterate and check.
+        let current = start;
+        // Align to hour boundary
+        const minuteOffset = (p.minute || 0) * 60 * 1000;
+        if (minuteOffset > 0) current += (3600 * 1000 - minuteOffset);
+
         while (current <= end) {
             ticks.add(current);
             current += 3600 * 1000;
@@ -496,7 +536,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                             type="number"
                             domain={['dataMin', 'dataMax']}
                             ticks={xAxisConfig.ticks}
-                            tick={<CustomTick xAxisConfig={xAxisConfig} themeColors={themeColors} />}
+                            tick={<CustomTick xAxisConfig={xAxisConfig} themeColors={themeColors} siteTimezone={siteTimezone} displayMode={displayMode} />}
                             interval={0} // Force render all custom ticks
                             stroke={themeColors.axis}
                             height={40}
@@ -599,7 +639,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                         })}
 
                         <Tooltip
-                            content={<TooltipContent events={processedEvents} tariffs={tariffs} isDarkMode={isDarkMode} themeColors={themeColors} />}
+                            content={<TooltipContent events={processedEvents} tariffs={tariffs} isDarkMode={isDarkMode} themeColors={themeColors} siteTimezone={siteTimezone} displayMode={displayMode} />}
                             cursor={{ stroke: themeColors.cursor, strokeWidth: 1, strokeDasharray: '3 3' }}
                             wrapperStyle={{ outline: 'none' }}
                         />

@@ -390,17 +390,79 @@ export class TrmnlRenderer {
                 <path d="${homePath}" fill="none" stroke="black" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="${batteryPath}" fill="none" stroke="black" stroke-width="1" stroke-dasharray="4,4" stroke-linecap="round" stroke-linejoin="round" />
 
-                <!-- Legend (Left side) -->
-                <g transform="translate(${padding.left + 10}, 0)">
-                    <line x1="0" y1="5" x2="20" y2="5" stroke="black" stroke-width="3" />
-                    <text x="25" y="10" font-family="Arial" font-size="10">Solar</text>
-                    
-                    <line x1="0" y1="20" x2="20" y2="20" stroke="black" stroke-width="1" />
-                    <text x="25" y="25" font-family="Arial" font-size="10">Home</text>
-                    
-                    <line x1="0" y1="35" x2="20" y2="35" stroke="black" stroke-width="1" stroke-dasharray="4,4" />
-                    <text x="25" y="40" font-family="Arial" font-size="10">Battery</text>
-                </g>
+                <!-- Legend (Dynamic Placement) -->
+                ${(() => {
+                // Heuristic to find a clear spot for the legend
+                const legendWidth = 120; // Increased for safety
+                const legendMargin = 10;
+
+                // Candidate X positions: check every 40 pixels from left to right
+                let bestLegendX = padding.left + legendMargin;
+                let minMaxPowerSeen = Infinity;
+                let leastObscuredX = padding.left + legendMargin;
+
+                // Threshold: If max trace value in this X range is below 40% of chart height, it's "safe enough"
+                // The legend sits at the top (0-50px), and chart height is 120 (padding bottom 20).
+                const traceThresholdW = kilowattsToWatts(maxValue * 0.4);
+
+                // Find first "valley"
+                for (let x = padding.left + legendMargin; x < width - padding.right - legendWidth; x += 40) {
+                    // Convert X back to timestamp to check data
+                    const rangeStartTime = startTime + ((x - padding.left) / chartWidth) * duration;
+                    const rangeEndTime = startTime + ((x + legendWidth - padding.left) / chartWidth) * duration;
+
+                    // Filter data points that fall within this horizontal slice
+                    const dataInRange = data.filter(d => {
+                        const ts = d.timestamp.getTime();
+                        return ts >= rangeStartTime && ts <= rangeEndTime;
+                    });
+
+                    // If we have data points, check if they are all below our threshold
+                    if (dataInRange.length > 0) {
+                        const maxPowerInRange = dataInRange.reduce((max, d) => {
+                            return Math.max(max,
+                                energyToAveragePower(d.load_power),
+                                energyToAveragePower(d.solar_power),
+                                Math.abs(energyToAveragePower(d.battery_power))
+                            );
+                        }, 0);
+
+                        if (maxPowerInRange < traceThresholdW) {
+                            bestLegendX = x;
+                            minMaxPowerSeen = maxPowerInRange; // Mark as found
+                            break;
+                        }
+
+                        if (maxPowerInRange < minMaxPowerSeen) {
+                            minMaxPowerSeen = maxPowerInRange;
+                            leastObscuredX = x;
+                        }
+                    } else {
+                        // If no data in this range, it's a gap in the chart, perfect for a legend
+                        bestLegendX = x;
+                        minMaxPowerSeen = 0; // Mark as found
+                        break;
+                    }
+                }
+
+                // If we didn't find anything below the threshold, use the "least obscured" spot found
+                if (minMaxPowerSeen > traceThresholdW && minMaxPowerSeen !== Infinity) {
+                    bestLegendX = leastObscuredX;
+                }
+
+                return `
+                    <g transform="translate(${bestLegendX}, 0)">
+                        <line x1="0" y1="5" x2="20" y2="5" stroke="black" stroke-width="3" />
+                        <text x="25" y="10" font-family="Arial" font-size="10">Solar</text>
+                        
+                        <line x1="0" y1="20" x2="20" y2="20" stroke="black" stroke-width="1" />
+                        <text x="25" y="25" font-family="Arial" font-size="10">Home</text>
+                        
+                        <line x1="0" y1="35" x2="20" y2="35" stroke="black" stroke-width="1" stroke-dasharray="4,4" />
+                        <text x="25" y="40" font-family="Arial" font-size="10">Battery</text>
+                    </g>
+                `;
+            })()}
             </svg>
         `;
         const renderDuration = Date.now() - start;

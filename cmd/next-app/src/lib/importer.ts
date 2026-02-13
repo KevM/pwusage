@@ -6,6 +6,11 @@ import { UserRepo } from './user-repo';
 
 import { PoolClient } from 'pg';
 
+function logSync(msg: string) {
+    const ts = new Date().toISOString();
+    console.log(`[Importer] ${msg}`);
+}
+
 export interface EnergyDataRow {
     site_id: string;
     tariff_id: number;
@@ -154,11 +159,13 @@ export class Importer {
     }
 
     async ensureDataForRange(siteId: string, start: Date, end: Date, onProgress?: (msg: string) => void, options?: { force?: boolean }): Promise<EnergyDataRow[]> {
-        if (Importer.pendingSyncs.has(siteId)) {
-            console.log(`[Importer] Skip: Data for range already being synced for site ${siteId}`);
+        const force = options?.force ?? false;
+        if (Importer.pendingSyncs.has(siteId) && !force) {
+            logSync(`Skip: Data for range already being synced for site ${siteId}`);
             return [];
         }
-        Importer.pendingSyncs.add(siteId);
+        if (!force) Importer.pendingSyncs.add(siteId);
+        logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
 
         try {
             const allRows: EnergyDataRow[] = [];
@@ -183,9 +190,7 @@ export class Importer {
             const todayStart = EnergyRepo.getSiteMidnight(now, site.timezone);
 
             const rangeStartStr = cursor.toISOString();
-            const rangeEnd = new Date(end);
-            rangeEnd.setDate(rangeEnd.getDate() + 1);
-            const rangeEndStr = rangeEnd.toISOString();
+            const rangeEndStr = end.toISOString();
 
             // One query to rule them all
             const rowsRes = await pool.query(`
@@ -232,35 +237,23 @@ export class Importer {
 
                 if (!hasAnyData || force) {
                     needsImport = true;
-                } else if (isToday) {
-                    // Today is managed by ensureRecentData/Freshness-First logic in the route.
-                    // We skip historical gap detection here to avoid dual syncs.
-                    needsImport = false;
                 } else {
-                    // For past days, check completeness
-                    const threshold = 30 * 60 * 1000; // 30 mins
+                    const threshold = 30 * 60 * 1000;
                     const missingStart = firstInWindow && (firstInWindow - windowStart > threshold);
-                    const missingEnd = lastInWindow && (windowEnd - lastInWindow > threshold);
+                    const effectiveWindowEnd = isToday ? now.getTime() : windowEnd;
+                    const missingEnd = lastInWindow && (effectiveWindowEnd - lastInWindow > threshold);
 
-                    if (missingStart) {
-                        const startGap = new Date(windowStart);
-                        const endGap = new Date(firstInWindow!);
-                        console.log(`[Importer] Surgical Gap at start of ${cursor.toISOString().split('T')[0]}: ${startGap.toISOString().substring(11, 16)} - ${endGap.toISOString().substring(11, 16)}`);
-                        const rows = await this.importRange(siteId, startGap, endGap, 'day');
+                    if (missingStart || missingEnd) {
+                        const type = missingStart ? (missingEnd ? 'full' : 'start') : 'end';
+                        logSync(`Gap detected for ${dateKey} (${type}). windowStart: ${new Date(windowStart).toISOString()}, windowEnd: ${new Date(windowEnd).toISOString()}, first: ${firstInWindow ? new Date(firstInWindow).toISOString() : 'null'}, last: ${lastInWindow ? new Date(lastInWindow).toISOString() : 'null'}`);
+
+                        // AGGRESSIVE: If any gap, fetch the whole 24h day window.
+                        // This ensures Tesla returns the 5-minute intervals correctly.
+                        const rows = await this.importRange(siteId, new Date(windowStart), new Date(windowEnd), 'day');
                         allRows.push(...rows);
-                    }
-
-                    if (missingEnd) {
-                        const startGap = new Date(lastInWindow!);
-                        const endGap = new Date(windowEnd);
-                        console.log(`[Importer] Surgical Gap at end of ${cursor.toISOString().split('T')[0]}: ${startGap.toISOString().substring(11, 16)} - ${endGap.toISOString().substring(11, 16)}`);
-                        const rows = await this.importRange(siteId, startGap, endGap, 'day');
-                        allRows.push(...rows);
-                    }
-
-                    // If it was completely empty (and not synthetic), mark for full import
-                    if (!hasAnyData) {
-                        needsImport = true;
+                        logSync(`Aggressive Day Sync complete for ${dateKey}: ${rows.length} rows`);
+                    } else {
+                        logSync(`No Gap detected for ${dateKey}. Count: ${countInWindow}`);
                     }
                 }
 
@@ -268,7 +261,7 @@ export class Importer {
                 if (needsImport) {
                     const dateStr = cursor.toISOString().split('T')[0];
                     if (onProgress) onProgress(`Importing ${dateStr}...`);
-                    console.log(`[Importer] Gap/Stale detected for ${dateStr}. Importing...`);
+                    logSync(`Gap/Stale detected/forced for ${dateStr}. Importing...`);
 
                     let importEnd = nextDay;
                     if (isToday) importEnd = now;
@@ -309,7 +302,20 @@ export class Importer {
         const chunkMs = 24 * 60 * 60 * 1000;
 
         while (cursor < end) {
-            const next = new Date(Math.min(cursor.getTime() + chunkMs, end.getTime()));
+            // Find next chunk boundary (24h) or end
+            let next = new Date(Math.min(cursor.getTime() + chunkMs, end.getTime()));
+
+            // CRITICAL: Tesla's calendar_history endpoint often fails to return 5-minute data 
+            // if the range crosses a UTC midnight boundary. 
+            // We'll detect if this chunk crosses UTC midnight and split it there.
+            const utcMidnight = new Date(cursor.getTime());
+            utcMidnight.setUTCHours(23, 59, 59, 999);
+            const nextUtcMidnight = new Date(utcMidnight.getTime() + 1);
+
+            if (nextUtcMidnight > cursor && nextUtcMidnight < next) {
+                logSync(`Splitting range at UTC midnight: ${nextUtcMidnight.toISOString()}`);
+                next = nextUtcMidnight;
+            }
 
             if (onProgress) onProgress(cursor);
 
@@ -542,18 +548,14 @@ export class Importer {
     }
 
     private async loadInterval(site: SiteWithTariffs, start: Date, end: Date, period: string): Promise<EnergyDataRow[]> {
-        const actualEnd = new Date(end);
+        let actualEnd = new Date(end);
         const diffMs = end.getTime() - start.getTime();
         const oneDayMs = 24 * 60 * 60 * 1000;
 
-        if (period === 'day' && diffMs <= oneDayMs && diffMs > (oneDayMs - 60000)) {
-            // Keep full range? 
-            // Previous logic subtracted 1s. This might be causing the 11pm cutoff if Tesla treats end_date as exclusive/inclusive strangely.
-            // Let's TRY sending the exact next midnight.
-            // actualEnd = new Date(actualEnd.getTime() - 1000); 
-        }
-        if (period === 'day' && actualEnd.getHours() === 0 && actualEnd.getMinutes() === 0 && actualEnd.getSeconds() === 0) {
-            // actualEnd = new Date(actualEnd.getTime() - 1000);
+        if (period === 'day' || period === 'hour') {
+            // Tesla API can be finicky about exact midnight boundaries for full days.
+            // Subtracting 1s ensures we are safely within the previous day's data availability window.
+            actualEnd = new Date(actualEnd.getTime() - 1000);
         }
 
         console.log(`[Import] loadInterval ${start.toISOString()} - ${actualEnd.toISOString()} (${period})`);
@@ -829,6 +831,67 @@ export class Importer {
         }
     }
 
+    async auditRange(siteId: string, start: Date, end: Date) {
+        const repo = new EnergyRepo();
+        const site = await repo.getSite(siteId);
+        if (!site) return { error: 'Site not found' };
 
+        const rowsRes = await pool.query(`
+            SELECT timestamp FROM "EnergyData" 
+            WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
+            ORDER BY timestamp ASC
+        `, [siteId, start.toISOString(), end.toISOString()]);
 
+        const existingTimestamps = rowsRes.rows.map((r: any) => new Date(r.timestamp).getTime());
+        const auditResults: any[] = [];
+
+        let cursor = EnergyRepo.getSiteMidnight(start, site.timezone);
+        const now = new Date();
+        let tsIndex = 0;
+
+        while (cursor.getTime() < end.getTime()) {
+            const windowStart = cursor.getTime();
+            const nextDay = EnergyRepo.getSiteMidnight(new Date(windowStart + 30 * 60 * 60 * 1000), site.timezone);
+            const windowEnd = nextDay.getTime();
+            const isToday = EnergyRepo.getSiteMidnight(now, site.timezone).getTime() === windowStart;
+
+            while (tsIndex < existingTimestamps.length && existingTimestamps[tsIndex] < windowStart) {
+                tsIndex++;
+            }
+
+            let firstInWindow: number | null = null;
+            let lastInWindow: number | null = null;
+            let countInWindow = 0;
+            let tempIdx = tsIndex;
+            while (tempIdx < existingTimestamps.length && existingTimestamps[tempIdx] < windowEnd) {
+                if (firstInWindow === null) firstInWindow = existingTimestamps[tempIdx];
+                lastInWindow = existingTimestamps[tempIdx];
+                countInWindow++;
+                tempIdx++;
+            }
+
+            const threshold = 30 * 60 * 1000;
+            const missingStart = firstInWindow && (firstInWindow - windowStart > threshold);
+            const effectiveWindowEnd = isToday ? now.getTime() : windowEnd;
+            const missingEnd = lastInWindow && (effectiveWindowEnd - lastInWindow > threshold);
+
+            auditResults.push({
+                date: new Intl.DateTimeFormat('en-CA', { timeZone: site.timezone }).format(cursor),
+                isToday,
+                count: countInWindow,
+                first: firstInWindow ? new Date(firstInWindow).toISOString() : null,
+                last: lastInWindow ? new Date(lastInWindow).toISOString() : null,
+                windowStart: new Date(windowStart).toISOString(),
+                windowEnd: new Date(windowEnd).toISOString(),
+                effectiveWindowEnd: new Date(effectiveWindowEnd).toISOString(),
+                missingStart,
+                missingEnd,
+                gapMs: lastInWindow ? effectiveWindowEnd - lastInWindow : null
+            });
+
+            cursor = nextDay;
+        }
+
+        return auditResults;
+    }
 }

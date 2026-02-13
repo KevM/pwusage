@@ -55,6 +55,15 @@
 - **Build**: `npm run build` must pass before finishing tasks.
 - **Migrations**: SQL migrations in `cmd/next-app/db-migrations/`. Create a new `.sql` file with a timestamp prefix for schema changes.
 
+## Agent Dev Environment
+- **Port Collision**: The user typically runs `npm run dev` on port 5173.
+- **Agent Port**: A `dev:agent` script is available in `package.json` to run on port 5174.
+- **Environment**: `.env.development.local` overrides `NEXT_PUBLIC_APP_URL` to `http://localhost:5174` for the agent.
+- **Limitation**: Next.js prevents multiple concurrent `next dev` instances in the same directory via a file lock in `.next/`.
+- **Workaround**: To test UI or API changes without stopping the user's server:
+    1. Stop the user's server temporarily OR
+    2. Use `npm run build && next start -p 5174`.
+
 ## Communication Style
 - **Task Management**: Use `task.md` to track huge chunks of work.
 - **Verification**: Always verify builds, lint, and run tests before finishing tasks.
