@@ -13,6 +13,7 @@ export function SystemAnnouncementsManager() {
     const [refreshKey, setRefreshKey] = useState(0);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [previewMode, setPreviewMode] = useState(false);
+    const [createdAt, setCreatedAt] = useState<string>('');
 
     useEffect(() => {
         async function fetchAnnouncements() {
@@ -31,8 +32,8 @@ export function SystemAnnouncementsManager() {
 
         const method = editingId ? 'PUT' : 'POST';
         const body = editingId
-            ? JSON.stringify({ id: editingId, title, content })
-            : JSON.stringify({ title, content });
+            ? JSON.stringify({ id: editingId, title, content, createdAt: createdAt || undefined })
+            : JSON.stringify({ title, content, createdAt: createdAt || undefined });
 
         const res = await fetch('/api/announcements', {
             method,
@@ -43,6 +44,7 @@ export function SystemAnnouncementsManager() {
         if (res.ok) {
             setTitle('');
             setContent('');
+            setCreatedAt('');
             setEditingId(null);
             setRefreshKey(prev => prev + 1);
         } else {
@@ -55,6 +57,10 @@ export function SystemAnnouncementsManager() {
         setEditingId(item.id);
         setTitle(item.title);
         setContent(item.content);
+        // Format date for datetime-local input: YYYY-MM-DDTHH:mm
+        const date = new Date(item.created_at);
+        const formattedDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        setCreatedAt(formattedDate);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
@@ -62,6 +68,7 @@ export function SystemAnnouncementsManager() {
         setEditingId(null);
         setTitle('');
         setContent('');
+        setCreatedAt('');
     }
 
     async function handleDelete(id: string) {
@@ -144,6 +151,16 @@ export function SystemAnnouncementsManager() {
                         className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 text-gray-900 dark:text-white caret-indigo-500 p-2.5"
                         required
                     />
+                </div>
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Posted Date (Optional)</label>
+                    <input
+                        type="datetime-local"
+                        value={createdAt}
+                        onChange={(e) => setCreatedAt(e.target.value)}
+                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 text-gray-900 dark:text-white caret-indigo-500 p-2.5"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">Leave blank to use current time (or keep existing date when editing).</p>
                 </div>
                 <div className="mb-4">
                     <div className="flex justify-between items-end mb-1">
@@ -248,7 +265,10 @@ function AnnouncementListItem({
                 <div className="flex-1 mr-4">
                     <h3 className="text-sm font-bold text-gray-900 dark:text-white">{item.title}</h3>
                     <p className="text-xs text-gray-500 mt-1">
-                        {new Date(item.created_at).toLocaleString()}
+                        Posted on {new Date(item.created_at).toLocaleString()}
+                        {item.updated_at && new Date(item.updated_at).getTime() > new Date(item.created_at).getTime() + 1000 && (
+                            <> • Edited on {new Date(item.updated_at).toLocaleString()}</>
+                        )}
                     </p>
                     <div className="text-sm text-gray-600 dark:text-gray-300 mt-2 prose prose-sm dark:prose-invert max-w-none">
                         <ReactMarkdown>{item.content}</ReactMarkdown>

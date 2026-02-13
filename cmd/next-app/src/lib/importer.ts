@@ -8,7 +8,7 @@ import { PoolClient } from 'pg';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
-    console.log(`[Importer] ${msg}`);
+    console.log(`[${ts}] [Importer] ${msg}`);
 }
 
 export interface EnergyDataRow {
@@ -549,8 +549,6 @@ export class Importer {
 
     private async loadInterval(site: SiteWithTariffs, start: Date, end: Date, period: string): Promise<EnergyDataRow[]> {
         let actualEnd = new Date(end);
-        const diffMs = end.getTime() - start.getTime();
-        const oneDayMs = 24 * 60 * 60 * 1000;
 
         if (period === 'day' || period === 'hour') {
             // Tesla API can be finicky about exact midnight boundaries for full days.
@@ -842,8 +840,8 @@ export class Importer {
             ORDER BY timestamp ASC
         `, [siteId, start.toISOString(), end.toISOString()]);
 
-        const existingTimestamps = rowsRes.rows.map((r: any) => new Date(r.timestamp).getTime());
-        const auditResults: any[] = [];
+        const existingTimestamps = rowsRes.rows.map((r: { timestamp: string | Date }) => new Date(r.timestamp).getTime());
+        const auditResults: Record<string, unknown>[] = [];
 
         let cursor = EnergyRepo.getSiteMidnight(start, site.timezone);
         const now = new Date();

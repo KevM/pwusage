@@ -30,6 +30,9 @@ export function LoginAnnouncement({ announcement }: LoginAnnouncementProps) {
                     </h3>
                     <span className="text-xs text-gray-500 dark:text-gray-400">
                         • {new Date(announcement.created_at).toLocaleDateString()}
+                        {announcement.updated_at && new Date(announcement.updated_at).getTime() > new Date(announcement.created_at).getTime() + 1000 && (
+                            <> (Edited {new Date(announcement.updated_at).toLocaleDateString()})</>
+                        )}
                     </span>
                 </div>
                 <button

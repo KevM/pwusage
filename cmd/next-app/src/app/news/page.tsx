@@ -45,6 +45,15 @@ export default async function NewsPage() {
                                                 month: 'long',
                                                 day: 'numeric'
                                             })}
+                                            {post.updated_at && new Date(post.updated_at).getTime() > new Date(post.created_at).getTime() + 1000 && (
+                                                <span className="ml-2 text-xs opacity-75">
+                                                    (Edited {new Date(post.updated_at).toLocaleDateString(undefined, {
+                                                        year: 'numeric',
+                                                        month: 'long',
+                                                        day: 'numeric'
+                                                    })})
+                                                </span>
+                                            )}
                                         </span>
                                     </div>
                                     <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">

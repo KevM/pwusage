@@ -6,18 +6,19 @@ export interface SystemAnnouncement {
     title: string;
     content: string;
     created_at: Date;
+    updated_at: Date;
     author_id?: string;
     discord_message_id?: string;
 }
 
 export class AnnouncementRepo {
-    async create(title: string, content: string, authorId?: string, discordMessageId?: string): Promise<SystemAnnouncement> {
+    async create(title: string, content: string, authorId?: string, discordMessageId?: string, createdAt?: Date): Promise<SystemAnnouncement> {
         const query = `
-            INSERT INTO "SystemAnnouncement" (title, content, author_id, discord_message_id)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO "SystemAnnouncement" (title, content, author_id, discord_message_id, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, COALESCE($5, NOW()), NOW())
             RETURNING *
         `;
-        const values = [title, content, authorId, discordMessageId];
+        const values = [title, content, authorId, discordMessageId, createdAt];
         const result = await getDb().query(query, values);
         return result.rows[0];
     }
@@ -37,17 +38,16 @@ export class AnnouncementRepo {
         await getDb().query(query, [id]);
     }
 
-    async update(id: string, title: string, content: string, discordMessageId?: string): Promise<SystemAnnouncement | null> {
+    async update(id: string, title: string, content: string, discordMessageId?: string, createdAt?: Date): Promise<SystemAnnouncement | null> {
         const query = `
             UPDATE "SystemAnnouncement"
-            SET title = $2, content = $3, discord_message_id = COALESCE($4, discord_message_id), created_at = NOW()
+            SET title = $2, content = $3, discord_message_id = COALESCE($4, discord_message_id), created_at = COALESCE($5, created_at), updated_at = NOW()
             WHERE id = $1
             RETURNING *
         `;
-        const result = await getDb().query(query, [id, title, content, discordMessageId]);
+        const result = await getDb().query(query, [id, title, content, discordMessageId, createdAt]);
         return result.rows[0] || null;
     }
-
     async getLatest(): Promise<SystemAnnouncement | null> {
         const query = `
             SELECT * FROM "SystemAnnouncement"

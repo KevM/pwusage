@@ -422,7 +422,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
             ticks: Array.from(ticks).sort((a, b) => a - b),
             transitionTimes
         };
-    }, [formattedData, tariffRegions]);
+    }, [formattedData, tariffRegions, displayMode, siteTimezone]);
 
 
 

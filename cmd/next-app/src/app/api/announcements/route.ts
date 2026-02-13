@@ -49,7 +49,7 @@ export async function POST(request: Request) {
 
     try {
         const body = await request.json();
-        const { title, content } = body;
+        const { title, content, createdAt } = body;
 
         if (!title || !content) {
             return NextResponse.json({ error: 'Title and content are required' }, { status: 400 });
@@ -58,7 +58,7 @@ export async function POST(request: Request) {
         // Get current user ID to set as author
         const user = await getCurrentUser();
 
-        let announcement = await repo.create(title, content, user?.id);
+        let announcement = await repo.create(title, content, user?.id, undefined, createdAt ? new Date(createdAt) : undefined);
 
         // Send Discord notification and update DB with the message ID
         try {
@@ -91,7 +91,7 @@ export async function PUT(request: Request) {
 
     try {
         const body = await request.json();
-        const { id, title, content } = body;
+        const { id, title, content, createdAt } = body;
 
         if (!id || !title || !content) {
             return NextResponse.json({ error: 'ID, title, and content are required' }, { status: 400 });
@@ -105,7 +105,7 @@ export async function PUT(request: Request) {
                 .catch(err => console.error('Failed to update Discord message:', err));
         }
 
-        const updated = await repo.update(id, title, content);
+        const updated = await repo.update(id, title, content, undefined, createdAt ? new Date(createdAt) : undefined);
         if (!updated) {
             return NextResponse.json({ error: 'Announcement not found' }, { status: 404 });
         }

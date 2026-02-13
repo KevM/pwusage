@@ -75,7 +75,7 @@ export async function GET(
 
         // 0. Auto-Heal / Sync Check
         const tokens = await getUserTokensForSite(siteId);
-        let importer = new Importer(null as any); // Fallback for audit
+        let importer: Importer | null = null;
 
         if (tokens) {
             // We need to initialize TeslaClient with token refresh logic
@@ -88,11 +88,14 @@ export async function GET(
             });
 
             const force = searchParams.get('force') === 'true';
-            const importer = new Importer(teslaClient);
+            importer = new Importer(teslaClient);
             console.error(`[Analysis] Calling ensureDataForRange for ${siteId}, force=${force}`);
             await importer.ensureDataForRange(siteId, start, queryEnd, (msg) => {
                 console.error(`[Analysis Progress] ${msg}`);
             }, { force });
+        } else {
+            // Fallback for audit if no tokens (though TeslaClient might throw later)
+            importer = new Importer(null as unknown as TeslaClient);
         }
 
         // 1. Fetch Raw Data (Potential re-fetch if sync happened inside ensureDataForRange)
