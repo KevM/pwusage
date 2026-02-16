@@ -216,8 +216,21 @@ export class TeslaClient {
             time_zone: timeZone
         });
 
-        const result = await this.fetch<{ response: { time_series: SoeHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
-        return result.response.time_series;
+        const result = await this.fetch<{ response: { time_series?: RawSoeHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
+        const rows = result.response?.time_series ?? [];
+
+        return rows
+            .map((row) => {
+                const normalizedSoc = typeof row.percentage_charged === 'number'
+                    ? row.percentage_charged
+                    : row.soe;
+
+                return {
+                    timestamp: row.timestamp,
+                    percentage_charged: normalizedSoc
+                };
+            })
+            .filter((row): row is SoeHistoryEntry => typeof row.timestamp === 'string' && typeof row.percentage_charged === 'number');
     }
 
     async getLiveStatus(siteId: string): Promise<EnergySiteLiveStatus> {
@@ -290,6 +303,12 @@ export interface EnergyHistoryEntry {
 export interface SoeHistoryEntry {
     timestamp: string;
     percentage_charged: number;
+}
+
+interface RawSoeHistoryEntry {
+    timestamp?: string;
+    percentage_charged?: number;
+    soe?: number;
 }
 
 function formatDateWithTimezone(date: Date, timeZone: string): string {

@@ -1,6 +1,5 @@
 import { cookies } from 'next/headers';
-import { TeslaClient } from './tesla-client';
-import { signSiteToken, verifySiteToken } from './auth-jwt';
+import { verifySiteToken } from './auth-jwt';
 import { getUserTokensForSite } from './energy-repo';
 
 const SITE_AUTH_COOKIE = 'site_auth';
@@ -55,87 +54,23 @@ export async function verifySiteAccess(siteId: string): Promise<boolean> {
             return true;
         }
     }
-
-    // Fallback: Fetch fresh list from Tesla API
-    const accessToken = cookieStore.get('access_token')?.value;
-    if (!accessToken) return false;
-
-    try {
-        const client = new TeslaClient({ accessToken });
-        const products = await client.getProducts();
-        const allowedSites = products
-            .filter(p => p.energy_site_id)
-            .map(p => p.energy_site_id!.toString());
-
-        // Update cookie (using centralized auth logic)
-        // Fetch user roles to preserve them
-        const { getUserByToken } = await import('./energy-repo');
-        const user = await getUserByToken(accessToken);
-
-        await setSiteClaims(allowedSites, user?.roles || [], user?.id);
-
-        return allowedSites.includes(siteId);
-    } catch {
-        // Log error but don't leak details
-        console.error('Failed to verify site access with Tesla API');
-        return false;
-    }
+    return false;
 }
 
 export async function getAuthorizedSiteIds(): Promise<string[]> {
     const cookieStore = await cookies();
     const token = cookieStore.get(SITE_AUTH_COOKIE)?.value;
 
-    // 1. Try from Cookie
     if (token) {
         const decoded = verifySiteToken(token);
         if (decoded && decoded.sites.length > 0) {
             return decoded.sites;
         }
     }
-
-    // 2. Fallback: Fetch from API
-    const accessToken = cookieStore.get('access_token')?.value;
-    if (accessToken) {
-        try {
-            const client = new TeslaClient({ accessToken });
-            const products = await client.getProducts();
-            const allowedSites = products
-                .filter(p => p.energy_site_id)
-                .map(p => p.energy_site_id!.toString());
-
-            if (allowedSites.length > 0) {
-                // Update cookie cache
-                const { getUserByToken } = await import('./energy-repo');
-                const user = await getUserByToken(accessToken);
-                await setSiteClaims(allowedSites, user?.roles || [], user?.id);
-                return allowedSites;
-            }
-        } catch (e) {
-            console.error('Failed to get authorized sites:', e);
-        }
-    }
-
     return [];
 }
 
 export async function getDefaultSiteId(): Promise<string | null> {
     const siteIds = await getAuthorizedSiteIds();
     return siteIds.length > 0 ? siteIds[0] : null;
-}
-
-export async function setSiteClaims(siteIds: string[], roles: string[] = [], userId?: string) {
-    // We name this setSiteClaims to keep backward compat if imported elsewhere, 
-    // but it sets the authoritative site_auth cookie.
-    const token = signSiteToken(siteIds, roles, userId);
-    const cookieStore = await cookies();
-    try {
-        cookieStore.set(SITE_AUTH_COOKIE, token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 86400 // 24 hours
-        });
-    } catch {
-        // Ignored: Cannot set cookies in Server Components if headers sent
-    }
 }

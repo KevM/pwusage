@@ -10,6 +10,8 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get('code');
     const state = searchParams.get('state');
+    const redirectBaseUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+    const callbackUrl = `${redirectBaseUrl.replace(/\/$/, '')}/auth/tesla-callback`;
 
     if (!code || !state) {
         return NextResponse.json({ error: 'Missing code or state' }, { status: 400 });
@@ -34,7 +36,7 @@ export async function GET(request: NextRequest) {
             client_id: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID!,
             client_secret: process.env.TESLA_OAUTH_SECRET!,
             audience: process.env.PUBLIC_TESLA_OAUTH_AUDIENCE!,
-            redirect_uri: `${process.env.NEXT_PUBLIC_APP_URL}/auth/tesla-callback`,
+            redirect_uri: callbackUrl,
             grant_type: "authorization_code",
             code: code,
         }),

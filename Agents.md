@@ -5,40 +5,17 @@
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS
 - **Database**: PostgreSQL (via `pg` drive/pool).
-- **Authentication**: Custom JWT-based (`site_auth` cookie), storing tokens in `User` table.
+- **Authentication**: See [`Authentication.md`](./Authentication.md) for the full auth/authz model and flows.
 - **Testing**: Vitest (`npm run test`)
 
 ## Architecture Patterns
 - **Repository Pattern**: Data access logic resides in `src/lib/*-repo.ts` (e.g., `EnergyRepo`, `SettingsRepo` - *deleted*).
 - **Service Pattern**: Business logic resides in `src/lib/*-service.ts` (e.g., `SiteService`).
-- **Authorization**:
-    - **User**: Managed via `site_auth` cookie containing JWT with authorized `sites`.
-    - **Token Storage**: Access/Refresh tokens stored in `User` table, linked to `Site` via `user_id`.
-    - **API Security**: All sensitive routes must verify `site_auth` and use `SiteService.validateSiteAccess(siteId)`.
+- **Authorization**: See [`Authentication.md`](./Authentication.md) for route-level authz rules and checks.
 
 ## Authentication & Security
 
-### 1. Site Authorization (`site_auth`)
-- **Mechanism**: JWT stored in an HTTP-only cookie named `site_auth`.
-- **Payload**: Contains the authenticated `sub` (User ID), `roles` (e.g., admin), and the list of authorized `sites` (legacy claim, moving towards validation via User ID).
-- **Purpose**: Identifies the currently logged-in user and their active session. **This is NOT the Tesla Access Token.**
-
-### 2. Tesla Token Storage
-- **Storage**: Tesla `access_token` and `refresh_token` are stored securely in the `User` database table, keyed by the User ID.
-- **Retrieval**: To make Tesla API calls:
-    1.  Validate `site_auth` JWT to get the `userId`.
-    2.  Query `EnergyRepo.getUserTokens(userId)` to get the actual `access_token`.
-    3.  Initialize `TeslaClient` with this token.
-- **Security**: The raw Tesla `access_token` is **NEVER** exposed in cookies or client-side storage to prevent theft.
-
-### 3. Trmnl Integration Auth
-- **Primary**: Authenticated via a unique Trmnl `uuid` and `token` (Trmnl-specific secret).
-- **Re-Authentication Fallback**: If the Trmnl secret is missing (e.g., re-scanning QR code):
-    1.  App verifies the user has a valid `site_auth` session.
-    2.  App retrieves the user's Tesla `access_token` from the DB.
-    3.  App verifies against the Tesla API that the user owns the site linked to the Trmnl UUID.
-    4.  If owned, access is granted to update the integration.
-
+Authentication and authorization documentation is consolidated in [`Authentication.md`](./Authentication.md).
 
 ## Conventions
 - **Files**: Use `kebab-case` for filenames.
@@ -47,18 +24,27 @@
     - **Environment Variables**: Scripts must explicitly load the `.env` file using `dotenv` or similar at the very beginning to ensure correct configuration when run from the CLI.
 - **Cron Jobs**: Vercel Cron Jobs configured in `vercel.json` and implemented in `src/app/api/cron/*`.
 
-## Database Timezone Handling
-
 ## Development
 - **Linting**: `npm run lint` must pass.
 - **Typing**: STRICTLY avoid the `any` type. Explicitly define interfaces or types for all variables and function parameters.
 - **Build**: `npm run build` must pass before finishing tasks.
 - **Migrations**: SQL migrations in `cmd/next-app/db-migrations/`. Create a new `.sql` file with a timestamp prefix for schema changes.
+  - When pushing to PRs a GitHub Action will test any migrations against a backup of production to ensure they can be applied. Note: This does cause Trmnl device installations in the dev database to become invalid. 
+
+## TRMNL + Tesla API Constraints
+- **TRMNL Poll Cadence**: Assume devices poll at most once every 15 minutes.
+- **Cost Control**: Tesla Fleet API calls are billable over thresholds, so avoid per-request live/history fetches when they are not needed.
+- **Energy History Resolution**: Tesla energy history data is 5-minute resolution and is easiest to retrieve by day. History requrest for less than a day behave weirdly.
+- **Route Behavior** (`/api/trmnl/markup`):
+    - Treat DB data as the blocking source-of-truth for markup responses.
+    - Run Tesla refreshes in the background with per-site throttling aligned to poll cadence.
+    - Prefer stale-while-refresh for Tesla data; do not block response on Tesla API.
+    - Never present battery SoC as fresh when stale; if too old, show unknown (`--`) instead.
+    - Include freshness/debug headers (e.g., data/SOC age) when adjusting route behavior.
 
 ## Agent Dev Environment
 - **Port Collision**: The user typically runs `npm run dev` on port 5173.
 - **Agent Port**: A `dev:agent` script is available in `package.json` to run on port 5174.
-- **Environment**: `.env.development.local` overrides `NEXT_PUBLIC_APP_URL` to `http://localhost:5174` for the agent.
 - **Limitation**: Next.js prevents multiple concurrent `next dev` instances in the same directory via a file lock in `.next/`.
 - **Workaround**: To test UI or API changes without stopping the user's server:
     1. Stop the user's server temporarily OR

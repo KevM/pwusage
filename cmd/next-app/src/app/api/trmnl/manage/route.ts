@@ -6,6 +6,7 @@ import { pool } from '@/lib/db';
 import { cookies } from 'next/headers';
 import { SiteService } from '@/lib/site-service';
 import { verifyTrmnlToken } from '@/lib/trmnl-auth';
+import { verifySiteToken } from '@/lib/auth-jwt';
 
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
@@ -13,44 +14,52 @@ export async function GET(request: Request) {
 
     const secret = searchParams.get('token');
 
-    // Auth Strategy: 
-    // 1. Trmnl Token (Proof of Device Ownership) - Allows reading current config
-    // 2. Site Auth (Proof of Site Ownership) - Allows reading if linked? 
-    // Actually, usually Trmnl Page has the Token.
-
-    let isAuthorized = false;
-
-    // Verify Trmnl Token if present
-    if (secret && uuid) {
-        try {
-            await verifyTrmnlToken(secret, uuid);
-            isAuthorized = true;
-        } catch (e) {
-            console.warn(`[TrmnlManage] GET Token verification failed: ${e}`);
-        }
-    }
-
-    // Verify Site Auth if present
-    const cookieStore = await cookies();
-    const siteAuthToken = cookieStore.get('site_auth')?.value;
-
-    if (siteAuthToken) {
-        isAuthorized = true;
-        // Technically we should check if this user owns the linked site, 
-        // but for just retrieving the uuid's status, knowing they are a valid user might be enough?
-        // Or strictly: if they own the site currently linked.
-    }
-
-    if (!isAuthorized) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     if (!uuid) {
         return NextResponse.json({ error: 'Missing UUID' }, { status: 400 });
     }
 
     const service = new TrmnlService();
     const installation = await service.getInstallationByUuid(uuid);
+
+    // Auth Strategy: 
+    // 1. Trmnl Token (Proof of Device Ownership) - Allows reading current config
+    // 2. Site Auth (Proof of Site Ownership) - Only for existing linked installations user owns.
+
+    let isDeviceAuthorized = false;
+
+    // Verify Trmnl Token if present
+    if (secret) {
+        try {
+            await verifyTrmnlToken(secret, uuid);
+            isDeviceAuthorized = true;
+        } catch (e) {
+            console.warn(`[TrmnlManage] GET Token verification failed: ${e}`);
+        }
+    }
+
+    if (!isDeviceAuthorized) {
+        // Site auth fallback is only valid if the user owns the currently linked site.
+        const cookieStore = await cookies();
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
+        if (!siteAuthToken) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const decoded = verifySiteToken(siteAuthToken);
+        if (!decoded) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        if (!installation || !installation.site_id) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const isAdmin = decoded.roles.includes('admin');
+        const ownsLinkedSite = decoded.sites.includes(installation.site_id);
+        if (!isAdmin && !ownsLinkedSite) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+    }
 
     if (!installation) {
         return NextResponse.json({ site_id: null });

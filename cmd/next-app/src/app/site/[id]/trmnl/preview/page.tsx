@@ -2,6 +2,7 @@ import { pool } from '@/lib/db';
 import { PreviewClient } from './client';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
 import { EnergyRepo } from '@/lib/energy-repo';
+import { verifySiteAccess } from '@/lib/auth-checks';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +15,15 @@ export default async function Page(props: { params: Promise<{ id: string }>, sea
     const params = await props.params;
     const siteId = params.id;
     const searchParams = await props.searchParams;
+
+    const hasAccess = await verifySiteAccess(siteId);
+    if (!hasAccess) {
+        return (
+            <div className="p-8 text-red-500">
+                Unauthorized
+            </div>
+        );
+    }
 
     // Fetch site details for breadcrumbs
     const repo = new EnergyRepo();

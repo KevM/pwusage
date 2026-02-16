@@ -47,7 +47,7 @@ The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for b
 First, run the development server:
 
 ```bash
-bun dev
+npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173) with your browser to see the result. We also use ngrok to expose the application to the internet for testing purposes. You can find the ngrok URL in the terminal output.

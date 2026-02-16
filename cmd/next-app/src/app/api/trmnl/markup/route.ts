@@ -12,6 +12,87 @@ import { wattsToKilowatts } from '@/lib/energy-utils';
 
 export const dynamic = 'force-dynamic';
 
+interface LiveStatusCacheEntry {
+    data: EnergySiteLiveStatus;
+    fetchedAt: number;
+    expiresAt: number;
+}
+
+interface TeslaRefreshState {
+    todayInFlight: boolean;
+    liveInFlight: boolean;
+    lastTodayRefreshAt: number;
+    lastLiveRefreshAt: number;
+}
+
+const TRMNL_POLL_INTERVAL_MS = 15 * 60 * 1000;
+const TESLA_REFRESH_MIN_INTERVAL_MS = 14 * 60 * 1000;
+const LIVE_STATUS_CACHE_TTL_MS = 16 * 60 * 1000;
+const SOC_STALE_AFTER_MS = 20 * 60 * 1000;
+const TESLA_TODAY_TIMEOUT_MS = 8000;
+const TESLA_LIVE_TIMEOUT_MS = 3000;
+const TESLA_LIVE_INLINE_TIMEOUT_MS = 900;
+
+function getLiveStatusCache(): Map<string, LiveStatusCacheEntry> {
+    const globalState = global as unknown as { trmnlLiveStatusCache?: Map<string, LiveStatusCacheEntry> };
+    if (!globalState.trmnlLiveStatusCache) {
+        globalState.trmnlLiveStatusCache = new Map<string, LiveStatusCacheEntry>();
+    }
+    return globalState.trmnlLiveStatusCache;
+}
+
+function getCachedLiveStatus(siteId: string): LiveStatusCacheEntry | undefined {
+    const cache = getLiveStatusCache();
+    const cached = cache.get(siteId);
+    if (!cached) return undefined;
+    if (cached.expiresAt <= Date.now()) {
+        cache.delete(siteId);
+        return undefined;
+    }
+    return cached;
+}
+
+function setCachedLiveStatus(siteId: string, data: EnergySiteLiveStatus): void {
+    const now = Date.now();
+    getLiveStatusCache().set(siteId, {
+        data,
+        fetchedAt: now,
+        expiresAt: now + LIVE_STATUS_CACHE_TTL_MS
+    });
+}
+
+function getTeslaRefreshState(siteId: string): TeslaRefreshState {
+    const globalState = global as unknown as { trmnlTeslaRefreshState?: Map<string, TeslaRefreshState> };
+    if (!globalState.trmnlTeslaRefreshState) {
+        globalState.trmnlTeslaRefreshState = new Map<string, TeslaRefreshState>();
+    }
+    const existing = globalState.trmnlTeslaRefreshState.get(siteId);
+    if (existing) {
+        return existing;
+    }
+    const initial: TeslaRefreshState = {
+        todayInFlight: false,
+        liveInFlight: false,
+        lastTodayRefreshAt: 0,
+        lastLiveRefreshAt: 0
+    };
+    globalState.trmnlTeslaRefreshState.set(siteId, initial);
+    return initial;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let timeoutId: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label}_timeout`)), timeoutMs);
+    });
+
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
+}
+
 export async function GET(request: Request) {
     const routeStart = Date.now();
     try {
@@ -109,163 +190,172 @@ export async function GET(request: Request) {
             console.log(`[Trmnl] No refresh token found for site ${site.id}`);
         }
 
-        // --- 4-WAY PARALLEL DATA FETCHING ---
-
-        const midnightToday = EnergyRepo.getSiteMidnight(now, site.timezone);
-        let fetchStatus = 'skipped';
+        // --- BLOCKING DATA FETCHES (DB only) ---
+        let dbLatestMs = 0;
+        let dbCycleMs = 0;
+        let aggregationMs = 0;
+        let renderMs = 0;
 
         const dbLatestPromise = (async () => {
-            const start = Date.now();
+            const startMs = Date.now();
             const res = await repo.getLatestEnergyData(site!.id);
-            console.log(`[TrmnlMarkup] DB Latest Energy Lookup: ${Date.now() - start}ms`);
+            dbLatestMs = Date.now() - startMs;
+            console.log(`[TrmnlMarkup] DB Latest Energy Lookup: ${dbLatestMs}ms`);
             return res;
         })();
 
-        const dbHistoryPromise = (async () => {
-            const startStr = Date.now();
-            const res = await repo.getRawEnergyData(site!.id, start, midnightToday);
-            console.log(`[TrmnlMarkup] DB Historical Fetch: ${Date.now() - startStr}ms`);
+        const dbCyclePromise = (async () => {
+            const startMs = Date.now();
+            const res = await repo.getRawEnergyData(site!.id, start, now);
+            dbCycleMs = Date.now() - startMs;
+            console.log(`[TrmnlMarkup] DB Cycle Fetch: ${dbCycleMs}ms`);
             return res;
         })();
 
-        let teslaTodayPromise: Promise<import('@/lib/importer').EnergyDataRow[]> = Promise.resolve([]);
-        let teslaLivePromise: Promise<EnergySiteLiveStatus | undefined> = Promise.resolve(undefined);
+        const [latestData, allCycleData] = await Promise.all([dbLatestPromise, dbCyclePromise]);
+        const latestTimestamp = latestData?.timestamp ?? null;
 
-        if (trmnlClient) {
+        let liveStatusEntry = getCachedLiveStatus(site.id);
+        let liveStatus: EnergySiteLiveStatus | undefined = liveStatusEntry?.data;
+        let hasCachedLiveStatus = Boolean(liveStatus);
+        const nowMs = Date.now();
+        let fetchStatus = trmnlClient ? 'background-throttled' : 'skipped';
+        let backgroundStatus = trmnlClient ? 'throttled' : 'skipped';
+        let liveInlineMs = 0;
+        let liveInlineStatus = 'skipped';
+
+        const refreshState = getTeslaRefreshState(site.id);
+
+        // On cache miss, do a short inline live-status fetch to avoid blank SoC on this response.
+        if (trmnlClient && !liveStatus) {
+            try {
+                const liveInlineStart = Date.now();
+                const inlineLive = await withTimeout(trmnlClient.getLiveStatus(site.id), TESLA_LIVE_INLINE_TIMEOUT_MS, 'tesla_live_inline');
+                liveInlineMs = Date.now() - liveInlineStart;
+                liveInlineStatus = 'success';
+                setCachedLiveStatus(site.id, inlineLive);
+                liveStatusEntry = getCachedLiveStatus(site.id);
+                liveStatus = inlineLive;
+                hasCachedLiveStatus = true;
+                fetchStatus = 'live-inline';
+                refreshState.lastLiveRefreshAt = Date.now();
+            } catch (error) {
+                liveInlineStatus = 'timeout_or_error';
+                console.warn('[TrmnlMarkup] Inline live status fetch failed:', error);
+            }
+        }
+
+        const shouldRefreshToday = trmnlClient
+            ? !refreshState.todayInFlight && (nowMs - refreshState.lastTodayRefreshAt >= TESLA_REFRESH_MIN_INTERVAL_MS)
+            : false;
+        const shouldRefreshLive = trmnlClient
+            ? !liveStatus && !refreshState.liveInFlight && (nowMs - refreshState.lastLiveRefreshAt >= TESLA_REFRESH_MIN_INTERVAL_MS)
+            : false;
+
+        // --- TESLA REFRESH (non-blocking background) ---
+        if (trmnlClient && (shouldRefreshToday || shouldRefreshLive)) {
             const importer = new Importer(trmnlClient);
             const siteId = site.id;
-            fetchStatus = 'pending';
+            backgroundStatus = 'started';
+            fetchStatus = hasCachedLiveStatus ? 'cached+refreshing' : 'refreshing';
 
-            teslaTodayPromise = (async () => {
-                const startStr = Date.now();
-                const res = await importer.getTodayData(siteId);
-                console.log(`[TrmnlMarkup] Tesla Today Usage Fetch: ${Date.now() - startStr}ms`);
-                return res;
-            })();
+            void (async () => {
+                try {
+                    const tasks: Promise<void>[] = [];
 
-            teslaLivePromise = (async () => {
-                const startStr = Date.now();
-                const res = await trmnlClient!.getLiveStatus(siteId);
-                console.log(`[TrmnlMarkup] Tesla Live Status Fetch: ${Date.now() - startStr}ms`);
-                return res;
-            })();
-        }
+                    if (shouldRefreshToday) {
+                        refreshState.todayInFlight = true;
+                        refreshState.lastTodayRefreshAt = Date.now();
+                        tasks.push((async () => {
+                            try {
+                                const startMs = Date.now();
+                                const rows = await withTimeout(importer.getTodayData(siteId), TESLA_TODAY_TIMEOUT_MS, 'tesla_today');
+                                console.log(`[TrmnlMarkup] Tesla Today Usage Fetch (background): ${Date.now() - startMs}ms`);
+                                if (rows.length === 0) return;
+                                const missingRows = rows.filter(row => !latestTimestamp || row.timestamp.getTime() > latestTimestamp.getTime());
+                                if (missingRows.length > 0) {
+                                    await importer.persistHistory(siteId, missingRows, latestTimestamp);
+                                }
+                            } catch (error) {
+                                console.warn(`[TrmnlMarkup] Tesla today fetch failed (background):`, error);
+                            } finally {
+                                refreshState.todayInFlight = false;
+                            }
+                        })());
+                    }
 
-        const combinedTimeout = 2000;
-        let timeoutId: NodeJS.Timeout | null = null;
-        const timeoutPromise = new Promise<'timeout'>(resolve => {
-            timeoutId = setTimeout(() => resolve('timeout'), combinedTimeout);
-        });
+                    if (shouldRefreshLive) {
+                        refreshState.liveInFlight = true;
+                        refreshState.lastLiveRefreshAt = Date.now();
+                        tasks.push((async () => {
+                            try {
+                                const startMs = Date.now();
+                                const status = await withTimeout(trmnlClient!.getLiveStatus(siteId), TESLA_LIVE_TIMEOUT_MS, 'tesla_live');
+                                console.log(`[TrmnlMarkup] Tesla Live Status Fetch (background): ${Date.now() - startMs}ms`);
+                                setCachedLiveStatus(siteId, status);
+                            } catch (error) {
+                                console.warn(`[TrmnlMarkup] Tesla live status fetch failed (background):`, error);
+                            } finally {
+                                refreshState.liveInFlight = false;
+                            }
+                        })());
+                    }
 
-        const parallelRace = await Promise.race([
-            Promise.allSettled([dbLatestPromise, dbHistoryPromise, teslaTodayPromise, teslaLivePromise]),
-            timeoutPromise
-        ]);
-
-        let latestTimestamp: Date | null = null;
-        let historicalDbData: import('@/lib/db').EnergyData[] = [];
-        let freshRows: import('@/lib/importer').EnergyDataRow[] = [];
-        let liveStatus: EnergySiteLiveStatus | undefined = undefined;
-
-        if (parallelRace === 'timeout') {
-            console.warn(`[TrmnlMarkup] Parallel fetches reached timeout: ${combinedTimeout}ms`);
-            // We might want to await them anyway here if they are critical, or fallback to empty
-            // For now, let's treat timeout as a failure for the parallel block.
-        } else {
-            if (timeoutId) clearTimeout(timeoutId);
-            const [latestRes, historyRes, todayRes, liveRes] = parallelRace;
-
-            if (latestRes.status === 'fulfilled') latestTimestamp = latestRes.value?.timestamp ?? null;
-            if (historyRes.status === 'fulfilled') historicalDbData = historyRes.value;
-
-            if (todayRes.status === 'fulfilled') {
-                freshRows = todayRes.value;
-            } else {
-                console.warn(`[TrmnlMarkup] Tesla Today Today fetch failed:`, todayRes.reason);
-                if ((todayRes.reason?.message || '').includes('401') || (todayRes.reason?.message || '').includes('login_required')) {
-                    return getQrResponse(request, uuid!, 'Tesla Auth Expired', 'Scan to Re-authenticate');
+                    await Promise.all(tasks);
+                } catch (error) {
+                    console.error(`[TrmnlMarkup] Background Tesla refresh failed:`, error);
                 }
-            }
-
-            if (liveRes.status === 'fulfilled' && liveRes.value) {
-                liveStatus = liveRes.value;
-                fetchStatus = 'success';
-            }
+            })();
+        } else if (hasCachedLiveStatus) {
+            fetchStatus = 'cached';
         }
-
-        // Prepare surgical update
-        const missingRows = freshRows.filter(row => !latestTimestamp || row.timestamp.getTime() > latestTimestamp.getTime());
-
-        const todayData = freshRows;
-
-        // Fallback: ONLY if Tesla todayData fetch failed AND we have NO historical overlap? 
-        // Actually, user said remove fallbacks. If Tesla is down, we show what we have.
-        // We already joined historical data.
-
-        // --- MERGE DATA ---
-        // Combine historical DB data with today's data (Tesla or DB fallback)
-        const allCycleData = [
-            ...historicalDbData,
-            ...todayData.map(row => ({
-                ...row,
-                id: 0,
-            } as import('@/lib/db').EnergyData))
-        ].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
         // --- IN-MEMORY AGGREGATION (TOU Stats & Chart Extraction) ---
+        const aggregationStart = Date.now();
 
-        // Determine "today" in site timezone for chart extraction (Wall-Clock aligned)
+        // Determine site-local "today" window once, then use numeric boundary checks per row
         const tz = site.timezone || 'UTC';
-        const fmtToday = new Intl.DateTimeFormat('en-CA', {
-            timeZone: tz,
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-        });
-        const partsToday = fmtToday.formatToParts(new Date());
-        const getT = (type: string) => partsToday.find(p => p.type === type)?.value || '';
-
-        const todayYear = getT('year');
-        const todayMonth = getT('month');
-        const todayDay = getT('day');
-
-        const schedule = new Schedule(site.tariffs, site.timezone);
+        const todayStart = EnergyRepo.getSiteMidnight(now, tz);
+        const schedule = new Schedule(site.tariffs, tz);
         const tariffMap = new Map<number, import('@/lib/db').Tariff>();
         site.tariffs.forEach(t => tariffMap.set(t.id, t));
 
         const aggregation = new Map<string, {
             tariff: import('@/lib/db').Tariff;
+            tariffName: string;
             touName: string;
+            label: string;
             homeUsage: number;
             gridUsage: number;
             solarProduction: number;
             batteryChange: number;
             cost: number;
         }>();
+        const touLabelCache = new Map<string, string>();
+        const getTouLabel = (name: string): string => {
+            const cached = touLabelCache.get(name);
+            if (cached) return cached;
+            const label = (name || 'Standard')
+                .replace(/_/g, ' ')
+                .toLowerCase()
+                .replace(/\b\w/g, c => c.toUpperCase())
+                .replace(' ', '-');
+            touLabelCache.set(name, label);
+            return label;
+        };
+        const scheduleKeyCache = new WeakMap<object, string>();
+        const fallbackKeyCache = new Map<number, string>();
 
         const seriesData: import('@/lib/db').EnergyData[] = [];
         let todayGrid = 0;
         let todaySolar = 0;
 
-        // Site-local Formatting for TOU aggregation
-        const fmtLocal = new Intl.DateTimeFormat('en-CA', {
-            timeZone: tz,
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-            hour12: false
-        });
-
         for (const row of allCycleData) {
             const ts = row.timestamp;
-            const parts = fmtLocal.formatToParts(ts);
-            const getL = (type: string) => parts.find(p => p.type === type)?.value || '';
-
             const tp = schedule.getTariffPeriod(ts);
-            const yearStr = getL('year');
-            const monthStr = getL('month');
-            const dayStr = getL('day');
 
-            // Extract today's points for the chart (Compare Site Time components)
-            if (yearStr === todayYear && monthStr === todayMonth && dayStr === todayDay) {
+            // Extract today's points for the chart using site-local day boundary
+            if (ts.getTime() >= todayStart.getTime()) {
                 seriesData.push(row);
                 todayGrid += row.grid_power;
                 todaySolar += row.solar_power;
@@ -277,6 +367,7 @@ export async function GET(request: Request) {
             let buyRate = 0;
             let sellRate = 0;
             let currentTariff = site.tariffs[0];
+            let key = '';
 
             if (tp) {
                 touName = tp.schedule.name || 'Standard';
@@ -284,20 +375,36 @@ export async function GET(request: Request) {
                 buyRate = tp.schedule.buy_rate || 0;
                 sellRate = tp.schedule.sell_rate || 0;
                 currentTariff = tp.tariff;
+                const scheduleObj = tp.schedule as unknown as object;
+                const cachedKey = scheduleKeyCache.get(scheduleObj);
+                if (cachedKey) {
+                    key = cachedKey;
+                } else {
+                    key = `${currentTariff.id}|${touName}|${buyRate}|${sellRate}`;
+                    scheduleKeyCache.set(scheduleObj, key);
+                }
             } else {
                 const t = tariffMap.get(row.tariff_id);
                 if (t) {
                     tariffName = t.name || 'Unknown';
                     currentTariff = t;
                 }
+                const cachedFallbackKey = fallbackKeyCache.get(currentTariff.id);
+                if (cachedFallbackKey) {
+                    key = cachedFallbackKey;
+                } else {
+                    key = `${currentTariff.id}|${touName}|${buyRate}|${sellRate}`;
+                    fallbackKeyCache.set(currentTariff.id, key);
+                }
             }
 
-            const key = `${tariffName}|${touName}|${buyRate}|${sellRate}`;
             let data = aggregation.get(key);
             if (!data) {
                 data = {
                     tariff: currentTariff,
+                    tariffName: tariffName,
                     touName: touName,
+                    label: getTouLabel(touName),
                     homeUsage: 0,
                     gridUsage: 0,
                     solarProduction: 0,
@@ -320,6 +427,7 @@ export async function GET(request: Request) {
                 data.cost += gridKwh * sellRate;
             }
         }
+        aggregationMs = Date.now() - aggregationStart;
 
         // Convert today totals to kWh
         todayGrid = wattsToKilowatts(todayGrid);
@@ -340,20 +448,16 @@ export async function GET(request: Request) {
             }[];
         }>();
 
-        for (const [key, data] of aggregation) {
-            const [tariffName, touName] = key.split('|');
-            let group = tariffGroups.get(tariffName);
+        for (const data of aggregation.values()) {
+            let group = tariffGroups.get(data.tariffName);
             if (!group) {
-                group = { tariffId: data.tariff.id, tariffName: tariffName, periods: [] };
-                tariffGroups.set(tariffName, group);
+                group = { tariffId: data.tariff.id, tariffName: data.tariffName, periods: [] };
+                tariffGroups.set(data.tariffName, group);
             }
 
-            let label = touName || 'Standard';
-            label = label.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()).replace(' ', '-');
-
             group.periods.push({
-                touName: touName,
-                label: label,
+                touName: data.touName,
+                label: data.label,
                 home: data.homeUsage,
                 grid: data.gridUsage,
                 solar: data.solarProduction,
@@ -383,8 +487,10 @@ export async function GET(request: Request) {
         let batteryStatus: 'charging' | 'discharging' | 'idle' = 'idle';
 
         const latestLiveStatus = liveStatus as EnergySiteLiveStatus | undefined;
+        const liveStatusAgeMs = liveStatusEntry ? Math.max(0, nowMs - liveStatusEntry.fetchedAt) : null;
+        const isSocStale = liveStatusAgeMs !== null && liveStatusAgeMs > SOC_STALE_AFTER_MS;
         if (latestLiveStatus) {
-            if (typeof latestLiveStatus.percentage_charged === 'number') {
+            if (!isSocStale && typeof latestLiveStatus.percentage_charged === 'number') {
                 batterySoc = latestLiveStatus.percentage_charged;
             }
             const power = latestLiveStatus.battery_power || 0;
@@ -420,9 +526,31 @@ export async function GET(request: Request) {
         const markupHalfVertical = TrmnlRenderer.renderHalfVertical(renderCtx);
         const markupHalfHorizontal = TrmnlRenderer.renderHalfHorizontal(renderCtx);
         const markupQuadrant = TrmnlRenderer.renderQuadrant(renderCtx);
-        console.log(`[TrmnlMarkup] Rendering Logic: ${Date.now() - layoutStart}ms`);
+        renderMs = Date.now() - layoutStart;
+        console.log(`[TrmnlMarkup] Rendering Logic: ${renderMs}ms`);
 
-        console.log(`[TrmnlMarkup] Total Route Logic: ${Date.now() - routeStart}ms`);
+        const totalMs = Date.now() - routeStart;
+        console.log(`[TrmnlMarkup] Total Route Logic: ${totalMs}ms`);
+
+        const dataAgeMinutes = latestTimestamp
+            ? ((nowMs - latestTimestamp.getTime()) / 60000).toFixed(1)
+            : 'none';
+        const socAgeMinutes = liveStatusAgeMs !== null
+            ? (liveStatusAgeMs / 60000).toFixed(1)
+            : 'none';
+        const socAgeHeader = isSocStale ? `stale:${socAgeMinutes}` : socAgeMinutes;
+
+        const serverTiming = [
+            `db_latest;dur=${dbLatestMs.toFixed(1)}`,
+            `db_cycle;dur=${dbCycleMs.toFixed(1)}`,
+            `aggregate;dur=${aggregationMs.toFixed(1)}`,
+            `render;dur=${renderMs.toFixed(1)}`,
+            `total;dur=${totalMs.toFixed(1)}`,
+            `live_inline;dur=${liveInlineMs.toFixed(1)};desc="${liveInlineStatus}"`,
+            `live_cache;desc="${hasCachedLiveStatus ? 'hit' : 'miss'}"`,
+            `tesla_bg;desc="${backgroundStatus}"`,
+            `trmnl_poll;dur=${TRMNL_POLL_INTERVAL_MS}`
+        ].join(', ');
 
         const response = NextResponse.json({
             markup: markupFull,
@@ -435,19 +563,13 @@ export async function GET(request: Request) {
                 'Pragma': 'no-cache',
                 'Expires': '0',
                 'Surrogate-Control': 'no-store',
+                'Server-Timing': serverTiming,
                 'X-Debug-Live-Status': fetchStatus,
-                'X-Debug-Battery-SOC': batterySoc !== null ? String(batterySoc) : 'null'
+                'X-Debug-Battery-SOC': batterySoc !== null ? String(batterySoc) : 'null',
+                'X-Data-Age-Minutes': dataAgeMinutes,
+                'X-SOC-Age-Minutes': socAgeHeader
             }
         });
-
-        // Step 6: Eventually the batch update completes.
-        if (trmnlClient && missingRows.length > 0) {
-            const importer = new Importer(trmnlClient);
-            // Non-blocking persistence
-            importer.persistHistory(site.id, missingRows, latestTimestamp).catch(e => {
-                console.error(`[TrmnlMarkup] Background batch update failed:`, e);
-            });
-        }
 
         return response;
 
