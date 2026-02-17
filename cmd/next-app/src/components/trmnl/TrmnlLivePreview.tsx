@@ -94,12 +94,14 @@ interface TrmnlLivePreviewProps {
     noSourceMessage?: string;
     maxDisplayScale?: number;
     allowNarrowScroll?: boolean;
+    showScaleControls?: boolean;
+    displayScaleOverride?: number;
 }
 
 const TRMNL_SCREEN_WIDTH = 800;
 const TRMNL_SCREEN_HEIGHT = 480;
 const DISPLAY_SCALE_STORAGE_KEY = 'trmnl_preview_display_scale';
-const PRESET_DISPLAY_SCALES = [1, 0.5, 0.25] as const;
+const PRESET_DISPLAY_SCALES = [1, 0.75, 0.5, 0.25] as const;
 
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
@@ -112,7 +114,9 @@ export function TrmnlLivePreview({
     hasSource,
     noSourceMessage = 'Select a site to load preview.',
     maxDisplayScale = 1,
-    allowNarrowScroll = true
+    allowNarrowScroll = true,
+    showScaleControls = true,
+    displayScaleOverride
 }: TrmnlLivePreviewProps) {
     const normalizedMaxDisplayScale = clamp(maxDisplayScale, 0.2, 1);
     const previewMountRef = useRef<HTMLDivElement | null>(null);
@@ -124,8 +128,12 @@ export function TrmnlLivePreview({
     const [showOverflowHint, setShowOverflowHint] = useState(false);
     const [displayScaleCap, setDisplayScaleCap] = useState(normalizedMaxDisplayScale);
     const effectiveDisplayScaleCap = clamp(displayScaleCap, 0.2, normalizedMaxDisplayScale);
+    const resolvedDisplayScaleCap = typeof displayScaleOverride === 'number'
+        ? clamp(displayScaleOverride, 0.2, normalizedMaxDisplayScale)
+        : effectiveDisplayScaleCap;
 
     useEffect(() => {
+        if (typeof displayScaleOverride === 'number') return;
         if (storageHydratedRef.current) return;
         storageHydratedRef.current = true;
 
@@ -146,9 +154,10 @@ export function TrmnlLivePreview({
         if (Math.abs(resolvedScale - displayScaleCap) > 0.001) {
             requestAnimationFrame(() => setDisplayScaleCap(resolvedScale));
         }
-    }, [displayScaleCap, normalizedMaxDisplayScale]);
+    }, [displayScaleCap, displayScaleOverride, normalizedMaxDisplayScale]);
 
     useEffect(() => {
+        if (typeof displayScaleOverride === 'number') return;
         if (!storageHydratedRef.current) return;
         if (skipInitialWriteRef.current) {
             skipInitialWriteRef.current = false;
@@ -160,14 +169,14 @@ export function TrmnlLivePreview({
         } catch {
             // Ignore localStorage failures.
         }
-    }, [effectiveDisplayScaleCap]);
+    }, [displayScaleOverride, effectiveDisplayScaleCap]);
 
     useEffect(() => {
         const element = previewMountRef.current;
         if (!element) return;
 
         const updateScale = () => {
-            const cappedScale = effectiveDisplayScaleCap;
+            const cappedScale = resolvedDisplayScaleCap;
             if (allowNarrowScroll) {
                 // In scroll mode we don't need chassis measurements;
                 // apply persisted/preset scale immediately.
@@ -192,7 +201,7 @@ export function TrmnlLivePreview({
         const observer = new ResizeObserver(() => updateScale());
         observer.observe(element);
         return () => observer.disconnect();
-    }, [allowNarrowScroll, effectiveDisplayScaleCap, previewHtml]);
+    }, [allowNarrowScroll, previewHtml, resolvedDisplayScaleCap]);
 
     useEffect(() => {
         const container = scrollContainerRef.current;
@@ -216,11 +225,12 @@ export function TrmnlLivePreview({
 
     return (
         <div className="rounded-lg border bg-zinc-100 dark:bg-slate-900 p-3">
+            {showScaleControls && (
             <div className="mb-3 flex items-center justify-end gap-2 text-xs text-gray-600 dark:text-gray-400">
                 <span>Preview size</span>
                 {PRESET_DISPLAY_SCALES.map((scale) => {
                     const enabled = scale <= normalizedMaxDisplayScale;
-                    const selected = Math.abs(effectiveDisplayScaleCap - scale) < 0.005;
+                    const selected = Math.abs(resolvedDisplayScaleCap - scale) < 0.005;
                     return (
                         <button
                             key={scale}
@@ -237,6 +247,7 @@ export function TrmnlLivePreview({
                     );
                 })}
             </div>
+            )}
             {previewError && (
                 <div className="mb-3 p-2 bg-red-100 text-red-700 rounded text-sm">
                     Error loading preview: {previewError}

@@ -35,6 +35,10 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - **TRMNL Poll Cadence**: Assume devices poll at most once every 15 minutes.
 - **Cost Control**: Tesla Fleet API calls are billable over thresholds, so avoid per-request live/history fetches when they are not needed.
 - **Energy History Resolution**: Tesla energy history data is 5-minute resolution and is easiest to retrieve by day. History requrest for less than a day behave weirdly.
+- **TRMNL Markup Style** (`/api/trmnl/markup`, `src/lib/trmnl-renderer.ts`):
+    - Prefer [TRMNL Framework v2](https://trmnl.com/framework/docs/) markup/classes/utilities for layout, spacing, typography, and table behavior.
+    - Avoid custom inline layout/typography CSS when an equivalent Framework v2 primitive exists.
+    - Use custom inline styles only when Framework v2 does not provide the required primitive.
 - **Route Behavior** (`/api/trmnl/markup`):
     - Treat DB data as the blocking source-of-truth for markup responses.
     - Run Tesla refreshes in the background with per-site throttling aligned to poll cadence.

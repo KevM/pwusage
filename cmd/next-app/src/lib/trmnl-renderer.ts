@@ -105,7 +105,7 @@ export class TrmnlRenderer {
         const liveValueFontBase = visibleLiveStatCount <= 1 ? 74 : (visibleLiveStatCount === 2 ? 64 : 56);
         const liveIconSize = Math.round(liveIconSizeBase * liveDensityScale);
         const liveValueFontPx = Math.round(liveValueFontBase * liveDensityScale);
-        const liveGap = visibleLiveStatCount <= 1 ? 'gap--xxlarge' : (visibleLiveStatCount === 2 ? 'gap--xlarge' : 'gap--large');
+        const liveGap = 'gap--xxlarge';
         const liveBatteryScaleBase = visibleLiveStatCount <= 1 ? 1.16 : (visibleLiveStatCount === 2 ? 1.05 : 0.92);
         const liveBatteryScale = liveBatteryScaleBase * liveDensityScale;
         const liveRowHeight = hasLiveRow ? (isVeryDenseLayout ? 64 : (isDenseLayout ? 74 : 88)) : 0;
@@ -188,7 +188,12 @@ export class TrmnlRenderer {
         const billCompactLevel = billRowsTarget <= 1 ? 2 : (billRowsTarget === 2 ? 1 : 0);
 
         const tariffTables = ctx.tariffGroups.map(group => {
-            const periods = group.periods.sort((a, b) => a.touName.localeCompare(b.touName));
+            const periods = [...group.periods].sort((a, b) => {
+                const aIsCurrent = Boolean(ctx.currentTouName && a.touName === ctx.currentTouName);
+                const bIsCurrent = Boolean(ctx.currentTouName && b.touName === ctx.currentTouName);
+                if (aIsCurrent !== bIsCurrent) return aIsCurrent ? -1 : 1;
+                return a.touName.localeCompare(b.touName);
+            });
             const displayedPeriods = periods.slice(0, Math.min(billRowsTarget, periods.length));
             const spanClass = billCompactLevel > 0 ? 'value--xsmall' : 'value--small';
             const totalClass = billCompactLevel > 0 ? 'title title--small' : 'title title--medium';
@@ -242,23 +247,23 @@ export class TrmnlRenderer {
         const renderSunIcon = (size: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5" fill="black" stroke="none"/><line x1="12" y1="1" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="6.34" y2="6.34" /><line x1="17.66" y1="17.66" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="6.34" y2="17.66" /><line x1="17.66" y1="6.34" x2="19.78" y2="4.22" /></svg>`;
 
         const liveStatsSection = hasLiveRow ? `
-            <div class="flex flex--row flex--center-y flex--center-x flex--stretch-x ${liveGap}" style="height: ${liveRowHeight}px; min-height: ${liveRowHeight}px;">
+            <div class="flex flex--row flex--center-y flex--center-x ${liveGap}" style="height: ${liveRowHeight}px; min-height: ${liveRowHeight}px;">
                 ${showLiveGridStat ? `
-                <div class="flex flex--row flex--center-y gap--small" style="flex: 1 1 0; justify-content: center;">
+                <div class="flex flex--row flex--center-y flex--center-x gap--small">
                     <span class="title title--xxlarge" style="font-size: ${liveValueFontPx}px; line-height: 1;">${(ctx.todayGrid as number).toFixed(1)}</span>
                     ${renderGridIcon(liveIconSize)}
                 </div>
                 ` : ''}
 
                 ${showLiveSolarStat ? `
-                <div class="flex flex--row flex--center-y gap--small" style="flex: 1 1 0; justify-content: center;">
+                <div class="flex flex--row flex--center-y flex--center-x gap--small">
                     <span class="title title--xxlarge" style="font-size: ${liveValueFontPx}px; line-height: 1;">${(ctx.todaySolar as number).toFixed(1)}</span>
                     ${renderSunIcon(liveIconSize)}
                 </div>
                 ` : ''}
 
                 ${showLiveBatteryStat ? `
-                <div class="flex flex--col" style="flex: 1 1 0; align-items: center;">
+                <div class="flex flex--col flex--center-x">
                     ${this.renderBatteryStatusLarge(ctx.batterySoc, ctx.batteryStatus, { scale: liveBatteryScale })}
                 </div>
                 ` : ''}
@@ -557,7 +562,7 @@ export class TrmnlRenderer {
         const renderGlyph = (timestamp: number, soc: number, delta: number | null): string => {
             const clampedSoc = clamp(soc, 0, 100);
             const fillWidth = 13.5 * (clampedSoc / 100);
-            const marker = delta === null ? '•' : (delta >= 0 ? '▲' : '▼');
+            const marker = delta === null ? '' : (delta >= 0 ? '▲' : '▼');
             const safeX = clamp(getX(timestamp), padding.left + 30, width - padding.right - 20);
             return `
                 <g transform="translate(${safeX}, 0)">
@@ -622,33 +627,59 @@ export class TrmnlRenderer {
         const endTime = data[data.length - 1].timestamp.getTime();
         const duration = Math.max(1, endTime - startTime);
 
-        // Calculate max value for scaling (Convert 5-min Wh to Average W)
+        // Calculate scaling bounds (Convert 5-min Wh to average W)
         let maxValue = 1.0;
+        let minValue = 0;
         data.forEach(d => {
+            const home = energyToAveragePower(d.load_power);
+            const solar = energyToAveragePower(d.solar_power);
+            const battery = energyToAveragePower(d.battery_power);
             maxValue = Math.max(maxValue,
-                energyToAveragePower(d.load_power),
-                energyToAveragePower(d.solar_power),
-                Math.abs(energyToAveragePower(d.battery_power))
+                home,
+                solar,
+                battery
             );
+            minValue = Math.min(minValue, home, solar, battery);
         });
-        maxValue = Math.ceil(wattsToKilowatts(maxValue) * 1.2 * 10) / 10; // Convert to kW and add margin
+        const hasNegative = minValue < 0;
+        const maxPositiveKw = Math.max(0.1, wattsToKilowatts(maxValue));
+        const minNegativeKw = Math.min(0, wattsToKilowatts(minValue));
+        const yMaxKw = Math.ceil((maxPositiveKw * 1.12) * 10) / 10;
+        let yMinKw = 0;
+        if (hasNegative) {
+            // Keep negative headroom tight to observed discharge while avoiding extreme ranges.
+            const negativeWithMargin = minNegativeKw * 1.15;
+            const boundedNegative = Math.max(-5, negativeWithMargin);
+            yMinKw = Math.floor(boundedNegative * 10) / 10;
+            if (yMinKw === 0) yMinKw = -0.1;
+        }
+        const yRangeKw = Math.max(0.1, yMaxKw - yMinKw);
 
         const getX = (ts: number) => padding.left + ((ts - startTime) / duration) * chartWidth;
-        const getY = (w: number) => padding.top + chartHeight - (wattsToKilowatts(w) / maxValue) * chartHeight;
+        const getY = (w: number) => {
+            const kw = wattsToKilowatts(w);
+            return padding.top + ((yMaxKw - kw) / yRangeKw) * chartHeight;
+        };
         // Series paths (5-min intervals - convert Wh to Average W)
         const homePath = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(d.timestamp.getTime())} ${getY(energyToAveragePower(d.load_power))}`).join(' ');
         const solarPath = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(d.timestamp.getTime())} ${getY(energyToAveragePower(d.solar_power))}`).join(' ');
         const batteryPath = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(d.timestamp.getTime())} ${getY(energyToAveragePower(d.battery_power))}`).join(' ');
 
         // Grid lines (kW)
-        const gridLines = [0, maxValue / 2, maxValue].map(v => {
+        const yTicks = hasNegative
+            ? [yMinKw, 0, yMaxKw / 2, yMaxKw]
+            : [0, yMaxKw / 2, yMaxKw];
+        const gridLines = yTicks.map(v => {
             const y = getY(kilowattsToWatts(v)); // v is in kW, convert to Average W
-            return `<line x1="${padding.left}" y1="${y}" x2="${chartWidth + padding.left}" y2="${y}" stroke="#eee" stroke-width="1" />
-                    <text x="${padding.left - 5}" y="${y + 4}" font-family="Arial" font-size="10" text-anchor="end">${v.toFixed(1)}</text>`;
+            const stroke = v === 0 ? '#bbb' : '#eee';
+            const strokeWidth = v === 0 ? '1.25' : '1';
+            const yLabelX = padding.left + 2;
+            return `<line x1="${padding.left}" y1="${y}" x2="${chartWidth + padding.left}" y2="${y}" stroke="${stroke}" stroke-width="${strokeWidth}" />
+                    <text x="${yLabelX}" y="${y + 4}" font-family="Arial" font-size="11" font-weight="600" text-anchor="start">${v.toFixed(1)}</text>`;
         }).join('');
 
-        // Time labels (Every 6 hours)
-        const hourLabels = [];
+        // Time labels (Every 6 hours). Ensure 12am is visible early in the day.
+        const hourLabelEntries: { x: number; label: string; anchor: 'middle' | 'start' }[] = [];
         for (let h = 0; h <= 24; h += 6) {
             const labelTime = new Date(startTime);
             labelTime.setHours(h, 0, 0, 0);
@@ -658,98 +689,62 @@ export class TrmnlRenderer {
                 let displayH = h % 12;
                 if (displayH === 0) displayH = 12;
                 const label = `${displayH}${amPm}`;
-
-                hourLabels.push(`<text x="${x}" y="${padding.top + chartHeight + 14}" font-family="Arial" font-size="10" text-anchor="middle">${label}</text>`);
+                hourLabelEntries.push({ x, label, anchor: 'middle' });
             }
         }
+        let renderHourLabels = hourLabelEntries;
+        const hasMidnightLabel = hourLabelEntries.some((entry) => entry.label === '12am');
+        if (!hasMidnightLabel && hourLabelEntries.length <= 2) {
+            const midnightX = padding.left + 2;
+            const minLabelSpacingPx = 28;
+            renderHourLabels = [
+                { x: midnightX, label: '12am', anchor: 'start' },
+                ...hourLabelEntries.filter((entry) => (entry.x - midnightX) >= minLabelSpacingPx)
+            ];
+        }
+        const hourLabelOverlay = `
+            <div style="position: absolute; left: 0; right: 0; bottom: 2px; height: 18px; z-index: 2;">
+                ${renderHourLabels.map((entry) => {
+            const leftPercent = (entry.x / width) * 100;
+            const anchorStyle = entry.anchor === 'middle'
+                ? 'transform: translateX(-50%);'
+                : '';
+            return `<span class="value value--xsmall" style="position: absolute; left: ${leftPercent}%; ${anchorStyle} line-height: 1; white-space: nowrap; background: white; padding: 0 1px;">${entry.label}</span>`;
+        }).join('')}
+            </div>
+        `;
+
+        const legendOverlay = `
+            <div class="flex flex--row gap--medium" style="position: absolute; top: 6px; right: 8px; z-index: 2; background: white; padding: 2px 6px; border-radius: 2px;">
+                <div class="flex flex--row flex--center-y gap--xsmall">
+                    <span style="display:inline-block; width: 14px; border-top: 3px solid black;"></span>
+                    <span class="value value--xsmall" style="line-height: 1;">Solar</span>
+                </div>
+                <div class="flex flex--row flex--center-y gap--xsmall">
+                    <span style="display:inline-block; width: 14px; border-top: 1px solid black;"></span>
+                    <span class="value value--xsmall" style="line-height: 1;">Home</span>
+                </div>
+                <div class="flex flex--row flex--center-y gap--xsmall">
+                    <span style="display:inline-block; width: 14px; border-top: 1px dashed black;"></span>
+                    <span class="value value--xsmall" style="line-height: 1;">Battery</span>
+                </div>
+            </div>
+        `;
 
         const svg = `
-            <div style="width: 100%; height: 100%;">
+            <div style="position: relative; width: 100%; height: 100%;">
             <svg viewBox="0 0 ${width} ${height}" width="100%" height="100%" style="display: block;" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
                 <!-- Background and Grid -->
                 <rect width="${width}" height="${height}" fill="none" />
                 ${gridLines}
-                ${hourLabels.join('')}
 
                 <!-- Series -->
                 <path d="${solarPath}" fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="${homePath}" fill="none" stroke="black" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="${batteryPath}" fill="none" stroke="black" stroke-width="1" stroke-dasharray="4,4" stroke-linecap="round" stroke-linejoin="round" />
-
-                <!-- Legend (Dynamic Placement) -->
-                ${(() => {
-                // Heuristic to find a clear spot for the legend
-                const legendWidth = 120; // Increased for safety
-                const legendMargin = 10;
-
-                // Candidate X positions: check every 40 pixels from left to right
-                let bestLegendX = padding.left + legendMargin;
-                let minMaxPowerSeen = Infinity;
-                let leastObscuredX = padding.left + legendMargin;
-
-                // Threshold: If max trace value in this X range is below 40% of chart height, it's "safe enough"
-                // The legend sits at the top (0-50px), and chart height is 120 (padding bottom 20).
-                const traceThresholdW = kilowattsToWatts(maxValue * 0.4);
-
-                // Find first "valley"
-                for (let x = padding.left + legendMargin; x < width - padding.right - legendWidth; x += 40) {
-                    // Convert X back to timestamp to check data
-                    const rangeStartTime = startTime + ((x - padding.left) / chartWidth) * duration;
-                    const rangeEndTime = startTime + ((x + legendWidth - padding.left) / chartWidth) * duration;
-
-                    // Filter data points that fall within this horizontal slice
-                    const dataInRange = data.filter(d => {
-                        const ts = d.timestamp.getTime();
-                        return ts >= rangeStartTime && ts <= rangeEndTime;
-                    });
-
-                    // If we have data points, check if they are all below our threshold
-                    if (dataInRange.length > 0) {
-                        const maxPowerInRange = dataInRange.reduce((max, d) => {
-                            return Math.max(max,
-                                energyToAveragePower(d.load_power),
-                                energyToAveragePower(d.solar_power),
-                                Math.abs(energyToAveragePower(d.battery_power))
-                            );
-                        }, 0);
-
-                        if (maxPowerInRange < traceThresholdW) {
-                            bestLegendX = x;
-                            minMaxPowerSeen = maxPowerInRange; // Mark as found
-                            break;
-                        }
-
-                        if (maxPowerInRange < minMaxPowerSeen) {
-                            minMaxPowerSeen = maxPowerInRange;
-                            leastObscuredX = x;
-                        }
-                    } else {
-                        // If no data in this range, it's a gap in the chart, perfect for a legend
-                        bestLegendX = x;
-                        minMaxPowerSeen = 0; // Mark as found
-                        break;
-                    }
-                }
-
-                // If we didn't find anything below the threshold, use the "least obscured" spot found
-                if (minMaxPowerSeen > traceThresholdW && minMaxPowerSeen !== Infinity) {
-                    bestLegendX = leastObscuredX;
-                }
-
-                return `
-                    <g transform="translate(${bestLegendX}, 0)">
-                        <line x1="0" y1="5" x2="20" y2="5" stroke="black" stroke-width="3" />
-                        <text x="25" y="10" font-family="Arial" font-size="10">Solar</text>
-                        
-                        <line x1="0" y1="20" x2="20" y2="20" stroke="black" stroke-width="1" />
-                        <text x="25" y="25" font-family="Arial" font-size="10">Home</text>
-                        
-                        <line x1="0" y1="35" x2="20" y2="35" stroke="black" stroke-width="1" stroke-dasharray="4,4" />
-                        <text x="25" y="40" font-family="Arial" font-size="10">Battery</text>
-                    </g>
-                `;
-            })()}
             </svg>
+            ${legendOverlay}
+            ${hourLabelOverlay}
             </div>
         `;
         const renderDuration = Date.now() - start;

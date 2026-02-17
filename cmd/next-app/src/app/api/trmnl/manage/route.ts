@@ -8,9 +8,12 @@ import { SiteService } from '@/lib/site-service';
 import { verifyTrmnlToken } from '@/lib/trmnl-auth';
 import { verifySiteToken } from '@/lib/auth-jwt';
 import {
-    extractTrmnlComponentConfig,
-    mergeTrmnlComponentConfigIntoInstallationJson,
-    normalizeTrmnlComponentConfig
+    buildDefaultTrmnlComponentScreens,
+    extractTrmnlCarouselIndex,
+    extractTrmnlComponentScreens,
+    MAX_TRMNL_COMPONENT_SCREENS,
+    mergeTrmnlComponentScreensIntoInstallationJson,
+    normalizeTrmnlComponentScreens
 } from '@/lib/trmnl-component-config';
 
 function coercePositiveInt(value: unknown): number | null {
@@ -82,14 +85,17 @@ export async function GET(request: Request) {
     if (!installation) {
         return NextResponse.json({
             site_id: null,
-            component_config: normalizeTrmnlComponentConfig(null)
+            component_screens: buildDefaultTrmnlComponentScreens(),
+            carousel_index: 0
         });
     }
 
+    const screens = extractTrmnlComponentScreens(installation.json);
     return NextResponse.json({
         site_id: installation.site_id,
         plugin_setting_id: installation.plugin_setting_id,
-        component_config: extractTrmnlComponentConfig(installation.json)
+        component_screens: screens,
+        carousel_index: extractTrmnlCarouselIndex(installation.json, screens.length)
     });
 }
 
@@ -99,7 +105,10 @@ export async function POST(request: Request) {
     try {
         const body = await request.json();
         const { uuid, site_id, token: trmnlToken, plugin_setting_id: pluginSettingIdFromBody } = body;
-        const componentConfig = normalizeTrmnlComponentConfig(body.component_config);
+        const componentScreens = normalizeTrmnlComponentScreens(body.component_screens);
+        if (componentScreens.length === 0 || componentScreens.length > MAX_TRMNL_COMPONENT_SCREENS) {
+            return NextResponse.json({ error: `component_screens must have 1-${MAX_TRMNL_COMPONENT_SCREENS} entries` }, { status: 400 });
+        }
 
         if (!uuid || !site_id) {
             return NextResponse.json({ error: 'Missing uuid or site_id' }, { status: 400 });
@@ -208,9 +217,9 @@ export async function POST(request: Request) {
         // Create or Update installation (UPSERT)
         const trmnlService = new TrmnlService();
         const existingInstallation = await trmnlService.getInstallationByUuid(uuid);
-        const mergedJson = mergeTrmnlComponentConfigIntoInstallationJson(
+        const mergedJson = mergeTrmnlComponentScreensIntoInstallationJson(
             existingInstallation?.json ?? null,
-            componentConfig
+            componentScreens
         );
         const pluginSettingId = coercePositiveInt(pluginSettingIdFromBody)
             ?? tokenPluginSettingId

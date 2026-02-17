@@ -9,7 +9,14 @@ import { verifySiteAccess } from '@/lib/auth-checks';
 import QRCode from 'qrcode';
 import { TrmnlRenderer } from '@/lib/trmnl-renderer';
 import { wattsToKilowatts } from '@/lib/energy-utils';
-import { extractTrmnlComponentConfig, normalizeTrmnlComponentConfig } from '@/lib/trmnl-component-config';
+import {
+    extractTrmnlCarouselIndex,
+    extractTrmnlComponentConfig,
+    extractTrmnlComponentScreens,
+    mergeTrmnlComponentScreensIntoInstallationJson,
+    normalizeTrmnlComponentConfig
+} from '@/lib/trmnl-component-config';
+import { pool } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -128,7 +135,21 @@ export async function GET(request: Request) {
             installation = result.installation;
             site = result.site;
             if (!componentConfigParam) {
-                componentConfig = extractTrmnlComponentConfig(installation.json);
+                const screens = extractTrmnlComponentScreens(installation.json);
+                const currentIndex = extractTrmnlCarouselIndex(installation.json, screens.length);
+                componentConfig = screens[currentIndex]?.componentConfig ?? extractTrmnlComponentConfig(installation.json);
+
+                const nextIndex = screens.length > 1 ? (currentIndex + 1) % screens.length : 0;
+                if (installation.id && nextIndex !== currentIndex) {
+                    const nextJson = mergeTrmnlComponentScreensIntoInstallationJson(installation.json ?? null, screens, nextIndex);
+                    after(async () => {
+                        try {
+                            await pool.query('UPDATE "TrmnlInstallation" SET json = $1 WHERE id = $2', [nextJson, installation!.id]);
+                        } catch (error) {
+                            console.warn(`[TrmnlMarkup] Failed to advance carousel index for installation ${installation!.id}:`, error);
+                        }
+                    });
+                }
             }
 
             // Verify Bearer Token
