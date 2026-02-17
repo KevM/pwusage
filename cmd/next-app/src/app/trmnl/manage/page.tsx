@@ -49,7 +49,7 @@ function ManageContent() {
     const [draggingScreenId, setDraggingScreenId] = useState<string | null>(null);
     const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
     const [formOffsetPx, setFormOffsetPx] = useState(0);
-    const [formMinHeightPx, setFormMinHeightPx] = useState(0);
+    const [formHeightPx, setFormHeightPx] = useState(0);
 
     const rightRailRef = useRef<HTMLDivElement | null>(null);
     const formCardRef = useRef<HTMLDivElement | null>(null);
@@ -214,7 +214,7 @@ function ManageContent() {
         const updateFormOffset = () => {
             if (typeof window !== 'undefined' && window.innerWidth < 1280) {
                 setFormOffsetPx(0);
-                setFormMinHeightPx(0);
+                setFormHeightPx(0);
                 return;
             }
 
@@ -224,7 +224,7 @@ function ManageContent() {
             const selectedCard = selectedId ? screenCardRefs.current[selectedId] : null;
             if (!rail || !form || !selectedCard) {
                 setFormOffsetPx(0);
-                setFormMinHeightPx(0);
+                setFormHeightPx(0);
                 return;
             }
 
@@ -233,7 +233,7 @@ function ManageContent() {
             const desired = Math.max(0, cardRect.top - railRect.top);
             const maxOffset = Math.max(0, rail.clientHeight - form.offsetHeight);
             setFormOffsetPx(Math.min(desired, maxOffset));
-            setFormMinHeightPx(Math.max(0, selectedCard.offsetHeight));
+            setFormHeightPx(Math.max(0, selectedCard.offsetHeight));
         };
 
         updateFormOffset();
@@ -241,7 +241,7 @@ function ManageContent() {
         return () => {
             window.removeEventListener('resize', updateFormOffset);
         };
-    }, [editingScreen?.id, componentScreens, previewByScreen]);
+    }, [editingScreen?.id, componentScreens, previewByScreen, previewScale]);
 
     const handleAddScreen = () => {
         if (componentScreens.length >= MAX_TRMNL_COMPONENT_SCREENS) return;
@@ -551,10 +551,10 @@ function ManageContent() {
                     <div ref={rightRailRef} className="relative min-h-[240px]">
                         <div
                             ref={formCardRef}
-                            className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800 transition-transform duration-300"
+                            className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800 transition-transform duration-300 overflow-y-auto"
                             style={{
                                 transform: `translateY(${formOffsetPx}px)`,
-                                minHeight: formMinHeightPx > 0 ? `${formMinHeightPx}px` : undefined
+                                height: formHeightPx > 0 ? `${formHeightPx}px` : undefined
                             }}
                         >
                             <h2 className="text-xl font-semibold mb-2">Screen Components</h2>
