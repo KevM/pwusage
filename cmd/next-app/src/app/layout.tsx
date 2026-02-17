@@ -26,7 +26,6 @@ export const metadata: Metadata = {
       : (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
   ),
   openGraph: {
-    title: "Powerwall Usage",
     description: "Powerwall insights for smarter energy savings.",
     siteName: "Powerwall Usage",
     images: [
@@ -41,7 +40,6 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Powerwall Usage",
     description: "Powerwall insights for smarter energy savings.",
   },
   alternates: {

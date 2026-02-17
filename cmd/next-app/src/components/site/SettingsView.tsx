@@ -80,6 +80,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
     const [previewHtml, setPreviewHtml] = useState('');
     const [previewError, setPreviewError] = useState('');
     const [previewLoading, setPreviewLoading] = useState(true);
+    const [previewScale, setPreviewScale] = useState<number>(0.5);
     const pluginSettingId = extractPluginSettingId(installation);
 
     useEffect(() => {
@@ -149,11 +150,28 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                 </p>
 
                 <div className="mb-8">
+                    <div className="mb-3 flex items-center justify-end gap-2">
+                        <label className="text-xs text-gray-600 dark:text-gray-300">Preview size</label>
+                        <select
+                            value={String(previewScale)}
+                            onChange={(e) => setPreviewScale(Number.parseFloat(e.target.value))}
+                            className="text-xs p-1 border rounded dark:bg-slate-800 dark:border-slate-700"
+                        >
+                            <option value="0.25">25%</option>
+                            <option value="0.33">33%</option>
+                            <option value="0.5">50%</option>
+                            <option value="0.75">75%</option>
+                            <option value="1">100%</option>
+                        </select>
+                    </div>
                     <TrmnlLivePreview
                         previewHtml={previewHtml}
                         previewError={previewError}
                         previewLoading={previewLoading}
                         hasSource={true}
+                        maxDisplayScale={1}
+                        showScaleControls={false}
+                        displayScaleOverride={previewScale}
                     />
                 </div>
 

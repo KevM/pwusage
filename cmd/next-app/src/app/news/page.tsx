@@ -6,10 +6,74 @@ import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
-export const metadata: Metadata = {
-    title: 'News & Announcements | Powerwall Usage',
-    description: 'Latest updates and announcements from the developers.',
-};
+const DEFAULT_NEWS_DESCRIPTION = 'Latest updates and announcements from the developers.';
+const NEWS_TITLE = 'News & Announcements | Powerwall Usage';
+
+function getFirstParagraph(markdown: string): string {
+    const paragraphs = markdown
+        .split(/\n\s*\n/)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+
+    if (paragraphs.length === 0) {
+        return '';
+    }
+
+    return paragraphs[0]
+        .replace(/!\[[^\]]*]\([^)]*\)/g, '')
+        .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/^#{1,6}\s*/gm, '')
+        .replace(/[*_~]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function getDescription(content?: string): string {
+    if (!content) {
+        return DEFAULT_NEWS_DESCRIPTION;
+    }
+
+    const firstParagraph = getFirstParagraph(content);
+    if (!firstParagraph) {
+        return DEFAULT_NEWS_DESCRIPTION;
+    }
+
+    return firstParagraph.slice(0, 200);
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+    try {
+        const latestAnnouncement = await new AnnouncementRepo().getLatest();
+        const description = getDescription(latestAnnouncement?.content);
+
+        return {
+            title: NEWS_TITLE,
+            description,
+            openGraph: {
+                title: NEWS_TITLE,
+                description,
+            },
+            twitter: {
+                title: NEWS_TITLE,
+                description,
+            },
+        };
+    } catch {
+        return {
+            title: NEWS_TITLE,
+            description: DEFAULT_NEWS_DESCRIPTION,
+            openGraph: {
+                title: NEWS_TITLE,
+                description: DEFAULT_NEWS_DESCRIPTION,
+            },
+            twitter: {
+                title: NEWS_TITLE,
+                description: DEFAULT_NEWS_DESCRIPTION,
+            },
+        };
+    }
+}
 
 export default async function NewsPage() {
     const repo = new AnnouncementRepo();

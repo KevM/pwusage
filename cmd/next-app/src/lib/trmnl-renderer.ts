@@ -125,6 +125,11 @@ export class TrmnlRenderer {
             : (!showEnergyChart
                 ? (showEstimatedBill ? (hasLiveRow ? 150 : 170) : 220)
                 : (showEstimatedBill ? 102 : 92));
+        const isSocOnlyLayout = hasStandaloneSocChart && !showEnergyChart && !showEstimatedBill && !hasLiveRow;
+        if (isSocOnlyLayout) {
+            // Use nearly full TRMNL height for standalone SoC charts (minus footer/gaps).
+            socChartMinHeight = 430;
+        }
         const socGlyphSectionHeight = hasStandaloneSocGlyph ? (isVeryDenseLayout ? 28 : 24) : 0;
         const liveSectionHeightEstimate = liveRowHeight;
         const footerHeightEstimate = 24;
@@ -279,7 +284,7 @@ export class TrmnlRenderer {
         ` : '';
 
         const standaloneSocSection = hasStandaloneSocChart ? `
-            <div class="flex flex--row flex--center-y flex--center-x w--full" style="height: ${socChartMinHeight}px; min-height: ${socChartMinHeight}px;">
+            <div class="flex flex--row flex--center-y flex--center-x w--full" style="flex: 1 1 auto; height: ${socChartMinHeight}px; min-height: ${socChartMinHeight}px;">
                 ${ctx.seriesData ? this.renderSocChart(ctx.seriesData, ctx.batterySoc, socChartMinHeight) : '<span class="label">Battery SoC unavailable</span>'}
             </div>
         ` : (hasStandaloneSocGlyph ? `
@@ -893,7 +898,7 @@ export class TrmnlRenderer {
             .map((point, i) => `${i === 0 ? 'M' : 'L'} ${getX(point.timestamp)} ${getSocY(point.soc)}`)
             .join(' ');
 
-        const hourLabels: string[] = [];
+        const hourLabelEntries: { x: number; label: string }[] = [];
         for (let h = 0; h <= 24; h += 6) {
             const labelTime = new Date(startTime);
             labelTime.setHours(h, 0, 0, 0);
@@ -902,23 +907,44 @@ export class TrmnlRenderer {
                 const amPm = h % 24 < 12 ? 'am' : 'pm';
                 let displayH = h % 12;
                 if (displayH === 0) displayH = 12;
-                hourLabels.push(`<text x="${x}" y="${height - 3}" font-family="Arial" font-size="10" text-anchor="middle">${displayH}${amPm}</text>`);
+                hourLabelEntries.push({ x, label: `${displayH}${amPm}` });
             }
         }
 
+        const xAxisLabelOverlay = `
+            <div style="position: absolute; left: 0; right: 0; bottom: 2px; height: 16px; z-index: 2;">
+                ${hourLabelEntries.map((entry) => {
+            const leftPercent = (entry.x / width) * 100;
+            return `<span class="value value--xsmall" style="position: absolute; left: ${leftPercent}%; transform: translateX(-50%); line-height: 1; white-space: nowrap; background: white; padding: 0 1px;">${entry.label}</span>`;
+        }).join('')}
+            </div>
+        `;
+
+        const yAxisLabelOverlay = `
+            <div style="position: absolute; top: 0; right: 0; bottom: 0; width: 50px; z-index: 2;">
+                <span class="value value--xsmall" style="position: absolute; right: 2px; top: ${getSocY(100) - 6}px; line-height: 1; background: white; padding: 0 1px;">100%</span>
+                <span class="value value--xsmall" style="position: absolute; right: 2px; top: ${getSocY(50) - 6}px; line-height: 1; background: white; padding: 0 1px;">50%</span>
+                <span class="value value--xsmall" style="position: absolute; right: 2px; top: ${getSocY(0) - 6}px; line-height: 1; background: white; padding: 0 1px;">0%</span>
+            </div>
+        `;
+
+        const titleOverlay = `
+            <div style="position: absolute; top: 0; left: ${padding.left}px; z-index: 2;">
+                <span class="label label--small" style="line-height: 1;">Battery Level (%)</span>
+            </div>
+        `;
+
         return `
-            <div style="width: 100%; height: 100%; min-width: 280px;">
+            <div style="position: relative; width: 100%; height: 100%; min-width: 280px;">
                 <svg viewBox="0 0 ${width} ${height}" width="100%" height="100%" style="display: block;" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-                    <text x="${padding.left}" y="${padding.top - 2}" font-family="Arial" font-size="10" text-anchor="start">Battery SoC (%)</text>
                     <line x1="${padding.left}" y1="${getSocY(100)}" x2="${width - padding.right}" y2="${getSocY(100)}" stroke="#eee" stroke-width="1" />
                     <line x1="${padding.left}" y1="${getSocY(50)}" x2="${width - padding.right}" y2="${getSocY(50)}" stroke="#eee" stroke-width="1" />
                     <line x1="${padding.left}" y1="${getSocY(0)}" x2="${width - padding.right}" y2="${getSocY(0)}" stroke="#eee" stroke-width="1" />
                     <path d="${socPath}" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    <text x="${width - 4}" y="${getSocY(100) + 3}" font-family="Arial" font-size="9" text-anchor="end">100%</text>
-                    <text x="${width - 4}" y="${getSocY(50) + 3}" font-family="Arial" font-size="9" text-anchor="end">50%</text>
-                    <text x="${width - 4}" y="${getSocY(0) + 3}" font-family="Arial" font-size="9" text-anchor="end">0%</text>
-                    ${hourLabels.join('')}
                 </svg>
+                ${titleOverlay}
+                ${yAxisLabelOverlay}
+                ${xAxisLabelOverlay}
             </div>
         `;
     }
