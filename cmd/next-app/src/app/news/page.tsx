@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic';
 
 const DEFAULT_NEWS_DESCRIPTION = 'Latest updates and announcements from the developers.';
 const NEWS_TITLE = 'News & Announcements | Powerwall Usage';
+const DEFAULT_OG_IMAGE = '/opengraph-image';
 
 function getFirstParagraph(markdown: string): string {
     const paragraphs = markdown
@@ -42,10 +43,30 @@ function getDescription(content?: string): string {
     return firstParagraph.slice(0, 200);
 }
 
+function getFirstImageUrl(markdown?: string): string | undefined {
+    if (!markdown) {
+        return undefined;
+    }
+
+    const match = markdown.match(/!\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/);
+    if (!match?.[1]) {
+        return undefined;
+    }
+
+    const candidate = match[1].trim();
+    if (candidate.startsWith('http://') || candidate.startsWith('https://') || candidate.startsWith('/')) {
+        return candidate;
+    }
+
+    return undefined;
+}
+
 export async function generateMetadata(): Promise<Metadata> {
     try {
         const latestAnnouncement = await new AnnouncementRepo().getLatest();
         const description = getDescription(latestAnnouncement?.content);
+        const latestPostImage = getFirstImageUrl(latestAnnouncement?.content);
+        const ogImages = latestPostImage ? [latestPostImage, DEFAULT_OG_IMAGE] : [DEFAULT_OG_IMAGE];
 
         return {
             title: NEWS_TITLE,
@@ -53,10 +74,13 @@ export async function generateMetadata(): Promise<Metadata> {
             openGraph: {
                 title: NEWS_TITLE,
                 description,
+                images: ogImages,
             },
             twitter: {
+                card: 'summary_large_image',
                 title: NEWS_TITLE,
                 description,
+                images: ogImages,
             },
         };
     } catch {
@@ -66,10 +90,13 @@ export async function generateMetadata(): Promise<Metadata> {
             openGraph: {
                 title: NEWS_TITLE,
                 description: DEFAULT_NEWS_DESCRIPTION,
+                images: [DEFAULT_OG_IMAGE],
             },
             twitter: {
+                card: 'summary_large_image',
                 title: NEWS_TITLE,
                 description: DEFAULT_NEWS_DESCRIPTION,
+                images: [DEFAULT_OG_IMAGE],
             },
         };
     }

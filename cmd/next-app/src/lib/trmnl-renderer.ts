@@ -126,9 +126,19 @@ export class TrmnlRenderer {
                 ? (showEstimatedBill ? (hasLiveRow ? 150 : 170) : 220)
                 : (showEstimatedBill ? 102 : 92));
         const isSocOnlyLayout = hasStandaloneSocChart && !showEnergyChart && !showEstimatedBill && !hasLiveRow;
+        const isLiveSocOnlyLayout = hasStandaloneSocChart && !showEnergyChart && !showEstimatedBill && hasLiveRow;
         if (isSocOnlyLayout) {
-            // Use nearly full TRMNL height for standalone SoC charts (minus footer/gaps).
-            socChartMinHeight = 430;
+            // Use the available TRMNL height budget so standalone SoC charts expand fully.
+            const trmnlHeight = 480;
+            const footerHeight = 24;
+            const gapHeight = 8; // SoC chart + footer
+            socChartMinHeight = Math.max(220, trmnlHeight - footerHeight - gapHeight);
+        } else if (isLiveSocOnlyLayout) {
+            // Fill remaining height when only live row + SoC chart + footer are visible.
+            const trmnlHeight = 480;
+            const footerHeight = 24;
+            const gapHeight = 16; // live row + SoC chart + footer
+            socChartMinHeight = Math.max(220, trmnlHeight - liveRowHeight - footerHeight - gapHeight);
         }
         const socGlyphSectionHeight = hasStandaloneSocGlyph ? (isVeryDenseLayout ? 28 : 24) : 0;
         const liveSectionHeightEstimate = liveRowHeight;
@@ -251,41 +261,53 @@ export class TrmnlRenderer {
         const renderGridIcon = (size: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="6 0 12 24" width="${size}" height="${size}"><path d="M7 2v11h3v9l7-12h-4l4-8z" fill="black"/></svg>`;
         const renderSunIcon = (size: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5" fill="black" stroke="none"/><line x1="12" y1="1" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="6.34" y2="6.34" /><line x1="17.66" y1="17.66" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="6.34" y2="17.66" /><line x1="17.66" y1="6.34" x2="19.78" y2="4.22" /></svg>`;
 
+        const showBillMetaHeader = !(isVeryDenseLayout || isLiveEnergyBillLayout);
+        const showSiteNameInLiveRow = hasLiveRow && showEstimatedBill && !showBillMetaHeader;
+
         const liveStatsSection = hasLiveRow ? `
-            <div class="flex flex--row flex--center-y flex--center-x ${liveGap}" style="height: ${liveRowHeight}px; min-height: ${liveRowHeight}px;">
-                ${showLiveGridStat ? `
-                <div class="flex flex--row flex--center-y flex--center-x gap--small">
-                    <span class="title title--xxlarge" style="font-size: ${liveValueFontPx}px; line-height: 1;">${(ctx.todayGrid as number).toFixed(1)}</span>
-                    ${renderGridIcon(liveIconSize)}
-                </div>
+            <div class="w--full" style="position: relative; height: ${liveRowHeight}px; min-height: ${liveRowHeight}px;">
+                ${showSiteNameInLiveRow ? `
+                <span class="label label--small" style="position: absolute; top: 2px; left: 2px; line-height: 1; z-index: 2;">${ctx.siteName}</span>
                 ` : ''}
+                <div class="flex flex--row flex--center-y flex--center-x ${liveGap}" style="height: 100%;">
+                    ${showLiveGridStat ? `
+                    <div class="flex flex--row flex--center-y flex--center-x gap--small">
+                        <span class="title title--xxlarge" style="font-size: ${liveValueFontPx}px; line-height: 1;">${(ctx.todayGrid as number).toFixed(1)}</span>
+                        ${renderGridIcon(liveIconSize)}
+                    </div>
+                    ` : ''}
 
-                ${showLiveSolarStat ? `
-                <div class="flex flex--row flex--center-y flex--center-x gap--small">
-                    <span class="title title--xxlarge" style="font-size: ${liveValueFontPx}px; line-height: 1;">${(ctx.todaySolar as number).toFixed(1)}</span>
-                    ${renderSunIcon(liveIconSize)}
-                </div>
-                ` : ''}
+                    ${showLiveSolarStat ? `
+                    <div class="flex flex--row flex--center-y flex--center-x gap--small">
+                        <span class="title title--xxlarge" style="font-size: ${liveValueFontPx}px; line-height: 1;">${(ctx.todaySolar as number).toFixed(1)}</span>
+                        ${renderSunIcon(liveIconSize)}
+                    </div>
+                    ` : ''}
 
-                ${showLiveBatteryStat ? `
-                <div class="flex flex--col flex--center-x">
-                    ${this.renderBatteryStatusLarge(ctx.batterySoc, ctx.batteryStatus, { scale: liveBatteryScale })}
+                    ${showLiveBatteryStat ? `
+                    <div class="flex flex--col flex--center-x">
+                        ${this.renderBatteryStatusLarge(ctx.batterySoc, ctx.batteryStatus, { scale: liveBatteryScale })}
+                    </div>
+                    ` : ''}
                 </div>
-                ` : ''}
             </div>
         ` : '';
 
         const chartSection = showEnergyChart ? `
             <div class="flex flex--row flex--center-y flex--center-x w--full" style="flex: 1 1 auto; height: ${chartMinHeight}px; min-height: ${chartMinHeight}px;">
                 ${ctx.seriesData ? this.renderChart(ctx.seriesData, {
-            chartHeight: chartMinHeight
+            chartHeight: chartMinHeight,
+            denseLegend: isDenseLayout || isVeryDenseLayout,
+            veryDenseLegend: isVeryDenseLayout
         }) : ''}
             </div>
         ` : '';
 
         const standaloneSocSection = hasStandaloneSocChart ? `
-            <div class="flex flex--row flex--center-y flex--center-x w--full" style="flex: 1 1 auto; height: ${socChartMinHeight}px; min-height: ${socChartMinHeight}px;">
-                ${ctx.seriesData ? this.renderSocChart(ctx.seriesData, ctx.batterySoc, socChartMinHeight) : '<span class="label">Battery SoC unavailable</span>'}
+            <div class="flex flex--row flex--center-x w--full" style="flex: 1 1 auto; height: ${socChartMinHeight}px; min-height: ${socChartMinHeight}px; align-items: stretch;">
+                ${ctx.seriesData ? this.renderSocChart(ctx.seriesData, ctx.batterySoc, socChartMinHeight, {
+            showXAxis: !showEnergyChart
+        }) : '<span class="label">Battery SoC unavailable</span>'}
             </div>
         ` : (hasStandaloneSocGlyph ? `
             <div class="flex flex--row flex--center-x w--full" style="height: ${socGlyphSectionHeight}px; min-height: ${socGlyphSectionHeight}px; align-items: center;">
@@ -299,10 +321,12 @@ export class TrmnlRenderer {
 
         const billSection = showEstimatedBill ? `
             <div class="flex flex--col w--full">
+                ${showBillMetaHeader ? `
                 <div class="flex flex--row flex--center-y w--full" style="justify-content: space-between; margin-bottom: 4px;">
                     <span class="title title--small" style="font-size: ${compactBillMode ? 15 : 17}px; line-height: 1;">${ctx.siteName}</span>
                     <span class="label label--small" style="font-size: ${compactBillMode ? 11 : 13}px; line-height: 1;">${ctx.dateRange}</span>
                 </div>
+                ` : ''}
                 ${tariffTables}
             </div>
         ` : '';
@@ -614,12 +638,49 @@ export class TrmnlRenderer {
 
     // ... (keep renderHalfVertical/Horizontal/Quadrant same) ...
 
+    private static buildHourLabelEntries(
+        startTime: number,
+        endTime: number,
+        getX: (ts: number) => number,
+        leftInset = 0
+    ): { x: number; label: string; anchor: 'middle' | 'start' }[] {
+        const entries: { x: number; label: string; anchor: 'middle' | 'start' }[] = [];
+        for (let h = 0; h <= 24; h += 6) {
+            const labelTime = new Date(startTime);
+            labelTime.setHours(h, 0, 0, 0);
+            if (labelTime.getTime() >= startTime && labelTime.getTime() <= endTime) {
+                const x = getX(labelTime.getTime());
+                const amPm = h % 24 < 12 ? 'am' : 'pm';
+                let displayH = h % 12;
+                if (displayH === 0) displayH = 12;
+                entries.push({ x, label: `${displayH}${amPm}`, anchor: 'middle' });
+            }
+        }
+
+        const hasMidnightLabel = entries.some((entry) => entry.label === '12am');
+        if (!hasMidnightLabel && entries.length <= 2) {
+            const midnightX = leftInset + 2;
+            const minLabelSpacingPx = 28;
+            return [
+                { x: midnightX, label: '12am', anchor: 'start' },
+                ...entries.filter((entry) => (entry.x - midnightX) >= minLabelSpacingPx)
+            ];
+        }
+
+        return entries;
+    }
 
 
-    private static renderChart(data: EnergyData[], options: { chartHeight: number }): string {
+
+    private static renderChart(
+        data: EnergyData[],
+        options: { chartHeight: number; denseLegend?: boolean; veryDenseLegend?: boolean }
+    ): string {
         const start = Date.now();
         const width = 760;
         const height = Math.max(110, options.chartHeight);
+        const denseLegend = Boolean(options.denseLegend);
+        const veryDenseLegend = Boolean(options.veryDenseLegend);
         const bottomPadding = height <= 175 ? 28 : 36;
         const padding = { top: 8, right: 10, bottom: bottomPadding, left: 30 };
         const chartWidth = width - padding.left - padding.right;
@@ -684,29 +745,12 @@ export class TrmnlRenderer {
         }).join('');
 
         // Time labels (Every 6 hours). Ensure 12am is visible early in the day.
-        const hourLabelEntries: { x: number; label: string; anchor: 'middle' | 'start' }[] = [];
-        for (let h = 0; h <= 24; h += 6) {
-            const labelTime = new Date(startTime);
-            labelTime.setHours(h, 0, 0, 0);
-            if (labelTime.getTime() >= startTime && labelTime.getTime() <= endTime) {
-                const x = getX(labelTime.getTime());
-                const amPm = h % 24 < 12 ? 'am' : 'pm';
-                let displayH = h % 12;
-                if (displayH === 0) displayH = 12;
-                const label = `${displayH}${amPm}`;
-                hourLabelEntries.push({ x, label, anchor: 'middle' });
-            }
-        }
-        let renderHourLabels = hourLabelEntries;
-        const hasMidnightLabel = hourLabelEntries.some((entry) => entry.label === '12am');
-        if (!hasMidnightLabel && hourLabelEntries.length <= 2) {
-            const midnightX = padding.left + 2;
-            const minLabelSpacingPx = 28;
-            renderHourLabels = [
-                { x: midnightX, label: '12am', anchor: 'start' },
-                ...hourLabelEntries.filter((entry) => (entry.x - midnightX) >= minLabelSpacingPx)
-            ];
-        }
+        const renderHourLabels = this.buildHourLabelEntries(
+            startTime,
+            endTime,
+            getX,
+            padding.left
+        );
         const hourLabelOverlay = `
             <div style="position: absolute; left: 0; right: 0; bottom: 2px; height: 18px; z-index: 2;">
                 ${renderHourLabels.map((entry) => {
@@ -719,19 +763,25 @@ export class TrmnlRenderer {
             </div>
         `;
 
+        const legendTextSizePx = veryDenseLegend ? 10 : (denseLegend ? 11 : 12);
+        const legendSampleWidthPx = veryDenseLegend ? 10 : (denseLegend ? 12 : 14);
+        const legendGroupGapPx = veryDenseLegend ? 8 : (denseLegend ? 10 : 12);
+        const legendItemGapPx = veryDenseLegend ? 3 : 4;
+        const legendTopPx = veryDenseLegend ? 4 : 6;
+        const legendPadding = veryDenseLegend ? '1px 4px' : (denseLegend ? '1px 5px' : '2px 6px');
         const legendOverlay = `
-            <div class="flex flex--row gap--medium" style="position: absolute; top: 6px; right: 8px; z-index: 2; background: white; padding: 2px 6px; border-radius: 2px;">
-                <div class="flex flex--row flex--center-y gap--xsmall">
-                    <span style="display:inline-block; width: 14px; border-top: 3px solid black;"></span>
-                    <span class="value value--xsmall" style="line-height: 1;">Solar</span>
+            <div class="flex flex--row" style="position: absolute; top: ${legendTopPx}px; right: 8px; z-index: 2; background: white; padding: ${legendPadding}; border-radius: 2px; gap: ${legendGroupGapPx}px;">
+                <div class="flex flex--row flex--center-y" style="gap: ${legendItemGapPx}px;">
+                    <span style="display:inline-block; width: ${legendSampleWidthPx}px; border-top: 3px solid black;"></span>
+                    <span class="value value--xsmall" style="line-height: 1; font-size: ${legendTextSizePx}px;">Solar</span>
                 </div>
-                <div class="flex flex--row flex--center-y gap--xsmall">
-                    <span style="display:inline-block; width: 14px; border-top: 1px solid black;"></span>
-                    <span class="value value--xsmall" style="line-height: 1;">Home</span>
+                <div class="flex flex--row flex--center-y" style="gap: ${legendItemGapPx}px;">
+                    <span style="display:inline-block; width: ${legendSampleWidthPx}px; border-top: 1px solid black;"></span>
+                    <span class="value value--xsmall" style="line-height: 1; font-size: ${legendTextSizePx}px;">Home</span>
                 </div>
-                <div class="flex flex--row flex--center-y gap--xsmall">
-                    <span style="display:inline-block; width: 14px; border-top: 1px dashed black;"></span>
-                    <span class="value value--xsmall" style="line-height: 1;">Battery</span>
+                <div class="flex flex--row flex--center-y" style="gap: ${legendItemGapPx}px;">
+                    <span style="display:inline-block; width: ${legendSampleWidthPx}px; border-top: 1px dashed black;"></span>
+                    <span class="value value--xsmall" style="line-height: 1; font-size: ${legendTextSizePx}px;">Battery</span>
                 </div>
             </div>
         `;
@@ -873,10 +923,18 @@ export class TrmnlRenderer {
             .filter((row): row is SocSample => row !== null);
     }
 
-    private static renderSocChart(data: EnergyData[], latestBatterySoc?: number | null, chartHeight = 102): string {
+    private static renderSocChart(
+        data: EnergyData[],
+        latestBatterySoc?: number | null,
+        chartHeight = 102,
+        options?: { showXAxis?: boolean }
+    ): string {
         const width = 760;
         const height = Math.max(92, chartHeight);
-        const bottomPadding = height < 96 ? 24 : 30;
+        const showXAxis = options?.showXAxis !== false;
+        const bottomPadding = showXAxis
+            ? (height < 96 ? 24 : 30)
+            : 10;
         const padding = { top: 10, right: 26, bottom: bottomPadding, left: 24 };
         const chartWidth = width - padding.left - padding.right;
         const plotHeight = height - padding.top - padding.bottom;
@@ -898,27 +956,24 @@ export class TrmnlRenderer {
             .map((point, i) => `${i === 0 ? 'M' : 'L'} ${getX(point.timestamp)} ${getSocY(point.soc)}`)
             .join(' ');
 
-        const hourLabelEntries: { x: number; label: string }[] = [];
-        for (let h = 0; h <= 24; h += 6) {
-            const labelTime = new Date(startTime);
-            labelTime.setHours(h, 0, 0, 0);
-            if (labelTime.getTime() >= startTime && labelTime.getTime() <= endTime) {
-                const x = getX(labelTime.getTime());
-                const amPm = h % 24 < 12 ? 'am' : 'pm';
-                let displayH = h % 12;
-                if (displayH === 0) displayH = 12;
-                hourLabelEntries.push({ x, label: `${displayH}${amPm}` });
-            }
-        }
-
-        const xAxisLabelOverlay = `
-            <div style="position: absolute; left: 0; right: 0; bottom: 2px; height: 16px; z-index: 2;">
+        const hourLabelEntries = this.buildHourLabelEntries(
+            startTime,
+            endTime,
+            getX,
+            padding.left
+        );
+        const xAxisTop = Math.min(height - 16, getSocY(0) + 4);
+        const xAxisLabelOverlay = showXAxis ? `
+            <div style="position: absolute; left: 0; right: 0; top: ${xAxisTop}px; height: 16px; z-index: 2;">
                 ${hourLabelEntries.map((entry) => {
             const leftPercent = (entry.x / width) * 100;
-            return `<span class="value value--xsmall" style="position: absolute; left: ${leftPercent}%; transform: translateX(-50%); line-height: 1; white-space: nowrap; background: white; padding: 0 1px;">${entry.label}</span>`;
+            const anchorStyle = entry.anchor === 'middle'
+                ? 'transform: translateX(-50%);'
+                : '';
+            return `<span class="value value--xsmall" style="position: absolute; left: ${leftPercent}%; ${anchorStyle} line-height: 1; white-space: nowrap; background: white; padding: 0 1px;">${entry.label}</span>`;
         }).join('')}
             </div>
-        `;
+        ` : '';
 
         const yAxisLabelOverlay = `
             <div style="position: absolute; top: 0; right: 0; bottom: 0; width: 50px; z-index: 2;">
