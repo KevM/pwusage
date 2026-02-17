@@ -74,7 +74,15 @@ interface ThemeColors {
 
 interface TooltipProps {
     active?: boolean;
-    payload?: { value: number | string; payload: PowerData & { touName?: string; tariffId?: number; batterySoc?: number | null } }[];
+    payload?: {
+        value: number | string;
+        payload: PowerData & {
+            touName?: string;
+            tariffId?: number;
+            batterySoc?: number | null;
+            batterySocInterpolated?: number | null;
+        };
+    }[];
     label?: string | number;
     events?: (LoadEvent & { index: number; startMs: number; endMs: number })[];
     tariffs?: Record<number, string>;
@@ -200,10 +208,10 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, t
                         <span style={{ color: colors.grid, fontWeight: 'bold', fontSize: '14px' }}>{(Number(payload[0].payload.gridWatts) / 1000).toFixed(2)} kW</span>
                     </div>
                 )}
-                {typeof payload[0].payload.batterySoc === 'number' && (
+                {typeof payload[0].payload.batterySocInterpolated === 'number' && (
                     <div className="flex items-center justify-between gap-4 mb-1">
                         <span style={{ color: themeColors?.battery ?? colors.battery }}>Battery SoC</span>
-                        <span style={{ color: themeColors?.battery ?? colors.battery, fontWeight: 'bold', fontSize: '14px' }}>{payload[0].payload.batterySoc.toFixed(1)}%</span>
+                        <span style={{ color: themeColors?.battery ?? colors.battery, fontWeight: 'bold', fontSize: '14px' }}>{payload[0].payload.batterySocInterpolated.toFixed(1)}%</span>
                     </div>
                 )}
 
