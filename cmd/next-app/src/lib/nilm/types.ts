@@ -7,4 +7,5 @@ export interface PowerData {
     solarWatts?: number;
     batteryWatts?: number;
     gridWatts?: number;
+    batterySoc?: number | null;
 }

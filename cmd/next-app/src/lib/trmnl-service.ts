@@ -46,6 +46,10 @@ export class TrmnlService {
 
     private static readonly CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes for polled installations
 
+    invalidateInstallationCache(uuid: string) {
+        TrmnlService.getCache().delete(uuid);
+    }
+
     async updateInstallation(uuid: string, pluginSettingId: number) {
         await pool.query(`
             UPDATE "TrmnlInstallation"
@@ -76,7 +80,7 @@ export class TrmnlService {
         const { rows } = await pool.query(`
             SELECT * FROM "TrmnlInstallation" 
             WHERE site_id = $1 
-            ORDER BY uuid DESC NULLS LAST
+            ORDER BY (plugin_setting_id IS NOT NULL) DESC, created_at DESC, id DESC
             LIMIT 1
         `, [siteId]);
         return rows[0] as TrmnlInstallation | undefined;

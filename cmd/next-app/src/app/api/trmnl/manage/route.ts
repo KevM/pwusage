@@ -7,6 +7,24 @@ import { cookies } from 'next/headers';
 import { SiteService } from '@/lib/site-service';
 import { verifyTrmnlToken } from '@/lib/trmnl-auth';
 import { verifySiteToken } from '@/lib/auth-jwt';
+import {
+    extractTrmnlComponentConfig,
+    mergeTrmnlComponentConfigIntoInstallationJson,
+    normalizeTrmnlComponentConfig
+} from '@/lib/trmnl-component-config';
+
+function coercePositiveInt(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+        return value;
+    }
+    if (typeof value === 'string') {
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isInteger(parsed) && parsed > 0) {
+            return parsed;
+        }
+    }
+    return null;
+}
 
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
@@ -62,12 +80,16 @@ export async function GET(request: Request) {
     }
 
     if (!installation) {
-        return NextResponse.json({ site_id: null });
+        return NextResponse.json({
+            site_id: null,
+            component_config: normalizeTrmnlComponentConfig(null)
+        });
     }
 
     return NextResponse.json({
         site_id: installation.site_id,
-        plugin_setting_id: installation.plugin_setting_id
+        plugin_setting_id: installation.plugin_setting_id,
+        component_config: extractTrmnlComponentConfig(installation.json)
     });
 }
 
@@ -76,7 +98,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { uuid, site_id, token: trmnlToken } = body;
+        const { uuid, site_id, token: trmnlToken, plugin_setting_id: pluginSettingIdFromBody } = body;
+        const componentConfig = normalizeTrmnlComponentConfig(body.component_config);
 
         if (!uuid || !site_id) {
             return NextResponse.json({ error: 'Missing uuid or site_id' }, { status: 400 });
@@ -88,12 +111,15 @@ export async function POST(request: Request) {
 
         let isDeviceAuthorized = false;
         let isTargetSiteAuthorized = false;
+        let tokenPluginSettingId: number | null = null;
 
         // 1. Verify Trmnl JWT if present
         if (trmnlToken) {
             try {
-                await verifyTrmnlToken(trmnlToken, uuid);
+                const tokenPayload = await verifyTrmnlToken(trmnlToken, uuid);
                 isDeviceAuthorized = true;
+                tokenPluginSettingId = coercePositiveInt(tokenPayload.plugin_setting_id)
+                    ?? coercePositiveInt(tokenPayload.user?.plugin_setting_id);
             } catch (err) {
                 console.warn(`[TrmnlManage] JWT Verification Failed for ${uuid}:`, err);
                 // Don't return error yet, try method 2
@@ -180,20 +206,35 @@ export async function POST(request: Request) {
         }
 
         // Create or Update installation (UPSERT)
+        const trmnlService = new TrmnlService();
+        const existingInstallation = await trmnlService.getInstallationByUuid(uuid);
+        const mergedJson = mergeTrmnlComponentConfigIntoInstallationJson(
+            existingInstallation?.json ?? null,
+            componentConfig
+        );
+        const pluginSettingId = coercePositiveInt(pluginSettingIdFromBody)
+            ?? tokenPluginSettingId
+            ?? existingInstallation?.plugin_setting_id
+            ?? null;
+
         const query = `
-            INSERT INTO "TrmnlInstallation" (uuid, site_id)
-            VALUES ($1, $2)
+            INSERT INTO "TrmnlInstallation" (uuid, site_id, json, plugin_setting_id)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT(uuid) DO UPDATE SET 
-                site_id = EXCLUDED.site_id
+                site_id = EXCLUDED.site_id,
+                json = EXCLUDED.json,
+                plugin_setting_id = COALESCE(EXCLUDED.plugin_setting_id, "TrmnlInstallation".plugin_setting_id)
             RETURNING id
         `;
 
-        const { rows } = await pool.query(query, [uuid, site_id]);
+        const { rows } = await pool.query(query, [uuid, site_id, mergedJson, pluginSettingId]);
 
         if (rows.length === 0) {
             console.log(`[TrmnlManage] Failed to upsert installation for UUID ${uuid}.`);
             return NextResponse.json({ error: 'Failed to save installation' }, { status: 500 });
         }
+
+        trmnlService.invalidateInstallationCache(uuid);
 
         // Update refresh token in Site table (Source of Truth) if available
 

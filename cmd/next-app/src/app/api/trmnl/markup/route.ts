@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 
@@ -9,6 +9,7 @@ import { verifySiteAccess } from '@/lib/auth-checks';
 import QRCode from 'qrcode';
 import { TrmnlRenderer } from '@/lib/trmnl-renderer';
 import { wattsToKilowatts } from '@/lib/energy-utils';
+import { extractTrmnlComponentConfig, normalizeTrmnlComponentConfig } from '@/lib/trmnl-component-config';
 
 export const dynamic = 'force-dynamic';
 
@@ -99,10 +100,23 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const uuid = searchParams.get('uuid');
         const siteIdParam = searchParams.get('site_id');
+        const componentConfigParam = searchParams.get('component_config');
 
         let installation: import('@/lib/db').TrmnlInstallation | null = null;
         let site: import('@/lib/db').SiteWithTariffs | null = null;
         const repo = new EnergyRepo();
+        let componentConfig = extractTrmnlComponentConfig(null);
+
+        if (componentConfigParam) {
+            if (!siteIdParam || uuid) {
+                return NextResponse.json({ error: 'component_config override requires site_id preview mode' }, { status: 400 });
+            }
+            try {
+                componentConfig = normalizeTrmnlComponentConfig(JSON.parse(componentConfigParam));
+            } catch {
+                return NextResponse.json({ error: 'Invalid component_config payload' }, { status: 400 });
+            }
+        }
 
         if (uuid) {
             const result = await repo.getInstallationAndSite(uuid);
@@ -113,6 +127,9 @@ export async function GET(request: Request) {
 
             installation = result.installation;
             site = result.site;
+            if (!componentConfigParam) {
+                componentConfig = extractTrmnlComponentConfig(installation.json);
+            }
 
             // Verify Bearer Token
             const authHeader = request.headers.get('Authorization');
@@ -249,17 +266,17 @@ export async function GET(request: Request) {
             ? !refreshState.todayInFlight && (nowMs - refreshState.lastTodayRefreshAt >= TESLA_REFRESH_MIN_INTERVAL_MS)
             : false;
         const shouldRefreshLive = trmnlClient
-            ? !liveStatus && !refreshState.liveInFlight && (nowMs - refreshState.lastLiveRefreshAt >= TESLA_REFRESH_MIN_INTERVAL_MS)
+            ? !refreshState.liveInFlight && (nowMs - refreshState.lastLiveRefreshAt >= TESLA_REFRESH_MIN_INTERVAL_MS)
             : false;
 
-        // --- TESLA REFRESH (non-blocking background) ---
+        // --- TESLA REFRESH (lifecycle-bound background) ---
         if (trmnlClient && (shouldRefreshToday || shouldRefreshLive)) {
             const importer = new Importer(trmnlClient);
             const siteId = site.id;
             backgroundStatus = 'started';
             fetchStatus = hasCachedLiveStatus ? 'cached+refreshing' : 'refreshing';
 
-            void (async () => {
+            const backgroundRefresh = async () => {
                 try {
                     const tasks: Promise<void>[] = [];
 
@@ -305,7 +322,8 @@ export async function GET(request: Request) {
                 } catch (error) {
                     console.error(`[TrmnlMarkup] Background Tesla refresh failed:`, error);
                 }
-            })();
+            };
+            after(backgroundRefresh);
         } else if (hasCachedLiveStatus) {
             fetchStatus = 'cached';
         }
@@ -330,6 +348,8 @@ export async function GET(request: Request) {
             solarProduction: number;
             batteryChange: number;
             cost: number;
+            buyRate: number;
+            sellRate: number;
         }>();
         const touLabelCache = new Map<string, string>();
         const getTouLabel = (name: string): string => {
@@ -409,7 +429,9 @@ export async function GET(request: Request) {
                     gridUsage: 0,
                     solarProduction: 0,
                     batteryChange: 0,
-                    cost: 0
+                    cost: 0,
+                    buyRate,
+                    sellRate
                 };
                 aggregation.set(key, data);
             }
@@ -418,16 +440,18 @@ export async function GET(request: Request) {
             data.gridUsage += row.grid_power;
             data.solarProduction += row.solar_power;
             data.batteryChange += row.battery_power;
-
-            // Calculate cost for this 5-min block incrementally
-            const gridKwh = wattsToKilowatts(row.grid_power);
-            if (gridKwh >= 0) {
-                data.cost += gridKwh * buyRate;
-            } else {
-                data.cost += gridKwh * sellRate;
-            }
         }
         aggregationMs = Date.now() - aggregationStart;
+
+        // Compute each period cost from NET grid usage so displayed Grid and Cost stay consistent.
+        for (const data of aggregation.values()) {
+            const gridKwh = wattsToKilowatts(data.gridUsage);
+            if (gridKwh >= 0) {
+                data.cost = gridKwh * Math.abs(data.buyRate);
+            } else {
+                data.cost = -Math.abs(gridKwh) * Math.abs(data.sellRate);
+            }
+        }
 
         // Convert today totals to kWh
         todayGrid = wattsToKilowatts(todayGrid);
@@ -518,7 +542,8 @@ export async function GET(request: Request) {
             batteryStatus: batteryStatus,
             todayGrid: todayGrid,
             todaySolar: todaySolar,
-            seriesData: seriesData
+            seriesData: seriesData,
+            componentConfig
         };
 
         const layoutStart = Date.now();
@@ -539,6 +564,15 @@ export async function GET(request: Request) {
             ? (liveStatusAgeMs / 60000).toFixed(1)
             : 'none';
         const socAgeHeader = isSocStale ? `stale:${socAgeMinutes}` : socAgeMinutes;
+        const componentDebug = [
+            `lg:${componentConfig.showLiveGrid ? 1 : 0}`,
+            `lso:${componentConfig.showLiveSolar ? 1 : 0}`,
+            `lb:${componentConfig.showLiveBattery ? 1 : 0}`,
+            `ec:${componentConfig.showEnergyChart ? 1 : 0}`,
+            `soc:${componentConfig.showBatterySoc ? 1 : 0}`,
+            `bill:${componentConfig.showEstimatedBill ? 1 : 0}`,
+            `mode:${componentConfig.batterySocMode}`
+        ].join(',');
 
         const serverTiming = [
             `db_latest;dur=${dbLatestMs.toFixed(1)}`,
@@ -567,7 +601,8 @@ export async function GET(request: Request) {
                 'X-Debug-Live-Status': fetchStatus,
                 'X-Debug-Battery-SOC': batterySoc !== null ? String(batterySoc) : 'null',
                 'X-Data-Age-Minutes': dataAgeMinutes,
-                'X-SOC-Age-Minutes': socAgeHeader
+                'X-SOC-Age-Minutes': socAgeHeader,
+                'X-Component-Config': componentDebug
             }
         });
 

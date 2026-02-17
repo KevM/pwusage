@@ -1,6 +1,6 @@
 import { pool, SiteWithTariffs, TariffSeason, TariffSchedule } from './db';
 import { Schedule } from './schedule';
-import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo } from './tesla-client';
+import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry } from './tesla-client';
 import { EnergyRepo } from './energy-repo';
 import { UserRepo } from './user-repo';
 
@@ -19,6 +19,7 @@ export interface EnergyDataRow {
     solar_power: number;
     grid_power: number;
     battery_power: number;
+    battery_soc: number | null;
 }
 
 
@@ -335,8 +336,14 @@ export class Importer {
             const next = new Date(Math.min(cursor.getTime() + chunkMs, end.getTime()));
 
             const history = await this.client.getEnergyHistory(site.id, cursor, next, period, site.timezone);
+            let soeHistory: SoeHistoryEntry[] = [];
+            try {
+                soeHistory = await this.client.getSoeHistory(site.id, cursor, next, period, site.timezone);
+            } catch (error) {
+                console.warn(`[Importer] SOE history fetch failed for ${site.id} (${cursor.toISOString()}-${next.toISOString()})`, error);
+            }
             if (history && history.length > 0) {
-                const rows = await this.processHistory(null as unknown as PoolClient, site, history, period);
+                const rows = await this.processHistory(null as unknown as PoolClient, site, history, soeHistory, period);
                 allRows.push(...rows);
             }
             cursor = next;
@@ -571,6 +578,12 @@ export class Importer {
             }
             throw err;
         }
+        let soeHistory: SoeHistoryEntry[] = [];
+        try {
+            soeHistory = await this.client.getSoeHistory(site.id, start, actualEnd, period, site.timezone);
+        } catch (error) {
+            console.warn(`[Importer] SOE history fetch failed for ${site.id} (${start.toISOString()}-${actualEnd.toISOString()})`, error);
+        }
 
         // Update last_checked_at if we successfully called the API
         if (history && site.user_id) {
@@ -596,7 +609,7 @@ export class Importer {
 
                 // SURGICAL: We no longer delete the whole day. 
                 // We rely on ON CONFLICT DO UPDATE to refresh points and overwrite synthetic zeros.
-                const energyDatas = await this.processHistory(client, site, history, period);
+                const energyDatas = await this.processHistory(client, site, history, soeHistory, period);
 
                 // Surgical Filter: Tesla often returns more data than requested (e.g., the whole day).
                 // We only want to write the rows that fall within our requested window.
@@ -621,9 +634,19 @@ export class Importer {
         }
     }
 
-    private async processHistory(client: PoolClient, site: SiteWithTariffs, history: EnergyHistoryEntry[], period: string = 'day'): Promise<EnergyDataRow[]> {
+    private async processHistory(client: PoolClient, site: SiteWithTariffs, history: EnergyHistoryEntry[], soeHistory: SoeHistoryEntry[], period: string = 'day'): Promise<EnergyDataRow[]> {
         const schedule = new Schedule(site.tariffs, site.timezone);
         const results: EnergyDataRow[] = [];
+        const socByTimestamp = new Map<number, number>();
+        const socTimestamps: number[] = [];
+
+        for (const row of soeHistory) {
+            const ts = new Date(row.timestamp).getTime();
+            if (Number.isNaN(ts)) continue;
+            socByTimestamp.set(ts, row.percentage_charged);
+            socTimestamps.push(ts);
+        }
+        socTimestamps.sort((a, b) => a - b);
 
         for (let i = 0; i < history.length; i++) {
             const h = history[i];
@@ -659,6 +682,10 @@ export class Importer {
             let battery = batteryCharge;
             if (battery === 0) battery = -batteryDischarge;
 
+            const tsMs = ts.getTime();
+            const exactSoc = socByTimestamp.get(tsMs);
+            const nearestSoc = exactSoc ?? this.findNearestSoeValue(tsMs, socTimestamps, socByTimestamp);
+
             results.push({
                 site_id: site.id,
                 tariff_id: Number(tp.tariff.id),
@@ -666,10 +693,43 @@ export class Importer {
                 load_power: hHome * scale,
                 solar_power: hSolar * scale,
                 grid_power: grid * scale,
-                battery_power: battery * scale
+                battery_power: battery * scale,
+                battery_soc: nearestSoc
             });
         }
         return results;
+    }
+
+    private findNearestSoeValue(targetMs: number, sortedSoeTimestamps: number[], socByTimestamp: Map<number, number>): number | null {
+        if (sortedSoeTimestamps.length === 0) return null;
+
+        const maxDistanceMs = 5 * 60 * 1000;
+        let lo = 0;
+        let hi = sortedSoeTimestamps.length - 1;
+
+        while (lo < hi) {
+            const mid = Math.floor((lo + hi) / 2);
+            if (sortedSoeTimestamps[mid] < targetMs) lo = mid + 1;
+            else hi = mid;
+        }
+
+        const candidates: number[] = [];
+        candidates.push(sortedSoeTimestamps[lo]);
+        if (lo > 0) candidates.push(sortedSoeTimestamps[lo - 1]);
+        if (lo + 1 < sortedSoeTimestamps.length) candidates.push(sortedSoeTimestamps[lo + 1]);
+
+        let bestTimestamp: number | null = null;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (const candidate of candidates) {
+            const distance = Math.abs(candidate - targetMs);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestTimestamp = candidate;
+            }
+        }
+
+        if (bestTimestamp === null || bestDistance > maxDistanceMs) return null;
+        return socByTimestamp.get(bestTimestamp) ?? null;
     }
 
 
@@ -802,7 +862,7 @@ export class Importer {
             let pIdx = 1;
 
             for (const row of chunk) {
-                placeholders.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, $${pIdx + 4}, $${pIdx + 5}, $${pIdx + 6})`);
+                placeholders.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, $${pIdx + 4}, $${pIdx + 5}, $${pIdx + 6}, $${pIdx + 7})`);
                 values.push(
                     row.site_id,
                     row.tariff_id,
@@ -810,19 +870,21 @@ export class Importer {
                     row.load_power,
                     row.solar_power,
                     row.grid_power,
-                    row.battery_power
+                    row.battery_power,
+                    row.battery_soc
                 );
-                pIdx += 7;
+                pIdx += 8;
             }
 
             const query = `
-                INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power) 
+                INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc) 
                 VALUES ${placeholders.join(', ')}
                 ON CONFLICT(timestamp, site_id, tariff_id) DO UPDATE SET
                     load_power=EXCLUDED.load_power,
                     solar_power=EXCLUDED.solar_power,
                     grid_power=EXCLUDED.grid_power,
-                    battery_power=EXCLUDED.battery_power
+                    battery_power=EXCLUDED.battery_power,
+                    battery_soc=COALESCE(EXCLUDED.battery_soc, "EnergyData".battery_soc)
             `;
 
             await client.query(query, values);

@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
+import {
+    extractTrmnlComponentConfig,
+    mergeTrmnlComponentConfigIntoInstallationJson
+} from '@/lib/trmnl-component-config';
 
 export async function POST(request: Request) {
     try {
@@ -29,8 +33,17 @@ export async function POST(request: Request) {
 
         const existing = await service.getInstallationByUuid(user.uuid);
         if (existing) {
+            const mergedInstallationJson = mergeTrmnlComponentConfigIntoInstallationJson(
+                user,
+                extractTrmnlComponentConfig(existing.json)
+            );
             // Update with new details
-            await service.createInstallation(existing.site_id, user.uuid, user.plugin_setting_id, user);
+            await service.createInstallation(
+                existing.site_id,
+                user.uuid,
+                user.plugin_setting_id,
+                mergedInstallationJson
+            );
 
             // Update user email if not present
             if (user.email && existing.site_id) {
@@ -61,13 +74,22 @@ export async function POST(request: Request) {
             }
 
             if (pending) {
+                const mergedInstallationJson = mergeTrmnlComponentConfigIntoInstallationJson(
+                    user,
+                    extractTrmnlComponentConfig(pending.json)
+                );
                 console.log(`[TrmnlWebhook] Claiming pending installation (ID: ${pending.id}) for plugin ${user.plugin_setting_id} / UUID ${user.uuid}`);
                 // If it was a "loose" pending record, it might not have the plugin_setting_id set either.
                 // We update it with BOTH.
                 // We pass the pending record's ID to ensure we update the correct row if we add a method for ID-based update, 
                 // OR we rely on claimPending... but claimPendingPluginId queries by plugin_setting_id.
                 // We need a new method to claim by Row ID.
-                await service.claimPendingInstallationById(pending.id, user.uuid, user.plugin_setting_id, user);
+                await service.claimPendingInstallationById(
+                    pending.id,
+                    user.uuid,
+                    user.plugin_setting_id,
+                    mergedInstallationJson
+                );
 
                 // Update user email if not present
                 if (user.email && pending.site_id) {

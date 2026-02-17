@@ -200,7 +200,9 @@ export class EnergyRepo {
             if (gridKwh >= 0) {
                 data.cost = gridKwh * buyRate;
             } else {
-                data.cost = gridKwh * sellRate;
+                // Exported energy should always be a credit (negative cost),
+                // regardless of whether sell_rate is stored as positive or negative.
+                data.cost = -Math.abs(gridKwh) * Math.abs(sellRate);
             }
         }
 
@@ -269,105 +271,6 @@ export class EnergyRepo {
     async hasData(siteId: string): Promise<boolean> {
         const { rows } = await pool.query('SELECT 1 FROM "EnergyData" WHERE site_id = $1 LIMIT 1', [siteId]);
         return rows.length > 0;
-    }
-
-    async getHourlyEnergyData(siteId: string, dateStr: string, targetTimezone?: string): Promise<Array<{
-        hour: number;
-        homeUsage: number;
-        solarProduction: number;
-        gridUsage: number;
-        batteryUsage: number;
-        batterySoc: number | null;
-    }>> {
-        if (!targetTimezone) {
-            const start = new Date(dateStr + 'T00:00:00Z');
-            const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-
-            const rowsResult = await pool.query(`
-                SELECT timestamp, load_power, solar_power, grid_power, battery_power, battery_soc
-                FROM "EnergyData"
-                WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
-            `, [siteId, start, end]);
-
-            const buckets = new Map<number, {
-                homeUsage: number; solarProduction: number; gridUsage: number; batteryUsage: number;
-            }>();
-
-            for (const row of rowsResult.rows) {
-                const ts = new Date(row.timestamp);
-                const hr = ts.getUTCHours();
-
-                let bucket = buckets.get(hr);
-                if (!bucket) {
-                    bucket = { homeUsage: 0, solarProduction: 0, gridUsage: 0, batteryUsage: 0 };
-                    buckets.set(hr, bucket);
-                }
-
-                bucket.homeUsage += row.load_power;
-                bucket.solarProduction += row.solar_power;
-                bucket.gridUsage += row.grid_power;
-                bucket.batteryUsage += row.battery_power;
-            }
-
-            const sortedHours = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]);
-            return sortedHours.map(([hour, bucket]) => ({
-                hour,
-                homeUsage: wattsToKilowatts(bucket.homeUsage),
-                solarProduction: wattsToKilowatts(bucket.solarProduction),
-                gridUsage: wattsToKilowatts(bucket.gridUsage),
-                batteryUsage: wattsToKilowatts(bucket.batteryUsage),
-                batterySoc: null
-            }));
-        }
-
-        const sql = `
-            WITH converted AS (
-                SELECT 
-                    timestamp,
-                    timestamp AT TIME ZONE $3 as target_ts,
-                    load_power, solar_power, grid_power, battery_power
-                FROM "EnergyData"
-                WHERE site_id = $1
-                AND timestamp >= ($2::timestamptz - INTERVAL '1 day')
-                AND timestamp <= ($2::timestamptz + INTERVAL '1 day')
-            )
-            SELECT
-                EXTRACT(HOUR FROM target_ts) as hour,
-                load_power, solar_power, grid_power, battery_power
-            FROM converted
-            WHERE (target_ts AT TIME ZONE $3)::date = $2::date
-        `;
-
-        const qRes = await pool.query(sql, [siteId, dateStr, targetTimezone]);
-
-        const buckets = new Map<number, {
-            homeUsage: number; solarProduction: number; gridUsage: number; batteryUsage: number;
-        }>();
-
-        for (const row of qRes.rows) {
-            const hr = parseInt(row.hour);
-
-            let bucket = buckets.get(hr);
-            if (!bucket) {
-                bucket = { homeUsage: 0, solarProduction: 0, gridUsage: 0, batteryUsage: 0 };
-                buckets.set(hr, bucket);
-            }
-
-            bucket.homeUsage += row.load_power;
-            bucket.solarProduction += row.solar_power;
-            bucket.gridUsage += row.grid_power;
-            bucket.batteryUsage += row.battery_power;
-        }
-
-        const sortedHours = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]);
-        return sortedHours.map(([hour, bucket]) => ({
-            hour,
-            homeUsage: wattsToKilowatts(bucket.homeUsage),
-            solarProduction: wattsToKilowatts(bucket.solarProduction),
-            gridUsage: wattsToKilowatts(bucket.gridUsage),
-            batteryUsage: wattsToKilowatts(bucket.batteryUsage),
-            batterySoc: null
-        }));
     }
 
     async getLatestEnergyData(siteId: string): Promise<{ timestamp: Date } | null> {
@@ -507,6 +410,7 @@ export class EnergyRepo {
             solar_power: Number(row.solar_power),
             grid_power: Number(row.grid_power),
             battery_power: Number(row.battery_power),
+            battery_soc: row.battery_soc === null || row.battery_soc === undefined ? null : Number(row.battery_soc),
         })) as EnergyData[];
     }
 
@@ -546,6 +450,7 @@ export class EnergyRepo {
             solar_power: Number(row.solar_power),
             grid_power: Number(row.grid_power),
             battery_power: Number(row.battery_power),
+            battery_soc: row.battery_soc === null || row.battery_soc === undefined ? null : Number(row.battery_soc),
         })) as EnergyData[];
     }
 

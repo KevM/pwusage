@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import { verifySiteAccess } from '@/lib/auth-checks';
+import { EnergyRepo } from '@/lib/energy-repo';
+import {
+    DEFAULT_TRMNL_COMPONENT_CONFIG,
+    mergeTrmnlComponentConfigIntoInstallationJson
+} from '@/lib/trmnl-component-config';
 
 export async function POST(request: Request) {
     try {
@@ -11,7 +16,6 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Missing code or site_id' }, { status: 400 });
         }
 
-        // TODO: Get these from env vars or settings
         const clientId = process.env.TRMNL_CLIENT_ID;
         const clientSecret = process.env.TRMNL_CLIENT_SECRET;
 
@@ -24,18 +28,19 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
         }
 
-        // We act on behalf of the site using its stored credentials (if needed later),
-        // but for setup we mainly just need to create the TrmnlInstallation in the DB
-        // which links site_id <> trmnl_id. We don't interact with Tesla API here except maybe to
-        // verify the site exists (database check).
-
-        // TODO: Could verify site exists in DB to be safe
-        // const repo = new EnergyRepo();
-        // const site = await repo.getSite(site_id);
-        // if (!site) ...
+        const repo = new EnergyRepo();
+        const site = await repo.getSite(site_id);
+        if (!site) {
+            console.warn(`[TrmnlSetup] Site ${site_id} not found during setup`);
+            return NextResponse.json({ error: 'Site not found' }, { status: 404 });
+        }
 
         // Save installation
         const service = new TrmnlService();
+        const defaultInstallationJson = mergeTrmnlComponentConfigIntoInstallationJson(
+            null,
+            DEFAULT_TRMNL_COMPONENT_CONFIG
+        );
 
         const tokenData = await service.exchangeCodeForToken(code, clientId, clientSecret);
         const accessToken = tokenData.access_token;
@@ -80,7 +85,13 @@ export async function POST(request: Request) {
                 // If we have a plugin_setting_id (from frontend), we use it.
                 if (body.plugin_setting_id) {
                     console.log(`[TrmnlSetup] Saving 'Pending' installation linked to Plugin ID: ${body.plugin_setting_id}`);
-                    await service.createInstallation(site_id, null, parseInt(body.plugin_setting_id), null, accessToken);
+                    await service.createInstallation(
+                        site_id,
+                        null,
+                        parseInt(body.plugin_setting_id),
+                        defaultInstallationJson,
+                        accessToken
+                    );
                     return NextResponse.json({ success: true, status: 'pending_webhook' });
                 }
 
@@ -89,7 +100,7 @@ export async function POST(request: Request) {
                 // The next Webhook to arrive (which will be for this new plugin) will claim it.
                 // This assumes single-user / sequential installation flow, which is true for this personal app.
                 console.warn('[TrmnlSetup] Unable to identify user/plugin. Saving generic Pending record for Webhook to claim.');
-                await service.createInstallation(site_id, null, null, null, accessToken);
+                await service.createInstallation(site_id, null, null, defaultInstallationJson, accessToken);
                 return NextResponse.json({ success: true, status: 'pending_loose' });
 
                 /*
@@ -103,7 +114,13 @@ export async function POST(request: Request) {
         // Create/Update installation with Site ID and UUID
         // We store the Trmnl Access Token here for verification, NOT in the Site table.
         // The Site table stores Tesla Tokens.
-        await service.createInstallation(site_id, deviceUuid, body.plugin_setting_id ? parseInt(body.plugin_setting_id) : null, null, accessToken);
+        await service.createInstallation(
+            site_id,
+            deviceUuid,
+            body.plugin_setting_id ? parseInt(body.plugin_setting_id) : null,
+            defaultInstallationJson,
+            accessToken
+        );
 
         return NextResponse.json({ success: true });
     } catch (error) {

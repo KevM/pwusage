@@ -1,10 +1,10 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
-import Link from 'next/link';
-import Image from 'next/image';
 import { TariffList } from './TariffList';
+import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
 
 
 import { SiteWithTariffs, TrmnlInstallation } from '@/lib/db';
@@ -15,8 +15,114 @@ interface SettingsViewProps {
     installation: TrmnlInstallation | undefined;
 }
 
+function parseInstallationJson(value: unknown): Record<string, unknown> | null {
+    if (!value) return null;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed as Record<string, unknown>;
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
+    if (typeof value === 'object' && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+    }
+
+    return null;
+}
+
+function coercePositiveInt(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+        return value;
+    }
+    if (typeof value === 'string') {
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isInteger(parsed) && parsed > 0) {
+            return parsed;
+        }
+    }
+    return null;
+}
+
+function extractPluginSettingId(installation: TrmnlInstallation | undefined): number | null {
+    if (!installation) return null;
+    if (installation.plugin_setting_id) return installation.plugin_setting_id;
+
+    const json = parseInstallationJson(installation.json);
+    if (!json) return null;
+
+    const topLevel = coercePositiveInt(json.plugin_setting_id);
+    if (topLevel) return topLevel;
+
+    const user = json.user;
+    if (user && typeof user === 'object' && !Array.isArray(user)) {
+        const nested = coercePositiveInt((user as Record<string, unknown>).plugin_setting_id);
+        if (nested) return nested;
+    }
+
+    const callbackUrl = typeof json.installation_callback_url === 'string' ? json.installation_callback_url : null;
+    if (callbackUrl) {
+        const match = callbackUrl.match(/\/plugin_settings\/(\d+)/);
+        if (match) {
+            return coercePositiveInt(match[1]);
+        }
+    }
+
+    return null;
+}
+
 export function SettingsView({ site, installation }: SettingsViewProps) {
-    // Trmnl Preview logic extracted from Settings Page
+    const [previewHtml, setPreviewHtml] = useState('');
+    const [previewError, setPreviewError] = useState('');
+    const [previewLoading, setPreviewLoading] = useState(true);
+    const pluginSettingId = extractPluginSettingId(installation);
+
+    useEffect(() => {
+        let active = true;
+
+        const fetchPreview = async () => {
+            setPreviewLoading(true);
+            setPreviewError('');
+            setPreviewHtml('');
+
+            try {
+                const res = await fetch(`/api/trmnl/markup?site_id=${site.id}`, {
+                    credentials: 'include'
+                });
+                const data = await res.json();
+                if (!active) return;
+
+                if (!res.ok) {
+                    const message = typeof data?.error === 'string' ? data.error : 'Failed to load preview';
+                    setPreviewError(message);
+                    return;
+                }
+
+                if (typeof data.markup === 'string' && data.markup.length > 0) {
+                    setPreviewHtml(data.markup);
+                } else {
+                    setPreviewError('Preview response missing markup');
+                }
+            } catch (err) {
+                if (!active) return;
+                setPreviewError((err as Error).message);
+            } finally {
+                if (active) setPreviewLoading(false);
+            }
+        };
+
+        fetchPreview();
+
+        return () => {
+            active = false;
+        };
+    }, [site.id]);
+
     return (
         <div className="w-full max-w-5xl mx-auto">
             <h1 className="text-3xl font-bold mb-8">Site Settings</h1>
@@ -43,27 +149,19 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                 </p>
 
                 <div className="mb-8">
-                    <div className="relative aspect-video w-full max-w-lg mx-auto bg-gray-100 dark:bg-gray-900 rounded-lg overflow-hidden border border-gray-200 dark:border-gray-800 shadow-sm mb-4">
-                        <Image
-                            src="/trmn-plugin.png"
-                            alt="Trmnl E-ink Display showing Energy Dashboard"
-                            fill
-                            className="object-cover"
-                        />
-                    </div>
-
-                    <div className="text-center mb-4">
-                        <Link href={`/site/${site.id}/trmnl/preview`} className="text-blue-600 hover:underline font-medium text-sm" target="_blank">
-                            View Live Device Preview &rarr;
-                        </Link>
-                    </div>
+                    <TrmnlLivePreview
+                        previewHtml={previewHtml}
+                        previewError={previewError}
+                        previewLoading={previewLoading}
+                        hasSource={true}
+                    />
                 </div>
 
                 <div className="flex gap-4 flex-col sm:flex-row">
                     {installation ? (
                         <a
-                            href={installation.plugin_setting_id
-                                ? `https://trmnl.com/plugin_settings/${installation.plugin_setting_id}/edit`
+                            href={pluginSettingId
+                                ? `https://trmnl.com/plugin_settings/${pluginSettingId}/edit`
                                 : 'https://trmnl.com/dashboard'}
                             target="_blank"
                             className="flex-1 bg-gray-800 text-white px-4 py-2 rounded text-center hover:bg-gray-700 transition-colors font-semibold"

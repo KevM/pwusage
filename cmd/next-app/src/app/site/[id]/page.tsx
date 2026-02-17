@@ -143,8 +143,6 @@ export default async function SitePage({ params, searchParams }: {
         dateStr = `${year}-${month}-${day}`;
     }
 
-    // const hourlyData = await repo.getHourlyEnergyData(id, dateStr); // Unused
-
     // Calculate period based on billing start day
     const billingDay = finalSite.billing_start_day || 1;
 

@@ -4,6 +4,7 @@ import React from 'react';
 import {
     LineChart,
     Line,
+    Area,
     XAxis,
     YAxis,
     CartesianGrid,
@@ -14,6 +15,7 @@ import {
 } from 'recharts';
 import { PowerData } from '@/lib/nilm/types';
 import { LoadEvent } from '@/lib/nilm/load-detection';
+import { buildSocCheckpoints } from '@/lib/soc-checkpoints';
 
 interface NILMChartProps {
     data: PowerData[];
@@ -61,24 +63,36 @@ interface CustomTickProps {
 interface ThemeColors {
     gridLines: string;
     axis: string;
-    line: string;
     cursor: string;
     text: string;
     solar: string;
     battery: string;
+    soc: string;
     load: string;
     gridTrace: string;
 }
 
 interface TooltipProps {
     active?: boolean;
-    payload?: { value: number | string; payload: PowerData & { touName?: string; tariffId?: number } }[];
+    payload?: { value: number | string; payload: PowerData & { touName?: string; tariffId?: number; batterySoc?: number | null } }[];
     label?: string | number;
     events?: (LoadEvent & { index: number; startMs: number; endMs: number })[];
     tariffs?: Record<number, string>;
     isDarkMode?: boolean;
 
     themeColors?: ThemeColors;
+}
+
+function BatteryGlyph({ level, color, stroke }: { level: number; color: string; stroke: string }) {
+    const clamped = Math.max(0, Math.min(100, level));
+    const fillWidth = (clamped / 100) * 14;
+    return (
+        <svg width="22" height="13" viewBox="0 0 22 13" aria-hidden="true">
+            <rect x="1" y="1.5" width="16" height="10" rx="1.8" fill="none" stroke={stroke} strokeWidth="1.4" />
+            <rect x="17.5" y="4" width="3" height="5" rx="1" fill={stroke} />
+            <rect x="2.5" y="3" width={fillWidth} height="7" rx="0.8" fill={color} />
+        </svg>
+    );
 }
 
 const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, themeColors, siteTimezone, displayMode }: TooltipProps & { siteTimezone?: string, displayMode?: string }) => {
@@ -133,7 +147,6 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, t
             grid: themeColors ? themeColors.gridTrace : (isDarkMode ? '#A67B5B' : '#6F4E37'), // Fallback to avoid crash if themeColors missing
         };
 
-        // STYLING NOTE: Using inline styles for background AND TEXT to force compliance on Safari
         return (
             <div
                 className="rounded-xl shadow-2xl z-50 min-w-[200px]"
@@ -187,6 +200,12 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, t
                         <span style={{ color: colors.grid, fontWeight: 'bold', fontSize: '14px' }}>{(Number(payload[0].payload.gridWatts) / 1000).toFixed(2)} kW</span>
                     </div>
                 )}
+                {typeof payload[0].payload.batterySoc === 'number' && (
+                    <div className="flex items-center justify-between gap-4 mb-1">
+                        <span style={{ color: themeColors?.battery ?? colors.battery }}>Battery SoC</span>
+                        <span style={{ color: themeColors?.battery ?? colors.battery, fontWeight: 'bold', fontSize: '14px' }}>{payload[0].payload.batterySoc.toFixed(1)}%</span>
+                    </div>
+                )}
 
                 {activeEvent && (
                     <div className="mt-3 pt-3 border-t -mx-4 px-4 pb-1" style={{ backgroundColor: colors.loadBg, borderColor: colors.border }}>
@@ -233,8 +252,8 @@ const CustomTick = ({ x, y, payload, xAxisConfig, themeColors, siteTimezone, dis
     const p: Record<string, string> = {};
     parts.forEach(part => p[part.type] = part.value);
 
-    const hour = parseInt(p.hour);
-    const minute = parseInt(p.minute);
+    const hour = parseInt(p.hour, 10);
+    const minute = parseInt(p.minute, 10);
 
     const isTransition = xAxisConfig.transitionTimes.has(time);
     const isWholeHour = minute === 0;
@@ -277,6 +296,7 @@ const CustomTick = ({ x, y, payload, xAxisConfig, themeColors, siteTimezone, dis
 
 export default function NILMChart({ data, events, tariffs, highlightedEvent, selectedEvent, onEventClick, isDarkMode = true, siteTimezone, displayMode }: NILMChartProps) {
     const [hoverTime, setHoverTime] = React.useState<number | null>(null);
+    const [isCompactSocView, setIsCompactSocView] = React.useState(false);
     const [visibleSeries, setVisibleSeries] = React.useState({
         load: true,
         solar: true,
@@ -298,27 +318,33 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         return visibleSeries[key] && Object.values(visibleSeries).filter(Boolean).length <= 1;
     };
 
-    // Theme Colors
+    React.useEffect(() => {
+        const media = window.matchMedia('(max-width: 1024px)');
+        const update = () => setIsCompactSocView(media.matches);
+        update();
+        media.addEventListener('change', update);
+        return () => media.removeEventListener('change', update);
+    }, []);
+
+    const sharedYAxisWidth = 72;
+    const sharedChartMargin = { top: 0, right: 10, left: 0, bottom: 0 };
+
     const themeColors = React.useMemo(() => ({
         gridLines: isDarkMode ? "#374151" : "#e5e7eb",
         axis: isDarkMode ? "#9CA3AF" : "#6B7280",
-        line: isDarkMode ? "#22d3ee" : "#0891b2", // Cyan-400 vs Cyan-600
         cursor: isDarkMode ? "#6B7280" : "#9CA3AF",
         text: isDarkMode ? "#9CA3AF" : "#6B7280",
         solar: isDarkMode ? "#fbbf24" : "#f59e0b",
         battery: isDarkMode ? "#4ade80" : "#10b981",
+        soc: isDarkMode ? "#86efac" : "#166534",
         load: isDarkMode ? "#c084fc" : "#9333ea", // Purple-400 / Purple-600
         gridTrace: isDarkMode ? "#A67B5B" : "#6F4E37"  // Cocoa Brown (Dark/Light)
     }), [isDarkMode]);
 
-    // Helper to get effective time for display
     const getDisplayTime = React.useCallback((val: string | Date | number) => {
-        // We receive real UTC timestamps (e.g. "2023-01-01T12:00:00.000Z").
-        // We just parse it. The formatting hooks will handle the timezone conversion.
         return parseDate(val);
     }, []);
 
-    // Pre-process events for performance
     const processedEvents = React.useMemo(() => {
         return events.map((e, index) => ({
             ...e,
@@ -328,24 +354,75 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         }));
     }, [events, getDisplayTime]);
 
-    const formattedData = React.useMemo(() => data.map(d => {
-        const dt = getDisplayTime(d.timestamp);
-        return {
-            ...d,
-            time: dt.getTime(),
-            datetime: dt.toLocaleString(),
-        };
-    }), [data, getDisplayTime]);
+    const formattedData = React.useMemo(() => {
+        const baseRows = data.map(d => {
+            const dt = getDisplayTime(d.timestamp);
+            return {
+                ...d,
+                time: dt.getTime(),
+                datetime: dt.toLocaleString(),
+                batterySocInterpolated: typeof d.batterySoc === 'number' ? d.batterySoc : null as number | null
+            };
+        });
 
-    // ... tariffRegions and xAxisConfig logic unchanged ...
+        const knownIndexes: number[] = [];
+        for (let i = 0; i < baseRows.length; i++) {
+            if (typeof baseRows[i].batterySocInterpolated === 'number') knownIndexes.push(i);
+        }
+        if (knownIndexes.length === 0) return baseRows;
 
-    // Calculate Tariff Regions
+        const firstKnown = knownIndexes[0];
+        const lastKnown = knownIndexes[knownIndexes.length - 1];
+
+        // Extend edge segments with nearest known value so the strip stays continuous.
+        for (let i = 0; i < firstKnown; i++) {
+            baseRows[i].batterySocInterpolated = baseRows[firstKnown].batterySocInterpolated;
+        }
+        for (let i = lastKnown + 1; i < baseRows.length; i++) {
+            baseRows[i].batterySocInterpolated = baseRows[lastKnown].batterySocInterpolated;
+        }
+
+        // Fill interior gaps with linear interpolation between known samples.
+        for (let k = 0; k < knownIndexes.length - 1; k++) {
+            const leftIdx = knownIndexes[k];
+            const rightIdx = knownIndexes[k + 1];
+            const left = baseRows[leftIdx].batterySocInterpolated;
+            const right = baseRows[rightIdx].batterySocInterpolated;
+            if (left === null || right === null) continue;
+
+            const span = rightIdx - leftIdx;
+            if (span <= 1) continue;
+
+            for (let i = leftIdx + 1; i < rightIdx; i++) {
+                const t = (i - leftIdx) / span;
+                baseRows[i].batterySocInterpolated = left + (right - left) * t;
+            }
+        }
+
+        // Apply a light centered moving average to reduce visual stair-stepping.
+        const windowRadius = 2;
+        for (let i = 0; i < baseRows.length; i++) {
+            let sum = 0;
+            let count = 0;
+            for (let j = i - windowRadius; j <= i + windowRadius; j++) {
+                if (j < 0 || j >= baseRows.length) continue;
+                const v = baseRows[j].batterySocInterpolated;
+                if (typeof v === 'number') {
+                    sum += v;
+                    count++;
+                }
+            }
+            baseRows[i].batterySocInterpolated = count > 0 ? sum / count : null;
+        }
+
+        return baseRows;
+    }, [data, getDisplayTime]);
+
     const tariffRegions = React.useMemo(() => {
         if (!formattedData.length) return [];
         const regions: { start: number, end: number, name: string }[] = [];
 
         let currentStart = formattedData[0].time;
-        // Prefer touName (calculated by server), then fall back to tariffId lookup
         let currentName = formattedData[0].touName || (formattedData[0].tariffId ? tariffs?.[formattedData[0].tariffId] : 'Unknown');
 
         for (let i = 1; i < formattedData.length; i++) {
@@ -358,12 +435,10 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                     end: point.time,
                     name: currentName || 'Unknown'
                 });
-                // Start new region
                 currentStart = point.time;
                 currentName = pointExample;
             }
         }
-        // Push last region
         if (formattedData.length > 0) {
             const lastPoint = formattedData[formattedData.length - 1];
             const lastName = lastPoint.touName || (lastPoint.tariffId != null ? tariffs?.[lastPoint.tariffId] : undefined) || 'Unknown';
@@ -384,19 +459,14 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         const ticks = new Set<number>();
         const transitionTimes = new Set<number>();
 
-        // 1. Add Tariff Transitions
         tariffRegions.forEach(r => {
             ticks.add(r.start);
             transitionTimes.add(r.start);
-            // We usually don't label 'end' of last region if it's just end of data
         });
 
-        // 2. Add Whole Hours
-        // We want whole hours IN THE SITE TIMEZONE
         const tz = (displayMode === 'SITE' && siteTimezone) ? siteTimezone : undefined;
         const startDate = new Date(start);
 
-        // Adjust to previous whole hour in TZ
         const fmt = new Intl.DateTimeFormat('en-US', {
             year: 'numeric', month: 'numeric', day: 'numeric',
             hour: 'numeric', minute: 'numeric', second: 'numeric',
@@ -404,12 +474,9 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         });
         const parts = fmt.formatToParts(startDate);
         const p: Record<string, number> = {};
-        parts.forEach(part => { if (part.type !== 'literal') p[part.type] = parseInt(part.value); });
+        parts.forEach(part => { if (part.type !== 'literal') p[part.type] = parseInt(part.value, 10); });
 
-        // Create a date that is midnight UTC, then shift it?
-        // Actually, easier to just iterate and check.
         let current = start;
-        // Align to hour boundary
         const minuteOffset = (p.minute || 0) * 60 * 1000;
         if (minuteOffset > 0) current += (3600 * 1000 - minuteOffset);
 
@@ -424,6 +491,47 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         };
     }, [formattedData, tariffRegions, displayMode, siteTimezone]);
 
+    const socCheckpoints = React.useMemo(() => {
+        if (formattedData.length === 0) return [];
+
+        const tz = (displayMode === 'SITE' && siteTimezone) ? siteTimezone : undefined;
+        const hmFormatter = new Intl.DateTimeFormat('en-US', {
+            hour: 'numeric',
+            minute: 'numeric',
+            hour12: false,
+            timeZone: tz
+        });
+
+        const samples = formattedData
+            .map((row) => {
+                if (typeof row.batterySocInterpolated !== 'number') return null;
+                const parts = hmFormatter.formatToParts(row.time);
+                const p: Record<string, string> = {};
+                parts.forEach((part) => { p[part.type] = part.value; });
+                const hour = parseInt(p.hour, 10);
+                const minute = parseInt(p.minute, 10);
+                return {
+                    time: row.time,
+                    soc: row.batterySocInterpolated,
+                    isAnchor: minute === 0 && hour % 4 === 0
+                };
+            })
+            .filter((row): row is { time: number; soc: number; isAnchor: boolean } => row !== null);
+
+        if (samples.length === 0) return [];
+        const anchorTimestamps = samples.filter((s) => s.isAnchor).map((s) => s.time);
+        return buildSocCheckpoints({
+            samples: samples.map((s) => ({ timestamp: s.time, soc: s.soc })),
+            startTime: samples[0].time,
+            endTime: samples[samples.length - 1].time,
+            anchorTimestamps,
+            baseAnchorMs: 4 * 60 * 60 * 1000,
+            rapidAnchorMs: 2 * 60 * 60 * 1000,
+            deltaThreshold: 20,
+            rapidSegmentDeltaThreshold: 20
+        });
+    }, [formattedData, displayMode, siteTimezone]);
+
 
 
 
@@ -435,9 +543,12 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         );
     }
 
+    const socMinTime = formattedData[0]?.time ?? 0;
+    const socMaxTime = formattedData[formattedData.length - 1]?.time ?? socMinTime;
+    const socRange = Math.max(1, socMaxTime - socMinTime);
+
     return (
         <div className="w-full h-full">
-            {/* Custom Legend / Toggles */}
             <div className="flex flex-wrap items-center gap-4 mb-4 text-xs font-medium select-none">
                 <label
                     className={`flex items-center gap-2 cursor-pointer transition-opacity ${visibleSeries.load ? 'opacity-100' : 'opacity-40 hover:opacity-60'} ${isToggleDisabled('load') ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -512,15 +623,17 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                 </label>
             </div>
 
-            <div style={{ width: '100%', height: 460 }}>
+            <div style={{ width: '100%', height: 520 }}>
                 <style>{`
                 .recharts-wrapper, .recharts-surface, .recharts-layer {
                     outline: none !important;
                 }
             `}</style>
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="82%">
                     <LineChart
                         data={formattedData}
+                        syncId="history-power-and-soc"
+                        margin={sharedChartMargin}
                         onMouseMove={(state) => {
                             if (state.isTooltipActive && state.activeLabel) {
                                 setHoverTime(Number(state.activeLabel));
@@ -537,13 +650,14 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                             domain={['dataMin', 'dataMax']}
                             ticks={xAxisConfig.ticks}
                             tick={<CustomTick xAxisConfig={xAxisConfig} themeColors={themeColors} siteTimezone={siteTimezone} displayMode={displayMode} />}
-                            interval={0} // Force render all custom ticks
+                            interval={0}
                             stroke={themeColors.axis}
                             height={40}
                         />
                         <YAxis
                             stroke={themeColors.axis}
                             tickFormatter={(val) => `${(val / 1000).toFixed(1)} kW`}
+                            width={sharedYAxisWidth}
                         />
 
                         {/* Tariff Background Regions - Rendered FIRST to be behind lines */}
@@ -643,19 +757,16 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                             cursor={{ stroke: themeColors.cursor, strokeWidth: 1, strokeDasharray: '3 3' }}
                             wrapperStyle={{ outline: 'none' }}
                         />
-                        {/* Hiding default Legend since we have custom controls */}
-                        {/* <Legend /> */}
-
                         <Line
                             type="linear"
                             dataKey="powerWatts"
                             name="Load Power (kW)"
-                            stroke={themeColors.load} // Purple
+                            stroke={themeColors.load}
                             dot={false}
                             strokeWidth={2}
                             animationDuration={500}
                             hide={!visibleSeries.load}
-                            isAnimationActive={false} // Disable animation for improved responsiveness
+                            isAnimationActive={false}
                         />
 
                         <Line
@@ -696,6 +807,84 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
 
                     </LineChart>
                 </ResponsiveContainer>
+                {isCompactSocView ? (
+                    <div className="relative w-full h-[54px] mt-1">
+                        <div
+                            className="absolute top-1 bottom-0"
+                            style={{ left: `${sharedYAxisWidth}px`, right: '10px' }}
+                        >
+                            {socCheckpoints.map((cp, idx) => {
+                                const marker = cp.delta === null ? '' : (cp.delta >= 0 ? '▲' : '▼');
+                                const markerColor = cp.delta === null ? themeColors.text : (cp.delta >= 0 ? themeColors.soc : '#b91c1c');
+                                const isFirst = idx === 0;
+                                const isLast = idx === socCheckpoints.length - 1;
+                                const xTransform = isFirst ? 'none' : (isLast ? 'translateX(-100%)' : 'translateX(-50%)');
+                                return (
+                                    <div
+                                        key={`${cp.timestamp}-${idx}`}
+                                        className="absolute"
+                                        style={{
+                                            left: `${((cp.timestamp - socMinTime) / socRange) * 100}%`,
+                                            top: '2px',
+                                            transform: xTransform
+                                        }}
+                                    >
+                                        <div className="flex flex-col items-center gap-0.5">
+                                            <BatteryGlyph level={cp.soc} color={themeColors.soc} stroke={themeColors.axis} />
+                                            <div className="text-[10px] leading-none" style={{ color: themeColors.text }}>{Math.round(cp.soc)}%</div>
+                                            {marker && (
+                                                <div className="text-[9px] leading-none" style={{ color: markerColor }}>{marker}</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                ) : (
+                    <ResponsiveContainer width="100%" height="18%">
+                        <LineChart data={formattedData} syncId="history-power-and-soc" margin={sharedChartMargin}>
+                            <defs>
+                                <linearGradient id="socFillGradient" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor={themeColors.soc} stopOpacity={0.28} />
+                                    <stop offset="100%" stopColor={themeColors.soc} stopOpacity={0.03} />
+                                </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke={themeColors.gridLines} vertical={false} />
+                            <XAxis dataKey="time" type="number" domain={['dataMin', 'dataMax']} hide />
+                            <YAxis
+                                stroke={themeColors.axis}
+                                domain={[0, 103]}
+                                ticks={[0, 100]}
+                                tickFormatter={(val) => `${val}%`}
+                                width={sharedYAxisWidth}
+                            />
+                            <ReferenceLine
+                                y={50}
+                                stroke={themeColors.axis}
+                                strokeDasharray="4 4"
+                                strokeOpacity={0.35}
+                            />
+                            <Area
+                                type="monotone"
+                                dataKey="batterySocInterpolated"
+                                stroke="none"
+                                fill="url(#socFillGradient)"
+                                isAnimationActive={false}
+                            />
+                            <Line
+                                type="monotone"
+                                dataKey="batterySocInterpolated"
+                                name="Battery SoC (%)"
+                                stroke={themeColors.soc}
+                                dot={false}
+                                strokeWidth={1.85}
+                                connectNulls={true}
+                                isAnimationActive={false}
+                            />
+                        </LineChart>
+                    </ResponsiveContainer>
+                )}
             </div>
         </div>
     );

@@ -23,7 +23,8 @@ export function adaptTeslaData(data: EnergyData[]): PowerData[] {
             solarWatts: point.solar_power * 10,
             batteryWatts: point.battery_power * 10,
             gridWatts: point.grid_power * 10,
-            tariffId: point.tariff_id
+            tariffId: point.tariff_id,
+            batterySoc: point.battery_soc
         };
     });
 }
