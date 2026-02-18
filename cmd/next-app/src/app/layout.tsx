@@ -5,6 +5,9 @@ import "./globals.css";
 import { GlobalHeader } from "@/components/GlobalHeader";
 import { Footer } from "@/components/Footer";
 
+const isPreviewDeployment = process.env.VERCEL_ENV === "preview";
+const appTitle = isPreviewDeployment ? "Powerwall Usage (Preview)" : "Powerwall Usage";
+
 const geistSans = localFont({
   src: "./fonts/geist-latin.woff2",
   variable: "--font-geist-sans",
@@ -18,7 +21,7 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Powerwall Usage",
+  title: appTitle,
   description: "Powerwall insights for smarter energy savings.",
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_APP_URL
@@ -26,6 +29,7 @@ export const metadata: Metadata = {
       : (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
   ),
   openGraph: {
+    title: appTitle,
     description: "Powerwall insights for smarter energy savings.",
     siteName: "Powerwall Usage",
     images: [

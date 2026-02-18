@@ -20,10 +20,10 @@ export function NoSupportedProducts() {
                 </svg>
             </div>
             <h3 className="text-lg font-medium text-slate-900 dark:text-slate-100 mb-2">
-                No Powerwalls Found
+                No Tesla Energy Products Found
             </h3>
             <p className="text-slate-500 dark:text-slate-400 max-w-sm mb-6">
-                We couldn&apos;t find any Powerwall sites linked to your Tesla account. This dashboard is designed for Powerwall monitoring.
+                We couldn&apos;t find any Tesla energy products linked to your account. pwusage is designed for Powerwall and Tesla Energy monitoring.
             </p>
             <div className="flex gap-4">
                 <form action="/logout" method="POST">

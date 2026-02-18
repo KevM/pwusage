@@ -266,6 +266,8 @@ export async function GET(request: Request) {
 
         // On cache miss, do a short inline live-status fetch to avoid blank SoC on this response.
         if (trmnlClient && !liveStatus) {
+            refreshState.liveInFlight = true;
+            refreshState.lastLiveRefreshAt = Date.now();
             try {
                 const liveInlineStart = Date.now();
                 const inlineLive = await withTimeout(trmnlClient.getLiveStatus(site.id), TESLA_LIVE_INLINE_TIMEOUT_MS, 'tesla_live_inline');
@@ -276,10 +278,17 @@ export async function GET(request: Request) {
                 liveStatus = inlineLive;
                 hasCachedLiveStatus = true;
                 fetchStatus = 'live-inline';
-                refreshState.lastLiveRefreshAt = Date.now();
             } catch (error) {
-                liveInlineStatus = 'timeout_or_error';
-                console.warn('[TrmnlMarkup] Inline live status fetch failed:', error);
+                if (error instanceof Error && error.message === 'tesla_live_inline_timeout') {
+                    liveInlineStatus = 'timeout';
+                    fetchStatus = 'inline-timeout';
+                    console.info('[TrmnlMarkup] Inline live status fetch timed out; continuing with stale-while-refresh.');
+                } else {
+                    liveInlineStatus = 'error';
+                    console.warn('[TrmnlMarkup] Inline live status fetch failed:', error);
+                }
+            } finally {
+                refreshState.liveInFlight = false;
             }
         }
 

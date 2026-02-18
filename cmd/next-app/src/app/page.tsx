@@ -59,52 +59,34 @@ export default async function Home() {
     );
   }
 
-  // If we have site auth, but we want to show the Dashboard (Products Page) instead of redirecting
-  // we should check if we have sites to show.
-
   let products: ProductWithLiveData[] = []; // We will map this to ProductWithLiveData
   const repo = new EnergyRepo();
 
-  if (siteAuthToken) {
-    // ... existing siteAuthToken logic
-    const decoded = verifySiteToken(siteAuthToken);
-
-
-
-    if (decoded && decoded.sites.length > 0) {
-      const sitePromises = decoded.sites.map(id => repo.getSite(id));
-      const sitesResults = await Promise.all(sitePromises);
-      const validSites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
-
-      products = validSites.map(s => ({
-        id: s.id,
-        site_name: s.name,
-        energy_site_id: s.id,
-        percentage_charged: 0,
-        currentTariff: 'Loading...',
-        liveBatteryPower: 0,
-        liveSolarPower: 0,
-        liveLoadPower: 0,
-        liveGridPower: 0
-      }));
-    } else {
-      // Token invalid or empty
-      redirect('/login');
-    }
+  const decoded = verifySiteToken(siteAuthToken);
+  if (!decoded) {
+    redirect('/login');
   }
 
+  if (decoded.sites.length === 0) {
+    // Car-only users are authenticated and should land on the products page.
+    redirect('/products');
+  }
 
-  // Logic: 
-  // 1. If > 1 Energy Site -> Products
-  // 2. If 1 Energy Site -> Redirect to Site (UNLESS we have vehicles?)
-  //    User said: "if there is only one energy site they will automatically be redirected to that site's page. Otherwise redirect them to the product page so they can pick one."
-  //    "Please add support to the product page for Tesla car products."
-  //    If I have 1 Powerwall and 1 Car, I probably want to see the product page to pick the Car?
-  //    But the user strictly said "If they have only one energy site they will automatically be redirected to that site's page."
-  //    So even if I have a car, I go to the Energy Site page? And then maybe I can click "Products" to go back?
-  //    "Otherwise redirect them to the product page so they can pick one." -> This implies if I have multiple *options* to pick.
-  //    Let's stick to the strict rule: "If they have only one energy site -> redirect to it".
-  //    This implies Vehicles are secondary. The user can navigate back to Products from the site page if they want to see the car.
+  const sitePromises = decoded.sites.map(id => repo.getSite(id));
+  const sitesResults = await Promise.all(sitePromises);
+  const validSites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
+
+  products = validSites.map(s => ({
+    id: s.id,
+    site_name: s.name,
+    energy_site_id: s.id,
+    percentage_charged: 0,
+    currentTariff: 'Loading...',
+    liveBatteryPower: 0,
+    liveSolarPower: 0,
+    liveLoadPower: 0,
+    liveGridPower: 0
+  }));
 
   if (products.length === 1) {
     redirect(`/site/${products[0].id}`);
