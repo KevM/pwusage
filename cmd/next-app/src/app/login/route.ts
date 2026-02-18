@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   const callbackUrl = `${redirectBaseUrl.replace(/\/$/, '')}/auth/tesla-callback`;
   const clientId = process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID;
 
-  const uri = `https://auth.tesla.com/oauth2/v3/authorize?&locale=en-US&response_type=code&scope=${scopes}&state=${state}&redirect_uri=${callbackUrl}&client_id=${clientId}&nonce=${nonce}`;
+  const uri = `https://auth.tesla.com/oauth2/v3/authorize?&locale=en-US&response_type=code&scope=${scopes}&state=${state}&redirect_uri=${callbackUrl}&client_id=${clientId}&nonce=${nonce}&prompt=login`;
 
   redirect(uri);
 }
