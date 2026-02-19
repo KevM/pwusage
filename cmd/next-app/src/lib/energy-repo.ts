@@ -273,9 +273,9 @@ export class EnergyRepo {
         return rows.length > 0;
     }
 
-    async getLatestEnergyData(siteId: string): Promise<{ timestamp: Date } | null> {
+    async getLatestEnergyData(siteId: string): Promise<{ timestamp: Date; batterySoc: number | null } | null> {
         const { rows } = await pool.query(`
-            SELECT timestamp
+            SELECT timestamp, battery_soc
             FROM "EnergyData" 
             WHERE site_id = $1 
             ORDER BY timestamp DESC 
@@ -284,7 +284,10 @@ export class EnergyRepo {
 
         if (rows.length === 0) return null;
         return {
-            timestamp: new Date(rows[0].timestamp)
+            timestamp: new Date(rows[0].timestamp),
+            batterySoc: rows[0].battery_soc === null || rows[0].battery_soc === undefined
+                ? null
+                : Number(rows[0].battery_soc)
         };
     }
 

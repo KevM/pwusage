@@ -129,7 +129,7 @@ export async function GET(request: Request) {
             const result = await repo.getInstallationAndSite(uuid);
             if (!result) {
                 console.log(`[TrmnlMarkup] UUID ${uuid} not found. Generating setup QR code.`);
-                return getQrResponse(request, uuid, 'Setup Required', 'Scan to Configure');
+                return getQrResponse(request, uuid, null, 'Setup Required', 'Scan to Configure');
             }
 
             installation = result.installation;
@@ -155,7 +155,7 @@ export async function GET(request: Request) {
             // Verify Bearer Token
             const authHeader = request.headers.get('Authorization');
             if (installation.access_token && (!authHeader || !authHeader.startsWith('Bearer ') || authHeader.split(' ')[1] !== installation.access_token)) {
-                return getQrResponse(request, uuid, 'Plugin Auth Failed', 'Scan to Re-link');
+                return getQrResponse(request, uuid, null, 'Plugin Auth Failed', 'Scan to Re-link');
             }
 
         } else if (siteIdParam) {
@@ -174,7 +174,7 @@ export async function GET(request: Request) {
         // --- TESLA AUTH CHECK (Revoked) ---
         if (site.auth_status === 'revoked') {
             console.warn(`[TrmnlMarkup] Tesla auth revoked for site ${site.id}. Showing re-auth QR code.`);
-            return getQrResponse(request, uuid!, 'Tesla Auth Expired', 'Scan to Re-authenticate');
+            return getQrResponse(request, uuid, site.id, 'Tesla Auth Expired', 'Scan to Re-authenticate');
         }
 
         // Calculate bill for current period using site-local time components
@@ -267,7 +267,6 @@ export async function GET(request: Request) {
         // On cache miss, do a short inline live-status fetch to avoid blank SoC on this response.
         if (trmnlClient && !liveStatus) {
             refreshState.liveInFlight = true;
-            refreshState.lastLiveRefreshAt = Date.now();
             try {
                 const liveInlineStart = Date.now();
                 const inlineLive = await withTimeout(trmnlClient.getLiveStatus(site.id), TESLA_LIVE_INLINE_TIMEOUT_MS, 'tesla_live_inline');
@@ -278,6 +277,7 @@ export async function GET(request: Request) {
                 liveStatus = inlineLive;
                 hasCachedLiveStatus = true;
                 fetchStatus = 'live-inline';
+                refreshState.lastLiveRefreshAt = Date.now();
             } catch (error) {
                 if (error instanceof Error && error.message === 'tesla_live_inline_timeout') {
                     liveInlineStatus = 'timeout';
@@ -399,6 +399,7 @@ export async function GET(request: Request) {
         const seriesData: import('@/lib/db').EnergyData[] = [];
         let todayGrid = 0;
         let todaySolar = 0;
+        let latestSeriesSoc: { value: number; timestamp: Date } | null = null;
 
         for (const row of allCycleData) {
             const ts = row.timestamp;
@@ -409,6 +410,9 @@ export async function GET(request: Request) {
                 seriesData.push(row);
                 todayGrid += row.grid_power;
                 todaySolar += row.solar_power;
+                if (typeof row.battery_soc === 'number') {
+                    latestSeriesSoc = { value: row.battery_soc, timestamp: ts };
+                }
             }
 
 
@@ -543,6 +547,20 @@ export async function GET(request: Request) {
         const latestLiveStatus = liveStatus as EnergySiteLiveStatus | undefined;
         const liveStatusAgeMs = liveStatusEntry ? Math.max(0, nowMs - liveStatusEntry.fetchedAt) : null;
         const isSocStale = liveStatusAgeMs !== null && liveStatusAgeMs > SOC_STALE_AFTER_MS;
+        const isFresh = (ts: Date | null | undefined): ts is Date => {
+            if (!ts) return false;
+            const ageMs = nowMs - ts.getTime();
+            return ageMs >= 0 && ageMs <= SOC_STALE_AFTER_MS;
+        };
+        const latestDbSocFromLatestRow = (
+            typeof latestData?.batterySoc === 'number' &&
+            isFresh(latestTimestamp)
+        ) ? latestData.batterySoc : null;
+        const latestDbSocFromSeries = (
+            latestSeriesSoc !== null &&
+            isFresh(latestSeriesSoc.timestamp)
+        ) ? latestSeriesSoc.value : null;
+
         if (latestLiveStatus) {
             if (!isSocStale && typeof latestLiveStatus.percentage_charged === 'number') {
                 batterySoc = latestLiveStatus.percentage_charged;
@@ -550,6 +568,11 @@ export async function GET(request: Request) {
             const power = latestLiveStatus.battery_power || 0;
             if (power < -50) batteryStatus = 'charging';
             else if (power > 50) batteryStatus = 'discharging';
+        }
+        if (batterySoc === null && typeof latestDbSocFromLatestRow === 'number') {
+            batterySoc = latestDbSocFromLatestRow;
+        } else if (batterySoc === null && typeof latestDbSocFromSeries === 'number') {
+            batterySoc = latestDbSocFromSeries;
         }
 
         // Prepare Render Context
@@ -676,10 +699,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Missing uuid parameter' }, { status: 400 });
 }
 
-async function getQrResponse(request: Request, uuid: string, title: string, label: string) {
+async function getQrResponse(request: Request, uuid: string | null, siteId: string | null, title: string, label: string) {
     const host = request.headers.get('host') || 'localhost:3000';
     const protocol = host.includes('localhost') ? 'http' : 'https';
-    const manageUrl = `${protocol}://${host}/trmnl/manage?uuid=${uuid}`;
+    const manageUrl = uuid
+        ? `${protocol}://${host}/trmnl/manage?uuid=${uuid}`
+        : `${protocol}://${host}/site/${siteId}/settings`;
 
     // Generate QR Code
     const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
