@@ -751,17 +751,13 @@ export class TrmnlRenderer {
             getX,
             padding.left
         );
-        const hourLabelOverlay = `
-            <div style="position: absolute; left: 0; right: 0; bottom: 2px; height: 18px; z-index: 2;">
-                ${renderHourLabels.map((entry) => {
-            const leftPercent = (entry.x / width) * 100;
-            const anchorStyle = entry.anchor === 'middle'
-                ? 'transform: translateX(-50%);'
-                : '';
-            return `<span class="value value--xsmall" style="position: absolute; left: ${leftPercent}%; ${anchorStyle} line-height: 1; white-space: nowrap; background: white; padding: 0 1px;">${entry.label}</span>`;
-        }).join('')}
-            </div>
-        `;
+        const hourLabelY = height - 6;
+        const hourLabelLayer = renderHourLabels
+            .map((entry) => {
+                const anchor = entry.anchor === 'middle' ? 'middle' : 'start';
+                return `<text x="${entry.x}" y="${hourLabelY}" font-family="Arial" font-size="10" text-anchor="${anchor}">${entry.label}</text>`;
+            })
+            .join('');
 
         const legendTextSizePx = veryDenseLegend ? 10 : (denseLegend ? 11 : 12);
         const legendSampleWidthPx = veryDenseLegend ? 10 : (denseLegend ? 12 : 14);
@@ -797,9 +793,9 @@ export class TrmnlRenderer {
                 <path d="${solarPath}" fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="${homePath}" fill="none" stroke="black" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="${batteryPath}" fill="none" stroke="black" stroke-width="1" stroke-dasharray="4,4" stroke-linecap="round" stroke-linejoin="round" />
+                ${hourLabelLayer}
             </svg>
             ${legendOverlay}
-            ${hourLabelOverlay}
             </div>
         `;
         const renderDuration = Date.now() - start;
@@ -962,32 +958,15 @@ export class TrmnlRenderer {
             getX,
             padding.left
         );
-        const xAxisTop = Math.min(height - 16, getSocY(0) + 4);
-        const xAxisLabelOverlay = showXAxis ? `
-            <div style="position: absolute; left: 0; right: 0; top: ${xAxisTop}px; height: 16px; z-index: 2;">
-                ${hourLabelEntries.map((entry) => {
-            const leftPercent = (entry.x / width) * 100;
-            const anchorStyle = entry.anchor === 'middle'
-                ? 'transform: translateX(-50%);'
-                : '';
-            return `<span class="value value--xsmall" style="position: absolute; left: ${leftPercent}%; ${anchorStyle} line-height: 1; white-space: nowrap; background: white; padding: 0 1px;">${entry.label}</span>`;
-        }).join('')}
-            </div>
-        ` : '';
-
-        const yAxisLabelOverlay = `
-            <div style="position: absolute; top: 0; right: 0; bottom: 0; width: 50px; z-index: 2;">
-                <span class="value value--xsmall" style="position: absolute; right: 2px; top: ${getSocY(100) - 6}px; line-height: 1; background: white; padding: 0 1px;">100%</span>
-                <span class="value value--xsmall" style="position: absolute; right: 2px; top: ${getSocY(50) - 6}px; line-height: 1; background: white; padding: 0 1px;">50%</span>
-                <span class="value value--xsmall" style="position: absolute; right: 2px; top: ${getSocY(0) - 6}px; line-height: 1; background: white; padding: 0 1px;">0%</span>
-            </div>
-        `;
-
-        const titleOverlay = `
-            <div style="position: absolute; top: 0; left: ${padding.left}px; z-index: 2;">
-                <span class="label label--small" style="line-height: 1;">Battery Level (%)</span>
-            </div>
-        `;
+        const xAxisLabelY = Math.min(height - 4, getSocY(0) + 14);
+        const xAxisLabelLayer = showXAxis
+            ? hourLabelEntries
+                .map((entry) => {
+                    const anchor = entry.anchor === 'middle' ? 'middle' : 'start';
+                    return `<text x="${entry.x}" y="${xAxisLabelY}" font-family="Arial" font-size="10" text-anchor="${anchor}">${entry.label}</text>`;
+                })
+                .join('')
+            : '';
 
         return `
             <div style="position: relative; width: 100%; height: 100%; min-width: 280px;">
@@ -996,10 +975,12 @@ export class TrmnlRenderer {
                     <line x1="${padding.left}" y1="${getSocY(50)}" x2="${width - padding.right}" y2="${getSocY(50)}" stroke="#eee" stroke-width="1" />
                     <line x1="${padding.left}" y1="${getSocY(0)}" x2="${width - padding.right}" y2="${getSocY(0)}" stroke="#eee" stroke-width="1" />
                     <path d="${socPath}" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    <text x="${padding.left}" y="${padding.top - 2}" font-family="Arial" font-size="10" text-anchor="start">Battery Level (%)</text>
+                    <text x="${width - 2}" y="${getSocY(100) + 4}" font-family="Arial" font-size="10" text-anchor="end">100%</text>
+                    <text x="${width - 2}" y="${getSocY(50) + 4}" font-family="Arial" font-size="10" text-anchor="end">50%</text>
+                    <text x="${width - 2}" y="${getSocY(0) + 4}" font-family="Arial" font-size="10" text-anchor="end">0%</text>
+                    ${xAxisLabelLayer}
                 </svg>
-                ${titleOverlay}
-                ${yAxisLabelOverlay}
-                ${xAxisLabelOverlay}
             </div>
         `;
     }
