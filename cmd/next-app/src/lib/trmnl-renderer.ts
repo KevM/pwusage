@@ -35,6 +35,7 @@ export interface RenderContext {
 }
 
 export class TrmnlRenderer {
+    private static readonly CHART_FONT_FAMILY = 'Verdana, Arial, sans-serif';
 
     static get SUN_ICON() {
         return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5" fill="black" stroke="none"/><line x1="12" y1="1" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="6.34" y2="6.34" /><line x1="17.66" y1="17.66" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="6.34" y2="17.66" /><line x1="17.66" y1="6.34" x2="19.78" y2="4.22" /></svg>`;
@@ -595,11 +596,11 @@ export class TrmnlRenderer {
             const safeX = clamp(getX(timestamp), padding.left + 30, width - padding.right - 20);
             return `
                 <g transform="translate(${safeX}, 0)">
-                    <text x="-12" y="9" font-family="Arial" font-size="9" text-anchor="end">${Math.round(clampedSoc)}%</text>
+                    <text x="-12" y="9" font-family="${this.CHART_FONT_FAMILY}" font-size="10" text-anchor="end">${Math.round(clampedSoc)}%</text>
                     <rect x="-9" y="1" width="16" height="10" rx="1.6" fill="none" stroke="black" stroke-width="1.2"/>
                     <rect x="7" y="3.8" width="2.6" height="4.4" rx="0.7" fill="black"/>
                     <rect x="-7.2" y="2.6" width="${fillWidth}" height="6.8" rx="0.7" fill="black"/>
-                    <text x="12" y="9" font-family="Arial" font-size="9" text-anchor="start">${marker}</text>
+                    <text x="12" y="9" font-family="${this.CHART_FONT_FAMILY}" font-size="10" text-anchor="start">${marker}</text>
                 </g>
             `;
         };
@@ -620,7 +621,7 @@ export class TrmnlRenderer {
                 labelTime.setHours(h, 0, 0, 0);
                 if (labelTime.getTime() >= startTime && labelTime.getTime() <= endTime) {
                     const x = getX(labelTime.getTime());
-                    hourLabels.push(`<text x="${x}" y="${rowHeight - 2}" font-family="Arial" font-size="9" text-anchor="middle">${formatHour(labelTime.getTime())}</text>`);
+                    hourLabels.push(`<text x="${x}" y="${rowHeight - 2}" font-family="${this.CHART_FONT_FAMILY}" font-size="10" text-anchor="middle">${formatHour(labelTime.getTime())}</text>`);
                 }
             }
         }
@@ -741,7 +742,7 @@ export class TrmnlRenderer {
             const strokeWidth = v === 0 ? '1.25' : '1';
             const yLabelX = padding.left + 2;
             return `<line x1="${padding.left}" y1="${y}" x2="${chartWidth + padding.left}" y2="${y}" stroke="${stroke}" stroke-width="${strokeWidth}" />
-                    <text x="${yLabelX}" y="${y + 4}" font-family="Arial" font-size="11" font-weight="600" text-anchor="start">${v.toFixed(1)}</text>`;
+                    <text x="${yLabelX}" y="${y + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="13" font-weight="700" text-anchor="start">${v.toFixed(1)}</text>`;
         }).join('');
 
         // Time labels (Every 6 hours). Ensure 12am is visible early in the day.
@@ -755,7 +756,7 @@ export class TrmnlRenderer {
         const hourLabelLayer = renderHourLabels
             .map((entry) => {
                 const anchor = entry.anchor === 'middle' ? 'middle' : 'start';
-                return `<text x="${entry.x}" y="${hourLabelY}" font-family="Arial" font-size="10" text-anchor="${anchor}">${entry.label}</text>`;
+                return `<text x="${entry.x}" y="${hourLabelY}" font-family="${this.CHART_FONT_FAMILY}" font-size="12" font-weight="700" text-anchor="${anchor}">${entry.label}</text>`;
             })
             .join('');
 
@@ -963,7 +964,7 @@ export class TrmnlRenderer {
             ? hourLabelEntries
                 .map((entry) => {
                     const anchor = entry.anchor === 'middle' ? 'middle' : 'start';
-                    return `<text x="${entry.x}" y="${xAxisLabelY}" font-family="Arial" font-size="10" text-anchor="${anchor}">${entry.label}</text>`;
+                    return `<text x="${entry.x}" y="${xAxisLabelY}" font-family="${this.CHART_FONT_FAMILY}" font-size="12" font-weight="700" text-anchor="${anchor}">${entry.label}</text>`;
                 })
                 .join('')
             : '';
@@ -975,10 +976,10 @@ export class TrmnlRenderer {
                     <line x1="${padding.left}" y1="${getSocY(50)}" x2="${width - padding.right}" y2="${getSocY(50)}" stroke="#eee" stroke-width="1" />
                     <line x1="${padding.left}" y1="${getSocY(0)}" x2="${width - padding.right}" y2="${getSocY(0)}" stroke="#eee" stroke-width="1" />
                     <path d="${socPath}" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    <text x="${padding.left}" y="${padding.top - 2}" font-family="Arial" font-size="10" text-anchor="start">Battery Level (%)</text>
-                    <text x="${width - 2}" y="${getSocY(100) + 4}" font-family="Arial" font-size="10" text-anchor="end">100%</text>
-                    <text x="${width - 2}" y="${getSocY(50) + 4}" font-family="Arial" font-size="10" text-anchor="end">50%</text>
-                    <text x="${width - 2}" y="${getSocY(0) + 4}" font-family="Arial" font-size="10" text-anchor="end">0%</text>
+                    <text x="${padding.left}" y="${padding.top - 2}" font-family="${this.CHART_FONT_FAMILY}" font-size="12" font-weight="700" text-anchor="start">Battery Level (%)</text>
+                    <text x="${width - 2}" y="${getSocY(100) + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="12" font-weight="700" text-anchor="end">100%</text>
+                    <text x="${width - 2}" y="${getSocY(50) + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="12" font-weight="700" text-anchor="end">50%</text>
+                    <text x="${width - 2}" y="${getSocY(0) + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="12" font-weight="700" text-anchor="end">0%</text>
                     ${xAxisLabelLayer}
                 </svg>
             </div>
