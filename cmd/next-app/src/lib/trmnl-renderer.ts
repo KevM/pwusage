@@ -325,7 +325,7 @@ export class TrmnlRenderer {
                 ${showBillMetaHeader ? `
                 <div class="flex flex--row flex--center-y w--full" style="justify-content: space-between; margin-bottom: 4px;">
                     <span class="title title--small" style="font-size: ${compactBillMode ? 15 : 17}px; line-height: 1;">${ctx.siteName}</span>
-                    <span class="label label--small" style="font-size: ${compactBillMode ? 11 : 13}px; line-height: 1;">${ctx.dateRange}</span>
+                    <span class="value value--small" style="font-size: ${compactBillMode ? 13 : 15}px; font-weight: 700; line-height: 1;">${ctx.dateRange}</span>
                 </div>
                 ` : ''}
                 ${tariffTables}
