@@ -10,7 +10,10 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get('code');
     const state = searchParams.get('state');
-    const redirectBaseUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+    const redirectBaseUrl =
+        process.env.NODE_ENV === 'development'
+            ? request.nextUrl.origin
+            : (process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin);
     const callbackUrl = `${redirectBaseUrl.replace(/\/$/, '')}/auth/tesla-callback`;
 
     if (!code || !state) {

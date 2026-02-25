@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { fetchSiteLiveData, isValidSiteId, SiteLiveDataFetchError } from '@/lib/site-live-data-client';
+import { LiveMetricChip } from '@/components/ui/LiveMetricChip';
+import { Spinner } from '@/components/ui/Spinner';
 
 
 interface LiveStats {
@@ -11,6 +13,36 @@ interface LiveStats {
     gridPower: number;
     percentageCharged: number;
     batteryState?: string; // 'Charging', 'Discharging', 'Idle'
+}
+
+function LiveStatsShell({ children }: { children: React.ReactNode }) {
+    return (
+        <div className="inline-flex w-full md:w-auto flex-wrap items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-bg-muted/60 px-2.5 py-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 md:justify-start">
+            {children}
+        </div>
+    );
+}
+
+function LiveStateIndicator({
+    tone,
+    label
+}: {
+    tone: 'live' | 'loading' | 'error';
+    label: string;
+}) {
+    const toneClass =
+        tone === 'live'
+            ? 'bg-green-500 dark:bg-green-400'
+            : tone === 'loading'
+                ? 'bg-blue-500 dark:bg-blue-400'
+                : 'bg-red-500 dark:bg-red-400';
+
+    return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-gray-600 dark:bg-slate-800/80 dark:text-gray-300">
+            <span className={`h-1.5 w-1.5 rounded-full ${toneClass}`} aria-hidden="true" />
+            {label}
+        </span>
+    );
 }
 
 export function HeaderLiveStats({ siteId }: { siteId: string }) {
@@ -67,17 +99,24 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
 
     if (loading) {
         return (
-            <div className="flex items-center gap-4 text-xs text-gray-400">
-                <span>Loading...</span>
-            </div>
+            <LiveStatsShell>
+                <LiveStateIndicator tone="loading" label="Live" />
+                <div className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                    <Spinner size="sm" className="text-blue-500 dark:text-blue-400" />
+                    <span className="font-medium">Syncing…</span>
+                </div>
+            </LiveStatsShell>
         );
     }
 
     if (!stats) {
         return (
-            <div className="flex items-center gap-4 text-xs text-red-400">
-                <span>Stats Unavailable</span>
-            </div>
+            <LiveStatsShell>
+                <LiveStateIndicator tone="error" label="Live" />
+                <span className="text-sm font-medium text-red-700 dark:text-red-300">
+                    Status unavailable
+                </span>
+            </LiveStatsShell>
         );
     }
 
@@ -86,43 +125,60 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
     // Helper to format power (W to kW)
     const fmtKw = (w: number) => (Math.abs(w) / 1000).toFixed(1);
 
+    const batteryValueClassName =
+        batteryPower < -100
+            ? 'text-green-700 dark:text-green-300'
+            : batteryPower > 100
+                ? 'text-red-700 dark:text-red-300'
+                : 'text-purple-700 dark:text-purple-300';
+
+    const gridValueClassName =
+        gridPower > 100
+            ? 'text-orange-700 dark:text-orange-300'
+            : gridPower < -100
+                ? 'text-green-700 dark:text-green-300'
+                : 'text-gray-700 dark:text-gray-300';
+
     return (
-        <div className="flex items-center justify-between w-full md:w-auto md:justify-start md:gap-6 text-sm">
-            {/* Solar */}
-            <div className="flex flex-col items-center" title="Solar Production">
-                <span className="text-xs text-gray-500 uppercase font-medium">Solar</span>
-                <span className="font-semibold text-amber-600">{fmtKw(solarPower)} kW</span>
-            </div>
-
-            {/* Load */}
-            <div className="flex flex-col items-center" title="Home Usage">
-                <span className="text-xs text-gray-500 uppercase font-medium">Load</span>
-                <span className="font-semibold text-blue-600">{fmtKw(loadPower)} kW</span>
-            </div>
-
-            {/* Battery */}
-            <div className="flex flex-col items-center" title={`Battery (${Math.round(percentageCharged)}%)`}>
-                <span className="text-xs text-gray-500 uppercase font-medium">Battery</span>
-                <div className="flex items-center gap-1">
-                    <span className={`font-semibold ${batteryPower < -100 ? 'text-green-600' : batteryPower > 100 ? 'text-red-500' : 'text-purple-600'}`}>
-                        {Math.round(percentageCharged)}%
-                    </span>
-                    {batteryPower < -100 && (
-                        <svg className="w-3 h-3 text-green-600 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                    )}
-                </div>
-            </div>
-
-            {/* Grid */}
-            <div className="flex flex-col items-center" title="Grid Usage">
-                <span className="text-xs text-gray-500 uppercase font-medium">Grid</span>
-                {/* Positive grid = Importing (taking from grid), Negative grid = Exporting (sending to grid) */}
-                <span className={`font-semibold ${gridPower > 100 ? 'text-orange-600' : gridPower < -100 ? 'text-green-600' : 'text-gray-600'}`}>
-                    {fmtKw(Math.abs(gridPower))} kW
-                </span>
-            </div>
-        </div>
+        <LiveStatsShell>
+            <LiveStateIndicator tone="live" label="Live" />
+            <LiveMetricChip
+                label="Solar"
+                value={`${fmtKw(solarPower)} kW`}
+                labelStyle="text"
+                surfaceStyle="flat"
+                valueClassName="text-amber-700 dark:text-amber-300"
+                title="Solar Production"
+            />
+            <LiveMetricChip
+                label="Load"
+                value={`${fmtKw(loadPower)} kW`}
+                labelStyle="text"
+                surfaceStyle="flat"
+                valueClassName="text-blue-700 dark:text-blue-300"
+                title="Home Usage"
+            />
+            <LiveMetricChip
+                label="Battery"
+                value={`${Math.round(percentageCharged)}%`}
+                labelStyle="text"
+                surfaceStyle="flat"
+                valueClassName={batteryValueClassName}
+                title={`Battery (${Math.round(percentageCharged)}%)`}
+                trailing={batteryPower < -100 ? (
+                    <svg className="h-3.5 w-3.5 text-green-600 dark:text-green-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                ) : undefined}
+            />
+            <LiveMetricChip
+                label="Grid"
+                value={`${fmtKw(Math.abs(gridPower))} kW`}
+                labelStyle="text"
+                surfaceStyle="flat"
+                valueClassName={gridValueClassName}
+                title="Grid Usage"
+            />
+        </LiveStatsShell>
     );
 }

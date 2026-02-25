@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
 import { Spinner } from '@/components/ui/Spinner';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { LiveMetricChip } from '@/components/ui/LiveMetricChip';
 import { InteractiveExamples } from './InteractiveExamples';
 import { StyleGuideToc } from './StyleGuideToc';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
@@ -27,6 +28,7 @@ export default function StyleGuidePage() {
         { id: 'empty-state', label: 'Empty State' },
         { id: 'breadcrumbs', label: 'Breadcrumbs' },
         { id: 'table-primitives', label: 'Table Primitives' },
+        { id: 'live-status-header', label: 'Header Live Status' },
         { id: 'loading-states', label: 'Loading States' },
         { id: 'interactive-components', label: 'Interactive Components' },
     ];
@@ -558,6 +560,59 @@ export default function StyleGuidePage() {
                             </TableRow>
                         </TableBody>
                     </Table>
+                </div>
+            </section>
+
+            <section id="live-status-header" className="space-y-6 scroll-mt-24">
+                <div>
+                    <H2>Header Live Status</H2>
+                    <P className="mt-1">Compact header telemetry uses a shared surface plus `LiveMetricChip` items for readable labels and values in limited space.</P>
+                </div>
+                <div className="space-y-4">
+                    <div className="rounded-xl border border-gray-200 bg-bg-muted/70 p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/80">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-gray-600 dark:bg-slate-800/80 dark:text-gray-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-green-500 dark:bg-green-400" aria-hidden="true" />
+                                Live
+                            </span>
+                            <LiveMetricChip label="Solar" value="4.2 kW" labelStyle="text" surfaceStyle="flat" valueClassName="text-amber-700 dark:text-amber-300" />
+                            <LiveMetricChip label="Load" value="2.8 kW" labelStyle="text" surfaceStyle="flat" valueClassName="text-blue-700 dark:text-blue-300" />
+                            <LiveMetricChip
+                                label="Battery"
+                                value="73%"
+                                labelStyle="text"
+                                surfaceStyle="flat"
+                                valueClassName="text-green-700 dark:text-green-300"
+                                trailing={(
+                                    <svg className="h-3.5 w-3.5 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                    </svg>
+                                )}
+                            />
+                            <LiveMetricChip label="Grid" value="0.0 kW" labelStyle="text" surfaceStyle="flat" />
+                        </div>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-bg-muted/70 p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/80">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-gray-600 dark:bg-slate-800/80 dark:text-gray-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-blue-500 dark:bg-blue-400" aria-hidden="true" />
+                                Live
+                            </span>
+                            <div className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                                <Spinner size="sm" className="text-blue-500 dark:text-blue-400" />
+                                <span className="font-medium">Syncing…</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-bg-muted/70 p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/80">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-gray-600 dark:bg-slate-800/80 dark:text-gray-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-red-500 dark:bg-red-400" aria-hidden="true" />
+                                Live
+                            </span>
+                            <span className="text-sm font-medium text-red-700 dark:text-red-300">Status unavailable</span>
+                        </div>
+                    </div>
                 </div>
             </section>
 

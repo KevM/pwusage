@@ -20,7 +20,7 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
     return (
         <header className="w-full bg-white dark:bg-slate-900 p-4 md:px-8 shadow-sm">
             <div className="max-w-6xl mx-auto">
-                <div className="flex flex-wrap md:flex-nowrap items-center justify-between gap-x-4 gap-y-3">
+                <div className="flex flex-wrap md:flex-nowrap items-start md:items-center justify-between gap-x-4 gap-y-3">
                     {/* Logo Group - Always First */}
                     <div className="flex items-center gap-6 order-1 shrink-0">
                         <Link href="/" className="flex items-center gap-3 group shrink-0">
@@ -84,7 +84,7 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
 
                     {/* Live Stats Group - Order 3 on Mobile (New Row), Order 2 on Desktop (Center) */}
                     {currentSiteId && currentSiteId !== 'undefined' && (
-                        <div className="order-3 md:order-2 w-full md:w-auto flex justify-center mt-2 md:mt-0">
+                        <div className="order-3 md:order-2 w-full md:flex-1 md:min-w-0 flex justify-center md:px-4 mt-1 md:mt-0">
                             <HeaderLiveStats siteId={currentSiteId} />
                         </div>
                     )}
