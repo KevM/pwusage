@@ -150,7 +150,7 @@ export default async function UsagePage({ params, searchParams }: {
 
                 <DataSyncer siteId={id} start={start} end={end} viewDate={start} />
 
-                <BillSummary usage={usage} alwaysExpanded={true} />
+                <BillSummary usage={usage} />
             </div>
         </PageShell>
     );
