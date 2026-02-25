@@ -21,6 +21,11 @@ import { HistoryView } from '@/components/site/HistoryView';
 import { EstimatedBillView } from '@/components/site/EstimatedBillView';
 import { SettingsView } from '@/components/site/SettingsView';
 import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
+import { PageShell } from '@/components/ui/PageShell';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { SectionCard } from '@/components/ui/SectionCard';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,13 +41,25 @@ export default async function SitePage({ params, searchParams }: {
     const hasAccess = await verifySiteAccess(id);
     if (!hasAccess) {
         return (
-            <div className="flex min-h-screen flex-col items-center justify-center p-8">
-                <h1 className="text-2xl font-bold text-red-600 mb-4">Unauthorized</h1>
-                <p className="text-gray-600 mb-6">You do not have permission to view this site.</p>
-                <Link href="/products" className="text-blue-600 hover:underline">
-                    Return to My Products
-                </Link>
-            </div>
+            <PageShell maxWidth="xl" className="flex items-center justify-center">
+                <SectionCard
+                    className="w-full"
+                    title="Unauthorized"
+                    description="You do not have permission to view this site."
+                >
+                    <div className="space-y-4">
+                        <Alert variant="danger">
+                            <AlertTitle>Access denied</AlertTitle>
+                            <AlertDescription>
+                                Your account is not authorized for this site.
+                            </AlertDescription>
+                        </Alert>
+                        <Link href="/products">
+                            <Button variant="outline">Return to My Products</Button>
+                        </Link>
+                    </div>
+                </SectionCard>
+            </PageShell>
         );
     }
 
@@ -101,7 +118,21 @@ export default async function SitePage({ params, searchParams }: {
     const finalSite = await repo.getSite(id);
 
     if (!finalSite) {
-        return <div>Site not found</div>;
+        return (
+            <PageShell maxWidth="xl" className="flex items-center justify-center">
+                <SectionCard
+                    className="w-full"
+                    title="Site Not Found"
+                    description="We could not find a site for the selected id."
+                >
+                    <div>
+                        <Link href="/products">
+                            <Button variant="outline">Back to Products</Button>
+                        </Link>
+                    </div>
+                </SectionCard>
+            </PageShell>
+        );
     }
 
     // If new site, BLOCK everything else and show setup wizard
@@ -234,51 +265,54 @@ export default async function SitePage({ params, searchParams }: {
     const installation = await trmnlService.getInstallationBySiteId(finalSite.id);
 
     return (
-        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
-            <div className="w-full">
-                <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />
+        <PageShell maxWidth="7xl" padding="compact">
+            <PageHeader
+                title={finalSite.name}
+                description="Monitor history, billing, and settings for this site."
+                className="mb-4"
+            />
+            <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />
 
-                <SiteTabs
-                    historySlot={
-                        <HistoryView
-                            chartNavSlot={null}
-                            analysisSlot={
-                                <LoadAnalysisClientPage
-                                    siteId={id}
-                                    siteName={finalSite.name}
-                                    defaultDate={dateStr}
-                                    siteTimezone={finalSite.timezone}
-                                    displayMode={finalSite.timezone_display_mode || 'SITE'}
-                                />
-                            }
-                        />
-                    }
-                    billSlot={
-                        <EstimatedBillView
-                            billNavSlot={
-                                <BillDateNav
-                                    siteId={id}
-                                    billingDay={billingDay}
-                                    prevDateStr={fmtDate(prevDate)}
-                                    nextDateStr={fmtDate(nextDate)}
-                                    isCurrentPeriod={isCurrentPeriod}
-                                    dateRangeLabel={dateRangeLabel}
-                                    currentMonthVal={currentMonthVal}
-                                    fullBillDateStr={fullBillDateStr}
-                                />
-                            }
-                            billSummarySlot={
-                                <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} />
-                            }
-                        />
-                    }
-                    settingsSlot={
-                        <SettingsView site={finalSite} installation={installation} />
-                    }
-                >
-                    {/* Fallback or shared content could go here if needed */}
-                </SiteTabs>
-            </div>
-        </div>
+            <SiteTabs
+                historySlot={
+                    <HistoryView
+                        chartNavSlot={null}
+                        analysisSlot={
+                            <LoadAnalysisClientPage
+                                siteId={id}
+                                siteName={finalSite.name}
+                                defaultDate={dateStr}
+                                siteTimezone={finalSite.timezone}
+                                displayMode={finalSite.timezone_display_mode || 'SITE'}
+                            />
+                        }
+                    />
+                }
+                billSlot={
+                    <EstimatedBillView
+                        billNavSlot={
+                            <BillDateNav
+                                siteId={id}
+                                billingDay={billingDay}
+                                prevDateStr={fmtDate(prevDate)}
+                                nextDateStr={fmtDate(nextDate)}
+                                isCurrentPeriod={isCurrentPeriod}
+                                dateRangeLabel={dateRangeLabel}
+                                currentMonthVal={currentMonthVal}
+                                fullBillDateStr={fullBillDateStr}
+                            />
+                        }
+                        billSummarySlot={
+                            <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} />
+                        }
+                    />
+                }
+                settingsSlot={
+                    <SettingsView site={finalSite} installation={installation} />
+                }
+            >
+                {/* Fallback or shared content could go here if needed */}
+            </SiteTabs>
+        </PageShell>
     );
 }

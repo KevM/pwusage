@@ -7,6 +7,9 @@ import { EnergyRepo } from '@/lib/energy-repo';
 import { ProductWithLiveData } from '@/components/DashboardCards';
 import { AnnouncementRepo } from '@/lib/announcement-repo';
 import { LoginAnnouncement } from '@/components/LoginAnnouncement';
+import { Button } from '@/components/ui/Button';
+import { PageShell } from '@/components/ui/PageShell';
+import { SectionCard } from '@/components/ui/SectionCard';
 
 // Force dynamic rendering to always fetch fresh data
 export const dynamic = 'force-dynamic';
@@ -21,40 +24,52 @@ export default async function Home() {
   // If no token at all, show login screen
   if (!siteAuthToken) {
     return (
-      // ... (inside the if (!siteAuthToken) block)
-      <div className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24">
-        <h1 className="text-4xl font-bold mb-8">Powerwall Usage</h1>
-        <Image
-          src="/login-summary-v2.png"
-          alt="Monitor Usage, Track Costs, Maximize Savings"
-          width={930}
-          height={375}
-          className="mb-8 block dark:hidden"
-          priority
-        />
-        <Image
-          src="/login-summary-dark-v2.png"
-          alt="Monitor Usage, Track Costs, Maximize Savings"
-          width={930}
-          height={375}
-          className="mb-8 hidden dark:block"
-          priority
-        />
-        <Link
-          href="/login"
-          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+      <div className="bg-bg-muted/30">
+        <PageShell
+          maxWidth="4xl"
+          padding="relaxed"
+          className="flex items-center justify-center"
         >
-          Login with Tesla
-        </Link>
-        <Link
-          href="/about"
-          className="mt-4 text-blue-600 hover:text-blue-800 underline"
-        >
-          Learn More
-        </Link>
+          <div className="w-full space-y-6">
+            <SectionCard bodyClassName="flex flex-col items-center gap-6 text-center">
+              <h1 className="text-3xl font-bold tracking-tight text-primary sm:text-4xl">
+                Powerwall Usage
+              </h1>
+              <Image
+                src="/login-summary-v2.png"
+                alt="Monitor Usage, Track Costs, Maximize Savings"
+                width={930}
+                height={375}
+                className="block w-full rounded-md border dark:hidden"
+                priority
+              />
+              <Image
+                src="/login-summary-dark-v2.png"
+                alt="Monitor Usage, Track Costs, Maximize Savings"
+                width={930}
+                height={375}
+                className="hidden w-full rounded-md border dark:block"
+                priority
+              />
+              <div className="flex flex-col items-center gap-3 sm:flex-row">
+                <Link href="/login">
+                  <Button renderAs="span" size="lg">
+                    Login with Tesla
+                  </Button>
+                </Link>
+                <Link href="/about">
+                  <Button renderAs="span" size="lg" variant="outline">
+                    Learn More
+                  </Button>
+                </Link>
+              </div>
+            </SectionCard>
 
-        {/* Latest Announcement */}
-        <LoginAnnouncement announcement={latestAnnouncement} />
+            <div className="flex justify-center">
+              <LoginAnnouncement announcement={latestAnnouncement} />
+            </div>
+          </div>
+        </PageShell>
       </div>
     );
   }

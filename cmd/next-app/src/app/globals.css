@@ -4,20 +4,51 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
-}
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Frosted theme variables */
+  --theme-primary: #5C7E8F;
+  --theme-secondary: #A2A2A2;
+  --theme-bg-base: #FFFFFF;
+  --theme-bg-muted: #D4DDE2;
+  --theme-text-base: #5C7E8F;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+
+    /* Frosted theme dark mode inversions */
+    --theme-primary: #D4DDE2;
+    --theme-bg-base: #1a1a1a;
   }
+}
+
+.dark {
+  --theme-primary: #D4DDE2;
+  --theme-bg-base: #1a1a1a;
+}
+
+/* Keep `inline` here: Tailwind v4 semantic color utilities (e.g. `text-primary`, `bg-primary`)
+   stop resolving correctly if this is changed to plain `@theme`. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Mapping semantic utility classes (text-primary, bg-base, etc.) to CSS variables */
+  --color-primary: var(--theme-primary);
+  --color-secondary: var(--theme-secondary);
+  --color-bg-base: var(--theme-bg-base);
+  --color-bg-muted: var(--theme-bg-muted);
+  --color-text-base: var(--theme-text-base);
+
+  /* Individual Frosted palette colors */
+  --color-frosted-blue: #5C7E8F;
+  --color-frosted-gray: #A2A2A2;
+  --color-frosted-ice: #D4DDE2;
+  --color-frosted-white: #FFFFFF;
 }
 
 body {

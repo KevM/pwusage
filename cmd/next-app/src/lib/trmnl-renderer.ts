@@ -114,10 +114,10 @@ export class TrmnlRenderer {
         let chartMinHeight = isVeryDenseLayout
             ? (hasStandaloneSocGlyph ? 138 : 128)
             : (showEstimatedBill
-            ? (hasLiveRow ? 160 : 210)
-            : (hasStandaloneSocChart
-                ? (hasLiveRow ? 176 : 230)
-                : (hasLiveRow ? 250 : 310)));
+                ? (hasLiveRow ? 160 : 210)
+                : (hasStandaloneSocChart
+                    ? (hasLiveRow ? 176 : 230)
+                    : (hasLiveRow ? 250 : 310)));
         if (isLiveEnergyBillLayout) {
             chartMinHeight = 140;
         }
@@ -740,9 +740,9 @@ export class TrmnlRenderer {
             const y = getY(kilowattsToWatts(v)); // v is in kW, convert to Average W
             const stroke = v === 0 ? '#bbb' : '#eee';
             const strokeWidth = v === 0 ? '1.25' : '1';
-            const yLabelX = padding.left + 2;
+            const yLabelX = padding.left - 4;
             return `<line x1="${padding.left}" y1="${y}" x2="${chartWidth + padding.left}" y2="${y}" stroke="${stroke}" stroke-width="${strokeWidth}" />
-                    <text x="${yLabelX}" y="${y + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="13" font-weight="700" text-anchor="start">${v.toFixed(1)}</text>`;
+                    <text x="${yLabelX}" y="${y + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="13" font-weight="700" text-anchor="end">${v.toFixed(1)}</text>`;
         }).join('');
 
         // Time labels (Every 6 hours). Ensure 12am is visible early in the day.
@@ -976,10 +976,10 @@ export class TrmnlRenderer {
                     <line x1="${padding.left}" y1="${getSocY(50)}" x2="${width - padding.right}" y2="${getSocY(50)}" stroke="#eee" stroke-width="1" />
                     <line x1="${padding.left}" y1="${getSocY(0)}" x2="${width - padding.right}" y2="${getSocY(0)}" stroke="#eee" stroke-width="1" />
                     <path d="${socPath}" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    <text x="${padding.left}" y="${padding.top - 2}" font-family="${this.CHART_FONT_FAMILY}" font-size="12" font-weight="700" text-anchor="start">Battery Level (%)</text>
-                    <text x="${width - 2}" y="${getSocY(100) + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="12" font-weight="700" text-anchor="end">100%</text>
-                    <text x="${width - 2}" y="${getSocY(50) + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="12" font-weight="700" text-anchor="end">50%</text>
-                    <text x="${width - 2}" y="${getSocY(0) + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="12" font-weight="700" text-anchor="end">0%</text>
+                    <text x="${padding.left}" y="${padding.top - 2}" font-family="${this.CHART_FONT_FAMILY}" font-size="10" font-weight="700" text-anchor="start">Battery Level (%)</text>
+                    <text x="${width - 4}" y="${getSocY(100) + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="10" font-weight="700" text-anchor="end">100%</text>
+                    <text x="${width - 4}" y="${getSocY(50) + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="10" font-weight="700" text-anchor="end">50%</text>
+                    <text x="${width - 4}" y="${getSocY(0) + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="10" font-weight="700" text-anchor="end">0%</text>
                     ${xAxisLabelLayer}
                 </svg>
             </div>

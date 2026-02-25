@@ -1,8 +1,29 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+
+import { ErrorPanel, LoadingPanel } from '@/components/ui/AsyncState';
+import { Button } from '@/components/ui/Button';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { PageShell } from '@/components/ui/PageShell';
+import { SectionCard } from '@/components/ui/SectionCard';
+import { StatusPill } from '@/components/ui/StatusPill';
 
 import type { HealthChecks } from '../api/health/route';
+
+type SchemaSummaryDetails = {
+    sites: number;
+    energyDataRows: number;
+};
+
+function isSchemaSummaryDetails(details: unknown): details is SchemaSummaryDetails {
+    if (!details || typeof details !== 'object') {
+        return false;
+    }
+
+    const candidate = details as Record<string, unknown>;
+    return typeof candidate.sites === 'number' && typeof candidate.energyDataRows === 'number';
+}
 
 export default function HealthPage() {
     const [data, setData] = useState<HealthChecks | null>(null);
@@ -11,6 +32,7 @@ export default function HealthPage() {
 
     const fetchHealth = async () => {
         setLoading(true);
+        setError('');
         try {
             const res = await fetch('/api/health');
             const json = await res.json();
@@ -26,99 +48,93 @@ export default function HealthPage() {
         fetchHealth();
     }, []);
 
-    const StatusBadge = ({ status }: { status: string }) => {
-        let color = 'bg-gray-100 text-gray-800';
-        if (status === 'ok') color = 'bg-green-100 text-green-800';
-        if (status === 'error') color = 'bg-red-100 text-red-800';
-        if (status === 'warning') color = 'bg-yellow-100 text-yellow-800';
-
+    if (loading) {
         return (
-            <span className={`px-2 py-1 rounded-full text-xs font-medium ${color}`}>
-                {status.toUpperCase()}
-            </span>
+            <PageShell maxWidth="lg">
+                <LoadingPanel title="Running diagnostics..." />
+            </PageShell>
         );
-    };
+    }
 
-    if (loading) return <div className="p-8">Running diagnostics...</div>;
-    if (error) return <div className="p-8 text-red-500">Failed to load health check: {error}</div>;
+    if (error) {
+        return (
+            <PageShell maxWidth="lg">
+                <ErrorPanel title="Failed to load health check" message={error} />
+            </PageShell>
+        );
+    }
+
+    const schemaDetails = isSchemaSummaryDetails(data?.schema?.details) ? data.schema.details : null;
 
     return (
-        <div className="min-h-screen bg-gray-50 dark:bg-zinc-900 p-8">
-            <div className="max-w-4xl mx-auto">
-                <div className="flex justify-between items-center mb-8">
-                    <h1 className="text-3xl font-bold dark:text-white">System Health Check</h1>
-                    <button
-                        onClick={fetchHealth}
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-                    >
+        <PageShell maxWidth="lg" className="space-y-6">
+            <PageHeader
+                title="System Health Check"
+                actions={(
+                    <Button onClick={fetchHealth} disabled={loading}>
                         Refresh
-                    </button>
-                </div>
+                    </Button>
+                )}
+            />
 
-                <div className="grid gap-6">
-                    {/* Database */}
-                    <div className="bg-white dark:bg-zinc-800 p-6 rounded-lg shadow">
-                        <div className="flex justify-between items-start mb-4">
-                            <h2 className="text-xl font-semibold dark:text-gray-200">Database</h2>
-                            {data?.database && <StatusBadge status={data.database.status} />}
-                        </div>
-                        <p className="text-gray-600 dark:text-gray-400 font-mono text-sm">
-                            {data?.database?.message}
-                        </p>
-                    </div>
+            <div className="grid gap-6">
+                <SectionCard
+                    title="Database"
+                    action={data?.database ? <StatusPill status={data.database.status} /> : null}
+                >
+                    <p className="font-mono text-sm text-gray-600 dark:text-gray-400">
+                        {data?.database?.message}
+                    </p>
+                </SectionCard>
 
-                    {/* Data / Schema */}
-                    <div className="bg-white dark:bg-zinc-800 p-6 rounded-lg shadow">
-                        <div className="flex justify-between items-start mb-4">
-                            <h2 className="text-xl font-semibold dark:text-gray-200">Data Storage</h2>
-                            {data?.schema && <StatusBadge status={data.schema.status} />}
-                        </div>
-
-                        {data?.schema?.details && (
-                            <div className="grid grid-cols-3 gap-4 text-center">
-                                <div className="bg-gray-50 dark:bg-zinc-700 p-3 rounded">
-                                    <div className="text-2xl font-bold dark:text-white">{data.schema.details?.sites as number}</div>
+                <SectionCard
+                    title="Data Storage"
+                    action={data?.schema ? <StatusPill status={data.schema.status} /> : null}
+                >
+                    <div className="space-y-3">
+                        {schemaDetails ? (
+                            <div className="grid grid-cols-1 gap-4 text-center sm:grid-cols-2">
+                                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-zinc-700 dark:bg-zinc-700">
+                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{schemaDetails.sites}</div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400">Sites</div>
                                 </div>
-                                <div className="bg-gray-50 dark:bg-zinc-700 p-3 rounded">
-                                    <div className="text-2xl font-bold dark:text-white">{data.schema.details?.energyDataRows as number}</div>
+                                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-zinc-700 dark:bg-zinc-700">
+                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{schemaDetails.energyDataRows}</div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400">Data Rows</div>
                                 </div>
                             </div>
-                        )}
-                        <p className="text-red-500 mt-2 text-sm">{data?.schema?.message}</p>
+                        ) : null}
+                        {data?.schema?.message ? (
+                            <p className="text-sm text-red-500">{data.schema.message}</p>
+                        ) : null}
                     </div>
+                </SectionCard>
 
-                    {/* Tesla API */}
-                    <div className="bg-white dark:bg-zinc-800 p-6 rounded-lg shadow">
-                        <div className="flex justify-between items-start mb-4">
-                            <h2 className="text-xl font-semibold dark:text-gray-200">Tesla API</h2>
-                            {data?.tesla && <StatusBadge status={data.tesla.status} />}
-                        </div>
-                        <p className="text-gray-600 dark:text-gray-400 font-mono text-sm mb-2">
-                            {data?.tesla?.message}
-                        </p>
-                        {data?.tesla?.products && (
-                            <ul className="list-disc list-inside text-sm text-gray-500 dark:text-gray-400">
-                                {data.tesla.products.map((p) => (
-                                    <li key={p.id}>{p.site_name} (ID: {p.id})</li>
-                                ))}
-                            </ul>
-                        )}
-                    </div>
+                <SectionCard
+                    title="Tesla API"
+                    action={data?.tesla ? <StatusPill status={data.tesla.status} /> : null}
+                >
+                    <p className="mb-2 font-mono text-sm text-gray-600 dark:text-gray-400">
+                        {data?.tesla?.message}
+                    </p>
+                    {data?.tesla?.products ? (
+                        <ul className="list-inside list-disc text-sm text-gray-500 dark:text-gray-400">
+                            {data.tesla.products.map((p) => (
+                                <li key={p.id}>{p.site_name} (ID: {p.id})</li>
+                            ))}
+                        </ul>
+                    ) : null}
+                </SectionCard>
 
-                    {/* Env */}
-                    <div className="bg-white dark:bg-zinc-800 p-6 rounded-lg shadow">
-                        <div className="flex justify-between items-start mb-4">
-                            <h2 className="text-xl font-semibold dark:text-gray-200">Environment</h2>
-                            {data?.env && <StatusBadge status={data.env.status} />}
-                        </div>
-                        <pre className="bg-gray-100 dark:bg-zinc-900 p-4 rounded text-xs overflow-auto">
-                            {JSON.stringify(data?.env?.details, null, 2)}
-                        </pre>
-                    </div>
-                </div>
+                <SectionCard
+                    title="Environment"
+                    action={data?.env ? <StatusPill status={data.env.status} /> : null}
+                >
+                    <pre className="overflow-auto rounded-lg bg-gray-100 p-4 text-xs dark:bg-zinc-900">
+                        {JSON.stringify(data?.env?.details, null, 2)}
+                    </pre>
+                </SectionCard>
             </div>
-        </div>
+        </PageShell>
     );
 }

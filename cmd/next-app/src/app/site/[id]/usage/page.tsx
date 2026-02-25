@@ -4,7 +4,10 @@ import { BillSummary } from '@/components/BillSummary';
 import { BillDateNav } from '@/components/BillDateNav';
 import { DataSyncer } from '@/components/DataSyncer';
 
-import { Breadcrumbs } from '@/components/Breadcrumbs';
+import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { PageShell } from '@/components/ui/PageShell';
+import { SectionCard } from '@/components/ui/SectionCard';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +22,14 @@ export default async function UsagePage({ params, searchParams }: {
 
     const site = await repo.getSite(id);
     if (!site) {
-        return <div>Site not found</div>;
+        return (
+            <PageShell maxWidth="2xl" className="space-y-6">
+                <PageHeader title="Estimated Monthly Bill" density="compact" />
+                <SectionCard density="compact">
+                    <p className="text-sm text-gray-600 dark:text-gray-300">Site not found.</p>
+                </SectionCard>
+            </PageShell>
+        );
     }
 
     // Determine start/end dates
@@ -107,16 +117,22 @@ export default async function UsagePage({ params, searchParams }: {
     const fullBillDateStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(site.billing_start_day || 1).padStart(2, '0')}`;
 
     return (
-        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
-            <div className="w-full max-w-6xl">
-                <Breadcrumbs items={[
+        <PageShell
+            maxWidth="2xl"
+            padding="none"
+            className="px-4 py-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6"
+        >
+            <div className="space-y-6 sm:space-y-8">
+                <PageBreadcrumbs items={[
                     { label: site.name, href: `/site/${id}` },
                     { label: 'Usage' }
                 ]} />
 
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-                    <h1 className="text-3xl font-bold">Estimated Monthly Bill</h1>
-                    <BillDateNav
+                <PageHeader
+                    title="Estimated Monthly Bill"
+                    density="compact"
+                    actions={(
+                        <BillDateNav
                         siteId={id}
                         billingDay={site.billing_start_day || 1}
                         prevDateStr={fmtDate(prevDate)}
@@ -128,13 +144,14 @@ export default async function UsagePage({ params, searchParams }: {
                         isCustomRange={isCustomRange}
                         customStart={isCustomRange ? fmtDate(start) : undefined}
                         customEnd={isCustomRange ? fmtDate(displayEnd) : undefined}
-                    />
-                </div>
+                        />
+                    )}
+                />
 
                 <DataSyncer siteId={id} start={start} end={end} viewDate={start} />
 
                 <BillSummary usage={usage} alwaysExpanded={true} />
             </div>
-        </div>
+        </PageShell>
     );
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { fetchSiteLiveData, isValidSiteId, SiteLiveDataFetchError } from '@/lib/site-live-data-client';
 
 
 interface LiveStats {
@@ -14,36 +15,38 @@ interface LiveStats {
 
 export function HeaderLiveStats({ siteId }: { siteId: string }) {
     const [stats, setStats] = useState<LiveStats | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(isValidSiteId(siteId));
 
     useEffect(() => {
+        if (!isValidSiteId(siteId)) return;
+
         let isMounted = true;
+        let redirectedToLogin = false;
+        const controller = new AbortController();
 
         async function fetchStats() {
             try {
-                const response = await fetch(`/api/site-live-data?siteId=${siteId}`);
-
                 if (!isMounted) return;
-
-                if (!response.ok) {
-                    if (response.status === 401) {
-                        console.warn('[HeaderLiveStats] Unauthorized. Redirecting to login...');
-                        window.location.href = '/login';
-                        return;
-                    }
-                    console.error('[HeaderLiveStats] Fetch failed:', response.status, response.statusText);
-                    setLoading(false);
-                    return;
-                }
-
-                const data = await response.json();
+                const data = await fetchSiteLiveData(siteId, controller.signal);
                 if (!isMounted) return;
 
                 setStats(data);
                 setLoading(false);
             } catch (error) {
+                if (error instanceof DOMException && error.name === 'AbortError') {
+                    return;
+                }
+                if (error instanceof SiteLiveDataFetchError && error.status === 401) {
+                    if (!redirectedToLogin) {
+                        redirectedToLogin = true;
+                        console.warn('[HeaderLiveStats] Unauthorized. Redirecting to login...');
+                        window.location.href = '/login';
+                    }
+                    return;
+                }
                 if (isMounted) {
-                    console.error('Failed to refresh header stats:', error);
+                    // Network/transient failures should not crash client rendering.
+                    console.warn('Failed to refresh header stats:', error);
                     setLoading(false);
                 }
             }
@@ -57,6 +60,7 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
 
         return () => {
             isMounted = false;
+            controller.abort();
             clearInterval(interval);
         };
     }, [siteId]);

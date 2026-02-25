@@ -125,6 +125,7 @@ export function TrmnlLivePreview({
     const storageHydratedRef = useRef(false);
     const skipInitialWriteRef = useRef(true);
     const [previewScale, setPreviewScale] = useState(1);
+    const [chassisSize, setChassisSize] = useState({ width: 878, height: 561 });
     const [showOverflowHint, setShowOverflowHint] = useState(false);
     const [displayScaleCap, setDisplayScaleCap] = useState(normalizedMaxDisplayScale);
     const effectiveDisplayScaleCap = clamp(displayScaleCap, 0.2, normalizedMaxDisplayScale);
@@ -177,23 +178,23 @@ export function TrmnlLivePreview({
 
         const updateScale = () => {
             const cappedScale = resolvedDisplayScaleCap;
-            if (allowNarrowScroll) {
-                // In scroll mode we don't need chassis measurements;
-                // apply persisted/preset scale immediately.
+            if (allowNarrowScroll && element.clientWidth >= 890 * cappedScale) {
                 setPreviewScale(cappedScale);
+                setChassisSize({ width: 890, height: 620 }); // Generous buffer for shadow/text
                 return;
             }
 
-            const chassisEl = previewChassisRef.current;
-            if (!chassisEl) return;
-
             const availableWidth = element.clientWidth;
-            const naturalWidth = chassisEl.offsetWidth;
-            const naturalHeight = chassisEl.offsetHeight;
+            // The exact width/height of the TRMNL device wrapper based on fixed padding:
+            // 800 width + 4 + 16 + 24 + 32 (various paddings and borders) = 876
+            // We use 890 width and 620 height to safely encapsulate the drop shadow and bottom text.
+            const strictWidth = 890;
+            const strictHeight = 620;
 
-            if (availableWidth <= 0 || naturalWidth <= 0 || naturalHeight <= 0) return;
+            if (availableWidth <= 0) return;
 
-            setPreviewScale(Math.max(0.2, Math.min(cappedScale, availableWidth / naturalWidth)));
+            setPreviewScale(Math.max(0.2, Math.min(cappedScale, availableWidth / strictWidth)));
+            setChassisSize({ width: strictWidth, height: strictHeight });
         };
 
         updateScale();
@@ -226,27 +227,27 @@ export function TrmnlLivePreview({
     return (
         <div className="rounded-lg border bg-zinc-100 dark:bg-slate-900 p-3">
             {showScaleControls && (
-            <div className="mb-3 flex items-center justify-end gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span>Preview size</span>
-                {PRESET_DISPLAY_SCALES.map((scale) => {
-                    const enabled = scale <= normalizedMaxDisplayScale;
-                    const selected = Math.abs(resolvedDisplayScaleCap - scale) < 0.005;
-                    return (
-                        <button
-                            key={scale}
-                            type="button"
-                            disabled={!enabled}
-                            onClick={() => setDisplayScaleCap(scale)}
-                            className={`rounded border px-2 py-1 transition-colors ${selected
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'bg-white dark:bg-slate-800 border-gray-300 dark:border-slate-600'
-                                } ${enabled ? '' : 'opacity-50 cursor-not-allowed'}`}
-                        >
-                            {scale === 1 ? 'Full' : `${Math.round(scale * 100)}%`}
-                        </button>
-                    );
-                })}
-            </div>
+                <div className="mb-3 flex items-center justify-end gap-2 text-xs text-gray-600 dark:text-gray-400">
+                    <span>Preview size</span>
+                    {PRESET_DISPLAY_SCALES.map((scale) => {
+                        const enabled = scale <= normalizedMaxDisplayScale;
+                        const selected = Math.abs(resolvedDisplayScaleCap - scale) < 0.005;
+                        return (
+                            <button
+                                key={scale}
+                                type="button"
+                                disabled={!enabled}
+                                onClick={() => setDisplayScaleCap(scale)}
+                                className={`rounded border px-2 py-1 transition-colors ${selected
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'bg-white dark:bg-slate-800 border-gray-300 dark:border-slate-600'
+                                    } ${enabled ? '' : 'opacity-50 cursor-not-allowed'}`}
+                            >
+                                {scale === 1 ? 'Full' : `${Math.round(scale * 100)}%`}
+                            </button>
+                        );
+                    })}
+                </div>
             )}
             {previewError && (
                 <div className="mb-3 p-2 bg-red-100 text-red-700 rounded text-sm">
@@ -262,42 +263,50 @@ export function TrmnlLivePreview({
             {previewHtml && (
                 <div ref={previewMountRef} className="w-full">
                     <div ref={scrollContainerRef} className={`w-full ${allowNarrowScroll ? 'overflow-x-auto' : 'overflow-x-hidden'}`}>
-                    <div className="mx-auto w-fit">
-                        <div
-                            ref={previewChassisRef}
-                            className="origin-top-left"
-                            style={{ zoom: previewScale }}
-                        >
-                            <div className="relative rounded-[18px] border border-zinc-700 bg-gradient-to-b from-zinc-600 to-zinc-700 p-4 pb-5 shadow-[0_16px_36px_rgba(0,0,0,0.35)]">
-                                <div className="rounded-[12px] border border-zinc-500 bg-zinc-300 p-3 shadow-[inset_0_1px_4px_rgba(0,0,0,0.2)]">
-                                    <div className="rounded-[8px] border border-zinc-400 bg-zinc-100 p-2">
-                                        <div
-                                            className="overflow-hidden rounded border border-gray-300 bg-white"
-                                            style={{
-                                                width: `${TRMNL_SCREEN_WIDTH}px`,
-                                                height: `${TRMNL_SCREEN_HEIGHT}px`,
-                                                contain: 'paint'
-                                            }}
-                                        >
-                                            <iframe
-                                                title="TRMNL live preview"
-                                                className="block border-0 bg-white"
+                        <div className="mx-auto" style={{
+                            width: Math.ceil(chassisSize.width * previewScale),
+                            height: Math.ceil(chassisSize.height * previewScale)
+                        }}>
+                            <div
+                                ref={previewChassisRef}
+                                className="origin-top-left flex flex-col w-fit"
+                                style={{
+                                    transform: `scale(${previewScale})`,
+                                    transformOrigin: 'top left'
+                                }}
+                            >
+                                <div className="relative inline-block rounded-[18px] border border-zinc-700 bg-gradient-to-b from-zinc-600 to-zinc-700 p-4 pb-5 shadow-[0_16px_36px_rgba(0,0,0,0.35)]">
+                                    <div className="rounded-[12px] border border-zinc-500 bg-zinc-300 p-3 shadow-[inset_0_1px_4px_rgba(0,0,0,0.2)]">
+                                        <div className="rounded-[8px] border border-zinc-400 bg-zinc-100 p-2">
+                                            <div
+                                                className="overflow-hidden rounded border border-gray-300 bg-white"
                                                 style={{
                                                     width: `${TRMNL_SCREEN_WIDTH}px`,
-                                                    height: `${TRMNL_SCREEN_HEIGHT}px`
+                                                    height: `${TRMNL_SCREEN_HEIGHT}px`,
+                                                    contain: 'paint'
                                                 }}
-                                                scrolling="no"
-                                                srcDoc={buildTrmnlPreviewDocument(previewHtml)}
-                                            />
+                                            >
+                                                <iframe
+                                                    title="TRMNL live preview"
+                                                    className="block border-0 bg-white"
+                                                    width={TRMNL_SCREEN_WIDTH}
+                                                    height={TRMNL_SCREEN_HEIGHT}
+                                                    style={{
+                                                        width: `${TRMNL_SCREEN_WIDTH}px`,
+                                                        height: `${TRMNL_SCREEN_HEIGHT}px`
+                                                    }}
+                                                    scrolling="no"
+                                                    srcDoc={buildTrmnlPreviewDocument(previewHtml)}
+                                                />
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div className="mt-3 text-center text-[11px] font-semibold tracking-[0.2em] text-zinc-300">
-                                    TRMNL
+                                    <div className="mt-3 text-center text-[11px] font-semibold tracking-[0.2em] text-zinc-300">
+                                        TRMNL
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
                     </div>
                     {showOverflowHint && (
                         <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">

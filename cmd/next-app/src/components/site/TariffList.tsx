@@ -1,6 +1,8 @@
 
 import { Tariff } from '@/lib/db';
 import { formatTouName, formatTimeRange } from '@/lib/format-utils';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
 
 interface TariffListProps {
     tariffs: Tariff[];
@@ -9,81 +11,99 @@ interface TariffListProps {
 export function TariffList({ tariffs }: TariffListProps) {
     if (!tariffs || tariffs.length === 0) {
         return (
-            <div className="p-6 bg-gray-100 dark:bg-slate-800 rounded-lg">
-                <p className="text-gray-500 dark:text-gray-400">No tariffs found for this site.</p>
-            </div>
+            <Card>
+                <CardHeader>
+                    <CardTitle>Tariff Information</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <p className="text-gray-500 dark:text-gray-400">No tariffs found for this site.</p>
+                </CardContent>
+            </Card>
         );
     }
 
     return (
         <div className="space-y-8">
             {tariffs.map((tariff) => (
-                <div key={tariff.id} className="border rounded-lg p-6 shadow-sm bg-gray-50 dark:bg-slate-800/50 dark:border-slate-700">
-                    <h2 className="text-2xl font-semibold mb-4">{formatTouName(tariff.name || `Tariff #${tariff.id}`)}</h2>
+                <Card key={tariff.id}>
+                    <CardHeader>
+                        <CardTitle>{formatTouName(tariff.name || `Tariff #${tariff.id}`)} Tariff Information</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        {(!tariff.seasons || tariff.seasons.length === 0) ? (
+                            <p className="text-gray-500 italic">No seasons defined.</p>
+                        ) : (
+                            <div className="space-y-6">
+                                {tariff.seasons.map((season) => (
+                                    <Card key={season.id} className="shadow-sm overflow-hidden border-gray-200 dark:border-slate-700">
+                                        <CardHeader
+                                            className="pb-3 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800"
+                                            action={
+                                                <div className="text-sm text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 px-2 py-1 rounded">
+                                                    {formatSeasonDate(season.from_month, season.from_day)} - {formatSeasonDate(season.to_month, season.to_day)}
+                                                </div>
+                                            }
+                                        >
+                                            <CardTitle className="text-xl font-medium">{formatTouName(season.name || 'Unnamed Season')}</CardTitle>
+                                        </CardHeader>
 
-                    {(!tariff.seasons || tariff.seasons.length === 0) ? (
-                        <p className="text-gray-500 italic">No seasons defined.</p>
-                    ) : (
-                        <div className="space-y-6">
-                            {tariff.seasons.map((season) => (
-                                <div key={season.id} className="bg-white dark:bg-slate-900 p-4 rounded-md border dark:border-slate-800">
-                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
-                                        <h3 className="text-xl font-medium">{formatTouName(season.name || 'Unnamed Season')}</h3>
-                                        <span className="text-sm text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 px-2 py-1 rounded">
-                                            {season.from_month}/{season.from_day} - {season.to_month}/{season.to_day}
-                                        </span>
-                                    </div>
+                                        <CardContent className="p-0 bg-gray-50/50 dark:bg-slate-900/50">
+                                            {(!season.schedules || season.schedules.length === 0) ? (
+                                                <div className="p-6">
+                                                    <p className="text-gray-500 dark:text-gray-400 italic text-sm">No schedules defined.</p>
+                                                </div>
+                                            ) : (
+                                                <Table>
+                                                    <TableHeader className="border-b border-gray-200 dark:border-slate-700">
+                                                        <TableRow className="bg-gray-100 dark:bg-slate-800/80">
+                                                            <TableHead className="pl-4 text-gray-700 dark:text-gray-300">Schedule Name</TableHead>
+                                                            <TableHead className="text-gray-700 dark:text-gray-300">Time Range</TableHead>
+                                                            <TableHead className="text-gray-700 dark:text-gray-300">Days</TableHead>
+                                                            <TableHead className="text-gray-700 dark:text-gray-300">Buy Rate ($/kWh)</TableHead>
+                                                            <TableHead className="pr-4 text-gray-700 dark:text-gray-300">Sell Rate ($/kWh)</TableHead>
+                                                        </TableRow>
+                                                    </TableHeader>
+                                                    <TableBody className="divide-y divide-gray-100 dark:divide-slate-800">
+                                                        {season.schedules.map((schedule) => {
+                                                            const daysLabel = (schedule.from_day_of_week === 0 && schedule.to_day_of_week === 6)
+                                                                ? 'Every Day'
+                                                                : (schedule.from_day_of_week !== null
+                                                                    ? `${getDayName(schedule.from_day_of_week)} - ${getDayName(schedule.to_day_of_week!)}`
+                                                                    : 'Every Day');
 
-                                    {(!season.schedules || season.schedules.length === 0) ? (
-                                        <p className="text-gray-500 dark:text-gray-400 italic text-sm">No schedules defined.</p>
-                                    ) : (
-                                        <div className="overflow-x-auto">
-                                            <table className="min-w-full text-sm">
-                                                <thead>
-                                                    <tr className="bg-gray-100 dark:bg-slate-800 text-left dark:text-gray-200">
-                                                        <th className="p-2 rounded-l">Schedule Name</th>
-                                                        <th className="p-2">Time Range</th>
-                                                        <th className="p-2">Days</th>
-                                                        <th className="p-2">Buy Rate ($/kWh)</th>
-                                                        <th className="p-2 rounded-r">Sell Rate ($/kWh)</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {season.schedules.map((schedule) => (
-                                                        <tr key={schedule.id} className="border-b last:border-0 dark:border-slate-700">
-                                                            <td className="p-2 font-medium">{formatTouName(schedule.name || 'Standard')}</td>
-                                                            <td className="p-2">
-                                                                {formatTimeRange(
-                                                                    schedule.from_hour,
-                                                                    schedule.from_minute,
-                                                                    schedule.to_hour,
-                                                                    schedule.to_minute
-                                                                )}
-                                                            </td>
-                                                            <td className="p-2">
-                                                                {(schedule.from_day_of_week === 0 && schedule.to_day_of_week === 6) ? 'Every Day' : (
-                                                                    schedule.from_day_of_week !== null ? (
-                                                                        `${getDayName(schedule.from_day_of_week)} - ${getDayName(schedule.to_day_of_week!)}`
-                                                                    ) : 'Every Day'
-                                                                )}
-                                                            </td>
-                                                            <td className="p-2 text-red-600 font-mono">
-                                                                ${(schedule.buy_rate ?? season.buy_rate).toFixed(4)}
-                                                            </td>
-                                                            <td className="p-2 text-green-600 font-mono">
-                                                                ${(schedule.sell_rate ?? season.sell_rate).toFixed(4)}
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
+                                                            return (
+                                                                <TableRow key={schedule.id}>
+                                                                    <TableCell className="pl-4 font-medium">{formatTouName(schedule.name || 'Standard')}</TableCell>
+                                                                    <TableCell className="text-gray-700 dark:text-gray-300">
+                                                                        {formatTimeRange(
+                                                                            schedule.from_hour,
+                                                                            schedule.from_minute,
+                                                                            schedule.to_hour,
+                                                                            schedule.to_minute
+                                                                        )}
+                                                                    </TableCell>
+                                                                    <TableCell className="text-gray-700 dark:text-gray-300">
+                                                                        {daysLabel}
+                                                                    </TableCell>
+                                                                    <TableCell className="text-red-600">
+                                                                        ${(schedule.buy_rate ?? season.buy_rate).toFixed(4)}
+                                                                    </TableCell>
+                                                                    <TableCell className="pr-4 text-green-600">
+                                                                        ${(schedule.sell_rate ?? season.sell_rate).toFixed(4)}
+                                                                    </TableCell>
+                                                                </TableRow>
+                                                            );
+                                                        })}
+                                                    </TableBody>
+                                                </Table>
+                                            )}
+                                        </CardContent>
+                                    </Card>
+                                ))}
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
             ))}
         </div>
     );
@@ -93,4 +113,10 @@ function getDayName(day: number): string {
     // Tesla uses 0=Monday, 6=Sunday
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     return days[day] || String(day);
+}
+
+function formatSeasonDate(month: number | null | undefined, day: number | null | undefined): string {
+    if (!month || !day) return '';
+    const date = new Date(2000, month - 1, day);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }

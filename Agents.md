@@ -31,6 +31,12 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - **Migrations**: SQL migrations in `cmd/next-app/db-migrations/`. Create a new `.sql` file with a timestamp prefix for schema changes.
   - When pushing to PRs a GitHub Action will test any migrations against a backup of production to ensure they can be applied. Note: This does cause Trmnl device installations in the dev database to become invalid. 
 
+## Repo Layout (Important)
+- Primary active app under development is in `cmd/next-app` (App Router code is under `cmd/next-app/src`).
+- Do not assume a top-level `src/`.
+- If a task says “Next.js code”, start in `cmd/next-app` unless explicitly told otherwise.
+- Secondary legacy web project exists at `cmd/web-app` (only use when task references it).
+
 ## TRMNL + Tesla API Constraints
 - **TRMNL Poll Cadence**: Assume devices poll at most once every 15 minutes.
 - **Cost Control**: Tesla Fleet API calls are billable over thresholds, so avoid per-request live/history fetches when they are not needed.
@@ -58,3 +64,4 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - **Task Management**: Use `task.md` to track huge chunks of work.
 - **Verification**: Always verify builds, lint, and run tests before finishing tasks.
 - **Persona**: Helpful, competent software engineer pair programmer.
+- **Change Control**: The developer is responsible for all Git commits and PRs. 

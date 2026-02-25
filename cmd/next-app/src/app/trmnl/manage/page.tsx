@@ -4,8 +4,16 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
-import { Breadcrumbs } from '@/components/Breadcrumbs';
+import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
+import { ErrorPanel, LoadingPanel } from '@/components/ui/AsyncState';
+import { Button } from '@/components/ui/Button';
+import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Checkbox, Label, Select } from '@/components/ui/Form';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { PageShell } from '@/components/ui/PageShell';
+import { SectionCard } from '@/components/ui/SectionCard';
 import {
     buildDefaultTrmnlComponentScreens,
     DEFAULT_TRMNL_COMPONENT_CONFIG,
@@ -332,16 +340,34 @@ function ManageContent() {
         }
     };
 
-    if (loading) return <div className="p-8">Loading...</div>;
-    if (error) return <div className="p-8 text-red-500">Error: {error}</div>;
+    if (loading) {
+        return (
+            <PageShell maxWidth="7xl" className="px-4 py-6 md:px-8 lg:px-16">
+                <LoadingPanel
+                    title="Loading Trmnl connection"
+                    description="Fetching your linked site and saved screen configuration."
+                />
+            </PageShell>
+        );
+    }
+    if (error) {
+        return (
+            <PageShell maxWidth="7xl" className="px-4 py-6 md:px-8 lg:px-16">
+                <ErrorPanel title="Failed to load Trmnl connection" message={error} />
+            </PageShell>
+        );
+    }
 
     const currentSite = sites.find((s) => s.id === selectedSite);
 
     return (
-        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-16 lg:pt-2 lg:pb-6">
-            <div className="w-full max-w-[1800px]">
+        <PageShell
+            maxWidth="full"
+            padding="none"
+            className="max-w-[1800px] px-4 pt-2 pb-6 md:px-8 lg:px-16"
+        >
                 {currentSite && (
-                    <Breadcrumbs items={[
+                    <PageBreadcrumbs items={[
                         { label: 'Manage' },
                         { label: currentSite.name, href: `/site/${currentSite.id}` },
                         { label: 'Settings', href: `/site/${currentSite.id}/settings` },
@@ -349,83 +375,90 @@ function ManageContent() {
                     ]} />
                 )}
                 {!currentSite && (
-                    <Breadcrumbs items={[
+                    <PageBreadcrumbs items={[
                         { label: 'Manage' },
                         { label: 'Trmnl Connect' }
                     ]} />
                 )}
 
-                <div className="mt-8 grid gap-6 xl:grid-cols-2">
-                    <div className="xl:col-span-2 px-1 py-1">
-                        <h1 className="text-3xl font-bold mb-3">Manage Trmnl Connection</h1>
+                <PageHeader
+                    className="mt-6"
+                    title="Manage Trmnl Connection"
+                    description="Configure rotating TRMNL screens, preview each layout, and save changes without interrupting the current link."
+                    density="compact"
+                />
 
+                <div className="mt-8 grid gap-6 xl:grid-cols-2">
+                    <SectionCard className="xl:col-span-2" title="Connection Details" density="compact">
                         {sites.length > 1 ? (
-                            <div className="mb-6">
-                                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Select Site to Display</label>
-                                <select
+                            <div className="mb-6 space-y-2">
+                                <Label htmlFor="trmnl-manage-site-select">Select Site to Display</Label>
+                                <Select
+                                    id="trmnl-manage-site-select"
                                     value={selectedSite}
                                     onChange={(e) => setSelectedSite(e.target.value)}
-                                    className="w-full p-2 border rounded dark:bg-slate-800 dark:border-slate-700"
                                 >
                                     {sites.map((site) => (
                                         <option key={site.id} value={site.id}>{site.name}</option>
                                     ))}
-                                </select>
+                                </Select>
                             </div>
                         ) : sites.length === 0 ? (
-                            <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 rounded border border-yellow-200 dark:border-yellow-700">
-                                <h3 className="font-semibold text-yellow-800 dark:text-yellow-200 mb-2">No Energy Sites Found</h3>
-                                <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-4">
+                            <Alert variant="warning" className="mb-6">
+                                <AlertTitle>No Energy Sites Found</AlertTitle>
+                                <AlertDescription className="mb-3">
                                     We couldn&apos;t find any compatible energy sites associated with your account.
-                                </p>
-                                <Link href="/" className="text-sm font-medium text-blue-600 hover:text-blue-500 underline">
+                                </AlertDescription>
+                                <Link href="/" className="text-sm font-medium underline">
                                     Return to Dashboard
                                 </Link>
-                            </div>
+                            </Alert>
                         ) : null
                         }
 
                         {currentSite && (
-                            <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
-                                <p className="text-sm text-gray-700 dark:text-gray-200">
+                            <Alert variant="info">
+                                <AlertDescription className="text-sm">
                                     Your site <span className="font-semibold">{currentSite.name}</span> serviced by the utility <span className="font-semibold">{currentSite.utility}</span> is being linked to your Trmnl device.
-                                </p>
-                            </div>
+                                </AlertDescription>
+                            </Alert>
                         )}
-                    </div>
+                    </SectionCard>
 
-                    <div className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800">
-                        <div className="flex items-center justify-between mb-3">
-                            <h3 className="font-semibold text-gray-900 dark:text-white">Screen Configuration</h3>
-                            <div className="flex items-center gap-2">
-                                <label className="text-xs text-gray-600 dark:text-gray-300">Preview size</label>
-                                <select
+                    <SectionCard
+                        title="Screen Configuration"
+                        description="Each request rotates to the next screen. Edit a screen to change its component set."
+                        action={(
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                                <Label htmlFor="trmnl-preview-size" className="text-xs">Preview size</Label>
+                                <Select
+                                    id="trmnl-preview-size"
                                     value={String(previewScale)}
                                     onChange={(e) => setPreviewScale(Number.parseFloat(e.target.value))}
-                                    className="text-xs p-1 border rounded dark:bg-slate-800 dark:border-slate-700"
+                                    className="h-8 w-auto min-w-20 px-2 py-1 text-xs"
                                 >
                                     <option value="0.25">25%</option>
                                     <option value="0.33">33%</option>
                                     <option value="0.5">50%</option>
                                     <option value="0.75">75%</option>
                                     <option value="1">100%</option>
-                                </select>
-                                <button
+                                </Select>
+                                <Button
                                     type="button"
                                     onClick={handleAddScreen}
                                     disabled={componentScreens.length >= MAX_TRMNL_COMPONENT_SCREENS}
-                                    className="text-xs px-2 py-1 rounded border border-gray-300 dark:border-slate-700 disabled:opacity-50 inline-flex items-center gap-1"
+                                    variant="outline"
+                                    size="sm"
+                                    className="inline-flex gap-1"
                                     aria-label="Add screen"
                                     title="Add screen"
                                 >
                                     <span aria-hidden="true">+</span>
                                     <span>Add Screen</span>
-                                </button>
+                                </Button>
                             </div>
-                        </div>
-                        <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
-                            Each request rotates to the next screen. Edit a screen to change its component set.
-                        </p>
+                        )}
+                    >
                         <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
                             Tip: drag the handle to reorder screen rotation.
                         </p>
@@ -447,7 +480,7 @@ function ManageContent() {
                                         {isDropBefore && (
                                             <div className="h-1.5 rounded bg-blue-500/80 mb-2 animate-pulse" />
                                         )}
-                                        <div
+                                        <Card
                                             onClick={() => setEditingScreenId(screen.id)}
                                             onKeyDown={(e) => {
                                                 if (e.key === 'Enter' || e.key === ' ') {
@@ -475,7 +508,7 @@ function ManageContent() {
                                                 setDraggingScreenId(null);
                                                 setDropIndicator(null);
                                             }}
-                                            className={`rounded border p-3 cursor-pointer transition-all duration-150 ${isEditing ? 'border-2 border-zinc-700 dark:border-zinc-200 shadow-lg bg-white dark:bg-slate-900' : 'border-gray-200 dark:border-slate-700'} ${isDragging ? 'opacity-60 scale-[0.99]' : (isEditing ? 'scale-100 hover:shadow-xl' : 'scale-100 hover:shadow-sm')}`}
+                                            className={`cursor-pointer p-3 transition-all duration-150 ${isEditing ? 'border-2 border-zinc-700 dark:border-zinc-200 shadow-lg' : ''} ${isDragging ? 'scale-[0.99] opacity-60' : (isEditing ? 'scale-100 hover:shadow-xl' : 'scale-100 hover:shadow-sm')}`}
                                         >
                                             <div className="mb-2 flex items-center justify-between">
                                                 <div className="flex items-center gap-2">
@@ -501,29 +534,32 @@ function ManageContent() {
                                                     <span className="text-sm font-semibold">{getScreenLabel(index)}</span>
                                                 </div>
                                                 <div className="flex items-center gap-2">
-                                                    <button
+                                                    <Button
                                                         type="button"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             setEditingScreenId(screen.id);
                                                         }}
-                                                        className="text-xs px-2 py-1 rounded border border-gray-300 dark:border-slate-700"
+                                                        variant="outline"
+                                                        size="sm"
                                                     >
                                                         Edit
-                                                    </button>
-                                                    <button
+                                                    </Button>
+                                                    <Button
                                                         type="button"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             handleDeleteScreen(screen.id);
                                                         }}
                                                         disabled={componentScreens.length <= 1}
-                                                        className="text-xs px-2 py-1 rounded border border-red-300 text-red-600 disabled:opacity-50 inline-flex items-center justify-center"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="border-red-300 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20"
                                                         aria-label={`Delete ${screen.name}`}
                                                         title={`Delete ${screen.name}`}
                                                     >
                                                         <span aria-hidden="true">🗑</span>
-                                                    </button>
+                                                    </Button>
                                                 </div>
                                             </div>
 
@@ -538,7 +574,7 @@ function ManageContent() {
                                                     displayScaleOverride={previewScale}
                                                 />
                                             </div>
-                                        </div>
+                                        </Card>
                                         {isDropAfter && (
                                             <div className="h-1.5 rounded bg-blue-500/80 mt-2 animate-pulse" />
                                         )}
@@ -546,114 +582,112 @@ function ManageContent() {
                                 );
                             })}
                         </div>
-                    </div>
+                    </SectionCard>
 
                     <div ref={rightRailRef} className="relative min-h-[240px]">
-                        <div
+                        <Card
                             ref={formCardRef}
-                            className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800 transition-transform duration-300 overflow-y-auto"
+                            className="overflow-y-auto transition-transform duration-300"
                             style={{
                                 transform: `translateY(${formOffsetPx}px)`,
                                 height: formHeightPx > 0 ? `${formHeightPx}px` : undefined
                             }}
                         >
-                            <h2 className="text-xl font-semibold mb-2">Screen Components</h2>
-                            <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-                                Editing: <span className="font-semibold">{editingScreen ? editingScreen.name : 'Screen 1'}</span>
-                            </p>
-
-                            {success && <div className="mb-4 p-2 bg-green-100 text-green-700 rounded">{success}</div>}
-
-                            <div className="mb-6 p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
-                                <h3 className="font-semibold mb-3 text-gray-900 dark:text-white">Components</h3>
-                                <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-                                    Choose what renders on this screen.
+                            <CardHeader>
+                                <CardTitle>Screen Components</CardTitle>
+                                <p className="text-sm text-gray-600 dark:text-gray-300">
+                                    Editing: <span className="font-semibold">{editingScreen ? editingScreen.name : 'Screen 1'}</span>
                                 </p>
+                            </CardHeader>
+                            <CardBody className="space-y-6">
+                                {success ? (
+                                    <Alert variant="success">
+                                        <AlertDescription>{success}</AlertDescription>
+                                    </Alert>
+                                ) : null}
+
+                                <SectionCard
+                                    density="compact"
+                                    title="Components"
+                                    description="Choose what renders on this screen."
+                                    className="bg-gray-50/60 dark:bg-slate-800/60"
+                                >
 
                                 <div className="space-y-4">
                                     <div className="space-y-2">
-                                        <label className="block text-xs text-gray-500 dark:text-gray-400">Live stats</label>
+                                        <Label className="block text-xs text-gray-500 dark:text-gray-400">Live stats</Label>
                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                            <label className="flex items-center gap-2 text-sm">
-                                                <input
-                                                    type="checkbox"
+                                            <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                                <Checkbox
                                                     checked={editingScreen?.componentConfig.showLiveGrid ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showLiveGrid: e.target.checked }))}
                                                 />
                                                 <span>Grid</span>
-                                            </label>
-                                            <label className="flex items-center gap-2 text-sm">
-                                                <input
-                                                    type="checkbox"
+                                            </Label>
+                                            <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                                <Checkbox
                                                     checked={editingScreen?.componentConfig.showLiveSolar ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showLiveSolar: e.target.checked }))}
                                                 />
                                                 <span>Solar</span>
-                                            </label>
-                                            <label className="flex items-center gap-2 text-sm">
-                                                <input
-                                                    type="checkbox"
+                                            </Label>
+                                            <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                                <Checkbox
                                                     checked={editingScreen?.componentConfig.showLiveBattery ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showLiveBattery: e.target.checked }))}
                                                 />
                                                 <span>Battery</span>
-                                            </label>
+                                            </Label>
                                         </div>
                                     </div>
 
                                     <div className="space-y-2">
-                                        <label className="block text-xs text-gray-500 dark:text-gray-400">Charts and Tables</label>
+                                        <Label className="block text-xs text-gray-500 dark:text-gray-400">Charts and Tables</Label>
                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                            <label className="flex items-center gap-2 text-sm">
-                                                <input
-                                                    type="checkbox"
+                                            <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                                <Checkbox
                                                     checked={editingScreen?.componentConfig.showEnergyChart ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showEnergyChart: e.target.checked }))}
                                                 />
                                                 <span>Energy Usage Chart</span>
-                                            </label>
+                                            </Label>
                                             <div className="space-y-1">
-                                                <label className="flex items-center gap-2 text-sm">
-                                                    <input
-                                                        type="checkbox"
+                                                <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                                    <Checkbox
                                                         checked={editingScreen?.componentConfig.showBatterySoc ?? false}
                                                         onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showBatterySoc: e.target.checked }))}
                                                     />
                                                     <span>Battery Level</span>
-                                                </label>
-                                                <select
+                                                </Label>
+                                                <Select
                                                     value={editingScreen?.componentConfig.batterySocMode ?? 'glyph'}
                                                     onChange={(e) => updateEditingConfig((prev) => ({
                                                         ...prev,
                                                         batterySocMode: e.target.value === 'chart' ? 'chart' : 'glyph'
                                                     }))}
-                                                    className="w-full p-1.5 border rounded dark:bg-slate-800 dark:border-slate-700 text-xs"
+                                                    className="h-8 text-xs"
                                                 >
                                                     <option value="glyph">Glyph</option>
                                                     <option value="chart">Chart</option>
-                                                </select>
+                                                </Select>
                                             </div>
-                                            <label className="flex items-center gap-2 text-sm">
-                                                <input
-                                                    type="checkbox"
+                                            <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                                <Checkbox
                                                     checked={editingScreen?.componentConfig.showEstimatedBill ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showEstimatedBill: e.target.checked }))}
                                                 />
                                                 <span>Estimated Monthly Bill</span>
-                                            </label>
+                                            </Label>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
+                                </SectionCard>
 
-                            <button
-                                onClick={handleSave}
-                                disabled={!selectedSite}
-                                className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                            >
-                                Save Changes
-                            </button>
-                        </div>
+                                <Button onClick={handleSave} disabled={!selectedSite} className="w-full">
+                                    Save Changes
+                                </Button>
+                            </CardBody>
+                        </Card>
                     </div>
                 </div>
 
@@ -669,14 +703,13 @@ function ManageContent() {
                         </a>
                     )}
                 </div>
-            </div>
-        </div>
+        </PageShell>
     );
 }
 
 export default function Page() {
     return (
-        <Suspense fallback={<div>Loading...</div>}>
+        <Suspense fallback={<PageShell maxWidth="7xl"><LoadingPanel title="Loading Trmnl manager" /></PageShell>}>
             <ManageContent />
         </Suspense>
     );

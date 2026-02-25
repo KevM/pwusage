@@ -3,7 +3,14 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
-import { Breadcrumbs } from '@/components/Breadcrumbs';
+import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
+import { ErrorPanel, LoadingPanel } from '@/components/ui/AsyncState';
+import { Button } from '@/components/ui/Button';
+import { Select, Label } from '@/components/ui/Form';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { PageShell } from '@/components/ui/PageShell';
+import { SectionCard } from '@/components/ui/SectionCard';
 
 function InstallContent() {
     const searchParams = useSearchParams();
@@ -64,12 +71,12 @@ function InstallContent() {
                             const match = installationCallbackUrl.match(/\/plugin_settings\/(\d+)/);
                             if (match) pluginSettingId = match[1];
                         }
-                        performSetup(firstSiteId, code, installationCallbackUrl, installationUuid, pluginSettingId);
-                    } else {
-                        if (!redirecting) setLoading(false);
+                        void performSetup(firstSiteId, code, installationCallbackUrl, installationUuid, pluginSettingId);
+                    } else if (!redirecting) {
+                        setLoading(false);
                     }
-                } else {
-                    if (!redirecting) setLoading(false);
+                } else if (!redirecting) {
+                    setLoading(false);
                 }
             })
             .catch(() => {
@@ -78,7 +85,13 @@ function InstallContent() {
             });
     }, [code, installationCallbackUrl, installationUuid]); // Only run once on mount (with code)
 
-    const performSetup = async (siteId: string, authCode: string, callbackUrl: string | null, uuid: string | null, pluginSettingId: string | null = null) => {
+    const performSetup = async (
+        siteId: string,
+        authCode: string,
+        callbackUrl: string | null,
+        uuid: string | null,
+        pluginSettingId: string | null = null,
+    ) => {
         try {
             const res = await fetch('/api/trmnl/setup', {
                 method: 'POST',
@@ -87,9 +100,9 @@ function InstallContent() {
                 body: JSON.stringify({
                     code: authCode,
                     site_id: siteId,
-                    uuid: uuid,
-                    plugin_setting_id: pluginSettingId
-                })
+                    uuid,
+                    plugin_setting_id: pluginSettingId,
+                }),
             });
 
             if (!res.ok) throw new Error(await res.text());
@@ -116,84 +129,98 @@ function InstallContent() {
                 pluginSettingId = match[1];
             }
         }
-        performSetup(selectedSite, code!, installationCallbackUrl, installationUuid, pluginSettingId);
+        void performSetup(selectedSite, code!, installationCallbackUrl, installationUuid, pluginSettingId);
     };
 
-    if (loading || autoConnecting) return (
-        <div className="max-w-md mx-auto mt-10 p-8 bg-white rounded-lg shadow-md text-center">
-            <h1 className="text-xl font-bold mb-4">Connecting to Trmnl...</h1>
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-            {autoConnecting && sites.length > 0 && <p className="mt-4 text-gray-600">Linking to {sites[0].name}</p>}
-        </div>
-    );
+    if (loading || autoConnecting) {
+        return (
+            <PageShell maxWidth="md" className="pt-10">
+                <LoadingPanel
+                    title="Connecting to Trmnl..."
+                    description={autoConnecting && sites.length > 0 ? `Linking to ${sites[0].name}` : undefined}
+                />
+            </PageShell>
+        );
+    }
 
-    if (error) return <div className="p-8 text-red-500">Error: {error}</div>;
+    if (error) {
+        return (
+            <PageShell maxWidth="md" className="pt-10">
+                <ErrorPanel title="Error" message={error} />
+            </PageShell>
+        );
+    }
 
     return (
-        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
-            <div className="w-full max-w-2xl">
-                <Breadcrumbs items={[
-                    { label: 'Install' }
-                ]} />
+        <PageShell maxWidth="2xl" className="space-y-6">
+            <PageBreadcrumbs items={[
+                { label: 'Install' },
+            ]} />
 
-                <div className="mt-8 bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800">
-                    <h1 className="text-2xl font-bold mb-6">Connect to Trmnl</h1>
+            <PageHeader title="Connect to Trmnl" titleTag="h1" density="compact" />
 
-                    {sites.length > 1 ? (
-                        <div className="mb-6">
-                            <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Select Site to Display</label>
-                            <select
-                                value={selectedSite}
-                                onChange={e => setSelectedSite(e.target.value)}
-                                className="w-full p-2 border rounded dark:bg-slate-800 dark:border-slate-700"
-                            >
-                                {sites.map(site => (
-                                    <option key={site.id} value={site.id}>{site.name}</option>
-                                ))}
-                            </select>
-                        </div>
-                    ) : sites.length === 1 ? (
-                        // Should generally not be reached due to auto-connect, but good fallback
-                        <div className="mb-6">
-                            <p className="text-sm font-medium mb-1 text-gray-500">Link to Site:</p>
-                            <p className="font-bold text-lg">{sites[0].name}</p>
-                        </div>
-                    ) : (
-                        <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 rounded border border-yellow-200 dark:border-yellow-700">
-                            <h3 className="font-semibold text-yellow-800 dark:text-yellow-200 mb-2">No Energy Sites Found</h3>
-                            <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-4">
-                                We couldn&apos;t find any compatible energy sites associated with your account.
-                            </p>
-                        </div>
-                    )}
-
-                    <div className="flex gap-4">
-                        <button
-                            onClick={handleSetup}
-                            disabled={!selectedSite || !code}
-                            className="flex-1 bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            <SectionCard>
+                {sites.length > 1 ? (
+                    <div className="mb-6 space-y-2">
+                        <Label htmlFor="trmnl-site-select">Select Site to Display</Label>
+                        <Select
+                            id="trmnl-site-select"
+                            value={selectedSite}
+                            onChange={(e) => setSelectedSite(e.target.value)}
                         >
-                            Connect
-                        </button>
-
-                        <a
-                            href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded hover:bg-gray-200 text-center transition-colors dark:bg-slate-800 dark:text-gray-300 dark:hover:bg-slate-700"
-                        >
-                            Back to Trmnl
-                        </a>
+                            {sites.map((site) => (
+                                <option key={site.id} value={site.id}>{site.name}</option>
+                            ))}
+                        </Select>
                     </div>
+                ) : sites.length === 1 ? (
+                    <div className="mb-6">
+                        <p className="mb-1 text-sm font-medium text-gray-500">Link to Site:</p>
+                        <p className="text-lg font-bold text-gray-900 dark:text-white">{sites[0].name}</p>
+                    </div>
+                ) : (
+                    <div className="mb-6">
+                        <Alert variant="warning">
+                            <AlertTitle>No Energy Sites Found</AlertTitle>
+                            <AlertDescription>
+                                We couldn&apos;t find any compatible energy sites associated with your account.
+                            </AlertDescription>
+                        </Alert>
+                    </div>
+                )}
+
+                <div className="flex flex-col gap-4 sm:flex-row">
+                    <Button
+                        onClick={handleSetup}
+                        disabled={!selectedSite || !code}
+                        className="flex-1"
+                    >
+                        Connect
+                    </Button>
+
+                    <a
+                        href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-1"
+                    >
+                        <Button renderAs="span" variant="secondary" className="w-full">
+                            Back to Trmnl
+                        </Button>
+                    </a>
                 </div>
-            </div>
-        </div>
+            </SectionCard>
+        </PageShell>
     );
 }
 
 export default function Page() {
     return (
-        <Suspense fallback={<div>Loading...</div>}>
+        <Suspense fallback={(
+            <PageShell maxWidth="md" className="pt-10">
+                <LoadingPanel title="Loading..." />
+            </PageShell>
+        )}>
             <InstallContent />
         </Suspense>
     );

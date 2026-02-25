@@ -7,6 +7,8 @@ import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards
 import { TeslaClient } from '@/lib/tesla-client';
 import { NoSupportedProducts } from '@/components/NoSupportedProducts';
 import { NoPowerwallYet } from '@/components/no-powerwall-yet';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { PageShell } from '@/components/ui/PageShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -103,13 +105,11 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
     const hasEnergyProducts = energyProducts.length > 0;
 
     return (
-        <div className="flex min-h-screen flex-col items-center p-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
-            <div className="w-full max-w-6xl mt-8">
-                <h1 className="text-3xl font-bold mb-6">Tesla Products</h1>
+        <PageShell maxWidth="6xl" className="mt-8">
+            <div className="space-y-6">
+                <PageHeader title="Tesla Products" density="compact" />
                 {!hasEnergyProducts && (
-                    <div className="mb-6">
-                        <NoPowerwallYet />
-                    </div>
+                    <NoPowerwallYet />
                 )}
                 {products.length > 0 ? (
                     <DashboardCards initialProducts={products} />
@@ -117,6 +117,6 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                     <NoSupportedProducts />
                 )}
             </div>
-        </div>
+        </PageShell>
     );
 }

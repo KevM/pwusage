@@ -1,0 +1,12 @@
+Read cmd/next-app/tracks/tailwind-styleguide/Track.md and execute only Step 1 and Step 2.
+
+Requirements:
+- Inventory routes/views under /Users/kevm/github/pwusage/cmd/next-app/src/app
+- Identify which views already use style guide components in /Users/kevm/github/pwusage/cmd/next-app/src/components/ui
+- List repeated UI patterns missing from the style guide
+- Replace Step 2 placeholders with concrete migration batches (small batches only)
+
+Update /Users/kevm/github/pwusage/Track.md:
+- Mark Step 1 and Step 2 as done
+- Add notes and execution log entries
+- Do not modify code yet

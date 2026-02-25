@@ -6,7 +6,13 @@ import { getDefaultSiteId, isUserAdmin } from '@/lib/auth-checks';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { pool, User } from '@/lib/db';
-import { Breadcrumbs } from '@/components/Breadcrumbs';
+import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
+import { H3, P } from '@/components/ui/Typography';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
+import { PageShell } from '@/components/ui/PageShell';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { SectionCard } from '@/components/ui/SectionCard';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,14 +40,28 @@ export default async function ProfilePage() {
     const firstSite = await repo.getSite(siteId);
 
     if (!firstSite || !firstSite.user_id) {
-        return <div className="p-8">Could not resolve user profile.</div>;
+        return (
+            <PageShell maxWidth="lg">
+                <Alert variant="danger">
+                    <AlertTitle>Profile Unavailable</AlertTitle>
+                    <AlertDescription>Could not resolve user profile.</AlertDescription>
+                </Alert>
+            </PageShell>
+        );
     }
 
     const userRes = await pool.query('SELECT * FROM "User" WHERE id = $1', [firstSite.user_id]);
     const user = userRes.rows[0] as User;
 
     if (!user) {
-        return <div className="p-8">User detailed record not found.</div>;
+        return (
+            <PageShell maxWidth="lg">
+                <Alert variant="danger">
+                    <AlertTitle>Profile Unavailable</AlertTitle>
+                    <AlertDescription>User detailed record not found.</AlertDescription>
+                </Alert>
+            </PageShell>
+        );
     }
 
     // Check Admin Status
@@ -61,14 +81,22 @@ export default async function ProfilePage() {
     }
 
     return (
-        <div className="container mx-auto p-6 max-w-2xl">
-            <Breadcrumbs items={[
+        <PageShell maxWidth="lg">
+            <PageBreadcrumbs items={[
                 { label: firstSite.name, href: `/site/${firstSite.id}` },
                 { label: 'Profile' }
             ]} />
-            <h1 className="text-3xl font-bold tracking-tight mb-8">User Profile</h1>
+            <PageHeader title="User Profile" titleTag="h2" density="compact" className="mb-6 mt-4" />
 
-            <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6 space-y-6">
+            <SectionCard
+                title="Account Details"
+                description={
+                    <>
+                        Review your Tesla account profile and linked application identity.
+                    </>
+                }
+            >
+                <div className="space-y-6">
 
                 {teslaUser && (
                     <div className="flex items-center gap-6">
@@ -86,51 +114,50 @@ export default async function ProfilePage() {
                             </div>
                         )}
                         <div>
-                            <h2 className="text-2xl font-semibold">{teslaUser.full_name}</h2>
-                            <p className="text-muted-foreground">{teslaUser.email}</p>
+                            <H3>{teslaUser.full_name}</H3>
+                            <P className="text-sm text-gray-500 dark:text-gray-400">{teslaUser.email}</P>
                         </div>
                     </div>
                 )}
 
                 {!teslaUser && error && (
-                    <div className="p-4 bg-red-50 text-red-600 rounded-md">
-                        {error}
-                    </div>
+                    <Alert variant="danger">
+                        <AlertTitle>Tesla Profile Error</AlertTitle>
+                        <AlertDescription>{error}</AlertDescription>
+                    </Alert>
                 )}
 
                 <div className="border-t pt-4 space-y-4">
                     <div>
-                        <h3 className="text-sm font-medium text-muted-foreground">Member Since</h3>
-                        <p className="text-sm">
+                        <h4 className="text-sm font-medium text-muted-foreground">Member Since</h4>
+                        <P className="text-sm leading-normal">
                             {user.created_at ? new Date(Number(user.created_at)).toLocaleDateString(undefined, {
                                 year: 'numeric',
                                 month: 'long',
                                 day: 'numeric'
                             }) : <span className="italic text-muted-foreground">Unknown</span>}
-                        </p>
+                        </P>
                     </div>
 
                     <div>
-                        <h3 className="text-sm font-medium text-muted-foreground">User ID</h3>
-                        <p className="text-sm font-mono bg-slate-100 dark:bg-slate-800 p-1 rounded inline-block select-all">
+                        <h4 className="text-sm font-medium text-muted-foreground">User ID</h4>
+                        <P className="text-sm font-mono bg-slate-100 dark:bg-slate-800 p-1 rounded inline-block select-all">
                             {user.id}
-                        </p>
+                        </P>
                     </div>
                 </div>
 
                 {isAdmin && (
                     <div className="border-t pt-4">
-                        <h3 className="text-sm font-medium text-muted-foreground mb-3">Administration</h3>
-                        <Link
-                            href="/admin"
-                            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-                        >
-                            Access Admin Dashboard
+                        <h4 className="text-sm font-medium text-muted-foreground mb-3">Administration</h4>
+                        <Link href="/admin">
+                            <Button renderAs="span">Access Admin Dashboard</Button>
                         </Link>
                     </div>
                 )}
 
-            </div>
-        </div>
+                </div>
+            </SectionCard>
+        </PageShell>
     );
 }

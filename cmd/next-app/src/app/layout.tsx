@@ -58,6 +58,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const showStyleGuide = process.env.NODE_ENV === "development";
   /* Sites fetching logic removed as it was only used for GlobalHeader which no longer needs it. 
      Keeping auth check logic if needed for other reasons, but seemingly the sites variable itself is now unused.
      actually, let's keep it simple and just remove the sites variable and its populating logic. 
@@ -80,7 +81,7 @@ export default async function RootLayout({
         suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} antialiased flex flex-col min-h-screen`}
       >
-        <GlobalHeader />
+        <GlobalHeader showStyleGuide={showStyleGuide} />
         <main className="flex-grow min-h-screen">
           {children}
         </main>

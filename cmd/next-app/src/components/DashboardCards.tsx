@@ -1,8 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { formatTouName } from '../lib/format-utils';
+import { fetchSiteLiveData, isValidSiteId } from '@/lib/site-live-data-client';
+import { SectionCard } from '@/components/ui/SectionCard';
+import { StatusPill } from '@/components/ui/StatusPill';
 
 export interface ProductWithLiveData {
     id: string;
@@ -24,39 +27,66 @@ interface VehicleMeta {
     option_codes?: string;
 }
 
+function VehicleIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-6 w-6 text-blue-600 dark:text-blue-400" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5h16.5m-14.25 0-.75 3h3l.75-3m9.75 0 .75 3h-3l-.75-3M5.25 13.5l1.08-4.318A2.25 2.25 0 0 1 8.514 7.5h6.972a2.25 2.25 0 0 1 2.184 1.682l1.08 4.318M6.75 18.75h10.5" />
+        </svg>
+    );
+}
+
+function EnergySiteIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-6 w-6 text-green-600 dark:text-green-400" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
+        </svg>
+    );
+}
+
 export function DashboardCards({ initialProducts }: { initialProducts: ProductWithLiveData[] }) {
     const [products, setProducts] = useState(initialProducts);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+    const productsRef = useRef(products);
 
     useEffect(() => {
+        productsRef.current = products;
+    }, [products]);
+
+    useEffect(() => {
+        let isMounted = true;
+        const controller = new AbortController();
+        const initialTimer = setTimeout(() => setLastUpdate(new Date()), 0);
+
+        productsRef.current = initialProducts;
+
         // Initial update
-        setTimeout(() => setLastUpdate(new Date()), 0);
 
         async function fetchLiveForProduct(p: ProductWithLiveData) {
-            if (p.type === 'vehicle') return;
+            if (p.type === 'vehicle' || !isValidSiteId(p.energy_site_id)) return;
 
             try {
-                const res = await fetch(`/api/site-live-data?siteId=${p.energy_site_id}`);
-                if (res.ok) {
-                    const data = await res.json();
+                const data = await fetchSiteLiveData(p.energy_site_id, controller.signal);
+                if (!isMounted) return;
 
-                    setProducts(prev => prev.map(prod => {
-                        if (prod.id === p.id) {
-                            return {
-                                ...prod,
-                                liveSolarPower: data.solarPower,
-                                liveBatteryPower: data.batteryPower,
-                                liveGridPower: data.gridPower,
-                                liveLoadPower: data.loadPower,
-                                percentage_charged: data.percentageCharged,
-                                currentTariff: prod.currentTariff === 'Loading...' ? (data.tariffName || 'Standard') : prod.currentTariff
-                            };
-                        }
-                        return prod;
-                    }));
-                    setLastUpdate(new Date());
-                }
+                setProducts(prev => prev.map(prod => {
+                    if (prod.id === p.id) {
+                        return {
+                            ...prod,
+                            liveSolarPower: data.solarPower,
+                            liveBatteryPower: data.batteryPower,
+                            liveGridPower: data.gridPower,
+                            liveLoadPower: data.loadPower,
+                            percentage_charged: data.percentageCharged,
+                            currentTariff: prod.currentTariff === 'Loading...' ? (data.currentTariff || 'Standard') : prod.currentTariff
+                        };
+                    }
+                    return prod;
+                }));
+                setLastUpdate(new Date());
             } catch (e) {
+                if (e instanceof DOMException && e.name === 'AbortError') {
+                    return;
+                }
                 console.error(`Failed to load live data for ${p.site_name}`, e);
             }
         }
@@ -70,54 +100,59 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
 
         // Poll every 60s
         const interval = setInterval(() => {
-            products.forEach(p => {
+            productsRef.current.forEach(p => {
                 if (p.type !== 'vehicle') fetchLiveForProduct(p);
             });
         }, 60000);
 
-        return () => clearInterval(interval);
-    }, [initialProducts, products]); // Added dependency products
+        return () => {
+            isMounted = false;
+            clearTimeout(initialTimer);
+            controller.abort();
+            clearInterval(interval);
+        };
+    }, [initialProducts]);
 
     return (
         <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {products.map((product) => {
                     if (product.type === 'vehicle') {
                         const meta = product.meta as VehicleMeta | undefined;
                         return (
-                            <div key={product.id} className="border p-4 rounded shadow hover:shadow-lg transition bg-slate-50 dark:bg-slate-800">
-                                <div className="flex items-center justify-between mb-3">
-                                    <div className="flex items-center gap-2">
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-blue-600 dark:text-blue-400">
-                                            <path fillRule="evenodd" clipRule="evenodd" d="M8.23607 5C7.09975 5 6.06096 5.64201 5.55279 6.65836L4.65836 8.44721C4.48897 8.786 4.1427 9 3.76393 9H3C1.34315 9 0 10.3431 0 12V14C0 15.3121 0.842366 16.4275 2.01581 16.8348C2.18436 18.6108 3.67994 20 5.5 20C7.26324 20 8.72194 18.6961 8.96456 17H15.0354C15.2781 18.6961 16.7368 20 18.5 20C20.3201 20 21.8156 18.6108 21.9842 16.8348C23.1576 16.4275 24 15.3121 24 14V12.6943C24 11.2277 22.9398 9.97617 21.4932 9.73507L17.6091 9.08772L15.9355 6.41C15.3873 5.53286 14.4259 5 13.3915 5H8.23607ZM4 16.4361V16.5639C4.03348 17.3634 4.69224 18.0013 5.5 18.0013C6.30776 18.0013 6.96652 17.3634 7 16.5639V16.4361C6.96652 15.6366 6.30776 14.9987 5.5 14.9987C4.69224 14.9987 4.03348 15.6366 4 16.4361ZM5.5 13C6.8962 13 8.10145 13.8175 8.66318 15H15.3368C15.8985 13.8175 17.1038 13 18.5 13C19.8245 13 20.9771 13.7357 21.5716 14.8207C21.8306 14.64 22 14.3398 22 14V12.6943C22 12.2054 21.6466 11.7882 21.1644 11.7079L16.9172 11H12C10.8954 11 10 10.1046 10 9V7H8.23607C7.8573 7 7.51103 7.214 7.34164 7.55279L6.44721 9.34164C5.93904 10.358 4.90025 11 3.76393 11H3C2.44772 11 2 11.4477 2 12V14C2 14.3398 2.16945 14.64 2.42845 14.8207C3.02292 13.7357 4.17555 13 5.5 13ZM12 7V8C12 8.55229 12.4477 9 13 9H15.1958L14.2395 7.47C14.0568 7.17762 13.7363 7 13.3915 7H12ZM17 16.4361V16.5639C17.0335 17.3634 17.6922 18.0013 18.5 18.0013C19.3078 18.0013 19.9665 17.3634 20 16.5639V16.4361C19.9665 15.6366 19.3078 14.9987 18.5 14.9987C17.6922 14.9987 17.0335 15.6366 17 16.4361Z" />
-                                        </svg>
-                                        <h2 className="text-xl font-semibold">{product.site_name}</h2>
-                                    </div>
-                                    <span className={`text-xs font-mono px-2 py-1 rounded ${meta?.state === 'online' ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
-                                        {meta?.state || 'Unknown'}
+                            <SectionCard
+                                key={product.id}
+                                className="h-full bg-slate-50 transition-shadow hover:shadow-md dark:bg-slate-800"
+                                title={(
+                                    <span className="flex items-center gap-2">
+                                        <VehicleIcon />
+                                        <span>{product.site_name}</span>
                                     </span>
-                                </div>
+                                )}
+                                action={<StatusPill status={meta?.state} className="font-mono" />}
+                                bodyClassName="space-y-3"
+                            >
                                 <div className="space-y-2 text-sm text-gray-600 dark:text-gray-300">
-                                    <div className="flex justify-between border-b pb-1">
+                                    <div className="flex justify-between border-b border-gray-100 pb-1 dark:border-slate-700">
                                         <span className="text-gray-500">VIN</span>
                                         <span className="font-mono">{product.currentTariff}</span>
                                     </div>
-                                    <div className="flex justify-between border-b pb-1">
+                                    <div className="flex justify-between border-b border-gray-100 pb-1 dark:border-slate-700">
                                         <span className="text-gray-500">ID</span>
                                         <span className="font-mono">{meta?.vehicle_id}</span>
                                     </div>
-                                    {meta?.option_codes && (
-                                        <div className="text-xs text-gray-400 truncate" title={meta.option_codes}>
+                                    {meta?.option_codes ? (
+                                        <div className="truncate text-xs text-gray-400" title={meta.option_codes}>
                                             Options: {meta.option_codes}
                                         </div>
-                                    )}
+                                    ) : null}
                                 </div>
-                                <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
-                                    <span className="text-xs text-gray-400 italic">
+                                <div className="flex justify-end border-t border-gray-100 pt-3 dark:border-slate-700">
+                                    <span className="text-xs italic text-gray-400">
                                         Integrated via Tesla Fleet API
                                     </span>
                                 </div>
-                            </div>
+                            </SectionCard>
                         );
                     }
 
@@ -127,15 +162,17 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                             href={`/site/${product.energy_site_id}`}
                             className="block"
                         >
-                            <div className="border p-4 rounded shadow hover:shadow-lg transition cursor-pointer bg-white dark:bg-slate-900">
-                                <div className="flex items-center gap-2 mb-3">
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-green-600 dark:text-green-400">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
-                                    </svg>
-                                    <h2 className="text-xl font-semibold">{product.site_name}</h2>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                            <SectionCard
+                                className="h-full cursor-pointer transition-shadow hover:shadow-md"
+                                title={(
+                                    <span className="flex items-center gap-2">
+                                        <EnergySiteIcon />
+                                        <span>{product.site_name}</span>
+                                    </span>
+                                )}
+                                bodyClassName="space-y-3"
+                            >
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
                                     <div>
                                         <p className="text-amber-700">Solar: {(product.liveSolarPower / 1000).toFixed(1)} kW</p>
                                         <p className="text-purple-700">Battery: {(product.liveBatteryPower / 1000).toFixed(1)} kW</p>
@@ -146,10 +183,10 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                                         <p className="text-blue-700">Load: {(product.liveLoadPower / 1000).toFixed(1)} kW</p>
                                     </div>
                                 </div>
-                                <p className="text-sm text-gray-500 mt-2">Tariff: {formatTouName(product.currentTariff)}</p>
-                            </div>
+                                <p className="text-sm text-gray-500">Tariff: {formatTouName(product.currentTariff)}</p>
+                            </SectionCard>
                         </Link>
-                    )
+                    );
                 })}
             </div>
 

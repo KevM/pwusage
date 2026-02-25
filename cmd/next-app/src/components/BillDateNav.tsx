@@ -3,6 +3,9 @@
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import React, { useState } from 'react';
+import { DateNavigator, DateNavigatorButton, DateNavigatorContent, DateNavigatorLabel } from './ui/DateNavigator';
+import { Button } from './ui/Button';
+import { Input, Label } from './ui/Form';
 
 interface BillDateNavProps {
     siteId: string;
@@ -78,32 +81,18 @@ export function BillDateNav({
     return (
         <div className="flex items-center gap-2 relative">
             {/* Centered Date Navigation Pill */}
-            <div className={`flex items-center gap-1 bg-white dark:bg-slate-900 rounded-lg p-1 shadow-sm border ${isCustomRange ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-200 dark:border-slate-800'} shrink-0`}>
-                {/* Hide Prev Arrow in Custom Mode? Or let it function as "Previous Month" relative to custom start? 
-                    The props provide prevDateStr which is calculated based on start-1 month. 
-                    If custom range is 34 days, "Previous Month" logic might be weird (start - 1 month).
-                    Let's hide arrows in Custom Mode to imply "Fixed Range".
-                 */}
+            <DateNavigator isCustom={isCustomRange}>
                 {!isCustomRange && (
-                    <Link
-                        href={`/site/${siteId}/usage?date=${prevDateStr}`}
-                        className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors flex-none"
-                        title="Previous Month"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="m15 18-6-6 6-6" />
-                        </svg>
-                    </Link>
+                    <DateNavigatorButton href={`/site/${siteId}/usage?date=${prevDateStr}`} direction="prev" />
                 )}
 
-                <div className="relative group text-center min-w-[150px]">
-                    <div
+                <DateNavigatorContent>
+                    <DateNavigatorLabel
                         onClick={() => setShowCustomPicker(!showCustomPicker)}
-                        className="font-semibold text-sm hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center select-none"
+                        isCustom={isCustomRange}
                     >
                         {dateRangeLabel}
-                        {isCustomRange && <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">Custom</span>}
-                    </div>
+                    </DateNavigatorLabel>
 
                     {/* Month Picker Overlay (Standard Mode Only) */}
                     {!isCustomRange && !showCustomPicker && (
@@ -123,32 +112,16 @@ export function BillDateNav({
                             })}
                         </select>
                     )}
-                </div>
+                </DateNavigatorContent>
 
                 {!isCustomRange && (
-                    isCurrentPeriod ? (
-                        <button
-                            disabled
-                            className="p-1.5 text-slate-300 dark:text-slate-700 cursor-not-allowed rounded-md flex-none"
-                            title="Next Month (Future)"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="m9 18 6-6-6-6" />
-                            </svg>
-                        </button>
-                    ) : (
-                        <Link
-                            href={`/site/${siteId}/usage?date=${nextDateStr}`}
-                            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors flex-none"
-                            title="Next Month"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="m9 18 6-6-6-6" />
-                            </svg>
-                        </Link>
-                    )
+                    <DateNavigatorButton
+                        href={isCurrentPeriod ? undefined : `/site/${siteId}/usage?date=${nextDateStr}`}
+                        direction="next"
+                        disabled={isCurrentPeriod}
+                    />
                 )}
-            </div>
+            </DateNavigator>
 
             {/* Custom Picker Popover */}
             {showCustomPicker && (
@@ -156,46 +129,48 @@ export function BillDateNav({
                     <h4 className="font-semibold mb-3 text-sm text-slate-900 dark:text-slate-100">Select Date Range</h4>
                     <div className="space-y-3">
                         <div>
-                            <label className="block text-xs text-slate-500 mb-1">Start Date</label>
-                            <input
+                            <Label className="block text-xs text-slate-500 mb-1">Start Date</Label>
+                            <Input
                                 type="date"
                                 value={startDate}
                                 onChange={(e) => setStartDate(e.target.value)}
-                                className="w-full text-sm p-2 border rounded bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                                className="w-full h-9 text-sm bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
                             />
                         </div>
                         <div>
-                            <label className="block text-xs text-slate-500 mb-1">End Date</label>
-                            <input
+                            <Label className="block text-xs text-slate-500 mb-1">End Date</Label>
+                            <Input
                                 type="date"
                                 value={endDate}
                                 onChange={(e) => setEndDate(e.target.value)}
-                                className="w-full text-sm p-2 border rounded bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                                className="w-full h-9 text-sm bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
                             />
                         </div>
                         <div className="flex gap-2 pt-2">
-                            <button
+                            <Button
                                 onClick={applyCustomRange}
                                 disabled={!startDate || !endDate}
-                                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded disabled:opacity-50"
+                                className="flex-1"
                             >
                                 Apply
-                            </button>
+                            </Button>
                             {isCustomRange && (
-                                <button
+                                <Button
                                     onClick={clearCustomRange}
-                                    className="flex-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium py-2 rounded"
+                                    variant="secondary"
+                                    className="flex-1"
                                 >
                                     Reset
-                                </button>
+                                </Button>
                             )}
                             {!isCustomRange && (
-                                <button
+                                <Button
                                     onClick={() => setShowCustomPicker(false)}
-                                    className="flex-1 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-medium py-2 rounded"
+                                    variant="outline"
+                                    className="flex-1"
                                 >
                                     Cancel
-                                </button>
+                                </Button>
                             )}
                         </div>
                     </div>
@@ -212,9 +187,11 @@ export function BillDateNav({
 
             {/* Action Buttons */}
             <div className='shrink-0 flex items-center'>
-                <button
+                <Button
                     onClick={() => setShowCustomPicker(!showCustomPicker)}
-                    className={`p-2 rounded-full transition-colors ${isCustomRange ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/30' : 'text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'}`}
+                    appearance="glyph"
+                    size="md"
+                    className={isCustomRange ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30' : ''}
                     title="Custom Date Range"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -223,19 +200,21 @@ export function BillDateNav({
                         <line x1="8" y1="2" x2="8" y2="6" />
                         <line x1="3" y1="10" x2="21" y2="10" />
                     </svg>
-                </button>
+                </Button>
 
                 <Link
                     href={`/site/${siteId}/usage?date=${fullBillDateStr}`}
-                    className="p-2 text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-full transition-colors"
                     title="View Full Bill (Current Cycle)"
+                    aria-label="View Full Bill (Current Cycle)"
                 >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z" />
-                        <path d="M16 8h-6" />
-                        <path d="M16 12h-6" />
-                        <path d="M10 16h-6" />
-                    </svg>
+                    <Button appearance="glyph" size="md" renderAs="span">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z" />
+                            <path d="M16 8h-6" />
+                            <path d="M16 12h-6" />
+                            <path d="M10 16h-6" />
+                        </svg>
+                    </Button>
                 </Link>
 
             </div>

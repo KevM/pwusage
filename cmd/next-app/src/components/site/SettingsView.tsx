@@ -5,13 +5,16 @@ import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
 import { TariffList } from './TariffList';
 import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/Card';
+import { Select, Label } from '@/components/ui/Form';
+import { H2 } from '@/components/ui/Typography';
+import { Button } from '@/components/ui/Button';
 
 
 import { SiteWithTariffs, TrmnlInstallation } from '@/lib/db';
 
 interface SettingsViewProps {
     site: SiteWithTariffs;
-    // TrmnlInstallation can be undefined if not found
     installation: TrmnlInstallation | undefined;
 }
 
@@ -125,92 +128,103 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
     }, [site.id]);
 
     return (
-        <div className="w-full max-w-5xl mx-auto">
-            <h1 className="text-3xl font-bold mb-8">Site Settings</h1>
+        <div className="w-full max-w-5xl mx-auto space-y-8">
+            <H2 className="mb-8">Site Settings</H2>
 
-            <div className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800">
-                <h2 className="text-xl font-semibold mb-6">Billing Configuration</h2>
-
-                <div className="mb-6">
-                    <BillingStartDayForm siteId={site.id} initialDay={site.billing_start_day || 1} />
-                    <p className="text-xs text-gray-500 mt-1">
-                        Calculates monthly usage starting from this day.
-                    </p>
-                </div>
-                <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
-                    <TimezoneDisplayForm siteId={site.id} initialMode={site.timezone_display_mode || 'SITE'} />
-                </div>
-            </div>
-
-
-            <div className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800 mt-8">
-                <h2 className="text-xl font-semibold mb-4">Trmnl E-Ink Display</h2>
-                <p className="mb-6 text-gray-600 dark:text-gray-300">
-                    Display your daily energy usage on a dedicated, always-on e-ink screen.
-                </p>
-
-                <div className="mb-8">
-                    <div className="mb-3 flex items-center justify-end gap-2">
-                        <label className="text-xs text-gray-600 dark:text-gray-300">Preview size</label>
-                        <select
-                            value={String(previewScale)}
-                            onChange={(e) => setPreviewScale(Number.parseFloat(e.target.value))}
-                            className="text-xs p-1 border rounded dark:bg-slate-800 dark:border-slate-700"
-                        >
-                            <option value="0.25">25%</option>
-                            <option value="0.33">33%</option>
-                            <option value="0.5">50%</option>
-                            <option value="0.75">75%</option>
-                            <option value="1">100%</option>
-                        </select>
+            <Card>
+                <CardHeader>
+                    <CardTitle>Billing Configuration</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                    <div>
+                        <BillingStartDayForm siteId={site.id} initialDay={site.billing_start_day || 1} />
+                        <p className="text-xs text-gray-500 mt-1">
+                            Calculates monthly usage starting from this day.
+                        </p>
                     </div>
-                    <TrmnlLivePreview
-                        previewHtml={previewHtml}
-                        previewError={previewError}
-                        previewLoading={previewLoading}
-                        hasSource={true}
-                        maxDisplayScale={1}
-                        showScaleControls={false}
-                        displayScaleOverride={previewScale}
-                    />
-                </div>
+                    <div className="pt-2">
+                        <TimezoneDisplayForm siteId={site.id} initialMode={site.timezone_display_mode || 'SITE'} />
+                    </div>
+                </CardContent>
+            </Card>
 
-                <div className="flex gap-4 flex-col sm:flex-row">
-                    {installation ? (
-                        <a
-                            href={pluginSettingId
-                                ? `https://trmnl.com/plugin_settings/${pluginSettingId}/edit`
-                                : 'https://trmnl.com/dashboard'}
-                            target="_blank"
-                            className="flex-1 bg-gray-800 text-white px-4 py-2 rounded text-center hover:bg-gray-700 transition-colors font-semibold"
-                        >
-                            Manage Trmnl Plugin
-                        </a>
-                    ) : (
-                        <a
-                            href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
-                            target="_blank"
-                            className="flex-1 bg-black text-white px-4 py-2 rounded text-center hover:bg-gray-800 transition-colors font-semibold"
-                        >
-                            Add Trmnl Plugin
-                        </a>
-                    )}
-                    <a
-                        href="https://trmnl.com"
-                        target="_blank"
-                        className="flex-1 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-200 px-4 py-2 rounded text-center hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
-                    >
-                        Buy Device
-                    </a>
-                </div>
-            </div>
 
-            <div className="bg-white dark:bg-slate-900 p-6 rounded shadow border dark:border-slate-800 mt-8">
-                <h2 className="text-xl font-semibold mb-4">Tariff Information</h2>
-                <div className="mb-6">
-                    <TariffList tariffs={site.tariffs} />
-                </div>
-            </div>
+            <Card>
+                <CardHeader
+                    action={
+                        <div className="flex items-center gap-3 bg-white dark:bg-slate-900">
+                            <Label className="whitespace-nowrap">Preview size</Label>
+                            <div className="w-24">
+                                <Select
+                                    value={String(previewScale)}
+                                    onChange={(e) => setPreviewScale(Number.parseFloat(e.target.value))}
+                                    className="h-8 py-1 text-xs m-0"
+                                    style={{ width: '100%' }}
+                                >
+                                    <option value="0.25">25%</option>
+                                    <option value="0.33">33%</option>
+                                    <option value="0.5">50%</option>
+                                    <option value="0.75">75%</option>
+                                    <option value="1">100%</option>
+                                </Select>
+                            </div>
+                        </div>
+                    }
+                >
+                    <CardTitle>Trmnl E-Ink Display</CardTitle>
+                    <CardDescription>
+                        Display your daily energy usage on a dedicated, always-on e-ink screen.
+                    </CardDescription>
+                </CardHeader>
+
+                <CardContent>
+                    <div className="mb-8">
+                        <TrmnlLivePreview
+                            previewHtml={previewHtml}
+                            previewError={previewError}
+                            previewLoading={previewLoading}
+                            hasSource={true}
+                            maxDisplayScale={1}
+                            showScaleControls={false}
+                            displayScaleOverride={previewScale}
+                        />
+                    </div>
+
+                    <div className="flex gap-4 flex-col sm:flex-row">
+                        {installation ? (
+                            <a
+                                href={pluginSettingId
+                                    ? `https://trmnl.com/plugin_settings/${pluginSettingId}/edit`
+                                    : 'https://trmnl.com/dashboard'}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="flex-1"
+                            >
+                                <Button className="w-full" size="lg">Manage Trmnl Plugin</Button>
+                            </a>
+                        ) : (
+                            <a
+                                href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
+                                target="_blank"
+                                rel="noreferrer"
+                                className="flex-1"
+                            >
+                                <Button className="w-full" size="lg">Add Trmnl Plugin</Button>
+                            </a>
+                        )}
+                        <a
+                            href="https://trmnl.com"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1"
+                        >
+                            <Button className="w-full" size="lg" variant="outline">Buy Device</Button>
+                        </a>
+                    </div>
+                </CardContent>
+            </Card>
+
+            <TariffList tariffs={site.tariffs} />
         </div>
     );
 }

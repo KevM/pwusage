@@ -4,6 +4,10 @@
 import { useState, useEffect, useRef } from 'react';
 import type { SystemAnnouncement } from '@/lib/announcement-repo';
 import ReactMarkdown from 'react-markdown';
+import { Button } from '@/components/ui/Button';
+import { Input, Label, Textarea } from '@/components/ui/Form';
+import { SectionCard } from '@/components/ui/SectionCard';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 
 export function SystemAnnouncementsManager() {
     const [announcements, setAnnouncements] = useState<SystemAnnouncement[]>([]);
@@ -96,9 +100,6 @@ export function SystemAnnouncementsManager() {
         setUploading(true);
 
         try {
-            const formData = new FormData();
-            formData.append('file', file);
-
             const res = await fetch(`/api/upload?filename=${file.name}`, {
                 method: 'POST',
                 body: file,
@@ -149,114 +150,107 @@ export function SystemAnnouncementsManager() {
     }
 
     return (
-        <div>
-            <h2 className="text-xl font-semibold mb-4">System Announcements</h2>
+        <div className="space-y-6">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">System Announcements</h2>
 
             {/* Create/Edit Form */}
-            <form onSubmit={handleSubmit} className="bg-white dark:bg-gray-800 shadow rounded-lg p-4 mb-6">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                        {editingId ? 'Edit Announcement' : 'New Announcement'}
-                    </h3>
-                    {editingId && (
-                        <button
-                            type="button"
-                            onClick={handleCancel}
-                            className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                        >
-                            Cancel Edit
-                        </button>
-                    )}
-                </div>
-                <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Title</label>
-                    <input
-                        type="text"
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 text-gray-900 dark:text-white caret-indigo-500 p-2.5"
-                        required
-                    />
-                </div>
-                <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Posted Date (Optional)</label>
-                    <input
-                        type="datetime-local"
-                        value={createdAt}
-                        onChange={(e) => setCreatedAt(e.target.value)}
-                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 text-gray-900 dark:text-white caret-indigo-500 p-2.5"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">Leave blank to use current time (or keep existing date when editing).</p>
-                </div>
-                <div className="mb-4">
-                    <div className="flex justify-between items-end mb-1">
-                        <div className="flex space-x-1 bg-gray-100 dark:bg-gray-700 p-0.5 rounded-lg">
-                            <button
-                                type="button"
-                                onClick={() => setPreviewMode(false)}
-                                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${!previewMode ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
-                            >
-                                Write
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setPreviewMode(true)}
-                                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${previewMode ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
-                            >
-                                Preview
-                            </button>
-                        </div>
-
-                        <div className="flex items-center">
-                            <input
-                                type="file"
-                                ref={fileInputRef}
-                                className="hidden"
-                                accept="image/*"
-                                onChange={handleUpload}
-                            />
-                            {!previewMode && (
-                                <button
-                                    type="button"
-                                    onClick={() => fileInputRef.current?.click()}
-                                    disabled={uploading}
-                                    className="text-xs text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium flex items-center ml-4"
-                                >
-                                    {uploading ? 'Uploading...' : 'Upload Image'}
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                                    </svg>
-                                </button>
-                            )}
-                        </div>
-                    </div>
-
-                    {previewMode ? (
-                        <div className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-4 min-h-[9rem] prose prose-sm dark:prose-invert max-w-none">
-                            {content ? <ReactMarkdown>{content}</ReactMarkdown> : <span className="text-gray-400 italic">Nothing to preview</span>}
-                        </div>
-                    ) : (
-                        <textarea
-                            ref={textareaRef}
-                            value={content}
-                            onChange={(e) => setContent(e.target.value)}
-                            rows={4}
-                            className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 text-gray-900 dark:text-white caret-indigo-500 p-2.5"
+            <SectionCard
+                title={editingId ? 'Edit Announcement' : 'New Announcement'}
+                action={editingId ? (
+                    <Button type="button" variant="outline" size="sm" onClick={handleCancel}>
+                        Cancel Edit
+                    </Button>
+                ) : null}
+            >
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="space-y-1.5">
+                        <Label htmlFor="announcement-title">Title</Label>
+                        <Input
+                            id="announcement-title"
+                            type="text"
+                            value={title}
+                            onChange={(e) => setTitle(e.target.value)}
                             required
                         />
-                    )}
-                </div>
-                <button
-                    type="submit"
-                    disabled={loading}
-                    className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                >
-                    {loading ? (editingId ? 'Updating...' : 'Posting...') : (editingId ? 'Update Announcement' : 'Post Announcement')}
-                </button>
-            </form>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label htmlFor="announcement-created-at">Posted Date (Optional)</Label>
+                        <Input
+                            id="announcement-created-at"
+                            type="datetime-local"
+                            value={createdAt}
+                            onChange={(e) => setCreatedAt(e.target.value)}
+                        />
+                        <p className="text-xs text-gray-500">
+                            Leave blank to use current time (or keep existing date when editing).
+                        </p>
+                    </div>
+
+                    <div className="space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <Tabs
+                                value={previewMode ? 'preview' : 'write'}
+                                onValueChange={(value) => setPreviewMode(value === 'preview')}
+                            >
+                                <TabsList className="p-1">
+                                    <TabsTrigger value="write" className="px-3 py-1 text-xs">Write</TabsTrigger>
+                                    <TabsTrigger value="preview" className="px-3 py-1 text-xs">Preview</TabsTrigger>
+                                </TabsList>
+                            </Tabs>
+
+                            <div className="flex items-center">
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    className="hidden"
+                                    accept="image/*"
+                                    onChange={handleUpload}
+                                />
+                                {!previewMode && (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        disabled={uploading}
+                                        appearance="icon"
+                                        iconPosition="right"
+                                        icon={(
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                            </svg>
+                                        )}
+                                    >
+                                        {uploading ? 'Uploading...' : 'Upload Image'}
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+
+                        {previewMode ? (
+                            <div className="min-h-[9rem] rounded-md border border-gray-200 bg-gray-50 p-4 prose prose-sm max-w-none dark:border-slate-700 dark:bg-slate-900 dark:prose-invert">
+                                {content ? <ReactMarkdown>{content}</ReactMarkdown> : <span className="text-gray-400 italic">Nothing to preview</span>}
+                            </div>
+                        ) : (
+                            <Textarea
+                                ref={textareaRef}
+                                value={content}
+                                onChange={(e) => setContent(e.target.value)}
+                                rows={4}
+                                required
+                            />
+                        )}
+                    </div>
+
+                    <Button type="submit" disabled={loading}>
+                        {loading ? (editingId ? 'Updating...' : 'Posting...') : (editingId ? 'Update Announcement' : 'Post Announcement')}
+                    </Button>
+                </form>
+            </SectionCard>
 
             {/* List */}
-            <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
+            <SectionCard title="Published Announcements" bodyClassName="p-0">
                 <ul className="divide-y divide-gray-200 dark:divide-gray-700">
                     {announcements.map((item) => (
                         <AnnouncementListItem
@@ -272,7 +266,7 @@ export function SystemAnnouncementsManager() {
                         </li>
                     )}
                 </ul>
-            </div>
+            </SectionCard>
         </div>
     );
 }
@@ -287,7 +281,7 @@ function AnnouncementListItem({
     onDelete: (id: string) => void;
 }) {
     return (
-        <li className="p-4 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <li className="p-4 hover:bg-gray-50 dark:hover:bg-slate-800/50">
             <div className="flex justify-between items-start">
                 <div className="flex-1 mr-4">
                     <h3 className="text-sm font-bold text-gray-900 dark:text-white">{item.title}</h3>
@@ -302,18 +296,23 @@ function AnnouncementListItem({
                     </div>
                 </div>
                 <div className="flex space-x-3 shrink-0">
-                    <button
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={() => onEdit(item)}
-                        className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 text-xs font-medium"
                     >
                         Edit
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={() => onDelete(item.id)}
-                        className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 text-xs font-medium"
+                        className="border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/30"
                     >
                         Delete
-                    </button>
+                    </Button>
                 </div>
             </div>
         </li>

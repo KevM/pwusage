@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { formatTouName } from '../lib/format-utils';
+import { fetchSiteLiveData, isValidSiteId } from '@/lib/site-live-data-client';
 
 interface LiveStats {
     solarPower: number;
@@ -9,7 +10,7 @@ interface LiveStats {
     batteryPower: number;
     gridPower: number;
     percentageCharged: number;
-    currentTariff: string;
+    currentTariff?: string;
 }
 
 export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initialStats: LiveStats }) {
@@ -17,23 +18,32 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
     useEffect(() => {
+        if (!isValidSiteId(siteId)) return;
+
+        let isMounted = true;
+        const controller = new AbortController();
         const timer = setTimeout(() => setLastUpdate(new Date()), 0); // Set initial time on client mount
 
-        const interval = setInterval(async () => {
+        async function fetchStats() {
             try {
-                const response = await fetch(`/api/site-live-data?siteId=${siteId}`);
-                if (response.ok) {
-                    const data = await response.json();
-                    setStats(data);
-                    setLastUpdate(new Date());
-                }
+                const data = await fetchSiteLiveData(siteId, controller.signal);
+                if (!isMounted) return;
+                setStats(data);
+                setLastUpdate(new Date());
             } catch (error) {
+                if (error instanceof DOMException && error.name === 'AbortError') {
+                    return;
+                }
                 console.error('Failed to refresh site stats:', error);
             }
-        }, 60000); // 60 seconds
+        }
+
+        const interval = setInterval(fetchStats, 60000); // 60 seconds
 
         return () => {
+            isMounted = false;
             clearTimeout(timer);
+            controller.abort();
             clearInterval(interval);
         };
     }, [siteId]);
@@ -88,7 +98,7 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
 
                     <div className="flex items-center gap-2">
                         <span className="text-gray-500 dark:text-gray-400">Tariff:</span>
-                        <span className="font-medium text-slate-700 dark:text-slate-300">{formatTouName(stats.currentTariff)}</span>
+                        <span className="font-medium text-slate-700 dark:text-slate-300">{formatTouName(stats.currentTariff ?? 'Unknown')}</span>
                     </div>
                 </div>
 

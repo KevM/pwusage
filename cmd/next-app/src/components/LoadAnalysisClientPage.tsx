@@ -4,6 +4,12 @@ import React, { useState, useEffect } from 'react';
 import NILMChart from '@/components/NILMChart';
 import { PowerData } from '@/lib/nilm/types';
 import { LoadEvent } from '@/lib/nilm/load-detection';
+import { DateNavigator, DateNavigatorButton, DateNavigatorContent, DateNavigatorLabel } from '@/components/ui/DateNavigator';
+import { Card, CardBody, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { Spinner } from '@/components/ui/Spinner';
 
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 
@@ -226,34 +232,34 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
             {/* Breadcrumbs removed as requested */}
 
             {/* Unified History Card */}
-            <div className="mb-8 bg-white dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm">
+            <Card className="mb-8 overflow-hidden">
                 {/* Header: Title & Controls */}
-                <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 flex flex-col sm:flex-row gap-4 sm:justify-between sm:items-center">
-                    <h2 className="text-xl font-semibold dark:text-gray-200">
-                        Usage History
-                    </h2>
+                <CardHeader className="bg-gray-50 dark:bg-gray-900/50 flex flex-col sm:flex-row gap-4 sm:justify-between sm:items-center">
+                    <CardTitle>Usage History</CardTitle>
 
                     <div className="flex gap-2 items-center self-end sm:self-auto">
-                        <div className="flex bg-white dark:bg-slate-800 rounded-lg p-1 shadow-sm border border-gray-200 dark:border-slate-700 items-center justify-between gap-1 shrink-0">
-                            <button
+                        <DateNavigator>
+                            <DateNavigatorButton
                                 onClick={() => changeDate(-1)}
+                                direction="prev"
                                 disabled={loading}
-                                className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
-                                title="Previous Day"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="m15 18-6-6 6-6" />
-                                </svg>
-                            </button>
+                            />
 
-                            <div className="relative group flex-1 md:flex-none text-center min-w-[140px]">
-                                <div
-                                    className="font-semibold text-sm hover:underline decoration-blue-500 decoration-2 underline-offset-4 cursor-pointer rounded px-2 py-1 transition-colors w-full h-full flex items-center justify-center text-gray-900 dark:text-white"
+                            <DateNavigatorContent>
+                                <DateNavigatorLabel
+                                    className="hover:underline decoration-blue-500 decoration-2 underline-offset-4"
                                     title="Click to pick a date"
+                                    onClick={() => {
+                                        try {
+                                            dateInputRef.current?.showPicker();
+                                        } catch {
+                                            // Fallback
+                                        }
+                                    }}
                                 >
                                     {displayDateStr}
                                     {isToday && ' (Today)'}
-                                </div>
+                                </DateNavigatorLabel>
                                 <input
                                     ref={dateInputRef}
                                     type="date"
@@ -263,36 +269,31 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                                         setDate(e.target.value);
                                         updateUrl(e.target.value);
                                     }}
-                                    onClick={() => {
-                                        try {
-                                            dateInputRef.current?.showPicker();
-                                        } catch {
-                                            // Fallback
-                                        }
+                                    onClick={(e) => {
+                                        // Stop propagation so label onClick handles it if needed
+                                        e.stopPropagation();
                                     }}
                                     max={new Date().toISOString().split('T')[0]}
                                 />
-                            </div>
+                            </DateNavigatorContent>
 
-                            <button
+                            <DateNavigatorButton
                                 onClick={() => changeDate(1)}
+                                direction="next"
                                 disabled={loading || isToday}
-                                className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-none"
-                                title="Next Day"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="m9 18 6-6-6-6" />
-                                </svg>
-                            </button>
-                        </div>
+                            />
+                        </DateNavigator>
                     </div>
-                </div>
+                </CardHeader>
 
                 {/* Chart Body */}
-                <div className="p-4">
+                <CardContent className="p-4 pt-4">
                     {loading ? (
                         <div className="h-[500px] w-full flex items-center justify-center">
-                            <span className="text-gray-500 dark:text-gray-400 animate-pulse">Loading High-Fidelity Data...</span>
+                            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
+                                <Spinner />
+                                <span>Loading High-Fidelity Data...</span>
+                            </div>
                         </div>
                     ) : (
                         <NILMChart
@@ -307,109 +308,111 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                             displayMode={displayMode}
                         />
                     )}
-                </div>
-            </div>
+                </CardContent>
+            </Card>
 
             {/* Event List (Card View) */}
-            <div className="bg-white dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-                    <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">Detected Load Events</h3>
-                </div>
+            <Card className="overflow-hidden">
+                <CardHeader className="bg-gray-50 dark:bg-gray-900/50 items-center text-center">
+                    <CardTitle className="text-lg">Detected Load Events</CardTitle>
+                </CardHeader>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-4">
-                    {events.length === 0 ? (
-                        <div className="col-span-full p-8 text-center text-gray-500 italic">
-                            No significant load events detected for this day.
-                        </div>
-                    ) : (
-                        events.map((ev, i) => {
-                            const isSelected = selectedEvent && new Date(selectedEvent.startTime).getTime() === new Date(ev.startTime).getTime();
-                            // Compact Card Styles
-                            let cardClass = "p-2 rounded-lg border transition-all cursor-pointer shadow-sm hover:shadow-md active:scale-95 ";
-                            if (isSelected) {
-                                cardClass += "bg-blue-50 dark:bg-blue-900/20 border-blue-500 ring-1 ring-blue-500 dark:border-blue-400 ";
-                            } else {
-                                cardClass += "bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 ";
-                            }
+                <CardContent className="pt-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                        {events.length === 0 ? (
+                            <div className="col-span-full">
+                                <EmptyState
+                                    title="No significant load events"
+                                    description="No significant load events were detected for this day."
+                                />
+                            </div>
+                        ) : (
+                            events.map((ev, i) => {
+                                const isSelected = selectedEvent && new Date(selectedEvent.startTime).getTime() === new Date(ev.startTime).getTime();
+                                let cardClass = "transition-shadow cursor-pointer hover:shadow-md ";
+                                if (isSelected) {
+                                    cardClass += "ring-1 ring-gray-300 dark:ring-slate-600 ";
+                                }
 
-                            return (
-                                <div
-                                    key={i}
-                                    ref={el => { eventRefs.current[i] = el }}
-                                    className={cardClass}
-                                    onClick={() => handleEventClick(ev)}
-                                >
-                                    {/* Header: Compact Time & Id */}
-                                    <div className="flex justify-between items-start mb-1.5">
-                                        <div>
-                                            <div className="text-base font-bold text-gray-900 dark:text-gray-100">
-                                                {formatTime(ev.startTime.toString())} - {formatTime(ev.endTime.toString())}
+                                return (
+                                    <Card
+                                        key={i}
+                                        ref={el => { eventRefs.current[i] = el }}
+                                        density="compact"
+                                        className={`relative ${cardClass}`}
+                                        onClick={() => handleEventClick(ev)}
+                                    >
+                                        <Badge className="absolute right-1.5 top-1.5 font-mono text-[10px] px-0 py-0 m-0 rounded-md">
+                                            #{i + 1}
+                                        </Badge>
+
+                                        <CardBody density="compact">
+                                            {/* Header: Compact Time & Id */}
+                                            <div className="mb-1.5 min-w-0 pr-10">
+                                                <CardTitle density="compact" className="leading-tight">
+                                                    {formatTime(ev.startTime.toString())} - {formatTime(ev.endTime.toString())}
+                                                </CardTitle>
                                             </div>
-                                            <div className="text-xs text-gray-500">
+                                            <div className="text-xs text-gray-500 mb-2">
                                                 {formatDuration(ev.durationMinutes)}
                                             </div>
-                                        </div>
-                                        <div className="text-[10px] font-mono text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">
-                                            #{i + 1}
-                                        </div>
-                                    </div>
 
-                                    {/* Stats Grid: Compact */}
-                                    <div className="grid grid-cols-3 gap-2 mb-2 text-xs p-1">
-                                        <div>
-                                            <div className="text-[10px] text-gray-500 uppercase font-semibold">Avg</div>
-                                            <div className="font-semibold text-sm text-gray-700 dark:text-gray-300">{(ev.averagePower / 1000).toFixed(1)}kW</div>
-                                        </div>
-                                        <div>
-                                            <div className="text-[10px] text-gray-500 uppercase font-semibold">Max</div>
-                                            <div className="font-semibold text-sm text-amber-600 dark:text-amber-400">{(ev.maxPower / 1000).toFixed(1)}kW</div>
-                                        </div>
-                                        <div>
-                                            <div className="text-[10px] text-gray-500 uppercase font-semibold">kWh</div>
-                                            <div className="font-semibold text-sm text-green-600 dark:text-green-400">{ev.kwh.toFixed(1)}</div>
-                                        </div>
-                                    </div>
+                                            {/* Stats Grid: Compact */}
+                                            <div className="grid grid-cols-3 gap-2 mb-2 text-xs">
+                                                <div>
+                                                    <div className="text-[10px] text-gray-500 uppercase font-semibold">Avg</div>
+                                                    <div className="font-semibold text-sm text-gray-900 dark:text-gray-100">{(ev.averagePower / 1000).toFixed(1)}kW</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-[10px] text-gray-500 uppercase font-semibold">Max</div>
+                                                    <div className="font-semibold text-sm text-gray-900 dark:text-gray-100">{(ev.maxPower / 1000).toFixed(1)}kW</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-[10px] text-gray-500 uppercase font-semibold">kWh</div>
+                                                    <div className="font-semibold text-sm text-gray-900 dark:text-gray-100">{ev.kwh.toFixed(1)}</div>
+                                                </div>
+                                            </div>
 
-                                    {/* Tags & Actions */}
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div className="flex flex-wrap gap-1 min-h-[1.25rem]">
-                                            {ev.tags?.slice(0, 3).map(tag => (
-                                                <span key={tag} className={`px-1.5 py-0.5 rounded-[4px] text-[10px] border flex items-center gap-0.5
-                                                 ${tag === 'Arbitrage Candidate'
-                                                        ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-900 text-red-700 dark:text-red-300'
-                                                        : 'bg-blue-50 dark:bg-blue-900/20 border-blue-100 dark:border-blue-900 text-blue-700 dark:text-blue-300'
-                                                    }`}>
-                                                    <span className="truncate max-w-[60px]">{tag}</span>
-                                                </span>
-                                            ))}
-                                            {(ev.tags?.length || 0) > 3 && (
-                                                <span className="text-[10px] text-gray-400">+{ev.tags!.length - 3}</span>
-                                            )}
-                                        </div>
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setTaggingEvent(ev);
-                                            }}
-                                            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-                                            title="Edit Tags"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                                                <path d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z" />
-                                                <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z" />
-                                            </svg>
-                                        </button>
-                                    </div>
-                                </div>
-                            )
-                        })
-                    )}
-                </div>
-            </div>
+                                            {/* Tags & Actions */}
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="flex flex-wrap gap-0.5 min-h-[1.25rem]">
+                                                    {ev.tags?.slice(0, 3).map(tag => (
+                                                        <Badge key={tag} className="text-[10px] px-1.5 py-0 rounded-md max-w-[84px]">
+                                                            <span className="truncate">{tag}</span>
+                                                        </Badge>
+                                                    ))}
+                                                    {(ev.tags?.length || 0) > 3 && (
+                                                        <Badge className="text-[10px] px-1.5 py-0 rounded-md">
+                                                            +{ev.tags!.length - 3}
+                                                        </Badge>
+                                                    )}
+                                                </div>
+                                                <Button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setTaggingEvent(ev);
+                                                    }}
+                                                    appearance="glyph"
+                                                    size="sm"
+                                                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                                                    title="Edit Tags"
+                                                    aria-label="Edit tags"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                                        <path d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z" />
+                                                        <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z" />
+                                                    </svg>
+                                                </Button>
+                                            </div>
+                                        </CardBody>
+                                    </Card>
+                                );
+                            })
+                        )}
+                    </div>
+                </CardContent>
+            </Card>
 
-            <div className="mt-8 p-4 bg-gray-100 dark:bg-gray-900/30 rounded-lg text-xs text-gray-500 dark:text-gray-500">
-                <p>NILM Algorithm: Sliding Window Gradient (15m window) + Baseline Return Closure. Source: Total Home Load.</p>
-            </div>
         </div >
     );
 }
