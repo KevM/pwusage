@@ -143,7 +143,7 @@ jobs:
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-args: '--prod'
-          vercel-version: '50.22.0'
+          vercel-version: '50.23.5'
 
   check-db-changes:
     runs-on: ubuntu-latest
