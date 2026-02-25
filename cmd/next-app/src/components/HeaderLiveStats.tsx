@@ -2,18 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { fetchSiteLiveData, isValidSiteId, SiteLiveDataFetchError } from '@/lib/site-live-data-client';
+import type { SiteLiveData, SiteLiveSparklinePoint } from '@/lib/site-live-data-client';
 import { LiveMetricChip } from '@/components/ui/LiveMetricChip';
 import { Spinner } from '@/components/ui/Spinner';
-
-
-interface LiveStats {
-    solarPower: number;
-    loadPower: number;
-    batteryPower: number;
-    gridPower: number;
-    percentageCharged: number;
-    batteryState?: string; // 'Charging', 'Discharging', 'Idle'
-}
+import { MiniSparkline } from '@/components/ui/MiniSparkline';
+import { BatteryStatusGlyph } from '@/components/ui/BatteryStatusGlyph';
 
 function LiveStatsShell({ children }: { children: React.ReactNode }) {
     return (
@@ -46,7 +39,7 @@ function LiveStateIndicator({
 }
 
 export function HeaderLiveStats({ siteId }: { siteId: string }) {
-    const [stats, setStats] = useState<LiveStats | null>(null);
+    const [stats, setStats] = useState<SiteLiveData | null>(null);
     const [loading, setLoading] = useState(isValidSiteId(siteId));
 
     useEffect(() => {
@@ -127,10 +120,10 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
 
     const batteryValueClassName =
         batteryPower < -100
-            ? 'text-green-700 dark:text-green-300'
+            ? 'inline-flex items-center leading-none text-green-700 dark:text-green-300'
             : batteryPower > 100
-                ? 'text-red-700 dark:text-red-300'
-                : 'text-purple-700 dark:text-purple-300';
+                ? 'inline-flex items-center leading-none text-red-700 dark:text-red-300'
+                : 'inline-flex items-center leading-none text-purple-700 dark:text-purple-300';
 
     const gridValueClassName =
         gridPower > 100
@@ -139,9 +132,34 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                 ? 'text-green-700 dark:text-green-300'
                 : 'text-gray-700 dark:text-gray-300';
 
+    const toSparklinePoints = (points?: SiteLiveSparklinePoint[]) =>
+        (points ?? []).map((point) => ({ watts: point.watts }));
+
+    const solarSparkline = toSparklinePoints(stats.sparklines?.solar);
+    const gridSparkline = toSparklinePoints(stats.sparklines?.grid);
+    const loadSparkline = toSparklinePoints(stats.sparklines?.load);
+
+    const batteryGlyph = (
+        <span className="inline-flex items-center self-center leading-none">
+            <BatteryStatusGlyph
+                percentage={percentageCharged}
+                powerWatts={batteryPower}
+                className="block h-3.5 w-[1.55rem]"
+            />
+        </span>
+    );
+
     return (
         <LiveStatsShell>
             <LiveStateIndicator tone="live" label="Live" />
+            <LiveMetricChip
+                label="Battery"
+                value={batteryGlyph}
+                labelStyle="text"
+                surfaceStyle="flat"
+                valueClassName={batteryValueClassName}
+                title={`Battery (${Math.round(percentageCharged)}%)`}
+            />
             <LiveMetricChip
                 label="Solar"
                 value={`${fmtKw(solarPower)} kW`}
@@ -149,27 +167,13 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                 surfaceStyle="flat"
                 valueClassName="text-amber-700 dark:text-amber-300"
                 title="Solar Production"
-            />
-            <LiveMetricChip
-                label="Load"
-                value={`${fmtKw(loadPower)} kW`}
-                labelStyle="text"
-                surfaceStyle="flat"
-                valueClassName="text-blue-700 dark:text-blue-300"
-                title="Home Usage"
-            />
-            <LiveMetricChip
-                label="Battery"
-                value={`${Math.round(percentageCharged)}%`}
-                labelStyle="text"
-                surfaceStyle="flat"
-                valueClassName={batteryValueClassName}
-                title={`Battery (${Math.round(percentageCharged)}%)`}
-                trailing={batteryPower < -100 ? (
-                    <svg className="h-3.5 w-3.5 text-green-600 dark:text-green-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                ) : undefined}
+                trailing={(
+                    <MiniSparkline
+                        series={solarSparkline}
+                        className="h-3 w-8"
+                        strokeClassName="text-amber-600 dark:text-amber-300"
+                    />
+                )}
             />
             <LiveMetricChip
                 label="Grid"
@@ -178,6 +182,33 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                 surfaceStyle="flat"
                 valueClassName={gridValueClassName}
                 title="Grid Usage"
+                trailing={(
+                    <MiniSparkline
+                        series={gridSparkline}
+                        includeZero
+                        className="h-3 w-8"
+                        strokeClassName={gridPower > 100
+                            ? 'text-orange-600 dark:text-orange-300'
+                            : gridPower < -100
+                                ? 'text-green-600 dark:text-green-300'
+                                : 'text-gray-500 dark:text-gray-400'}
+                    />
+                )}
+            />
+            <LiveMetricChip
+                label="Load"
+                value={`${fmtKw(loadPower)} kW`}
+                labelStyle="text"
+                surfaceStyle="flat"
+                valueClassName="text-blue-700 dark:text-blue-300"
+                title="Home Usage"
+                trailing={(
+                    <MiniSparkline
+                        series={loadSparkline}
+                        className="h-3 w-8"
+                        strokeClassName="text-blue-600 dark:text-blue-300"
+                    />
+                )}
             />
         </LiveStatsShell>
     );

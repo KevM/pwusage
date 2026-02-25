@@ -33,14 +33,14 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
                                     height={40}
                                 />
                             </div>
-                            <span className="hidden text-4xl font-bold tracking-tight text-primary md:block">
+                            <span className="hidden text-4xl font-bold tracking-tight text-primary min-[1400px]:block">
                                 Powerwall Usage
                             </span>
                         </Link>
                     </div>
 
-                    {/* Nav Icons Group - Order 2 on Mobile (Right of Logo), Order 3 on Desktop (Far Right) */}
-                    <div className="flex gap-3 items-center order-2 md:order-3 shrink-0">
+                    {/* Nav Icons Group - Order 3 on Mobile (Below Live Stats), Order 3 on Desktop (Far Right) */}
+                    <div className="flex w-full justify-center gap-3 items-center order-3 md:order-3 md:w-auto shrink-0">
                         {showStyleGuide && (
                             <Link
                                 href="/styleguide"
@@ -82,9 +82,9 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
                         </form>
                     </div>
 
-                    {/* Live Stats Group - Order 3 on Mobile (New Row), Order 2 on Desktop (Center) */}
+                    {/* Live Stats Group - Order 2 on Mobile (Above Actions), Order 2 on Desktop (Center) */}
                     {currentSiteId && currentSiteId !== 'undefined' && (
-                        <div className="order-3 md:order-2 w-full md:flex-1 md:min-w-0 flex justify-center md:px-4 mt-1 md:mt-0">
+                        <div className="order-2 md:order-2 flex flex-1 min-w-0 justify-center md:px-4 mt-1 md:mt-0">
                             <HeaderLiveStats siteId={currentSiteId} />
                         </div>
                     )}

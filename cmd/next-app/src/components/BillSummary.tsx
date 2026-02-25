@@ -197,44 +197,46 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
                                 </Table>
                             </div>
 
-                            <div className="grid gap-3 md:hidden">
-                                {tariff.periods.map((period, index) => {
-                                    const isActiveTou = isActiveTariff && activeTouName === period.touName;
+                            <div className="md:hidden">
+                                <div className="grid gap-3">
+                                    {tariff.periods.map((period, index) => {
+                                        const isActiveTou = isActiveTariff && activeTouName === period.touName;
 
-                                    return (
-                                        <div
-                                            key={`${period.touName}-${index}`}
-                                            className={`rounded-lg border p-3 space-y-3 ${isActiveTou ? 'border-blue-300 bg-blue-50/50 dark:border-blue-700 dark:bg-blue-950/20' : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-950/20'}`}
-                                        >
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div className="min-w-0 space-y-1">
-                                                    <div className="flex flex-wrap items-center gap-2">
-                                                        <p className="font-medium text-gray-900 dark:text-white">{formatTouName(period.touName)}</p>
-                                                        {isActiveTou ? <Badge variant="info">Active</Badge> : null}
+                                        return (
+                                            <div
+                                                key={`${period.touName}-${index}`}
+                                                className={`rounded-lg border p-3 space-y-3 ${isActiveTou ? 'border-blue-300 bg-blue-50/50 dark:border-blue-700 dark:bg-blue-950/20' : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-950/20'}`}
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0 space-y-1">
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <p className="font-medium text-gray-900 dark:text-white">{formatTouName(period.touName)}</p>
+                                                            {isActiveTou ? <Badge variant="info">Active</Badge> : null}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                        <p className="font-semibold tabular-nums text-gray-900 dark:text-gray-100">{formatCurrency(period.cost)}</p>
+                                                        <p className="text-xs text-gray-500 dark:text-gray-400">{formatCostLabel(period.cost)}</p>
                                                     </div>
                                                 </div>
-                                                <div className="text-right shrink-0">
-                                                    <p className="font-semibold tabular-nums text-gray-900 dark:text-gray-100">{formatCurrency(period.cost)}</p>
-                                                    <p className="text-xs text-gray-500 dark:text-gray-400">{formatCostLabel(period.cost)}</p>
-                                                </div>
+                                                <PeriodMetricsGrid period={period} />
                                             </div>
-                                            <PeriodMetricsGrid period={period} />
-                                        </div>
-                                    );
-                                })}
+                                        );
+                                    })}
 
-                                <div className="rounded-lg border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60 p-3 space-y-3">
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div>
-                                            <p className="font-semibold text-gray-900 dark:text-white">Total</p>
-                                            <p className="text-xs text-gray-500 dark:text-gray-400">Tariff total across all TOU periods</p>
+                                    <div className="rounded-lg border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60 p-3 space-y-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <p className="font-semibold text-gray-900 dark:text-white">Total</p>
+                                                <p className="text-xs text-gray-500 dark:text-gray-400">Tariff total across all TOU periods</p>
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                                <p className="font-bold tabular-nums text-gray-900 dark:text-gray-100">{formatCurrency(totals.cost)}</p>
+                                                <p className="text-xs text-gray-500 dark:text-gray-400">{formatCostLabel(totals.cost)}</p>
+                                            </div>
                                         </div>
-                                        <div className="text-right shrink-0">
-                                            <p className="font-bold tabular-nums text-gray-900 dark:text-gray-100">{formatCurrency(totals.cost)}</p>
-                                            <p className="text-xs text-gray-500 dark:text-gray-400">{formatCostLabel(totals.cost)}</p>
-                                        </div>
+                                        <PeriodMetricsGrid period={totals} emphasize={true} />
                                     </div>
-                                    <PeriodMetricsGrid period={totals} emphasize={true} />
                                 </div>
                             </div>
                         </div>

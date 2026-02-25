@@ -1,3 +1,14 @@
+export interface SiteLiveSparklinePoint {
+    timestamp: string;
+    watts: number;
+}
+
+export interface SiteLiveSparklines {
+    solar: SiteLiveSparklinePoint[];
+    grid: SiteLiveSparklinePoint[];
+    load: SiteLiveSparklinePoint[];
+}
+
 export interface SiteLiveData {
     solarPower: number;
     loadPower: number;
@@ -5,6 +16,7 @@ export interface SiteLiveData {
     gridPower: number;
     percentageCharged: number;
     currentTariff?: string;
+    sparklines?: SiteLiveSparklines;
 }
 
 export class SiteLiveDataFetchError extends Error {
