@@ -8,6 +8,38 @@ import { Spinner } from '@/components/ui/Spinner';
 import { MiniSparkline } from '@/components/ui/MiniSparkline';
 import { BatteryStatusGlyph } from '@/components/ui/BatteryStatusGlyph';
 
+type BatteryActivity = 'charging' | 'discharging' | 'idle';
+
+function BatteryActivityGlyph({ status }: { status: Exclude<BatteryActivity, 'idle'> }) {
+    if (status === 'charging') {
+        return (
+            <svg
+                viewBox="0 0 24 24"
+                className="h-3.5 w-3.5 text-gray-700 dark:text-gray-300"
+                aria-hidden="true"
+                fill="currentColor"
+            >
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" transform="rotate(-90 12 12)" />
+            </svg>
+        );
+    }
+
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5 text-gray-700 dark:text-gray-300"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="M12 2v10M3 12h18M7 16h10M10 20h4" transform="rotate(-90 12 12)" />
+        </svg>
+    );
+}
+
 function LiveStatsShell({ children }: { children: React.ReactNode }) {
     return (
         <div className="inline-flex w-full md:w-auto flex-wrap items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-bg-muted/60 px-2.5 py-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 md:justify-start">
@@ -119,18 +151,24 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
     const fmtKw = (w: number) => (Math.abs(w) / 1000).toFixed(1);
 
     const batteryValueClassName =
+        percentageCharged >= 80
+            ? 'inline-flex items-center leading-none text-green-500 dark:text-green-300'
+            : percentageCharged >= 60
+                ? 'inline-flex items-center leading-none text-green-600 dark:text-green-400'
+                : percentageCharged >= 40
+                    ? 'inline-flex items-center leading-none text-green-700 dark:text-green-500'
+                    : percentageCharged >= 20
+                        ? 'inline-flex items-center leading-none text-green-800 dark:text-green-600'
+                        : 'inline-flex items-center leading-none text-green-900 dark:text-green-700';
+    const batteryActivity: BatteryActivity =
         batteryPower < -100
-            ? 'inline-flex items-center leading-none text-green-700 dark:text-green-300'
+            ? 'charging'
             : batteryPower > 100
-                ? 'inline-flex items-center leading-none text-red-700 dark:text-red-300'
-                : 'inline-flex items-center leading-none text-purple-700 dark:text-purple-300';
+                ? 'discharging'
+                : 'idle';
 
     const gridValueClassName =
-        gridPower > 100
-            ? 'text-orange-700 dark:text-orange-300'
-            : gridPower < -100
-                ? 'text-green-700 dark:text-green-300'
-                : 'text-gray-700 dark:text-gray-300';
+        'text-gray-900 dark:text-gray-100';
 
     const toSparklinePoints = (points?: SiteLiveSparklinePoint[]) =>
         (points ?? []).map((point) => ({ watts: point.watts }));
@@ -143,12 +181,12 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
     const loadScale = stats.sparklineScales?.load;
 
     const batteryGlyph = (
-        <span className="inline-flex items-center self-center leading-none">
+        <span className="inline-flex items-center self-center gap-0.5 leading-none">
             <BatteryStatusGlyph
                 percentage={percentageCharged}
-                powerWatts={batteryPower}
                 className="block h-3.5 w-[1.55rem]"
             />
+            {batteryActivity !== 'idle' ? <BatteryActivityGlyph status={batteryActivity} /> : null}
         </span>
     );
 
@@ -194,11 +232,9 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                         yMin={gridScale?.minWatts}
                         yMax={gridScale?.maxWatts}
                         className="h-3 w-8"
-                        strokeClassName={gridPower > 100
-                            ? 'text-orange-600 dark:text-orange-300'
-                            : gridPower < -100
-                                ? 'text-green-600 dark:text-green-300'
-                                : 'text-gray-500 dark:text-gray-400'}
+                        strokeClassName="text-gray-900 dark:text-gray-100"
+                        positiveStrokeClassName="text-gray-900 dark:text-gray-100"
+                        negativeStrokeClassName="text-gray-400 dark:text-gray-500"
                     />
                 )}
             />
