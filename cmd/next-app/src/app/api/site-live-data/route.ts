@@ -3,56 +3,13 @@ import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo, getUserTokensForSite } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { verifySiteAccess } from '@/lib/auth-checks';
-import type { EnergyData } from '@/lib/db';
-import { energyToAveragePower } from '@/lib/energy-utils';
+import {
+    parseScaleWindowHours,
+    SPARKLINE_DISPLAY_WINDOW_HOURS,
+    toSparklinePayload,
+} from './sparkline-utils';
 
 export const dynamic = 'force-dynamic';
-
-type SparklineMetricKey = 'solar' | 'grid' | 'load';
-
-interface SparklinePoint {
-    timestamp: string;
-    watts: number;
-}
-
-interface SparklineSeries {
-    solar: SparklinePoint[];
-    grid: SparklinePoint[];
-    load: SparklinePoint[];
-}
-
-function toSparklineSeries(historyRows: EnergyData[], liveTimestamp: Date, liveValues: {
-    solar: number;
-    grid: number;
-    load: number;
-}): SparklineSeries {
-    const history: Record<SparklineMetricKey, SparklinePoint[]> = {
-        // EnergyData stores interval energy (Wh); convert to average watts to match live Tesla readings.
-        solar: historyRows.map((row) => ({ timestamp: row.timestamp.toISOString(), watts: energyToAveragePower(row.solar_power) })),
-        grid: historyRows.map((row) => ({ timestamp: row.timestamp.toISOString(), watts: energyToAveragePower(row.grid_power) })),
-        load: historyRows.map((row) => ({ timestamp: row.timestamp.toISOString(), watts: energyToAveragePower(row.load_power) })),
-    };
-
-    const liveIso = liveTimestamp.toISOString();
-
-    const withLivePoint = (metric: SparklineMetricKey): SparklinePoint[] => {
-        const points = history[metric];
-        const livePoint: SparklinePoint = { timestamp: liveIso, watts: liveValues[metric] };
-        const lastPoint = points.at(-1);
-
-        if (lastPoint?.timestamp === liveIso) {
-            return [...points.slice(0, -1), livePoint];
-        }
-
-        return [...points, livePoint];
-    };
-
-    return {
-        solar: withLivePoint('solar'),
-        grid: withLivePoint('grid'),
-        load: withLivePoint('load'),
-    };
-}
 
 export async function GET(request: Request) {
     try {
@@ -93,12 +50,14 @@ export async function GET(request: Request) {
 
 
         const now = new Date();
-        const historyStart = new Date(now.getTime() - (4 * 60 * 60 * 1000));
+        const scaleWindowHours = parseScaleWindowHours(process.env.SPARKLINE_SCALE_WINDOW_HOURS);
+        const sparklineWindowStart = new Date(now.getTime() - (SPARKLINE_DISPLAY_WINDOW_HOURS * 60 * 60 * 1000));
+        const sparklineScaleStart = new Date(now.getTime() - (scaleWindowHours * 60 * 60 * 1000));
 
         const [liveStatus, site, historyRows] = await Promise.all([
             client.getLiveStatus(siteId),
             repo.getSite(siteId),
-            repo.getRawEnergyData(siteId, historyStart, now)
+            repo.getRawEnergyData(siteId, sparklineScaleStart, now)
         ]);
 
         let currentTariff = 'Unknown';
@@ -113,11 +72,11 @@ export async function GET(request: Request) {
             }
         }
 
-        const sparklines = toSparklineSeries(historyRows, now, {
+        const { series: sparklines, scales: sparklineScales } = toSparklinePayload(historyRows, now, {
             solar: liveStatus.solar_power,
             grid: liveStatus.grid_power,
             load: liveStatus.load_power
-        });
+        }, sparklineWindowStart);
 
         return NextResponse.json({
             solarPower: liveStatus.solar_power,
@@ -126,7 +85,8 @@ export async function GET(request: Request) {
             gridPower: liveStatus.grid_power,
             percentageCharged: liveStatus.percentage_charged,
             currentTariff,
-            sparklines
+            sparklines,
+            sparklineScales
         });
     } catch (error) {
         console.error('Site live data error:', error);

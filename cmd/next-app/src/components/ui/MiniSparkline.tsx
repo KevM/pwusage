@@ -8,6 +8,8 @@ interface MiniSparklineProps extends React.SVGAttributes<SVGSVGElement> {
     series: MiniSparklinePoint[];
     strokeClassName?: string;
     includeZero?: boolean;
+    yMin?: number;
+    yMax?: number;
 }
 
 const VIEWBOX_WIDTH = 32;
@@ -18,6 +20,8 @@ export function MiniSparkline({
     className,
     strokeClassName = 'text-gray-500 dark:text-gray-400',
     includeZero = false,
+    yMin,
+    yMax,
     ...props
 }: MiniSparklineProps) {
     if (series.length === 0) {
@@ -64,8 +68,21 @@ export function MiniSparkline({
     }
 
     const values = series.map((point) => point.watts);
-    const minValue = includeZero ? Math.min(0, ...values) : Math.min(...values);
-    const maxValue = includeZero ? Math.max(0, ...values) : Math.max(...values);
+    const computedMin = includeZero ? Math.min(0, ...values) : Math.min(...values);
+    const computedMax = includeZero ? Math.max(0, ...values) : Math.max(...values);
+
+    let minValue = Number.isFinite(yMin) ? (yMin as number) : computedMin;
+    let maxValue = Number.isFinite(yMax) ? (yMax as number) : computedMax;
+
+    if (includeZero) {
+        minValue = Math.min(minValue, 0);
+        maxValue = Math.max(maxValue, 0);
+    }
+
+    if (minValue > maxValue) {
+        [minValue, maxValue] = [computedMin, computedMax];
+    }
+
     const range = maxValue - minValue || 1;
     const xStep = (VIEWBOX_WIDTH - 2) / (series.length - 1);
 

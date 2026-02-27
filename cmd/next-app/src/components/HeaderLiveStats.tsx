@@ -138,6 +138,9 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
     const solarSparkline = toSparklinePoints(stats.sparklines?.solar);
     const gridSparkline = toSparklinePoints(stats.sparklines?.grid);
     const loadSparkline = toSparklinePoints(stats.sparklines?.load);
+    const solarScale = stats.sparklineScales?.solar;
+    const gridScale = stats.sparklineScales?.grid;
+    const loadScale = stats.sparklineScales?.load;
 
     const batteryGlyph = (
         <span className="inline-flex items-center self-center leading-none">
@@ -170,6 +173,8 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                 trailing={(
                     <MiniSparkline
                         series={solarSparkline}
+                        yMin={solarScale?.minWatts}
+                        yMax={solarScale?.maxWatts}
                         className="h-3 w-8"
                         strokeClassName="text-amber-600 dark:text-amber-300"
                     />
@@ -186,6 +191,8 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                     <MiniSparkline
                         series={gridSparkline}
                         includeZero
+                        yMin={gridScale?.minWatts}
+                        yMax={gridScale?.maxWatts}
                         className="h-3 w-8"
                         strokeClassName={gridPower > 100
                             ? 'text-orange-600 dark:text-orange-300'
@@ -205,6 +212,8 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                 trailing={(
                     <MiniSparkline
                         series={loadSparkline}
+                        yMin={loadScale?.minWatts}
+                        yMax={loadScale?.maxWatts}
                         className="h-3 w-8"
                         strokeClassName="text-blue-600 dark:text-blue-300"
                     />

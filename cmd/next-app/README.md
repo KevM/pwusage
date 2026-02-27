@@ -25,6 +25,7 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `JWT_REFRESH_THRESHOLD_HOURS`: Refresh token if expiration is within this many hours (default: `24`).
 - `CRON_SECRET`: Secret key used to authorize Vercel Cron Job requests.
 - `DATA_RETENTION_DAYS`: Number of days to keep energy data before cleanup (default: `365`).
+- `SPARKLINE_SCALE_WINDOW_HOURS`: Header sparkline y-axis clamp window in hours (default: `12`, minimum effective value: `4`).
 
 ### Deployment & CI (GitHub Actions Secrets)
 These variables are typically set as Secrets in your GitHub repository for automated deployments and backups:
@@ -55,4 +56,3 @@ Open [http://localhost:5173](http://localhost:5173) with your browser to see the
 ```bash 
 ngrok http 5173
 ```
-
