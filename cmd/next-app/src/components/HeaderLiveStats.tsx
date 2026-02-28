@@ -7,8 +7,7 @@ import { LiveMetricChip } from '@/components/ui/LiveMetricChip';
 import { Spinner } from '@/components/ui/Spinner';
 import { MiniSparkline } from '@/components/ui/MiniSparkline';
 import { BatteryStatusGlyph } from '@/components/ui/BatteryStatusGlyph';
-
-type BatteryActivity = 'charging' | 'discharging' | 'idle';
+import { getBatteryActivity, type BatteryActivity } from '@/lib/live-indicators';
 
 function BatteryActivityGlyph({ status }: { status: Exclude<BatteryActivity, 'idle'> }) {
     if (status === 'charging') {
@@ -42,7 +41,7 @@ function BatteryActivityGlyph({ status }: { status: Exclude<BatteryActivity, 'id
 
 function LiveStatsShell({ children }: { children: React.ReactNode }) {
     return (
-        <div className="inline-flex w-full md:w-auto flex-wrap items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-bg-muted/60 px-2.5 py-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 md:justify-start">
+        <div className="inline-flex w-full md:w-auto flex-wrap md:flex-nowrap items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-bg-muted/60 px-2.5 py-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 md:justify-start">
             {children}
         </div>
     );
@@ -160,12 +159,7 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                     : percentageCharged >= 20
                         ? 'inline-flex items-center leading-none text-green-800 dark:text-green-600'
                         : 'inline-flex items-center leading-none text-green-900 dark:text-green-700';
-    const batteryActivity: BatteryActivity =
-        batteryPower < -100
-            ? 'charging'
-            : batteryPower > 100
-                ? 'discharging'
-                : 'idle';
+    const batteryActivity: BatteryActivity = getBatteryActivity(batteryPower);
 
     const gridValueClassName =
         'text-gray-900 dark:text-gray-100';

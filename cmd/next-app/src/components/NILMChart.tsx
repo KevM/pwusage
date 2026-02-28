@@ -668,16 +668,19 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                             width={sharedYAxisWidth}
                         />
 
-                        {/* Tariff Background Regions - Rendered FIRST to be behind lines */}
-                        {tariffRegions.map((region, i) => (
-                            <ReferenceArea
-                                key={`tariff-${i}`}
-                                x1={region.start}
-                                x2={region.end}
-                                fill={region.name?.toLowerCase().includes('peak') && !region.name?.toLowerCase().includes('off') ? '#ef4444' : '#10b981'}
-                                fillOpacity={0.15}
-                            />
-                        ))}
+                        {/* Tariff Background Regions - On-peak light gray, off-peak white */}
+                        {tariffRegions.map((region, i) => {
+                            const isOnPeak = region.name?.toLowerCase().includes('peak') && !region.name?.toLowerCase().includes('off');
+                            return (
+                                <ReferenceArea
+                                    key={`tariff-${i}`}
+                                    x1={region.start}
+                                    x2={region.end}
+                                    fill={isOnPeak ? '#e5e7eb' : '#ffffff'}
+                                    fillOpacity={0.55}
+                                />
+                            );
+                        })}
 
                         {/* Explicit Vertical Transition Lines */}
                         {tariffRegions.map((region, i) => {
@@ -694,13 +697,8 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                             );
                         })}
 
-                        {/* Centered Labels for Tariff Regions - Context Aware Colors */}
+                        {/* Centered Labels for Tariff Regions */}
                         {tariffRegions.map((region, i) => {
-                            const isPeak = region.name?.toLowerCase().includes('peak') && !region.name?.toLowerCase().includes('off');
-                            const isOffPeak = region.name?.toLowerCase().includes('off');
-                            // Peak = Red-400, Off-Peak = Emerald-400, Else = Gray-400
-                            const labelColor = isPeak ? '#f87171' : (isOffPeak ? '#34d399' : themeColors.text);
-
                             return (
                                 <ReferenceArea
                                     key={`label-${i}`}
@@ -711,7 +709,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                                     label={{
                                         value: formatTariffName(region.name),
                                         position: 'insideTop',
-                                        fill: labelColor,
+                                        fill: themeColors.text,
                                         fontSize: 12,
                                         fontWeight: 'bold',
                                         offset: 10
@@ -720,7 +718,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                             );
                         })}
 
-                        {/* Active Event Highlight - Pop Color: Purple */}
+                        {/* Active Event Highlight - Style guide slate-blue */}
                         {processedEvents.map((event, index) => {
                             // isHighlighted triggers the visual POP (solid stroke, higher opacity)
                             // Triggered by:
@@ -741,17 +739,17 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                                     key={index}
                                     x1={event.startMs}
                                     x2={event.endMs}
-                                    stroke={active ? "#db2777" : "transparent"} // Pink-600
+                                    stroke={active ? '#5C7E8F' : 'transparent'}
                                     strokeWidth={active ? 2 : 0}
                                     strokeOpacity={1}
-                                    fill="#a855f7" // Purple-500
-                                    fillOpacity={active ? 0.6 : 0.25}
+                                    fill="#5C7E8F"
+                                    fillOpacity={active ? 0.42 : 0.22}
                                     onClick={() => onEventClick && onEventClick(event)}
                                     className="cursor-pointer" // Show pointer to indicate clickable
                                     label={{
                                         value: "Load",
                                         position: 'insideBottom',
-                                        fill: active ? (isDarkMode ? '#fdf2f8' : '#faf5ff') : '#c084fc',
+                                        fill: active ? '#f8fafc' : '#5C7E8F',
                                         fontSize: 12,
                                         fontWeight: 'bold',
                                         offset: 5

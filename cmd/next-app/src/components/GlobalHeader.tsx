@@ -19,7 +19,7 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
 
     return (
         <header className="w-full bg-white dark:bg-slate-900 p-4 md:px-8 shadow-sm">
-            <div className="max-w-6xl mx-auto">
+            <div className="max-w-screen-2xl mx-auto">
                 <div className="flex flex-wrap md:flex-nowrap items-start md:items-center justify-between gap-x-4 gap-y-3">
                     {/* Logo Group - Always First */}
                     <div className="flex items-center gap-6 order-1 shrink-0">
@@ -33,7 +33,7 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
                                     height={40}
                                 />
                             </div>
-                            <span className="hidden text-4xl font-bold tracking-tight text-primary min-[1400px]:block">
+                            <span className="hidden text-3xl font-bold tracking-tight text-primary whitespace-nowrap min-[1400px]:block min-[1800px]:text-4xl">
                                 Powerwall Usage
                             </span>
                         </Link>
