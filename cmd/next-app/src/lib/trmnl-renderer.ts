@@ -683,9 +683,6 @@ export class TrmnlRenderer {
         const denseLegend = Boolean(options.denseLegend);
         const veryDenseLegend = Boolean(options.veryDenseLegend);
         const bottomPadding = height <= 175 ? 28 : 36;
-        const padding = { top: 8, right: 10, bottom: bottomPadding, left: 30 };
-        const chartWidth = width - padding.left - padding.right;
-        const chartHeight = height - padding.top - padding.bottom;
 
         if (data.length < 2) return '';
 
@@ -711,16 +708,29 @@ export class TrmnlRenderer {
         const hasNegative = minValue < 0;
         const maxPositiveKw = Math.max(0.1, wattsToKilowatts(maxValue));
         const minNegativeKw = Math.min(0, wattsToKilowatts(minValue));
-        const yMaxKw = Math.ceil((maxPositiveKw * 1.12) * 10) / 10;
+        const yMaxKw = Math.max(1, Math.ceil(maxPositiveKw * 1.10));
         let yMinKw = 0;
         if (hasNegative) {
             // Keep negative headroom tight to observed discharge while avoiding extreme ranges.
             const negativeWithMargin = minNegativeKw * 1.15;
             const boundedNegative = Math.max(-5, negativeWithMargin);
-            yMinKw = Math.floor(boundedNegative * 10) / 10;
-            if (yMinKw === 0) yMinKw = -0.1;
+            yMinKw = Math.floor(boundedNegative);
+            if (yMinKw === 0) yMinKw = -1;
         }
         const yRangeKw = Math.max(0.1, yMaxKw - yMinKw);
+        const yTicks = hasNegative
+            ? (yMaxKw >= 2 ? [yMinKw, 0, Math.round(yMaxKw / 2), yMaxKw] : [yMinKw, 0, yMaxKw])
+            : (yMaxKw >= 2 ? [0, Math.round(yMaxKw / 2), yMaxKw] : [0, yMaxKw]);
+
+        const padding = {
+            top: 8,
+            right: 10,
+            bottom: bottomPadding,
+            // Integer kW labels are intentionally short, so a fixed gutter is sufficient.
+            left: 32
+        };
+        const chartWidth = width - padding.left - padding.right;
+        const chartHeight = height - padding.top - padding.bottom;
 
         const getX = (ts: number) => padding.left + ((ts - startTime) / duration) * chartWidth;
         const getY = (w: number) => {
@@ -733,16 +743,13 @@ export class TrmnlRenderer {
         const batteryPath = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(d.timestamp.getTime())} ${getY(energyToAveragePower(d.battery_power))}`).join(' ');
 
         // Grid lines (kW)
-        const yTicks = hasNegative
-            ? [yMinKw, 0, yMaxKw / 2, yMaxKw]
-            : [0, yMaxKw / 2, yMaxKw];
         const gridLines = yTicks.map(v => {
             const y = getY(kilowattsToWatts(v)); // v is in kW, convert to Average W
             const stroke = v === 0 ? '#bbb' : '#eee';
             const strokeWidth = v === 0 ? '1.25' : '1';
             const yLabelX = padding.left - 4;
             return `<line x1="${padding.left}" y1="${y}" x2="${chartWidth + padding.left}" y2="${y}" stroke="${stroke}" stroke-width="${strokeWidth}" />
-                    <text x="${yLabelX}" y="${y + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="13" font-weight="700" text-anchor="end">${v.toFixed(1)}</text>`;
+                    <text x="${yLabelX}" y="${y + 4}" font-family="${this.CHART_FONT_FAMILY}" font-size="13" font-weight="700" text-anchor="end">${v}</text>`;
         }).join('');
 
         // Time labels (Every 6 hours). Ensure 12am is visible early in the day.
