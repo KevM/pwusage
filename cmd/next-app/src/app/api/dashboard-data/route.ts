@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { TeslaClient, EnergySiteInfo } from '@/lib/tesla-client';
+import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
@@ -40,15 +40,7 @@ export async function GET() {
         // Fetch sites directly from repo using the authorized IDs we already validated
         const sitesPromises = authorizedSiteIds.map(id => repo.getSite(id));
         const sitesResults = await Promise.all(sitesPromises);
-        const sites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
-
-        // Filter for battery sites (using DB info if available, or assume yes for now as we only sync battery sites usually?)
-        // Let's check site.json for components.battery
-        const batterySites = sites.filter(s => {
-            const info = s.json as unknown as EnergySiteInfo;
-            // EnergySiteInfo has components.battery as boolean
-            return info?.components?.battery === true;
-        });
+        const batterySites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
 
         const productsWithTariff = await Promise.all(batterySites.map(async (basicSite) => {
             // Fetch full site details including tariffs (which are not in the basic Site object)

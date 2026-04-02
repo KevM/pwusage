@@ -24,7 +24,7 @@ export class UserRepo {
                 WHERE s.user_id = u.id
             ) as last_data_import
             FROM "User" u
-            ORDER BY u.is_active DESC, last_data_import DESC
+            ORDER BY last_data_import DESC NULLS LAST, u.is_active DESC
         `);
         const users = userRes.rows as (User & { has_trmnl_integration: boolean; last_data_import: string | null })[];
 

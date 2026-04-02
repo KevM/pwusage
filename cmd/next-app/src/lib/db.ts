@@ -62,6 +62,7 @@ export interface Site {
   id: string;
   user_id?: string | null; // FK to User
   name: string;
+  utility?: string | null;
   updated: Date;
   installed: Date;
   timezone: string;

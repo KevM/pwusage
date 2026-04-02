@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { cookies } from 'next/headers';
-import { EnergySiteInfo } from '@/lib/tesla-client';
 import { SiteService } from '@/lib/site-service';
 import { Site } from '@/lib/db';
 
@@ -63,15 +62,11 @@ export async function GET(request: Request) {
         }
 
         // Map to simple structure
-        const result = sites.map(s => {
-            const info = s.json as unknown as EnergySiteInfo;
-            const utility = info?.tariff_content_v2?.utility ?? 'Unknown Utility';
-            return {
-                id: s.id,
-                name: s.name,
-                utility
-            };
-        });
+        const result = sites.map(s => ({
+            id: s.id,
+            name: s.name,
+            utility: s.utility ?? 'Unknown Utility'
+        }));
 
         return NextResponse.json(result);
     } catch (error) {

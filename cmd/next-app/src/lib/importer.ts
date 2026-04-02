@@ -390,10 +390,22 @@ export class Importer {
             }
 
             await pool.query(`
-                INSERT INTO "Site"(id, name, updated, installed, timezone, json)
-                VALUES ($1, $2, NOW(), $3, $4, $5)
-                ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name, installed=EXCLUDED.installed, timezone=EXCLUDED.timezone, json=EXCLUDED.json
-            `, [siteId, info.site_name, info.installation_date, info.installation_time_zone, JSON.stringify(info)]);
+                INSERT INTO "Site"(id, name, utility, updated, installed, timezone, json)
+                VALUES ($1, $2, $3, NOW(), $4, $5, $6)
+                ON CONFLICT(id) DO UPDATE SET
+                    name=EXCLUDED.name,
+                    utility=EXCLUDED.utility,
+                    installed=EXCLUDED.installed,
+                    timezone=EXCLUDED.timezone,
+                    json=EXCLUDED.json
+            `, [
+                siteId,
+                info.site_name,
+                info.tariff_content_v2?.utility ?? null,
+                info.installation_date,
+                info.installation_time_zone,
+                JSON.stringify(info)
+            ]);
 
             if (tariffsChanged) {
                 console.log(`Tariff content changed for site ${siteId}, updating tariffs...`);

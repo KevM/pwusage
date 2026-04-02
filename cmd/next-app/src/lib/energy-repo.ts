@@ -28,6 +28,13 @@ interface SiteIdRow {
     id: string;
 }
 
+interface SiteQueryOptions {
+    includeJson?: boolean;
+}
+
+const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode';
+const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
+
 // User-centric functions
 export async function getUserByToken(token: string): Promise<{ id: string, email?: string, roles?: string[] } | null> {
     const res = await pool.query('SELECT id, email, roles FROM "User" WHERE access_token = $1', [token]);
@@ -90,7 +97,7 @@ export class EnergyRepo {
             SELECT 
                 i.*,
                 s.name as site_name, s.updated as site_updated, s.installed as site_installed, s.timezone as site_timezone, 
-                s.billing_start_day, s.json as site_json,
+                s.billing_start_day,
                 u.access_token as tesla_access_token, u.refresh_token as tesla_refresh_token, u.auth_status as tesla_auth_status
             FROM "TrmnlInstallation" i
             JOIN "Site" s ON i.site_id = s.id
@@ -124,8 +131,9 @@ export class EnergyRepo {
         return { installation, site: siteWithTariffs };
     }
 
-    async getSitesForUser(userId: string): Promise<Site[]> {
-        const { rows } = await pool.query('SELECT * FROM "Site" WHERE user_id = $1', [userId]);
+    async getSitesForUser(userId: string, options?: SiteQueryOptions): Promise<Site[]> {
+        const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
+        const { rows } = await pool.query(`SELECT ${columns} FROM "Site" WHERE user_id = $1`, [userId]);
         return rows as Site[];
     }
 
@@ -209,14 +217,15 @@ export class EnergyRepo {
         return Array.from(aggregation.values());
     }
 
-    async getSite(siteId: string): Promise<SiteWithTariffs | undefined> {
+    async getSite(siteId: string, options?: SiteQueryOptions): Promise<SiteWithTariffs | undefined> {
         const now = Date.now();
         const cached = siteCache.get(siteId);
-        if (cached && cached.expires > now) {
+        if (cached && cached.expires > now && (!options?.includeJson || cached.data.json !== undefined)) {
             return cached.data;
         }
 
-        const siteRes = await pool.query('SELECT * FROM "Site" WHERE id = $1', [siteId]);
+        const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
+        const siteRes = await pool.query(`SELECT ${columns} FROM "Site" WHERE id = $1`, [siteId]);
         const site = siteRes.rows[0] as Site | undefined;
         if (!site) return undefined;
 
@@ -263,8 +272,9 @@ export class EnergyRepo {
         return rows.map((r) => r.id);
     }
 
-    async getSites(): Promise<Site[]> {
-        const { rows } = await pool.query('SELECT * FROM "Site"');
+    async getSites(options?: SiteQueryOptions): Promise<Site[]> {
+        const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
+        const { rows } = await pool.query(`SELECT ${columns} FROM "Site"`);
         return rows as Site[];
     }
 

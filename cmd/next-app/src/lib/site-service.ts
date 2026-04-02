@@ -9,10 +9,14 @@ export interface SiteServiceDeps {
     siteAuthToken?: string;
 }
 
+interface AuthorizedSitesOptions {
+    includeJson?: boolean;
+}
+
 export class SiteService {
     constructor(private deps: SiteServiceDeps) { }
 
-    async getAuthorizedSites(): Promise<Site[]> {
+    async getAuthorizedSites(options?: AuthorizedSitesOptions): Promise<Site[]> {
         let authorizedSiteIds: Set<string>;
 
         // 1. Try to use cached JWT source of truth
@@ -41,7 +45,7 @@ export class SiteService {
         }
 
         // Fetch all known sites from DB
-        const allSites = await this.deps.energyRepo.getSites();
+        const allSites = await this.deps.energyRepo.getSites({ includeJson: options?.includeJson });
 
 
 
