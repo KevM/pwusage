@@ -43,8 +43,8 @@ export default async function Image() {
                     // @ts-expect-error - ImageResponse supports buffer as src
                     src={iconData}
                     alt="Powerwall Usage Icon"
-                    width="200"
-                    height="200"
+                    width={200}
+                    height={200}
                     style={{
                         borderRadius: '20px', // Optional: rounded corners for icon
                         marginBottom: 40
