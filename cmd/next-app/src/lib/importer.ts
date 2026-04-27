@@ -343,7 +343,14 @@ export class Importer {
                 console.warn(`[Importer] SOE history fetch failed for ${site.id} (${cursor.toISOString()}-${next.toISOString()})`, error);
             }
             if (history && history.length > 0) {
-                const rows = await this.processHistory(null as unknown as PoolClient, site, history, soeHistory, period);
+                const rows = await this.processHistory(
+                    null as unknown as PoolClient,
+                    site,
+                    history,
+                    soeHistory,
+                    period,
+                    (next.getTime() - cursor.getTime()) / (3600 * 1000)
+                );
                 allRows.push(...rows);
             }
             cursor = next;
@@ -621,7 +628,14 @@ export class Importer {
 
                 // SURGICAL: We no longer delete the whole day. 
                 // We rely on ON CONFLICT DO UPDATE to refresh points and overwrite synthetic zeros.
-                const energyDatas = await this.processHistory(client, site, history, soeHistory, period);
+                const energyDatas = await this.processHistory(
+                    client,
+                    site,
+                    history,
+                    soeHistory,
+                    period,
+                    (actualEnd.getTime() - start.getTime()) / (3600 * 1000)
+                );
 
                 // Surgical Filter: Tesla often returns more data than requested (e.g., the whole day).
                 // We only want to write the rows that fall within our requested window.
@@ -646,7 +660,14 @@ export class Importer {
         }
     }
 
-    private async processHistory(client: PoolClient, site: SiteWithTariffs, history: EnergyHistoryEntry[], soeHistory: SoeHistoryEntry[], period: string = 'day'): Promise<EnergyDataRow[]> {
+    private async processHistory(
+        client: PoolClient,
+        site: SiteWithTariffs,
+        history: EnergyHistoryEntry[],
+        soeHistory: SoeHistoryEntry[],
+        period: string = 'day',
+        requestedDurationHours: number = 24
+    ): Promise<EnergyDataRow[]> {
         const schedule = new Schedule(site.tariffs, site.timezone);
         const results: EnergyDataRow[] = [];
         const socByTimestamp = new Map<number, number>();
@@ -673,7 +694,8 @@ export class Importer {
                 durationHours = (ts.getTime() - prevTs) / (3600 * 1000);
             }
 
-            const scale = (period === 'day' && durationHours > 20) ? 1000 : 1;
+            const shouldScaleDailyAggregate = period === 'day' && requestedDurationHours > 20 && durationHours > 20;
+            const scale = shouldScaleDailyAggregate ? 1000 : 1;
 
             // Map historical energy fields
             const hSolar = (h.total_solar_generation || h.solar_energy_exported) ?? 0;

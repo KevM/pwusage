@@ -397,6 +397,7 @@ export async function GET(request: Request) {
         const fallbackKeyCache = new Map<number, string>();
 
         const seriesData: import('@/lib/db').EnergyData[] = [];
+        let todayHome = 0;
         let todayGrid = 0;
         let todaySolar = 0;
         let latestSeriesSoc: { value: number; timestamp: Date } | null = null;
@@ -408,6 +409,7 @@ export async function GET(request: Request) {
             // Extract today's points for the chart using site-local day boundary
             if (ts.getTime() >= todayStart.getTime()) {
                 seriesData.push(row);
+                todayHome += row.load_power;
                 todayGrid += row.grid_power;
                 todaySolar += row.solar_power;
                 if (typeof row.battery_soc === 'number') {
@@ -488,6 +490,7 @@ export async function GET(request: Request) {
         }
 
         // Convert today totals to kWh
+        todayHome = wattsToKilowatts(todayHome);
         todayGrid = wattsToKilowatts(todayGrid);
         todaySolar = wattsToKilowatts(todaySolar);
 
@@ -593,6 +596,7 @@ export async function GET(request: Request) {
             currentTouName: currentTouName || undefined,
             batterySoc: batterySoc,
             batteryStatus: batteryStatus,
+            todayHome: todayHome,
             todayGrid: todayGrid,
             todaySolar: todaySolar,
             seriesData: seriesData,

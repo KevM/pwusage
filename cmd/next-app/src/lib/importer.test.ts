@@ -1,7 +1,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Importer } from './importer';
-import { TeslaClient } from './tesla-client';
+import { EnergyHistoryEntry, TeslaClient } from './tesla-client';
 import { pool } from './db';
 
 // Mock dependencies
@@ -104,5 +104,64 @@ describe('Importer Sync Logic', () => {
         expect(importSpy).toHaveBeenCalled();
         expect(result.rows).toHaveLength(1);
         expect(result.latestTimestamp).toEqual(latestKnown);
+    });
+
+    it('does not multiply partial-day singleton history rows by 1000', async () => {
+        const singletonHistory: EnergyHistoryEntry[] = [
+            {
+                timestamp: '2026-04-27T05:05:00.000Z',
+                solar_energy_exported: 0,
+                generator_energy_exported: 0,
+                grid_energy_imported: 64,
+                grid_services_energy_imported: 0,
+                grid_services_energy_exported: 0,
+                grid_energy_exported_from_solar: 0,
+                grid_energy_exported_from_generator: 0,
+                grid_energy_exported_from_battery: 0,
+                battery_energy_exported: 0,
+                battery_energy_imported_from_grid: 0,
+                battery_energy_imported_from_solar: 0,
+                battery_energy_imported_from_generator: 0,
+                consumer_energy_imported_from_grid: 64,
+                consumer_energy_imported_from_solar: 0,
+                consumer_energy_imported_from_battery: 0,
+                consumer_energy_imported_from_generator: 0,
+                total_home_usage: 64,
+                total_solar_generation: 0,
+                total_battery_charge: 0,
+                total_battery_discharge: 0,
+                total_grid_energy_exported: 0
+            }
+        ];
+
+        const site = {
+            id: 'site-123',
+            timezone: 'America/Chicago',
+            installed: new Date('2025-01-01T00:00:00Z'),
+            tariffs: [
+                {
+                    id: 1,
+                    site_id: 'site-123',
+                    updated: new Date('2025-01-01T00:00:00Z'),
+                    name: 'Default Tariff',
+                    seasons: []
+                }
+            ]
+        };
+
+        const rows = await (importer as unknown as {
+            processHistory: (
+                client: unknown,
+                siteArg: typeof site,
+                history: EnergyHistoryEntry[],
+                soeHistory: [],
+                period: string,
+                requestedDurationHours: number
+            ) => Promise<Array<{ load_power: number; grid_power: number }>>;
+        }).processHistory(null, site, singletonHistory, [], 'day', 7);
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0].load_power).toBe(64);
+        expect(rows[0].grid_power).toBe(64);
     });
 });

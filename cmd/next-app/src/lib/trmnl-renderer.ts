@@ -28,6 +28,7 @@ export interface RenderContext {
     currentTouName?: string;
     batterySoc?: number | null;
     batteryStatus?: 'charging' | 'discharging' | 'idle';
+    todayHome?: number;
     todayGrid?: number;
     todaySolar?: number;
     seriesData?: EnergyData[];
@@ -362,6 +363,9 @@ export class TrmnlRenderer {
     }
 
     static renderHalfVertical(ctx: RenderContext): string {
+        const gridValue = this.summaryStat(ctx, 'grid');
+        const solarValue = this.summaryStat(ctx, 'solar');
+
         return `
             <div class="view view--half-vertical">
                  <div class="layout layout--col" style="padding: 10px; height: 100%;">
@@ -379,11 +383,11 @@ export class TrmnlRenderer {
                     <div class="flex flex--row" style="gap: 10px; width: 100%; margin-top: auto;">
                         <div class="flex flex--col flex--center-x" style="flex: 1;">
                             <span class="label">Grid</span>
-                            <span class="value">${this.sumStat(ctx.tariffGroups, 'grid')}</span>
+                            <span class="value">${gridValue}</span>
                         </div>
                          <div class="flex flex--col flex--center-x" style="flex: 1;">
                             <span class="label">Solar</span>
-                            <span class="value">${this.sumStat(ctx.tariffGroups, 'solar')}</span>
+                            <span class="value">${solarValue}</span>
                         </div>
                     </div>
                 </div>
@@ -392,6 +396,10 @@ export class TrmnlRenderer {
     }
 
     static renderHalfHorizontal(ctx: RenderContext): string {
+        const homeValue = this.summaryStat(ctx, 'home');
+        const solarValue = this.summaryStat(ctx, 'solar');
+        const gridValue = this.summaryStat(ctx, 'grid');
+
         return `
             <div class="view view--half-horizontal">
                 <div class="layout layout--col" style="padding: 15px; height: 100%;">
@@ -407,9 +415,9 @@ export class TrmnlRenderer {
                     </div>
 
                     <div class="flex flex--row flex--center-y" style="justify-content: space-between; width: 100%; margin-top: auto;">
-                          ${this.renderHorizontalStat('Home', this.sumStat(ctx.tariffGroups, 'home'))}
-                          ${this.renderHorizontalStat('Solar', this.sumStat(ctx.tariffGroups, 'solar'))}
-                          ${this.renderHorizontalStat('Grid', this.sumStat(ctx.tariffGroups, 'grid'))}
+                          ${this.renderHorizontalStat('Home', homeValue)}
+                          ${this.renderHorizontalStat('Solar', solarValue)}
+                          ${this.renderHorizontalStat('Grid', gridValue)}
                           <div style="margin-left: 10px;">
                              ${this.renderBatteryStatus(ctx.batterySoc, ctx.batteryStatus)}
                           </div>
@@ -434,6 +442,18 @@ export class TrmnlRenderer {
         let total = 0;
         groups.forEach(g => g.periods.forEach(p => total += p[field]));
         return wattsToKilowatts(total).toFixed(1) + ' kWh';
+    }
+
+    private static summaryStat(ctx: RenderContext, field: 'home' | 'grid' | 'solar'): string {
+        const todayValue = field === 'home'
+            ? ctx.todayHome
+            : (field === 'grid' ? ctx.todayGrid : ctx.todaySolar);
+
+        if (typeof todayValue === 'number') {
+            return todayValue.toFixed(1) + ' kWh';
+        }
+
+        return this.sumStat(ctx.tariffGroups, field);
     }
 
     private static renderHorizontalStat(label: string, value: string): string {
