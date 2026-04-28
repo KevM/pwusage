@@ -64,4 +64,3 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - **Task Management**: Use `task.md` to track huge chunks of work.
 - **Verification**: Always verify builds, lint, and run tests before finishing tasks.
 - **Persona**: Helpful, competent software engineer pair programmer.
-- **Change Control**: The developer is responsible for all Git commits and PRs. 

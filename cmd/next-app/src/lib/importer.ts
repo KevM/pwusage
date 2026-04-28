@@ -832,7 +832,6 @@ export class Importer {
         const remappedIds = new Map<number, number>(); // Old ID -> New ID
 
         for (const row of data) {
-            let finalTariffId = row.tariff_id;
 
             // Check if ID is valid (exists in DB ids)
             // We can check if it's in the values of dbTariffMap
@@ -863,15 +862,20 @@ export class Importer {
                     }
                 }
             }
+        }
 
-            finalTariffId = remappedIds.get(row.tariff_id)!;
+        const remappedRows = new Set<EnergyDataRow>();
+
+        for (const row of data) {
+            const finalTariffId = remappedIds.get(row.tariff_id)!;
 
             if (finalTariffId !== -1) {
-                // Update the row's tariff_id in place or create copy? 
-                // Creating a shallow clone is safer if we reuse data, but we don't here.
-                // We can modify the row object if we push it to validRows.
-                // Actually, let's just make a new object or modify if safe.
+                const originalTariffId = row.tariff_id;
                 row.tariff_id = finalTariffId;
+                // Track if it was remapped to avoid using stale schedule IDs
+                if (originalTariffId !== finalTariffId) {
+                    remappedRows.add(row);
+                }
                 validRows.push(row);
             } else {
                 // Count skips
@@ -879,6 +883,8 @@ export class Importer {
         }
 
         console.log(`[Import] Valid Rows to Insert: ${validRows.length} / ${data.length}`);
+
+        const schedule = new Schedule(site.tariffs, site.timezone);
 
         if (validRows.length === 0) return;
 
@@ -896,7 +902,10 @@ export class Importer {
             let pIdx = 1;
 
             for (const row of chunk) {
-                placeholders.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, $${pIdx + 4}, $${pIdx + 5}, $${pIdx + 6}, $${pIdx + 7})`);
+                const wasRemapped = remappedRows.has(row);
+                const scheduleId = wasRemapped ? null : (schedule.getTariffPeriod(row.timestamp)?.schedule.id ?? null);
+
+                placeholders.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, $${pIdx + 4}, $${pIdx + 5}, $${pIdx + 6}, $${pIdx + 7}, $${pIdx + 8})`);
                 values.push(
                     row.site_id,
                     row.tariff_id,
@@ -905,20 +914,22 @@ export class Importer {
                     row.solar_power,
                     row.grid_power,
                     row.battery_power,
-                    row.battery_soc
+                    row.battery_soc,
+                    scheduleId
                 );
-                pIdx += 8;
+                pIdx += 9;
             }
 
             const query = `
-                INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc) 
+                INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, tariff_schedule_id)
                 VALUES ${placeholders.join(', ')}
                 ON CONFLICT(timestamp, site_id, tariff_id) DO UPDATE SET
                     load_power=EXCLUDED.load_power,
                     solar_power=EXCLUDED.solar_power,
                     grid_power=EXCLUDED.grid_power,
                     battery_power=EXCLUDED.battery_power,
-                    battery_soc=COALESCE(EXCLUDED.battery_soc, "EnergyData".battery_soc)
+                    battery_soc=COALESCE(EXCLUDED.battery_soc, "EnergyData".battery_soc),
+                    tariff_schedule_id=EXCLUDED.tariff_schedule_id
             `;
 
             await client.query(query, values);

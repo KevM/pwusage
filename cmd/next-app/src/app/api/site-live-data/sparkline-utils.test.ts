@@ -17,6 +17,7 @@ function makeRow(timestamp: string, values: {
         timestamp: new Date(timestamp),
         site_id: 'site-1',
         tariff_id: 1,
+        tariff_schedule_id: null,
         load_power: values.loadWh,
         solar_power: values.solarWh,
         grid_power: values.gridWh,

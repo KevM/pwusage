@@ -111,6 +111,7 @@ export interface EnergyData {
   timestamp: Date;
   site_id: string;
   tariff_id: number;
+  tariff_schedule_id: number | null;
   load_power: number;
   solar_power: number;
   grid_power: number;
