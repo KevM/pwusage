@@ -449,7 +449,7 @@ export class EnergyRepo {
         const queryStart = Date.now();
         const res = await pool.query(`
             SELECT * FROM "EnergyData"
-            WHERE site_id = $1 
+            WHERE site_id = $1
             AND timestamp >= $2
             AND timestamp < $3
             ORDER BY timestamp ASC
@@ -466,6 +466,44 @@ export class EnergyRepo {
             grid_power: Number(row.grid_power),
             battery_power: Number(row.battery_power),
             battery_soc: row.battery_soc === null || row.battery_soc === undefined ? null : Number(row.battery_soc),
+        })) as EnergyData[];
+    }
+
+    async getBucketedEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
+        const queryStart = Date.now();
+        const res = await pool.query(`
+            SELECT
+                date_bin('15 minutes', timestamp, TIMESTAMPTZ '2000-01-01') as timestamp,
+                site_id,
+                tariff_id,
+                tariff_schedule_id,
+                AVG(load_power) as load_power,
+                AVG(solar_power) as solar_power,
+                AVG(grid_power) as grid_power,
+                AVG(battery_power) as battery_power,
+                NULL as battery_soc,
+                ROW_NUMBER() OVER (ORDER BY date_bin('15 minutes', timestamp, TIMESTAMPTZ '2000-01-01')) as id
+            FROM "EnergyData"
+            WHERE site_id = $1
+            AND timestamp >= $2
+            AND timestamp < $3
+            GROUP BY date_bin('15 minutes', timestamp, TIMESTAMPTZ '2000-01-01'), site_id, tariff_id, tariff_schedule_id
+            ORDER BY timestamp ASC
+        `, [siteId, start, end]);
+        const queryDuration = Date.now() - queryStart;
+        console.log(`[EnergyRepo] getBucketedEnergyData: Query = ${queryDuration}ms, Rows = ${res.rows.length}`);
+
+        return res.rows.map(row => ({
+            id: row.id,
+            timestamp: new Date(row.timestamp),
+            site_id: row.site_id.toString(),
+            tariff_id: row.tariff_id,
+            tariff_schedule_id: row.tariff_schedule_id,
+            load_power: Number(row.load_power),
+            solar_power: Number(row.solar_power),
+            grid_power: Number(row.grid_power),
+            battery_power: Number(row.battery_power),
+            battery_soc: null,
         })) as EnergyData[];
     }
 

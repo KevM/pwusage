@@ -57,7 +57,7 @@ export async function GET(request: Request) {
         const [liveStatus, site, historyRows] = await Promise.all([
             client.getLiveStatus(siteId),
             repo.getSite(siteId),
-            repo.getRawEnergyData(siteId, sparklineScaleStart, now)
+            repo.getBucketedEnergyData(siteId, sparklineScaleStart, now)
         ]);
 
         let currentTariff = 'Unknown';

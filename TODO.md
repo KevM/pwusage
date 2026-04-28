@@ -13,12 +13,6 @@ These were identified during the audit that produced the Trmnl markup cycle aggr
 - **Impact:** Cleaner database schema and reduced maintenance overhead.
 - **Risk:** High — ensure absolutely no code paths rely on these tables before dropping.
 
-### Aggregate sparkline data in SQL for `/api/site-live-data`
-
-- **Where:** `cmd/next-app/src/app/api/site-live-data/route.ts` and `cmd/next-app/src/app/api/site-live-data/sparkline-utils.ts`
-- **Change:** Replace the raw 5-minute fetch with a SQL query that buckets to 15-minute windows using `date_trunc('15 minutes', timestamp)` and `AVG(...)` over `solar_power, grid_power, load_power`. Returns ~16 rows per metric instead of ~144. Update `toSparklinePayload` to consume pre-bucketed input.
-- **Impact:** ~90% wire reduction on this endpoint's row data.
-- **Risk:** Medium — verify sparkline visual output matches before/after with representative data; tests in `sparkline-utils.test.ts` need updating.
 
 ### Refactor usage page to use `getCycleAggregates` instead of `getUsageByTOU`
 
