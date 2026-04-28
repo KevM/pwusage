@@ -15,7 +15,14 @@
       "Bash(git restore *)",
       "Bash(git diff *)",
       "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
-      "Bash(git revert *)"
+      "Bash(git revert *)",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)",
+      "Bash(grep -E \"\\\\.ts$\")",
+      "Bash(curl -s http://localhost:5173/health)",
+      "Bash(pkill -f \"npm run dev\")"
     ]
   }
 }

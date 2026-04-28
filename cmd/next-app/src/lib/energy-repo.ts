@@ -154,36 +154,56 @@ export class EnergyRepo {
         const tariffMap = new Map<number, Tariff>();
         site.tariffs.forEach(t => tariffMap.set(t.id, t));
 
+        const scheduleMap = new Map<number, TariffSchedule>();
+        site.tariffs.forEach(t => {
+            if (t.seasons) {
+                t.seasons.forEach(season => {
+                    if (season.schedules) {
+                        season.schedules.forEach(s => scheduleMap.set(s.id, s));
+                    }
+                });
+            }
+        });
+
         const schedule = new Schedule(site.tariffs, site.timezone);
 
-        const rowsResult = await pool.query(`
-            SELECT timestamp, tariff_id, load_power, solar_power, grid_power, battery_power 
-            FROM "EnergyData"
-            WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
-            ORDER BY timestamp ASC
-        `, [siteId, start, end]);
-        const rows = rowsResult.rows;
+        // Calculate site-local "today" boundary and split point
+        const now = new Date();
+        const todayStart = EnergyRepo.getSiteMidnight(now, site.timezone);
+        const splitPoint = todayStart < end ? todayStart : end;
+
+        // Fetch prior aggregates and today's raw data in parallel
+        const [priorAggregates, todayRaw] = await Promise.all([
+            this.getCycleAggregates(siteId, start, splitPoint),
+            this.getRawEnergyData(siteId, splitPoint, end)
+        ]);
+
         const aggregation = new Map<string, UsageData>();
 
-        for (const row of rows) {
-            const ts = new Date(row.timestamp);
-            const tp = schedule.getTariffPeriod(ts);
-
+        // Pass 1: Prior day aggregates (use tariff_schedule_id for TOU lookup)
+        for (const row of priorAggregates) {
             let touName = 'Unknown';
-            let tariffName = 'Unknown';
             let buyRate = 0;
             let sellRate = 0;
 
-            if (tp) {
-                touName = tp.schedule.name || 'Standard';
-                tariffName = tp.tariff.name || 'Unknown';
-                buyRate = tp.schedule.buy_rate || 0;
-                sellRate = tp.schedule.sell_rate || 0;
+            if (row.tariff_schedule_id != null) {
+                const sched = scheduleMap.get(row.tariff_schedule_id);
+                if (sched) {
+                    touName = sched.name || 'Standard';
+                    buyRate = sched.buy_rate || 0;
+                    sellRate = sched.sell_rate || 0;
+                }
             } else {
-                const t = tariffMap.get(row.tariff_id);
-                if (t) tariffName = t.name || 'Unknown';
+                const tp = schedule.getTariffPeriod(row.day);
+                if (tp) {
+                    touName = tp.schedule.name || 'Standard';
+                    buyRate = tp.schedule.buy_rate || 0;
+                    sellRate = tp.schedule.sell_rate || 0;
+                }
             }
 
+            const tariff = tariffMap.get(row.tariff_id);
+            const tariffName = tariff?.name || 'Unknown';
             const key = `${tariffName}|${touName}|${buyRate}|${sellRate}`;
 
             let data = aggregation.get(key);
@@ -194,7 +214,7 @@ export class EnergyRepo {
                     gridUsage: 0,
                     solarProduction: 0,
                     batteryChange: 0,
-                    tariff: tp?.tariff || tariffMap.get(row.tariff_id)!,
+                    tariff: tariff!,
                     touName: touName,
                     cost: 0,
                     buyRate: buyRate,
@@ -209,6 +229,57 @@ export class EnergyRepo {
             data.batteryChange += row.battery_power;
         }
 
+        // Pass 2: Today's raw rows (use Schedule.getTariffPeriod for TOU lookup)
+        for (const row of todayRaw) {
+            const ts = row.timestamp;
+            const tp = schedule.getTariffPeriod(ts);
+
+            let touName = 'Unknown';
+            let tariffName = 'Unknown';
+            let buyRate = 0;
+            let sellRate = 0;
+            let currentTariff: Tariff | undefined;
+
+            if (tp) {
+                touName = tp.schedule.name || 'Standard';
+                tariffName = tp.tariff.name || 'Unknown';
+                buyRate = tp.schedule.buy_rate || 0;
+                sellRate = tp.schedule.sell_rate || 0;
+                currentTariff = tp.tariff;
+            } else {
+                const t = tariffMap.get(row.tariff_id);
+                if (t) {
+                    tariffName = t.name || 'Unknown';
+                    currentTariff = t;
+                }
+            }
+
+            const key = `${tariffName}|${touName}|${buyRate}|${sellRate}`;
+
+            let data = aggregation.get(key);
+            if (!data) {
+                data = {
+                    start: start,
+                    homeUsage: 0,
+                    gridUsage: 0,
+                    solarProduction: 0,
+                    batteryChange: 0,
+                    tariff: currentTariff!,
+                    touName: touName,
+                    cost: 0,
+                    buyRate: buyRate,
+                    sellRate: sellRate
+                };
+                aggregation.set(key, data);
+            }
+
+            data.homeUsage += row.load_power;
+            data.gridUsage += row.grid_power;
+            data.solarProduction += row.solar_power;
+            data.batteryChange += row.battery_power;
+        }
+
+        // Calculate costs
         for (const [key, data] of aggregation) {
             const [, , buyRateStr, sellRateStr] = key.split('|');
             const buyRate = parseFloat(buyRateStr);
@@ -218,8 +289,6 @@ export class EnergyRepo {
             if (gridKwh >= 0) {
                 data.cost = gridKwh * buyRate;
             } else {
-                // Exported energy should always be a credit (negative cost),
-                // regardless of whether sell_rate is stored as positive or negative.
                 data.cost = -Math.abs(gridKwh) * Math.abs(sellRate);
             }
         }

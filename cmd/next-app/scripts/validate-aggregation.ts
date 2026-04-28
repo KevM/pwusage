@@ -104,6 +104,9 @@ async function newApproach(repo: EnergyRepo, site: SiteWithTariffs, start: Date,
         if (row.tariff_schedule_id !== null) {
             const sched = scheduleMap.get(row.tariff_schedule_id);
             if (sched) touName = sched.name ?? 'Standard';
+        } else {
+            const tp = schedule.getTariffPeriod(row.day);
+            if (tp) touName = tp.schedule.name ?? 'Standard';
         }
         upsert(tariffName, touName, row);
     }
