@@ -91,8 +91,17 @@ export class Schedule {
 
                 if (!season.schedules) continue;
 
-                // Sort schedules: Specific time windows first, then broad (24h) windows
+                // Sort schedules: narrower day ranges first (Sat-Sun overrides Every Day),
+                // then time-specific windows before all-day within the same day range.
                 const sortedSchedules = [...season.schedules].sort((a, b) => {
+                    const aDayRange = (a.from_day_of_week !== null && a.to_day_of_week !== null)
+                        ? a.to_day_of_week - a.from_day_of_week
+                        : 6;
+                    const bDayRange = (b.from_day_of_week !== null && b.to_day_of_week !== null)
+                        ? b.to_day_of_week - b.from_day_of_week
+                        : 6;
+                    if (aDayRange !== bDayRange) return aDayRange - bDayRange;
+
                     const aSpecific = a.from_hour !== null || a.to_hour !== null;
                     const bSpecific = b.from_hour !== null || b.to_hour !== null;
                     if (aSpecific && !bSpecific) return -1;
@@ -214,7 +223,13 @@ export class Schedule {
         }
 
         if (schedule.from_hour !== null && schedule.to_hour !== null) {
-            return th >= schedule.from_hour && th < schedule.to_hour;
+            if (schedule.from_hour <= schedule.to_hour) {
+                // Normal range: e.g., 08:00 - 20:00
+                return th >= schedule.from_hour && th < schedule.to_hour;
+            } else {
+                // Midnight-crossing range: e.g., 20:00 - 08:00
+                return th >= schedule.from_hour || th < schedule.to_hour;
+            }
         }
 
         if (schedule.to_hour !== null) {

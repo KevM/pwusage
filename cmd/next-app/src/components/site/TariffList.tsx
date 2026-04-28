@@ -65,7 +65,23 @@ export function TariffList({ tariffs }: TariffListProps) {
                                                     </TableHeader>
                                                     <TableBody className="divide-y divide-gray-100 dark:divide-slate-800">
                                                         {season.schedules.map((schedule) => {
-                                                            const daysLabel = (schedule.from_day_of_week === 0 && schedule.to_day_of_week === 6)
+                                                            // Tesla emits "Every Day" (0-6) for weekday periods and relies on a
+                                                            // Sat-Sun all-day entry to override weekends. When that override exists,
+                                                            // time-windowed "Every Day" schedules are effectively Mon-Fri only.
+                                                            const hasWeekendAllDayOverride = season.schedules?.some(s =>
+                                                                s.id !== schedule.id &&
+                                                                s.from_day_of_week !== null &&
+                                                                s.from_day_of_week >= 5 &&
+                                                                s.from_hour === null && s.to_hour === null
+                                                            );
+                                                            const isEveryDayWithSpecificHours =
+                                                                schedule.from_day_of_week === 0 &&
+                                                                schedule.to_day_of_week === 6 &&
+                                                                (schedule.from_hour !== null || schedule.to_hour !== null);
+
+                                                            const daysLabel = isEveryDayWithSpecificHours && hasWeekendAllDayOverride
+                                                                ? 'Mon - Fri'
+                                                                : (schedule.from_day_of_week === 0 && schedule.to_day_of_week === 6)
                                                                 ? 'Every Day'
                                                                 : (schedule.from_day_of_week !== null
                                                                     ? `${getDayName(schedule.from_day_of_week)} - ${getDayName(schedule.to_day_of_week!)}`
