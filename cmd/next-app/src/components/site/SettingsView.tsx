@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
 import { TariffList } from './TariffList';
@@ -80,11 +81,48 @@ function extractPluginSettingId(installation: TrmnlInstallation | undefined): nu
 }
 
 export function SettingsView({ site, installation }: SettingsViewProps) {
+    const router = useRouter();
     const [previewHtml, setPreviewHtml] = useState('');
     const [previewError, setPreviewError] = useState('');
     const [previewLoading, setPreviewLoading] = useState(true);
     const [previewScale, setPreviewScale] = useState<number>(0.5);
+    const [refreshLoading, setRefreshLoading] = useState(false);
+    const [refreshStatus, setRefreshStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
     const pluginSettingId = extractPluginSettingId(installation);
+
+    const handleRefreshTariffs = async () => {
+        setRefreshLoading(true);
+        setRefreshStatus(null);
+        try {
+            const response = await fetch(`/api/site/${site.id}/refresh-tariffs`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            const data = await response.json();
+
+            if (!response.ok) {
+                setRefreshStatus({
+                    type: 'error',
+                    message: data.error || 'Failed to refresh tariffs'
+                });
+                return;
+            }
+
+            setRefreshStatus({
+                type: 'success',
+                message: 'Tariffs updated successfully'
+            });
+
+            router.refresh();
+        } catch (error) {
+            setRefreshStatus({
+                type: 'error',
+                message: error instanceof Error ? error.message : 'An error occurred'
+            });
+        } finally {
+            setRefreshLoading(false);
+        }
+    };
 
     useEffect(() => {
         let active = true;
@@ -221,6 +259,43 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                             <Button className="w-full" size="lg" variant="outline">Buy Device</Button>
                         </a>
                     </div>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Tariff Information</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div>
+                        <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
+                            The rates shown below are synced from your Powerwall settings in the Tesla App. If you&apos;ve recently changed your Time-of-Use (TOU) rates or tariff settings in Tesla, click the button below to refresh.
+                        </p>
+                        <Button
+                            onClick={handleRefreshTariffs}
+                            disabled={refreshLoading}
+                            className="gap-2"
+                        >
+                            {refreshLoading ? (
+                                <>
+                                    <span className="inline-block animate-spin">⟳</span>
+                                    Refreshing...
+                                </>
+                            ) : (
+                                'Refresh Tariffs from Tesla'
+                            )}
+                        </Button>
+                    </div>
+
+                    {refreshStatus && (
+                        <div className={`p-3 rounded-md text-sm ${
+                            refreshStatus.type === 'success'
+                                ? 'bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200'
+                                : 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200'
+                        }`}>
+                            {refreshStatus.message}
+                        </div>
+                    )}
                 </CardContent>
             </Card>
 

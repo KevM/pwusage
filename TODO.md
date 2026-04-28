@@ -13,22 +13,6 @@ These were identified during the audit that produced the Trmnl markup cycle aggr
 - **Impact:** Cleaner database schema and reduced maintenance overhead.
 - **Risk:** High — ensure absolutely no code paths rely on these tables before dropping.
 
-
-### Replace `SELECT *` with column projection in `getRawEnergyData`
-
-- **Where:** `cmd/next-app/src/lib/energy-repo.ts` — `getRawEnergyData` and `getRawEnergyDataWithTz`
-- **Change:** Project only the columns callers actually use: `timestamp, tariff_id, load_power, solar_power, grid_power, battery_power, battery_soc`. Drop `id` from the wire.
-- **Callers to verify after change:** `cmd/next-app/src/app/api/site-live-data/route.ts`, `cmd/next-app/src/app/api/site/[id]/analysis/route.ts`, `cmd/next-app/src/app/api/trmnl/markup/route.ts` (today-only path after the C-2 work lands).
-- **Impact:** ~10–15% wire reduction on every call to these methods.
-- **Risk:** Low — mechanical change, existing tests should catch regressions.
-
-### Lower `HeaderLiveStats` polling cadence and pause when tab hidden
-
-- **Where:** `cmd/next-app/src/components/HeaderLiveStats.tsx`
-- **Change:** Increase `setInterval` from `120000` (2 min) to `300000` (5 min). Add a `document.visibilityState` listener so polling pauses when the tab is hidden and resumes on focus (use `visibilitychange` event).
-- **Impact:** ~60% reduction on `/api/site-live-data` calls for active tabs; effectively eliminates calls from backgrounded tabs.
-- **Risk:** Low — UX impact is acceptable since live header values aren't critical to drive decisions on. Check that re-fetch on focus works smoothly without flicker.
-
 ### Aggregate sparkline data in SQL for `/api/site-live-data`
 
 - **Where:** `cmd/next-app/src/app/api/site-live-data/route.ts` and `cmd/next-app/src/app/api/site-live-data/sparkline-utils.ts`
