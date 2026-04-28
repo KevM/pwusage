@@ -79,6 +79,7 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
         let isMounted = true;
         let redirectedToLogin = false;
         const controller = new AbortController();
+        let interval: ReturnType<typeof setInterval> | null = null;
 
         async function fetchStats() {
             try {
@@ -108,16 +109,38 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
             }
         }
 
-        // Initial fetch
-        fetchStats();
+        function startPolling() {
+            if (interval) clearInterval(interval);
+            fetchStats();
+            interval = setInterval(fetchStats, 300000);
+        }
 
-        // Poll every 2 minutes
-        const interval = setInterval(fetchStats, 120000);
+        function stopPolling() {
+            if (interval) {
+                clearInterval(interval);
+                interval = null;
+            }
+        }
+
+        function handleVisibilityChange() {
+            if (document.visibilityState === 'visible') {
+                startPolling();
+            } else {
+                stopPolling();
+            }
+        }
+
+        // Pause polling when tab is hidden, resume when visible
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        // Initialize based on current visibility state
+        handleVisibilityChange();
 
         return () => {
             isMounted = false;
             controller.abort();
-            clearInterval(interval);
+            stopPolling();
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
     }, [siteId]);
 
