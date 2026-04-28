@@ -143,3 +143,132 @@ describe('EnergyRepo site payload selection', () => {
         expect(result?.site.json).toBeUndefined();
     });
 });
+
+describe('EnergyRepo.getCycleAggregates', () => {
+    const start = new Date('2026-04-01T00:00:00Z');
+    const end   = new Date('2026-04-28T00:00:00Z');
+
+    beforeEach(() => {
+        queryMock.mockReset();
+    });
+
+    it('returns an empty array when there are no rows', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+
+        const repo = new EnergyRepo();
+        const result = await repo.getCycleAggregates('site-1', start, end);
+
+        expect(result).toEqual([]);
+        expect(queryMock).toHaveBeenCalledWith(
+            expect.stringContaining('GROUP BY'),
+            ['site-1', start, end]
+        );
+    });
+
+    it('coerces pg numeric strings to JS numbers', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{
+                day: '2026-04-15T00:00:00Z',
+                tariff_id: '42',
+                tariff_schedule_id: '7',
+                load_power: '100000',
+                solar_power: '80000',
+                grid_power: '20000',
+                battery_power: '-5000',
+            }]
+        });
+
+        const repo = new EnergyRepo();
+        const [row] = await repo.getCycleAggregates('site-1', start, end);
+
+        expect(typeof row.tariff_id).toBe('number');
+        expect(row.tariff_id).toBe(42);
+        expect(typeof row.tariff_schedule_id).toBe('number');
+        expect(row.tariff_schedule_id).toBe(7);
+        expect(row.load_power).toBe(100000);
+        expect(row.solar_power).toBe(80000);
+        expect(row.grid_power).toBe(20000);
+        expect(row.battery_power).toBe(-5000);
+        expect(row.day).toBeInstanceOf(Date);
+    });
+
+    it('maps NULL tariff_schedule_id to null (not 0)', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{
+                day: '2026-04-15T00:00:00Z',
+                tariff_id: '42',
+                tariff_schedule_id: null,
+                load_power: '50000',
+                solar_power: '0',
+                grid_power: '50000',
+                battery_power: '0',
+            }]
+        });
+
+        const repo = new EnergyRepo();
+        const [row] = await repo.getCycleAggregates('site-1', start, end);
+
+        expect(row.tariff_schedule_id).toBeNull();
+    });
+
+    it('returns one row per distinct (day, tariff_id, tariff_schedule_id) combination', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [
+                {
+                    day: '2026-04-14T00:00:00Z',
+                    tariff_id: '1',
+                    tariff_schedule_id: '10',
+                    load_power: '60000',
+                    solar_power: '30000',
+                    grid_power: '30000',
+                    battery_power: '0',
+                },
+                {
+                    day: '2026-04-14T00:00:00Z',
+                    tariff_id: '1',
+                    tariff_schedule_id: '11',
+                    load_power: '90000',
+                    solar_power: '10000',
+                    grid_power: '80000',
+                    battery_power: '0',
+                },
+                {
+                    day: '2026-04-15T00:00:00Z',
+                    tariff_id: '1',
+                    tariff_schedule_id: '10',
+                    load_power: '70000',
+                    solar_power: '40000',
+                    grid_power: '30000',
+                    battery_power: '0',
+                },
+            ]
+        });
+
+        const repo = new EnergyRepo();
+        const rows = await repo.getCycleAggregates('site-1', start, end);
+
+        expect(rows).toHaveLength(3);
+
+        const apr14Rows = rows.filter(r => r.day.toISOString().startsWith('2026-04-14'));
+        expect(apr14Rows).toHaveLength(2);
+        expect(apr14Rows.map(r => r.tariff_schedule_id).sort()).toEqual([10, 11]);
+
+        const apr15Rows = rows.filter(r => r.day.toISOString().startsWith('2026-04-15'));
+        expect(apr15Rows).toHaveLength(1);
+        expect(apr15Rows[0].load_power).toBe(70000);
+    });
+
+    it('queries EnergyData with GROUP BY day, tariff_id, tariff_schedule_id', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+
+        const repo = new EnergyRepo();
+        await repo.getCycleAggregates('site-1', start, end);
+
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('GROUP BY');
+        expect(sql).toContain('tariff_id');
+        expect(sql).toContain('tariff_schedule_id');
+        expect(sql).toContain('"EnergyData"');
+        expect(params).toEqual(['site-1', start, end]);
+    });
+});

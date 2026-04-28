@@ -231,8 +231,12 @@ export async function GET(request: Request) {
         // --- BLOCKING DATA FETCHES (DB only) ---
         let dbLatestMs = 0;
         let dbCycleMs = 0;
+        let dbTodayMs = 0;
         let aggregationMs = 0;
         let renderMs = 0;
+
+        const tz = site.timezone || 'UTC';
+        const todayStart = EnergyRepo.getSiteMidnight(now, tz);
 
         const dbLatestPromise = (async () => {
             const startMs = Date.now();
@@ -244,13 +248,21 @@ export async function GET(request: Request) {
 
         const dbCyclePromise = (async () => {
             const startMs = Date.now();
-            const res = await repo.getRawEnergyData(site!.id, start, now);
+            const res = await repo.getCycleAggregates(site!.id, start, todayStart);
             dbCycleMs = Date.now() - startMs;
-            console.log(`[TrmnlMarkup] DB Cycle Fetch: ${dbCycleMs}ms`);
+            console.log(`[TrmnlMarkup] DB Cycle Aggregates Fetch: ${dbCycleMs}ms`);
             return res;
         })();
 
-        const [latestData, allCycleData] = await Promise.all([dbLatestPromise, dbCyclePromise]);
+        const dbTodayPromise = (async () => {
+            const startMs = Date.now();
+            const res = await repo.getRawEnergyData(site!.id, todayStart, now);
+            dbTodayMs = Date.now() - startMs;
+            console.log(`[TrmnlMarkup] DB Today Raw Fetch: ${dbTodayMs}ms`);
+            return res;
+        })();
+
+        const [latestData, priorAggregates, todayRaw] = await Promise.all([dbLatestPromise, dbCyclePromise, dbTodayPromise]);
         const latestTimestamp = latestData?.timestamp ?? null;
 
         let liveStatusEntry = getCachedLiveStatus(site.id);
@@ -362,11 +374,19 @@ export async function GET(request: Request) {
         const aggregationStart = Date.now();
 
         // Determine site-local "today" window once, then use numeric boundary checks per row
-        const tz = site.timezone || 'UTC';
-        const todayStart = EnergyRepo.getSiteMidnight(now, tz);
         const schedule = new Schedule(site.tariffs, tz);
         const tariffMap = new Map<number, import('@/lib/db').Tariff>();
-        site.tariffs.forEach(t => tariffMap.set(t.id, t));
+        const scheduleMap = new Map<number, import('@/lib/db').TariffSchedule>();
+        site.tariffs.forEach(t => {
+            tariffMap.set(t.id, t);
+            if (t.seasons) {
+                t.seasons.forEach(season => {
+                    if (season.schedules) {
+                        season.schedules.forEach(s => scheduleMap.set(s.id, s));
+                    }
+                });
+            }
+        });
 
         const aggregation = new Map<string, {
             tariff: import('@/lib/db').Tariff;
@@ -402,21 +422,76 @@ export async function GET(request: Request) {
         let todaySolar = 0;
         let latestSeriesSoc: { value: number; timestamp: Date } | null = null;
 
-        for (const row of allCycleData) {
+        // Pass 1: Prior day aggregates
+        for (const row of priorAggregates) {
+            let touName = 'Unknown';
+            let tariffName = 'Unknown';
+            let buyRate = 0;
+            let sellRate = 0;
+            let currentTariff = site.tariffs[0];
+
+            if (row.tariff_schedule_id != null) {
+                // Happy path: aggregate row has a stamped schedule ID — use it directly.
+                const sched = scheduleMap.get(row.tariff_schedule_id);
+                if (sched) {
+                    touName = sched.name || 'Standard';
+                    buyRate = sched.buy_rate || 0;
+                    sellRate = sched.sell_rate || 0;
+                }
+            } else {
+                // Fallback: tariff_schedule_id is null (pre-backfill or remapped import row).
+                // Recover TOU rates the same way the old per-row logic did:
+                // use the midpoint of the aggregate day to look up the tariff period.
+                const tp = schedule.getTariffPeriod(row.day);
+                if (tp) {
+                    touName = tp.schedule.name || 'Standard';
+                    buyRate = tp.schedule.buy_rate || 0;
+                    sellRate = tp.schedule.sell_rate || 0;
+                }
+            }
+            const t = tariffMap.get(row.tariff_id);
+            if (t) {
+                tariffName = t.name || 'Unknown';
+                currentTariff = t;
+            }
+
+            const key = `${currentTariff.id}|${touName}|${buyRate}|${sellRate}`;
+            let data = aggregation.get(key);
+            if (!data) {
+                data = {
+                    tariff: currentTariff,
+                    tariffName: tariffName,
+                    touName: touName,
+                    label: getTouLabel(touName),
+                    homeUsage: 0,
+                    gridUsage: 0,
+                    solarProduction: 0,
+                    batteryChange: 0,
+                    cost: 0,
+                    buyRate,
+                    sellRate
+                };
+                aggregation.set(key, data);
+            }
+
+            data.homeUsage += row.load_power;
+            data.gridUsage += row.grid_power;
+            data.solarProduction += row.solar_power;
+            data.batteryChange += row.battery_power;
+        }
+
+        // Pass 2: Today's raw rows
+        for (const row of todayRaw) {
             const ts = row.timestamp;
             const tp = schedule.getTariffPeriod(ts);
 
-            // Extract today's points for the chart using site-local day boundary
-            if (ts.getTime() >= todayStart.getTime()) {
-                seriesData.push(row);
-                todayHome += row.load_power;
-                todayGrid += row.grid_power;
-                todaySolar += row.solar_power;
-                if (typeof row.battery_soc === 'number') {
-                    latestSeriesSoc = { value: row.battery_soc, timestamp: ts };
-                }
+            seriesData.push(row);
+            todayHome += row.load_power;
+            todayGrid += row.grid_power;
+            todaySolar += row.solar_power;
+            if (typeof row.battery_soc === 'number') {
+                latestSeriesSoc = { value: row.battery_soc, timestamp: ts };
             }
-
 
             let touName = 'Unknown';
             let tariffName = 'Unknown';
@@ -634,6 +709,7 @@ export async function GET(request: Request) {
         const serverTiming = [
             `db_latest;dur=${dbLatestMs.toFixed(1)}`,
             `db_cycle;dur=${dbCycleMs.toFixed(1)}`,
+            `db_today;dur=${dbTodayMs.toFixed(1)}`,
             `aggregate;dur=${aggregationMs.toFixed(1)}`,
             `render;dur=${renderMs.toFixed(1)}`,
             `total;dur=${totalMs.toFixed(1)}`,

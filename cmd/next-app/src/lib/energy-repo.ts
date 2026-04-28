@@ -22,6 +22,16 @@ export interface UsageData {
     sellRate?: number;
 }
 
+export interface CycleAggregateRow {
+    day: Date;
+    tariff_id: number;
+    tariff_schedule_id: number | null;
+    load_power: number;
+    solar_power: number;
+    grid_power: number;
+    battery_power: number;
+}
+
 // SiteWithTariffs is now imported from db.ts
 
 interface SiteIdRow {
@@ -401,6 +411,38 @@ export class EnergyRepo {
                 }
             }
         };
+    }
+
+    async getCycleAggregates(
+        siteId: string, start: Date, end: Date
+    ): Promise<CycleAggregateRow[]> {
+        const queryStart = Date.now();
+        const res = await pool.query(`
+            SELECT
+                date_trunc('day', timestamp) AS day,
+                tariff_id,
+                tariff_schedule_id,
+                SUM(load_power) AS load_power,
+                SUM(solar_power) AS solar_power,
+                SUM(grid_power) AS grid_power,
+                SUM(battery_power) AS battery_power
+            FROM "EnergyData"
+            WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
+            GROUP BY day, tariff_id, tariff_schedule_id
+            ORDER BY day ASC
+        `, [siteId, start, end]);
+        const queryDuration = Date.now() - queryStart;
+        console.log(`[EnergyRepo] getCycleAggregates: Query = ${queryDuration}ms, Rows = ${res.rows.length}`);
+
+        return res.rows.map(row => ({
+            day: new Date(row.day),
+            tariff_id: Number(row.tariff_id),
+            tariff_schedule_id: row.tariff_schedule_id == null ? null : Number(row.tariff_schedule_id),
+            load_power: Number(row.load_power),
+            solar_power: Number(row.solar_power),
+            grid_power: Number(row.grid_power),
+            battery_power: Number(row.battery_power),
+        }));
     }
 
     async getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {

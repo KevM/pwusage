@@ -6,6 +6,14 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 These were identified during the audit that produced the Trmnl markup cycle aggregation work. They're smaller individual wins than the cycle-aggregation change but still worthwhile once that lands.
 
+### Remove unused db tables from the db
+
+- **Where:** Database schema / Migrations
+- **Change:** Drop any tables that are no longer used by the application to clean up the schema.
+- **Impact:** Cleaner database schema and reduced maintenance overhead.
+- **Risk:** High — ensure absolutely no code paths rely on these tables before dropping.
+
+
 ### Replace `SELECT *` with column projection in `getRawEnergyData`
 
 - **Where:** `cmd/next-app/src/lib/energy-repo.ts` — `getRawEnergyData` and `getRawEnergyDataWithTz`
@@ -27,6 +35,13 @@ These were identified during the audit that produced the Trmnl markup cycle aggr
 - **Change:** Replace the raw 5-minute fetch with a SQL query that buckets to 15-minute windows using `date_trunc('15 minutes', timestamp)` and `AVG(...)` over `solar_power, grid_power, load_power`. Returns ~16 rows per metric instead of ~144. Update `toSparklinePayload` to consume pre-bucketed input.
 - **Impact:** ~90% wire reduction on this endpoint's row data.
 - **Risk:** Medium — verify sparkline visual output matches before/after with representative data; tests in `sparkline-utils.test.ts` need updating.
+
+### Refactor usage page to use `getCycleAggregates` instead of `getUsageByTOU`
+
+- **Where:** `cmd/next-app/src/lib/energy-repo.ts` — `getUsageByTOU`; callers in `cmd/next-app/src/app/site/[id]/usage/page.tsx` and `cmd/next-app/src/app/site/[id]/page.tsx`
+- **Change:** Replace the full-cycle raw fetch in `getUsageByTOU` with the same split strategy used in the Trmnl markup route: `getCycleAggregates(siteId, billingStart, todayStart)` for prior days + `getRawEnergyData(siteId, todayStart, now)` for today. Merge the two result sets using `scheduleMap` for prior rows and `Schedule.getTariffPeriod` for today rows (same pattern as `validate-aggregation.ts`).
+- **Impact:** Same ~20× egress reduction per usage page load for users with long billing cycles.
+- **Risk:** Low — `validate-aggregation.ts` confirms numerical equivalence across all sites; update the existing usage page tests after refactoring.
 
 ## How to use this list
 
