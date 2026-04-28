@@ -14,26 +14,21 @@ async function main() {
             const siteIds = sitesRes.rows.map(r => r.site_id);
             
             console.log(`Found ${siteIds.length} sites. Starting backfill...`);
-            
-            const cutoff = new Date();
-            cutoff.setDate(cutoff.getDate() - 45);
-            
+
             for (const siteId of siteIds) {
                 const site = await repo.getSite(siteId);
                 if (!site) {
                     console.log(`[Site ${siteId}] Could not load site data. Skipping.`);
                     continue;
                 }
-                
+
                 const schedule = new Schedule(site.tariffs, site.timezone);
-                
+
                 const rowsRes = await client.query(`
-                    SELECT id, timestamp 
-                    FROM "EnergyData" 
-                    WHERE site_id = $1 
-                      AND timestamp >= $2 
-                      AND tariff_schedule_id IS NULL
-                `, [siteId, cutoff]);
+                    SELECT id, timestamp
+                    FROM "EnergyData"
+                    WHERE site_id = $1
+                `, [siteId]);
                 
                 const rows = rowsRes.rows;
                 if (rows.length === 0) {
@@ -42,15 +37,15 @@ async function main() {
                 }
                 
                 const idBuckets = new Map<number, number[]>(); // schedule_id -> array of row IDs
-                let unmatched = 0;
-                
+                const unmatchedIds: number[] = [];
+
                 for (const row of rows) {
                     const ts = new Date(row.timestamp);
                     const period = schedule.getTariffPeriod(ts);
                     const scheduleId = period?.schedule.id ?? null;
-                    
+
                     if (scheduleId === null) {
-                        unmatched++;
+                        unmatchedIds.push(row.id);
                     } else {
                         if (!idBuckets.has(scheduleId)) {
                             idBuckets.set(scheduleId, []);
@@ -58,24 +53,37 @@ async function main() {
                         idBuckets.get(scheduleId)!.push(row.id);
                     }
                 }
-                
+
                 let updated = 0;
-                
+
+                // Update rows with matched schedules
                 for (const [scheduleId, ids] of idBuckets.entries()) {
                     // Update in chunks of 1000
                     for (let i = 0; i < ids.length; i += 1000) {
                         const chunk = ids.slice(i, i + 1000);
                         await client.query(`
-                            UPDATE "EnergyData" 
-                            SET tariff_schedule_id = $1 
-                            WHERE id = ANY($2::int[]) 
-                              AND tariff_schedule_id IS NULL
+                            UPDATE "EnergyData"
+                            SET tariff_schedule_id = $1
+                            WHERE id = ANY($2::int[])
                         `, [scheduleId, chunk]);
                         updated += chunk.length;
                     }
                 }
+
+                // NULL out rows that don't match any tariff period (stale scheduleIds)
+                if (unmatchedIds.length > 0) {
+                    for (let i = 0; i < unmatchedIds.length; i += 1000) {
+                        const chunk = unmatchedIds.slice(i, i + 1000);
+                        await client.query(`
+                            UPDATE "EnergyData"
+                            SET tariff_schedule_id = NULL
+                            WHERE id = ANY($1::int[])
+                        `, [chunk]);
+                        updated += chunk.length;
+                    }
+                }
                 
-                console.log(`[Site ${siteId}] scanned=${rows.length} updated=${updated} unmatched=${unmatched}`);
+                console.log(`[Site ${siteId}] scanned=${rows.length} updated=${updated} unmatched=${unmatchedIds.length}`);
             }
             
             console.log('Backfill complete.');

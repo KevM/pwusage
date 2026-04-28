@@ -431,7 +431,7 @@ export async function GET(request: Request) {
             let currentTariff = site.tariffs[0];
 
             if (row.tariff_schedule_id != null) {
-                // Happy path: aggregate row has a stamped schedule ID — use it directly.
+                // Look up the schedule by its ID (populated by insertEnergyData with corrected logic)
                 const sched = scheduleMap.get(row.tariff_schedule_id);
                 if (sched) {
                     touName = sched.name || 'Standard';
@@ -439,9 +439,8 @@ export async function GET(request: Request) {
                     sellRate = sched.sell_rate || 0;
                 }
             } else {
-                // Fallback: tariff_schedule_id is null (pre-backfill or remapped import row).
-                // Recover TOU rates the same way the old per-row logic did:
-                // use the midpoint of the aggregate day to look up the tariff period.
+                // Fallback: tariff_schedule_id is null (old data or no matching period).
+                // Recalculate using the midpoint of the aggregated day.
                 const tp = schedule.getTariffPeriod(row.day);
                 if (tp) {
                     touName = tp.schedule.name || 'Standard';
