@@ -1,5 +1,6 @@
 import { pool, Site, SiteWithTariffs, Tariff, EnergyData, TrmnlInstallation, TariffSeason, TariffSchedule } from './db';
 import { wattsToKilowatts } from './energy-utils';
+import { getRequestContext } from './request-context';
 
 import { Schedule } from './schedule';
 
@@ -298,8 +299,18 @@ export class EnergyRepo {
 
     async getSite(siteId: string, options?: SiteQueryOptions): Promise<SiteWithTariffs | undefined> {
         const now = Date.now();
+
+        // Request-scoped cache: short-circuit if we already loaded this site in the current request.
+        const requestCtx = getRequestContext();
+        const requestCached = requestCtx.siteCache.get(siteId);
+        if (requestCached && (!options?.includeJson || requestCached.json !== undefined)) {
+            return requestCached;
+        }
+
+        // Persistent (cross-request) cache.
         const cached = siteCache.get(siteId);
         if (cached && cached.expires > now && (!options?.includeJson || cached.data.json !== undefined)) {
+            requestCtx.siteCache.set(siteId, cached.data);
             return cached.data;
         }
 
@@ -343,6 +354,7 @@ export class EnergyRepo {
         } as SiteWithTariffs;
 
         siteCache.set(siteId, { data: result, expires: now + CACHE_TTL_MS });
+        requestCtx.siteCache.set(siteId, result);
         return result;
     }
 
@@ -517,7 +529,8 @@ export class EnergyRepo {
     async getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
         const queryStart = Date.now();
         const res = await pool.query(`
-            SELECT * FROM "EnergyData"
+            SELECT site_id, timestamp, tariff_id, tariff_schedule_id, load_power, solar_power, grid_power, battery_power, battery_soc
+            FROM "EnergyData"
             WHERE site_id = $1
             AND timestamp >= $2
             AND timestamp < $3
@@ -527,9 +540,10 @@ export class EnergyRepo {
         console.log(`[EnergyRepo] getRawEnergyData: Query = ${queryDuration}ms, Rows = ${res.rows.length}`);
 
         return res.rows.map(row => ({
-            ...row,
             timestamp: new Date(row.timestamp),
             site_id: row.site_id.toString(),
+            tariff_id: row.tariff_id,
+            tariff_schedule_id: row.tariff_schedule_id,
             load_power: Number(row.load_power),
             solar_power: Number(row.solar_power),
             grid_power: Number(row.grid_power),

@@ -3,12 +3,14 @@ import { verifySiteAccess } from '@/lib/auth-checks';
 import { TeslaClient } from '@/lib/tesla-client';
 import { Importer } from '@/lib/importer';
 import { EnergyRepo, getUserTokensForSite } from '@/lib/energy-repo';
+import { withRequestContext } from '@/lib/request-context';
 
 export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    try {
+    return withRequestContext(async () => {
+        try {
         const { id: siteId } = await params;
 
         // Verify user has access to this site
@@ -56,12 +58,13 @@ export async function POST(
             message: 'Tariffs refreshed successfully',
             tariffCount: updatedSite.tariffs.length
         });
-    } catch (error) {
-        console.error(`[API] Refresh tariffs error:`, error);
-        const message = error instanceof Error ? error.message : 'Failed to refresh tariffs';
-        return NextResponse.json(
-            { error: message },
-            { status: 500 }
-        );
-    }
+        } catch (error) {
+            console.error(`[API] Refresh tariffs error:`, error);
+            const message = error instanceof Error ? error.message : 'Failed to refresh tariffs';
+            return NextResponse.json(
+                { error: message },
+                { status: 500 }
+            );
+        }
+    });
 }

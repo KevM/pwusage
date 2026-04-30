@@ -9,6 +9,7 @@ import { detectLoads } from '@/lib/nilm/load-detection';
 import { Schedule } from '@/lib/schedule';
 import { TeslaClient } from '@/lib/tesla-client';
 import { Importer } from '@/lib/importer';
+import { withRequestContext } from '@/lib/request-context';
 
 const repo = new EnergyRepo();
 
@@ -16,7 +17,8 @@ export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> } // Params is a Promise in Next 15+
 ) {
-    try {
+    return withRequestContext(async () => {
+        try {
         const { id: siteId } = await params;
         const searchParams = request.nextUrl.searchParams;
         const dateParam = searchParams.get('date');
@@ -189,17 +191,19 @@ export async function GET(
             audit
         });
 
-    } catch (error) {
-        console.error('Error fetching NILM data:', error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
-    }
+        } catch (error) {
+            console.error('Error fetching NILM data:', error);
+            return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        }
+    });
 }
 
 export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    try {
+    return withRequestContext(async () => {
+        try {
         const { id: siteId } = await params;
         const body = await request.json();
         const { action, start_time, end_time, tag } = body;
@@ -238,8 +242,9 @@ export async function POST(
 
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
 
-    } catch (e) {
-        console.error('Error in NILM POST:', e);
-        return NextResponse.json({ error: 'Server Error' }, { status: 500 });
-    }
+        } catch (e) {
+            console.error('Error in NILM POST:', e);
+            return NextResponse.json({ error: 'Server Error' }, { status: 500 });
+        }
+    });
 }

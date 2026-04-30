@@ -3,9 +3,11 @@ import { EnergyRepo } from '@/lib/energy-repo';
 import { cookies } from 'next/headers';
 import { SiteService } from '@/lib/site-service';
 import { Site } from '@/lib/db';
+import { withRequestContext } from '@/lib/request-context';
 
 export async function GET(request: Request) {
-    try {
+    return withRequestContext(async () => {
+        try {
         const { searchParams } = new URL(request.url);
         const uuid = searchParams.get('uuid');
         const token = searchParams.get('token');
@@ -69,8 +71,9 @@ export async function GET(request: Request) {
         }));
 
         return NextResponse.json(result);
-    } catch (error) {
-        console.error('Failed to fetch sites:', error);
-        return NextResponse.json({ error: `Failed to fetch sites: ${(error as Error).message}` }, { status: 500 });
-    }
+        } catch (error) {
+            console.error('Failed to fetch sites:', error);
+            return NextResponse.json({ error: `Failed to fetch sites: ${(error as Error).message}` }, { status: 500 });
+        }
+    });
 }

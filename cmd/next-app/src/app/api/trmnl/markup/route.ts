@@ -6,6 +6,7 @@ import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
 import { TeslaClient, EnergySiteLiveStatus } from '@/lib/tesla-client';
 import { verifySiteAccess } from '@/lib/auth-checks';
+import { withRequestContext } from '@/lib/request-context';
 import QRCode from 'qrcode';
 import { TrmnlRenderer } from '@/lib/trmnl-renderer';
 import { wattsToKilowatts } from '@/lib/energy-utils';
@@ -102,8 +103,9 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 }
 
 export async function GET(request: Request) {
-    const routeStart = Date.now();
-    try {
+    return withRequestContext(async () => {
+        const routeStart = Date.now();
+        try {
         const { searchParams } = new URL(request.url);
         const uuid = searchParams.get('uuid');
         const siteIdParam = searchParams.get('site_id');
@@ -741,41 +743,44 @@ export async function GET(request: Request) {
         return response;
 
 
-    } catch (error) {
-        console.error('Markup error:', error);
-        return NextResponse.json({ error: (error as Error).message }, { status: 500 });
-    }
+        } catch (error) {
+            console.error('Markup error:', error);
+            return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+        }
+    });
 }
 
 export async function POST(request: Request) {
-    let uuid = new URL(request.url).searchParams.get('uuid');
+    return withRequestContext(async () => {
+        let uuid = new URL(request.url).searchParams.get('uuid');
 
-    if (!uuid) {
-        try {
-            const clone = request.clone();
-            const contentType = request.headers.get('content-type') || '';
-            if (contentType.includes('application/json')) {
-                const body = await clone.json();
-                uuid = body.uuid || body.user_uuid;
-            } else if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
-                const formData = await clone.formData();
-                uuid = (formData.get('uuid') || formData.get('user_uuid')) as string;
+        if (!uuid) {
+            try {
+                const clone = request.clone();
+                const contentType = request.headers.get('content-type') || '';
+                if (contentType.includes('application/json')) {
+                    const body = await clone.json();
+                    uuid = body.uuid || body.user_uuid;
+                } else if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
+                    const formData = await clone.formData();
+                    uuid = (formData.get('uuid') || formData.get('user_uuid')) as string;
+                }
+            } catch {
+                console.log('[TrmnlMarkup] Failed to parse POST body');
             }
-        } catch {
-            console.log('[TrmnlMarkup] Failed to parse POST body');
         }
-    }
 
-    if (uuid) {
-        const url = new URL(request.url);
-        url.searchParams.set('uuid', uuid);
-        return GET(new Request(url.toString(), request));
-    }
-
+        if (uuid) {
+            const url = new URL(request.url);
+            url.searchParams.set('uuid', uuid);
+            return GET(new Request(url.toString(), request));
+        }
 
 
-    // If we still don't have UUID, return error BUT with 400 so client knows
-    return NextResponse.json({ error: 'Missing uuid parameter' }, { status: 400 });
+
+        // If we still don't have UUID, return error BUT with 400 so client knows
+        return NextResponse.json({ error: 'Missing uuid parameter' }, { status: 400 });
+    });
 }
 
 async function getQrResponse(request: Request, uuid: string | null, siteId: string | null, title: string, label: string) {

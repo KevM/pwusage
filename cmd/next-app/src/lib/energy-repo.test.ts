@@ -11,6 +11,7 @@ vi.mock('./db', () => ({
 }));
 
 import { EnergyRepo } from './energy-repo';
+import { withRequestContext } from './request-context';
 
 describe('EnergyRepo site payload selection', () => {
     beforeEach(() => {
@@ -270,5 +271,176 @@ describe('EnergyRepo.getCycleAggregates', () => {
         expect(sql).toContain('tariff_schedule_id');
         expect(sql).toContain('"EnergyData"');
         expect(params).toEqual(['site-1', start, end]);
+    });
+});
+
+describe('EnergyRepo getRawEnergyData column projection', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+    });
+
+    it('selects explicit columns and excludes id', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+
+        const repo = new EnergyRepo();
+        await repo.getRawEnergyData('site-1', new Date('2026-04-01'), new Date('2026-04-02'));
+
+        expect(queryMock).toHaveBeenCalledTimes(1);
+        const sql = queryMock.mock.calls[0][0] as string;
+
+        // Should not use SELECT *
+        expect(sql).not.toMatch(/SELECT\s+\*/i);
+
+        // Should include the 9 required columns
+        expect(sql).toMatch(/site_id/);
+        expect(sql).toMatch(/timestamp/);
+        expect(sql).toMatch(/tariff_id/);
+        expect(sql).toMatch(/tariff_schedule_id/);
+        expect(sql).toMatch(/load_power/);
+        expect(sql).toMatch(/solar_power/);
+        expect(sql).toMatch(/grid_power/);
+        expect(sql).toMatch(/battery_power/);
+        expect(sql).toMatch(/battery_soc/);
+
+        // Extract just the SELECT clause (between SELECT and FROM)
+        const selectClause = sql.match(/SELECT([\s\S]+?)FROM/i)?.[1] ?? '';
+        // Should NOT include the id column in the projection
+        expect(selectClause).not.toMatch(/\bid\b/);
+    });
+
+    it('returns rows with battery_soc value preserved', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{
+                site_id: 'site-1',
+                timestamp: new Date('2026-04-01T00:00:00Z'),
+                tariff_id: 1,
+                tariff_schedule_id: 2,
+                load_power: 1000,
+                solar_power: 500,
+                grid_power: 300,
+                battery_power: 200,
+                battery_soc: 75
+            }]
+        });
+
+        const repo = new EnergyRepo();
+        const rows = await repo.getRawEnergyData('site-1', new Date('2026-04-01'), new Date('2026-04-02'));
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0].battery_soc).toBe(75);
+        expect(rows[0].load_power).toBe(1000);
+        expect(rows[0].site_id).toBe('site-1');
+        expect(rows[0].tariff_id).toBe(1);
+        expect(rows[0].tariff_schedule_id).toBe(2);
+    });
+
+    it('preserves null battery_soc', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{
+                site_id: 'site-1',
+                timestamp: new Date('2026-04-01T00:00:00Z'),
+                tariff_id: 1,
+                tariff_schedule_id: 2,
+                load_power: 1000,
+                solar_power: 500,
+                grid_power: 300,
+                battery_power: 200,
+                battery_soc: null
+            }]
+        });
+
+        const repo = new EnergyRepo();
+        const rows = await repo.getRawEnergyData('site-1', new Date('2026-04-01'), new Date('2026-04-02'));
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0].battery_soc).toBeNull();
+    });
+});
+
+describe('EnergyRepo getSite request-scoped cache', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+        const repo = new EnergyRepo();
+        repo.invalidateCache('site-1');
+    });
+
+    it('reuses the request-cache on a second getSite call within the same request', async () => {
+        const setupMocks = () => {
+            queryMock
+                .mockResolvedValueOnce({
+                    rows: [{
+                        id: 'site-1',
+                        user_id: 'user-1',
+                        name: 'Home',
+                        updated: new Date(),
+                        installed: new Date(),
+                        timezone: 'America/Chicago',
+                        billing_start_day: 1
+                    }]
+                })
+                .mockResolvedValueOnce({ rows: [{ access_token: 'a', refresh_token: 'r', auth_status: 'active' }] })
+                .mockResolvedValueOnce({ rows: [] });
+        };
+
+        await withRequestContext(async () => {
+            // Invalidate the persistent cache so the first call must hit the database
+            const repo = new EnergyRepo();
+            repo.invalidateCache('site-1');
+            setupMocks();
+
+            const first = await repo.getSite('site-1');
+            const callCountAfterFirst = queryMock.mock.calls.length;
+            expect(first?.id).toBe('site-1');
+            expect(callCountAfterFirst).toBe(3);
+
+            // Invalidate persistent cache to prove the request cache is what saves us
+            repo.invalidateCache('site-1');
+
+            // Second call: should hit request cache, no new queries
+            const second = await repo.getSite('site-1');
+            expect(second?.id).toBe('site-1');
+            expect(queryMock.mock.calls.length).toBe(callCountAfterFirst);
+        });
+    });
+
+    it('isolates request caches across separate requests', async () => {
+        // First request populates request cache (and persistent cache)
+        await withRequestContext(async () => {
+            const repo = new EnergyRepo();
+            repo.invalidateCache('site-1');
+            queryMock
+                .mockResolvedValueOnce({
+                    rows: [{
+                        id: 'site-1', user_id: 'user-1', name: 'Home',
+                        updated: new Date(), installed: new Date(),
+                        timezone: 'America/Chicago', billing_start_day: 1
+                    }]
+                })
+                .mockResolvedValueOnce({ rows: [{ access_token: 'a', refresh_token: 'r', auth_status: 'active' }] })
+                .mockResolvedValueOnce({ rows: [] });
+            await repo.getSite('site-1');
+        });
+
+        // Second request: invalidate persistent cache so it must re-query
+        await withRequestContext(async () => {
+            const repo = new EnergyRepo();
+            repo.invalidateCache('site-1');
+            queryMock.mockReset();
+            queryMock
+                .mockResolvedValueOnce({
+                    rows: [{
+                        id: 'site-1', user_id: 'user-1', name: 'Home',
+                        updated: new Date(), installed: new Date(),
+                        timezone: 'America/Chicago', billing_start_day: 1
+                    }]
+                })
+                .mockResolvedValueOnce({ rows: [{ access_token: 'a', refresh_token: 'r', auth_status: 'active' }] })
+                .mockResolvedValueOnce({ rows: [] });
+
+            await repo.getSite('site-1');
+            // The fact that the mocks above resolved without "no more mock responses" errors
+            // means the request hit the database despite the previous request's cache.
+            expect(queryMock.mock.calls.length).toBe(3);
+        });
     });
 });

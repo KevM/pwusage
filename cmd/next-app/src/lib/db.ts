@@ -107,7 +107,7 @@ export interface TariffSchedule {
 }
 
 export interface EnergyData {
-  id: number;
+  id?: number;
   timestamp: Date;
   site_id: string;
   tariff_id: number;

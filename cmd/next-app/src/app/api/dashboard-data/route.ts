@@ -5,11 +5,13 @@ import { EnergyRepo } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
 import { getTeslaCredentials, getAuthorizedSiteIds } from '@/lib/auth-checks';
+import { withRequestContext } from '@/lib/request-context';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-    try {
+    return withRequestContext(async () => {
+        try {
         const authorizedSiteIds = await getAuthorizedSiteIds();
         if (authorizedSiteIds.length === 0) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -100,5 +102,6 @@ export async function GET() {
     } catch (error) {
         console.error('Dashboard data error:', error);
         return NextResponse.json({ error: 'Failed to fetch dashboard data' }, { status: 500 });
-    }
+        }
+    });
 }

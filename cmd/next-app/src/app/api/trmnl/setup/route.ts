@@ -2,13 +2,15 @@ import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { EnergyRepo } from '@/lib/energy-repo';
+import { withRequestContext } from '@/lib/request-context';
 import {
     DEFAULT_TRMNL_COMPONENT_CONFIG,
     mergeTrmnlComponentConfigIntoInstallationJson
 } from '@/lib/trmnl-component-config';
 
 export async function POST(request: Request) {
-    try {
+    return withRequestContext(async () => {
+        try {
         const body = await request.json();
         const { code, site_id, uuid } = body;
 
@@ -123,8 +125,9 @@ export async function POST(request: Request) {
         );
 
         return NextResponse.json({ success: true });
-    } catch (error) {
-        console.error('Setup error:', error);
-        return NextResponse.json({ error: (error as Error).message }, { status: 500 });
-    }
+        } catch (error) {
+            console.error('Setup error:', error);
+            return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+        }
+    });
 }

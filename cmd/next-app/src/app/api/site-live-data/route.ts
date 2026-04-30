@@ -3,6 +3,7 @@ import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo, getUserTokensForSite } from '@/lib/energy-repo';
 import { Schedule } from '@/lib/schedule';
 import { verifySiteAccess } from '@/lib/auth-checks';
+import { withRequestContext } from '@/lib/request-context';
 import {
     parseScaleWindowHours,
     SPARKLINE_DISPLAY_WINDOW_HOURS,
@@ -12,7 +13,8 @@ import {
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
-    try {
+    return withRequestContext(async () => {
+        try {
         const { searchParams } = new URL(request.url);
         const siteId = searchParams.get('siteId');
 
@@ -97,5 +99,6 @@ export async function GET(request: Request) {
         }
 
         return NextResponse.json({ error: 'Failed to fetch site live data' }, { status: 500 });
-    }
+        }
+    });
 }
