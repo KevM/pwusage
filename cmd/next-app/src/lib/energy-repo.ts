@@ -297,65 +297,164 @@ export class EnergyRepo {
         return Array.from(aggregation.values());
     }
 
-    async getSite(siteId: string, options?: SiteQueryOptions): Promise<SiteWithTariffs | undefined> {
+    async getSitesWithTariffs(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
+        if (siteIds.length === 0) return [];
+
         const now = Date.now();
-
-        // Request-scoped cache: short-circuit if we already loaded this site in the current request.
         const requestCtx = getRequestContext();
-        const requestCached = requestCtx.siteCache.get(siteId);
-        if (requestCached && (!options?.includeJson || requestCached.json !== undefined)) {
-            return requestCached;
+        const results: SiteWithTariffs[] = [];
+        const uncachedIds: string[] = [];
+
+        for (const id of siteIds) {
+            const reqCached = requestCtx.siteCache.get(id);
+            if (reqCached && (!options?.includeJson || reqCached.json !== undefined)) {
+                results.push(reqCached);
+                continue;
+            }
+            const cached = siteCache.get(id);
+            if (cached && cached.expires > now && (!options?.includeJson || cached.data.json !== undefined)) {
+                requestCtx.siteCache.set(id, cached.data);
+                results.push(cached.data);
+                continue;
+            }
+            uncachedIds.push(id);
         }
 
-        // Persistent (cross-request) cache.
-        const cached = siteCache.get(siteId);
-        if (cached && cached.expires > now && (!options?.includeJson || cached.data.json !== undefined)) {
-            requestCtx.siteCache.set(siteId, cached.data);
-            return cached.data;
-        }
-
-        const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
-        const siteRes = await pool.query(`SELECT ${columns} FROM "Site" WHERE id = $1`, [siteId]);
-        const site = siteRes.rows[0] as Site | undefined;
-        if (!site) return undefined;
-
-        let access_token: string | null = null;
-        let refresh_token: string | null = null;
-        let auth_status: string | null = null;
-
-        if (site.user_id) {
-            const userRes = await pool.query('SELECT access_token, refresh_token, auth_status FROM "User" WHERE id = $1', [site.user_id]);
-            if (userRes.rows.length > 0) {
-                access_token = userRes.rows[0].access_token;
-                refresh_token = userRes.rows[0].refresh_token;
-                auth_status = userRes.rows[0].auth_status;
+        if (uncachedIds.length > 0) {
+            const fresh = await this.loadSitesFromDB(uncachedIds, options);
+            for (const site of fresh) {
+                siteCache.set(site.id, { data: site, expires: now + CACHE_TTL_MS });
+                requestCtx.siteCache.set(site.id, site);
+                results.push(site);
             }
         }
 
-        const tariffsRes = await pool.query('SELECT * FROM "Tariff" WHERE site_id = $1', [siteId]);
-        const tariffs = tariffsRes.rows as Tariff[];
+        const inputOrder = new Map(siteIds.map((id, i) => [id, i]));
+        results.sort((a, b) => (inputOrder.get(a.id) ?? 0) - (inputOrder.get(b.id) ?? 0));
+        return results;
+    }
 
-        for (const tariff of tariffs) {
-            const seasonsRes = await pool.query('SELECT * FROM "TariffSeason" WHERE tariff_id = $1', [tariff.id]);
-            tariff.seasons = seasonsRes.rows as TariffSeason[];
+    async getSite(siteId: string, options?: SiteQueryOptions): Promise<SiteWithTariffs | undefined> {
+        const results = await this.getSitesWithTariffs([siteId], options);
+        return results[0];
+    }
 
-            for (const season of tariff.seasons!) {
-                const schedRes = await pool.query('SELECT * FROM "TariffSchedule" WHERE season_id = $1', [season.id]);
-                season.schedules = schedRes.rows as TariffSchedule[];
+    private async loadSitesFromDB(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
+        const jsonCol = options?.includeJson ? ', s.json' : '';
+        const sql = `
+            SELECT
+                s.id, s.user_id, s.name, s.utility, s.updated, s.installed,
+                s.timezone, s.billing_start_day, s.timezone_display_mode${jsonCol},
+                u.access_token, u.refresh_token, u.auth_status,
+                t.id          AS tariff_id,
+                t.name        AS tariff_name,
+                t.updated     AS tariff_updated,
+                t.site_id     AS tariff_site_id,
+                ts.id         AS season_id,
+                ts.name       AS season_name,
+                ts.from_month, ts.from_day, ts.to_month, ts.to_day,
+                ts.buy_rate   AS season_buy_rate,
+                ts.sell_rate  AS season_sell_rate,
+                sch.id        AS schedule_id,
+                sch.name      AS schedule_name,
+                sch.buy_rate  AS schedule_buy_rate,
+                sch.sell_rate AS schedule_sell_rate,
+                sch.from_day_of_week, sch.from_hour, sch.from_minute,
+                sch.to_day_of_week,   sch.to_hour,  sch.to_minute
+            FROM "Site" s
+            LEFT JOIN "User"           u   ON u.id          = s.user_id
+            LEFT JOIN "Tariff"         t   ON t.site_id     = s.id
+            LEFT JOIN "TariffSeason"   ts  ON ts.tariff_id  = t.id
+            LEFT JOIN "TariffSchedule" sch ON sch.season_id = ts.id
+            WHERE s.id = ANY($1::text[])
+        `;
+        const res = await pool.query(sql, [siteIds]);
+        return this.assembleFromRows(res.rows, options);
+    }
+
+    private assembleFromRows(
+        rows: Record<string, unknown>[],
+        options?: SiteQueryOptions
+    ): SiteWithTariffs[] {
+        // Tariff/season IDs are global serial PKs — safe to use as cross-site map keys.
+        const siteMap = new Map<string, SiteWithTariffs>();
+        const tariffMap = new Map<number, Tariff>();
+        const seasonMap = new Map<number, TariffSeason>();
+
+        for (const row of rows) {
+            const siteId = row.id as string;
+            if (!siteMap.has(siteId)) {
+                siteMap.set(siteId, {
+                    id: siteId,
+                    user_id: (row.user_id as string | null) ?? null,
+                    name: row.name as string,
+                    utility: (row.utility as string | null) ?? null,
+                    updated: new Date(row.updated as string | Date),
+                    installed: new Date(row.installed as string | Date),
+                    timezone: row.timezone as string,
+                    billing_start_day: row.billing_start_day as number,
+                    timezone_display_mode: (row.timezone_display_mode as 'SITE' | 'BROWSER') ?? undefined,
+                    json: options?.includeJson ? row.json : undefined,
+                    access_token: (row.access_token as string | null) ?? null,
+                    refresh_token: (row.refresh_token as string | null) ?? null,
+                    auth_status: (row.auth_status as string | null) ?? null,
+                    tariffs: [],
+                });
             }
+            const site = siteMap.get(siteId)!;
+
+            if (row.tariff_id == null) continue;
+            const tariffId = Number(row.tariff_id);
+            if (!tariffMap.has(tariffId)) {
+                const tariff: Tariff = {
+                    id: tariffId,
+                    site_id: row.tariff_site_id as string,
+                    updated: new Date(row.tariff_updated as string | Date),
+                    name: (row.tariff_name as string | null) ?? null,
+                    seasons: [],
+                };
+                tariffMap.set(tariffId, tariff);
+                site.tariffs.push(tariff);
+            }
+            const tariff = tariffMap.get(tariffId)!;
+
+            if (row.season_id == null) continue;
+            const seasonId = Number(row.season_id);
+            if (!seasonMap.has(seasonId)) {
+                const season: TariffSeason = {
+                    id: seasonId,
+                    tariff_id: tariffId,
+                    name: (row.season_name as string | null) ?? null,
+                    from_month: row.from_month as number,
+                    from_day: row.from_day as number,
+                    to_month: row.to_month as number,
+                    to_day: row.to_day as number,
+                    buy_rate: row.season_buy_rate as number,
+                    sell_rate: row.season_sell_rate as number,
+                    schedules: [],
+                };
+                seasonMap.set(seasonId, season);
+                tariff.seasons!.push(season);
+            }
+            const season = seasonMap.get(seasonId)!;
+
+            if (row.schedule_id == null) continue;
+            season.schedules!.push({
+                id: Number(row.schedule_id),
+                season_id: seasonId,
+                name: (row.schedule_name as string | null) ?? null,
+                buy_rate: row.schedule_buy_rate != null ? Number(row.schedule_buy_rate) : null,
+                sell_rate: row.schedule_sell_rate != null ? Number(row.schedule_sell_rate) : null,
+                from_day_of_week: row.from_day_of_week as number | null,
+                from_hour: row.from_hour as number | null,
+                from_minute: row.from_minute as number | null,
+                to_day_of_week: row.to_day_of_week as number | null,
+                to_hour: row.to_hour as number | null,
+                to_minute: row.to_minute as number | null,
+            });
         }
 
-        const result = {
-            ...site,
-            access_token,
-            refresh_token,
-            auth_status,
-            tariffs
-        } as SiteWithTariffs;
-
-        siteCache.set(siteId, { data: result, expires: now + CACHE_TTL_MS });
-        requestCtx.siteCache.set(siteId, result);
-        return result;
+        return Array.from(siteMap.values());
     }
 
     async getSiteIds(): Promise<string[]> {

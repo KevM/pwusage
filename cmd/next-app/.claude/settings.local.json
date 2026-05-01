@@ -1,4 +1,14 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(npm test *)",
+      "Bash(npm run *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Read(//Users/kevm/github/pwusage/**)",
+      "Bash(gh pr create --title 'Egress Phase 2: replace getSite waterfall queries with single JOIN' --body ' *)"
+    ]
+  },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
   }
