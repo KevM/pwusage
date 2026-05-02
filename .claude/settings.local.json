@@ -22,7 +22,13 @@
       "Bash(git stash *)",
       "Bash(grep -E \"\\\\.ts$\")",
       "Bash(curl -s http://localhost:5173/health)",
-      "Bash(pkill -f \"npm run dev\")"
+      "Bash(pkill -f \"npm run dev\")",
+      "Bash(awk '{print $NF}')",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3)",
+      "Bash(cd *)",
+      "Bash(cd * && git *)",
+      "Skill(update-config)"
     ]
   }
 }

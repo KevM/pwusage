@@ -6,7 +6,16 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Read(//Users/kevm/github/pwusage/**)",
-      "Bash(gh pr create --title 'Egress Phase 2: replace getSite waterfall queries with single JOIN' --body ' *)"
+      "Bash(gh pr create --title 'Egress Phase 2: replace getSite waterfall queries with single JOIN' --body ' *)",
+      "Bash(grep -E \"\\\\.ts$|^d\")",
+      "Bash(awk '{print $9, $5}')",
+      "Bash(ls -d .worktrees)",
+      "Bash(ls -d worktrees)",
+      "Read(//Users/kevm/.config/superpowers/worktrees/pwusage/importer-decomposition/cmd/next-app/**)",
+      "Bash(npm install *)",
+      "Bash(grep -E \"\\(importer|\\\\.ts$\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(npx vitest *)"
     ]
   },
   "enabledPlugins": {
