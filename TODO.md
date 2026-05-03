@@ -9,7 +9,3 @@ When starting fresh work in this repo, check this file. If a session begins some
 ## Update trmnl markup with Framework 3.1
 
 A new font has been introduced to look better on eInk displays.
-
-## Simplify trmnl renderer
-
-This is a smelly god class and needs to have their concerns separated. 
