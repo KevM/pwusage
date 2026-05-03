@@ -6,6 +6,13 @@ import { pool } from './db';
 
 // Mock dependencies
 vi.mock('./db');
+vi.mock('./date-utils', () => ({
+    getSiteMidnight: vi.fn((d: Date) => {
+        const date = new Date(d);
+        date.setUTCHours(0, 0, 0, 0);
+        return date;
+    }),
+}));
 vi.mock('./energy-repo', () => {
     class EnergyRepo {
         getSite = vi.fn();
@@ -151,14 +158,13 @@ describe('Importer Sync Logic', () => {
 
         const rows = await (importer as unknown as {
             processHistory: (
-                client: unknown,
                 siteArg: typeof site,
                 history: EnergyHistoryEntry[],
                 soeHistory: [],
                 period: string,
                 requestedDurationHours: number
             ) => Promise<Array<{ load_power: number; grid_power: number }>>;
-        }).processHistory(null, site, singletonHistory, [], 'day', 7);
+        }).processHistory(site, singletonHistory, [], 'day', 7);
 
         expect(rows).toHaveLength(1);
         expect(rows[0].load_power).toBe(64);

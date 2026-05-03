@@ -1,6 +1,7 @@
 import { pool, Site, SiteWithTariffs, Tariff, EnergyData, TrmnlInstallation, TariffSeason, TariffSchedule } from './db';
 import { wattsToKilowatts } from './energy-utils';
 import { getRequestContext } from './request-context';
+import { getSiteMidnight } from './date-utils';
 
 import { Schedule } from './schedule';
 
@@ -75,32 +76,7 @@ export class EnergyRepo {
      * Helper to get site-timezone midnight as a global Date object (UTC timestamp)
      */
     static getSiteMidnight(d: Date, tz: string): Date {
-        if (isNaN(d.getTime())) {
-            console.error(`[EnergyRepo] getSiteMidnight: Invalid Date received`);
-            return new Date();
-        }
-
-        const formatter = new Intl.DateTimeFormat('en-US', {
-            timeZone: tz,
-            year: 'numeric', month: 'numeric', day: 'numeric',
-            hour: 'numeric', minute: 'numeric', second: 'numeric',
-            hour12: false
-        });
-
-        const parts = formatter.formatToParts(d);
-        const partValues: Record<string, number> = {};
-        for (const part of parts) {
-            if (part.type !== 'literal') {
-                partValues[part.type] = parseInt(part.value);
-            }
-        }
-
-        const { year, month, day, hour, minute, second } = partValues;
-        const siteLocalAsUTC = Date.UTC(year, month - 1, day, hour, minute, second);
-        const offset = siteLocalAsUTC - d.getTime();
-        const siteMidnightUTC = Date.UTC(year, month - 1, day, 0, 0, 0) - offset;
-
-        return new Date(siteMidnightUTC);
+        return getSiteMidnight(d, tz);
     }
 
     async getInstallationAndSite(uuid: string): Promise<{ installation: TrmnlInstallation, site: SiteWithTariffs } | undefined> {
