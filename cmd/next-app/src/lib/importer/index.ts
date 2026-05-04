@@ -6,6 +6,7 @@ import { UserRepo } from '../user-repo';
 import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
 import { planImport, splitAtUtcMidnight, auditDays } from './import-planner';
+import { getSiteMidnight } from '../date-utils';
 
 import { PoolClient } from 'pg';
 
@@ -166,20 +167,21 @@ export class Importer {
             const site = await this.repo.getSite(siteId);
             if (!site) throw new Error(`Site ${siteId} not found in database`);
 
+            const auditStartTime = getSiteMidnight(start, site.timezone);
             const rowsRes = await pool.query(`
                 SELECT timestamp FROM "EnergyData"
                 WHERE site_id = $1
                 AND timestamp >= $2
                 AND timestamp < $3
                 ORDER BY timestamp ASC
-            `, [siteId, start.toISOString(), end.toISOString()]);
+            `, [siteId, auditStartTime.toISOString(), end.toISOString()]);
 
             const existingTimestamps = rowsRes.rows.map(
                 (r: { timestamp: string | Date }) => new Date(r.timestamp).getTime()
             );
 
             const windows = planImport({
-                requestedRange: { start, end },
+                requestedRange: { start: auditStartTime, end },
                 existingTimestamps,
                 timezone: site.timezone,
                 installationDate: new Date(site.installed),

@@ -170,4 +170,34 @@ describe('Importer Sync Logic', () => {
         expect(rows[0].load_power).toBe(64);
         expect(rows[0].grid_power).toBe(64);
     });
+
+    it('audits coverage using site midnight when start is non-midnight', async () => {
+        // Simulate the bug: caller passes autoBackfillLimit at 14:30, which has full-day data
+        // Without the fix, early-day rows are omitted from existingTimestamps, falsely triggering re-import
+        const start = new Date('2026-01-10T14:30:00Z'); // non-midnight start
+        const end = new Date('2026-01-11T00:00:00Z');
+
+        // Mock data exists for the full day (00:00 to 23:30 in 30-min intervals)
+        const rows = [];
+        const dayStart = new Date('2026-01-10T00:00:00Z').getTime();
+        for (let i = 0; i < 48; i++) { // 00:00 to 23:30 in 30-min intervals
+            rows.push({ timestamp: new Date(dayStart + i * 30 * 60 * 1000).toISOString() });
+        }
+
+        const mockQuery = vi.fn().mockResolvedValue({ rows });
+        (pool.query as unknown) = mockQuery;
+
+        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+
+        await importer.ensureDataForRange('site-123', start, end);
+
+        // Verify the query was called with site midnight (00:00), not the non-midnight start (14:30)
+        expect(mockQuery).toHaveBeenCalled();
+        const queryCall = mockQuery.mock.calls[0];
+        const queryStart = queryCall[1][1]; // The timestamp parameter
+        expect(queryStart).toBe(new Date('2026-01-10T00:00:00Z').toISOString());
+
+        // Verify we don't import when full-day coverage exists
+        expect(importSpy).not.toHaveBeenCalled();
+    });
 });
