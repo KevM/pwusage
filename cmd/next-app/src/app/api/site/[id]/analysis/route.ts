@@ -3,7 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-import { EnergyRepo, getUserTokensForSite } from '@/lib/energy-repo';
+import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
+import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
+import { LoadTagRepo } from '@/lib/load-tag-repo';
+import { getUserTokensForSite } from '@/lib/user-repo';
 import { adaptTeslaData } from '@/lib/nilm/tesla-adapter';
 import { detectLoads } from '@/lib/nilm/load-detection';
 import { Schedule } from '@/lib/schedule';
@@ -12,6 +16,9 @@ import { Importer } from '@/lib/importer';
 import { withRequestContext } from '@/lib/request-context';
 
 const repo = new EnergyRepo();
+const siteRepo = new SiteRepo();
+const tokenRepo = new TeslaTokenRepo(siteRepo);
+const tagRepo = new LoadTagRepo();
 
 export async function GET(
     request: NextRequest,
@@ -24,7 +31,7 @@ export async function GET(
         const dateParam = searchParams.get('date');
         const tzParam = searchParams.get('tz');
 
-        const site = await repo.getSite(siteId);
+        const site = await siteRepo.getSite(siteId);
         if (!site) {
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });
         }
@@ -63,7 +70,7 @@ export async function GET(
         const siteAuthToken = cookieStore.get('site_auth')?.value;
         if (siteAuthToken) {
             // Validate access to THIS specific site
-            const siteService = new SiteService({ energyRepo: repo, siteAuthToken });
+            const siteService = new SiteService({ siteRepo, siteAuthToken });
             if (!await siteService.validateSiteAccess(siteId)) {
                 return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
             }
@@ -81,7 +88,7 @@ export async function GET(
 
         if (tokens) {
             // We need to initialize TeslaClient with token refresh logic
-            const handlers = repo.getLockedRefreshHandler(siteId);
+            const handlers = tokenRepo.getLockedRefreshHandler(siteId);
             const teslaClient = new TeslaClient({
                 accessToken: tokens.access_token,
                 refreshToken: tokens.refresh_token,
@@ -142,7 +149,7 @@ export async function GET(
         const detectedEvents = detectLoads(powerData, 1000);
 
         // 6. Fetch Persisted Tags
-        const tagsRes = await repo.getLoadTags(siteId, start, end);
+        const tagsRes = await tagRepo.getLoadTags(siteId, start, end);
 
         // 7. Enrich Events with Tags (System & Manual)
         const enrichedEvents = detectedEvents.map(event => {
@@ -220,7 +227,7 @@ export async function POST(
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const siteService = new SiteService({ energyRepo: repo, siteAuthToken });
+        const siteService = new SiteService({ siteRepo, siteAuthToken });
         if (!await siteService.validateSiteAccess(siteId)) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
@@ -233,10 +240,10 @@ export async function POST(
         const end = new Date(end_time);
 
         if (action === 'add_tag') {
-            await repo.addLoadTag(siteId, start, end, tag);
+            await tagRepo.addLoadTag(siteId, start, end, tag);
             return NextResponse.json({ success: true });
         } else if (action === 'remove_tag') {
-            await repo.removeLoadTag(siteId, start, end, tag);
+            await tagRepo.removeLoadTag(siteId, start, end, tag);
             return NextResponse.json({ success: true });
         }
 

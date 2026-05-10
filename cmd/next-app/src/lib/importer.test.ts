@@ -15,7 +15,6 @@ vi.mock('./date-utils', () => ({
 }));
 vi.mock('./energy-repo', () => {
     class EnergyRepo {
-        getSite = vi.fn();
         getRawEnergyData = vi.fn();
         getLatestEnergyData = vi.fn();
         static getSiteMidnight = vi.fn((d: Date) => {
@@ -25,6 +24,13 @@ vi.mock('./energy-repo', () => {
         });
     }
     return { EnergyRepo };
+});
+vi.mock('./site-repo', () => {
+    class SiteRepo {
+        getSite = vi.fn();
+        invalidateCache = vi.fn();
+    }
+    return { SiteRepo };
 });
 vi.mock('./user-repo', () => {
     class UserRepo {
@@ -54,7 +60,7 @@ describe('Importer Sync Logic', () => {
                 tariffs: []
             })
         };
-        (importer as unknown as { repo: unknown }).repo = mockRepo;
+        (importer as unknown as { siteRepo: unknown }).siteRepo = mockRepo;
     });
 
     it('should trigger import when data is missing', async () => {

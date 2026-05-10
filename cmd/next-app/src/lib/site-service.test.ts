@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { SiteService } from './site-service';
 import { Site } from './db';
 import { FleetProduct, TeslaClient } from './tesla-client';
-import { EnergyRepo } from './energy-repo';
+import { SiteRepo } from './site-repo';
 import * as authJwt from './auth-jwt';
 
 // Mock auth-jwt to verify it's being called
@@ -33,7 +33,7 @@ describe('SiteService Security', () => {
 
         const service = new SiteService({
             teslaClient: mockTeslaClient as unknown as TeslaClient,
-            energyRepo: mockEnergyRepo as unknown as EnergyRepo
+            siteRepo: mockEnergyRepo as unknown as SiteRepo
         });
 
         const sites = await service.getAuthorizedSites();
@@ -52,7 +52,7 @@ describe('SiteService Security', () => {
 
         const service = new SiteService({
             teslaClient: mockTeslaClient as unknown as TeslaClient,
-            energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+            siteRepo: mockEnergyRepo as unknown as SiteRepo,
             siteAuthToken: 'valid_token'
         });
 
@@ -74,7 +74,7 @@ describe('SiteService Security', () => {
 
         const service = new SiteService({
             teslaClient: mockTeslaClient as unknown as TeslaClient,
-            energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+            siteRepo: mockEnergyRepo as unknown as SiteRepo,
             siteAuthToken: 'invalid_token'
         });
 
@@ -93,7 +93,7 @@ describe('SiteService Security', () => {
 
             const service = new SiteService({
                 teslaClient: mockTeslaClient as unknown as TeslaClient,
-                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
                 siteAuthToken: 'valid_token'
             });
 
@@ -108,7 +108,7 @@ describe('SiteService Security', () => {
 
             const service = new SiteService({
                 teslaClient: mockTeslaClient as unknown as TeslaClient,
-                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
                 siteAuthToken: 'valid_token'
             });
 
@@ -128,7 +128,7 @@ describe('SiteService Security', () => {
 
             const service = new SiteService({
                 teslaClient: mockTeslaClient as unknown as TeslaClient,
-                energyRepo: mockEnergyRepo as unknown as EnergyRepo
+                siteRepo: mockEnergyRepo as unknown as SiteRepo
             });
 
             const isValid = await service.validateSiteAccess('12345');

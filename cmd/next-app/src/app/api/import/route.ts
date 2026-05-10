@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { getTeslaCredentials, getAuthorizedSiteIds } from '@/lib/auth-checks';
 
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Unauthorized or no credentials found' }, { status: 401 });
         }
 
-        const repo = new EnergyRepo();
+        const tokenRepo = new TeslaTokenRepo(new SiteRepo());
 
         // Default behavior (Auto-import recent history)
         const now = new Date();
@@ -27,7 +28,7 @@ export async function POST(request: Request) {
 
         // Instantiate client once using the credentials
         // We use the first site ID for the refresh handler context (locks the User)
-        const handlers = repo.getLockedRefreshHandler(authorizedSites[0]);
+        const handlers = tokenRepo.getLockedRefreshHandler(authorizedSites[0]);
         const client = new TeslaClient({
             accessToken: credentials.access_token,
             refreshToken: credentials.refresh_token || undefined,

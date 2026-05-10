@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { cookies } from 'next/headers';
 import { SiteService } from '@/lib/site-service';
 import { Site } from '@/lib/db';
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
         // 1. Site Auth (User) - Returns all authorized sites
         // 2. Trmnl Token (Device) - Returns ONLY the linked site (if any)
 
-        const repo = new EnergyRepo();
+        const repo = new SiteRepo();
         let sites: Site[] = [];
 
         if (token && uuid) {
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
             try {
                 // Let's use `site_auth` if available FIRST.
                 if (siteAuthToken) {
-                    const service = new SiteService({ energyRepo: repo, siteAuthToken });
+                    const service = new SiteService({ siteRepo: repo, siteAuthToken });
                     sites = await service.getAuthorizedSites();
                 } else {
                     // Trmnl Auth Fallback
@@ -57,7 +57,7 @@ export async function GET(request: Request) {
             }
 
             const service = new SiteService({
-                energyRepo: repo,
+                siteRepo: repo,
                 siteAuthToken
             });
             sites = await service.getAuthorizedSites();

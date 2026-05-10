@@ -1,7 +1,7 @@
 
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { pool } from '@/lib/db';
 import { cookies } from 'next/headers';
 import { SiteService } from '@/lib/site-service';
@@ -137,14 +137,14 @@ export async function POST(request: Request) {
 
         const cookieStore = await cookies();
         const siteAuthToken = cookieStore.get('site_auth')?.value;
-        const repo = new EnergyRepo();
+        const repo = new SiteRepo();
 
         // Initialize Tesla Client if we can resolve an access token from the DB for the current user
         let accessToken: string | undefined;
 
         if (siteAuthToken) {
             const { verifySiteToken } = await import('@/lib/auth-jwt');
-            const { getUserTokens } = await import('@/lib/energy-repo');
+            const { getUserTokens } = await import('@/lib/user-repo');
 
             const decoded = verifySiteToken(siteAuthToken);
             if (decoded && decoded.sub) {
@@ -162,7 +162,7 @@ export async function POST(request: Request) {
         }
 
         const siteService = new SiteService({
-            energyRepo: repo,
+            siteRepo: repo,
             siteAuthToken,
             teslaClient
         });

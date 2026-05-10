@@ -1,4 +1,6 @@
 import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
+import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import Link from 'next/link';
 
 
@@ -35,8 +37,10 @@ export default async function SitePage({ params, searchParams }: {
 }) {
     const { id } = await params;
     const { date: queryDate } = await searchParams;
+    const siteRepo = new SiteRepo();
     const repo = new EnergyRepo();
-    let site = await repo.getSite(id);
+    const tokenRepo = new TeslaTokenRepo(siteRepo);
+    let site = await siteRepo.getSite(id);
 
     const hasAccess = await verifySiteAccess(id);
     if (!hasAccess) {
@@ -67,7 +71,7 @@ export default async function SitePage({ params, searchParams }: {
     const accessToken = site?.access_token;
     const refreshToken = site?.refresh_token;
 
-    const handlers = repo.getLockedRefreshHandler(id);
+    const handlers = tokenRepo.getLockedRefreshHandler(id);
     const teslaClient = new TeslaClient({
         accessToken: accessToken!,
         refreshToken: refreshToken!, // Type assertion as we expect valid sites to have tokens
@@ -115,7 +119,7 @@ export default async function SitePage({ params, searchParams }: {
         await importer.ensureSite(id);
     }
 
-    const finalSite = await repo.getSite(id);
+    const finalSite = await siteRepo.getSite(id);
 
     if (!finalSite) {
         return (

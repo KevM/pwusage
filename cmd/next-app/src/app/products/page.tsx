@@ -2,7 +2,8 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getAuthorizedSiteIds } from '@/lib/auth-checks';
 import { verifySiteToken } from '@/lib/auth-jwt';
-import { EnergyRepo, getUserTokens } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
+import { getUserTokens } from '@/lib/user-repo';
 import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards';
 import { TeslaClient } from '@/lib/tesla-client';
 import { NoSupportedProducts } from '@/components/NoSupportedProducts';
@@ -37,7 +38,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         redirect('/login');
     }
 
-    const repo = new EnergyRepo();
+    const repo = new SiteRepo();
     let energyProducts: ProductWithLiveData[] = [];
     let vehicleProducts: ProductWithLiveData[] = [];
 

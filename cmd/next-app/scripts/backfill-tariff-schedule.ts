@@ -1,11 +1,11 @@
 import 'dotenv/config';
 import { pool } from '../src/lib/db';
-import { EnergyRepo } from '../src/lib/energy-repo';
+import { SiteRepo } from '../src/lib/site-repo';
 import { Schedule } from '../src/lib/schedule';
 
 async function main() {
     try {
-        const repo = new EnergyRepo();
+        const repo = new SiteRepo();
         const client = await pool.connect();
         
         try {

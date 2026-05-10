@@ -3,7 +3,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { redirect } from 'next/navigation';
 import { verifySiteToken } from '@/lib/auth-jwt';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { ProductWithLiveData } from '@/components/DashboardCards';
 import { AnnouncementRepo } from '@/lib/announcement-repo';
 import { LoginAnnouncement } from '@/components/LoginAnnouncement';
@@ -75,7 +75,7 @@ export default async function Home() {
   }
 
   let products: ProductWithLiveData[] = []; // We will map this to ProductWithLiveData
-  const repo = new EnergyRepo();
+  const repo = new SiteRepo();
 
   const decoded = verifySiteToken(siteAuthToken);
   if (!decoded) {

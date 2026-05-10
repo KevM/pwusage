@@ -26,19 +26,19 @@ function parseArgs(argv: string[]): Args {
 
 async function run(): Promise<void> {
     const { pool } = await import('../src/lib/db');
-    const { EnergyRepo } = await import('../src/lib/energy-repo');
+    const { SiteRepo } = await import('../src/lib/site-repo');
     const args = parseArgs(process.argv.slice(2));
-    const repo = new EnergyRepo();
+    const siteRepo = new SiteRepo();
 
     let siteId = args.siteId;
     if (!siteId) {
-        const siteIds = await repo.getSiteIds();
+        const siteIds = await siteRepo.getSiteIds();
         siteId = siteIds[0];
         if (!siteId) throw new Error('No sites found');
         console.log(`No --site provided. Using first site: ${siteId}`);
     }
 
-    const site = await repo.getSite(siteId);
+    const site = await siteRepo.getSite(siteId);
     if (!site) throw new Error(`Site not found: ${siteId}`);
 
     console.log(`SoC coverage`);

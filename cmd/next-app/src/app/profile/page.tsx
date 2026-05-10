@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Image from 'next/image';
 import { getDefaultSiteId, isUserAdmin } from '@/lib/auth-checks';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { TeslaClient } from '@/lib/tesla-client';
 import { pool, User } from '@/lib/db';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
@@ -36,7 +36,7 @@ export default async function ProfilePage() {
     // Resolve User from the first site (assuming all sites belong to the same user in current context)
     // Or we find the user via token, but we don't store user_id in cookie directly yet.
     // We can lookup any site in DB to get user_id.
-    const repo = new EnergyRepo();
+    const repo = new SiteRepo();
     const firstSite = await repo.getSite(siteId);
 
     if (!firstSite || !firstSite.user_id) {

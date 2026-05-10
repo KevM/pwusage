@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { TeslaClient } from '@/lib/tesla-client';
-import { EnergyRepo, getUserTokensForSite } from '@/lib/energy-repo';
+import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
+import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
+import { getUserTokensForSite } from '@/lib/user-repo';
 import { Schedule } from '@/lib/schedule';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
@@ -25,7 +28,9 @@ export async function GET(request: Request) {
         let token: string | undefined;
         let refreshToken: string | undefined;
 
+        const siteRepo = new SiteRepo();
         const repo = new EnergyRepo();
+        const tokenRepo = new TeslaTokenRepo(siteRepo);
 
         if (await verifySiteAccess(siteId)) {
             // Fetch tokens from User table via Site relationship
@@ -40,7 +45,7 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
         }
 
-        const handlers = repo.getLockedRefreshHandler(siteId);
+        const handlers = tokenRepo.getLockedRefreshHandler(siteId);
         const client = new TeslaClient({
             accessToken: token,
             refreshToken: refreshToken,
@@ -58,7 +63,7 @@ export async function GET(request: Request) {
 
         const [liveStatus, site, historyRows] = await Promise.all([
             client.getLiveStatus(siteId),
-            repo.getSite(siteId),
+            siteRepo.getSite(siteId),
             repo.getBucketedEnergyData(siteId, sparklineScaleStart, now)
         ]);
 

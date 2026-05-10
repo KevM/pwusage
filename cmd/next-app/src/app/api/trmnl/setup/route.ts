@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import { verifySiteAccess } from '@/lib/auth-checks';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { withRequestContext } from '@/lib/request-context';
 import {
     DEFAULT_TRMNL_COMPONENT_CONFIG,
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
         }
 
-        const repo = new EnergyRepo();
+        const repo = new SiteRepo();
         const site = await repo.getSite(site_id);
         if (!site) {
             console.warn(`[TrmnlSetup] Site ${site_id} not found during setup`);

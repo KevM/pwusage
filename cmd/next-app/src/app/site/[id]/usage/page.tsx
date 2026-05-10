@@ -1,4 +1,5 @@
 import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
 
 import { BillSummary } from '@/components/BillSummary';
 import { BillDateNav } from '@/components/BillDateNav';
@@ -17,10 +18,11 @@ export default async function UsagePage({ params, searchParams }: {
 }) {
     const { id } = await params;
     const { date: queryDate, start: queryStart, end: queryEnd } = await searchParams;
+    const siteRepo = new SiteRepo();
     const repo = new EnergyRepo();
 
 
-    const site = await repo.getSite(id);
+    const site = await siteRepo.getSite(id);
     if (!site) {
         return (
             <PageShell maxWidth="2xl" className="space-y-6">

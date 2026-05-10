@@ -6,6 +6,29 @@ export interface UserWithSites extends User {
     has_trmnl_integration?: boolean;
 }
 
+export async function getUserByToken(token: string): Promise<{ id: string, email?: string, roles?: string[] } | null> {
+    const res = await pool.query('SELECT id, email, roles FROM "User" WHERE access_token = $1', [token]);
+    if (res.rows.length === 0) return null;
+    return res.rows[0];
+}
+
+export async function getUserTokens(userId: string): Promise<{ access_token: string, refresh_token: string } | null> {
+    const res = await pool.query('SELECT access_token, refresh_token FROM "User" WHERE id = $1', [userId]);
+    if (res.rows.length === 0) return null;
+    return res.rows[0];
+}
+
+export async function getUserTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string } | null> {
+    const res = await pool.query(`
+        SELECT u.access_token, u.refresh_token, u.id as user_id 
+        FROM "User" u
+        JOIN "Site" s ON s.user_id = u.id
+        WHERE s.id = $1
+    `, [siteId]);
+    if (res.rows.length === 0) return null;
+    return res.rows[0];
+}
+
 export class UserRepo {
     async getAllUsers(): Promise<UserWithSites[]> {
         // Fetch users and check for Trmnl integration in a single query using subquery (efficiently handles the join logic)

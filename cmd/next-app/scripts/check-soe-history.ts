@@ -80,15 +80,17 @@ function summarize(rows: SoeSample[]): void {
 }
 
 async function run(): Promise<void> {
-    const { EnergyRepo } = await import('../src/lib/energy-repo');
+    const { SiteRepo } = await import('../src/lib/site-repo');
+    const { TeslaTokenRepo } = await import('../src/lib/tesla-token-repo');
     const { TeslaClient } = await import('../src/lib/tesla-client');
 
     const args = parseArgs(process.argv.slice(2));
-    const repo = new EnergyRepo();
+    const siteRepo = new SiteRepo();
+    const tokenRepo = new TeslaTokenRepo(siteRepo);
 
     let siteId = args.siteId;
     if (!siteId) {
-        const siteIds = await repo.getSiteIds();
+        const siteIds = await siteRepo.getSiteIds();
         siteId = siteIds[0];
         if (!siteId) {
             throw new Error('No sites found in DB. Provide --site <siteId>.');
@@ -96,7 +98,7 @@ async function run(): Promise<void> {
         console.log(`No --site provided. Using first site: ${siteId}`);
     }
 
-    const site = await repo.getSite(siteId);
+    const site = await siteRepo.getSite(siteId);
     if (!site) {
         throw new Error(`Site not found: ${siteId}`);
     }
@@ -104,7 +106,7 @@ async function run(): Promise<void> {
         throw new Error(`Site ${siteId} is missing Tesla tokens (access/refresh).`);
     }
 
-    const handlers = repo.getLockedRefreshHandler(siteId);
+    const handlers = tokenRepo.getLockedRefreshHandler(siteId);
     const client = new TeslaClient({
         accessToken: site.access_token,
         refreshToken: site.refresh_token,

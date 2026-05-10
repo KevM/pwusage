@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { verifySiteToken } from './auth-jwt';
-import { getUserTokensForSite } from './energy-repo';
+import { getUserTokensForSite } from './user-repo';
 
 const SITE_AUTH_COOKIE = 'site_auth';
 

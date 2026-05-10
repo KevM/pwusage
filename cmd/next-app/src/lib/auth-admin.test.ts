@@ -2,13 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { signSiteToken, verifySiteToken } from './auth-jwt';
 import { SiteService } from './site-service';
 import { TeslaClient } from './tesla-client';
-import { EnergyRepo } from './energy-repo';
+import { SiteRepo } from './site-repo';
 import { Site } from './db';
 
 // Mock dependencies
 const mockEnergyRepo = {
     getSites: vi.fn(),
-} as unknown as EnergyRepo;
+} as unknown as SiteRepo;
 
 describe('Admin Authorization', () => {
 
@@ -38,7 +38,7 @@ describe('Admin Authorization', () => {
         it('should allow admin to access any site via validateSiteAccess', async () => {
             const token = signSiteToken(['site1'], ['admin']);
             siteService = new SiteService({
-                energyRepo: mockEnergyRepo,
+                siteRepo: mockEnergyRepo,
                 siteAuthToken: token
             });
 
@@ -55,7 +55,7 @@ describe('Admin Authorization', () => {
             };
 
             siteService = new SiteService({
-                energyRepo: mockEnergyRepo,
+                siteRepo: mockEnergyRepo,
                 siteAuthToken: token,
                 teslaClient: mockClient as unknown as Pick<TeslaClient, 'getProducts'>
             });
@@ -67,7 +67,7 @@ describe('Admin Authorization', () => {
         it('should allow non-admin to access their own sites', async () => {
             const token = signSiteToken(['site1'], ['user']);
             siteService = new SiteService({
-                energyRepo: mockEnergyRepo,
+                siteRepo: mockEnergyRepo,
                 siteAuthToken: token
             });
 
@@ -85,7 +85,7 @@ describe('Admin Authorization', () => {
             // Admin token with ONLY site1
             const token = signSiteToken(['site1'], ['admin']);
             siteService = new SiteService({
-                energyRepo: mockEnergyRepo,
+                siteRepo: mockEnergyRepo,
                 siteAuthToken: token
             });
 
@@ -103,7 +103,7 @@ describe('Admin Authorization', () => {
 
             const token = signSiteToken(['site1'], ['user']);
             siteService = new SiteService({
-                energyRepo: mockEnergyRepo,
+                siteRepo: mockEnergyRepo,
                 siteAuthToken: token
             });
 

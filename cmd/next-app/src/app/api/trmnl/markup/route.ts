@@ -1,5 +1,7 @@
 import { after, NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
+import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { Schedule } from '@/lib/schedule';
 
 
@@ -113,7 +115,9 @@ export async function GET(request: Request) {
 
         let installation: import('@/lib/db').TrmnlInstallation | null = null;
         let site: import('@/lib/db').SiteWithTariffs | null = null;
+        const siteRepo = new SiteRepo();
         const repo = new EnergyRepo();
+        const tokenRepo = new TeslaTokenRepo(siteRepo);
         let componentConfig = extractTrmnlComponentConfig(null);
 
         if (componentConfigParam) {
@@ -128,7 +132,7 @@ export async function GET(request: Request) {
         }
 
         if (uuid) {
-            const result = await repo.getInstallationAndSite(uuid);
+            const result = await siteRepo.getInstallationAndSite(uuid);
             if (!result) {
                 console.log(`[TrmnlMarkup] UUID ${uuid} not found. Generating setup QR code.`);
                 return getQrResponse(request, uuid, null, 'Setup Required', 'Scan to Configure');
@@ -164,7 +168,7 @@ export async function GET(request: Request) {
             if (!(await verifySiteAccess(siteIdParam))) {
                 return NextResponse.json({ error: 'Unauthorized preview' }, { status: 401 });
             }
-            site = await repo.getSite(siteIdParam) || null;
+            site = await siteRepo.getSite(siteIdParam) || null;
         } else {
             return NextResponse.json({ error: 'Missing uuid or site_id parameter' }, { status: 400 });
         }
@@ -216,7 +220,7 @@ export async function GET(request: Request) {
             console.log(`[Trmnl] Found refresh token for site ${site.id}, initializing client...`);
             const useToken = site.access_token || 'expired';
 
-            const handlers = repo.getLockedRefreshHandler(site.id);
+            const handlers = tokenRepo.getLockedRefreshHandler(site.id);
             trmnlClient = new TeslaClient({
                 accessToken: useToken,
                 refreshToken: site.refresh_token,

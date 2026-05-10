@@ -1,11 +1,11 @@
 import { Site } from './db';
 import { TeslaClient } from './tesla-client';
-import { EnergyRepo } from './energy-repo';
+import { SiteRepo } from './site-repo';
 import { verifySiteToken } from './auth-jwt';
 
 export interface SiteServiceDeps {
     teslaClient?: Pick<TeslaClient, 'getProducts'>;
-    energyRepo: Pick<EnergyRepo, 'getSites'>;
+    siteRepo: Pick<SiteRepo, 'getSites'>;
     siteAuthToken?: string;
 }
 
@@ -45,7 +45,7 @@ export class SiteService {
         }
 
         // Fetch all known sites from DB
-        const allSites = await this.deps.energyRepo.getSites({ includeJson: options?.includeJson });
+        const allSites = await this.deps.siteRepo.getSites({ includeJson: options?.includeJson });
 
 
 

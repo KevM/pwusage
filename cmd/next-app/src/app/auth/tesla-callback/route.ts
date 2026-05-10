@@ -2,7 +2,8 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { NextRequest, NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { pool } from '@/lib/db';
 
 
@@ -126,7 +127,7 @@ export async function GET(request: NextRequest) {
 
         if (products.length > 0 || roles.includes('admin')) {
             const importer = new Importer(client);
-            const repo = new EnergyRepo();
+            const tokenRepo = new TeslaTokenRepo(new SiteRepo());
             const siteIds: string[] = [];
 
             for (const product of products) {
@@ -138,8 +139,8 @@ export async function GET(request: NextRequest) {
 
                 await importer.ensureSite(siteId);
                 await pool.query('UPDATE "Site" SET user_id = $1 WHERE id = $2', [userId, siteId]);
-                await repo.updateSiteTokens(siteId, authData.access_token, authData.refresh_token);
-                await repo.releaseRefreshLock(siteId);
+                await tokenRepo.updateSiteTokens(siteId, authData.access_token, authData.refresh_token);
+                await tokenRepo.releaseRefreshLock(siteId);
                 console.log(`[AuthCallback] Linked site ${siteId} to User ${userId} and updated tokens.`);
             }
 

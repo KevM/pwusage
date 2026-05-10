@@ -2,7 +2,8 @@
 import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
 import { TeslaClient } from '@/lib/tesla-client';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { getTeslaCredentials, getAuthorizedSiteIds } from '@/lib/auth-checks';
 
 export async function GET(request: Request) {
@@ -26,8 +27,8 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
         }
 
-        const repo = new EnergyRepo();
-        const handlers = repo.getLockedRefreshHandler(siteId);
+        const tokenRepo = new TeslaTokenRepo(new SiteRepo());
+        const handlers = tokenRepo.getLockedRefreshHandler(siteId);
         const client = new TeslaClient({
             accessToken: credentials.access_token,
             refreshToken: credentials.refresh_token || undefined,

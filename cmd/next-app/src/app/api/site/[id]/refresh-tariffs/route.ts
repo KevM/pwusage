@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { TeslaClient } from '@/lib/tesla-client';
 import { Importer } from '@/lib/importer';
-import { EnergyRepo, getUserTokensForSite } from '@/lib/energy-repo';
+import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
+import { SiteRepo } from '@/lib/site-repo';
+import { getUserTokensForSite } from '@/lib/user-repo';
 import { withRequestContext } from '@/lib/request-context';
 
 export async function POST(
@@ -26,14 +28,15 @@ export async function POST(
         }
 
         // Verify site exists
-        const repo = new EnergyRepo();
-        const site = await repo.getSite(siteId);
+        const siteRepo = new SiteRepo();
+        const tokenRepo = new TeslaTokenRepo(siteRepo);
+        const site = await siteRepo.getSite(siteId);
         if (!site) {
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });
         }
 
         // Create Tesla client and importer
-        const handlers = repo.getLockedRefreshHandler(siteId);
+        const handlers = tokenRepo.getLockedRefreshHandler(siteId);
         const client = new TeslaClient({
             accessToken: credentials.access_token,
             refreshToken: credentials.refresh_token || undefined,

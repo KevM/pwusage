@@ -13,6 +13,7 @@
 import 'dotenv/config';
 import { pool } from '../src/lib/db';
 import { EnergyRepo } from '../src/lib/energy-repo';
+import { SiteRepo } from '../src/lib/site-repo';
 import { Schedule } from '../src/lib/schedule';
 import { wattsToKilowatts } from '../src/lib/energy-utils';
 import type { SiteWithTariffs, TariffSchedule } from '../src/lib/db';
@@ -166,6 +167,7 @@ function compareBuckets(oldB: BucketMap, newB: BucketMap): CompareResult {
 // Main
 // ---------------------------------------------------------------------------
 async function main() {
+    const siteRepo = new SiteRepo();
     const repo = new EnergyRepo();
     const now = new Date();
 
@@ -174,7 +176,7 @@ async function main() {
     if (siteFilter) {
         siteIds = [siteFilter];
     } else {
-        siteIds = await repo.getSiteIds();
+        siteIds = await siteRepo.getSiteIds();
     }
 
     console.log(`\nValidating aggregation for ${siteIds.length} site(s) at ${now.toISOString()}\n${'─'.repeat(72)}`);
@@ -184,7 +186,7 @@ async function main() {
     let skipCount = 0;
 
     for (const siteId of siteIds) {
-        const site = await repo.getSite(siteId);
+        const site = await siteRepo.getSite(siteId);
         if (!site) { console.log(`[${siteId}] SKIP — site not found`); skipCount++; continue; }
 
         // Compute billing start (same logic as route.ts)

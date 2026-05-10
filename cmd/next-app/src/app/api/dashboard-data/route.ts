@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 
 import { TeslaClient } from '@/lib/tesla-client';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
+import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { Schedule } from '@/lib/schedule';
 import { Importer } from '@/lib/importer';
 import { getTeslaCredentials, getAuthorizedSiteIds } from '@/lib/auth-checks';
@@ -23,8 +24,9 @@ export async function GET() {
         }
 
         const activeSiteId = authorizedSiteIds[0];
-        const repo = new EnergyRepo();
-        const handlers = repo.getLockedRefreshHandler(activeSiteId);
+        const siteRepo = new SiteRepo();
+        const tokenRepo = new TeslaTokenRepo(siteRepo);
+        const handlers = tokenRepo.getLockedRefreshHandler(activeSiteId);
 
         const client = new TeslaClient({
             accessToken: credentials.access_token,
@@ -40,13 +42,13 @@ export async function GET() {
 
         // Use cached authorization source of truth
         // Fetch sites directly from repo using the authorized IDs we already validated
-        const sitesPromises = authorizedSiteIds.map(id => repo.getSite(id));
+        const sitesPromises = authorizedSiteIds.map(id => siteRepo.getSite(id));
         const sitesResults = await Promise.all(sitesPromises);
         const batterySites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
 
         const productsWithTariff = await Promise.all(batterySites.map(async (basicSite) => {
             // Fetch full site details including tariffs (which are not in the basic Site object)
-            let site = await repo.getSite(basicSite.id);
+            let site = await siteRepo.getSite(basicSite.id);
 
             if (!site) {
                 // Should be rare as basicSite came from DB, but possible due to race conditions or partial writes?

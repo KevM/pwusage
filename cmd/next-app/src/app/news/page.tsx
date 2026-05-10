@@ -7,7 +7,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/Badge';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { getDefaultSiteId } from '@/lib/auth-checks';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 
@@ -113,7 +113,7 @@ export default async function NewsPage() {
     const repo = new AnnouncementRepo();
     const announcements = await repo.getAll(20);
     const defaultSiteId = await getDefaultSiteId();
-    const energyRepo = new EnergyRepo();
+    const energyRepo = new SiteRepo();
     const defaultSite = defaultSiteId ? await energyRepo.getSite(defaultSiteId) : null;
 
     const firstBreadcrumb = defaultSite

@@ -2,6 +2,7 @@ import { pool, SiteWithTariffs, TariffSeason, TariffSchedule } from '../db';
 import { Schedule } from '../schedule';
 import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry } from '../tesla-client';
 import { EnergyRepo } from '../energy-repo';
+import { SiteRepo } from '../site-repo';
 import { UserRepo } from '../user-repo';
 import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
@@ -23,6 +24,7 @@ export type { EnergyDataRow } from './energy-transformer';
 export class Importer {
     private client: TeslaClient;
     private repo: EnergyRepo;
+    private siteRepo: SiteRepo;
     private userRepo: UserRepo;
 
     // Prevent multiple simultaneous syncs (persist across HMR in dev)
@@ -37,11 +39,12 @@ export class Importer {
     constructor(client: TeslaClient) {
         this.client = client;
         this.repo = new EnergyRepo();
+        this.siteRepo = new SiteRepo();
         this.userRepo = new UserRepo();
     }
 
     async getTodayData(siteId: string): Promise<EnergyDataRow[]> {
-        const site = await this.repo.getSite(siteId);
+        const site = await this.siteRepo.getSite(siteId);
         if (!site) return [];
 
         const now = new Date();
@@ -56,7 +59,7 @@ export class Importer {
     async persistHistory(siteId: string, rows: EnergyDataRow[], latestTimestamp: Date | null) {
         if (rows.length === 0) return;
 
-        const site = await this.repo.getSite(siteId);
+        const site = await this.siteRepo.getSite(siteId);
         if (!site) return;
 
         // Surgical Filter: only insert rows around or newer than what we have.
@@ -101,7 +104,7 @@ export class Importer {
         Importer.pendingSyncs.add(siteId);
 
         try {
-            const site = await this.repo.getSite(siteId);
+            const site = await this.siteRepo.getSite(siteId);
             if (!site) return { rows: [], latestTimestamp: null };
 
             const now = new Date();
@@ -164,7 +167,7 @@ export class Importer {
 
         try {
             if (onProgress) onProgress(`Checking data coverage...`);
-            const site = await this.repo.getSite(siteId);
+            const site = await this.siteRepo.getSite(siteId);
             if (!site) throw new Error(`Site ${siteId} not found in database`);
 
             const auditStartTime = getSiteMidnight(start, site.timezone);
@@ -215,7 +218,7 @@ export class Importer {
 
     async importRange(siteId: string, start: Date, end: Date, period: string = 'day', onProgress?: (date: Date) => void): Promise<EnergyDataRow[]> {
         const allRows: EnergyDataRow[] = [];
-        const site = await this.repo.getSite(siteId);
+        const site = await this.siteRepo.getSite(siteId);
         if (!site) {
             console.error(`Site ${siteId} not found for importRange`);
             throw new Error(`Site ${siteId} not found in database`);
@@ -264,7 +267,7 @@ export class Importer {
             const info = await this.client.getEnergySiteInfo(siteId);
 
             // Update last_checked_at since we successfully called the API
-            const siteForUser = await this.repo.getSite(siteId);
+            const siteForUser = await this.siteRepo.getSite(siteId);
             if (siteForUser?.user_id) {
                 await this.userRepo.updateLastChecked(siteForUser.user_id);
             }
@@ -345,13 +348,13 @@ export class Importer {
             }
 
             // Invalidate cache to ensure subsequent fetches get the new/confirmed schema/json
-            this.repo.invalidateCache(siteId);
+            this.siteRepo.invalidateCache(siteId);
 
-            return this.repo.getSite(siteId);
+            return this.siteRepo.getSite(siteId);
         } catch (e: unknown) {
             const errorMsg = e instanceof Error ? e.message : String(e);
             if (errorMsg.includes('401') || errorMsg.includes('login_required')) {
-                const siteForUser = await this.repo.getSite(siteId);
+                const siteForUser = await this.siteRepo.getSite(siteId);
                 if (siteForUser?.user_id) {
                     console.warn(`[Import] Auth error in ensureSite for user ${siteForUser.user_id}, marking revoked`);
                     await this.userRepo.updateUserStatus(siteForUser.user_id, 'revoked', false);
@@ -425,7 +428,7 @@ export class Importer {
                 console.warn(`[Import] Auth error for user ${site.user_id}, marking as revoked`);
                 if (site.user_id) {
                     await this.userRepo.updateUserStatus(site.user_id, 'revoked', false);
-                    this.repo.invalidateCache(site.id);
+                    this.siteRepo.invalidateCache(site.id);
                 }
             }
             throw err;
@@ -680,8 +683,7 @@ export class Importer {
     }
 
     async auditRange(siteId: string, start: Date, end: Date) {
-        const repo = new EnergyRepo();
-        const site = await repo.getSite(siteId);
+        const site = await this.siteRepo.getSite(siteId);
         if (!site) return { error: 'Site not found' };
 
         const rowsRes = await pool.query(`

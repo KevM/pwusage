@@ -1,6 +1,6 @@
 'use server';
 
-import { EnergyRepo } from '@/lib/energy-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { revalidatePath } from 'next/cache';
 import { verifySiteAccess } from '@/lib/auth-checks';
 
@@ -20,7 +20,7 @@ export async function updateBillingStartDay(formData: FormData) {
         throw new Error('Unauthorized');
     }
 
-    const repo = new EnergyRepo();
+    const repo = new SiteRepo();
     await repo.updateSiteBillingDay(siteId, day);
 
     revalidatePath(`/site/${siteId}/settings`);
@@ -39,10 +39,7 @@ export async function updateTimezoneDisplayMode(formData: FormData) {
         throw new Error('Unauthorized');
     }
 
-    const repo = new EnergyRepo();
-    // We need to add this method to EnergyRepo or just run query here?
-    // Let's run query here directly via repo helper or direct db access?
-    // Converting to repo method is cleaner.
+    const repo = new SiteRepo();
     await repo.updateSiteTimezoneDisplayMode(siteId, mode as 'SITE' | 'BROWSER');
 
     revalidatePath(`/site/${siteId}/settings`);

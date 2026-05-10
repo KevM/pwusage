@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
+import { LoadTagRepo } from '@/lib/load-tag-repo';
 
 export async function GET(request: NextRequest) {
     try {
@@ -14,8 +15,15 @@ export async function GET(request: NextRequest) {
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - retentionDays);
 
-        const repo = new EnergyRepo();
-        const result = await repo.cleanupOldData(cutoff);
+        const energyRepo = new EnergyRepo();
+        const tagRepo = new LoadTagRepo();
+        const energyResult = await energyRepo.cleanupOldEnergyData(cutoff);
+        const tagResult = await tagRepo.cleanupOldTags(cutoff);
+        
+        const result = {
+            energyDeleted: energyResult.energyDeleted,
+            tagsDeleted: tagResult.tagsDeleted
+        };
 
         console.log(`[CRON] Cleanup completed. Cutoff: ${cutoff.toISOString()}. Deleted: ${JSON.stringify(result)}`);
 

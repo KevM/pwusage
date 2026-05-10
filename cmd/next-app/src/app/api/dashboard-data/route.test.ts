@@ -20,10 +20,15 @@ vi.mock('@/lib/auth-checks', () => ({
     getTeslaCredentials: mocks.getTeslaCredentials
 }));
 
-vi.mock('@/lib/energy-repo', () => ({
-    EnergyRepo: class {
-        getSite = mocks.getSite;
+vi.mock('@/lib/tesla-token-repo', () => ({
+    TeslaTokenRepo: class {
         getLockedRefreshHandler = mocks.getLockedRefreshHandler;
+    }
+}));
+
+vi.mock('@/lib/site-repo', () => ({
+    SiteRepo: class {
+        getSite = mocks.getSite;
     }
 }));
 
