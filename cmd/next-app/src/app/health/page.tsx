@@ -45,7 +45,23 @@ export default function HealthPage() {
     };
 
     useEffect(() => {
-        fetchHealth();
+        let cancelled = false;
+        fetch('/api/health')
+            .then((res) => res.json())
+            .then((json) => {
+                if (cancelled) return;
+                setData(json);
+                setError('');
+                setLoading(false);
+            })
+            .catch((err: Error) => {
+                if (cancelled) return;
+                setError(err.message);
+                setLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     if (loading) {

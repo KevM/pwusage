@@ -33,13 +33,16 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
     // Initialize date from URL or Today
     const [date, setDate] = useState<string>(initialDate);
 
-    // Sync state with URL
-    useEffect(() => {
-        const urlDate = searchParams.get('date');
-        if (urlDate && urlDate !== date) {
-            setDate(urlDate);
+    // Sync state with URL using the render-phase pattern:
+    // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+    const [syncedSearchDate, setSyncedSearchDate] = useState<string | null>(searchParams.get('date'));
+    const currentSearchDate = searchParams.get('date');
+    if (currentSearchDate !== syncedSearchDate) {
+        setSyncedSearchDate(currentSearchDate);
+        if (currentSearchDate && currentSearchDate !== date) {
+            setDate(currentSearchDate);
         }
-    }, [searchParams, date]);
+    }
 
     const updateUrl = (newDate: string) => {
         const params = new URLSearchParams(searchParams);
@@ -58,7 +61,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
     // If I select a date there and click Analysis, it opens this page with that date. 
     // That's satisfied by initialization.
 
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
     const [data, setData] = useState<PowerData[]>([]);
     const [events, setEvents] = useState<(LoadEvent & { tags?: string[] })[]>([]);
     const [tariffMap, setTariffMap] = useState<Record<number, string>>({});
@@ -154,8 +157,30 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
     }, [siteId, date, displayMode, siteTimezone]);
 
     useEffect(() => {
-        fetchData();
-    }, [fetchData]);
+        if (!siteId) return;
+        let cancelled = false;
+        const targetTz = displayMode === 'BROWSER' ? Intl.DateTimeFormat().resolvedOptions().timeZone : siteTimezone;
+        fetch(`/api/site/${siteId}/analysis?date=${date}&tz=${targetTz}`)
+            .then((res) => {
+                if (!res.ok) throw new Error('Failed to fetch data');
+                return res.json();
+            })
+            .then((json) => {
+                if (cancelled) return;
+                setData(json.data);
+                setEvents(json.events || []);
+                setTariffMap(json.tariffs || {});
+                setLoading(false);
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                console.error(err);
+                setLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [siteId, date, displayMode, siteTimezone]);
 
     // Live Refresh for Today
     useEffect(() => {

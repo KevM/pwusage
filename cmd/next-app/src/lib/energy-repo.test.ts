@@ -10,7 +10,88 @@ vi.mock('./db', () => ({
     }
 }));
 
-import { EnergyRepo } from './energy-repo';
+import { EnergyRepo, sumTodayRows, type UsageData } from './energy-repo';
+import type { EnergyData } from './db';
+
+function makeEnergyRow(over: Partial<EnergyData>): EnergyData {
+    return {
+        timestamp: new Date('2026-05-11T07:00:00Z'),
+        site_id: 'site-1',
+        tariff_id: 1,
+        tariff_schedule_id: 10,
+        load_power: 0,
+        solar_power: 0,
+        grid_power: 0,
+        battery_power: 0,
+        battery_soc: null,
+        ...over
+    } as EnergyData;
+}
+
+describe('sumTodayRows', () => {
+    it('returns all zeros for empty input', () => {
+        const totals = sumTodayRows([]);
+        expect(totals).toEqual({
+            homeKwh: 0, solarKwh: 0, gridNetKwh: 0,
+            importKwh: 0, exportKwh: 0, batteryNetKwh: 0,
+            latestBatterySoc: null
+        });
+    });
+
+    it('sums Wh rows and converts to kWh', () => {
+        const rows = [
+            makeEnergyRow({ load_power: 200, solar_power: 50, grid_power: 300, battery_power: -100 }),
+            makeEnergyRow({ load_power: 400, solar_power: 550, grid_power: 300, battery_power: -100 })
+        ];
+        const t = sumTodayRows(rows);
+        expect(t.homeKwh).toBeCloseTo(0.6);
+        expect(t.solarKwh).toBeCloseTo(0.6);
+        expect(t.gridNetKwh).toBeCloseTo(0.6);
+        expect(t.importKwh).toBeCloseTo(0.6);
+        expect(t.exportKwh).toBeCloseTo(0);
+        expect(t.batteryNetKwh).toBeCloseTo(-0.2);
+    });
+
+    it('splits grid into gross import and export by sign of each row', () => {
+        const rows = [
+            makeEnergyRow({ grid_power: 800 }),    // import 0.8 kWh
+            makeEnergyRow({ grid_power: -200 }),   // export 0.2 kWh
+            makeEnergyRow({ grid_power: -500 })    // export 0.5 kWh
+        ];
+        const t = sumTodayRows(rows);
+        expect(t.importKwh).toBeCloseTo(0.8);
+        expect(t.exportKwh).toBeCloseTo(0.7);
+        // Net = 0.8 - 0.2 - 0.5 = 0.1 kWh
+        expect(t.gridNetKwh).toBeCloseTo(0.1);
+    });
+
+    it('agrees with the previous live-page summary logic on the same rows', () => {
+        // Regression check: this is the data shape the live page used to feed
+        // through DailyTotalsRow.summarize, computed independently here. If the
+        // unified helper ever drifts from the long-standing semantics, this
+        // test catches it.
+        const rows = [
+            makeEnergyRow({ load_power: 600, solar_power: 0,   grid_power: 600 }),  // 0.6 kWh import
+            makeEnergyRow({ load_power: 0,   solar_power: 600, grid_power: -300 }), // 0.3 kWh export
+            makeEnergyRow({ load_power: 200, solar_power: 0,   grid_power: 200 })   // 0.2 kWh import
+        ];
+        const t = sumTodayRows(rows);
+        expect(t.homeKwh).toBeCloseTo(0.8);
+        expect(t.solarKwh).toBeCloseTo(0.6);
+        expect(t.importKwh).toBeCloseTo(0.8);
+        expect(t.exportKwh).toBeCloseTo(0.3);
+        expect(t.gridNetKwh).toBeCloseTo(0.5);
+    });
+
+    it('reports the latest non-null battery_soc by timestamp', () => {
+        const rows = [
+            makeEnergyRow({ timestamp: new Date('2026-05-11T07:00:00Z'), battery_soc: 40 }),
+            makeEnergyRow({ timestamp: new Date('2026-05-11T07:30:00Z'), battery_soc: 49 }),
+            makeEnergyRow({ timestamp: new Date('2026-05-11T07:15:00Z'), battery_soc: 45 })
+        ];
+        expect(sumTodayRows(rows).latestBatterySoc).toBe(49);
+    });
+});
 
 describe('EnergyRepo.getCycleAggregates', () => {
     const start = new Date('2026-04-01T00:00:00Z');
@@ -221,5 +302,52 @@ describe('EnergyRepo getRawEnergyData column projection', () => {
 
         expect(rows).toHaveLength(1);
         expect(rows[0].battery_soc).toBeNull();
+    });
+});
+
+describe('EnergyRepo.getCycleAndTodayTotals', () => {
+    it('calls getUsageByTOU once for the cycle window and once for today', async () => {
+        const repo = new EnergyRepo();
+        const cycleResult = [
+            { start: new Date(), homeUsage: 100, gridUsage: -50, solarProduction: 200, batteryChange: 0,
+              tariff: { id: 1, site_id: 's', updated: new Date(), name: 'On-Peak' }, touName: 'On-Peak',
+              buyRate: 0.3, sellRate: 0.03, cost: 0 } as UsageData
+        ];
+        const todayResult = [
+            { start: new Date(), homeUsage: 10, gridUsage: -5, solarProduction: 20, batteryChange: 0,
+              tariff: { id: 1, site_id: 's', updated: new Date(), name: 'On-Peak' }, touName: 'On-Peak',
+              buyRate: 0.3, sellRate: 0.03, cost: 0 } as UsageData
+        ];
+
+        const spy = vi.spyOn(repo, 'getUsageByTOU')
+            .mockResolvedValueOnce(cycleResult)
+            .mockResolvedValueOnce(todayResult);
+
+        const cycleStart = new Date(2026, 2, 1);
+        const todayStart = new Date(2026, 2, 10);
+        const end = new Date(2026, 2, 10, 18, 0, 0);
+
+        const result = await repo.getCycleAndTodayTotals('site-1', cycleStart, todayStart, end);
+
+        expect(spy).toHaveBeenCalledTimes(2);
+        expect(spy).toHaveBeenNthCalledWith(1, 'site-1', cycleStart, end);
+        expect(spy).toHaveBeenNthCalledWith(2, 'site-1', todayStart, end);
+        expect(result.cycle).toEqual(cycleResult);
+        expect(result.today).toEqual(todayResult);
+    });
+
+    it('returns empty arrays when the site has no data', async () => {
+        const repo = new EnergyRepo();
+        vi.spyOn(repo, 'getUsageByTOU').mockResolvedValue([]);
+
+        const result = await repo.getCycleAndTodayTotals(
+            'site-1',
+            new Date(2026, 2, 1),
+            new Date(2026, 2, 10),
+            new Date(2026, 2, 10, 18, 0, 0)
+        );
+
+        expect(result.cycle).toEqual([]);
+        expect(result.today).toEqual([]);
     });
 });

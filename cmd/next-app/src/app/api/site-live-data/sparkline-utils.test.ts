@@ -40,7 +40,9 @@ describe('parseScaleWindowHours', () => {
     it('clamps configured window to at least display window', () => {
         expect(parseScaleWindowHours('1')).toBe(SPARKLINE_DISPLAY_WINDOW_HOURS);
         expect(parseScaleWindowHours('4')).toBe(SPARKLINE_DISPLAY_WINDOW_HOURS);
-        expect(parseScaleWindowHours('18')).toBe(18);
+        // Configured value wider than display passes through unchanged.
+        expect(parseScaleWindowHours(String(SPARKLINE_DISPLAY_WINDOW_HOURS * 2)))
+            .toBe(SPARKLINE_DISPLAY_WINDOW_HOURS * 2);
     });
 });
 

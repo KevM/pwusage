@@ -159,7 +159,7 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                     return (
                         <Link
                             key={product.id}
-                            href={`/site/${product.energy_site_id}`}
+                            href={`/site/${product.energy_site_id}/live`}
                             className="block"
                         >
                             <SectionCard

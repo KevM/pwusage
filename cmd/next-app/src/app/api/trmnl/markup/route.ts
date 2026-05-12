@@ -1,5 +1,5 @@
 import { after, NextResponse } from 'next/server';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { Schedule } from '@/lib/schedule';
@@ -423,9 +423,13 @@ export async function GET(request: Request) {
         const fallbackKeyCache = new Map<number, string>();
 
         const seriesData: import('@/lib/db').EnergyData[] = [];
-        let todayHome = 0;
-        let todayGrid = 0;
-        let todaySolar = 0;
+        // Today's scalar totals come from the canonical helper so this route
+        // and the live page never disagree on "today so far". Computed on the
+        // same `todayRaw` rows we use for per-period aggregation below.
+        const todayTotals = sumTodayRows(todayRaw);
+        const todayHome = todayTotals.homeKwh;
+        const todayGrid = todayTotals.gridNetKwh;
+        const todaySolar = todayTotals.solarKwh;
         let latestSeriesSoc: { value: number; timestamp: Date } | null = null;
 
         // Pass 1: Prior day aggregates
@@ -491,9 +495,6 @@ export async function GET(request: Request) {
             const tp = schedule.getTariffPeriod(ts);
 
             seriesData.push(row);
-            todayHome += row.load_power;
-            todayGrid += row.grid_power;
-            todaySolar += row.solar_power;
             if (typeof row.battery_soc === 'number') {
                 latestSeriesSoc = { value: row.battery_soc, timestamp: ts };
             }
@@ -569,10 +570,7 @@ export async function GET(request: Request) {
             }
         }
 
-        // Convert today totals to kWh
-        todayHome = wattsToKilowatts(todayHome);
-        todayGrid = wattsToKilowatts(todayGrid);
-        todaySolar = wattsToKilowatts(todaySolar);
+        // (today totals already in kWh via sumTodayRows above)
 
         // Group by tariff for the renderer
         const tariffGroups = new Map<string, {

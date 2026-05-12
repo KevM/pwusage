@@ -3,8 +3,8 @@ import { energyToAveragePower } from '@/lib/energy-utils';
 
 type SparklineMetricKey = 'solar' | 'grid' | 'load';
 
-export const SPARKLINE_DISPLAY_WINDOW_HOURS = 4;
-export const DEFAULT_SPARKLINE_SCALE_WINDOW_HOURS = 12;
+export const SPARKLINE_DISPLAY_WINDOW_HOURS = 24;
+export const DEFAULT_SPARKLINE_SCALE_WINDOW_HOURS = 24;
 
 interface SparklinePoint {
     timestamp: string;

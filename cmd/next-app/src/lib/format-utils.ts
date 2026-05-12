@@ -39,3 +39,21 @@ export function formatTimeRange(
 
     return `${startStr} - ${endStr}`;
 }
+
+export function formatCentsPerKwh(dollars: number): string {
+    const cents = dollars * 100;
+    const formatted = new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 1
+    }).format(cents);
+    return `${formatted}¢ per kWh`;
+}
+
+export function formatCentsPerKwhShort(dollars: number): string {
+    const cents = dollars * 100;
+    const formatted = new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 1
+    }).format(cents);
+    return `${formatted}¢/kWh`;
+}

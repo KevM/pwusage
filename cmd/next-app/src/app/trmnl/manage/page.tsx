@@ -49,8 +49,8 @@ function ManageContent() {
     const [pluginSettingId, setPluginSettingId] = useState<number | null>(null);
     const [componentScreens, setComponentScreens] = useState<TrmnlComponentScreen[]>(buildDefaultTrmnlComponentScreens());
     const [editingScreenId, setEditingScreenId] = useState<string>('screen-1');
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
+    const [loading, setLoading] = useState<boolean>(Boolean(uuid));
+    const [error, setError] = useState<string>(uuid ? '' : 'Missing UUID');
     const [success, setSuccess] = useState('');
     const [previewByScreen, setPreviewByScreen] = useState<Record<string, ScreenPreviewState>>({});
     const [previewScale, setPreviewScale] = useState<number>(0.5);
@@ -80,11 +80,7 @@ function ManageContent() {
     };
 
     useEffect(() => {
-        if (!uuid) {
-            setError('Missing UUID');
-            setLoading(false);
-            return;
-        }
+        if (!uuid) return;
 
         if (!token) {
             console.warn('Missing Trmnl security token in URL');
@@ -146,10 +142,7 @@ function ManageContent() {
     }, [uuid, token, searchParams, pluginSettingIdParam]);
 
     useEffect(() => {
-        if (!selectedSite) {
-            setPreviewByScreen({});
-            return;
-        }
+        if (!selectedSite) return;
 
         let active = true;
         const timer = setTimeout(async () => {

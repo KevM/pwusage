@@ -35,6 +35,41 @@ function InstallContent() {
 
     const [autoConnecting, setAutoConnecting] = useState(false);
 
+    const performSetup = async (
+        siteId: string,
+        authCode: string,
+        callbackUrl: string | null,
+        uuid: string | null,
+        pluginSettingId: string | null = null,
+    ) => {
+        try {
+            const res = await fetch('/api/trmnl/setup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    code: authCode,
+                    site_id: siteId,
+                    uuid,
+                    plugin_setting_id: pluginSettingId,
+                }),
+            });
+
+            if (!res.ok) throw new Error(await res.text());
+
+            // Redirect back to Trmnl
+            if (callbackUrl) {
+                window.location.href = callbackUrl;
+            } else {
+                alert('Setup complete! You can close this window.');
+            }
+        } catch (err) {
+            setError((err as Error).message);
+            setLoading(false);
+            setAutoConnecting(false);
+        }
+    };
+
     // Effect to handle initial data load and auto-connection
     useEffect(() => {
         if (!code) return; // Wait for code
@@ -84,41 +119,6 @@ function InstallContent() {
                 setLoading(false);
             });
     }, [code, installationCallbackUrl, installationUuid]); // Only run once on mount (with code)
-
-    const performSetup = async (
-        siteId: string,
-        authCode: string,
-        callbackUrl: string | null,
-        uuid: string | null,
-        pluginSettingId: string | null = null,
-    ) => {
-        try {
-            const res = await fetch('/api/trmnl/setup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    code: authCode,
-                    site_id: siteId,
-                    uuid,
-                    plugin_setting_id: pluginSettingId,
-                }),
-            });
-
-            if (!res.ok) throw new Error(await res.text());
-
-            // Redirect back to Trmnl
-            if (callbackUrl) {
-                window.location.href = callbackUrl;
-            } else {
-                alert('Setup complete! You can close this window.');
-            }
-        } catch (err) {
-            setError((err as Error).message);
-            setLoading(false);
-            setAutoConnecting(false);
-        }
-    };
 
     const handleSetup = () => {
         // Extract plugin_setting_id from callback URL if possible for robust linking

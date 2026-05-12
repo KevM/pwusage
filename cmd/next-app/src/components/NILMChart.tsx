@@ -16,6 +16,7 @@ import {
 import { PowerData } from '@/lib/nilm/types';
 import { LoadEvent } from '@/lib/nilm/load-detection';
 import { buildSocCheckpoints } from '@/lib/soc-checkpoints';
+import { energyHex } from '@/lib/energy-colors';
 
 interface NILMChartProps {
     data: PowerData[];
@@ -342,11 +343,13 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
         axis: isDarkMode ? "#9CA3AF" : "#6B7280",
         cursor: isDarkMode ? "#6B7280" : "#9CA3AF",
         text: isDarkMode ? "#9CA3AF" : "#6B7280",
-        solar: isDarkMode ? "#fbbf24" : "#f59e0b",
-        battery: isDarkMode ? "#4ade80" : "#10b981",
+        // Energy metric colors live in lib/energy-colors so the live page,
+        // tiles, legends and this chart all agree.
+        solar: energyHex('solar', isDarkMode),
+        battery: energyHex('battery', isDarkMode),
         soc: isDarkMode ? "#86efac" : "#166534",
-        load: isDarkMode ? "#c084fc" : "#9333ea", // Purple-400 / Purple-600
-        gridTrace: isDarkMode ? "#A67B5B" : "#6F4E37"  // Cocoa Brown (Dark/Light)
+        load: energyHex('load', isDarkMode),
+        gridTrace: energyHex('grid', isDarkMode)
     }), [isDarkMode]);
 
     const getDisplayTime = React.useCallback((val: string | Date | number) => {

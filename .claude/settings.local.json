@@ -28,7 +28,14 @@
       "Bash(python3)",
       "Bash(cd *)",
       "Bash(cd * && git *)",
-      "Skill(update-config)"
+      "Skill(update-config)",
+      "Bash(git *)",
+      "Bash(npm audit *)",
+      "Bash(npm view *)",
+      "Bash(npm ls *)",
+      "Bash(cp package.json /tmp/package.json.bak)",
+      "Bash(cp package-lock.json /tmp/package-lock.json.bak)",
+      "Skill(schedule)"
     ]
   }
 }

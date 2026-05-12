@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { formatTouName } from '../lib/format-utils';
 import { fetchSiteLiveData, isValidSiteId } from '@/lib/site-live-data-client';
+import { useVisiblePolling } from '@/lib/use-visible-polling';
 
 interface LiveStats {
     solarPower: number;
@@ -17,36 +18,17 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
     const [stats, setStats] = useState(initialStats);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
-    useEffect(() => {
+    useVisiblePolling(async () => {
         if (!isValidSiteId(siteId)) return;
-
-        let isMounted = true;
-        const controller = new AbortController();
-        const timer = setTimeout(() => setLastUpdate(new Date()), 0); // Set initial time on client mount
-
-        async function fetchStats() {
-            try {
-                const data = await fetchSiteLiveData(siteId, controller.signal);
-                if (!isMounted) return;
-                setStats(data);
-                setLastUpdate(new Date());
-            } catch (error) {
-                if (error instanceof DOMException && error.name === 'AbortError') {
-                    return;
-                }
-                console.error('Failed to refresh site stats:', error);
-            }
+        try {
+            const data = await fetchSiteLiveData(siteId);
+            setStats(data);
+            setLastUpdate(new Date());
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') return;
+            console.error('Failed to refresh site stats:', error);
         }
-
-        const interval = setInterval(fetchStats, 60000); // 60 seconds
-
-        return () => {
-            isMounted = false;
-            clearTimeout(timer);
-            controller.abort();
-            clearInterval(interval);
-        };
-    }, [siteId]);
+    }, 60000);
 
     return (
         <div className="mb-6">

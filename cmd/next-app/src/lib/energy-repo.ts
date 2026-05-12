@@ -28,6 +28,72 @@ export interface CycleAggregateRow {
     battery_power: number;
 }
 
+/**
+ * Canonical "today so far" scalar totals. Single source of truth — both the
+ * live page and the Trmnl markup endpoint compute these from the same
+ * `EnergyData` rows via `sumTodayRows`, so the two surfaces never disagree.
+ *
+ * Sign convention: positive grid = importing, negative = exporting. The
+ * gross splits (`importKwh` / `exportKwh`) are always non-negative magnitudes
+ * for display; `gridNetKwh = importKwh - exportKwh`.
+ */
+export interface TodayTotals {
+    homeKwh: number;
+    solarKwh: number;
+    gridNetKwh: number;
+    importKwh: number;
+    exportKwh: number;
+    batteryNetKwh: number;
+    latestBatterySoc: number | null;
+}
+
+const EMPTY_TODAY_TOTALS: TodayTotals = {
+    homeKwh: 0, solarKwh: 0, gridNetKwh: 0,
+    importKwh: 0, exportKwh: 0, batteryNetKwh: 0,
+    latestBatterySoc: null
+};
+
+/**
+ * Sum a set of 5-minute `EnergyData` rows into `TodayTotals` (kWh). Each row
+ * stores energy (Wh) for its interval, so summing the columns and dividing
+ * by 1000 produces total kWh for the range. Import/export are split by the
+ * sign of each row's `grid_power` before conversion.
+ */
+export function sumTodayRows(rows: EnergyData[]): TodayTotals {
+    if (rows.length === 0) return { ...EMPTY_TODAY_TOTALS };
+
+    let homeWh = 0;
+    let solarWh = 0;
+    let gridNetWh = 0;
+    let importWh = 0;
+    let exportWh = 0;
+    let batteryWh = 0;
+    let latestSoc: { value: number; timestamp: Date } | null = null;
+
+    for (const row of rows) {
+        homeWh += row.load_power;
+        solarWh += row.solar_power;
+        gridNetWh += row.grid_power;
+        if (row.grid_power > 0) importWh += row.grid_power;
+        else if (row.grid_power < 0) exportWh += -row.grid_power;
+        batteryWh += row.battery_power;
+        if (typeof row.battery_soc === 'number'
+            && (!latestSoc || row.timestamp > latestSoc.timestamp)) {
+            latestSoc = { value: row.battery_soc, timestamp: row.timestamp };
+        }
+    }
+
+    return {
+        homeKwh: wattsToKilowatts(homeWh),
+        solarKwh: wattsToKilowatts(solarWh),
+        gridNetKwh: wattsToKilowatts(gridNetWh),
+        importKwh: wattsToKilowatts(importWh),
+        exportKwh: wattsToKilowatts(exportWh),
+        batteryNetKwh: wattsToKilowatts(batteryWh),
+        latestBatterySoc: latestSoc?.value ?? null
+    };
+}
+
 
 export class EnergyRepo {
     /**
@@ -187,14 +253,50 @@ export class EnergyRepo {
         return Array.from(aggregation.values());
     }
 
+    /**
+     * Returns both billing-cycle totals and today's totals in a single call,
+     * keyed by TOU period name (via getUsageByTOU). Used by the live detail
+     * page to compute marginal cost per period and show today's contribution.
+     */
+    async getCycleAndTodayTotals(
+        siteId: string,
+        cycleStart: Date,
+        todayStart: Date,
+        end: Date
+    ): Promise<{ cycle: UsageData[]; today: UsageData[] }> {
+        const [cycle, today] = await Promise.all([
+            this.getUsageByTOU(siteId, cycleStart, end),
+            this.getUsageByTOU(siteId, todayStart, end)
+        ]);
+        return { cycle, today };
+    }
+
+    /**
+     * Canonical "today so far" totals. Fetches the raw 5-minute rows once and
+     * runs them through `sumTodayRows`. Both the live page and the Trmnl
+     * markup route call this (or `sumTodayRows` directly on rows they already
+     * have) — there should not be a third place that re-derives these.
+     */
+    async getTodayTotals(siteId: string, todayStart: Date, end: Date): Promise<TodayTotals> {
+        const rows = await this.getRawEnergyData(siteId, todayStart, end);
+        return sumTodayRows(rows);
+    }
+
     async hasData(siteId: string): Promise<boolean> {
         const { rows } = await pool.query('SELECT 1 FROM "EnergyData" WHERE site_id = $1 LIMIT 1', [siteId]);
         return rows.length > 0;
     }
 
-    async getLatestEnergyData(siteId: string): Promise<{ timestamp: Date; batterySoc: number | null } | null> {
+    async getLatestEnergyData(siteId: string): Promise<{
+        timestamp: Date;
+        batterySoc: number | null;
+        batteryPower: number;
+        solarPower: number;
+        gridPower: number;
+        loadPower: number;
+    } | null> {
         const { rows } = await pool.query(`
-            SELECT timestamp, battery_soc
+            SELECT timestamp, battery_soc, battery_power, solar_power, grid_power, load_power
             FROM "EnergyData"
             WHERE site_id = $1
             ORDER BY timestamp DESC
@@ -206,7 +308,11 @@ export class EnergyRepo {
             timestamp: new Date(rows[0].timestamp),
             batterySoc: rows[0].battery_soc === null || rows[0].battery_soc === undefined
                 ? null
-                : Number(rows[0].battery_soc)
+                : Number(rows[0].battery_soc),
+            batteryPower: Number(rows[0].battery_power),
+            solarPower: Number(rows[0].solar_power),
+            gridPower: Number(rows[0].grid_power),
+            loadPower: Number(rows[0].load_power),
         };
     }
 

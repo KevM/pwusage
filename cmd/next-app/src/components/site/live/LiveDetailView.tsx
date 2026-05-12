@@ -1,0 +1,88 @@
+import { SectionCard } from '@/components/ui/SectionCard';
+import type { TodayTotals, UsageData } from '@/lib/energy-repo';
+import type { EnergyData } from '@/lib/db';
+import type { CheaperPeriod } from '@/lib/next-cheaper-period';
+import { DailyTotalsRow } from './DailyTotalsRow';
+import { DailyByPeriodTable } from './DailyByPeriodTable';
+import { PeriodCardRow, type ActivePeriod } from './PeriodCardRow';
+import { TodayEnergyChart } from './TodayEnergyChart';
+import { HalfHourRefresh } from './HalfHourRefresh';
+
+
+export interface LiveDetailViewProps {
+    siteId: string;
+    siteName: string;
+    siteTimezone: string;
+    batterySoC: number | null;
+    batteryPower: number;
+    solarPower: number;
+    gridPower: number;
+    loadPower: number;
+    cycle: UsageData[];
+    today: UsageData[];
+    todayTotals: TodayTotals;
+    todayChartRows: EnergyData[];
+    todayStart: Date;
+    now: Date;
+    activePeriod: ActivePeriod | null;
+    hasTariff: boolean;
+    nextCheaper: CheaperPeriod | null;
+    nextCheaperPhrase: string | null;
+    nextStartPhraseByKey?: Record<string, string>;
+    activeIsCheapest?: boolean;
+}
+
+export function LiveDetailView({
+    siteId, siteName, siteTimezone,
+    batterySoC, batteryPower,
+    solarPower, gridPower, loadPower,
+    cycle, today, todayTotals,
+    todayChartRows, todayStart, now,
+    activePeriod, hasTariff,
+    nextCheaper, nextCheaperPhrase,
+    nextStartPhraseByKey, activeIsCheapest
+}: LiveDetailViewProps) {
+
+
+    return (
+        <div className="space-y-6">
+            <SectionCard title={`${siteName} — Today`} density="compact">
+                <TodayEnergyChart
+                    rows={todayChartRows}
+                    todayStart={todayStart}
+                    now={now}
+                    timezone={siteTimezone}
+                    currentPower={{
+                        solar: solarPower,
+                        grid: gridPower,
+                        load: loadPower,
+                        battery: batteryPower
+                    }}
+                />
+            </SectionCard>
+
+            <SectionCard title="Today so far" density="compact" bodyClassName="space-y-4">
+                <DailyTotalsRow
+                    totals={todayTotals}
+                    soc={batterySoC}
+                    batteryPower={batteryPower}
+                />
+                <DailyByPeriodTable today={today} />
+                <HalfHourRefresh />
+            </SectionCard>
+
+            <SectionCard title="Load timing this cycle" density="compact" bodyClassName="space-y-3">
+                <PeriodCardRow
+                    siteId={siteId}
+                    cycle={cycle}
+                    activePeriod={activePeriod}
+                    hasTariff={hasTariff}
+                    nextCheaper={nextCheaper}
+                    nextCheaperPhrase={nextCheaperPhrase}
+                    nextStartPhraseByKey={nextStartPhraseByKey}
+                    activeIsCheapest={activeIsCheapest}
+                />
+            </SectionCard>
+        </div>
+    );
+}

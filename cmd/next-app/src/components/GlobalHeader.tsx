@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import Image from 'next/image';
-import { useParams } from 'next/navigation';
+import { useParams, usePathname } from 'next/navigation';
 // SiteSwitcher import removed
 import { HeaderLiveStats } from './HeaderLiveStats';
 import { NewsNotificationIcon } from './NewsNotificationIcon';
@@ -14,13 +14,15 @@ interface GlobalHeaderProps {
 
 export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
     const params = useParams();
+    const pathname = usePathname();
     const currentSiteIdParam = params?.id;
     const currentSiteId = Array.isArray(currentSiteIdParam) ? currentSiteIdParam[0] : currentSiteIdParam;
+    const onLiveDetail = Boolean(currentSiteId && pathname === `/site/${currentSiteId}/live`);
 
     return (
         <header className="w-full bg-white dark:bg-slate-900 p-4 md:px-8 shadow-sm">
             <div className="max-w-screen-2xl mx-auto">
-                <div className="flex flex-wrap md:flex-nowrap items-start md:items-center justify-between gap-x-4 gap-y-3">
+                <div className={`flex flex-wrap md:flex-nowrap items-start md:items-center gap-x-4 gap-y-3 ${onLiveDetail ? 'justify-start' : 'justify-between'}`}>
                     {/* Logo Group - Always First */}
                     <div className="flex items-center gap-6 order-1 shrink-0">
                         <Link href="/" className="flex items-center gap-3 group shrink-0">
@@ -83,7 +85,7 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
                     </div>
 
                     {/* Live Stats Group - Order 2 on Mobile (Above Actions), Order 2 on Desktop (Center) */}
-                    {currentSiteId && currentSiteId !== 'undefined' && (
+                    {currentSiteId && currentSiteId !== 'undefined' && !onLiveDetail && (
                         <div className="order-2 md:order-2 flex flex-1 min-w-0 justify-center md:px-4 mt-1 md:mt-0">
                             <HeaderLiveStats siteId={currentSiteId} />
                         </div>

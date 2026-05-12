@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition, useEffect } from 'react';
+import { useState, useTransition } from 'react';
 import { updateBillingStartDay } from '@/app/site/[id]/settings/actions';
 import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Form';
@@ -15,10 +15,14 @@ export function BillingStartDayForm({ siteId, initialDay }: Props) {
     const [isPending, startTransition] = useTransition();
     const [saved, setSaved] = useState(false);
 
-    // Sync state if server data changes (e.g. after revalidation)
-    useEffect(() => {
+    // Sync state if server data changes (e.g. after revalidation).
+    // Uses the React-documented render-phase pattern instead of useEffect:
+    // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+    const [syncedInitialDay, setSyncedInitialDay] = useState(initialDay);
+    if (syncedInitialDay !== initialDay) {
+        setSyncedInitialDay(initialDay);
         setDay(initialDay);
-    }, [initialDay]);
+    }
 
     const isDirty = day !== initialDay;
 

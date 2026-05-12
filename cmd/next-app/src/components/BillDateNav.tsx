@@ -41,13 +41,21 @@ export function BillDateNav({
     const [startDate, setStartDate] = useState(customStart);
     const [endDate, setEndDate] = useState(customEnd);
 
-    // Sync state with props if they change (e.g. navigation)
-    React.useEffect(() => {
+    // Sync state with props if they change (e.g. navigation).
+    // Uses the React-documented render-phase pattern instead of useEffect:
+    // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+    const [syncedProps, setSyncedProps] = useState({ start: customStart, end: customEnd, range: isCustomRange });
+    if (
+        syncedProps.start !== customStart ||
+        syncedProps.end !== customEnd ||
+        syncedProps.range !== isCustomRange
+    ) {
+        setSyncedProps({ start: customStart, end: customEnd, range: isCustomRange });
         if (isCustomRange) {
             setStartDate(customStart);
             setEndDate(customEnd);
         }
-    }, [isCustomRange, customStart, customEnd]); // Lint might want React.useEffect vs useEffect
+    }
 
     const handleMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const value = e.target.value; // YYYY-MM

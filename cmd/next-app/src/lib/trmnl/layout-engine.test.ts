@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateLayoutBudget, LayoutState } from './layout-engine';
+import { calculateLayoutBudget } from './layout-engine';
 import { RenderContext } from '../trmnl-renderer';
 import { TrmnlComponentConfig } from '../trmnl-component-config';
 

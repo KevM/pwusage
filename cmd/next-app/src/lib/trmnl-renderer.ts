@@ -1,5 +1,3 @@
-import { EnergyData } from './db';
-import { wattsToKilowatts } from './energy-utils';
 import { DEFAULT_TRMNL_COMPONENT_CONFIG } from './trmnl-component-config';
 import { getSunIcon, getGridIcon } from './trmnl/icons';
 import { calculateLayoutBudget } from './trmnl/layout-engine';
@@ -31,7 +29,6 @@ export class TrmnlRenderer {
             isVeryDenseLayout,
             isDenseLayout,
             compactBillMode,
-            isLiveEnergyBillLayout,
             liveIconSize,
             liveValueFontPx,
             liveGap,

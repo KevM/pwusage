@@ -1,5 +1,7 @@
+import { Temporal } from '@js-temporal/polyfill';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
+import { getCurrentCycleStart, getSiteLocalDate, addMonthsInSiteTimezone } from '@/lib/billing-cycle';
 
 import { BillSummary } from '@/components/BillSummary';
 import { BillDateNav } from '@/components/BillDateNav';
@@ -44,48 +46,55 @@ export default async function UsagePage({ params, searchParams }: {
         const [sy, sm, sd] = queryStart.split('-').map(Number);
         const [ey, em, ed] = queryEnd.split('-').map(Number);
 
-        // Construct dates (00:00:00 local time implicitly via Date constructor with args)
-        // Note: Months depend on 0-index.
-        start = new Date(sy, sm - 1, sd);
+        // Parse dates as site-local time, convert to UTC instant at midnight.
+        start = getSiteLocalDate(sy, sm, sd, site.timezone);
 
-        // For end date: logic usually expects exclusive end for database queries?
-        // Or inclusive for UI display?
-        // In previous logic: "End date is start + 1 month".
-        // repo.getUsageByTOU expects end date (exclusive upper bound).
-        // If user picks "Dec 11" as end date, they usually mean "Include Dec 11".
-        // So we should set end to Dec 12 00:00:00 OR Dec 11 23:59:59.
-        // Let's add 1 day to the parsed end date.
-        end = new Date(ey, em - 1, ed);
-        end.setDate(end.getDate() + 1);
+        // For end date: repo.getUsageByTOU expects exclusive upper bound.
+        // If user picks "Dec 11" as end date, they mean "Include Dec 11".
+        // So we set end to Dec 12 00:00 UTC.
+        end = getSiteLocalDate(ey, em, ed, site.timezone);
+        end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
 
         isCustomRange = true;
     } else if (queryDate) {
         // Specific Billing Cycle Mode
         const [y, m, d] = queryDate.split('-').map(Number);
-        start = new Date(y, m - 1, d);
-        end = new Date(start.getFullYear(), start.getMonth() + 1, start.getDate());
-    } else {
-        // Default to Current Billing Cycle
-        const now = new Date();
-        const billingDay = site.billing_start_day || 1;
-        let startMonth = now.getMonth();
-        const startYear = now.getFullYear();
+        start = getSiteLocalDate(y, m, d, site.timezone);
 
-        if (now.getDate() < billingDay) {
-            startMonth--;
-        }
-        start = new Date(startYear, startMonth, billingDay);
-        end = new Date(start.getFullYear(), start.getMonth() + 1, start.getDate());
+        // Calculate end as one month later (same day, next month).
+        // Use 35-day pivot to ensure we land in the next month, then getSiteLocalDate
+        // to get the correct midnight in the site's timezone.
+        const nextMonthPivot = new Date(start.getTime() + 35 * 24 * 60 * 60 * 1000);
+        const instant = Temporal.Instant.from(nextMonthPivot.toISOString());
+        const zonedDate = instant.toZonedDateTimeISO(site.timezone);
+        end = getSiteLocalDate(zonedDate.year, zonedDate.month, d, site.timezone);
+    } else {
+        // Default to Current Billing Cycle (computed in the site's timezone).
+        const now = new Date();
+        start = getCurrentCycleStart(site.billing_start_day, now, site.timezone);
+        // End = next cycle start. Pivot 35 days forward (always lands in the next month)
+        // so the +1-month math goes through the same tz-aware helper.
+        const nextMonthPivot = new Date(start.getTime() + 35 * 24 * 60 * 60 * 1000);
+        end = getCurrentCycleStart(site.billing_start_day, nextMonthPivot, site.timezone);
     }
 
     const usage = await repo.getUsageByTOU(id, start, end);
 
-    // Format dates for display
+    // Convert UTC instant to site-local date components for display
+    const getSiteLocalComponents = (utcDate: Date) => {
+        const instant = Temporal.Instant.from(utcDate.toISOString());
+        const zoned = instant.toZonedDateTimeISO(site.timezone);
+        return {
+            year: zoned.year,
+            month: zoned.month,
+            day: zoned.day
+        };
+    };
+
+    // Format dates using site-local date components (for URLs and display)
     const fmtDate = (d: Date) => {
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${y}-${m}-${day}`;
+        const { year, month, day } = getSiteLocalComponents(d);
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     };
 
     // Recalculate end display date (inclusive) for UI label
@@ -94,8 +103,9 @@ export default async function UsagePage({ params, searchParams }: {
     displayEnd.setDate(displayEnd.getDate() - 1);
 
     // Previous and Next month links (only relevant for non-custom)
-    const prevDate = new Date(start.getFullYear(), start.getMonth() - 1, start.getDate());
-    const nextDate = new Date(start.getFullYear(), start.getMonth() + 1, start.getDate());
+    // Use timezone-aware month arithmetic to handle sites east of UTC correctly
+    const prevDate = addMonthsInSiteTimezone(start, -1, site.timezone);
+    const nextDate = addMonthsInSiteTimezone(start, 1, site.timezone);
 
 
     // Check if next month would be in the future
@@ -106,17 +116,17 @@ export default async function UsagePage({ params, searchParams }: {
 
     const getDisplayLabel = (d: Date, includeYear: boolean) => {
         const mNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        const month = mNames[d.getMonth()];
-        const day = d.getDate();
-        if (includeYear) return `${month} ${day}, ${d.getFullYear()}`;
-        return `${month} ${day}`;
+        const { year, month, day } = getSiteLocalComponents(d);
+        if (includeYear) return `${mNames[month - 1]} ${day}, ${year}`;
+        return `${mNames[month - 1]} ${day}`;
     };
 
     const dateRangeLabel = `${getDisplayLabel(start, false)} - ${getDisplayLabel(displayEnd, true)}`;
 
     // Usage Page is always viewing "full bill", so current val matches start
-    const currentMonthVal = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
-    const fullBillDateStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(site.billing_start_day || 1).padStart(2, '0')}`;
+    const startLocal = getSiteLocalComponents(start);
+    const currentMonthVal = `${startLocal.year}-${String(startLocal.month).padStart(2, '0')}`;
+    const fullBillDateStr = `${startLocal.year}-${String(startLocal.month).padStart(2, '0')}-${String(site.billing_start_day || 1).padStart(2, '0')}`;
 
     return (
         <PageShell

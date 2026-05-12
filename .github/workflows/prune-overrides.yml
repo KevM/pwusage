@@ -1,0 +1,113 @@
+name: Prune Dependency Overrides
+
+on:
+  schedule:
+    - cron: '0 6 * * 0'  # Sunday 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prune:
+    name: Try to prune npm overrides
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cmd/next-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Detect prunable overrides
+        id: prune
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          if ! jq -e '.overrides | type == "object" and (length > 0)' package.json >/dev/null; then
+            echo "No overrides defined; nothing to prune."
+            echo "removed=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ORIGINAL=$(cat package.json)
+          KEYS=$(jq -r '.overrides | keys[]' package.json)
+          REMOVED=()
+
+          apply_removals() {
+            echo "$ORIGINAL" > package.json
+            for k in "$@"; do
+              jq --arg k "$k" 'del(.overrides[$k])' package.json > package.tmp.json
+              mv package.tmp.json package.json
+            done
+            rm -f package-lock.json
+            npm install --silent --no-audit --no-fund
+          }
+
+          test_state() {
+            npm audit --audit-level=moderate --silent \
+              && npm run build --silent \
+              && npm test --silent
+          }
+
+          while IFS= read -r key; do
+            echo "::group::Testing removal of override: $key"
+            candidate=("${REMOVED[@]}" "$key")
+            apply_removals "${candidate[@]}"
+            if test_state; then
+              echo "✓ '$key' is no longer needed"
+              REMOVED=("${candidate[@]}")
+            else
+              echo "✗ '$key' is still needed; keeping it"
+              apply_removals "${REMOVED[@]}"
+            fi
+            echo "::endgroup::"
+          done <<< "$KEYS"
+
+          if [ ${#REMOVED[@]} -eq 0 ]; then
+            echo "No prunable overrides found."
+            echo "removed=" >> "$GITHUB_OUTPUT"
+            # Leave the working tree clean so no PR gets opened.
+            echo "$ORIGINAL" > package.json
+            rm -f package-lock.json
+            npm install --silent --no-audit --no-fund
+          else
+            printf 'Prunable overrides:\n'
+            printf ' - %s\n' "${REMOVED[@]}"
+            {
+              echo 'removed<<EOF'
+              printf ' - `%s`\n' "${REMOVED[@]}"
+              echo 'EOF'
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Pull Request
+        if: steps.prune.outputs.removed != ''
+        uses: peter-evans/create-pull-request@v6
+        with:
+          path: .
+          add-paths: |
+            cmd/next-app/package.json
+            cmd/next-app/package-lock.json
+          commit-message: "chore: prune unnecessary npm overrides"
+          branch: chore/prune-overrides
+          base: main
+          delete-branch: true
+          title: "chore: prune unnecessary npm overrides"
+          body: |
+            Automated weekly check found these overrides are no longer needed:
+
+            ${{ steps.prune.outputs.removed }}
+
+            Each was tested by removing it, regenerating the lockfile, and running:
+            - `npm audit --audit-level=moderate`
+            - `npm run build`
+            - `npm test`
+
+            All checks passed without the override.

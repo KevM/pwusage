@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import Link from 'next/link';
 import { fetchSiteLiveData, isValidSiteId, SiteLiveDataFetchError } from '@/lib/site-live-data-client';
 import type { SiteLiveData, SiteLiveSparklinePoint } from '@/lib/site-live-data-client';
 import { LiveMetricChip } from '@/components/ui/LiveMetricChip';
@@ -8,6 +9,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { MiniSparkline } from '@/components/ui/MiniSparkline';
 import { BatteryStatusGlyph } from '@/components/ui/BatteryStatusGlyph';
 import { getBatteryActivity, type BatteryActivity } from '@/lib/live-indicators';
+import { useVisiblePolling } from '@/lib/use-visible-polling';
 
 function BatteryActivityGlyph({ status }: { status: Exclude<BatteryActivity, 'idle'> }) {
     if (status === 'charging') {
@@ -39,12 +41,16 @@ function BatteryActivityGlyph({ status }: { status: Exclude<BatteryActivity, 'id
     );
 }
 
-function LiveStatsShell({ children }: { children: React.ReactNode }) {
-    return (
-        <div className="inline-flex w-full md:w-auto flex-wrap md:flex-nowrap items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-bg-muted/60 px-2.5 py-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 md:justify-start">
-            {children}
-        </div>
-    );
+function LiveStatsShell({ children, href }: { children: React.ReactNode; href?: string }) {
+    const baseClass = "inline-flex w-full md:w-auto flex-wrap md:flex-nowrap items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-bg-muted/60 px-2.5 py-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 md:justify-start";
+    if (href) {
+        return (
+            <Link href={href} className={`${baseClass} cursor-pointer transition-shadow hover:shadow-md`}>
+                {children}
+            </Link>
+        );
+    }
+    return <div className={baseClass}>{children}</div>;
 }
 
 function LiveStateIndicator({
@@ -72,81 +78,35 @@ function LiveStateIndicator({
 export function HeaderLiveStats({ siteId }: { siteId: string }) {
     const [stats, setStats] = useState<SiteLiveData | null>(null);
     const [loading, setLoading] = useState(isValidSiteId(siteId));
+    const [redirectedToLogin, setRedirectedToLogin] = useState(false);
 
-    useEffect(() => {
+    useVisiblePolling(async () => {
         if (!isValidSiteId(siteId)) return;
-
-        let isMounted = true;
-        let redirectedToLogin = false;
-        const controller = new AbortController();
-        let interval: ReturnType<typeof setInterval> | null = null;
-
-        async function fetchStats() {
-            try {
-                if (!isMounted) return;
-                const data = await fetchSiteLiveData(siteId, controller.signal);
-                if (!isMounted) return;
-
-                setStats(data);
-                setLoading(false);
-            } catch (error) {
-                if (error instanceof DOMException && error.name === 'AbortError') {
-                    return;
+        try {
+            const data = await fetchSiteLiveData(siteId);
+            setStats(data);
+            setLoading(false);
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') return;
+            if (error instanceof SiteLiveDataFetchError && error.status === 401) {
+                if (!redirectedToLogin) {
+                    setRedirectedToLogin(true);
+                    console.warn('[HeaderLiveStats] Unauthorized. Redirecting to login...');
+                    window.location.href = '/login';
                 }
-                if (error instanceof SiteLiveDataFetchError && error.status === 401) {
-                    if (!redirectedToLogin) {
-                        redirectedToLogin = true;
-                        console.warn('[HeaderLiveStats] Unauthorized. Redirecting to login...');
-                        window.location.href = '/login';
-                    }
-                    return;
-                }
-                if (isMounted) {
-                    // Network/transient failures should not crash client rendering.
-                    console.warn('Failed to refresh header stats:', error);
-                    setLoading(false);
-                }
+                return;
             }
+            // Network/transient failures should not crash client rendering.
+            console.warn('Failed to refresh header stats:', error);
+            setLoading(false);
         }
+    }, 300000);
 
-        function startPolling() {
-            if (interval) clearInterval(interval);
-            fetchStats();
-            interval = setInterval(fetchStats, 300000);
-        }
-
-        function stopPolling() {
-            if (interval) {
-                clearInterval(interval);
-                interval = null;
-            }
-        }
-
-        function handleVisibilityChange() {
-            if (document.visibilityState === 'visible') {
-                startPolling();
-            } else {
-                stopPolling();
-            }
-        }
-
-        // Pause polling when tab is hidden, resume when visible
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-
-        // Initialize based on current visibility state
-        handleVisibilityChange();
-
-        return () => {
-            isMounted = false;
-            controller.abort();
-            stopPolling();
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-        };
-    }, [siteId]);
+    const detailHref = isValidSiteId(siteId) ? `/site/${siteId}/live` : undefined;
 
     if (loading) {
         return (
-            <LiveStatsShell>
+            <LiveStatsShell href={detailHref}>
                 <LiveStateIndicator tone="loading" label="Live" />
                 <div className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
                     <Spinner size="sm" className="text-blue-500 dark:text-blue-400" />
@@ -158,7 +118,7 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
 
     if (!stats) {
         return (
-            <LiveStatsShell>
+            <LiveStatsShell href={detailHref}>
                 <LiveStateIndicator tone="error" label="Live" />
                 <span className="text-sm font-medium text-red-700 dark:text-red-300">
                     Status unavailable
@@ -208,7 +168,7 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
     );
 
     return (
-        <LiveStatsShell>
+        <LiveStatsShell href={detailHref}>
             <LiveStateIndicator tone="live" label="Live" />
             <LiveMetricChip
                 label="Battery"

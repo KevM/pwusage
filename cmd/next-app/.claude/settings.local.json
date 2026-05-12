@@ -6,13 +6,12 @@
       "Bash(npm run *)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(awk *",
       "Bash(ls -d .worktrees)",
       "Bash(npm install *)",
-      "Bash(grep *",
       "Bash(node -e ' *)",
       "Bash(npx vitest *)",
-      "Bash(gh pr *)"
+      "Bash(gh pr *)",
+      "Skill(update-config)"
     ]
   },
   "enabledPlugins": {

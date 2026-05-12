@@ -1,0 +1,284 @@
+import { describe, expect, it } from 'vitest';
+import { formatRelativeStart, findNextCheaperPeriod, findNextStartsByKey, periodKey } from './next-cheaper-period';
+import type { UsageData } from './energy-repo';
+import { Schedule, type TariffPeriod } from './schedule';
+import type { Tariff } from './db';
+
+describe('formatRelativeStart', () => {
+    const tz = 'America/Los_Angeles';
+
+    it('renders same-day starts as "today at H AM/PM"', () => {
+        // Both in LA timezone on March 15, 2026 (PDT, UTC-7).
+        const now = new Date(Date.UTC(2026, 2, 15, 18, 0, 0)); // 11 AM LA
+        const start = new Date(Date.UTC(2026, 2, 16, 3, 0, 0)); // 8 PM LA same day
+        expect(formatRelativeStart(start, now, tz)).toBe('today at 8 PM');
+    });
+
+    it('renders next-day starts as "tomorrow at H AM/PM"', () => {
+        const now = new Date(Date.UTC(2026, 2, 15, 22, 0, 0)); // 3 PM LA Mar 15
+        const start = new Date(Date.UTC(2026, 2, 16, 13, 0, 0)); // 6 AM LA Mar 16
+        expect(formatRelativeStart(start, now, tz)).toBe('tomorrow at 6 AM');
+    });
+
+    it('renders within-week starts with weekday', () => {
+        // Sunday Mar 15 → Friday Mar 20 within the week.
+        const now = new Date(Date.UTC(2026, 2, 15, 18, 0, 0)); // 11 AM LA Sun
+        const start = new Date(Date.UTC(2026, 2, 20, 15, 0, 0)); // 8 AM LA Fri
+        expect(formatRelativeStart(start, now, tz)).toBe('Friday at 8 AM');
+    });
+
+    it('renders further-out starts with month + day', () => {
+        const now = new Date(Date.UTC(2026, 2, 15, 18, 0, 0)); // Mar 15
+        const start = new Date(Date.UTC(2026, 2, 25, 15, 0, 0)); // Mar 25
+        expect(formatRelativeStart(start, now, tz)).toBe('Mar 25 at 8 AM');
+    });
+
+    it('preserves minutes when not on the hour', () => {
+        const now = new Date(Date.UTC(2026, 2, 15, 18, 0, 0));
+        const start = new Date(Date.UTC(2026, 2, 16, 3, 30, 0)); // 8:30 PM LA same day
+        expect(formatRelativeStart(start, now, tz)).toBe('today at 8:30 PM');
+    });
+});
+
+// Minimal stub returning a (distinct-id'd) period for any timestamp in its
+// [start, end] window. Periods must not overlap. Used by walker-agnostic tests.
+function makeStubSchedule(periods: TariffPeriod[]): Schedule {
+    const stub = {
+        getTariffPeriod(t: Date): TariffPeriod | null {
+            for (const p of periods) {
+                if (t >= p.start && t <= p.end) return p;
+            }
+            return null;
+        }
+    };
+    return stub as unknown as Schedule;
+}
+
+function makePeriod(scheduleId: number, name: string, buyRate: number, sellRate: number, start: Date, end: Date): TariffPeriod {
+    return {
+        start,
+        end,
+        tariff: { id: 1, site_id: 's', updated: new Date(), name: 'Tariff' },
+        season: { id: 1, tariff_id: 1, name: 'Season', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: buyRate, sell_rate: sellRate },
+        schedule: { id: scheduleId, season_id: 1, name, buy_rate: buyRate, sell_rate: sellRate, from_day_of_week: null, from_hour: null, from_minute: null, to_day_of_week: null, to_hour: null, to_minute: null }
+    };
+}
+
+function makeUsage(name: string, buyRate: number, sellRate: number, gridUsage: number): UsageData {
+    return {
+        start: new Date(),
+        homeUsage: 0,
+        gridUsage,
+        solarProduction: 0,
+        batteryChange: 0,
+        tariff: { id: 1, site_id: 's', updated: new Date(), name: 'Tariff' },
+        touName: name,
+        buyRate,
+        sellRate,
+        cost: 0
+    };
+}
+
+describe('findNextCheaperPeriod', () => {
+    it('returns the next period whose marginal cost is lower than active', () => {
+        const t0 = new Date(Date.UTC(2026, 2, 15, 18, 0, 0)); // 18:00 UTC
+        const onPeak = makePeriod(/*id*/ 100, 'On-Peak', 0.30, 0.03,
+            new Date(Date.UTC(2026, 2, 15, 16, 0, 0)),
+            new Date(Date.UTC(2026, 2, 15, 23, 59, 59, 999)));
+        const offPeak = makePeriod(/*id*/ 200, 'Off-Peak', 0.10, 0.03,
+            new Date(Date.UTC(2026, 2, 16, 0, 0, 0)),
+            new Date(Date.UTC(2026, 2, 16, 15, 59, 59, 999)));
+
+        const schedule = makeStubSchedule([onPeak, offPeak]);
+        const cycle: UsageData[] = [
+            makeUsage('On-Peak', 0.30, 0.03, 1_000_000),   // net importer → buy → 0.30
+            makeUsage('Off-Peak', 0.10, 0.03, -50_000)     // net exporter → sell → 0.03
+        ];
+
+        const result = findNextCheaperPeriod(schedule, t0, cycle, 'UTC', 48);
+        expect(result).not.toBeNull();
+        expect(result!.name).toBe('Off-Peak');
+        expect(result!.marginalCost).toBeCloseTo(0.03);
+        expect(result!.basis).toBe('sell');
+        // Walker detects transition at the hour boundary when schedule.id changes.
+        expect(result!.startsAt).toEqual(new Date(Date.UTC(2026, 2, 16, 0, 0, 0)));
+    });
+
+    it('returns null when active period is already the cheapest', () => {
+        const t0 = new Date(Date.UTC(2026, 2, 15, 1, 0, 0));
+        const offPeak = makePeriod(100, 'Off-Peak', 0.10, 0.03,
+            new Date(Date.UTC(2026, 2, 15, 0, 0, 0)),
+            new Date(Date.UTC(2026, 2, 15, 15, 59, 59, 999)));
+        const onPeak = makePeriod(200, 'On-Peak', 0.30, 0.03,
+            new Date(Date.UTC(2026, 2, 15, 16, 0, 0)),
+            new Date(Date.UTC(2026, 2, 15, 23, 59, 59, 999)));
+
+        const schedule = makeStubSchedule([offPeak, onPeak]);
+        const cycle: UsageData[] = [
+            makeUsage('Off-Peak', 0.10, 0.03, -200_000),  // net exporter → 0.03
+            makeUsage('On-Peak', 0.30, 0.03, 100_000)     // net importer → 0.30
+        ];
+
+        const result = findNextCheaperPeriod(schedule, t0, cycle, 'UTC', 48);
+        expect(result).toBeNull();
+    });
+
+    it('returns null when active period has no resolvable marginal cost', () => {
+        const t0 = new Date(Date.UTC(2026, 2, 15, 18, 0, 0));
+        const onPeak = makePeriod(100, 'On-Peak', 0.30, 0.03,
+            new Date(Date.UTC(2026, 2, 15, 16, 0, 0)),
+            new Date(Date.UTC(2026, 2, 16, 0, 0, 0)));
+        const schedule = makeStubSchedule([onPeak]);
+        const cycle: UsageData[] = [
+            makeUsage('On-Peak', 0.30, 0.03, 100)  // |0.1 kWh| < 0.5 → neutral
+        ];
+
+        const result = findNextCheaperPeriod(schedule, t0, cycle, 'UTC', 48);
+        expect(result).toBeNull();
+    });
+
+    it('returns null when no current period at now (gap)', () => {
+        const schedule = makeStubSchedule([]);
+        const t0 = new Date();
+        expect(findNextCheaperPeriod(schedule, t0, [], 'UTC', 48)).toBeNull();
+    });
+});
+
+describe('findNextStartsByKey', () => {
+    it('returns the next start for each non-active period in the cycle', () => {
+        // Walker should detect each schedule.id transition and record the
+        // local-hour-aligned start of the new period for that key.
+        const t0 = new Date(Date.UTC(2026, 2, 15, 18, 0, 0)); // 18:00 UTC, active = Off-Peak
+        const offPeakA = makePeriod(100, 'Off-Peak', 0.10, 0.03,
+            new Date(Date.UTC(2026, 2, 15, 7, 0, 0)),
+            new Date(Date.UTC(2026, 2, 15, 19, 59, 59, 999)));
+        const onPeak = makePeriod(200, 'On-Peak', 0.30, 0.03,
+            new Date(Date.UTC(2026, 2, 15, 20, 0, 0)),
+            new Date(Date.UTC(2026, 2, 15, 23, 59, 59, 999)));
+        const offPeakB = makePeriod(300, 'Off-Peak', 0.10, 0.03,
+            new Date(Date.UTC(2026, 2, 16, 0, 0, 0)),
+            new Date(Date.UTC(2026, 2, 16, 19, 59, 59, 999)));
+        const schedule = makeStubSchedule([offPeakA, onPeak, offPeakB]);
+        const cycle: UsageData[] = [
+            makeUsage('Off-Peak', 0.10, 0.03, -50_000),
+            makeUsage('On-Peak', 0.30, 0.03, 100_000)
+        ];
+
+        const result = findNextStartsByKey(schedule, t0, cycle, 'UTC');
+        // On-Peak first occurs at 20:00 UTC the same day.
+        expect(result.get(periodKey('On-Peak', 0.30, 0.03)))
+            .toEqual(new Date(Date.UTC(2026, 2, 15, 20, 0, 0)));
+        // Off-Peak (the active key) re-occurs the next day at 00:00 UTC.
+        expect(result.get(periodKey('Off-Peak', 0.10, 0.03)))
+            .toEqual(new Date(Date.UTC(2026, 2, 16, 0, 0, 0)));
+    });
+
+    it('records only the earliest future occurrence per key', () => {
+        const t0 = new Date(Date.UTC(2026, 2, 15, 18, 0, 0));
+        const active = makePeriod(100, 'Off-Peak', 0.10, 0.03,
+            new Date(Date.UTC(2026, 2, 15, 7, 0, 0)),
+            new Date(Date.UTC(2026, 2, 15, 19, 59, 59, 999)));
+        const firstOnPeak = makePeriod(200, 'On-Peak', 0.30, 0.03,
+            new Date(Date.UTC(2026, 2, 15, 20, 0, 0)),
+            new Date(Date.UTC(2026, 2, 15, 23, 59, 59, 999)));
+        const offPeakB = makePeriod(300, 'Off-Peak', 0.10, 0.03,
+            new Date(Date.UTC(2026, 2, 16, 0, 0, 0)),
+            new Date(Date.UTC(2026, 2, 16, 19, 59, 59, 999)));
+        const laterOnPeak = makePeriod(400, 'On-Peak', 0.30, 0.03,
+            new Date(Date.UTC(2026, 2, 16, 20, 0, 0)),
+            new Date(Date.UTC(2026, 2, 16, 23, 59, 59, 999)));
+
+        const schedule = makeStubSchedule([active, firstOnPeak, offPeakB, laterOnPeak]);
+        const cycle: UsageData[] = [
+            makeUsage('Off-Peak', 0.10, 0.03, -50_000),
+            makeUsage('On-Peak', 0.30, 0.03, 100_000)
+        ];
+
+        const result = findNextStartsByKey(schedule, t0, cycle, 'UTC');
+        expect(result.get(periodKey('On-Peak', 0.30, 0.03)))
+            .toEqual(new Date(Date.UTC(2026, 2, 15, 20, 0, 0)));
+    });
+
+    it('returns empty map when no active period at now', () => {
+        const schedule = makeStubSchedule([]);
+        const result = findNextStartsByKey(schedule, new Date(), [], 'UTC');
+        expect(result.size).toBe(0);
+    });
+});
+
+// Integration test against a real Schedule: regression coverage for the bug
+// where Schedule.getTariffPeriod returns start=end=query-time. The previous
+// walker advanced by `cursor.end + 1ms` and never crossed period boundaries,
+// causing findNextCheaperPeriod to always return null in production.
+describe('walker against real Schedule (regression)', () => {
+    function buildTariff(): Tariff {
+        return {
+            id: 1,
+            site_id: 'site-1',
+            updated: new Date(),
+            name: 'PG&E EV2-A',
+            seasons: [
+                {
+                    id: 1,
+                    tariff_id: 1,
+                    name: 'Year-round',
+                    from_month: 1, from_day: 1,
+                    to_month: 12, to_day: 31,
+                    buy_rate: 0,
+                    sell_rate: 0,
+                    schedules: [
+                        // Tesla weekday encoding: 0=Mon..6=Sun. "Every day" is from=0 to=6.
+                        // On-Peak: 16:00–21:00 every day.
+                        { id: 10, season_id: 1, name: 'On-Peak', buy_rate: 0.45, sell_rate: 0.04,
+                            from_day_of_week: 0, to_day_of_week: 6,
+                            from_hour: 16, to_hour: 21, from_minute: 0, to_minute: 0 },
+                        // Off-Peak default: catch-all for the rest of the day.
+                        { id: 20, season_id: 1, name: 'Off-Peak', buy_rate: 0.10, sell_rate: 0.04,
+                            from_day_of_week: 0, to_day_of_week: 6,
+                            from_hour: null, to_hour: null, from_minute: null, to_minute: null }
+                    ]
+                }
+            ]
+        };
+    }
+
+    it('finds the next cheaper period when active is On-Peak (net importer)', () => {
+        const schedule = new Schedule([buildTariff()], 'America/Los_Angeles');
+        // 5 PM LA on Mar 16, 2026 (PDT, UTC-7) = 00:00 UTC Mar 17.
+        const now = new Date(Date.UTC(2026, 2, 17, 0, 0, 0));
+        // Verify active is On-Peak before testing.
+        expect(schedule.getTariffPeriod(now)?.schedule.name).toBe('On-Peak');
+
+        const cycle: UsageData[] = [
+            // On-Peak net importer → marginal $0.45 (buy basis)
+            makeUsage('On-Peak', 0.45, 0.04, 200_000),
+            // Off-Peak net importer → marginal $0.10 (buy basis)
+            makeUsage('Off-Peak', 0.10, 0.04, 500_000)
+        ];
+
+        const result = findNextCheaperPeriod(schedule, now, cycle, 'America/Los_Angeles', 48);
+        expect(result).not.toBeNull();
+        expect(result!.name).toBe('Off-Peak');
+        expect(result!.marginalCost).toBeCloseTo(0.10);
+        // On-Peak ends at 21:00 LA, so the next Off-Peak starts at 9 PM LA.
+        // 21:00 LA on Mar 16 (PDT) = 04:00 UTC Mar 17.
+        expect(result!.startsAt).toEqual(new Date(Date.UTC(2026, 2, 17, 4, 0, 0)));
+    });
+
+    it('finds the next On-Peak start when active is Off-Peak', () => {
+        const schedule = new Schedule([buildTariff()], 'America/Los_Angeles');
+        // 10 AM LA Mar 16 = 17:00 UTC Mar 16.
+        const now = new Date(Date.UTC(2026, 2, 16, 17, 0, 0));
+        expect(schedule.getTariffPeriod(now)?.schedule.name).toBe('Off-Peak');
+
+        const cycle: UsageData[] = [
+            makeUsage('On-Peak', 0.45, 0.04, 200_000),
+            makeUsage('Off-Peak', 0.10, 0.04, -200_000) // net exporter, marginal $0.04
+        ];
+
+        const result = findNextStartsByKey(schedule, now, cycle, 'America/Los_Angeles');
+        // Next On-Peak starts at 4 PM LA same day = 23:00 UTC Mar 16.
+        expect(result.get(periodKey('On-Peak', 0.45, 0.04)))
+            .toEqual(new Date(Date.UTC(2026, 2, 16, 23, 0, 0)));
+    });
+});
