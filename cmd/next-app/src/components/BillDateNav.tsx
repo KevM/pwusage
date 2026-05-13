@@ -140,7 +140,7 @@ export function BillDateNav({
                             <Label className="block text-xs text-slate-500 mb-1">Start Date</Label>
                             <Input
                                 type="date"
-                                value={startDate}
+                                value={startDate || ''}
                                 onChange={(e) => setStartDate(e.target.value)}
                                 className="w-full h-9 text-sm bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
                             />
@@ -149,7 +149,7 @@ export function BillDateNav({
                             <Label className="block text-xs text-slate-500 mb-1">End Date</Label>
                             <Input
                                 type="date"
-                                value={endDate}
+                                value={endDate || ''}
                                 onChange={(e) => setEndDate(e.target.value)}
                                 className="w-full h-9 text-sm bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
                             />
