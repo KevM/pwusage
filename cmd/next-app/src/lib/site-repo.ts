@@ -80,14 +80,23 @@ export class SiteRepo {
         const results: SiteWithTariffs[] = [];
         const uncachedIds: string[] = [];
 
+        // When includeTokens is requested, always hit the DB to get fresh auth_status.
+        // The global cache can serve stale auth_status (e.g., after external recovery scripts
+        // reset users from 'revoked' to 'active'), which would cause the markup endpoint to
+        // continue showing re-auth QR codes for up to 15 minutes.
         for (const id of siteIds) {
+            if (options?.includeTokens) {
+                uncachedIds.push(id);
+                continue;
+            }
+
             const reqCached = requestCtx.siteCache.get(id);
-            if (reqCached && (!options?.includeJson || reqCached.json !== undefined) && (!options?.includeTokens || reqCached.access_token !== undefined)) {
+            if (reqCached && (!options?.includeJson || reqCached.json !== undefined)) {
                 results.push(reqCached);
                 continue;
             }
             const cached = siteCache.get(id);
-            if (cached && cached.expires > now && (!options?.includeJson || cached.data.json !== undefined) && (!options?.includeTokens || cached.data.access_token !== undefined)) {
+            if (cached && cached.expires > now && (!options?.includeJson || cached.data.json !== undefined)) {
                 requestCtx.siteCache.set(id, cached.data);
                 results.push(cached.data);
                 continue;
@@ -98,8 +107,12 @@ export class SiteRepo {
         if (uncachedIds.length > 0) {
             const fresh = await this.loadSitesFromDB(uncachedIds, options);
             for (const site of fresh) {
-                siteCache.set(site.id, { data: site, expires: now + CACHE_TTL_MS });
-                requestCtx.siteCache.set(site.id, site);
+                // Don't populate the global cache when tokens/auth_status are included —
+                // those fields can change outside this process and shouldn't be cached.
+                if (!options?.includeTokens) {
+                    siteCache.set(site.id, { data: site, expires: now + CACHE_TTL_MS });
+                    requestCtx.siteCache.set(site.id, site);
+                }
                 results.push(site);
             }
         }

@@ -321,18 +321,43 @@ describe('SiteRepo.getSitesWithTariffs', () => {
         expect(site.json).toEqual({ components: { battery: true } });
     });
 
-    it('re-fetches when cached entry lacks tokens and includeTokens is requested', async () => {
-        // Warm cache without tokens
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+    it('always hits DB when includeTokens is requested, bypassing the cache', async () => {
+        let queryCalls = 0;
+        queryMock.mockImplementation(async () => {
+            queryCalls++;
+            return { rows: [makeSiteJoinRow()] };
+        });
+
         const repo = new SiteRepo();
-        await repo.getSitesWithTariffs(['site-1']);
-        queryMock.mockReset();
 
-        // Request with includeTokens — must hit DB because cached entry has no tokens (undefined)
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        // First call with includeTokens — hits DB
+        await repo.getSitesWithTariffs(['site-1'], { includeTokens: true });
+        expect(queryCalls).toBe(1);
+
+        // Second call with includeTokens — must hit DB again, not use cache,
+        // because auth_status can change externally (e.g., via recovery scripts)
         const [site] = await repo.getSitesWithTariffs(['site-1'], { includeTokens: true });
-
-        expect(queryMock).toHaveBeenCalledTimes(1);
+        expect(queryCalls).toBe(2);
         expect(site.access_token).toBe('a');
+        expect(site.auth_status).toBe('active');
+    });
+
+    it('does not pollute global cache with includeTokens results', async () => {
+        let queryCalls = 0;
+        queryMock.mockImplementation(async () => {
+            queryCalls++;
+            return { rows: [makeSiteJoinRow()] };
+        });
+
+        const repo = new SiteRepo();
+
+        // Request with includeTokens
+        await repo.getSitesWithTariffs(['site-1'], { includeTokens: true });
+        expect(queryCalls).toBe(1);
+
+        // Subsequent request without includeTokens should still hit DB —
+        // the previous includeTokens fetch should not have populated the cache
+        await repo.getSitesWithTariffs(['site-1']);
+        expect(queryCalls).toBe(2);
     });
 });
