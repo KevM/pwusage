@@ -207,7 +207,7 @@ describe('SiteRepo.getSitesWithTariffs', () => {
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
 
         const repo = new SiteRepo();
-        const [site] = await repo.getSitesWithTariffs(['site-1']);
+        const [site] = await repo.getSitesWithTariffs(['site-1'], { includeTokens: true });
 
         expect(site.id).toBe('site-1');
         expect(site.tariffs).toEqual([]);
@@ -319,5 +319,20 @@ describe('SiteRepo.getSitesWithTariffs', () => {
 
         expect(queryMock).toHaveBeenCalledTimes(1);
         expect(site.json).toEqual({ components: { battery: true } });
+    });
+
+    it('re-fetches when cached entry lacks tokens and includeTokens is requested', async () => {
+        // Warm cache without tokens
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        const repo = new SiteRepo();
+        await repo.getSitesWithTariffs(['site-1']);
+        queryMock.mockReset();
+
+        // Request with includeTokens — must hit DB because cached entry has no tokens (undefined)
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        const [site] = await repo.getSitesWithTariffs(['site-1'], { includeTokens: true });
+
+        expect(queryMock).toHaveBeenCalledTimes(1);
+        expect(site.access_token).toBe('a');
     });
 });

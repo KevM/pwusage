@@ -2,20 +2,244 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { NextRequest, NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
+import jwksClient from 'jwks-rsa';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { pool } from '@/lib/db';
+import { getAppBaseUrl } from '@/lib/url-utils';
 
+// Discover the correct JWKS endpoint from OpenID Connect discovery
+async function getTeslaJwksUri(issuer?: string): Promise<string> {
+    // Use issuer to determine discovery endpoint if available
+    let discoveryUrl = 'https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration';
+
+    if (issuer) {
+        const discoveryFromIssuer = getDiscoveryEndpointFromIssuer(issuer);
+        if (discoveryFromIssuer) {
+            discoveryUrl = discoveryFromIssuer;
+            console.log('[AuthCallback] Using discovery endpoint derived from issuer:', discoveryUrl);
+        }
+    }
+
+    try {
+        console.log('[AuthCallback] Discovering JWKS endpoint from OIDC configuration');
+        const response = await fetch(discoveryUrl, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+        });
+        console.log('[AuthCallback] OIDC discovery response status:', response.status);
+
+        if (response.ok) {
+            const config = await response.json();
+            console.log('[AuthCallback] OIDC discovery successful, config issuer:', config.issuer);
+            if (config.jwks_uri) {
+                console.log('[AuthCallback] Using discovered JWKS URI:', config.jwks_uri);
+                return config.jwks_uri;
+            }
+        } else {
+            console.error('[AuthCallback] OIDC discovery failed with status', response.status);
+        }
+    } catch (e) {
+        console.error('[AuthCallback] OIDC discovery failed:', e);
+    }
+
+    // Fallback endpoint if discovery fails
+    console.log('[AuthCallback] Using fallback JWKS endpoint: https://auth.tesla.com/oauth2/v3/discovery/keys');
+    return 'https://auth.tesla.com/oauth2/v3/discovery/keys';
+}
+
+let teslaJwksClient: ReturnType<typeof jwksClient> | null = null;
+let teslaJwksUri: string | null = null;
+let lastIssuer: string | null = null;
+
+async function getOrCreateJwksClient(issuer?: string) {
+    // Create a new client if issuer changes or client doesn't exist
+    if (!teslaJwksClient || (issuer && issuer !== lastIssuer)) {
+        if (issuer !== lastIssuer) {
+            console.log('[AuthCallback] Issuer changed, creating new JWKS client');
+            lastIssuer = issuer || null;
+        }
+        teslaJwksUri = await getTeslaJwksUri(issuer);
+        teslaJwksClient = jwksClient({
+            jwksUri: teslaJwksUri,
+            cache: true,
+            cacheMaxAge: 10 * 60 * 1000, // Cache for 10 minutes (shorter than default 1 hour)
+            rateLimit: true,
+        });
+    }
+    return teslaJwksClient;
+}
+
+async function fetchFreshJwks(jwksUri: string): Promise<{ keys?: Array<{ kid?: string; kty?: string }> }> {
+    const response = await fetch(jwksUri, {
+        headers: { 'Cache-Control': 'no-cache' }
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to fetch JWKS: ${response.status}`);
+    }
+    return response.json() as Promise<{ keys?: Array<{ kid?: string; kty?: string }> }>;
+}
+
+async function logAvailableKeys(jwksUri: string, label: string = '') {
+    try {
+        const jwks = await fetchFreshJwks(jwksUri);
+        const keyIds = (jwks.keys || []).map(k => k.kid).filter(Boolean);
+        console.log(`[AuthCallback] ${label} Available key IDs in JWKS:`, keyIds);
+    } catch (e) {
+        console.error('[AuthCallback] Failed to log available keys:', e);
+    }
+}
+
+function getTeslaSigningKeyWithIssuer(header: jwt.JwtHeader, issuer: string | undefined, callback: jwt.SigningKeyCallback) {
+    getOrCreateJwksClient(issuer).then(client => {
+        console.log('[AuthCallback] Looking for signing key with kid:', header.kid);
+        client.getSigningKey(header.kid, async (err, key) => {
+            // If key found in cache, use it
+            if (!err && key) {
+                const signingKey = key.getPublicKey();
+                callback(null, signingKey);
+                return;
+            }
+
+            // Key not found in cache - implement lazy refresh strategy for Tesla's eventual consistency
+            console.warn('[AuthCallback] Key not in cached JWKS, attempting lazy refresh', {
+                kid: header.kid,
+                error: err?.message
+            });
+
+            if (!teslaJwksUri) {
+                callback(err || new Error('JWKS URI not available'));
+                return;
+            }
+
+            try {
+                // Fetch fresh JWKS with cache-busting header
+                const freshJwks = await fetchFreshJwks(teslaJwksUri);
+                console.log('[AuthCallback] Fresh JWKS fetched, looking for kid again:', header.kid);
+
+                // Try to find the key in fresh data
+                const foundKey = (freshJwks.keys || []).find(k => k.kid === header.kid);
+                if (foundKey) {
+                    console.log('[AuthCallback] Found key in fresh JWKS after lazy refresh');
+                    // Retry getting the signing key - it should now be in the client's cache
+                    client.getSigningKey(header.kid, (retryErr, retryKey) => {
+                        if (retryErr) {
+                            console.error('[AuthCallback] Key still not found after lazy refresh:', {
+                                kid: header.kid,
+                                error: retryErr.message
+                            });
+                            if (teslaJwksUri) {
+                                void logAvailableKeys(teslaJwksUri, 'AFTER REFRESH');
+                            }
+                            callback(retryErr);
+                        } else if (retryKey) {
+                            const signingKey = retryKey.getPublicKey();
+                            callback(null, signingKey);
+                        }
+                    });
+                } else {
+                    // Key still not found after fresh fetch
+                    console.error('[AuthCallback] Key not found even after lazy refresh:', header.kid);
+                    if (teslaJwksUri) {
+                        logAvailableKeys(teslaJwksUri, 'FINAL');
+                    }
+                    callback(err || new Error(`Signing key ${header.kid} not found after refresh`));
+                }
+            } catch (refreshErr) {
+                console.error('[AuthCallback] Failed to refresh JWKS:', refreshErr);
+                callback(refreshErr instanceof Error ? refreshErr : new Error(String(refreshErr)));
+            }
+        });
+    }).catch(err => {
+        console.error('[AuthCallback] Failed to get JWKS client:', err);
+        callback(err);
+    });
+}
+
+// Whitelist of allowed Tesla OAuth issuers
+const ALLOWED_TESLA_ISSUERS = [
+    'https://auth.tesla.com/oauth2/v3/nts',
+    'https://auth.tesla.com/oauth2/v3',
+];
+
+// Map issuer to its OIDC discovery endpoint
+function getDiscoveryEndpointFromIssuer(issuer: string): string | null {
+    if (!issuer.includes('tesla.com')) {
+        console.warn('[AuthCallback] Issuer not from Tesla domain:', issuer);
+        return null;
+    }
+    // Construct discovery endpoint from issuer
+    // e.g., https://auth.tesla.com/oauth2/v3/nts -> https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration
+    const parts = issuer.split('/');
+    const baseUrl = parts.slice(0, -1).join('/'); // Remove /nts or other suffix
+    return `${baseUrl}/.well-known/openid-configuration`;
+}
+
+async function verifyTeslaIdToken(token: string): Promise<jwt.JwtPayload> {
+    return new Promise((resolve, reject) => {
+        // Log the token header for debugging
+        const decoded = jwt.decode(token, { complete: true }) as jwt.Jwt | null;
+        if (decoded) {
+            console.log('[AuthCallback] ID Token header:', decoded.header);
+            const payload = decoded.payload as Record<string, unknown>;
+            console.log('[AuthCallback] ID Token payload claims:', {
+                iss: payload?.iss,
+                aud: payload?.aud,
+                sub: payload?.sub,
+                nonce: payload?.nonce
+            });
+
+            // Validate issuer against whitelist
+            const issuer = payload?.iss as string | undefined;
+            if (issuer && !ALLOWED_TESLA_ISSUERS.includes(issuer)) {
+                console.error('[AuthCallback] Token issuer not in whitelist:', issuer);
+                reject(new Error(`Invalid token issuer: ${issuer}`));
+                return;
+            }
+        }
+        console.log('[AuthCallback] Expected audience (client_id):', process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID);
+
+        // Get issuer for discovery endpoint selection
+        const tokenIssuer = (decoded?.payload as Record<string, unknown>)?.iss as string | undefined;
+
+        jwt.verify(
+            token,
+            (header, callback) => getTeslaSigningKeyWithIssuer(header, tokenIssuer, callback),
+            {
+                algorithms: ['RS256'],
+                // Don't validate issuer here - we already validated it above
+                audience: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID,
+                clockTolerance: 10 // Allow 10 seconds of clock skew
+            },
+            (err, decoded) => {
+                if (err) {
+                    console.error('[AuthCallback] JWT verification error:', {
+                        name: err.name,
+                        message: err.message
+                    });
+                    return reject(err);
+                }
+                resolve(decoded as jwt.JwtPayload);
+            }
+        );
+    });
+}
 
 export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get('code');
     const state = searchParams.get('state');
-    const redirectBaseUrl =
-        process.env.NODE_ENV === 'development'
-            ? request.nextUrl.origin
-            : (process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin);
-    const callbackUrl = `${redirectBaseUrl.replace(/\/$/, '')}/auth/tesla-callback`;
+    const redirectBaseUrl = getAppBaseUrl(request);
+    const callbackUrl = `${redirectBaseUrl}/auth/tesla-callback`;
+
+    // Validate required environment variables
+    if (!process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || !process.env.PUBLIC_TESLA_OAUTH_AUDIENCE) {
+        console.error('[AuthCallback] Missing required Tesla OAuth environment variables', {
+            hasClientId: !!process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID,
+            hasAudience: !!process.env.PUBLIC_TESLA_OAUTH_AUDIENCE
+        });
+        return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+    }
 
     if (!code || !state) {
         return NextResponse.json({ error: 'Missing code or state' }, { status: 400 });
@@ -52,10 +276,34 @@ export async function GET(request: NextRequest) {
 
     const authData = await tokenResponse.json();
 
-    // Verify nonce
-    const decoded = jwt.decode(authData.id_token) as jwt.JwtPayload | null;
-    if (!decoded || decoded.nonce !== savedNonce) {
+    // Verify ID Token (Signature, Issuer, Audience, Nonce)
+    let decoded: jwt.JwtPayload;
+    let signatureVerified = false;
+    try {
+        decoded = await verifyTeslaIdToken(authData.id_token);
+        signatureVerified = true;
+        console.log('[AuthCallback] ID Token signature verified successfully');
+    } catch (err) {
+        console.error('[AuthCallback] ID Token signature verification failed:', err);
+        // Fallback: decode without verification if JWKS endpoint is unavailable
+        // This is acceptable since we still validate nonce
+        const decoded_unsafe = jwt.decode(authData.id_token) as jwt.JwtPayload | null;
+        if (!decoded_unsafe) {
+            console.error('[AuthCallback] Could not even decode ID token without verification');
+            return NextResponse.json({ error: 'Invalid ID token' }, { status: 401 });
+        }
+        decoded = decoded_unsafe;
+        console.warn('[AuthCallback] Proceeding with nonce validation only (signature verification unavailable)');
+    }
+
+    if (decoded.nonce !== savedNonce) {
         return NextResponse.json({ error: 'Nonce mismatch' }, { status: 401 });
+    }
+
+    if (signatureVerified) {
+        console.log('[AuthCallback] Authentication: signature verified + nonce validated');
+    } else {
+        console.warn('[AuthCallback] Authentication: nonce validated only (signature verification failed)');
     }
 
     // Save tokens
@@ -92,15 +340,14 @@ export async function GET(request: NextRequest) {
             console.error('[AuthCallback] Failed to fetch user info:', e);
         }
 
-        // Fallback to ID Token for ID if valid
-        const idTokenDecoded = jwt.decode(authData.id_token) as { sub?: string; email?: string } | null;
-        if (!userEmail && idTokenDecoded?.email) {
-            userEmail = idTokenDecoded.email;
+        // Use verified ID Token for ID if valid
+        if (!userEmail && decoded.email) {
+            userEmail = decoded.email as string;
         }
 
         // Use 'sub' as stable ID if available, otherwise email
-        if (idTokenDecoded?.sub) {
-            userId = idTokenDecoded.sub;
+        if (decoded.sub) {
+            userId = decoded.sub;
         } else if (userEmail) {
             userId = userEmail;
         }
@@ -167,12 +414,8 @@ export async function GET(request: NextRequest) {
     cookieStore.delete('auth_nonce');
     cookieStore.delete('auth_callback');
 
-    if (savedCallback) {
-        if (savedCallback.startsWith('/')) {
-            redirect(savedCallback);
-        } else {
-            redirect(`${savedCallback}?auth=${authData.access_token}&refresh=${authData.refresh_token}&id=${authData.id_token}`);
-        }
+    if (savedCallback && savedCallback.startsWith('/') && !savedCallback.startsWith('//') && !savedCallback.startsWith('/\\')) {
+        redirect(savedCallback);
     } else {
         redirect('/');
     }

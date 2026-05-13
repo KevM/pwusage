@@ -59,31 +59,48 @@ export class TrmnlService {
         TrmnlService.getCache().delete(uuid);
     }
 
-    async getInstallationByUuid(uuid: string): Promise<TrmnlInstallation | undefined> {
+    async getInstallationByUuid(uuid: string, options: { includeTokens?: boolean } = {}): Promise<TrmnlInstallation | undefined> {
         const now = Date.now();
         const cached = TrmnlService.getCache().get(uuid);
+        // Cache always includes tokens for simplicity, but we strip them if not requested
+        let installation: TrmnlInstallation | undefined;
+
         if (cached && cached.expires > now) {
-            return cached.data;
+            installation = cached.data;
+        } else {
+            const { rows } = await pool.query('SELECT * FROM "TrmnlInstallation" WHERE uuid = $1', [uuid]);
+            installation = rows[0] as TrmnlInstallation | undefined;
+
+            if (installation) {
+                TrmnlService.getCache().set(uuid, { data: installation, expires: now + TrmnlService.CACHE_TTL_MS });
+            }
         }
 
-        const { rows } = await pool.query('SELECT * FROM "TrmnlInstallation" WHERE uuid = $1', [uuid]);
-        const installation = rows[0] as TrmnlInstallation | undefined;
-
-        if (installation) {
-            TrmnlService.getCache().set(uuid, { data: installation, expires: now + TrmnlService.CACHE_TTL_MS });
+        if (installation && !options.includeTokens) {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { access_token: _at, refresh_token: _rt, ...safe } = installation;
+            return safe as TrmnlInstallation;
         }
 
         return installation;
     }
 
-    async getInstallationBySiteId(siteId: string): Promise<TrmnlInstallation | undefined> {
+    async getInstallationBySiteId(siteId: string, options: { includeTokens?: boolean } = {}): Promise<TrmnlInstallation | undefined> {
         const { rows } = await pool.query(`
             SELECT * FROM "TrmnlInstallation" 
             WHERE site_id = $1 
             ORDER BY (plugin_setting_id IS NOT NULL) DESC, created_at DESC, id DESC
             LIMIT 1
         `, [siteId]);
-        return rows[0] as TrmnlInstallation | undefined;
+        const installation = rows[0] as TrmnlInstallation | undefined;
+
+        if (installation && !options.includeTokens) {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { access_token: _at, refresh_token: _rt, ...safe } = installation;
+            return safe as TrmnlInstallation;
+        }
+
+        return installation;
     }
 
     async deleteInstallation(uuid: string) {

@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { pool, User, Site } from './db';
 import { TeslaClient } from './tesla-client';
 
@@ -29,11 +30,17 @@ export async function getUserTokensForSite(siteId: string): Promise<{ access_tok
     return res.rows[0];
 }
 
+export const isUserActive = cache(async (userId: string): Promise<boolean> => {
+    const res = await pool.query('SELECT is_active FROM "User" WHERE id = $1', [userId]);
+    return res.rows.length > 0 && res.rows[0].is_active === true;
+});
+
 export class UserRepo {
-    async getAllUsers(): Promise<UserWithSites[]> {
+    async getAllUsers(options: { includeTokens?: boolean } = {}): Promise<UserWithSites[]> {
+        const tokenCols = options.includeTokens ? ', u.access_token, u.refresh_token' : '';
         // Fetch users and check for Trmnl integration in a single query using subquery (efficiently handles the join logic)
         const userRes = await pool.query(`
-            SELECT u.*, 
+            SELECT u.id, u.email, u.roles, u.is_active, u.auth_status, u.last_checked_at, u.created_at${tokenCols}, 
             EXISTS (
                 SELECT 1 
                 FROM "TrmnlInstallation" ti 
@@ -52,7 +59,8 @@ export class UserRepo {
         const users = userRes.rows as (User & { has_trmnl_integration: boolean; last_data_import: string | null })[];
 
         // Fetch all sites (optimization: fetch all and map in memory instead of N+1 queries)
-        const siteRes = await pool.query('SELECT * FROM "Site"');
+        // We also strip tokens from Site results here
+        const siteRes = await pool.query('SELECT id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode FROM "Site"');
         const sites = siteRes.rows as Site[];
 
         // Map sites to users
@@ -140,7 +148,7 @@ export class UserRepo {
     }
 
     async verifyAllUserStatuses() {
-        const users = await this.getAllUsers();
+        const users = await this.getAllUsers({ includeTokens: true });
         let activeCount = 0;
         let inactiveCount = 0;
         let errorCount = 0;

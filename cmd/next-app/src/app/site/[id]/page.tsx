@@ -40,7 +40,7 @@ export default async function SitePage({ params, searchParams }: {
     const siteRepo = new SiteRepo();
     const repo = new EnergyRepo();
     const tokenRepo = new TeslaTokenRepo(siteRepo);
-    let site = await siteRepo.getSite(id);
+    let site = await siteRepo.getSite(id, { includeTokens: true });
 
     const hasAccess = await verifySiteAccess(id);
     if (!hasAccess) {
@@ -265,8 +265,9 @@ export default async function SitePage({ params, searchParams }: {
     const isCurrentPeriod = siteNow >= start && siteNow < end;
 
     // Additional Fetch for Settings View (Trmnl)
+    // We explicitly do NOT include tokens here as they are passed to a client component
     const trmnlService = new TrmnlService();
-    const installation = await trmnlService.getInstallationBySiteId(finalSite.id);
+    const installation = await trmnlService.getInstallationBySiteId(finalSite.id, { includeTokens: false });
 
     return (
         <PageShell maxWidth="7xl" padding="compact">

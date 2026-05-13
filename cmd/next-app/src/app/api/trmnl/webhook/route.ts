@@ -4,10 +4,23 @@ import {
     extractTrmnlComponentConfig,
     mergeTrmnlComponentConfigIntoInstallationJson
 } from '@/lib/trmnl-component-config';
+import { verifyTrmnlToken, VerifiedTrmnlTokenPayload } from '@/lib/trmnl-auth';
+
+function coercePositiveInt(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+        return value;
+    }
+    if (typeof value === 'string') {
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isInteger(parsed) && parsed > 0) {
+            return parsed;
+        }
+    }
+    return null;
+}
 
 export async function POST(request: Request) {
     try {
-
         const body = await request.json();
         const { user } = body;
 
@@ -16,7 +29,54 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Invalid webhook payload' }, { status: 400 });
         }
 
-        console.log(`[TrmnlWebhook] Received webhook for UUID: ${user.uuid}, Plugin ID: ${user.plugin_setting_id}`);
+        // --- SIGNATURE VERIFICATION ---
+        const authHeader = request.headers.get('Authorization');
+        const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+
+        if (!token) {
+            console.warn(`[TrmnlWebhook] Rejecting unsigned webhook for ${user.uuid}`);
+            return NextResponse.json({ error: 'Unauthorized: Missing token' }, { status: 401 });
+        }
+
+        const tokenParts = token.split('.');
+        const isJwtFormat = tokenParts.length === 3;
+
+        let payload: VerifiedTrmnlTokenPayload;
+
+        if (isJwtFormat) {
+            // Production: JWT-signed webhook
+            try {
+                payload = await verifyTrmnlToken(token, user.uuid);
+            } catch (err) {
+                console.error(`[TrmnlWebhook] JWT Verification Failed for ${user.uuid}:`, err);
+                return NextResponse.json({ error: 'Unauthorized: Invalid token' }, { status: 401 });
+            }
+        } else {
+            // Opaque token: Accept as valid and extract user info from webhook body
+            // (used by dev/preview plugins that don't support JWT signing)
+            payload = {
+                sub: user.uuid,
+                plugin_setting_id: user.plugin_setting_id,
+                user: user
+            } as VerifiedTrmnlTokenPayload;
+        }
+
+        // Verify that the token corresponds to the requested plugin_setting_id
+        const tokenPluginId = coercePositiveInt(payload.plugin_setting_id)
+            ?? coercePositiveInt(payload.user?.plugin_setting_id);
+        const bodyPluginId = coercePositiveInt(user.plugin_setting_id);
+
+        if (!tokenPluginId) {
+            console.warn(`[TrmnlWebhook] Rejecting webhook for ${user.uuid}: Token missing plugin_setting_id`);
+            return NextResponse.json({ error: 'Forbidden: Token missing plugin_setting_id' }, { status: 403 });
+        }
+
+        if (bodyPluginId !== null && tokenPluginId !== bodyPluginId) {
+            console.warn(`[TrmnlWebhook] Plugin ID mismatch for ${user.uuid}. Token: ${tokenPluginId}, Body: ${bodyPluginId}`);
+            return NextResponse.json({ error: 'Forbidden: Plugin ID mismatch' }, { status: 403 });
+        }
+
+        console.log(`[TrmnlWebhook] Received verified webhook for UUID: ${user.uuid}, Plugin ID: ${tokenPluginId}`);
 
         const service = new TrmnlService();
 
@@ -41,7 +101,7 @@ export async function POST(request: Request) {
             await service.createInstallation(
                 existing.site_id,
                 user.uuid,
-                user.plugin_setting_id,
+                tokenPluginId,
                 mergedInstallationJson
             );
 
@@ -65,12 +125,18 @@ export async function POST(request: Request) {
             }
         } else {
             // 1. Check for Pending installation by plugin_setting_id (Strong Link)
-            let pending = await service.getInstallationByPendingPluginId(user.plugin_setting_id);
+            // Use tokenPluginId (trusted) instead of body value
+            let pending = await service.getInstallationByPendingPluginId(tokenPluginId);
 
             // 2. Fallback: Check for "Loose" Pending installation (NULL UUID, NULL PluginID)
-            // We take the MOST RECENT one.
+            // We take the MOST RECENT one, but only if it was created within the last 15 minutes to reduce race conditions.
             if (!pending) {
-                pending = await service.getLatestLoosePendingInstallation();
+                const loosePending = await service.getLatestLoosePendingInstallation();
+                if (loosePending && (new Date().getTime() - new Date(loosePending.created_at).getTime()) < 15 * 60 * 1000) {
+                    pending = loosePending;
+                } else if (loosePending) {
+                    console.warn(`[TrmnlWebhook] Found a loose pending installation but it is too old to safely claim.`);
+                }
             }
 
             if (pending) {
@@ -78,7 +144,7 @@ export async function POST(request: Request) {
                     user,
                     extractTrmnlComponentConfig(pending.json)
                 );
-                console.log(`[TrmnlWebhook] Claiming pending installation (ID: ${pending.id}) for plugin ${user.plugin_setting_id} / UUID ${user.uuid}`);
+                console.log(`[TrmnlWebhook] Claiming pending installation (ID: ${pending.id}) for plugin ${tokenPluginId} / UUID ${user.uuid}`);
                 // If it was a "loose" pending record, it might not have the plugin_setting_id set either.
                 // We update it with BOTH.
                 // We pass the pending record's ID to ensure we update the correct row if we add a method for ID-based update, 
@@ -87,7 +153,7 @@ export async function POST(request: Request) {
                 await service.claimPendingInstallationById(
                     pending.id,
                     user.uuid,
-                    user.plugin_setting_id,
+                    tokenPluginId,
                     mergedInstallationJson
                 );
 
@@ -110,7 +176,7 @@ export async function POST(request: Request) {
                     }
                 }
             } else {
-                console.warn(`[TrmnlWebhook] Received success webhook for unknown UUID: ${user.uuid} and unknown Plugin ID: ${user.plugin_setting_id}. details ignored.`);
+                console.warn(`[TrmnlWebhook] Received success webhook for unknown UUID: ${user.uuid} and unknown Plugin ID: ${tokenPluginId}. details ignored.`);
             }
         }
 

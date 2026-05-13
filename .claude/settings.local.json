@@ -35,7 +35,8 @@
       "Bash(npm ls *)",
       "Bash(cp package.json /tmp/package.json.bak)",
       "Bash(cp package-lock.json /tmp/package-lock.json.bak)",
-      "Skill(schedule)"
+      "Bash(grep *)",
+      "Bash(gh pr *)"
     ]
   }
 }

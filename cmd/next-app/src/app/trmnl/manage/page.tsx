@@ -381,8 +381,8 @@ function ManageContent() {
                     density="compact"
                 />
 
-                <div className="mt-8 grid gap-6 xl:grid-cols-2">
-                    <SectionCard className="xl:col-span-2" title="Connection Details" density="compact">
+                <div className="mt-8 grid gap-6 xl:grid-cols-2 min-w-0">
+                    <SectionCard className="xl:col-span-2 min-w-0" title="Connection Details" density="compact">
                         {sites.length > 1 ? (
                             <div className="mb-6 space-y-2">
                                 <Label htmlFor="trmnl-manage-site-select">Select Site to Display</Label>
@@ -421,6 +421,7 @@ function ManageContent() {
                     <SectionCard
                         title="Screen Configuration"
                         description="Each request rotates to the next screen. Edit a screen to change its component set."
+                        className="min-w-0"
                         action={(
                             <div className="flex flex-wrap items-center justify-end gap-2">
                                 <Label htmlFor="trmnl-preview-size" className="text-xs">Preview size</Label>
@@ -469,6 +470,7 @@ function ManageContent() {
                                         ref={(el) => {
                                             screenCardRefs.current[screen.id] = el;
                                         }}
+                                        className="min-w-0"
                                     >
                                         {isDropBefore && (
                                             <div className="h-1.5 rounded bg-blue-500/80 mb-2 animate-pulse" />
@@ -501,10 +503,10 @@ function ManageContent() {
                                                 setDraggingScreenId(null);
                                                 setDropIndicator(null);
                                             }}
-                                            className={`cursor-pointer p-3 transition-all duration-150 ${isEditing ? 'border-2 border-zinc-700 dark:border-zinc-200 shadow-lg' : ''} ${isDragging ? 'scale-[0.99] opacity-60' : (isEditing ? 'scale-100 hover:shadow-xl' : 'scale-100 hover:shadow-sm')}`}
+                                            className={`cursor-pointer p-3 transition-all duration-150 min-w-0 ${isEditing ? 'border-2 border-zinc-700 dark:border-zinc-200 shadow-lg' : ''} ${isDragging ? 'scale-[0.99] opacity-60' : (isEditing ? 'scale-100 hover:shadow-xl' : 'scale-100 hover:shadow-sm')}`}
                                         >
-                                            <div className="mb-2 flex items-center justify-between">
-                                                <div className="flex items-center gap-2">
+                                            <div className="mb-2 flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 min-w-0">
                                                     <span
                                                         draggable
                                                         onDragStart={(e) => {
@@ -520,13 +522,13 @@ function ManageContent() {
                                                         onClick={(e) => e.stopPropagation()}
                                                         title="Drag to reorder screens"
                                                         aria-label="Drag to reorder screens"
-                                                        className={`inline-flex items-center justify-center w-5 h-5 rounded border border-gray-300 dark:border-slate-700 text-xs text-gray-600 dark:text-gray-300 transition-transform duration-150 ${isDragging ? 'cursor-grabbing scale-110' : 'cursor-grab hover:scale-110'}`}
+                                                        className={`shrink-0 inline-flex items-center justify-center w-5 h-5 rounded border border-gray-300 dark:border-slate-700 text-xs text-gray-600 dark:text-gray-300 transition-transform duration-150 ${isDragging ? 'cursor-grabbing scale-110' : 'cursor-grab hover:scale-110'}`}
                                                     >
                                                         ⋮⋮
                                                     </span>
-                                                    <span className="text-sm font-semibold">{getScreenLabel(index)}</span>
+                                                    <span className="text-sm font-semibold truncate">{getScreenLabel(index)}</span>
                                                 </div>
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-2 shrink-0">
                                                     <Button
                                                         type="button"
                                                         onClick={(e) => {
@@ -577,10 +579,10 @@ function ManageContent() {
                         </div>
                     </SectionCard>
 
-                    <div ref={rightRailRef} className="relative min-h-[240px]">
+                    <div ref={rightRailRef} className="relative min-h-[240px] min-w-0">
                         <Card
                             ref={formCardRef}
-                            className="overflow-y-auto transition-transform duration-300"
+                            className="overflow-y-auto transition-transform duration-300 min-w-0"
                             style={{
                                 transform: `translateY(${formOffsetPx}px)`,
                                 height: formHeightPx > 0 ? `${formHeightPx}px` : undefined
@@ -603,29 +605,32 @@ function ManageContent() {
                                     density="compact"
                                     title="Components"
                                     description="Choose what renders on this screen."
-                                    className="bg-gray-50/60 dark:bg-slate-800/60"
+                                    className="bg-gray-50/60 dark:bg-slate-800/60 min-w-0"
                                 >
 
                                 <div className="space-y-4">
                                     <div className="space-y-2">
                                         <Label className="block text-xs text-gray-500 dark:text-gray-400">Live stats</Label>
-                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                            <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3 gap-3">
+                                            <Label className="flex items-start gap-2 text-sm font-normal text-gray-700 dark:text-gray-200 cursor-pointer">
                                                 <Checkbox
+                                                    className="mt-0.5"
                                                     checked={editingScreen?.componentConfig.showLiveGrid ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showLiveGrid: e.target.checked }))}
                                                 />
                                                 <span>Grid</span>
                                             </Label>
-                                            <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                            <Label className="flex items-start gap-2 text-sm font-normal text-gray-700 dark:text-gray-200 cursor-pointer">
                                                 <Checkbox
+                                                    className="mt-0.5"
                                                     checked={editingScreen?.componentConfig.showLiveSolar ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showLiveSolar: e.target.checked }))}
                                                 />
                                                 <span>Solar</span>
                                             </Label>
-                                            <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                            <Label className="flex items-start gap-2 text-sm font-normal text-gray-700 dark:text-gray-200 cursor-pointer">
                                                 <Checkbox
+                                                    className="mt-0.5"
                                                     checked={editingScreen?.componentConfig.showLiveBattery ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showLiveBattery: e.target.checked }))}
                                                 />
@@ -636,40 +641,45 @@ function ManageContent() {
 
                                     <div className="space-y-2">
                                         <Label className="block text-xs text-gray-500 dark:text-gray-400">Charts and Tables</Label>
-                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                            <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3 gap-x-3 gap-y-4">
+                                            <Label className="flex items-start gap-2 text-sm font-normal text-gray-700 dark:text-gray-200 cursor-pointer">
                                                 <Checkbox
+                                                    className="mt-0.5"
                                                     checked={editingScreen?.componentConfig.showEnergyChart ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showEnergyChart: e.target.checked }))}
                                                 />
-                                                <span>Energy Usage Chart</span>
+                                                <span className="leading-tight">Energy Usage Chart</span>
                                             </Label>
-                                            <div className="space-y-1">
-                                                <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                            <div className="space-y-1.5">
+                                                <Label className="flex items-start gap-2 text-sm font-normal text-gray-700 dark:text-gray-200 cursor-pointer">
                                                     <Checkbox
+                                                        className="mt-0.5"
                                                         checked={editingScreen?.componentConfig.showBatterySoc ?? false}
                                                         onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showBatterySoc: e.target.checked }))}
                                                     />
-                                                    <span>Battery Level</span>
+                                                    <span className="leading-tight">Battery Level</span>
                                                 </Label>
-                                                <Select
-                                                    value={editingScreen?.componentConfig.batterySocMode ?? 'glyph'}
-                                                    onChange={(e) => updateEditingConfig((prev) => ({
-                                                        ...prev,
-                                                        batterySocMode: e.target.value === 'chart' ? 'chart' : 'glyph'
-                                                    }))}
-                                                    className="h-8 text-xs"
-                                                >
-                                                    <option value="glyph">Glyph</option>
-                                                    <option value="chart">Chart</option>
-                                                </Select>
+                                                <div className="pl-6">
+                                                    <Select
+                                                        value={editingScreen?.componentConfig.batterySocMode ?? 'glyph'}
+                                                        onChange={(e) => updateEditingConfig((prev) => ({
+                                                            ...prev,
+                                                            batterySocMode: e.target.value === 'chart' ? 'chart' : 'glyph'
+                                                        }))}
+                                                        className="h-8 text-xs py-0"
+                                                    >
+                                                        <option value="glyph">Glyph</option>
+                                                        <option value="chart">Chart</option>
+                                                    </Select>
+                                                </div>
                                             </div>
-                                            <Label className="flex items-center gap-2 text-sm font-normal text-gray-700 dark:text-gray-200">
+                                            <Label className="flex items-start gap-2 text-sm font-normal text-gray-700 dark:text-gray-200 cursor-pointer">
                                                 <Checkbox
+                                                    className="mt-0.5"
                                                     checked={editingScreen?.componentConfig.showEstimatedBill ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showEstimatedBill: e.target.checked }))}
                                                 />
-                                                <span>Estimated Monthly Bill</span>
+                                                <span className="leading-tight">Estimated Monthly Bill</span>
                                             </Label>
                                         </div>
                                     </div>

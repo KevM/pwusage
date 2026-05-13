@@ -46,7 +46,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json({ success: true, sitesImported: authorizedSites.length, granularity });
     } catch (error) {
-        console.error('Import error full stack:', error);
-        return NextResponse.json({ error: (error as Error).message, stack: (error as Error).stack }, { status: 500 });
+        console.error('Import error:', error);
+        return NextResponse.json({ error: (error as Error).message }, { status: 500 });
     }
 }

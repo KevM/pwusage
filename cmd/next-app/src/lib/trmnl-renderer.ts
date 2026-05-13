@@ -7,10 +7,16 @@ import * as components from './trmnl/components';
 
 export type { RenderContext, TariffGroup } from './trmnl/types';
 
+export function escapeHtml(text: string): string {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 export class TrmnlRenderer {
-
-
-
     static renderFull(ctx: RenderContext): string {
         const start = Date.now();
         const cfg = ctx.componentConfig ?? DEFAULT_TRMNL_COMPONENT_CONFIG;
@@ -48,7 +54,7 @@ export class TrmnlRenderer {
         const liveStatsSection = hasLiveRow ? `
             <div class="w--full" style="position: relative; height: ${liveRowHeight}px; min-height: ${liveRowHeight}px;">
                 ${showSiteNameInLiveRow ? `
-                <span class="label label--small" style="position: absolute; top: 2px; left: 2px; line-height: 1; z-index: 2;">${ctx.siteName}</span>
+                <span class="label label--small" style="position: absolute; top: 2px; left: 2px; line-height: 1; z-index: 2;">${escapeHtml(ctx.siteName)}</span>
                 ` : ''}
                 <div class="flex flex--row flex--center-y flex--center-x ${liveGap}" style="height: 100%;">
                     ${showLiveGridStat ? `
@@ -104,8 +110,8 @@ export class TrmnlRenderer {
             <div class="flex flex--col w--full">
                 ${showBillMetaHeader ? `
                 <div class="flex flex--row flex--center-y w--full" style="justify-content: space-between; margin-bottom: 4px;">
-                    <span class="title title--small" style="font-size: ${compactBillMode ? 15 : 17}px; line-height: 1;">${ctx.siteName}</span>
-                    <span class="value value--small" style="font-size: ${compactBillMode ? 13 : 15}px; font-weight: 700; line-height: 1;">${ctx.dateRange}</span>
+                    <span class="title title--small" style="font-size: ${compactBillMode ? 15 : 17}px; line-height: 1;">${escapeHtml(ctx.siteName)}</span>
+                    <span class="value value--small" style="font-size: ${compactBillMode ? 13 : 15}px; font-weight: 700; line-height: 1;">${escapeHtml(ctx.dateRange)}</span>
                 </div>
                 ` : ''}
                 ${tariffTables}
@@ -129,8 +135,8 @@ export class TrmnlRenderer {
 
                      ${!showEstimatedBill ? `
                      <div class="flex flex--row flex--center-x flex--center-y gap--medium">
-                         <span class="title title--small">${ctx.siteName}</span>
-                         <span class="label label--small">${ctx.dateRange}</span>
+                         <span class="title title--small">${escapeHtml(ctx.siteName)}</span>
+                         <span class="label label--small">${escapeHtml(ctx.dateRange)}</span>
                      </div>
                      ` : ''}
                 </div>

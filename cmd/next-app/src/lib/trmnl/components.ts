@@ -8,6 +8,7 @@
 import { RenderContext, TariffGroup } from './types';
 import { wattsToKilowatts } from '../energy-utils';
 import { CHARGING_ICON, DISCHARGING_ICON } from './icons';
+import { escapeHtml } from '../trmnl-renderer';
 
 /* ------------------------------------------------------------------ */
 /*  Stat Helpers                                                      */
@@ -147,13 +148,13 @@ export function renderHalfVertical(ctx: RenderContext): string {
              <div class="layout layout--col" style="padding: 10px; height: 100%;">
                 
                 <div class="flex flex--row flex--center-y" style="justify-content: space-between; width: 100%; margin-bottom: 10px;">
-                     <span class="title title--small">${ctx.siteName}</span>
+                     <span class="title title--small">${escapeHtml(ctx.siteName)}</span>
                      ${renderBatteryStatus(ctx.batterySoc, ctx.batteryStatus)}
                 </div>
 
                 <div class="flex flex--col flex--center-x" style="flex-grow: 1;">
-                     <span class="label">${ctx.costLabel}</span>
-                     <span class="title title--medium">${ctx.displayCost}</span>
+                     <span class="label">${escapeHtml(ctx.costLabel)}</span>
+                     <span class="title title--medium">${escapeHtml(ctx.displayCost)}</span>
                 </div>
 
                 <div class="flex flex--row" style="gap: 10px; width: 100%; margin-top: auto;">
@@ -181,12 +182,12 @@ export function renderHalfHorizontal(ctx: RenderContext): string {
             <div class="layout layout--col" style="padding: 15px; height: 100%;">
                 <div class="flex flex--row flex--center-y" style="justify-content: space-between; width: 100%;">
                     <div class="flex flex--col">
-                        <span class="title title--small">${ctx.siteName}</span>
-                        <span class="label">${ctx.dateRange}</span>
+                        <span class="title title--small">${escapeHtml(ctx.siteName)}</span>
+                        <span class="label">${escapeHtml(ctx.dateRange)}</span>
                     </div>
                     <div class="flex flex--col" style="text-align: right; align-items: flex-end;">
-                         <span class="label">${ctx.costLabel}</span>
-                         <span class="title title--medium">${ctx.displayCost}</span>
+                         <span class="label">${escapeHtml(ctx.costLabel)}</span>
+                         <span class="title title--medium">${escapeHtml(ctx.displayCost)}</span>
                     </div>
                 </div>
 
@@ -208,8 +209,8 @@ export function renderQuadrant(ctx: RenderContext): string {
     return `
         <div class="view view--quadrant">
             <div class="layout layout--col layout--center" style="padding: 10px; width: 100%; height: 100%;">
-                <span class="label mb-2">${ctx.costLabel}</span>
-                <span class="title title--medium">${ctx.displayCost}</span>
+                <span class="label mb-2">${escapeHtml(ctx.costLabel)}</span>
+                <span class="title title--medium">${escapeHtml(ctx.displayCost)}</span>
             </div>
         </div>
     `;
@@ -253,22 +254,22 @@ export function renderTariffTables(
 
             return `
                                 <tr>
-                                    <td><span class="${spanClass}">${labelPrefix}${p.label}</span></td>
+                                    <td><span class="${spanClass}">${labelPrefix}${escapeHtml(p.label)}</span></td>
                                     <td><span class="${spanClass}">${Math.round(wattsToKilowatts(p.home))}</span></td>
                                     <td><span class="${spanClass}">${Math.round(wattsToKilowatts(p.solar))}</span></td>
                                     <td><span class="${spanClass}">${Math.round(wattsToKilowatts(p.grid))}</span></td>
                                     <td><span class="${spanClass}">${Math.round(wattsToKilowatts(p.battery))}</span></td>
-                                    <td><span class="${spanClass}">${periodCostDisplay}</span></td>
+                                    <td><span class="${spanClass}">${escapeHtml(periodCostDisplay)}</span></td>
                                 </tr>
                             `;
         }).join('')}
                         <tr>
                             <td class="table-col">
-                                <span class="${totalClass}"><strong>${ctx.costLabel}</strong></span>
+                                <span class="${totalClass}"><strong>${escapeHtml(ctx.costLabel)}</strong></span>
                             </td>
                             <td colspan="4"></td>
                             <td class="table-col">
-                                <span class="${totalClass}"><strong>${ctx.displayCost}</strong></span>
+                                <span class="${totalClass}"><strong>${escapeHtml(ctx.displayCost)}</strong></span>
                             </td>
                         </tr>
                     </tbody>

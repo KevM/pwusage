@@ -13,13 +13,14 @@ interface SiteIdRow {
 
 export interface SiteQueryOptions {
     includeJson?: boolean;
+    includeTokens?: boolean;
 }
 
 const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode';
 const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
 
 export class SiteRepo {
-    async getInstallationAndSite(uuid: string): Promise<{ installation: TrmnlInstallation, site: SiteWithTariffs } | undefined> {
+    async getInstallationAndSite(uuid: string, options: { includeTokens?: boolean } = {}): Promise<{ installation: TrmnlInstallation, site: SiteWithTariffs } | undefined> {
         const sql = `
             SELECT
                 i.*,
@@ -37,7 +38,7 @@ export class SiteRepo {
         const row = res.rows[0];
         if (!row) return undefined;
 
-        const installation: TrmnlInstallation = {
+        let installation: TrmnlInstallation = {
             id: row.id,
             uuid: row.uuid,
             site_id: row.site_id,
@@ -48,12 +49,19 @@ export class SiteRepo {
             refresh_token: row.refresh_token
         };
 
-        const siteWithTariffs = await this.getSite(row.site_id);
+        const siteWithTariffs = await this.getSite(row.site_id, options);
         if (!siteWithTariffs) return undefined;
 
-        siteWithTariffs.access_token = row.tesla_access_token;
-        siteWithTariffs.refresh_token = row.tesla_refresh_token;
-        siteWithTariffs.auth_status = row.tesla_auth_status;
+        if (options.includeTokens) {
+            siteWithTariffs.access_token = row.tesla_access_token;
+            siteWithTariffs.refresh_token = row.tesla_refresh_token;
+            siteWithTariffs.auth_status = row.tesla_auth_status;
+        } else if (installation) {
+            // Strip Trmnl tokens from installation if not requested
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { access_token: _at, refresh_token: _rt, ...safeInstallation } = installation;
+            installation = safeInstallation as TrmnlInstallation;
+        }
 
         return { installation, site: siteWithTariffs };
     }
@@ -74,12 +82,12 @@ export class SiteRepo {
 
         for (const id of siteIds) {
             const reqCached = requestCtx.siteCache.get(id);
-            if (reqCached && (!options?.includeJson || reqCached.json !== undefined)) {
+            if (reqCached && (!options?.includeJson || reqCached.json !== undefined) && (!options?.includeTokens || reqCached.access_token !== undefined)) {
                 results.push(reqCached);
                 continue;
             }
             const cached = siteCache.get(id);
-            if (cached && cached.expires > now && (!options?.includeJson || cached.data.json !== undefined)) {
+            if (cached && cached.expires > now && (!options?.includeJson || cached.data.json !== undefined) && (!options?.includeTokens || cached.data.access_token !== undefined)) {
                 requestCtx.siteCache.set(id, cached.data);
                 results.push(cached.data);
                 continue;
@@ -108,11 +116,11 @@ export class SiteRepo {
 
     private async loadSitesFromDB(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
         const jsonCol = options?.includeJson ? ', s.json' : '';
+        const tokenCols = options?.includeTokens ? ', u.access_token, u.refresh_token, u.auth_status' : '';
         const sql = `
             SELECT
                 s.id, s.user_id, s.name, s.utility, s.updated, s.installed,
-                s.timezone, s.billing_start_day, s.timezone_display_mode${jsonCol},
-                u.access_token, u.refresh_token, u.auth_status,
+                s.timezone, s.billing_start_day, s.timezone_display_mode${jsonCol}${tokenCols},
                 t.id          AS tariff_id,
                 t.name        AS tariff_name,
                 t.updated     AS tariff_updated,
@@ -162,9 +170,9 @@ export class SiteRepo {
                     billing_start_day: row.billing_start_day as number,
                     timezone_display_mode: (row.timezone_display_mode as 'SITE' | 'BROWSER') ?? undefined,
                     json: options?.includeJson ? row.json : undefined,
-                    access_token: (row.access_token as string | null) ?? null,
-                    refresh_token: (row.refresh_token as string | null) ?? null,
-                    auth_status: (row.auth_status as string | null) ?? null,
+                    access_token: options?.includeTokens ? (row.access_token as string | null) ?? null : undefined,
+                    refresh_token: options?.includeTokens ? (row.refresh_token as string | null) ?? null : undefined,
+                    auth_status: options?.includeTokens ? (row.auth_status as string | null) ?? null : undefined,
                     tariffs: [],
                 });
             }

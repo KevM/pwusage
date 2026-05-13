@@ -1,14 +1,13 @@
 
 import { AnnouncementRepo } from '@/lib/announcement-repo';
 import { marked } from 'marked';
+import { getAppBaseUrl } from '@/lib/url-utils';
 
 const repo = new AnnouncementRepo();
 
 export async function GET() {
   const announcements = await repo.getAll(20);
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL
-    ? process.env.NEXT_PUBLIC_APP_URL
-    : (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  const baseUrl = getAppBaseUrl();
   const newsUrl = `${baseUrl}/news`;
 
   const items = await Promise.all(announcements.map(async (a) => {

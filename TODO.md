@@ -15,3 +15,21 @@ When starting fresh work in this repo, check this file. If a session begins some
 ## Update trmnl markup with Framework 3.1
 
 A new font has been introduced to look better on eInk displays.
+
+## Investigate Tesla JWKS signature verification failures
+
+**Status:** Implemented lazy refresh strategy with fallback to nonce-only validation (2026-05-12, fix-security branch).
+
+Currently, Tesla ID tokens are signed with keys that don't appear in the public JWKS endpoint, even after lazy refresh with cache-busting headers. This appears to be a Tesla infrastructure issue (globally distributed CDN with eventual consistency, aggressive key rotation).
+
+**Current behavior:** Authentication works via nonce validation (CSRF-secure), but signature verification fails.
+
+**Next steps (when prioritized):**
+1. Check if this affects production or is staging-only
+2. Contact Tesla to understand key rotation grace period
+3. Consider implementing key caching (keep recently-used keys for N hours)
+4. Monitor error rates in production to assess urgency
+
+**Related files:**
+- `cmd/next-app/src/app/auth/tesla-callback/route.ts` - JWT verification with lazy refresh
+- `Security.md` section 8 - Tesla `id_token` signature verification requirements

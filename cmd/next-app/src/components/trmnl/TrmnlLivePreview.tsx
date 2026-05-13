@@ -296,6 +296,7 @@ export function TrmnlLivePreview({
                                                         height: `${TRMNL_SCREEN_HEIGHT}px`
                                                     }}
                                                     scrolling="no"
+                                                    sandbox=""
                                                     srcDoc={buildTrmnlPreviewDocument(previewHtml)}
                                                 />
                                             </div>

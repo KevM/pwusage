@@ -17,7 +17,7 @@ export async function proxy(request: NextRequest) {
     if (siteAuthToken) {
         // Check if we need to refresh the token (sliding window)
         // We do this for ANY request that has the token, to keep it alive.
-        const newToken = checkRefreshNeeded(siteAuthToken);
+        const newToken = await checkRefreshNeeded(siteAuthToken);
 
         if (newToken) {
             // Token was refreshed! Set the new cookie.

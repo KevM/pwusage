@@ -1,8 +1,9 @@
 
 import { SystemAnnouncement } from './announcement-repo';
+import { getAppBaseUrl } from './url-utils';
 
 const WEBHOOK_URL = process.env.DISCORD_ANNOUNCEMENTS_WEBHOOK_URL;
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+const APP_URL = getAppBaseUrl();
 
 function extractFirstImage(content: string): string | undefined {
     const match = content.match(/!\[.*?\]\((https?:\/\/.*?)\)/);

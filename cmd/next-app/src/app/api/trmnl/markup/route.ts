@@ -20,6 +20,7 @@ import {
     normalizeTrmnlComponentConfig
 } from '@/lib/trmnl-component-config';
 import { pool } from '@/lib/db';
+import { verifyTrmnlToken } from '@/lib/trmnl-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -132,7 +133,7 @@ export async function GET(request: Request) {
         }
 
         if (uuid) {
-            const result = await siteRepo.getInstallationAndSite(uuid);
+            const result = await siteRepo.getInstallationAndSite(uuid, { includeTokens: true });
             if (!result) {
                 console.log(`[TrmnlMarkup] UUID ${uuid} not found. Generating setup QR code.`);
                 return getQrResponse(request, uuid, null, 'Setup Required', 'Scan to Configure');
@@ -160,7 +161,24 @@ export async function GET(request: Request) {
 
             // Verify Bearer Token
             const authHeader = request.headers.get('Authorization');
-            if (installation.access_token && (!authHeader || !authHeader.startsWith('Bearer ') || authHeader.split(' ')[1] !== installation.access_token)) {
+            const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+            console.log(`[TrmnlMarkup] UUID: ${uuid}, has auth header: ${!!authHeader}, has token: ${!!token}, stored token exists: ${!!installation.access_token}`);
+
+            let isAuthorized = false;
+            if (installation.access_token) {
+                isAuthorized = token === installation.access_token;
+            } else if (token) {
+                // Fallback: If no local access_token, verify via Trmnl JWT
+                try {
+                    await verifyTrmnlToken(token, uuid);
+                    isAuthorized = true;
+                } catch (err) {
+                    console.warn(`[TrmnlMarkup] JWT Verification Failed for ${uuid}:`, err);
+                }
+            }
+
+            if (!isAuthorized) {
+                console.warn(`[TrmnlMarkup] Unauthorized access attempt for UUID ${uuid}`);
                 return getQrResponse(request, uuid, null, 'Plugin Auth Failed', 'Scan to Re-link');
             }
 
@@ -168,7 +186,7 @@ export async function GET(request: Request) {
             if (!(await verifySiteAccess(siteIdParam))) {
                 return NextResponse.json({ error: 'Unauthorized preview' }, { status: 401 });
             }
-            site = await siteRepo.getSite(siteIdParam) || null;
+            site = await siteRepo.getSite(siteIdParam, { includeTokens: true }) || null;
         } else {
             return NextResponse.json({ error: 'Missing uuid or site_id parameter' }, { status: 400 });
         }

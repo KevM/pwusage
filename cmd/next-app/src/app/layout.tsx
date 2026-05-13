@@ -4,6 +4,7 @@ import "./globals.css";
 
 import { GlobalHeader } from "@/components/GlobalHeader";
 import { Footer } from "@/components/Footer";
+import { getAppBaseUrl } from "@/lib/url-utils";
 
 const isPreviewDeployment = process.env.VERCEL_ENV === "preview";
 const appTitle = isPreviewDeployment ? "Powerwall Usage (Preview)" : "Powerwall Usage";
@@ -23,11 +24,7 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: appTitle,
   description: "Powerwall insights for smarter energy savings.",
-  metadataBase: new URL(
-    process.env.NEXT_PUBLIC_APP_URL
-      ? process.env.NEXT_PUBLIC_APP_URL
-      : (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
-  ),
+  metadataBase: new URL(getAppBaseUrl()),
   openGraph: {
     title: appTitle,
     description: "Powerwall insights for smarter energy savings.",

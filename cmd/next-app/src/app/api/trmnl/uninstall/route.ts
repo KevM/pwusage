@@ -14,7 +14,7 @@ export async function POST(request: Request) {
         }
 
         const service = new TrmnlService();
-        const installation = await service.getInstallationByUuid(user_uuid);
+        const installation = await service.getInstallationByUuid(user_uuid, { includeTokens: true });
 
         if (!installation) {
             console.log(`[TrmnlUninstall] Installation not found for UUID ${user_uuid}. Already deleted?`);
@@ -30,7 +30,22 @@ export async function POST(request: Request) {
         }
 
         const token = authHeader.split(' ')[1];
-        if (installation.access_token && token !== installation.access_token) {
+        let isAuthorized = false;
+
+        if (installation.access_token) {
+            isAuthorized = token === installation.access_token;
+        } else {
+            // If no local access_token, verify via Trmnl JWT
+            try {
+                const { verifyTrmnlToken } = await import('@/lib/trmnl-auth');
+                await verifyTrmnlToken(token, user_uuid);
+                isAuthorized = true;
+            } catch (err) {
+                console.warn(`[TrmnlUninstall] JWT Verification Failed for ${user_uuid}:`, err);
+            }
+        }
+
+        if (!isAuthorized) {
             console.warn(`[TrmnlUninstall] Invalid Bearer token for UUID ${user_uuid}`);
             return NextResponse.json({ error: 'Unauthorized: Invalid token' }, { status: 401 });
         }

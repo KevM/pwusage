@@ -1,6 +1,7 @@
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { verifySiteToken } from './auth-jwt';
-import { getUserTokensForSite } from './user-repo';
+import { getUserTokensForSite, isUserActive } from './user-repo';
 
 const SITE_AUTH_COOKIE = 'site_auth';
 
@@ -14,7 +15,10 @@ export async function getTeslaCredentials() {
     return getUserTokensForSite(siteIds[0]);
 }
 
-export async function isUserAdmin(): Promise<boolean> {
+export const isUserAdmin = cache(async (): Promise<boolean> => {
+    const user = await getCurrentUser();
+    if (!user) return false;
+
     const cookieStore = await cookies();
     const token = cookieStore.get(SITE_AUTH_COOKIE)?.value;
 
@@ -25,50 +29,61 @@ export async function isUserAdmin(): Promise<boolean> {
         }
     }
     return false;
-    return false;
-}
+});
 
-export async function getCurrentUser(): Promise<{ id: string, email?: string } | null> {
+export const getCurrentUser = cache(async (): Promise<{ id: string, email?: string } | null> => {
     const cookieStore = await cookies();
     const token = cookieStore.get(SITE_AUTH_COOKIE)?.value;
 
     if (token) {
         const decoded = verifySiteToken(token);
-        // Assuming the ID is in the subject 'sub' claim or similar. 
-        // Based on `signSiteToken`, verify what's actually in there. 
-        // The `verifySiteToken` usually returns { sites: [], roles: [], sub: 'userid', ... }
         if (decoded && decoded.sub) {
+            // Check if user is still active in DB
+            if (!(await isUserActive(decoded.sub))) {
+                console.warn(`[AuthChecks] Blocking access for revoked/inactive user: ${decoded.sub}`);
+                return null;
+            }
             return { id: decoded.sub };
         }
     }
     return null;
-}
+});
 
-export async function verifySiteAccess(siteId: string): Promise<boolean> {
+export const verifySiteAccess = cache(async (siteId: string): Promise<boolean> => {
     const cookieStore = await cookies();
     const token = cookieStore.get(SITE_AUTH_COOKIE)?.value;
 
     if (token) {
         const decoded = verifySiteToken(token);
         if (decoded && (decoded.sites.includes(siteId) || decoded.roles.includes('admin'))) {
+            // Check if user is still active in DB
+            if (decoded.sub && !(await isUserActive(decoded.sub))) {
+                console.warn(`[AuthChecks] verifySiteAccess blocked for revoked user: ${decoded.sub}`);
+                return false;
+            }
             return true;
         }
     }
     return false;
-}
+});
 
-export async function getAuthorizedSiteIds(): Promise<string[]> {
+export const getAuthorizedSiteIds = cache(async (): Promise<string[]> => {
     const cookieStore = await cookies();
     const token = cookieStore.get(SITE_AUTH_COOKIE)?.value;
 
     if (token) {
         const decoded = verifySiteToken(token);
         if (decoded && decoded.sites.length > 0) {
+            // Check if user is still active in DB
+            if (decoded.sub && !(await isUserActive(decoded.sub))) {
+                console.warn(`[AuthChecks] getAuthorizedSiteIds blocked for revoked user: ${decoded.sub}`);
+                return [];
+            }
             return decoded.sites;
         }
     }
     return [];
-}
+});
 
 export async function getDefaultSiteId(): Promise<string | null> {
     const siteIds = await getAuthorizedSiteIds();
