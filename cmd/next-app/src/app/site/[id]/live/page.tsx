@@ -17,6 +17,7 @@ import { computeMarginalCost } from '@/lib/marginal-cost';
 import { refreshTodayData } from '@/lib/today-refresh';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { getUserTokensForSite } from '@/lib/user-repo';
+import { energyToAveragePower } from '@/lib/energy-utils';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageShell } from '@/components/ui/PageShell';
@@ -159,11 +160,11 @@ export default async function SiteLivePage({ params }: { params: Promise<{ id: s
                     siteId={id}
                     siteName={site.name}
                     siteTimezone={site.timezone}
-                    batterySoC={latestEnergyData?.batterySoc ?? liveStatus?.percentage_charged ?? null}
-                    batteryPower={latestEnergyData?.batteryPower ?? liveStatus?.battery_power ?? 0}
-                    solarPower={latestEnergyData?.solarPower ?? liveStatus?.solar_power ?? 0}
-                    gridPower={latestEnergyData?.gridPower ?? liveStatus?.grid_power ?? 0}
-                    loadPower={latestEnergyData?.loadPower ?? liveStatus?.load_power ?? 0}
+                    batterySoC={liveStatus?.percentage_charged ?? latestEnergyData?.batterySoc ?? null}
+                    batteryPower={liveStatus?.battery_power ?? (latestEnergyData !== null ? energyToAveragePower(latestEnergyData.batteryPower) : 0)}
+                    solarPower={liveStatus?.solar_power ?? (latestEnergyData !== null ? energyToAveragePower(latestEnergyData.solarPower) : 0)}
+                    gridPower={liveStatus?.grid_power ?? (latestEnergyData !== null ? energyToAveragePower(latestEnergyData.gridPower) : 0)}
+                    loadPower={liveStatus?.load_power ?? (latestEnergyData !== null ? energyToAveragePower(latestEnergyData.loadPower) : 0)}
                     cycle={cycle}
                     today={today}
                     todayTotals={todayTotals}
