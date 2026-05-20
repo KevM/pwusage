@@ -698,6 +698,13 @@ export async function GET(request: Request) {
         if (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== 'production') {
             displayName += ' (Preview)';
         }
+        const timeString = now.toLocaleTimeString('en-US', {
+            timeZone: tz,
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        }).toLowerCase().replace(/\s+/g, '');
+        displayName = `${displayName} @ ${timeString}`;
 
         const renderCtx = {
             siteName: displayName,
