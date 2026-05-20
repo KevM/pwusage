@@ -51,7 +51,7 @@ export const loadTimingSection: TrmnlSection = {
         } else if (view.activeIsCheapest) {
             banner = `
             <div class="flex flex--row flex--center-x w--full">
-                <span class="title title--medium">Cheapest period now</span>
+                <span class="title title--medium">You are in the Cheapest period</span>
             </div>`;
         }
 
