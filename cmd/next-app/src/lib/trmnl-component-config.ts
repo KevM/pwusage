@@ -189,18 +189,4 @@ export function mergeTrmnlComponentScreensIntoInstallationJson(
     };
 }
 
-// Backward-compatible helpers for legacy single-screen call sites.
-export function extractTrmnlComponentConfig(installationJson: unknown): TrmnlComponentConfig {
-    return extractTrmnlComponentScreens(installationJson)[0]?.componentConfig ?? { ...DEFAULT_TRMNL_COMPONENT_CONFIG };
-}
 
-export function mergeTrmnlComponentConfigIntoInstallationJson(
-    installationJson: unknown,
-    componentConfig: TrmnlComponentConfig
-): Record<string, unknown> {
-    return mergeTrmnlComponentScreensIntoInstallationJson(installationJson, [{
-        id: 'screen-1',
-        name: 'Screen 1',
-        componentConfig: normalizeTrmnlComponentConfig(componentConfig)
-    }], 0);
-}

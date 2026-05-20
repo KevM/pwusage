@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
     DEFAULT_TRMNL_COMPONENT_CONFIG,
-    extractTrmnlComponentConfig,
     normalizeTrmnlComponentConfig,
     buildDefaultTrmnlComponentScreens
 } from './trmnl-component-config';
@@ -67,7 +66,6 @@ describe('TRMNL component config defaults', () => {
         };
 
         expect(normalizeTrmnlComponentConfig(legacyStored).showLoadTiming).toBe(false);
-        expect(extractTrmnlComponentConfig(legacyStored).showLoadTiming).toBe(false);
     });
 
     it('preserves an explicit showLoadTiming=true that the user opted into', () => {

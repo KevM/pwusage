@@ -14,8 +14,8 @@ import { TrmnlRenderer } from '@/lib/trmnl-renderer';
 import { computeLoadTiming } from '@/lib/load-timing';
 import { wattsToKilowatts } from '@/lib/energy-utils';
 import {
+    DEFAULT_TRMNL_COMPONENT_CONFIG,
     extractTrmnlCarouselIndex,
-    extractTrmnlComponentConfig,
     extractTrmnlComponentScreens,
     mergeTrmnlComponentScreensIntoInstallationJson,
     normalizeTrmnlComponentConfig
@@ -120,7 +120,7 @@ export async function GET(request: Request) {
         const siteRepo = new SiteRepo();
         const repo = new EnergyRepo();
         const tokenRepo = new TeslaTokenRepo(siteRepo);
-        let componentConfig = extractTrmnlComponentConfig(null);
+        let componentConfig = { ...DEFAULT_TRMNL_COMPONENT_CONFIG };
 
         if (componentConfigParam) {
             if (!siteIdParam || uuid) {
@@ -145,7 +145,7 @@ export async function GET(request: Request) {
             if (!componentConfigParam) {
                 const screens = extractTrmnlComponentScreens(installation.json);
                 const currentIndex = extractTrmnlCarouselIndex(installation.json, screens.length);
-                componentConfig = screens[currentIndex]?.componentConfig ?? extractTrmnlComponentConfig(installation.json);
+                componentConfig = screens[currentIndex].componentConfig;
 
                 const nextIndex = screens.length > 1 ? (currentIndex + 1) % screens.length : 0;
                 if (installation.id && nextIndex !== currentIndex) {
