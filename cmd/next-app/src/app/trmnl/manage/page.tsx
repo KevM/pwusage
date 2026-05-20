@@ -681,6 +681,14 @@ function ManageContent() {
                                                 />
                                                 <span className="leading-tight">Estimated Monthly Bill</span>
                                             </Label>
+                                            <Label className="flex items-start gap-2 text-sm font-normal text-gray-700 dark:text-gray-200 cursor-pointer">
+                                                <Checkbox
+                                                    className="mt-0.5"
+                                                    checked={editingScreen?.componentConfig.showLoadTiming ?? false}
+                                                    onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showLoadTiming: e.target.checked }))}
+                                                />
+                                                <span className="leading-tight">Load timing</span>
+                                            </Label>
                                         </div>
                                     </div>
                                 </div>

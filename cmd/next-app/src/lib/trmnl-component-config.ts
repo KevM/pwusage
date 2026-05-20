@@ -7,6 +7,7 @@ export interface TrmnlComponentConfig {
     showEnergyChart: boolean;
     showBatterySoc: boolean;
     showEstimatedBill: boolean;
+    showLoadTiming: boolean;
     batterySocMode: TrmnlBatterySocMode;
 }
 
@@ -25,6 +26,7 @@ export const DEFAULT_TRMNL_COMPONENT_CONFIG: TrmnlComponentConfig = {
     showEnergyChart: true,
     showBatterySoc: true,
     showEstimatedBill: true,
+    showLoadTiming: false,
     batterySocMode: 'glyph'
 };
 
@@ -89,6 +91,7 @@ export function normalizeTrmnlComponentConfig(value: unknown): TrmnlComponentCon
         showEnergyChart: asBoolean(fromKeys(record, ['showEnergyChart', 'show_energy_chart']), DEFAULT_TRMNL_COMPONENT_CONFIG.showEnergyChart),
         showBatterySoc: asBoolean(fromKeys(record, ['showBatterySoc', 'show_battery_soc']), DEFAULT_TRMNL_COMPONENT_CONFIG.showBatterySoc),
         showEstimatedBill: asBoolean(fromKeys(record, ['showEstimatedBill', 'show_estimated_bill']), DEFAULT_TRMNL_COMPONENT_CONFIG.showEstimatedBill),
+        showLoadTiming: asBoolean(fromKeys(record, ['showLoadTiming', 'show_load_timing']), DEFAULT_TRMNL_COMPONENT_CONFIG.showLoadTiming),
         batterySocMode: asBatterySocMode(fromKeys(record, ['batterySocMode', 'battery_soc_mode']), DEFAULT_TRMNL_COMPONENT_CONFIG.batterySocMode)
     };
 }

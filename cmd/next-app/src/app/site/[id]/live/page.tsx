@@ -9,11 +9,9 @@ import { LiveDetailView } from '@/components/site/live/LiveDetailView';
 import type { ActivePeriod } from '@/components/site/live/PeriodCardRow';
 import {
     findNextCheaperPeriod,
-    findNextStartsByKey,
-    formatRelativeStart,
     type CheaperPeriod
 } from '@/lib/next-cheaper-period';
-import { computeMarginalCost } from '@/lib/marginal-cost';
+import { computeLoadTiming } from '@/lib/load-timing';
 import { refreshTodayData } from '@/lib/today-refresh';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { getUserTokensForSite } from '@/lib/user-repo';
@@ -116,40 +114,20 @@ export default async function SiteLivePage({ params }: { params: Promise<{ id: s
         getLiveStatus(id).catch(() => null)
     ]);
 
-    let nextCheaper: CheaperPeriod | null = null;
-    let nextCheaperPhrase: string | null = null;
-    let nextStartPhraseByKey: Record<string, string> = {};
-    let activeIsCheapest = false;
-    if (schedule && activePeriod) {
-        nextCheaper = findNextCheaperPeriod(schedule, now, cycle, site.timezone);
-        if (nextCheaper) {
-            nextCheaperPhrase = formatRelativeStart(nextCheaper.startsAt, now, site.timezone);
-        }
-        const nextStarts = findNextStartsByKey(schedule, now, cycle, site.timezone);
-        nextStartPhraseByKey = Object.fromEntries(
-            Array.from(nextStarts.entries()).map(([key, start]) => [
-                key,
-                formatRelativeStart(start, now, site.timezone)
-            ])
-        );
-
-        // "Cheapest right now" must be grounded in cycle marginal costs, not
-        // in whether the 48h forward walk happened to land on a cheaper one —
-        // e.g. weekday-only On-Peak on a Saturday is cheaper but out of reach.
-        const activeEntry = cycle.find((u) =>
-            (u.touName ?? 'Unknown') === activePeriod!.name
-            && (u.buyRate ?? 0) === activePeriod!.buyRate
-            && (u.sellRate ?? 0) === activePeriod!.sellRate
-        );
-        const activeMarginal = activeEntry ? computeMarginalCost(activeEntry).marginalCost : null;
-        if (activeMarginal !== null) {
-            activeIsCheapest = cycle.every((u) => {
-                if (u === activeEntry) return true;
-                const m = computeMarginalCost(u).marginalCost;
-                return m === null || m >= activeMarginal;
-            });
-        }
-    }
+    // Marginal-cost / next-cheaper orchestration lives in the shared
+    // computeLoadTiming module so the live page and the TRMNL markup route
+    // never disagree. The view consumes the full CheaperPeriod (startsAt /
+    // basis), so when a cheaper period exists re-derive it once — same
+    // inputs, same result, props stay identical to the prior inline logic.
+    const loadTiming = schedule
+        ? computeLoadTiming(schedule, cycle, now, site.timezone, activePeriod)
+        : null;
+    const nextCheaper: CheaperPeriod | null = (schedule && loadTiming?.nextCheaper)
+        ? findNextCheaperPeriod(schedule, now, cycle, site.timezone)
+        : null;
+    const nextCheaperPhrase: string | null = loadTiming?.nextCheaperPhrase ?? null;
+    const nextStartPhraseByKey: Record<string, string> = loadTiming?.nextStartPhraseByKey ?? {};
+    const activeIsCheapest = loadTiming?.activeIsCheapest ?? false;
 
     return (
         <PageShell maxWidth="2xl" padding="none" className="px-4 py-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">

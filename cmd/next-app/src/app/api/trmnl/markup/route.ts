@@ -11,6 +11,7 @@ import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
 import QRCode from 'qrcode';
 import { TrmnlRenderer } from '@/lib/trmnl-renderer';
+import { computeLoadTiming } from '@/lib/load-timing';
 import { wattsToKilowatts } from '@/lib/energy-utils';
 import {
     extractTrmnlCarouselIndex,
@@ -288,6 +289,12 @@ export async function GET(request: Request) {
 
         const [latestData, priorAggregates, todayRaw] = await Promise.all([dbLatestPromise, dbCyclePromise, dbTodayPromise]);
         const latestTimestamp = latestData?.timestamp ?? null;
+
+        // Load timing needs the per-TOU cycle UsageData. Only fetch it when the
+        // section is enabled — zero added DB cost when the feature is off.
+        const loadTimingCycle = componentConfig.showLoadTiming
+            ? await repo.getUsageByTOU(site!.id, start, now)
+            : [];
 
         let liveStatusEntry = getCachedLiveStatus(site.id);
         let liveStatus: EnergySiteLiveStatus | undefined = liveStatusEntry?.data;
@@ -639,6 +646,17 @@ export async function GET(request: Request) {
         const currentPeriod = schedule.getTariffPeriod(new Date());
         const currentTouName = currentPeriod?.schedule.name;
 
+        const loadTimingActive = currentPeriod
+            ? {
+                name: currentPeriod.schedule.name ?? 'Unknown',
+                buyRate: currentPeriod.schedule.buy_rate ?? 0,
+                sellRate: currentPeriod.schedule.sell_rate ?? 0
+            }
+            : null;
+        const loadTimingView = componentConfig.showLoadTiming
+            ? computeLoadTiming(schedule, loadTimingCycle, now, tz, loadTimingActive)
+            : undefined;
+
 
         let batterySoc: number | null = null;
         let batteryStatus: 'charging' | 'discharging' | 'idle' = 'idle';
@@ -696,7 +714,8 @@ export async function GET(request: Request) {
             todayGrid: todayGrid,
             todaySolar: todaySolar,
             seriesData: seriesData,
-            componentConfig
+            componentConfig,
+            loadTiming: loadTimingView
         };
 
         const layoutStart = Date.now();
@@ -724,6 +743,7 @@ export async function GET(request: Request) {
             `ec:${componentConfig.showEnergyChart ? 1 : 0}`,
             `soc:${componentConfig.showBatterySoc ? 1 : 0}`,
             `bill:${componentConfig.showEstimatedBill ? 1 : 0}`,
+            `lt:${componentConfig.showLoadTiming ? 1 : 0}`,
             `mode:${componentConfig.batterySocMode}`
         ].join(',');
 

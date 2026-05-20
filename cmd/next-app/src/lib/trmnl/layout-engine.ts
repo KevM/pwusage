@@ -28,6 +28,7 @@ export interface LayoutState {
     showEnergyChart: boolean;
     showEstimatedBill: boolean;
     showBatterySoc: boolean;
+    hasLoadTimingSection: boolean;
 
     /* ---- density classification ---- */
     activeSectionCount: number;
@@ -53,6 +54,10 @@ export interface LayoutState {
     billRowsTarget: number;
     billCompactLevel: number;
 
+    /* ---- load-timing sizing ---- */
+    loadTimingMinHeight: number;
+    loadTimingCompactLevel: number;
+
     /* ---- meta header ---- */
     showBillMetaHeader: boolean;
     showSiteNameInLiveRow: boolean;
@@ -70,6 +75,7 @@ export function calculateLayoutBudget(
     const showEnergyChart = config.showEnergyChart;
     const showBatterySoc = config.showBatterySoc;
     const showEstimatedBill = config.showEstimatedBill;
+    const showLoadTiming = config.showLoadTiming;
 
     const hasStandaloneSocChart = showBatterySoc && config.batterySocMode === 'chart';
     const hasStandaloneSocGlyph = !hasStandaloneSocChart && showBatterySoc;
@@ -81,14 +87,17 @@ export function calculateLayoutBudget(
         .length;
     const hasLiveRow = visibleLiveStatCount > 0;
     const hasStandaloneSocSection = hasStandaloneSocChart || hasStandaloneSocGlyph;
+    const hasLoadTimingSection = showLoadTiming;
     const activeSectionCount = (hasLiveRow ? 1 : 0)
         + (showEnergyChart ? 1 : 0)
         + (hasStandaloneSocSection ? 1 : 0)
-        + (showEstimatedBill ? 1 : 0);
+        + (showEstimatedBill ? 1 : 0)
+        + (hasLoadTimingSection ? 1 : 0);
     const isVeryDenseLayout = activeSectionCount >= 4;
     const isDenseLayout = activeSectionCount === 3;
     const compactBillMode = showEstimatedBill && activeSectionCount >= 3;
     const isLiveEnergyBillLayout = showEstimatedBill && hasLiveRow && showEnergyChart && !hasStandaloneSocSection;
+    const isLiveEnergyLoadTimingLayout = hasLoadTimingSection && hasLiveRow && showEnergyChart && !showEstimatedBill && !hasStandaloneSocSection;
 
     /* ---- live-stats sizing ---- */
     const liveDensityScale = isLiveEnergyBillLayout
@@ -104,14 +113,24 @@ export function calculateLayoutBudget(
     const liveRowHeight = hasLiveRow ? (isVeryDenseLayout ? 64 : (isDenseLayout ? 74 : 88)) : 0;
 
     /* ---- chart heights ---- */
+    // Load timing competes with the chart for vertical budget the same way
+    // the bill does — its content (banner + period cells) doesn't compress
+    // gracefully, so shrink the chart's floor when either is co-displayed.
+    const chartHasFlexCompanion = showEstimatedBill || hasLoadTimingSection;
     let chartMinHeight = isVeryDenseLayout
         ? (hasStandaloneSocGlyph ? 138 : 128)
-        : (showEstimatedBill
+        : (chartHasFlexCompanion
             ? (hasLiveRow ? 160 : 210)
             : (hasStandaloneSocChart
                 ? (hasLiveRow ? 176 : 230)
                 : (hasLiveRow ? 250 : 310)));
     if (isLiveEnergyBillLayout) {
+        chartMinHeight = 140;
+    }
+    if (isLiveEnergyLoadTimingLayout) {
+        // Mirror the bill case: chart yields more height so Load timing's
+        // multi-line cells (header + name + cost + net) have a comfortable
+        // budget without clipping the active cell at the section bottom.
         chartMinHeight = 140;
     }
     let socChartMinHeight = isVeryDenseLayout
@@ -132,6 +151,16 @@ export function calculateLayoutBudget(
     }
     const socGlyphSectionHeight = hasStandaloneSocGlyph ? (isVeryDenseLayout ? 28 : 24) : 0;
 
+    // Load timing renders a flex grid of period cells. It is a flexible
+    // section: when solo it fills the available height; co-displayed it gets a
+    // compact floor and steps font/spacing down via loadTimingCompactLevel.
+    const loadTimingCompactLevel = isVeryDenseLayout ? 2 : (isDenseLayout ? 1 : 0);
+    const loadTimingMinHeight = !hasLoadTimingSection
+        ? 0
+        : (activeSectionCount <= 1
+            ? Math.max(180, TRMNL_HEIGHT - FOOTER_HEIGHT - ESTIMATED_GAP)
+            : (isVeryDenseLayout ? 96 : (isLiveEnergyLoadTimingLayout ? 168 : (isDenseLayout ? 156 : 168))));
+
     /* ---- bill sizing ---- */
     let billRowsTarget = 3;
     if (showEstimatedBill) {
@@ -140,10 +169,12 @@ export function calculateLayoutBudget(
             liveSectionHeightEstimate +
             (showEnergyChart ? chartMinHeight : 0) +
             (hasStandaloneSocChart ? socChartMinHeight : socGlyphSectionHeight) +
+            (hasLoadTimingSection ? loadTimingMinHeight : 0) +
             FOOTER_HEIGHT;
         const renderedSections = (hasLiveRow ? 1 : 0)
             + (showEnergyChart ? 1 : 0)
             + (hasStandaloneSocSection ? 1 : 0)
+            + (hasLoadTimingSection ? 1 : 0)
             + 1 // bill
             + 1; // footer
         const gapHeight = Math.max(0, renderedSections - 1) * ESTIMATED_GAP;
@@ -206,6 +237,7 @@ export function calculateLayoutBudget(
         showEnergyChart,
         showEstimatedBill,
         showBatterySoc,
+        hasLoadTimingSection,
 
         activeSectionCount,
         isVeryDenseLayout,
@@ -226,6 +258,9 @@ export function calculateLayoutBudget(
 
         billRowsTarget,
         billCompactLevel,
+
+        loadTimingMinHeight,
+        loadTimingCompactLevel,
 
         showBillMetaHeader,
         showSiteNameInLiveRow

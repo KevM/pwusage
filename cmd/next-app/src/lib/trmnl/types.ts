@@ -1,5 +1,6 @@
 import { EnergyData } from '../db';
 import { TrmnlComponentConfig } from '../trmnl-component-config';
+import type { LoadTimingView } from '../load-timing';
 
 export interface TariffGroup {
     tariffId: number;
@@ -31,4 +32,5 @@ export interface RenderContext {
     todaySolar?: number;
     seriesData?: EnergyData[];
     componentConfig?: TrmnlComponentConfig;
+    loadTiming?: LoadTimingView;
 }

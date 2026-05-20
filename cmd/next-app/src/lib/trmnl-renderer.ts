@@ -1,9 +1,8 @@
 import { DEFAULT_TRMNL_COMPONENT_CONFIG } from './trmnl-component-config';
-import { getSunIcon, getGridIcon } from './trmnl/icons';
 import { calculateLayoutBudget } from './trmnl/layout-engine';
-import { renderEnergyChart, renderSocChart, renderBatterySocGlyphStrip } from './trmnl/charts';
 import { RenderContext } from './trmnl/types';
 import * as components from './trmnl/components';
+import { SECTION_REGISTRY } from './trmnl/sections/registry';
 
 export type { RenderContext, TariffGroup } from './trmnl/types';
 
@@ -22,103 +21,17 @@ export class TrmnlRenderer {
         const cfg = ctx.componentConfig ?? DEFAULT_TRMNL_COMPONENT_CONFIG;
         const layout = calculateLayoutBudget(ctx, cfg);
 
-        const {
-            hasStandaloneSocChart,
-            hasStandaloneSocGlyph,
-            showLiveGridStat,
-            showLiveSolarStat,
-            showLiveBatteryStat,
-            hasLiveRow,
-            showEnergyChart,
-            showEstimatedBill,
-            showBatterySoc,
-            isVeryDenseLayout,
-            isDenseLayout,
-            compactBillMode,
-            liveIconSize,
-            liveValueFontPx,
-            liveGap,
-            liveBatteryScale,
-            liveRowHeight,
-            chartMinHeight,
-            socChartMinHeight,
-            socGlyphSectionHeight,
-            billRowsTarget,
-            billCompactLevel,
-            showBillMetaHeader,
-            showSiteNameInLiveRow
-        } = layout;
+        // Section dispatch is registry-driven: each section owns its enable
+        // predicate and markup. The parent template keeps one explicit slot
+        // per section id so disabled sections still emit their (empty) slot —
+        // collapsing to a single join would drop that whitespace and break
+        // the characterization snapshots.
+        const html: Record<string, string> = {};
+        for (const section of SECTION_REGISTRY) {
+            html[section.id] = section.isEnabled(layout) ? section.render(ctx, layout) : '';
+        }
 
-        const tariffTables = components.renderTariffTables(ctx, billRowsTarget, billCompactLevel);
-
-        const liveStatsSection = hasLiveRow ? `
-            <div class="w--full" style="position: relative; height: ${liveRowHeight}px; min-height: ${liveRowHeight}px;">
-                ${showSiteNameInLiveRow ? `
-                <span class="label label--small" style="position: absolute; top: 2px; left: 2px; line-height: 1; z-index: 2;">${escapeHtml(ctx.siteName)}</span>
-                ` : ''}
-                <div class="flex flex--row flex--center-y flex--center-x ${liveGap}" style="height: 100%;">
-                    ${showLiveGridStat ? `
-                    <div class="flex flex--row flex--center-y flex--center-x gap--small">
-                        <span class="title title--xxlarge" style="font-size: ${liveValueFontPx}px; line-height: 1;">${(ctx.todayGrid as number).toFixed(1)}</span>
-                        ${getGridIcon(liveIconSize)}
-                    </div>
-                    ` : ''}
-
-                    ${showLiveSolarStat ? `
-                    <div class="flex flex--row flex--center-y flex--center-x gap--small">
-                        <span class="title title--xxlarge" style="font-size: ${liveValueFontPx}px; line-height: 1;">${(ctx.todaySolar as number).toFixed(1)}</span>
-                        ${getSunIcon(liveIconSize)}
-                    </div>
-                    ` : ''}
-
-                    ${showLiveBatteryStat ? `
-                    <div class="flex flex--col flex--center-x">
-                        ${components.renderBatteryStatusLarge(ctx.batterySoc, ctx.batteryStatus, { scale: liveBatteryScale })}
-                    </div>
-                    ` : ''}
-                </div>
-            </div>
-        ` : '';
-
-        const chartSection = showEnergyChart ? `
-            <div class="flex flex--row flex--center-y flex--center-x w--full" style="flex: 1 1 auto; height: ${chartMinHeight}px; min-height: ${chartMinHeight}px;">
-                ${ctx.seriesData ? renderEnergyChart(ctx.seriesData, {
-            chartHeight: chartMinHeight,
-            denseLegend: isDenseLayout || isVeryDenseLayout,
-            veryDenseLegend: isVeryDenseLayout
-        }) : ''}
-            </div>
-        ` : '';
-
-        const standaloneSocSection = hasStandaloneSocChart ? `
-            <div class="flex flex--row flex--center-x w--full" style="flex: 1 1 auto; height: ${socChartMinHeight}px; min-height: ${socChartMinHeight}px; align-items: stretch;">
-                ${ctx.seriesData ? renderSocChart(ctx.seriesData, ctx.batterySoc, socChartMinHeight, {
-            showXAxis: !showEnergyChart
-        }) : '<span class="label">Battery SoC unavailable</span>'}
-            </div>
-        ` : (hasStandaloneSocGlyph ? `
-            <div class="flex flex--row flex--center-x w--full" style="height: ${socGlyphSectionHeight}px; min-height: ${socGlyphSectionHeight}px; align-items: center;">
-                <div class="flex flex--col w--full">
-                    ${ctx.seriesData
-                ? renderBatterySocGlyphStrip(ctx.seriesData, ctx.batterySoc, { showXAxis: !showEnergyChart })
-                : components.renderBatterySocStandalone(ctx.batterySoc)}
-                </div>
-            </div>
-        ` : '');
-
-        const billSection = showEstimatedBill ? `
-            <div class="flex flex--col w--full">
-                ${showBillMetaHeader ? `
-                <div class="flex flex--row flex--center-y w--full" style="justify-content: space-between; margin-bottom: 4px;">
-                    <span class="title title--small" style="font-size: ${compactBillMode ? 15 : 17}px; line-height: 1;">${escapeHtml(ctx.siteName)}</span>
-                    <span class="value value--small" style="font-size: ${compactBillMode ? 13 : 15}px; font-weight: 700; line-height: 1;">${escapeHtml(ctx.dateRange)}</span>
-                </div>
-                ` : ''}
-                ${tariffTables}
-            </div>
-        ` : '';
-
-        const emptySection = (!hasLiveRow && !showEnergyChart && !showBatterySoc && !showEstimatedBill) ? `
+        const emptySection = !SECTION_REGISTRY.some((s) => s.isEnabled(layout)) ? `
             <div class="flex flex--row flex--center-x flex--center-y h--full">
                 <span class="title title--medium">No components selected</span>
             </div>
@@ -127,13 +40,13 @@ export class TrmnlRenderer {
         const markup = `
             <div class="view view--full">
                 <div class="layout layout--col gap--small h--full">
-                    ${liveStatsSection}
-                    ${chartSection}
-                    ${standaloneSocSection}
-                    ${billSection}
+                    ${html.live ?? ''}
+                    ${html.energyChart ?? ''}
+                    ${html.soc ?? ''}
+                    ${/* loadTiming rides the bill slot so a disabled section adds zero bytes — a separate template line would inject blank-line whitespace into every feature-off screen */ ''}${html.bill ?? ''}${html.loadTiming ?? ''}
                     ${emptySection}
 
-                     ${!showEstimatedBill ? `
+                     ${!layout.showEstimatedBill ? `
                      <div class="flex flex--row flex--center-x flex--center-y gap--medium">
                          <span class="title title--small">${escapeHtml(ctx.siteName)}</span>
                          <span class="label label--small">${escapeHtml(ctx.dateRange)}</span>
@@ -158,8 +71,5 @@ export class TrmnlRenderer {
     static renderQuadrant(ctx: RenderContext): string {
         return components.renderQuadrant(ctx);
     }
-
-
-
 
 }

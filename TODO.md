@@ -33,3 +33,23 @@ Currently, Tesla ID tokens are signed with keys that don't appear in the public 
 **Related files:**
 - `cmd/next-app/src/app/auth/tesla-callback/route.ts` - JWT verification with lazy refresh
 - `Security.md` section 8 - Tesla `id_token` signature verification requirements
+
+## TRMNL chart hour labels should use site timezone, not server timezone
+
+**Status:** Pre-existing on `main`; surfaced (but not introduced) by the snapshot
+tests added on `feature/trmnl-load-timing-widget` (2026-05-19, PR #55). Worked
+around in tests by pinning `process.env.TZ = 'UTC'` in `cmd/next-app/vitest.setup.ts`.
+
+`buildHourLabelEntries` in `cmd/next-app/src/lib/trmnl/charts.ts` computes the
+"12am / 6am / 12pm / 6pm" tick positions by calling `Date.setHours(h, ...)`,
+which uses the **process** timezone. On Vercel (UTC), this means every site —
+regardless of physical location — sees the chart's hour ticks anchored to UTC
+midnight, not the site's local midnight. For a California user this skews the
+"12am" tick by 7–8 hours.
+
+**Fix:** Plumb `site.timezone` from `src/app/api/trmnl/markup/route.ts` into
+`TrmnlRenderer.renderFull` / `renderChart`, and compute the tick clock-times
+in that zone (e.g. via `Intl.DateTimeFormat` or the same Temporal polyfill
+used in `billing-cycle.ts`). Once the renderer takes a `tz`, the snapshot
+tests should pass it explicitly and the `TZ=UTC` pin in `vitest.setup.ts`
+can stay as belt-and-braces or be removed.

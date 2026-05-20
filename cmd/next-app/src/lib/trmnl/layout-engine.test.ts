@@ -26,6 +26,7 @@ function makeCfg(overrides?: Partial<TrmnlComponentConfig>): TrmnlComponentConfi
         showEnergyChart: false,
         showBatterySoc: false,
         showEstimatedBill: false,
+        showLoadTiming: false,
         batterySocMode: 'glyph',
         ...overrides
     };
@@ -124,6 +125,75 @@ describe('Layout Engine', () => {
             const layout = calculateLayoutBudget(makeCtx(), makeCfg());
             // With no bill, billRowsTarget defaults to 3, billCompactLevel = 0
             expect(layout.billCompactLevel).toBe(0);
+        });
+
+        it('counts load timing toward active sections', () => {
+            const withLt = calculateLayoutBudget(makeCtx(), makeCfg({ showLoadTiming: true }));
+            const withoutLt = calculateLayoutBudget(makeCtx(), makeCfg({ showLoadTiming: false }));
+            expect(withLt.hasLoadTimingSection).toBe(true);
+            expect(withLt.activeSectionCount).toBe(withoutLt.activeSectionCount + 1);
+        });
+
+        it('gives solo load timing a tall budget', () => {
+            const layout = calculateLayoutBudget(makeCtx(), makeCfg({ showLoadTiming: true }));
+            expect(layout.loadTimingMinHeight).toBeGreaterThanOrEqual(180);
+        });
+
+        it('shrinks chart floor and lifts load-timing budget when co-displayed (live+chart+loadTiming)', () => {
+            // Mirrors the isLiveEnergyBillLayout override: live+chart+loadTiming
+            // (no bill, no SoC) gives the chart a tighter 140 floor and Load
+            // timing 168, so the 4-line active cell has room to breathe.
+            const layout = calculateLayoutBudget(
+                makeCtx({ todayGrid: 5 }),
+                makeCfg({ showLiveGrid: true, showEnergyChart: true, showLoadTiming: true })
+            );
+            expect(layout.chartMinHeight).toBe(140);
+            expect(layout.loadTimingMinHeight).toBe(168);
+        });
+
+        it('compacts load timing in very dense layouts', () => {
+            const layout = calculateLayoutBudget(
+                makeCtx({ todayGrid: 5, todaySolar: 3, batterySoc: 80 }),
+                makeCfg({
+                    showLiveGrid: true, showLiveSolar: true, showLiveBattery: true,
+                    showEnergyChart: true, showEstimatedBill: true, showLoadTiming: true
+                })
+            );
+            expect(layout.loadTimingCompactLevel).toBe(2);
+            expect(layout.loadTimingMinHeight).toBeLessThan(180);
+        });
+
+        it('includes load timing in bill height allocation math, reducing bill rows when load timing is enabled', () => {
+            // Test with load timing disabled
+            const layoutWithoutLt = calculateLayoutBudget(
+                makeCtx({ todayGrid: 5, todaySolar: 3, batterySoc: 80 }),
+                makeCfg({
+                    showLiveGrid: true,
+                    showEnergyChart: true,
+                    showEstimatedBill: true,
+                    showBatterySoc: true,
+                    batterySocMode: 'chart',
+                    showLoadTiming: false
+                })
+            );
+
+            // Test with load timing enabled
+            const layoutWithLt = calculateLayoutBudget(
+                makeCtx({ todayGrid: 5, todaySolar: 3, batterySoc: 80 }),
+                makeCfg({
+                    showLiveGrid: true,
+                    showEnergyChart: true,
+                    showEstimatedBill: true,
+                    showBatterySoc: true,
+                    batterySocMode: 'chart',
+                    showLoadTiming: true
+                })
+            );
+
+            // In this dense layout, the available space for the bill should be smaller when load timing is enabled.
+            // This should cause the bill rows target to be reduced to avoid canvas overflow.
+            expect(layoutWithoutLt.billRowsTarget).toBe(2);
+            expect(layoutWithLt.billRowsTarget).toBe(1);
         });
     });
 });
