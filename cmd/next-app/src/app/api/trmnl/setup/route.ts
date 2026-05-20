@@ -4,8 +4,8 @@ import { verifySiteAccess } from '@/lib/auth-checks';
 import { SiteRepo } from '@/lib/site-repo';
 import { withRequestContext } from '@/lib/request-context';
 import {
-    DEFAULT_TRMNL_COMPONENT_CONFIG,
-    mergeTrmnlComponentConfigIntoInstallationJson
+    buildDefaultTrmnlComponentScreens,
+    mergeTrmnlComponentScreensIntoInstallationJson
 } from '@/lib/trmnl-component-config';
 
 export async function POST(request: Request) {
@@ -39,9 +39,9 @@ export async function POST(request: Request) {
 
         // Save installation
         const service = new TrmnlService();
-        const defaultInstallationJson = mergeTrmnlComponentConfigIntoInstallationJson(
+        const defaultInstallationJson = mergeTrmnlComponentScreensIntoInstallationJson(
             null,
-            DEFAULT_TRMNL_COMPONENT_CONFIG
+            buildDefaultTrmnlComponentScreens()
         );
 
         const tokenData = await service.exchangeCodeForToken(code, clientId, clientSecret);

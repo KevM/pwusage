@@ -24,10 +24,10 @@ export const DEFAULT_TRMNL_COMPONENT_CONFIG: TrmnlComponentConfig = {
     showLiveSolar: true,
     showLiveBattery: true,
     showEnergyChart: true,
-    showBatterySoc: false,
+    showBatterySoc: true,
     showEstimatedBill: false,
-    showLoadTiming: true,
-    batterySocMode: 'glyph'
+    showLoadTiming: false,
+    batterySocMode: 'chart'
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -97,11 +97,27 @@ export function normalizeTrmnlComponentConfig(value: unknown): TrmnlComponentCon
 }
 
 export function buildDefaultTrmnlComponentScreens(): TrmnlComponentScreen[] {
-    return [{
-        id: 'screen-1',
-        name: 'Screen 1',
-        componentConfig: { ...DEFAULT_TRMNL_COMPONENT_CONFIG }
-    }];
+    return [
+        {
+            id: 'screen-1',
+            name: 'Screen 1',
+            componentConfig: { ...DEFAULT_TRMNL_COMPONENT_CONFIG }
+        },
+        {
+            id: 'screen-2',
+            name: 'Screen 2',
+            componentConfig: {
+                showLiveGrid: true,
+                showLiveSolar: true,
+                showLiveBattery: true,
+                showEnergyChart: false,
+                showBatterySoc: false,
+                showEstimatedBill: true,
+                showLoadTiming: true,
+                batterySocMode: 'chart'
+            }
+        }
+    ];
 }
 
 export function normalizeTrmnlComponentScreens(value: unknown): TrmnlComponentScreen[] {
