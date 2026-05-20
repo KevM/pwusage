@@ -24,9 +24,9 @@ export const DEFAULT_TRMNL_COMPONENT_CONFIG: TrmnlComponentConfig = {
     showLiveSolar: true,
     showLiveBattery: true,
     showEnergyChart: true,
-    showBatterySoc: true,
-    showEstimatedBill: true,
-    showLoadTiming: false,
+    showBatterySoc: false,
+    showEstimatedBill: false,
+    showLoadTiming: true,
     batterySocMode: 'glyph'
 };
 
