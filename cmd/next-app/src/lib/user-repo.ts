@@ -191,4 +191,16 @@ export class UserRepo {
             errors: errorCount
         };
     }
+
+    // === Queries ===
+    async getUserEmail(userId: string): Promise<string | null> {
+        const res = await pool.query('SELECT email FROM "User" WHERE id = $1', [userId]);
+        return res.rows.length > 0 ? res.rows[0].email : null;
+    }
+
+    // === Commands ===
+    async updateUserEmail(userId: string, email: string): Promise<void> {
+        await pool.query('UPDATE "User" SET email = $1 WHERE id = $2', [email, userId]);
+    }
 }
+

@@ -31,3 +31,31 @@ describe('UserRepo admin ordering', () => {
         );
     });
 });
+
+describe('UserRepo email synchronization', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+    });
+
+    it('getUserEmail fetches email column', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ email: 'test@trmnl.com' }] });
+        const repo = new UserRepo();
+        const email = await repo.getUserEmail('user-123');
+        expect(email).toBe('test@trmnl.com');
+        expect(queryMock).toHaveBeenCalledWith(
+            'SELECT email FROM "User" WHERE id = $1',
+            ['user-123']
+        );
+    });
+
+    it('updateUserEmail updates email column', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new UserRepo();
+        await repo.updateUserEmail('user-123', 'new@trmnl.com');
+        expect(queryMock).toHaveBeenCalledWith(
+            'UPDATE "User" SET email = $1 WHERE id = $2',
+            ['new@trmnl.com', 'user-123']
+        );
+    });
+});
+

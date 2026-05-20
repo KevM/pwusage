@@ -6,6 +6,8 @@ import {
     mergeTrmnlComponentScreensIntoInstallationJson
 } from '@/lib/trmnl-component-config';
 import { verifyTrmnlToken, VerifiedTrmnlTokenPayload } from '@/lib/trmnl-auth';
+import { SiteRepo } from '@/lib/site-repo';
+import { UserRepo } from '@/lib/user-repo';
 
 function coercePositiveInt(value: unknown): number | null {
     if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
@@ -18,6 +20,19 @@ function coercePositiveInt(value: unknown): number | null {
         }
     }
     return null;
+}
+
+async function syncUserEmail(siteId: string, email: string) {
+    const siteRepo = new SiteRepo();
+    const userRepo = new UserRepo();
+    const site = await siteRepo.getSite(siteId);
+    if (site && site.user_id) {
+        const currentEmail = await userRepo.getUserEmail(site.user_id);
+        if (!currentEmail) {
+            await userRepo.updateUserEmail(site.user_id, email);
+            console.log(`[TrmnlWebhook] Updated user ${site.user_id} with email from Trmnl: ${email}`);
+        }
+    }
 }
 
 export async function POST(request: Request) {
@@ -111,21 +126,7 @@ export async function POST(request: Request) {
 
             // Update user email if not present
             if (user.email && existing.site_id) {
-                const { pool } = await import('@/lib/db');
-
-                // Get the user_id from the site
-                const siteRes = await pool.query('SELECT user_id FROM "Site" WHERE id = $1', [existing.site_id]);
-                if (siteRes.rows.length > 0 && siteRes.rows[0].user_id) {
-                    const userId = siteRes.rows[0].user_id;
-
-                    // Check if user already has an email
-                    const userRes = await pool.query('SELECT email FROM "User" WHERE id = $1', [userId]);
-                    if (userRes.rows.length > 0 && !userRes.rows[0].email) {
-                        // Update user with email from Trmnl
-                        await pool.query('UPDATE "User" SET email = $1 WHERE id = $2', [user.email, userId]);
-                        console.log(`[TrmnlWebhook] Updated user ${userId} with email from Trmnl: ${user.email}`);
-                    }
-                }
+                await syncUserEmail(existing.site_id, user.email);
             }
         } else {
             // 1. Check for Pending installation by plugin_setting_id (Strong Link)
@@ -166,21 +167,7 @@ export async function POST(request: Request) {
 
                 // Update user email if not present
                 if (user.email && pending.site_id) {
-                    const { pool } = await import('@/lib/db');
-
-                    // Get the user_id from the site
-                    const siteRes = await pool.query('SELECT user_id FROM "Site" WHERE id = $1', [pending.site_id]);
-                    if (siteRes.rows.length > 0 && siteRes.rows[0].user_id) {
-                        const userId = siteRes.rows[0].user_id;
-
-                        // Check if user already has an email
-                        const userRes = await pool.query('SELECT email FROM "User" WHERE id = $1', [userId]);
-                        if (userRes.rows.length > 0 && !userRes.rows[0].email) {
-                            // Update user with email from Trmnl
-                            await pool.query('UPDATE "User" SET email = $1 WHERE id = $2', [user.email, userId]);
-                            console.log(`[TrmnlWebhook] Updated user ${userId} with email from Trmnl: ${user.email}`);
-                        }
-                    }
+                    await syncUserEmail(pending.site_id, user.email);
                 }
             } else {
                 console.warn(`[TrmnlWebhook] Received success webhook for unknown UUID: ${user.uuid} and unknown Plugin ID: ${tokenPluginId}. details ignored.`);

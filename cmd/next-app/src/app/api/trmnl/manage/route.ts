@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import { SiteRepo } from '@/lib/site-repo';
-import { pool } from '@/lib/db';
+import { TrmnlInstallationRepo } from '@/lib/trmnl-installation-repo';
 import { cookies } from 'next/headers';
 import { SiteService } from '@/lib/site-service';
 import { verifyTrmnlToken } from '@/lib/trmnl-auth';
@@ -226,19 +226,10 @@ export async function POST(request: Request) {
             ?? existingInstallation?.plugin_setting_id
             ?? null;
 
-        const query = `
-            INSERT INTO "TrmnlInstallation" (uuid, site_id, json, plugin_setting_id)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT(uuid) DO UPDATE SET 
-                site_id = EXCLUDED.site_id,
-                json = EXCLUDED.json,
-                plugin_setting_id = COALESCE(EXCLUDED.plugin_setting_id, "TrmnlInstallation".plugin_setting_id)
-            RETURNING id
-        `;
+        const installationRepo = new TrmnlInstallationRepo();
+        const savedId = await installationRepo.upsertSettings(uuid, site_id, mergedJson, pluginSettingId);
 
-        const { rows } = await pool.query(query, [uuid, site_id, mergedJson, pluginSettingId]);
-
-        if (rows.length === 0) {
+        if (!savedId) {
             console.log(`[TrmnlManage] Failed to upsert installation for UUID ${uuid}.`);
             return NextResponse.json({ error: 'Failed to save installation' }, { status: 500 });
         }

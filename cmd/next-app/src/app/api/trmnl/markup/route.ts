@@ -20,7 +20,7 @@ import {
     mergeTrmnlComponentScreensIntoInstallationJson,
     normalizeTrmnlComponentConfig
 } from '@/lib/trmnl-component-config';
-import { pool } from '@/lib/db';
+import { TrmnlInstallationRepo } from '@/lib/trmnl-installation-repo';
 import { verifyTrmnlToken } from '@/lib/trmnl-auth';
 
 export const dynamic = 'force-dynamic';
@@ -150,11 +150,13 @@ export async function GET(request: Request) {
                 const nextIndex = screens.length > 1 ? (currentIndex + 1) % screens.length : 0;
                 if (installation.id && nextIndex !== currentIndex) {
                     const nextJson = mergeTrmnlComponentScreensIntoInstallationJson(installation.json ?? null, screens, nextIndex);
+                    const trmnlInstallationRepo = new TrmnlInstallationRepo();
+                    const installationId = installation.id;
                     after(async () => {
                         try {
-                            await pool.query('UPDATE "TrmnlInstallation" SET json = $1 WHERE id = $2', [nextJson, installation!.id]);
+                            await trmnlInstallationRepo.updateJson(installationId, nextJson);
                         } catch (error) {
-                            console.warn(`[TrmnlMarkup] Failed to advance carousel index for installation ${installation!.id}:`, error);
+                            console.warn(`[TrmnlMarkup] Failed to advance carousel index for installation ${installationId}:`, error);
                         }
                     });
                 }
