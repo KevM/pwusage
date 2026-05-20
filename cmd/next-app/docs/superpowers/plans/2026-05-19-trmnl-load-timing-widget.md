@@ -990,12 +990,12 @@ describe('loadTimingSection', () => {
         expect(html).toContain('today at 4 PM');
     });
 
-    it('shows "Cheapest period now" when active is cheapest and no cheaper ahead', () => {
+    it('shows "You are in the Cheapest period" when active is cheapest and no cheaper ahead', () => {
         const html = loadTimingSection.render(
             ctx(view({ nextCheaper: null, nextCheaperPhrase: null, activeIsCheapest: true })),
             layout()
         );
-        expect(html).toContain('Cheapest period now');
+        expect(html).toContain('You are in the Cheapest period');
     });
 
     it('renders a no-data message when cycle is empty', () => {
