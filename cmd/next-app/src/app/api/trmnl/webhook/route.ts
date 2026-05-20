@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import {
-    extractTrmnlComponentConfig,
-    mergeTrmnlComponentConfigIntoInstallationJson
+    extractTrmnlComponentScreens,
+    extractTrmnlCarouselIndex,
+    mergeTrmnlComponentScreensIntoInstallationJson
 } from '@/lib/trmnl-component-config';
 import { verifyTrmnlToken, VerifiedTrmnlTokenPayload } from '@/lib/trmnl-auth';
 
@@ -93,9 +94,12 @@ export async function POST(request: Request) {
 
         const existing = await service.getInstallationByUuid(user.uuid);
         if (existing) {
-            const mergedInstallationJson = mergeTrmnlComponentConfigIntoInstallationJson(
+            const screens = extractTrmnlComponentScreens(existing.json);
+            const carouselIndex = extractTrmnlCarouselIndex(existing.json, screens.length);
+            const mergedInstallationJson = mergeTrmnlComponentScreensIntoInstallationJson(
                 user,
-                extractTrmnlComponentConfig(existing.json)
+                screens,
+                carouselIndex
             );
             // Update with new details
             await service.createInstallation(
@@ -140,9 +144,12 @@ export async function POST(request: Request) {
             }
 
             if (pending) {
-                const mergedInstallationJson = mergeTrmnlComponentConfigIntoInstallationJson(
+                const screens = extractTrmnlComponentScreens(pending.json);
+                const carouselIndex = extractTrmnlCarouselIndex(pending.json, screens.length);
+                const mergedInstallationJson = mergeTrmnlComponentScreensIntoInstallationJson(
                     user,
-                    extractTrmnlComponentConfig(pending.json)
+                    screens,
+                    carouselIndex
                 );
                 console.log(`[TrmnlWebhook] Claiming pending installation (ID: ${pending.id}) for plugin ${tokenPluginId} / UUID ${user.uuid}`);
                 // If it was a "loose" pending record, it might not have the plugin_setting_id set either.

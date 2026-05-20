@@ -25,9 +25,9 @@ export const DEFAULT_TRMNL_COMPONENT_CONFIG: TrmnlComponentConfig = {
     showLiveBattery: true,
     showEnergyChart: true,
     showBatterySoc: true,
-    showEstimatedBill: true,
+    showEstimatedBill: false,
     showLoadTiming: false,
-    batterySocMode: 'glyph'
+    batterySocMode: 'chart'
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -97,11 +97,27 @@ export function normalizeTrmnlComponentConfig(value: unknown): TrmnlComponentCon
 }
 
 export function buildDefaultTrmnlComponentScreens(): TrmnlComponentScreen[] {
-    return [{
-        id: 'screen-1',
-        name: 'Screen 1',
-        componentConfig: { ...DEFAULT_TRMNL_COMPONENT_CONFIG }
-    }];
+    return [
+        {
+            id: 'screen-1',
+            name: 'Screen 1',
+            componentConfig: { ...DEFAULT_TRMNL_COMPONENT_CONFIG }
+        },
+        {
+            id: 'screen-2',
+            name: 'Screen 2',
+            componentConfig: {
+                showLiveGrid: true,
+                showLiveSolar: true,
+                showLiveBattery: true,
+                showEnergyChart: false,
+                showBatterySoc: false,
+                showEstimatedBill: true,
+                showLoadTiming: true,
+                batterySocMode: 'chart'
+            }
+        }
+    ];
 }
 
 export function normalizeTrmnlComponentScreens(value: unknown): TrmnlComponentScreen[] {
@@ -173,18 +189,4 @@ export function mergeTrmnlComponentScreensIntoInstallationJson(
     };
 }
 
-// Backward-compatible helpers for legacy single-screen call sites.
-export function extractTrmnlComponentConfig(installationJson: unknown): TrmnlComponentConfig {
-    return extractTrmnlComponentScreens(installationJson)[0]?.componentConfig ?? { ...DEFAULT_TRMNL_COMPONENT_CONFIG };
-}
 
-export function mergeTrmnlComponentConfigIntoInstallationJson(
-    installationJson: unknown,
-    componentConfig: TrmnlComponentConfig
-): Record<string, unknown> {
-    return mergeTrmnlComponentScreensIntoInstallationJson(installationJson, [{
-        id: 'screen-1',
-        name: 'Screen 1',
-        componentConfig: normalizeTrmnlComponentConfig(componentConfig)
-    }], 0);
-}
