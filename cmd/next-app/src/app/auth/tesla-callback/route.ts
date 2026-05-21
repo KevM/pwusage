@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { pool } from '@/lib/db';
+import { UserRepo } from '@/lib/user-repo';
 import { getAppBaseUrl } from '@/lib/url-utils';
 
 // Discover the correct JWKS endpoint from OpenID Connect discovery
@@ -357,20 +357,18 @@ export async function GET(request: NextRequest) {
         const products = await client.getProducts();
 
         // Upsert User
-        await pool.query(`
-            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active)
-            VALUES ($1, $2, $3, $4, $5, 'active', true)
-            ON CONFLICT (id) DO UPDATE SET
-                access_token = EXCLUDED.access_token,
-                refresh_token = EXCLUDED.refresh_token,
-                email = COALESCE(EXCLUDED.email, "User".email),
-                auth_status = 'active',
-                is_active = true
-        `, [userId, userEmail, authData.access_token, authData.refresh_token, Date.now() + (authData.expires_in * 1000)]);
+        const userRepo = new UserRepo();
+        await userRepo.upsertOnTeslaAuth({
+            userId,
+            email: userEmail ?? null,
+            accessToken: authData.access_token,
+            refreshToken: authData.refresh_token,
+            tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
+        });
 
         // Retrieve Roles immediately
-        const userRes = await pool.query('SELECT roles FROM "User" WHERE id = $1', [userId]);
-        const roles = userRes.rows[0]?.roles || [];
+        const userRow = await userRepo.getById(userId);
+        const roles = (userRow as { roles?: string[] } | null)?.roles ?? [];
 
         if (products.length > 0 || roles.includes('admin')) {
             const importer = new Importer(client);
@@ -385,7 +383,7 @@ export async function GET(request: NextRequest) {
                 siteIds.push(siteId);
 
                 await importer.ensureSite(siteId);
-                await pool.query('UPDATE "Site" SET user_id = $1 WHERE id = $2', [userId, siteId]);
+                await new SiteRepo().assignSiteToUser(siteId, userId);
                 await tokenRepo.updateSiteTokens(siteId, authData.access_token, authData.refresh_token);
                 await tokenRepo.releaseRefreshLock(siteId);
                 console.log(`[AuthCallback] Linked site ${siteId} to User ${userId} and updated tokens.`);

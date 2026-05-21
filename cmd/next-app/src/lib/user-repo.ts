@@ -7,35 +7,42 @@ export interface UserWithSites extends User {
     has_trmnl_integration?: boolean;
 }
 
-export async function getUserByToken(token: string): Promise<{ id: string, email?: string, roles?: string[] } | null> {
-    const res = await pool.query('SELECT id, email, roles FROM "User" WHERE access_token = $1', [token]);
-    if (res.rows.length === 0) return null;
-    return res.rows[0];
-}
-
-export async function getUserTokens(userId: string): Promise<{ access_token: string, refresh_token: string } | null> {
-    const res = await pool.query('SELECT access_token, refresh_token FROM "User" WHERE id = $1', [userId]);
-    if (res.rows.length === 0) return null;
-    return res.rows[0];
-}
-
-export async function getUserTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string } | null> {
-    const res = await pool.query(`
-        SELECT u.access_token, u.refresh_token, u.id as user_id 
-        FROM "User" u
-        JOIN "Site" s ON s.user_id = u.id
-        WHERE s.id = $1
-    `, [siteId]);
-    if (res.rows.length === 0) return null;
-    return res.rows[0];
-}
-
-export const isUserActive = cache(async (userId: string): Promise<boolean> => {
-    const res = await pool.query('SELECT is_active FROM "User" WHERE id = $1', [userId]);
-    return res.rows.length > 0 && res.rows[0].is_active === true;
-});
-
 export class UserRepo {
+    // === Queries ===
+    async getByAccessToken(token: string): Promise<{ id: string, email?: string, roles?: string[] } | null> {
+        const res = await pool.query('SELECT id, email, roles FROM "User" WHERE access_token = $1', [token]);
+        if (res.rows.length === 0) return null;
+        return res.rows[0];
+    }
+
+    async getTokens(userId: string): Promise<{ access_token: string, refresh_token: string } | null> {
+        const res = await pool.query('SELECT access_token, refresh_token FROM "User" WHERE id = $1', [userId]);
+        if (res.rows.length === 0) return null;
+        return res.rows[0];
+    }
+
+    async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string } | null> {
+        const res = await pool.query(`
+            SELECT u.access_token, u.refresh_token, u.id as user_id
+            FROM "User" u
+            JOIN "Site" s ON s.user_id = u.id
+            WHERE s.id = $1
+        `, [siteId]);
+        if (res.rows.length === 0) return null;
+        return res.rows[0];
+    }
+
+    async isActive(userId: string): Promise<boolean> {
+        const res = await pool.query('SELECT is_active FROM "User" WHERE id = $1', [userId]);
+        return res.rows.length > 0 && res.rows[0].is_active === true;
+    }
+
+    async getById(userId: string): Promise<User | null> {
+        const res = await pool.query('SELECT * FROM "User" WHERE id = $1', [userId]);
+        if (res.rows.length === 0) return null;
+        return res.rows[0] as User;
+    }
+
     async getAllUsers(options: { includeTokens?: boolean } = {}): Promise<UserWithSites[]> {
         const tokenCols = options.includeTokens ? ', u.access_token, u.refresh_token' : '';
         // Fetch users and check for Trmnl integration in a single query using subquery (efficiently handles the join logic)
@@ -77,6 +84,16 @@ export class UserRepo {
         return usersWithSites;
     }
 
+    async getUserEmail(userId: string): Promise<string | null> {
+        const res = await pool.query('SELECT email FROM "User" WHERE id = $1', [userId]);
+        return res.rows.length > 0 ? res.rows[0].email : null;
+    }
+
+    // === Commands ===
+    async updateUserEmail(userId: string, email: string): Promise<void> {
+        await pool.query('UPDATE "User" SET email = $1 WHERE id = $2', [email, userId]);
+    }
+
     async updateUserStatus(userId: string, authStatus: string, isActive: boolean) {
         await pool.query(
             'UPDATE "User" SET auth_status = $1, is_active = $2, last_checked_at = NOW() WHERE id = $3',
@@ -88,6 +105,32 @@ export class UserRepo {
         await pool.query(
             'UPDATE "User" SET last_checked_at = NOW() WHERE id = $1',
             [userId]
+        );
+    }
+
+    async upsertOnTeslaAuth(params: {
+        userId: string;
+        email: string | null;
+        accessToken: string;
+        refreshToken: string;
+        tokenExpiresAt: number;
+    }): Promise<void> {
+        await pool.query(`
+            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active)
+            VALUES ($1, $2, $3, $4, $5, 'active', true)
+            ON CONFLICT (id) DO UPDATE SET
+                access_token = EXCLUDED.access_token,
+                refresh_token = EXCLUDED.refresh_token,
+                email = COALESCE(EXCLUDED.email, "User".email),
+                auth_status = 'active',
+                is_active = true
+        `, [params.userId, params.email, params.accessToken, params.refreshToken, params.tokenExpiresAt]);
+    }
+
+    async updateTokens(userId: string, accessToken: string, refreshToken: string): Promise<void> {
+        await pool.query(
+            'UPDATE "User" SET access_token = $1, refresh_token = $2 WHERE id = $3',
+            [accessToken, refreshToken, userId]
         );
     }
 
@@ -191,16 +234,13 @@ export class UserRepo {
             errors: errorCount
         };
     }
-
-    // === Queries ===
-    async getUserEmail(userId: string): Promise<string | null> {
-        const res = await pool.query('SELECT email FROM "User" WHERE id = $1', [userId]);
-        return res.rows.length > 0 ? res.rows[0].email : null;
-    }
-
-    // === Commands ===
-    async updateUserEmail(userId: string, email: string): Promise<void> {
-        await pool.query('UPDATE "User" SET email = $1 WHERE id = $2', [email, userId]);
-    }
 }
+
+// Backwards-compat thin wrapper — required because callers used this from
+// import-time React Server Component context. The wrapper for `isUserActive`
+// preserves React's per-request cache identity.
+export const isUserActive = cache(async (userId: string): Promise<boolean> => {
+    const repo = new UserRepo();
+    return repo.isActive(userId);
+});
 

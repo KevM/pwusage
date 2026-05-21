@@ -144,11 +144,11 @@ export async function POST(request: Request) {
 
         if (siteAuthToken) {
             const { verifySiteToken } = await import('@/lib/auth-jwt');
-            const { getUserTokens } = await import('@/lib/user-repo');
+            const { UserRepo } = await import('@/lib/user-repo');
 
             const decoded = verifySiteToken(siteAuthToken);
             if (decoded && decoded.sub) {
-                const userTokens = await getUserTokens(decoded.sub);
+                const userTokens = await new UserRepo().getTokens(decoded.sub);
                 if (userTokens) {
                     accessToken = userTokens.access_token;
                 }

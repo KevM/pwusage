@@ -14,7 +14,7 @@ import {
 import { computeLoadTiming } from '@/lib/load-timing';
 import { refreshTodayData } from '@/lib/today-refresh';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
-import { getUserTokensForSite } from '@/lib/user-repo';
+import { UserRepo } from '@/lib/user-repo';
 import { energyToAveragePower } from '@/lib/energy-utils';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -26,7 +26,7 @@ import { Button } from '@/components/ui/Button';
 export const dynamic = 'force-dynamic';
 
 async function getLiveStatus(siteId: string) {
-    const tokens = await getUserTokensForSite(siteId);
+    const tokens = await new UserRepo().getTokensForSite(siteId);
     if (!tokens?.access_token || !tokens?.refresh_token) return null;
 
     const siteRepo = new SiteRepo();

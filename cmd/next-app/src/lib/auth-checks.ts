@@ -1,7 +1,7 @@
 import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { verifySiteToken } from './auth-jwt';
-import { getUserTokensForSite, isUserActive } from './user-repo';
+import { UserRepo, isUserActive } from './user-repo';
 
 const SITE_AUTH_COOKIE = 'site_auth';
 
@@ -12,7 +12,7 @@ export async function getTeslaCredentials() {
     }
     // We assume all sites provided in a single site_auth token belong to the same Tesla User
     // So we grab credentials from the first one.
-    return getUserTokensForSite(siteIds[0]);
+    return new UserRepo().getTokensForSite(siteIds[0]);
 }
 
 export const isUserAdmin = cache(async (): Promise<boolean> => {

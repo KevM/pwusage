@@ -2,6 +2,7 @@ import { pool } from './db';
 import { LoadTag } from './db';
 
 export class LoadTagRepo {
+    // === Queries ===
     async getLoadTags(siteId: string, start: Date, end: Date): Promise<LoadTag[]> {
         const res = await pool.query(`
             SELECT * FROM "LoadTag"
@@ -18,6 +19,7 @@ export class LoadTagRepo {
         }));
     }
 
+    // === Commands ===
     async addLoadTag(siteId: string, start: Date, end: Date, tag: string) {
         const exists = await pool.query(`
             SELECT 1 FROM "LoadTag" 

@@ -59,3 +59,115 @@ describe('UserRepo email synchronization', () => {
     });
 });
 
+describe('UserRepo class methods (folded from module functions)', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+    });
+
+    it('getByAccessToken returns user row', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 'u1', email: 'a@b.c', roles: ['user'] }] });
+        const repo = new UserRepo();
+        const result = await repo.getByAccessToken('tok-123');
+        expect(result?.id).toBe('u1');
+        expect(queryMock).toHaveBeenCalledWith(
+            'SELECT id, email, roles FROM "User" WHERE access_token = $1',
+            ['tok-123']
+        );
+    });
+
+    it('getByAccessToken returns null on no rows', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new UserRepo();
+        const result = await repo.getByAccessToken('nope');
+        expect(result).toBeNull();
+    });
+
+    it('getTokens returns access + refresh tokens', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{ access_token: 'a', refresh_token: 'r' }]
+        });
+        const repo = new UserRepo();
+        const result = await repo.getTokens('u1');
+        expect(result).toEqual({ access_token: 'a', refresh_token: 'r' });
+        expect(queryMock).toHaveBeenCalledWith(
+            'SELECT access_token, refresh_token FROM "User" WHERE id = $1',
+            ['u1']
+        );
+    });
+
+    it('getTokensForSite joins User and Site', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{ access_token: 'a', refresh_token: 'r', user_id: 'u1' }]
+        });
+        const repo = new UserRepo();
+        const result = await repo.getTokensForSite('site-1');
+        expect(result?.user_id).toBe('u1');
+        expect(queryMock.mock.calls[0][0]).toContain('FROM "User" u');
+        expect(queryMock.mock.calls[0][0]).toContain('JOIN "Site" s ON s.user_id = u.id');
+        expect(queryMock.mock.calls[0][1]).toEqual(['site-1']);
+    });
+
+    it('isActive returns true when is_active is true', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ is_active: true }] });
+        const repo = new UserRepo();
+        expect(await repo.isActive('u1')).toBe(true);
+    });
+
+    it('isActive returns false when no row found', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new UserRepo();
+        expect(await repo.isActive('missing')).toBe(false);
+    });
+});
+
+describe('UserRepo new commands', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+    });
+
+    it('getById returns full user row', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{ id: 'u1', email: 'a@b.c', roles: ['admin'], is_active: true }]
+        });
+        const repo = new UserRepo();
+        const result = await repo.getById('u1');
+        expect(result?.email).toBe('a@b.c');
+        expect(queryMock).toHaveBeenCalledWith(
+            'SELECT * FROM "User" WHERE id = $1',
+            ['u1']
+        );
+    });
+
+    it('getById returns null when not found', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new UserRepo();
+        expect(await repo.getById('nope')).toBeNull();
+    });
+
+    it('upsertOnTeslaAuth issues INSERT ... ON CONFLICT', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new UserRepo();
+        const expiresAt = Date.now() + 3600_000;
+        await repo.upsertOnTeslaAuth({
+            userId: 'u1',
+            email: 'a@b.c',
+            accessToken: 'at',
+            refreshToken: 'rt',
+            tokenExpiresAt: expiresAt,
+        });
+        expect(queryMock.mock.calls[0][0]).toContain('INSERT INTO "User"');
+        expect(queryMock.mock.calls[0][0]).toContain('ON CONFLICT (id) DO UPDATE');
+        expect(queryMock.mock.calls[0][1]).toEqual(['u1', 'a@b.c', 'at', 'rt', expiresAt]);
+    });
+
+    it('updateTokens updates access and refresh tokens', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new UserRepo();
+        await repo.updateTokens('u1', 'newA', 'newR');
+        expect(queryMock).toHaveBeenCalledWith(
+            'UPDATE "User" SET access_token = $1, refresh_token = $2 WHERE id = $3',
+            ['newA', 'newR', 'u1']
+        );
+    });
+});
+

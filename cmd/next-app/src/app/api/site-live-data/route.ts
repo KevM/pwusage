@@ -3,7 +3,7 @@ import { TeslaClient } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
-import { getUserTokensForSite } from '@/lib/user-repo';
+import { UserRepo } from '@/lib/user-repo';
 import { Schedule } from '@/lib/schedule';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
         if (await verifySiteAccess(siteId)) {
             // Fetch tokens from User table via Site relationship
-            const userTokens = await getUserTokensForSite(siteId);
+            const userTokens = await new UserRepo().getTokensForSite(siteId);
             if (userTokens) {
                 token = userTokens.access_token;
                 refreshToken = userTokens.refresh_token;

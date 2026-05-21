@@ -134,7 +134,8 @@ export async function GET(request: Request) {
         }
 
         if (uuid) {
-            const result = await siteRepo.getInstallationAndSite(uuid, { includeTokens: true });
+            const trmnlInstallationRepo = new TrmnlInstallationRepo();
+            const result = await trmnlInstallationRepo.findByUuidWithSite(uuid, { includeTokens: true });
             if (!result) {
                 console.log(`[TrmnlMarkup] UUID ${uuid} not found. Generating setup QR code.`);
                 return getQrResponse(request, uuid, null, 'Setup Required', 'Scan to Configure');

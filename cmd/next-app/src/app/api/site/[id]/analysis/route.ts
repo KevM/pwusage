@@ -7,7 +7,7 @@ import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { LoadTagRepo } from '@/lib/load-tag-repo';
-import { getUserTokensForSite } from '@/lib/user-repo';
+import { UserRepo } from '@/lib/user-repo';
 import { adaptTeslaData } from '@/lib/nilm/tesla-adapter';
 import { detectLoads } from '@/lib/nilm/load-detection';
 import { Schedule } from '@/lib/schedule';
@@ -83,7 +83,7 @@ export async function GET(
         }
 
         // 0. Auto-Heal / Sync Check
-        const tokens = await getUserTokensForSite(siteId);
+        const tokens = await new UserRepo().getTokensForSite(siteId);
         let importer: Importer | null = null;
 
         if (tokens) {

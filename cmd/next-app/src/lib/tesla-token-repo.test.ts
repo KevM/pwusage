@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { queryMock, refreshAccessTokenMock } = vi.hoisted(() => ({
+const { queryMock, refreshAccessTokenMock, userRepoUpdateTokensMock, userRepoUpdateUserStatusMock } = vi.hoisted(() => ({
     queryMock: vi.fn(),
     refreshAccessTokenMock: vi.fn(),
+    userRepoUpdateTokensMock: vi.fn(),
+    userRepoUpdateUserStatusMock: vi.fn(),
 }));
 
 vi.mock('./db', () => ({
@@ -11,6 +13,10 @@ vi.mock('./db', () => ({
 
 vi.mock('./tesla-auth', () => ({
     refreshAccessToken: refreshAccessTokenMock,
+}));
+
+vi.mock('./user-repo', () => ({
+    UserRepo: vi.fn(),
 }));
 
 import { TeslaTokenRepo } from './tesla-token-repo';
@@ -139,5 +145,55 @@ describe('getLockedRefreshHandler', () => {
         expect(lockReleaseCall, 'expected a normal lock-release query').toBeDefined();
         // auth_status must NOT be touched — just a plain release for transient failures
         expect(lockReleaseCall![0], 'non-terminal release must not touch auth_status').not.toMatch(/auth_status/);
+    });
+});
+
+describe('TeslaTokenRepo delegates User writes to UserRepo', () => {
+    let siteRepo: SiteRepo;
+    let userRepo: { updateTokens: typeof userRepoUpdateTokensMock; updateUserStatus: typeof userRepoUpdateUserStatusMock };
+    let tokenRepo: TeslaTokenRepo;
+
+    beforeEach(() => {
+        queryMock.mockReset();
+        userRepoUpdateTokensMock.mockReset();
+        userRepoUpdateUserStatusMock.mockReset();
+        siteRepo = new SiteRepo();
+        siteRepo.invalidateCache('site-1');
+        userRepo = { updateTokens: userRepoUpdateTokensMock, updateUserStatus: userRepoUpdateUserStatusMock };
+        tokenRepo = new TeslaTokenRepo(siteRepo, userRepo);
+    });
+
+    it('updateSiteTokens delegates to UserRepo.updateTokens', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+
+        await tokenRepo.updateSiteTokens('site-1', 'new-access', 'new-refresh');
+
+        expect(userRepoUpdateTokensMock).toHaveBeenCalledWith('user-1', 'new-access', 'new-refresh');
+    });
+
+    it('refreshAccessToken calls updateTokens with new tokens', async () => {
+        // getSite for acquireRefreshLock
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 });
+        // acquireRefreshLock UPDATE
+        queryMock.mockResolvedValueOnce({ rowCount: 1 });
+        // getSite for refreshAccessToken path
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+
+        refreshAccessTokenMock.mockResolvedValueOnce({ access_token: 'new-access', refresh_token: 'new-refresh' });
+
+        const handlers = tokenRepo.getLockedRefreshHandler('site-1');
+        await handlers.refreshHandler('old-refresh');
+
+        expect(userRepoUpdateTokensMock).toHaveBeenCalledWith('user-1', 'new-access', 'new-refresh');
+    });
+
+    it('errorHandler delegates to UserRepo.updateUserStatus for terminal errors', async () => {
+        // getSite for errorHandler
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+
+        const handlers = tokenRepo.getLockedRefreshHandler('site-1');
+        await handlers.errorHandler(new Error('Tesla: 401 Unauthorized'));
+
+        expect(userRepoUpdateUserStatusMock).toHaveBeenCalledWith('user-1', 'revoked', false);
     });
 });

@@ -3,7 +3,7 @@ import { TeslaClient } from './tesla-client';
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { SiteRepo } from './site-repo';
 import { EnergyRepo } from './energy-repo';
-import { getUserTokensForSite } from './user-repo';
+import { UserRepo } from './user-repo';
 
 /**
  * Per-site throttle state. Both the live page (server render + poll) and the
@@ -64,7 +64,7 @@ export async function refreshTodayData(siteId: string): Promise<RefreshTodayResu
         return { status: 'throttled' };
     }
 
-    const tokens = await getUserTokensForSite(siteId);
+    const tokens = await new UserRepo().getTokensForSite(siteId);
     if (!tokens?.access_token || !tokens?.refresh_token) {
         return { status: 'no-tokens' };
     }

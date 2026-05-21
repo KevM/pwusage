@@ -57,7 +57,6 @@ function ManageContent() {
     const [draggingScreenId, setDraggingScreenId] = useState<string | null>(null);
     const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
     const [formOffsetPx, setFormOffsetPx] = useState(0);
-    const [formHeightPx, setFormHeightPx] = useState(0);
 
     const rightRailRef = useRef<HTMLDivElement | null>(null);
     const formCardRef = useRef<HTMLDivElement | null>(null);
@@ -215,7 +214,6 @@ function ManageContent() {
         const updateFormOffset = () => {
             if (typeof window !== 'undefined' && window.innerWidth < 1280) {
                 setFormOffsetPx(0);
-                setFormHeightPx(0);
                 return;
             }
 
@@ -225,7 +223,6 @@ function ManageContent() {
             const selectedCard = selectedId ? screenCardRefs.current[selectedId] : null;
             if (!rail || !form || !selectedCard) {
                 setFormOffsetPx(0);
-                setFormHeightPx(0);
                 return;
             }
 
@@ -234,7 +231,6 @@ function ManageContent() {
             const desired = Math.max(0, cardRect.top - railRect.top);
             const maxOffset = Math.max(0, rail.clientHeight - form.offsetHeight);
             setFormOffsetPx(Math.min(desired, maxOffset));
-            setFormHeightPx(Math.max(0, selectedCard.offsetHeight));
         };
 
         updateFormOffset();
@@ -579,13 +575,12 @@ function ManageContent() {
                         </div>
                     </SectionCard>
 
-                    <div ref={rightRailRef} className="relative min-h-[240px] min-w-0">
+                    <div ref={rightRailRef} className="relative min-w-0">
                         <Card
                             ref={formCardRef}
-                            className="overflow-y-auto transition-transform duration-300 min-w-0"
+                            className="transition-transform duration-300 min-w-0"
                             style={{
-                                transform: `translateY(${formOffsetPx}px)`,
-                                height: formHeightPx > 0 ? `${formHeightPx}px` : undefined
+                                transform: `translateY(${formOffsetPx}px)`
                             }}
                         >
                             <CardHeader>

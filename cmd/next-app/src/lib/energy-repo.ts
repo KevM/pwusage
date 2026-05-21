@@ -103,7 +103,36 @@ export class EnergyRepo {
         return getSiteMidnight(d, tz);
     }
 
+// === Queries ===
+    async getLatestTimestamp(siteId: string): Promise<Date | null> {
+        const res = await pool.query(
+            'SELECT MAX(timestamp) as timestamp FROM "EnergyData" WHERE site_id = $1 AND timestamp <= NOW() at time zone \'UTC\'',
+            [siteId]
+        );
+        const ts = res.rows[0]?.timestamp;
+        return ts ? new Date(ts) : null;
+    }
+
+    async getExistingTimestamps(siteId: string, start: Date, end: Date): Promise<number[]> {
+        const res = await pool.query(
+            `SELECT EXTRACT(EPOCH FROM timestamp) as timestamp
+            FROM "EnergyData"
+            WHERE site_id = $1
+            AND timestamp >= $2
+            AND timestamp < $3
+            ORDER BY timestamp ASC`,
+            [siteId, start.toISOString(), end.toISOString()]
+        );
+        return res.rows.map((r: { timestamp: string | number | Date }) => {
+            const ts = r.timestamp;
+            if (typeof ts === 'number') return ts * 1000; // seconds to ms
+            if (typeof ts === 'string') return Number(ts) * 1000; // parse epoch string to ms
+            return (ts as Date).getTime();
+        });
+    }
+
     async getUsageByTOU(siteId: string, start: Date, end: Date): Promise<UsageData[]> {
+
         const siteRepo = new SiteRepo();
         const site = await siteRepo.getSite(siteId);
         if (!site) return [];
@@ -452,7 +481,47 @@ export class EnergyRepo {
         })) as EnergyData[];
     }
 
+    // === Commands ===
+    async insertEnergyDataBatch(rows: Array<{
+        site_id: string;
+        tariff_id: number;
+        tariff_schedule_id?: number | null;
+        timestamp: Date;
+        load_power: number;
+        solar_power: number;
+        grid_power: number;
+        battery_power: number;
+        battery_soc: number | null;
+    }>): Promise<void> {
+        if (rows.length === 0) return;
+
+        const valuePlaceholders: string[] = [];
+        const params: unknown[] = [];
+        let p = 1;
+        for (const r of rows) {
+            valuePlaceholders.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
+            params.push(
+                r.site_id, r.tariff_id, r.timestamp,
+                r.load_power, r.solar_power, r.grid_power, r.battery_power,
+                r.battery_soc, r.tariff_schedule_id ?? null
+            );
+        }
+
+        await pool.query(`
+            INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, tariff_schedule_id)
+            VALUES ${valuePlaceholders.join(', ')}
+            ON CONFLICT(timestamp, site_id, tariff_id) DO UPDATE SET
+                load_power = EXCLUDED.load_power,
+                solar_power = EXCLUDED.solar_power,
+                grid_power = EXCLUDED.grid_power,
+                battery_power = EXCLUDED.battery_power,
+                battery_soc = COALESCE(EXCLUDED.battery_soc, "EnergyData".battery_soc),
+                tariff_schedule_id = EXCLUDED.tariff_schedule_id
+        `, params);
+    }
+
     async cleanupOldEnergyData(cutoffDate: Date): Promise<{ energyDeleted: number }> {
+
         const energyRes = await pool.query(`
             DELETE FROM "EnergyData"
             WHERE timestamp < $1

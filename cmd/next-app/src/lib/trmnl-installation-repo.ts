@@ -1,10 +1,31 @@
 import { pool, TrmnlInstallation } from './db';
+import { SiteRepo } from './site-repo';
 
 export class TrmnlInstallationRepo {
     // === Queries (Read Operations) ===
     async findByUuid(uuid: string): Promise<TrmnlInstallation | undefined> {
         const { rows } = await pool.query('SELECT * FROM "TrmnlInstallation" WHERE uuid = $1', [uuid]);
         return rows[0] as TrmnlInstallation | undefined;
+    }
+
+    async findByUuidWithSite(
+        uuid: string,
+        options: { includeTokens?: boolean } = {}
+    ): Promise<{ installation: TrmnlInstallation; site: import('./db').SiteWithTariffs } | undefined> {
+        const installation = await this.findByUuid(uuid);
+        if (!installation) return undefined;
+
+        const site = await new SiteRepo().getSite(installation.site_id, options);
+        if (!site) return undefined;
+
+        if (!options.includeTokens) {
+            // Strip TRMNL tokens from the returned installation when not requested
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { access_token: _at, refresh_token: _rt, ...safe } = installation;
+            return { installation: safe as TrmnlInstallation, site };
+        }
+
+        return { installation, site };
     }
 
     async findBySiteId(siteId: string): Promise<TrmnlInstallation | undefined> {

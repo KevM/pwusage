@@ -1,4 +1,4 @@
-import { pool, Site, SiteWithTariffs, Tariff, TrmnlInstallation, TariffSeason } from './db';
+import { pool, Site, SiteWithTariffs, Tariff, TariffSeason } from './db';
 import { getRequestContext } from './request-context';
 
 // Use global cache to persist across reloads in dev
@@ -20,52 +20,7 @@ const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timez
 const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
 
 export class SiteRepo {
-    async getInstallationAndSite(uuid: string, options: { includeTokens?: boolean } = {}): Promise<{ installation: TrmnlInstallation, site: SiteWithTariffs } | undefined> {
-        const sql = `
-            SELECT
-                i.*,
-                s.name as site_name, s.updated as site_updated, s.installed as site_installed, s.timezone as site_timezone,
-                s.billing_start_day,
-                u.access_token as tesla_access_token, u.refresh_token as tesla_refresh_token, u.auth_status as tesla_auth_status
-            FROM "TrmnlInstallation" i
-            JOIN "Site" s ON i.site_id = s.id
-            LEFT JOIN "User" u ON s.user_id = u.id
-            WHERE i.uuid = $1
-            LIMIT 1
-        `;
-
-        const res = await pool.query(sql, [uuid]);
-        const row = res.rows[0];
-        if (!row) return undefined;
-
-        let installation: TrmnlInstallation = {
-            id: row.id,
-            uuid: row.uuid,
-            site_id: row.site_id,
-            plugin_setting_id: row.plugin_setting_id,
-            created_at: new Date(row.created_at),
-            json: row.json,
-            access_token: row.access_token,
-            refresh_token: row.refresh_token
-        };
-
-        const siteWithTariffs = await this.getSite(row.site_id, options);
-        if (!siteWithTariffs) return undefined;
-
-        if (options.includeTokens) {
-            siteWithTariffs.access_token = row.tesla_access_token;
-            siteWithTariffs.refresh_token = row.tesla_refresh_token;
-            siteWithTariffs.auth_status = row.tesla_auth_status;
-        } else if (installation) {
-            // Strip Trmnl tokens from installation if not requested
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { access_token: _at, refresh_token: _rt, ...safeInstallation } = installation;
-            installation = safeInstallation as TrmnlInstallation;
-        }
-
-        return { installation, site: siteWithTariffs };
-    }
-
+    // === Queries ===
     async getSitesForUser(userId: string, options?: SiteQueryOptions): Promise<Site[]> {
         const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
         const { rows } = await pool.query(`SELECT ${columns} FROM "Site" WHERE user_id = $1`, [userId]);
@@ -256,6 +211,14 @@ export class SiteRepo {
         return rows as Site[];
     }
 
+    // === Queries ===
+    async getSiteJson(siteId: string): Promise<unknown | null> {
+        const res = await pool.query('SELECT json FROM "Site" WHERE id = $1', [siteId]);
+        if (res.rows.length === 0) return null;
+        return res.rows[0].json ?? null;
+    }
+
+    // === Commands ===
     async updateSiteBillingDay(siteId: string, day: number) {
         await pool.query('UPDATE "Site" SET billing_start_day = $1 WHERE id = $2', [day, siteId]);
         siteCache.delete(siteId);
@@ -266,6 +229,33 @@ export class SiteRepo {
         siteCache.delete(siteId);
     }
 
+    async assignSiteToUser(siteId: string, userId: string): Promise<void> {
+        await pool.query('UPDATE "Site" SET user_id = $1 WHERE id = $2', [userId, siteId]);
+        this.invalidateCache(siteId);
+    }
+
+    async upsertSite(params: {
+        id: string;
+        name: string;
+        utility: string | null;
+        installed: Date | string;
+        timezone: string;
+        json: unknown;
+    }): Promise<void> {
+        await pool.query(`
+            INSERT INTO "Site"(id, name, utility, updated, installed, timezone, json)
+            VALUES ($1, $2, $3, NOW(), $4, $5, $6)
+            ON CONFLICT(id) DO UPDATE SET
+                name=EXCLUDED.name,
+                utility=EXCLUDED.utility,
+                installed=EXCLUDED.installed,
+                timezone=EXCLUDED.timezone,
+                json=EXCLUDED.json
+        `, [params.id, params.name, params.utility, params.installed, params.timezone, JSON.stringify(params.json)]);
+        this.invalidateCache(params.id);
+    }
+
+    // Utility
     invalidateCache(siteId: string) {
         siteCache.delete(siteId);
     }

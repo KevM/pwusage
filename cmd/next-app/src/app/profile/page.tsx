@@ -3,9 +3,9 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Image from 'next/image';
 import { getDefaultSiteId, isUserAdmin } from '@/lib/auth-checks';
+import { UserRepo } from '@/lib/user-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { TeslaClient } from '@/lib/tesla-client';
-import { pool, User } from '@/lib/db';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { H3, P } from '@/components/ui/Typography';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
@@ -50,8 +50,7 @@ export default async function ProfilePage() {
         );
     }
 
-    const userRes = await pool.query('SELECT * FROM "User" WHERE id = $1', [firstSite.user_id]);
-    const user = userRes.rows[0] as User;
+    const user = await new UserRepo().getById(firstSite.user_id);
 
     if (!user) {
         return (

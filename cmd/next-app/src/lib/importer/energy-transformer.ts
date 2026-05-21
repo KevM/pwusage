@@ -6,6 +6,7 @@ export type { SocSample };
 export interface EnergyDataRow {
     site_id: string;
     tariff_id: number;
+    tariff_schedule_id: number | null;
     timestamp: Date;
     load_power: number;
     solar_power: number;
@@ -17,6 +18,7 @@ export interface EnergyDataRow {
 export interface TransformContext {
     siteId: string;
     getTariffId: (ts: Date) => number | null;
+    getTariffScheduleId: (ts: Date) => number | null;
 }
 
 export function transformEnergyPoints(
@@ -52,6 +54,8 @@ export function transformEnergyPoints(
         const tariffId = context.getTariffId(ts);
         if (tariffId === null) continue;
 
+        const tariffScheduleId = context.getTariffScheduleId(ts);
+
         const gridImported = h.grid_energy_imported ?? 0;
         const gridExported = h.total_grid_energy_exported ?? 0;
         const grid = gridImported !== 0 ? gridImported : -gridExported;
@@ -63,6 +67,7 @@ export function transformEnergyPoints(
         results.push({
             site_id: context.siteId,
             tariff_id: tariffId,
+            tariff_schedule_id: tariffScheduleId,
             timestamp: ts,
             load_power: hHome * scale,
             solar_power: hSolar * scale,

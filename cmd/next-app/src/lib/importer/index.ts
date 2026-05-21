@@ -1,15 +1,14 @@
-import { pool, SiteWithTariffs, TariffSeason, TariffSchedule } from '../db';
+import { SiteWithTariffs, Tariff, TariffSeason, TariffSchedule } from '../db';
 import { Schedule } from '../schedule';
 import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry } from '../tesla-client';
 import { EnergyRepo } from '../energy-repo';
 import { SiteRepo } from '../site-repo';
 import { UserRepo } from '../user-repo';
+import { TariffRepo } from '../tariff-repo';
 import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
 import { planImport, splitAtUtcMidnight, auditDays } from './import-planner';
 import { getSiteMidnight } from '../date-utils';
-
-import { PoolClient } from 'pg';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -26,6 +25,8 @@ export class Importer {
     private repo: EnergyRepo;
     private siteRepo: SiteRepo;
     private userRepo: UserRepo;
+    private tariffRepo: TariffRepo;
+
 
     // Prevent multiple simultaneous syncs (persist across HMR in dev)
     private static get pendingSyncs(): Set<string> {
@@ -41,6 +42,94 @@ export class Importer {
         this.repo = new EnergyRepo();
         this.siteRepo = new SiteRepo();
         this.userRepo = new UserRepo();
+        this.tariffRepo = new TariffRepo();
+    }
+
+    /**
+     * Remap stale tariff IDs to current DB tariff IDs.
+     * This handles the case where tariff refresh runs between loading site.tariffs
+     * and inserting energy data, causing FK violations.
+     */
+    private async remapTariffIds(
+        siteId: string,
+        rows: EnergyDataRow[],
+        siteTariffs: Tariff[]
+    ): Promise<EnergyDataRow[]> {
+        // Fetch current DB tariffs by name to build a map
+        const tariffRes = await this.tariffRepo.getTariffsForSite(siteId);
+        const dbTariffMap = new Map<string, number>(); // Name -> New ID
+        tariffRes.forEach((r) => {
+            if (r.name) dbTariffMap.set(r.name, r.id);
+        });
+
+        // Build mapping from old ID to name for local tariffs
+        const localTariffMap = new Map<number, string>(); // Old ID -> Name
+        siteTariffs.forEach((t) => {
+            if (t.name) localTariffMap.set(t.id, t.name);
+        });
+
+        // Build mapping from old ID to new ID
+        const remappedIds = new Map<number, number | null>(); // Old ID -> New ID
+
+        // First pass: resolve all tariff ID remappings
+        for (const row of rows) {
+            if (!remappedIds.has(row.tariff_id)) {
+                // Check if the current ID exists in DB (direct match)
+                const currentTariff = tariffRes.find((t) => t.id === row.tariff_id);
+
+                if (currentTariff) {
+                    // Direct match - ID is still valid
+                    remappedIds.set(row.tariff_id, row.tariff_id);
+                } else {
+                    // Try to map by name
+                    const name = localTariffMap.get(row.tariff_id);
+                    if (name && dbTariffMap.has(name)) {
+                        const newId = dbTariffMap.get(name)!;
+                        console.log(
+                            `[Importer] Remapping stale tariff ID ${row.tariff_id} ("${name}") -> ${newId}`
+                        );
+                        remappedIds.set(row.tariff_id, newId);
+                    } else {
+                        // Cannot resolve - use null to skip this row
+                        console.warn(
+                            `[Importer] Cannot resolve tariff ID ${row.tariff_id} (Name: "${name}")`
+                        );
+                        remappedIds.set(row.tariff_id, null);
+                    }
+                }
+            }
+        }
+
+        // Second pass: remap the rows
+        const remappedRows: EnergyDataRow[] = [];
+        for (const row of rows) {
+            const finalTariffId = remappedIds.get(row.tariff_id)!;
+
+            if (finalTariffId !== null) {
+                const originalTariffId = row.tariff_id;
+                const newRow: EnergyDataRow = {
+                    ...row,
+                    tariff_id: finalTariffId,
+                };
+
+                // If tariff was remapped, also null out the schedule ID
+                // (since the old schedule ID won't match the new tariff structure)
+                if (originalTariffId !== finalTariffId && row.tariff_schedule_id !== null) {
+                    newRow.tariff_schedule_id = null;
+                    console.log(
+                        `[Importer] Nulling schedule ID ${row.tariff_schedule_id} for remapped tariff ${row.tariff_id} -> ${finalTariffId}`
+                    );
+                }
+
+                remappedRows.push(newRow);
+            } else {
+                console.warn(
+                    `[Importer] Skipping row with unresolvable tariff ID ${row.tariff_id} at ${row.timestamp.toISOString()}`
+                );
+            }
+        }
+
+        return remappedRows;
     }
 
     async getTodayData(siteId: string): Promise<EnergyDataRow[]> {
@@ -77,18 +166,25 @@ export class Importer {
 
         console.log(`[Importer] Background persisting ${filteredRows.length} rows for site ${siteId} (Filtered from ${rows.length})`);
 
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            await this.insertEnergyData(client, site, filteredRows);
-            await client.query('COMMIT');
-            console.log(`[Importer] Background persistence complete for site ${siteId}`);
-        } catch (e) {
-            await client.query('ROLLBACK');
-            console.error(`[Importer] Background persistence failed for site ${siteId}`, e);
-        } finally {
-            client.release();
-        }
+        // Remap stale tariff IDs before inserting to handle concurrent tariff refresh
+        const remappedRows = await this.remapTariffIds(siteId, filteredRows, site.tariffs);
+
+        console.log(
+            `[Importer] Remapped ${filteredRows.length - remappedRows.length} rows with stale tariff IDs`
+        );
+
+        await this.repo.insertEnergyDataBatch(remappedRows.map(row => ({
+            site_id: row.site_id,
+            tariff_id: row.tariff_id,
+            tariff_schedule_id: row.tariff_schedule_id ?? null,
+            timestamp: row.timestamp,
+            load_power: row.load_power,
+            solar_power: row.solar_power,
+            grid_power: row.grid_power,
+            battery_power: row.battery_power,
+            battery_soc: row.battery_soc,
+        })));
+        console.log(`[Importer] Background persistence complete for site ${siteId}`);
     }
 
     /**
@@ -115,14 +211,9 @@ export class Importer {
             if (latestKnown) {
                 latest = latestKnown;
             } else {
-                const latestRes = await pool.query(`
-                    SELECT timestamp FROM "EnergyData"
-                    WHERE site_id = $1
-                    AND timestamp <= NOW()
-                    ORDER BY timestamp DESC LIMIT 1
-                `, [siteId]);
-                if (latestRes.rows.length > 0) {
-                    latest = new Date(latestRes.rows[0].timestamp);
+                const latestRow = await this.repo.getLatestTimestamp(siteId);
+                if (latestRow) {
+                    latest = latestRow;
                 }
             }
 
@@ -171,16 +262,10 @@ export class Importer {
             if (!site) throw new Error(`Site ${siteId} not found in database`);
 
             const auditStartTime = getSiteMidnight(start, site.timezone);
-            const rowsRes = await pool.query(`
-                SELECT timestamp FROM "EnergyData"
-                WHERE site_id = $1
-                AND timestamp >= $2
-                AND timestamp < $3
-                ORDER BY timestamp ASC
-            `, [siteId, auditStartTime.toISOString(), end.toISOString()]);
-
-            const existingTimestamps = rowsRes.rows.map(
-                (r: { timestamp: string | Date }) => new Date(r.timestamp).getTime()
+            const existingTimestamps = await this.repo.getExistingTimestamps(
+                siteId,
+                auditStartTime,
+                end
             );
 
             const windows = planImport({
@@ -272,13 +357,12 @@ export class Importer {
                 await this.userRepo.updateLastChecked(siteForUser.user_id);
             }
 
-            const existingSiteRes = await pool.query('SELECT json FROM "Site" WHERE id = $1', [siteId]);
-            const existingSite = existingSiteRes.rows[0];
+            const existingJson = await this.siteRepo.getSiteJson(siteId);
             let tariffsChanged = true;
 
-            if (existingSite && existingSite.json) {
+            if (existingJson) {
                 try {
-                    const existingInfo = existingSite.json as EnergySiteInfo;
+                    const existingInfo = existingJson as EnergySiteInfo;
 
                     // Use canonical stringify to prevent flapping on key order differences
                     const canonicalize = (obj: unknown): string => {
@@ -300,49 +384,21 @@ export class Importer {
                 }
             }
 
-            await pool.query(`
-                INSERT INTO "Site"(id, name, utility, updated, installed, timezone, json)
-                VALUES ($1, $2, $3, NOW(), $4, $5, $6)
-                ON CONFLICT(id) DO UPDATE SET
-                    name=EXCLUDED.name,
-                    utility=EXCLUDED.utility,
-                    installed=EXCLUDED.installed,
-                    timezone=EXCLUDED.timezone,
-                    json=EXCLUDED.json
-            `, [
-                siteId,
-                info.site_name,
-                info.tariff_content_v2?.utility ?? null,
-                info.installation_date,
-                info.installation_time_zone,
-                JSON.stringify(info)
-            ]);
+            await this.siteRepo.upsertSite({
+                id: siteId,
+                name: info.site_name,
+                utility: info.tariff_content_v2?.utility ?? null,
+                installed: info.installation_date,
+                timezone: info.installation_time_zone,
+                json: info,
+            });
 
             if (tariffsChanged) {
                 console.log(`Tariff content changed for site ${siteId}, updating tariffs...`);
-                // Use a client for atomicity of tariff replacement
-                const client = await pool.connect();
-                try {
-                    await client.query('BEGIN');
-
-                    const tariffIdsRes = await client.query('SELECT id FROM "Tariff" WHERE site_id = $1', [siteId]);
-                    const tariffIds = tariffIdsRes.rows;
-
-                    for (const t of tariffIds) {
-                        await client.query('DELETE FROM "TariffSchedule" WHERE season_id IN (SELECT id FROM "TariffSeason" WHERE tariff_id = $1)', [t.id]);
-                        await client.query('DELETE FROM "TariffSeason" WHERE tariff_id = $1', [t.id]);
-                    }
-                    await client.query('DELETE FROM "Tariff" WHERE site_id = $1', [siteId]);
-
-                    await this.updateTariffs(client, siteId, info);
-
-                    await client.query('COMMIT');
-                } catch (e) {
-                    await client.query('ROLLBACK');
-                    throw e;
-                } finally {
-                    client.release();
-                }
+                const parsed = info.tariff_content_v2
+                    ? parseTariffContent(info.tariff_content_v2, info.site_name ?? 'Utility Tariff')
+                    : buildDefaultTariff('Default Rate');
+                await this.tariffRepo.replaceTariffsForSite(siteId, parsed);
             } else {
                 console.log(`Tariff content unchanged for site ${siteId}, skipping tariff update.`);
             }
@@ -362,50 +418,6 @@ export class Importer {
             }
             console.error(`Error ensuring site ${siteId}`, e);
             throw e;
-        }
-    }
-
-    private async updateTariffs(client: PoolClient, siteId: string, info: EnergySiteInfo) {
-        const parsed = info.tariff_content_v2
-            ? parseTariffContent(info.tariff_content_v2, info.site_name ?? 'Utility Tariff')
-            : buildDefaultTariff('Default Rate');
-
-        await client.query(`
-            INSERT INTO "Tariff"(site_id, name, updated)
-            VALUES ($1, $2, NOW())
-            ON CONFLICT(site_id, name) DO UPDATE SET name=EXCLUDED.name
-        `, [siteId, parsed.name]);
-
-        const tariffRowRes = await client.query(
-            `SELECT id FROM "Tariff" WHERE site_id = $1 AND name = $2`,
-            [siteId, parsed.name]
-        );
-        const tariffRow = tariffRowRes.rows[0];
-
-        for (const season of parsed.seasons) {
-            await client.query(`
-                INSERT INTO "TariffSeason"(tariff_id, name, from_month, from_day, to_month, to_day, buy_rate, sell_rate)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            `, [tariffRow.id, season.name, season.from_month, season.from_day,
-                season.to_month, season.to_day, season.buy_rate, season.sell_rate]);
-
-            const seasonRowRes = await client.query(
-                `SELECT id FROM "TariffSeason" WHERE tariff_id = $1 AND name = $2`,
-                [tariffRow.id, season.name]
-            );
-            const seasonRow = seasonRowRes.rows[0];
-
-            for (const schedule of season.schedules) {
-                await client.query(`
-                    INSERT INTO "TariffSchedule"(season_id, name, buy_rate, sell_rate,
-                        from_day_of_week, to_day_of_week, from_hour, from_minute, to_hour, to_minute)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                `, [
-                    seasonRow.id, schedule.name, schedule.buy_rate, schedule.sell_rate,
-                    schedule.from_day_of_week, schedule.to_day_of_week,
-                    schedule.from_hour, schedule.from_minute, schedule.to_hour, schedule.to_minute,
-                ]);
-            }
         }
     }
 
@@ -455,43 +467,43 @@ export class Importer {
             return [];
         }
         else {
-            const client = await pool.connect();
-            try {
-                const msg1 = `[Import] Insert Transaction Start. History Rows: ${history.length}`;
-                console.log(msg1);
+            const energyDatas = await this.processHistory(
+                site,
+                history,
+                soeHistory,
+                period,
+                (actualEnd.getTime() - start.getTime()) / (3600 * 1000)
+            );
 
-                await client.query('BEGIN');
+            // Surgical Filter: Tesla often returns more data than requested (e.g., the whole day).
+            // We only want to write the rows that fall within our requested window.
+            const filteredDatas = energyDatas.filter(d =>
+                d.timestamp.getTime() >= start.getTime() &&
+                d.timestamp.getTime() <= actualEnd.getTime()
+            );
 
-                // SURGICAL: We no longer delete the whole day.
-                // We rely on ON CONFLICT DO UPDATE to refresh points and overwrite synthetic zeros.
-                const energyDatas = await this.processHistory(
-                    site,
-                    history,
-                    soeHistory,
-                    period,
-                    (actualEnd.getTime() - start.getTime()) / (3600 * 1000)
-                );
+            const msg2 = `[Import] Processed EnergyData Rows: ${filteredDatas.length} (Filtered from ${energyDatas.length})`;
+            console.log(msg2);
 
-                // Surgical Filter: Tesla often returns more data than requested (e.g., the whole day).
-                // We only want to write the rows that fall within our requested window.
-                const filteredDatas = energyDatas.filter(d =>
-                    d.timestamp.getTime() >= start.getTime() &&
-                    d.timestamp.getTime() <= actualEnd.getTime()
-                );
+            // Remap stale tariff IDs before inserting to handle concurrent tariff refresh
+            const remappedRows = await this.remapTariffIds(site.id, filteredDatas, site.tariffs);
 
-                const msg2 = `[Import] Processed EnergyData Rows: ${filteredDatas.length} (Filtered from ${energyDatas.length})`;
-                console.log(msg2);
+            console.log(
+                `[Import] Remapped ${filteredDatas.length - remappedRows.length} rows with stale tariff IDs`
+            );
 
-                await this.insertEnergyData(client, site, filteredDatas);
-
-                await client.query('COMMIT');
-                return energyDatas;
-            } catch (e) {
-                await client.query('ROLLBACK');
-                throw e;
-            } finally {
-                client.release();
-            }
+            await this.repo.insertEnergyDataBatch(remappedRows.map(row => ({
+                site_id: row.site_id,
+                tariff_id: row.tariff_id,
+                tariff_schedule_id: row.tariff_schedule_id,
+                timestamp: row.timestamp,
+                load_power: row.load_power,
+                solar_power: row.solar_power,
+                grid_power: row.grid_power,
+                battery_power: row.battery_power,
+                battery_soc: row.battery_soc,
+            })));
+            return energyDatas;
         }
     }
 
@@ -508,6 +520,14 @@ export class Importer {
             getTariffId: (ts: Date) => {
                 const tp = this.getTariffPeriodOrFallback(site, schedule, ts);
                 return tp ? Number(tp.tariff.id) : null;
+            },
+            getTariffScheduleId: (ts: Date) => {
+                const tp = this.getTariffPeriodOrFallback(site, schedule, ts);
+                // Only return schedule ID if it's not the synthetic fallback (id=-1)
+                // Fallback periods should have NULL schedule ID to maintain FK integrity
+                if (!tp) return null;
+                const schedId = Number(tp.schedule.id);
+                return schedId >= 0 ? schedId : null;
             },
         });
     }
@@ -559,140 +579,13 @@ export class Importer {
 
 
 
-    private async insertEnergyData(client: PoolClient, site: SiteWithTariffs, data: EnergyDataRow[]) {
-        const validRows: EnergyDataRow[] = [];
 
-        // 1. Get current DB tariffs (Name -> ID) to handle rotation
-        const tariffRes = await client.query('SELECT id, name FROM "Tariff" WHERE site_id = $1', [site.id]);
-        const dbTariffMap = new Map<string, number>(); // Name -> New ID
-        tariffRes.rows.forEach((r) => {
-            if (r.name) dbTariffMap.set(r.name, r.id);
-        });
-
-        // 2. Map local/stale IDs to Names
-        const localTariffMap = new Map<number, string>(); // Old ID -> Name
-        site.tariffs.forEach(t => {
-            if (t.name) localTariffMap.set(t.id, t.name);
-        });
-
-        const remappedIds = new Map<number, number>(); // Old ID -> New ID
-
-        for (const row of data) {
-
-            // Check if ID is valid (exists in DB ids)
-            // We can check if it's in the values of dbTariffMap
-            // Efficient check: build a set of valid IDs?
-            // Actually, let's just resolve everything.
-
-            // If we haven't resolved this ID yet
-            if (!remappedIds.has(row.tariff_id)) {
-                // Check if current ID exists in DB (direct match)
-                // We need a helper for ID -> exists.
-                // Or just try to find it.
-
-                const isDirectMatch = Array.from(dbTariffMap.values()).includes(row.tariff_id);
-
-                if (isDirectMatch) {
-                    remappedIds.set(row.tariff_id, row.tariff_id);
-                } else {
-                    // Try to map by name
-                    const name = localTariffMap.get(row.tariff_id);
-                    if (name && dbTariffMap.has(name)) {
-                        const newId = dbTariffMap.get(name)!;
-                        console.log(`[Import] Remapping stale tariff ID ${row.tariff_id} ("${name}") -> ${newId}`);
-                        remappedIds.set(row.tariff_id, newId);
-                    } else {
-                        // Cannot resolve
-                        console.warn(`[Import] Cannot resolve tariff ID ${row.tariff_id} (Name: "${name}")`);
-                        remappedIds.set(row.tariff_id, -1);
-                    }
-                }
-            }
-        }
-
-        const remappedRows = new Set<EnergyDataRow>();
-
-        for (const row of data) {
-            const finalTariffId = remappedIds.get(row.tariff_id)!;
-
-            if (finalTariffId !== -1) {
-                const originalTariffId = row.tariff_id;
-                row.tariff_id = finalTariffId;
-                // Track if it was remapped to avoid using stale schedule IDs
-                if (originalTariffId !== finalTariffId) {
-                    remappedRows.add(row);
-                }
-                validRows.push(row);
-            } else {
-                // Count skips
-            }
-        }
-
-        console.log(`[Import] Valid Rows to Insert: ${validRows.length} / ${data.length}`);
-
-        const schedule = new Schedule(site.tariffs, site.timezone);
-
-        if (validRows.length === 0) return;
-
-        const chunks: EnergyDataRow[][] = [];
-        const chunkSize = 1000; // Safe batch size
-        for (let i = 0; i < validRows.length; i += chunkSize) {
-            chunks.push(validRows.slice(i, i + chunkSize));
-        }
-
-        console.log(`[Import] Batching ${validRows.length} rows into ${chunks.length} chunks.`);
-
-        for (const chunk of chunks) {
-            const values: (string | number | Date | null)[] = [];
-            const placeholders: string[] = [];
-            let pIdx = 1;
-
-            for (const row of chunk) {
-                const wasRemapped = remappedRows.has(row);
-                const scheduleId = wasRemapped ? null : (schedule.getTariffPeriod(row.timestamp)?.schedule.id ?? null);
-
-                placeholders.push(`($${pIdx}, $${pIdx + 1}, $${pIdx + 2}, $${pIdx + 3}, $${pIdx + 4}, $${pIdx + 5}, $${pIdx + 6}, $${pIdx + 7}, $${pIdx + 8})`);
-                values.push(
-                    row.site_id,
-                    row.tariff_id,
-                    row.timestamp,
-                    row.load_power,
-                    row.solar_power,
-                    row.grid_power,
-                    row.battery_power,
-                    row.battery_soc,
-                    scheduleId
-                );
-                pIdx += 9;
-            }
-
-            const query = `
-                INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, tariff_schedule_id)
-                VALUES ${placeholders.join(', ')}
-                ON CONFLICT(timestamp, site_id, tariff_id) DO UPDATE SET
-                    load_power=EXCLUDED.load_power,
-                    solar_power=EXCLUDED.solar_power,
-                    grid_power=EXCLUDED.grid_power,
-                    battery_power=EXCLUDED.battery_power,
-                    battery_soc=COALESCE(EXCLUDED.battery_soc, "EnergyData".battery_soc),
-                    tariff_schedule_id=EXCLUDED.tariff_schedule_id
-            `;
-
-            await client.query(query, values);
-        }
-    }
 
     async auditRange(siteId: string, start: Date, end: Date) {
         const site = await this.siteRepo.getSite(siteId);
         if (!site) return { error: 'Site not found' };
 
-        const rowsRes = await pool.query(`
-            SELECT timestamp FROM "EnergyData"
-            WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
-            ORDER BY timestamp ASC
-        `, [siteId, start.toISOString(), end.toISOString()]);
-
-        const existingTimestamps = rowsRes.rows.map((r: { timestamp: string | Date }) => new Date(r.timestamp).getTime());
+        const existingTimestamps = await this.repo.getExistingTimestamps(siteId, start, end);
         const now = new Date();
 
         const days = auditDays({

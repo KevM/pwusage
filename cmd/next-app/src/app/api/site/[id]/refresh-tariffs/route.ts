@@ -4,7 +4,7 @@ import { TeslaClient } from '@/lib/tesla-client';
 import { Importer } from '@/lib/importer';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { getUserTokensForSite } from '@/lib/user-repo';
+import { UserRepo } from '@/lib/user-repo';
 import { withRequestContext } from '@/lib/request-context';
 
 export async function POST(
@@ -22,7 +22,7 @@ export async function POST(
         }
 
         // Get site-specific Tesla credentials (from the site owner)
-        const credentials = await getUserTokensForSite(siteId);
+        const credentials = await new UserRepo().getTokensForSite(siteId);
         if (!credentials) {
             return NextResponse.json({ error: 'Site has no Tesla credentials' }, { status: 401 });
         }

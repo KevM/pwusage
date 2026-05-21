@@ -1,46 +1,11 @@
 import { pool } from './db';
 import { SiteRepo } from './site-repo';
+import { UserRepo } from './user-repo';
 
 export class TeslaTokenRepo {
-    constructor(private siteRepo: SiteRepo) {}
+    constructor(private siteRepo: SiteRepo, private userRepo: UserRepo = new UserRepo()) {}
 
-    async updateSiteTokens(siteId: string, accessToken: string, refreshToken: string) {
-        const site = await this.siteRepo.getSite(siteId);
-
-        if (site && site.user_id) {
-            await pool.query('UPDATE "User" SET access_token = $1, refresh_token = $2 WHERE id = $3', [accessToken, refreshToken, site.user_id]);
-            console.log(`[TeslaTokenRepo] Updated tokens for USER ${site.user_id} (via site ${siteId})`);
-        } else {
-            console.warn(`[TeslaTokenRepo] Cannot update tokens for site ${siteId} - No User Linked!`);
-        }
-
-        this.siteRepo.invalidateCache(siteId);
-    }
-
-    async acquireRefreshLock(siteId: string): Promise<boolean> {
-        const now = Date.now();
-        const expires = now + 60000;
-
-        const site = await this.siteRepo.getSite(siteId);
-        if (site && site.user_id) {
-            const result = await pool.query(`
-                UPDATE "User"
-                SET is_refreshing = 1, refresh_lock_expires = $1
-                WHERE id = $2 AND (is_refreshing = 0 OR refresh_lock_expires < $3)
-            `, [expires, site.user_id, now]);
-            return (result.rowCount ?? 0) > 0;
-        }
-
-        return false;
-    }
-
-    async releaseRefreshLock(siteId: string) {
-        const site = await this.siteRepo.getSite(siteId);
-        if (site && site.user_id) {
-            await pool.query('UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0 WHERE id = $1', [site.user_id]);
-        }
-    }
-
+    // === Queries ===
     async waitForTokenRefresh(siteId: string, timeoutMs = 20000): Promise<{ access_token: string; refresh_token: string }> {
         const start = Date.now();
         const site = await this.siteRepo.getSite(siteId);
@@ -60,6 +25,45 @@ export class TeslaTokenRepo {
         throw new Error('Timeout waiting for token refresh lock');
     }
 
+    // === Commands ===
+    async acquireRefreshLock(siteId: string): Promise<boolean> {
+        const now = Date.now();
+        const expires = now + 60000;
+
+        const site = await this.siteRepo.getSite(siteId);
+        if (site && site.user_id) {
+            const result = await pool.query(`
+                UPDATE "User"
+                SET is_refreshing = 1, refresh_lock_expires = $1
+                WHERE id = $2 AND (is_refreshing = 0 OR refresh_lock_expires < $3)
+            `, [expires, site.user_id, now]);
+            return (result.rowCount ?? 0) > 0;
+        }
+
+        return false;
+    }
+
+    async updateSiteTokens(siteId: string, accessToken: string, refreshToken: string) {
+        const site = await this.siteRepo.getSite(siteId);
+
+        if (site && site.user_id) {
+            await this.userRepo.updateTokens(site.user_id, accessToken, refreshToken);
+            console.log(`[TeslaTokenRepo] Updated tokens for USER ${site.user_id} (via site ${siteId})`);
+        } else {
+            console.warn(`[TeslaTokenRepo] Cannot update tokens for site ${siteId} - No User Linked!`);
+        }
+
+        this.siteRepo.invalidateCache(siteId);
+    }
+
+    async releaseRefreshLock(siteId: string) {
+        const site = await this.siteRepo.getSite(siteId);
+        if (site && site.user_id) {
+            await pool.query('UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0 WHERE id = $1', [site.user_id]);
+        }
+    }
+
+    // Utility
     private isTerminalAuthError(msg: string): boolean {
         return msg.includes('401') || msg.includes('login_required') || msg.includes('invalid_grant');
     }
@@ -115,7 +119,7 @@ export class TeslaTokenRepo {
                     const site = await this.siteRepo.getSite(siteId);
                     if (site && site.user_id) {
                         console.warn(`[TokenLock] Secondary revoke guard for site ${siteId} (User ${site.user_id}).`);
-                        await pool.query('UPDATE "User" SET auth_status = $1, is_active = $2 WHERE id = $3', ['revoked', false, site.user_id]);
+                        await this.userRepo.updateUserStatus(site.user_id, 'revoked', false);
                         this.siteRepo.invalidateCache(siteId);
                     }
                 }

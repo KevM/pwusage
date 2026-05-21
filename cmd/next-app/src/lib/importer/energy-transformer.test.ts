@@ -33,6 +33,7 @@ function makeEntry(overrides: Partial<EnergyHistoryEntry> = {}): EnergyHistoryEn
 const CONTEXT: TransformContext = {
     siteId: 'site-123',
     getTariffId: () => 1,
+    getTariffScheduleId: () => null,
 };
 
 describe('transformEnergyPoints', () => {
@@ -113,13 +114,13 @@ describe('transformEnergyPoints', () => {
     });
 
     it('skips entries when getTariffId returns null', () => {
-        const ctx: TransformContext = { siteId: 'site-123', getTariffId: () => null };
+        const ctx: TransformContext = { siteId: 'site-123', getTariffId: () => null, getTariffScheduleId: () => null };
         const history = [makeEntry()];
         expect(transformEnergyPoints(history, [], 'day', 1, ctx)).toHaveLength(0);
     });
 
     it('sets site_id and tariff_id from context', () => {
-        const ctx: TransformContext = { siteId: 'my-site', getTariffId: () => 42 };
+        const ctx: TransformContext = { siteId: 'my-site', getTariffId: () => 42, getTariffScheduleId: () => null };
         const [row] = transformEnergyPoints([makeEntry()], [], 'day', 1, ctx);
         expect(row.site_id).toBe('my-site');
         expect(row.tariff_id).toBe(42);

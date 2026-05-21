@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { getAuthorizedSiteIds } from '@/lib/auth-checks';
 import { verifySiteToken } from '@/lib/auth-jwt';
 import { SiteRepo } from '@/lib/site-repo';
-import { getUserTokens } from '@/lib/user-repo';
+import { UserRepo } from '@/lib/user-repo';
 import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards';
 import { TeslaClient } from '@/lib/tesla-client';
 import { NoSupportedProducts } from '@/components/NoSupportedProducts';
@@ -64,7 +64,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
 
     if (decoded.sub) {
         try {
-            const userTokens = await getUserTokens(decoded.sub);
+            const userTokens = await new UserRepo().getTokens(decoded.sub);
             if (userTokens?.access_token) {
                 const client = new TeslaClient({
                     accessToken: userTokens.access_token,

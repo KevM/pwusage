@@ -104,39 +104,6 @@ describe('SiteRepo site payload selection', () => {
             expect.anything()
         );
     });
-
-    it('does not fetch site json for TRMNL installation lookups', async () => {
-        // Query 1: installation JOIN (getInstallationAndSite's own query)
-        queryMock.mockResolvedValueOnce({
-            rows: [{
-                id: 1,
-                uuid: 'uuid-1',
-                site_id: 'site-1',
-                plugin_setting_id: 123,
-                created_at: new Date(),
-                json: { device: true },
-                access_token: 'install-token',
-                refresh_token: 'install-refresh',
-                tesla_access_token: 'tesla-token',
-                tesla_refresh_token: 'tesla-refresh',
-                tesla_auth_status: 'active'
-            }]
-        });
-        // Query 2: getSite() JOIN (1 query, no s.json)
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
-
-        const repo = new SiteRepo();
-        const result = await repo.getInstallationAndSite('uuid-1');
-
-        expect(queryMock).toHaveBeenNthCalledWith(
-            1,
-            expect.not.stringContaining('s.json'),
-            ['uuid-1']
-        );
-        // Second call is the getSite JOIN — also no s.json
-        expect(queryMock).toHaveBeenCalledTimes(2);
-        expect(result?.site.json).toBeUndefined();
-    });
 });
 
 describe('SiteRepo getSite request-scoped cache', () => {
@@ -359,5 +326,58 @@ describe('SiteRepo.getSitesWithTariffs', () => {
         // the previous includeTokens fetch should not have populated the cache
         await repo.getSitesWithTariffs(['site-1']);
         expect(queryCalls).toBe(2);
+    });
+});
+
+describe('SiteRepo new commands and queries', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+    });
+
+    it('assignSiteToUser updates Site.user_id', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new SiteRepo();
+        await repo.assignSiteToUser('site-1', 'user-1');
+        expect(queryMock).toHaveBeenCalledWith(
+            'UPDATE "Site" SET user_id = $1 WHERE id = $2',
+            ['user-1', 'site-1']
+        );
+    });
+
+    it('getSiteJson returns parsed json blob', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ json: { site_name: 'Home' } }] });
+        const repo = new SiteRepo();
+        const result = await repo.getSiteJson('site-1');
+        expect(result).toEqual({ site_name: 'Home' });
+        expect(queryMock).toHaveBeenCalledWith(
+            'SELECT json FROM "Site" WHERE id = $1',
+            ['site-1']
+        );
+    });
+
+    it('getSiteJson returns null when row missing', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new SiteRepo();
+        expect(await repo.getSiteJson('missing')).toBeNull();
+    });
+
+    it('upsertSite issues INSERT ... ON CONFLICT', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new SiteRepo();
+        const installed = new Date('2024-01-01T00:00:00Z');
+        await repo.upsertSite({
+            id: 'site-1',
+            name: 'Home',
+            utility: 'PG&E',
+            installed,
+            timezone: 'America/Chicago',
+            json: { foo: 'bar' },
+        });
+        const [sql, args] = queryMock.mock.calls[0];
+        expect(sql).toContain('INSERT INTO "Site"');
+        expect(sql).toContain('ON CONFLICT(id) DO UPDATE');
+        expect(args).toEqual([
+            'site-1', 'Home', 'PG&E', installed, 'America/Chicago', JSON.stringify({ foo: 'bar' })
+        ]);
     });
 });

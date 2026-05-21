@@ -11,7 +11,13 @@
       "Bash(node -e ' *)",
       "Bash(npx vitest *)",
       "Bash(gh pr *)",
-      "Skill(update-config)"
+      "Skill(update-config)",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(cat)",
+      "Bash(bash /tmp/verify_headers.sh)",
+      "Bash(git --no-pager show 4b3de63 -- cmd/next-app/src/lib/announcement-repo.ts)",
+      "Bash(GIT_PAGER=cat git show 4b3de63 -- cmd/next-app/src/lib/announcement-repo.ts)",
+      "Read(//tmp/**)"
     ]
   },
   "enabledPlugins": {
