@@ -34,6 +34,36 @@ Currently, Tesla ID tokens are signed with keys that don't appear in the public 
 - `cmd/next-app/src/app/auth/tesla-callback/route.ts` - JWT verification with lazy refresh
 - `Security.md` section 8 - Tesla `id_token` signature verification requirements
 
+## Discuss: harden tariff ID remap race window in importer
+
+**Status:** Flagged in the 2026-05-21 architectural review (#5 of its "critical"
+list). Reassessed as MEDIUM, not critical — wanted for future discussion, not
+yet scheduled.
+
+`Importer.remapTariffIds` (`cmd/next-app/src/lib/importer/index.ts`) already
+mitigates the main hazard: it re-resolves stale tariff IDs by name against the
+current DB before inserting energy rows, and `TariffRepo.replaceTariffsForSite`
+runs in a transaction. The residual window is narrow: if `replaceTariffsForSite`
+commits *between* `remapTariffIds`' `getTariffsForSite` read and
+`insertEnergyDataBatch`, the remapped `tariff_id` can again be stale.
+
+**Consequence is bounded, not "data corruption":** the batch insert would hit an
+FK violation and throw, caught by the caller's try/catch (background refresh in
+the markup route, or `loadInterval`). Worst case is a skipped/failed insert, not
+silent bad data. Tariff replacement only fires when Tesla tariff content actually
+changes (rare), so the window is rarely open.
+
+**Options to discuss:**
+1. Wrap remap + insert in a single transaction (optionally `SELECT ... FOR
+   SHARE` on the tariffs) so the mapping can't change underneath the insert.
+2. Catch the FK-violation error specifically and re-run the remap once.
+3. Leave as-is and accept the rare throw (it's already non-corrupting).
+
+**Related files:**
+- `cmd/next-app/src/lib/importer/index.ts` — `remapTariffIds`, `persistHistory`, `loadInterval`
+- `cmd/next-app/src/lib/tariff-repo.ts` — `replaceTariffsForSite` (transactional)
+- `cmd/next-app/src/lib/energy-repo.ts` — `insertEnergyDataBatch` (`ON CONFLICT` upsert)
+
 ## TRMNL chart hour labels should use site timezone, not server timezone
 
 **Status:** Pre-existing on `main`; surfaced (but not introduced) by the snapshot

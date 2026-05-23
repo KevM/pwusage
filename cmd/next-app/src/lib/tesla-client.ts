@@ -110,6 +110,32 @@ export interface TeslaClientConfig {
     tokenRefreshHandler?: (refreshToken: string) => Promise<{ access_token: string; refresh_token: string }>;
 }
 
+const RATE_LIMIT_MAX_RETRIES = 2;
+const RATE_LIMIT_DEFAULT_DELAY_MS = 1000;
+const RATE_LIMIT_MAX_DELAY_MS = 60_000;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Parse an HTTP `Retry-After` header (delta-seconds or HTTP-date) into a delay
+ * in milliseconds, falling back to a default and capping absurd values.
+ */
+function parseRetryAfter(header: string | null): number {
+    if (!header) return RATE_LIMIT_DEFAULT_DELAY_MS;
+
+    const seconds = Number(header);
+    if (Number.isFinite(seconds)) {
+        return Math.min(Math.max(seconds, 0) * 1000, RATE_LIMIT_MAX_DELAY_MS);
+    }
+
+    const dateMs = Date.parse(header);
+    if (!Number.isNaN(dateMs)) {
+        return Math.min(Math.max(dateMs - Date.now(), 0), RATE_LIMIT_MAX_DELAY_MS);
+    }
+
+    return RATE_LIMIT_DEFAULT_DELAY_MS;
+}
+
 export class TeslaClient {
     private baseUrl = "https://fleet-api.prd.na.vn.cloud.tesla.com";
     private config: TeslaClientConfig;
@@ -135,33 +161,55 @@ export class TeslaClient {
 
         let response = await makeRequest(this.config.accessToken);
 
-        if (response.status === 401 && this.config.refreshToken) {
-            console.log('Tesla API 401, attempting refresh...');
-            try {
-                let newTokens: { access_token: string; refresh_token: string };
-                if (this.config.tokenRefreshHandler) {
-                    newTokens = await this.config.tokenRefreshHandler(this.config.refreshToken);
-                } else {
-                    newTokens = await TeslaClient.refreshAccessToken(this.config.refreshToken);
-                }
-                this.config.accessToken = newTokens.access_token;
-                this.config.refreshToken = newTokens.refresh_token;
+        // Handle 401 (refresh once) and 429 (bounded backoff) in a single loop so
+        // an expired/revoked token surfaced *after* a 429 retry still triggers the
+        // refresh path instead of falling straight through to a hard error.
+        let refreshAttempted = false;
+        let rateLimitAttempt = 0;
+        while (true) {
+            if (response.status === 401 && this.config.refreshToken && !refreshAttempted) {
+                refreshAttempted = true;
+                console.log('Tesla API 401, attempting refresh...');
+                try {
+                    let newTokens: { access_token: string; refresh_token: string };
+                    if (this.config.tokenRefreshHandler) {
+                        newTokens = await this.config.tokenRefreshHandler(this.config.refreshToken);
+                    } else {
+                        newTokens = await TeslaClient.refreshAccessToken(this.config.refreshToken);
+                    }
+                    this.config.accessToken = newTokens.access_token;
+                    this.config.refreshToken = newTokens.refresh_token;
 
-                if (this.config.onTokenUpdate) {
-                    this.config.onTokenUpdate(newTokens.access_token, newTokens.refresh_token);
-                }
+                    if (this.config.onTokenUpdate) {
+                        this.config.onTokenUpdate(newTokens.access_token, newTokens.refresh_token);
+                    }
 
-                // Retry with new token
-                response = await makeRequest(this.config.accessToken);
-            } catch (refreshError) {
-                console.error('Token refresh failed:', refreshError);
-                if (this.config.onTokenError && refreshError instanceof Error) {
-                    await this.config.onTokenError(refreshError);
+                    // Retry with new token
+                    response = await makeRequest(this.config.accessToken);
+                    continue;
+                } catch (refreshError) {
+                    console.error('Token refresh failed:', refreshError);
+                    if (this.config.onTokenError && refreshError instanceof Error) {
+                        await this.config.onTokenError(refreshError);
+                    }
+                    // Fall through to original error
+                    break;
                 }
-                // Fall through to original error
             }
-        }
 
+            // Honor Tesla's rate limiting: back off on 429 and retry a bounded
+            // number of times before surfacing the error.
+            if (response.status === 429 && rateLimitAttempt < RATE_LIMIT_MAX_RETRIES) {
+                const delayMs = parseRetryAfter(response.headers.get('Retry-After'));
+                console.warn(`Tesla API 429, retrying in ${delayMs}ms (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`);
+                await sleep(delayMs);
+                rateLimitAttempt++;
+                response = await makeRequest(this.config.accessToken);
+                continue;
+            }
+
+            break;
+        }
 
         if (!response.ok) {
             const body = await response.text();
