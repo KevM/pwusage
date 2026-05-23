@@ -94,4 +94,21 @@ describe('renderFull characterization', () => {
             expect(TrmnlRenderer.renderFull(makeCtx(cfg))).toMatchSnapshot();
         });
     }
+
+    it('renders energy-chart hour labels in the site timezone', () => {
+        const start = Date.UTC(2024, 0, 1, 8, 0, 0);   // LA 2024-01-01 00:00
+        const series = Array.from({ length: 24 }, (_, i) => ({
+            timestamp: new Date(start + i * 3_600_000),
+            site_id: 's1', tariff_id: 1,
+            load_power: 1000, solar_power: 200, grid_power: 100, battery_power: -50,
+            battery_soc: 50, tariff_schedule_id: null
+        })) as unknown as EnergyData[];
+
+        const base = makeCtx(makeCfg({ showEnergyChart: true }));
+
+        const utc = TrmnlRenderer.renderFull({ ...base, seriesData: series, timezone: 'UTC' });
+        const la = TrmnlRenderer.renderFull({ ...base, seriesData: series, timezone: 'America/Los_Angeles' });
+
+        expect(la).not.toEqual(utc);
+    });
 });

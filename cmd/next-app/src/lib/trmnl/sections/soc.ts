@@ -10,14 +10,15 @@ export const socSection: TrmnlSection = {
     render: (ctx, l) => l.hasStandaloneSocChart ? `
             <div class="flex flex--row flex--center-x w--full" style="flex: 1 1 auto; height: ${l.socChartMinHeight}px; min-height: ${l.socChartMinHeight}px; align-items: stretch;">
                 ${ctx.seriesData ? renderSocChart(ctx.seriesData, ctx.batterySoc, l.socChartMinHeight, {
-            showXAxis: !l.showEnergyChart
+            showXAxis: !l.showEnergyChart,
+            timeZone: ctx.timezone
         }) : '<span class="label">Battery SoC unavailable</span>'}
             </div>
         ` : `
             <div class="flex flex--row flex--center-x w--full" style="height: ${l.socGlyphSectionHeight}px; min-height: ${l.socGlyphSectionHeight}px; align-items: center;">
                 <div class="flex flex--col w--full">
                     ${ctx.seriesData
-                ? renderBatterySocGlyphStrip(ctx.seriesData, ctx.batterySoc, { showXAxis: !l.showEnergyChart })
+                ? renderBatterySocGlyphStrip(ctx.seriesData, ctx.batterySoc, { showXAxis: !l.showEnergyChart, timeZone: ctx.timezone })
                 : components.renderBatterySocStandalone(ctx.batterySoc)}
                 </div>
             </div>

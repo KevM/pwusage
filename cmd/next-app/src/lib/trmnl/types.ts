@@ -33,4 +33,7 @@ export interface RenderContext {
     seriesData?: EnergyData[];
     componentConfig?: TrmnlComponentConfig;
     loadTiming?: LoadTimingView;
+    /** IANA timezone of the site (e.g. 'America/Los_Angeles'). Chart hour
+     *  labels render in this zone; defaults to 'UTC' downstream when absent. */
+    timezone?: string;
 }

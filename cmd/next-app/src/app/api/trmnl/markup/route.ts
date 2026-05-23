@@ -724,6 +724,7 @@ export async function GET(request: Request) {
             todayGrid: todayGrid,
             todaySolar: todaySolar,
             seriesData: seriesData,
+            timezone: tz,
             componentConfig,
             loadTiming: loadTimingView
         };

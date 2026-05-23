@@ -11,7 +11,8 @@ export const energyChartSection: TrmnlSection = {
                 ${ctx.seriesData ? renderEnergyChart(ctx.seriesData, {
             chartHeight: l.chartMinHeight,
             denseLegend: l.isDenseLayout || l.isVeryDenseLayout,
-            veryDenseLegend: l.isVeryDenseLayout
+            veryDenseLegend: l.isVeryDenseLayout,
+            timeZone: ctx.timezone
         }) : ''}
             </div>
         `

@@ -6,6 +6,7 @@
  * All functions are side-effect-free for easy unit testing.
  */
 
+import { Temporal } from '@js-temporal/polyfill';
 import { EnergyData } from '../db';
 import { energyToAveragePower, wattsToKilowatts, kilowattsToWatts } from '../energy-utils';
 import { buildSocCheckpoints, SocSample } from '../soc-checkpoints';
@@ -22,24 +23,66 @@ export interface HourLabelEntry {
     anchor: 'middle' | 'start';
 }
 
+export interface HourTick {
+    /** UTC instant (epoch ms) of the site-local h:00 tick. */
+    epochMs: number;
+    /** Display label, e.g. "12am" | "6am" | "12pm" | "6pm". */
+    label: string;
+}
+
+function hourLabel(h: number): string {
+    const amPm = h % 24 < 12 ? 'am' : 'pm';
+    let displayH = h % 12;
+    if (displayH === 0) displayH = 12;
+    return `${displayH}${amPm}`;
+}
+
+/**
+ * Returns the 12am/6am/12pm/6pm/next-12am tick instants for the site-local day
+ * containing `startTime`, filtered to [startTime, endTime] and computed in
+ * `timeZone`. Uses @js-temporal/polyfill (same idiom as billing-cycle.ts) so
+ * ticks land correctly even across DST transitions. Defaults to 'UTC'.
+ */
+export function buildHourTicks(
+    startTime: number,
+    endTime: number,
+    timeZone: string = 'UTC'
+): HourTick[] {
+    const tz = timeZone || 'UTC';
+    const localDate = Temporal.Instant
+        .fromEpochMilliseconds(startTime)
+        .toZonedDateTimeISO(tz)
+        .toPlainDate();
+
+    const ticks: HourTick[] = [];
+    for (let h = 0; h <= 24; h += 6) {
+        const zoned = localDate
+            .add({ days: Math.floor(h / 24) })
+            .toZonedDateTime({
+                timeZone: tz,
+                plainTime: Temporal.PlainTime.from({ hour: h % 24 })
+            });
+        const epochMs = zoned.epochMilliseconds;
+        if (epochMs >= startTime && epochMs <= endTime) {
+            ticks.push({ epochMs, label: hourLabel(h) });
+        }
+    }
+    return ticks;
+}
+
 export function buildHourLabelEntries(
     startTime: number,
     endTime: number,
     getX: (ts: number) => number,
-    leftInset = 0
+    leftInset = 0,
+    timeZone = 'UTC'
 ): HourLabelEntry[] {
-    const entries: HourLabelEntry[] = [];
-    for (let h = 0; h <= 24; h += 6) {
-        const labelTime = new Date(startTime);
-        labelTime.setHours(h, 0, 0, 0);
-        if (labelTime.getTime() >= startTime && labelTime.getTime() <= endTime) {
-            const x = getX(labelTime.getTime());
-            const amPm = h % 24 < 12 ? 'am' : 'pm';
-            let displayH = h % 12;
-            if (displayH === 0) displayH = 12;
-            entries.push({ x, label: `${displayH}${amPm}`, anchor: 'middle' });
-        }
-    }
+    const entries: HourLabelEntry[] = buildHourTicks(startTime, endTime, timeZone)
+        .map((tick) => ({
+            x: getX(tick.epochMs),
+            label: tick.label,
+            anchor: 'middle' as const
+        }));
 
     const hasMidnightLabel = entries.some((entry) => entry.label === '12am');
     if (!hasMidnightLabel && entries.length <= 2) {
@@ -182,6 +225,7 @@ export interface EnergyChartOptions {
     chartHeight: number;
     denseLegend?: boolean;
     veryDenseLegend?: boolean;
+    timeZone?: string;
 }
 
 export function renderEnergyChart(
@@ -264,7 +308,8 @@ export function renderEnergyChart(
         startTime,
         endTime,
         getX,
-        padding.left
+        padding.left,
+        options.timeZone
     );
     const hourLabelY = height - 6;
     const hourLabelLayer = renderHourLabels
@@ -326,7 +371,7 @@ export function renderSocChart(
     data: EnergyData[],
     latestBatterySoc?: number | null,
     chartHeight = 102,
-    options?: { showXAxis?: boolean }
+    options?: { showXAxis?: boolean; timeZone?: string }
 ): string {
     const width = 760;
     const height = Math.max(92, chartHeight);
@@ -359,7 +404,8 @@ export function renderSocChart(
         startTime,
         endTime,
         getX,
-        padding.left
+        padding.left,
+        options?.timeZone
     );
     const xAxisLabelY = Math.min(height - 4, getSocY(0) + 14);
     const xAxisLabelLayer = showXAxis
@@ -395,7 +441,7 @@ export function renderSocChart(
 export function renderBatterySocGlyphStrip(
     data: EnergyData[],
     latestBatterySoc?: number | null,
-    options?: { showXAxis?: boolean }
+    options?: { showXAxis?: boolean; timeZone?: string }
 ): string {
     const width = 760;
     const padding = { right: 10, left: 30 };
@@ -456,24 +502,11 @@ export function renderBatterySocGlyphStrip(
             `;
     };
 
-    const formatHour = (ts: number): string => {
-        const d = new Date(ts);
-        const h = d.getHours();
-        const amPm = h < 12 ? 'am' : 'pm';
-        let displayH = h % 12;
-        if (displayH === 0) displayH = 12;
-        return `${displayH}${amPm}`;
-    };
-
     const hourLabels: string[] = [];
     if (showXAxis) {
-        for (let h = 0; h <= 24; h += 6) {
-            const labelTime = new Date(startTime);
-            labelTime.setHours(h, 0, 0, 0);
-            if (labelTime.getTime() >= startTime && labelTime.getTime() <= endTime) {
-                const x = getX(labelTime.getTime());
-                hourLabels.push(`<text x="${x}" y="${rowHeight - 2}" font-family="${CHART_FONT_FAMILY}" font-size="10" text-anchor="middle">${formatHour(labelTime.getTime())}</text>`);
-            }
+        for (const tick of buildHourTicks(startTime, endTime, options?.timeZone)) {
+            const x = getX(tick.epochMs);
+            hourLabels.push(`<text x="${x}" y="${rowHeight - 2}" font-family="${CHART_FONT_FAMILY}" font-size="10" text-anchor="middle">${tick.label}</text>`);
         }
     }
 
