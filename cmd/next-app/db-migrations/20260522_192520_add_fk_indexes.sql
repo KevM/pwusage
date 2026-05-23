@@ -1,0 +1,42 @@
+-- Add two indexes on the EnergyData table (the only large, time-series table).
+--
+-- Verified 2026-05-22 against a 210k-row EnergyData fixture in an ephemeral
+-- Postgres 16 (EXPLAIN before/after). Postgres auto-creates a usable btree for
+-- every PRIMARY KEY and UNIQUE constraint, so anything already covered by one is
+-- deliberately left alone -- see "intentionally NOT indexed" below.
+--
+--   * idx_energy_tariff_id -- EnergyData(tariff_id)
+--     tariff_id is not the leading column of any existing index, so a lookup by
+--     tariff_id seq-scans the whole table (verified: Seq Scan, cost ~4171).
+--     This is the cost paid by the ON DELETE CASCADE that fires when the
+--     importer replaces a site's tariffs (`DELETE FROM "Tariff" WHERE
+--     site_id = $1` in src/lib/tariff-repo.ts replaceTariffsForSite): each
+--     deleted parent row triggers a referencing-row scan of EnergyData. With
+--     the index that becomes a Bitmap Index Scan. This is the clear win.
+--
+--   * idx_energy_timestamp -- EnergyData(timestamp)
+--     The daily retention cleanup (`DELETE FROM "EnergyData" WHERE
+--     timestamp < $1` in src/lib/energy-repo.ts cleanupOldEnergyData) already
+--     rides the UNIQUE(timestamp, site_id, tariff_id) index, so this is an
+--     optimization, not a fix: a dedicated single-column index is far narrower,
+--     dropping the planner cost ~27x (verified: 1622 -> 60) and shortening the
+--     lock window of the delete on this write-heavy table. Cheap to maintain --
+--     timestamps are ~monotonic, so inserts land on the btree's right edge.
+--
+-- Intentionally NOT indexed (verified unhelpful or redundant):
+--   * Tariff(site_id)         -> covered by UNIQUE(site_id, name)
+--   * TariffSeason(tariff_id)  -> covered by UNIQUE(tariff_id, name)
+--   * EnergyData(site_id)      -> covered by idx_energy_site_ts(site_id, timestamp)
+--   * TariffSchedule(season_id), Site(user_id), LoadTag(site_id) -> these tables
+--     are small/bounded; EXPLAIN confirmed the planner keeps seq-scanning them
+--     even with an index present, so an index would add write cost for no gain.
+--
+-- Locking note: plain CREATE INDEX briefly blocks writes while it builds,
+-- matching the existing idx_energy_site_ts migration. The non-blocking
+-- CREATE INDEX CONCURRENTLY is deliberately NOT used here: CI applies migrations
+-- via `supabase migration up`, which wraps each file in a transaction, and
+-- CONCURRENTLY cannot run inside a transaction block. If the EnergyData build
+-- window ever becomes a problem, build these out-of-band with CONCURRENTLY.
+
+CREATE INDEX IF NOT EXISTS idx_energy_tariff_id ON "EnergyData"(tariff_id);
+CREATE INDEX IF NOT EXISTS idx_energy_timestamp ON "EnergyData"(timestamp);
