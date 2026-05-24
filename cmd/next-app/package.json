@@ -12,7 +12,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest",
-    "test:fleet": "tsx scripts/fleet-integration.ts"
+    "test:fleet": "tsx scripts/fleet-integration.ts",
+    "smoke:backup": "tsx scripts/set-backup-reserve.ts"
   },
   "dependencies": {
     "@js-temporal/polyfill": "^0.5.1",

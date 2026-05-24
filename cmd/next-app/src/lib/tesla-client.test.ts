@@ -180,3 +180,45 @@ describe('TeslaClient.getSoeHistory', () => {
         expect(headers.Authorization).toBe('Bearer test-access-token');
     });
 });
+
+describe('TeslaClient.setBackupReserve', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('POSTs backup_reserve_percent to the energy site backup endpoint and returns the command response', async () => {
+        // Shape mirrors the live Tesla response observed against a real site:
+        // PascalCase keys, Code 200 (not the lowercase { code, message } in some docs).
+        const fetchMock = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(makeJsonResponse({ response: { Code: 200, Message: 'Backup reserve updated' } }));
+
+        const client = new TeslaClient({ accessToken: 'test-access-token' });
+        const siteId = '2252268092126997';
+
+        const result = await client.setBackupReserve(siteId, 30);
+
+        expect(result).toEqual({ Code: 200, Message: 'Backup reserve updated' });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        const [requestUrl, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+        const parsed = new URL(requestUrl);
+        expect(parsed.pathname).toBe(`/api/1/energy_sites/${siteId}/backup`);
+        expect(options.method).toBe('POST');
+        expect(JSON.parse(options.body as string)).toEqual({ backup_reserve_percent: 30 });
+
+        const headers = options.headers as Record<string, string>;
+        expect(headers.Authorization).toBe('Bearer test-access-token');
+        expect(headers['Content-Type']).toBe('application/json');
+    });
+
+    it('rejects an invalid reserve percent without calling the API', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch');
+        const client = new TeslaClient({ accessToken: 'tok' });
+
+        await expect(client.setBackupReserve('site', 150)).rejects.toThrow(/between 0 and 100/);
+        await expect(client.setBackupReserve('site', -5)).rejects.toThrow(/between 0 and 100/);
+        await expect(client.setBackupReserve('site', 42.5)).rejects.toThrow(/integer/);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+});
