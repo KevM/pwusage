@@ -7,7 +7,7 @@ import { DailyByPeriodTable } from './DailyByPeriodTable';
 import { PeriodCardRow, type ActivePeriod } from './PeriodCardRow';
 import { TodayEnergyChart } from './TodayEnergyChart';
 import { HalfHourRefresh } from './HalfHourRefresh';
-
+import { BatteryHoldCard } from './BatteryHoldCard';
 
 export interface LiveDetailViewProps {
     siteId: string;
@@ -30,6 +30,7 @@ export interface LiveDetailViewProps {
     nextCheaperPhrase: string | null;
     nextStartPhraseByKey?: Record<string, string>;
     activeIsCheapest?: boolean;
+    batteryHold: { target_reserve: number; original_reserve: number; created_at: string } | null;
 }
 
 export function LiveDetailView({
@@ -40,7 +41,8 @@ export function LiveDetailView({
     todayChartRows, todayStart, now,
     activePeriod, hasTariff,
     nextCheaper, nextCheaperPhrase,
-    nextStartPhraseByKey, activeIsCheapest
+    nextStartPhraseByKey, activeIsCheapest,
+    batteryHold
 }: LiveDetailViewProps) {
 
 
@@ -83,6 +85,13 @@ export function LiveDetailView({
                     activeIsCheapest={activeIsCheapest}
                 />
             </SectionCard>
+
+            <BatteryHoldCard
+                siteId={siteId}
+                soc={batterySoC}
+                hasTariff={hasTariff}
+                initialHold={batteryHold}
+            />
         </div>
     );
 }

@@ -7,11 +7,8 @@ import type { BatteryHold } from './db';
 
 export const SAFETY_HOLD_MS = 16 * 60 * 60 * 1000; // 16h backstop
 
-/** ≤80 holds at floor(SoC); 81–99 would clamp to 80, so hold-high at 100. */
-export function computeTargetReserve(soc: number): number {
-  const floor = Math.floor(soc);
-  return floor <= 80 ? floor : 100;
-}
+import { computeTargetReserve } from './battery-hold-rules';
+export { computeTargetReserve };
 
 function isAuthError(e: unknown): boolean {
   const m = e instanceof Error ? e.message : String(e);

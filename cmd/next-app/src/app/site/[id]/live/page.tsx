@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { EnergyRepo } from '@/lib/energy-repo';
+import { BatteryHoldRepo } from '@/lib/battery-hold-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { Schedule } from '@/lib/schedule';
 import { TeslaClient } from '@/lib/tesla-client';
@@ -106,12 +107,13 @@ export default async function SiteLivePage({ params }: { params: Promise<{ id: s
         }
     }
 
-    const [{ cycle, today }, todayTotals, todayChartRows, latestEnergyData, liveStatus] = await Promise.all([
+    const [{ cycle, today }, todayTotals, todayChartRows, latestEnergyData, liveStatus, activeHold] = await Promise.all([
         repo.getCycleAndTodayTotals(id, cycleStart, todayStart, now),
         repo.getTodayTotals(id, todayStart, now),
         repo.getBucketedEnergyData(id, todayStart, now),
         repo.getLatestEnergyData(id),
-        getLiveStatus(id).catch(() => null)
+        getLiveStatus(id).catch(() => null),
+        new BatteryHoldRepo().getActiveHold(id)
     ]);
 
     // Marginal-cost / next-cheaper orchestration lives in the shared
@@ -155,6 +157,11 @@ export default async function SiteLivePage({ params }: { params: Promise<{ id: s
                     nextCheaperPhrase={nextCheaperPhrase}
                     nextStartPhraseByKey={nextStartPhraseByKey}
                     activeIsCheapest={activeIsCheapest}
+                    batteryHold={activeHold ? {
+                        target_reserve: activeHold.target_reserve,
+                        original_reserve: activeHold.original_reserve,
+                        created_at: activeHold.created_at.toISOString(),
+                    } : null}
                 />
             </div>
         </PageShell>
