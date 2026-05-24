@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { TariffV2 } from '../tesla-client';
 
 export interface ParsedSchedule {
@@ -101,4 +102,34 @@ export function buildDefaultTariff(name: string = 'Default Rate'): ParsedTariff 
             }],
         }],
     };
+}
+
+/**
+ * Deterministic, order-independent content hash of a parsed tariff. Two parses
+ * with the same rates/windows/names produce the same hash regardless of the
+ * order seasons/schedules arrive in. Used to skip appending a redundant tariff
+ * version when content is unchanged.
+ */
+export function tariffContentHash(parsed: ParsedTariff): string {
+    const normalized = {
+        name: parsed.name,
+        seasons: [...parsed.seasons]
+            .map((s) => ({
+                name: s.name,
+                from_month: s.from_month, from_day: s.from_day,
+                to_month: s.to_month, to_day: s.to_day,
+                buy_rate: s.buy_rate, sell_rate: s.sell_rate,
+                schedules: [...s.schedules]
+                    .map((sc) => ({
+                        name: sc.name,
+                        buy_rate: sc.buy_rate, sell_rate: sc.sell_rate,
+                        from_day_of_week: sc.from_day_of_week, to_day_of_week: sc.to_day_of_week,
+                        from_hour: sc.from_hour, from_minute: sc.from_minute,
+                        to_hour: sc.to_hour, to_minute: sc.to_minute,
+                    }))
+                    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+    };
+    return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
 }

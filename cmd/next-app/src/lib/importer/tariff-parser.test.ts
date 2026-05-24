@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
+import { parseTariffContent, buildDefaultTariff, tariffContentHash, type ParsedTariff } from './tariff-parser';
 import { TariffV2 } from '../tesla-client';
 
 const SIMPLE_TARIFF: TariffV2 = {
@@ -141,5 +141,43 @@ describe('buildDefaultTariff', () => {
 
     it('uses provided name', () => {
         expect(buildDefaultTariff('My Custom Rate').name).toBe('My Custom Rate');
+    });
+});
+
+const hashBase: ParsedTariff = {
+    name: 'PG&E EV2-A',
+    seasons: [
+        {
+            name: 'Summer', from_month: 6, from_day: 1, to_month: 9, to_day: 30,
+            buy_rate: 0, sell_rate: 0,
+            schedules: [
+                { name: 'ON_PEAK', buy_rate: 0.5, sell_rate: 0.1, from_day_of_week: 0, to_day_of_week: 6, from_hour: 16, from_minute: 0, to_hour: 21, to_minute: 0 },
+                { name: 'OFF_PEAK', buy_rate: 0.3, sell_rate: 0.1, from_day_of_week: 0, to_day_of_week: 6, from_hour: 21, from_minute: 0, to_hour: 16, to_minute: 0 },
+            ],
+        },
+    ],
+};
+
+describe('tariffContentHash', () => {
+    it('is stable for identical content', () => {
+        expect(tariffContentHash(hashBase)).toBe(tariffContentHash(structuredClone(hashBase)));
+    });
+
+    it('is independent of schedule ordering', () => {
+        const reordered = structuredClone(hashBase);
+        reordered.seasons[0].schedules.reverse();
+        expect(tariffContentHash(reordered)).toBe(tariffContentHash(hashBase));
+    });
+
+    it('changes when a rate changes', () => {
+        const changed = structuredClone(hashBase);
+        changed.seasons[0].schedules[0].buy_rate = 0.99;
+        expect(tariffContentHash(changed)).not.toBe(tariffContentHash(hashBase));
+    });
+
+    it('changes when a window boundary changes', () => {
+        const changed = structuredClone(hashBase);
+        changed.seasons[0].schedules[0].from_hour = 17;
+        expect(tariffContentHash(changed)).not.toBe(tariffContentHash(hashBase));
     });
 });

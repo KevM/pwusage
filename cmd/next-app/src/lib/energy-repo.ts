@@ -4,6 +4,7 @@ import { getSiteMidnight } from './date-utils';
 
 import { Schedule } from './schedule';
 import { SiteRepo } from './site-repo';
+import { TariffRepo } from './tariff-repo';
 
 export interface UsageData {
     start: Date;
@@ -137,7 +138,12 @@ export class EnergyRepo {
         const site = await siteRepo.getSite(siteId);
         if (!site) return [];
 
+        // Name-resolution map must cover ALL tariff versions: historical EnergyData
+        // rows keep an older version's tariff_id and would otherwise show 'Unknown'.
+        // (Pricing still uses site.tariffs — current only — via the Schedule below.)
         const tariffMap = new Map<number, Tariff>();
+        const allVersions = await new TariffRepo().getTariffsForSite(siteId);
+        allVersions.forEach(t => tariffMap.set(t.id, t));
         site.tariffs.forEach(t => tariffMap.set(t.id, t));
 
         const scheduleMap = new Map<number, TariffSchedule>();
@@ -150,6 +156,8 @@ export class EnergyRepo {
                 });
             }
         });
+        const allSchedules = await new TariffRepo().getSchedulesForSite(siteId);
+        allSchedules.forEach(s => scheduleMap.set(s.id, s));
 
         const schedule = new Schedule(site.tariffs, site.timezone);
 
@@ -510,7 +518,8 @@ export class EnergyRepo {
         await pool.query(`
             INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, tariff_schedule_id)
             VALUES ${valuePlaceholders.join(', ')}
-            ON CONFLICT(timestamp, site_id, tariff_id) DO UPDATE SET
+            ON CONFLICT(timestamp, site_id) DO UPDATE SET
+                tariff_id = EXCLUDED.tariff_id,
                 load_power = EXCLUDED.load_power,
                 solar_power = EXCLUDED.solar_power,
                 grid_power = EXCLUDED.grid_power,

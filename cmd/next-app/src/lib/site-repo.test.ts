@@ -381,3 +381,18 @@ describe('SiteRepo new commands and queries', () => {
         ]);
     });
 });
+
+describe('SiteRepo current-version tariff filter', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+        new SiteRepo().invalidateCache('site-1');
+    });
+
+    it('joins only the current tariff version', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        await new SiteRepo().getSite('site-1');
+        const sql = String(queryMock.mock.calls.at(-1)?.[0] ?? '');
+        expect(sql).toContain('LEFT JOIN "Tariff"');
+        expect(sql).toContain('t.is_current');
+    });
+});

@@ -8,6 +8,8 @@ import { SiteRepo } from '@/lib/site-repo';
 import { UserRepo } from '@/lib/user-repo';
 import { getAppBaseUrl } from '@/lib/url-utils';
 
+export const maxDuration = 60; // Allow up to 60 seconds on Vercel to avoid timeouts during slow Tesla API / JWKS calls
+
 // Discover the correct JWKS endpoint from OpenID Connect discovery
 async function getTeslaJwksUri(issuer?: string): Promise<string> {
     // Use issuer to determine discovery endpoint if available
@@ -279,8 +281,13 @@ export async function GET(request: NextRequest) {
     // Verify ID Token (Signature, Issuer, Audience, Nonce)
     let decoded: jwt.JwtPayload;
     let signatureVerified = false;
+    let timeoutId: NodeJS.Timeout | undefined;
     try {
-        decoded = await verifyTeslaIdToken(authData.id_token);
+        const verificationPromise = verifyTeslaIdToken(authData.id_token);
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error('Verification timeout')), 3000);
+        });
+        decoded = await Promise.race([verificationPromise, timeoutPromise]);
         signatureVerified = true;
         console.log('[AuthCallback] ID Token signature verified successfully');
     } catch (err) {
@@ -294,6 +301,10 @@ export async function GET(request: NextRequest) {
         }
         decoded = decoded_unsafe;
         console.warn('[AuthCallback] Proceeding with nonce validation only (signature verification unavailable)');
+    } finally {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
     }
 
     if (decoded.nonce !== savedNonce) {

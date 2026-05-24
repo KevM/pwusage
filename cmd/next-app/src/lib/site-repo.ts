@@ -106,7 +106,7 @@ export class SiteRepo {
                 sch.to_day_of_week,   sch.to_hour,  sch.to_minute
             FROM "Site" s
             LEFT JOIN "User"           u   ON u.id          = s.user_id
-            LEFT JOIN "Tariff"         t   ON t.site_id     = s.id
+            LEFT JOIN "Tariff"         t   ON t.site_id     = s.id AND t.is_current
             LEFT JOIN "TariffSeason"   ts  ON ts.tariff_id  = t.id
             LEFT JOIN "TariffSchedule" sch ON sch.season_id = ts.id
             WHERE s.id = ANY($1::text[])

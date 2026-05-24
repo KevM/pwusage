@@ -1,4 +1,4 @@
-import { SiteWithTariffs, Tariff, TariffSeason, TariffSchedule } from '../db';
+import { SiteWithTariffs, TariffSeason, TariffSchedule } from '../db';
 import { Schedule } from '../schedule';
 import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry } from '../tesla-client';
 import { EnergyRepo } from '../energy-repo';
@@ -45,92 +45,6 @@ export class Importer {
         this.tariffRepo = new TariffRepo();
     }
 
-    /**
-     * Remap stale tariff IDs to current DB tariff IDs.
-     * This handles the case where tariff refresh runs between loading site.tariffs
-     * and inserting energy data, causing FK violations.
-     */
-    private async remapTariffIds(
-        siteId: string,
-        rows: EnergyDataRow[],
-        siteTariffs: Tariff[]
-    ): Promise<EnergyDataRow[]> {
-        // Fetch current DB tariffs by name to build a map
-        const tariffRes = await this.tariffRepo.getTariffsForSite(siteId);
-        const dbTariffMap = new Map<string, number>(); // Name -> New ID
-        tariffRes.forEach((r) => {
-            if (r.name) dbTariffMap.set(r.name, r.id);
-        });
-
-        // Build mapping from old ID to name for local tariffs
-        const localTariffMap = new Map<number, string>(); // Old ID -> Name
-        siteTariffs.forEach((t) => {
-            if (t.name) localTariffMap.set(t.id, t.name);
-        });
-
-        // Build mapping from old ID to new ID
-        const remappedIds = new Map<number, number | null>(); // Old ID -> New ID
-
-        // First pass: resolve all tariff ID remappings
-        for (const row of rows) {
-            if (!remappedIds.has(row.tariff_id)) {
-                // Check if the current ID exists in DB (direct match)
-                const currentTariff = tariffRes.find((t) => t.id === row.tariff_id);
-
-                if (currentTariff) {
-                    // Direct match - ID is still valid
-                    remappedIds.set(row.tariff_id, row.tariff_id);
-                } else {
-                    // Try to map by name
-                    const name = localTariffMap.get(row.tariff_id);
-                    if (name && dbTariffMap.has(name)) {
-                        const newId = dbTariffMap.get(name)!;
-                        console.log(
-                            `[Importer] Remapping stale tariff ID ${row.tariff_id} ("${name}") -> ${newId}`
-                        );
-                        remappedIds.set(row.tariff_id, newId);
-                    } else {
-                        // Cannot resolve - use null to skip this row
-                        console.warn(
-                            `[Importer] Cannot resolve tariff ID ${row.tariff_id} (Name: "${name}")`
-                        );
-                        remappedIds.set(row.tariff_id, null);
-                    }
-                }
-            }
-        }
-
-        // Second pass: remap the rows
-        const remappedRows: EnergyDataRow[] = [];
-        for (const row of rows) {
-            const finalTariffId = remappedIds.get(row.tariff_id)!;
-
-            if (finalTariffId !== null) {
-                const originalTariffId = row.tariff_id;
-                const newRow: EnergyDataRow = {
-                    ...row,
-                    tariff_id: finalTariffId,
-                };
-
-                // If tariff was remapped, also null out the schedule ID
-                // (since the old schedule ID won't match the new tariff structure)
-                if (originalTariffId !== finalTariffId && row.tariff_schedule_id !== null) {
-                    newRow.tariff_schedule_id = null;
-                    console.log(
-                        `[Importer] Nulling schedule ID ${row.tariff_schedule_id} for remapped tariff ${row.tariff_id} -> ${finalTariffId}`
-                    );
-                }
-
-                remappedRows.push(newRow);
-            } else {
-                console.warn(
-                    `[Importer] Skipping row with unresolvable tariff ID ${row.tariff_id} at ${row.timestamp.toISOString()}`
-                );
-            }
-        }
-
-        return remappedRows;
-    }
 
     async getTodayData(siteId: string): Promise<EnergyDataRow[]> {
         const site = await this.siteRepo.getSite(siteId);
@@ -166,14 +80,7 @@ export class Importer {
 
         console.log(`[Importer] Background persisting ${filteredRows.length} rows for site ${siteId} (Filtered from ${rows.length})`);
 
-        // Remap stale tariff IDs before inserting to handle concurrent tariff refresh
-        const remappedRows = await this.remapTariffIds(siteId, filteredRows, site.tariffs);
-
-        console.log(
-            `[Importer] Remapped ${filteredRows.length - remappedRows.length} rows with stale tariff IDs`
-        );
-
-        await this.repo.insertEnergyDataBatch(remappedRows.map(row => ({
+        await this.repo.insertEnergyDataBatch(filteredRows.map(row => ({
             site_id: row.site_id,
             tariff_id: row.tariff_id,
             tariff_schedule_id: row.tariff_schedule_id ?? null,
@@ -398,7 +305,7 @@ export class Importer {
                 const parsed = info.tariff_content_v2
                     ? parseTariffContent(info.tariff_content_v2, info.site_name ?? 'Utility Tariff')
                     : buildDefaultTariff('Default Rate');
-                await this.tariffRepo.replaceTariffsForSite(siteId, parsed);
+                await this.tariffRepo.addTariffVersion(siteId, parsed);
             } else {
                 console.log(`Tariff content unchanged for site ${siteId}, skipping tariff update.`);
             }
@@ -485,14 +392,7 @@ export class Importer {
             const msg2 = `[Import] Processed EnergyData Rows: ${filteredDatas.length} (Filtered from ${energyDatas.length})`;
             console.log(msg2);
 
-            // Remap stale tariff IDs before inserting to handle concurrent tariff refresh
-            const remappedRows = await this.remapTariffIds(site.id, filteredDatas, site.tariffs);
-
-            console.log(
-                `[Import] Remapped ${filteredDatas.length - remappedRows.length} rows with stale tariff IDs`
-            );
-
-            await this.repo.insertEnergyDataBatch(remappedRows.map(row => ({
+            await this.repo.insertEnergyDataBatch(filteredDatas.map(row => ({
                 site_id: row.site_id,
                 tariff_id: row.tariff_id,
                 tariff_schedule_id: row.tariff_schedule_id,

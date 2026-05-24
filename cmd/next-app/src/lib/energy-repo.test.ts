@@ -12,6 +12,8 @@ vi.mock('./db', () => ({
 
 import { EnergyRepo, sumTodayRows, type UsageData } from './energy-repo';
 import type { EnergyData } from './db';
+import { SiteRepo } from './site-repo';
+import { TariffRepo } from './tariff-repo';
 
 function makeEnergyRow(over: Partial<EnergyData>): EnergyData {
     return {
@@ -349,5 +351,96 @@ describe('EnergyRepo.getCycleAndTodayTotals', () => {
 
         expect(result.cycle).toEqual([]);
         expect(result.today).toEqual([]);
+    });
+});
+
+describe('EnergyRepo.insertEnergyDataBatch conflict target', () => {
+    it('upserts on (timestamp, site_id) and refreshes tariff_id', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        await new EnergyRepo().insertEnergyDataBatch([{
+            site_id: 'site-1', tariff_id: 2, tariff_schedule_id: 20,
+            timestamp: new Date('2026-05-11T07:00:00Z'),
+            load_power: 1, solar_power: 2, grid_power: 3, battery_power: 4, battery_soc: 50,
+        }]);
+        const sql = String(queryMock.mock.calls.at(-1)?.[0] ?? '');
+        expect(sql).toContain('ON CONFLICT(timestamp, site_id) DO UPDATE');
+        expect(sql).toContain('tariff_id = EXCLUDED.tariff_id');
+        expect(sql).not.toContain('ON CONFLICT(timestamp, site_id, tariff_id)');
+    });
+});
+
+describe('EnergyRepo.getUsageByTOU historical name resolution', () => {
+    it('resolves a tariff_id from an older version to its name (not Unknown)', async () => {
+        const repo = new EnergyRepo();
+
+        vi.spyOn(SiteRepo.prototype, 'getSite').mockResolvedValue({
+            id: 'site-1', user_id: 'u1', name: 'Home', utility: 'PG&E',
+            updated: new Date(), installed: new Date('2026-01-01T00:00:00Z'),
+            timezone: 'UTC', billing_start_day: 1,
+            tariffs: [{ id: 2, site_id: 'site-1', name: 'PG&E v2', updated: new Date(), seasons: [] }],
+        } as never);
+
+        // All versions: current v2 (id 2) plus historical v1 (id 1).
+        vi.spyOn(TariffRepo.prototype, 'getTariffsForSite').mockResolvedValue([
+            { id: 1, site_id: 'site-1', name: 'PG&E v1', updated: new Date() },
+            { id: 2, site_id: 'site-1', name: 'PG&E v2', updated: new Date() },
+        ] as never);
+
+        vi.spyOn(TariffRepo.prototype, 'getSchedulesForSite').mockResolvedValue([]);
+
+        // One historical aggregate row stamped with the old version's tariff_id (1).
+        vi.spyOn(repo, 'getCycleAggregates').mockResolvedValue([{
+            day: new Date('2026-02-01T00:00:00Z'),
+            tariff_id: 1, tariff_schedule_id: null,
+            load_power: 10, solar_power: 0, grid_power: 10, battery_power: 0,
+        }] as never);
+        vi.spyOn(repo, 'getRawEnergyData').mockResolvedValue([] as never);
+
+        const usage = await repo.getUsageByTOU('site-1',
+            new Date('2026-02-01T00:00:00Z'), new Date('2026-02-02T00:00:00Z'));
+
+        const row = usage.find((u) => u.tariff?.id === 1);
+        expect(row).toBeDefined();
+        expect(row!.tariff.name).toBe('PG&E v1');
+    });
+
+    it('resolves a tariff_schedule_id from an older version to its name and rates', async () => {
+        const repo = new EnergyRepo();
+
+        vi.spyOn(SiteRepo.prototype, 'getSite').mockResolvedValue({
+            id: 'site-1', user_id: 'u1', name: 'Home', utility: 'PG&E',
+            updated: new Date(), installed: new Date('2026-01-01T00:00:00Z'),
+            timezone: 'UTC', billing_start_day: 1,
+            tariffs: [{ id: 2, site_id: 'site-1', name: 'PG&E v2', updated: new Date(), seasons: [] }],
+        } as never);
+
+        // All versions: current v2 (id 2) plus historical v1 (id 1).
+        vi.spyOn(TariffRepo.prototype, 'getTariffsForSite').mockResolvedValue([
+            { id: 1, site_id: 'site-1', name: 'PG&E v1', updated: new Date() },
+            { id: 2, site_id: 'site-1', name: 'PG&E v2', updated: new Date() },
+        ] as never);
+
+        // Historical schedules: current + historical
+        vi.spyOn(TariffRepo.prototype, 'getSchedulesForSite').mockResolvedValue([
+            { id: 10, season_id: 100, name: 'OFF_PEAK', buy_rate: 0.25, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 },
+            { id: 20, season_id: 200, name: 'ON_PEAK', buy_rate: 0.50, sell_rate: 0.10, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 },
+        ] as never);
+
+        // One historical aggregate row stamped with the old version's tariff_id (1) and tariff_schedule_id (10).
+        vi.spyOn(repo, 'getCycleAggregates').mockResolvedValue([{
+            day: new Date('2026-02-01T00:00:00Z'),
+            tariff_id: 1, tariff_schedule_id: 10,
+            load_power: 10, solar_power: 0, grid_power: 10, battery_power: 0,
+        }] as never);
+        vi.spyOn(repo, 'getRawEnergyData').mockResolvedValue([] as never);
+
+        const usage = await repo.getUsageByTOU('site-1',
+            new Date('2026-02-01T00:00:00Z'), new Date('2026-02-02T00:00:00Z'));
+
+        const row = usage.find((u) => u.tariff?.id === 1);
+        expect(row).toBeDefined();
+        expect(row!.touName).toBe('OFF_PEAK');
+        expect(row!.buyRate).toBe(0.25);
+        expect(row!.sellRate).toBe(0.05);
     });
 });
