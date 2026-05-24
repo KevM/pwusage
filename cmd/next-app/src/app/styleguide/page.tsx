@@ -90,6 +90,47 @@ export default function StyleGuidePage() {
                         </div>
                     </div>
                 </div>
+
+                <div className="pt-6 border-t border-gray-200 dark:border-slate-800 space-y-4">
+                    <div>
+                        <H3>Energy Metrics Palette</H3>
+                        <P className="mt-1">Unified color palette representing active energy flow metrics across all charts and tiles.</P>
+                    </div>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div className="rounded-lg border border-gray-200 dark:border-slate-800 p-4 space-y-3">
+                            <div className="h-16 w-full rounded-md bg-amber-500 shadow-inner"></div>
+                            <div>
+                                <p className="text-sm font-medium text-gray-900 dark:text-white">Solar</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">bg-amber-500 / text-amber-700</p>
+                                <p className="text-[10px] text-gray-400 dark:text-gray-500 font-mono mt-1">#f59e0b (L) / #fbbf24 (D)</p>
+                            </div>
+                        </div>
+                        <div className="rounded-lg border border-gray-200 dark:border-slate-800 p-4 space-y-3">
+                            <div className="h-16 w-full rounded-md bg-gray-500 shadow-inner"></div>
+                            <div>
+                                <p className="text-sm font-medium text-gray-900 dark:text-white">Grid</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">bg-gray-500 / text-gray-700</p>
+                                <p className="text-[10px] text-gray-400 dark:text-gray-500 font-mono mt-1">#6b7280 (L) / #9ca3af (D)</p>
+                            </div>
+                        </div>
+                        <div className="rounded-lg border border-gray-200 dark:border-slate-800 p-4 space-y-3">
+                            <div className="h-16 w-full rounded-md bg-emerald-500 shadow-inner"></div>
+                            <div>
+                                <p className="text-sm font-medium text-gray-900 dark:text-white">Battery</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">bg-emerald-500 / text-emerald-700</p>
+                                <p className="text-[10px] text-gray-400 dark:text-gray-500 font-mono mt-1">#10b981 (L) / #4ade80 (D)</p>
+                            </div>
+                        </div>
+                        <div className="rounded-lg border border-gray-200 dark:border-slate-800 p-4 space-y-3">
+                            <div className="h-16 w-full rounded-md bg-blue-600 shadow-inner"></div>
+                            <div>
+                                <p className="text-sm font-medium text-gray-900 dark:text-white">Load (Usage)</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">bg-blue-600 / text-blue-700</p>
+                                <p className="text-[10px] text-gray-400 dark:text-gray-500 font-mono mt-1">#2563eb (L) / #60a5fa (D)</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             {/* Typography Section */}

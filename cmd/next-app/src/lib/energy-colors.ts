@@ -39,13 +39,12 @@ export const energyColors: Record<EnergyMetric, EnergyMetricColor> = {
         tileBg: 'bg-amber-50 dark:bg-slate-800'
     },
     grid: {
-        // Cocoa brown — matches NILMChart.gridTrace exactly.
-        hex: { light: '#6F4E37', dark: '#A67B5B' },
-        stroke: 'stroke-[#6F4E37] dark:stroke-[#A67B5B]',
-        text: 'text-[#6F4E37] dark:text-[#A67B5B]',
-        textMuted: 'text-[#6F4E37]/80 dark:text-[#A67B5B]/80',
-        borderAccent: 'border-[#6F4E37] dark:border-[#A67B5B]',
-        tileBg: 'bg-[#6F4E37]/10 dark:bg-slate-800'
+        hex: { light: '#6b7280', dark: '#9ca3af' },
+        stroke: 'stroke-gray-500 dark:stroke-gray-400',
+        text: 'text-gray-700 dark:text-gray-400',
+        textMuted: 'text-gray-600 dark:text-gray-400',
+        borderAccent: 'border-gray-500',
+        tileBg: 'bg-gray-50 dark:bg-slate-800'
     },
     battery: {
         hex: { light: '#10b981', dark: '#4ade80' },
@@ -56,12 +55,12 @@ export const energyColors: Record<EnergyMetric, EnergyMetricColor> = {
         tileBg: 'bg-emerald-50 dark:bg-slate-800'
     },
     load: {
-        hex: { light: '#9333ea', dark: '#c084fc' },
-        stroke: 'stroke-purple-600 dark:stroke-purple-400',
-        text: 'text-purple-700 dark:text-purple-400',
-        textMuted: 'text-purple-600 dark:text-purple-400',
-        borderAccent: 'border-purple-500',
-        tileBg: 'bg-purple-50 dark:bg-slate-800'
+        hex: { light: '#2563eb', dark: '#60a5fa' },
+        stroke: 'stroke-blue-600 dark:stroke-blue-400',
+        text: 'text-blue-700 dark:text-blue-400',
+        textMuted: 'text-blue-600 dark:text-blue-400',
+        borderAccent: 'border-blue-500',
+        tileBg: 'bg-blue-50 dark:bg-slate-800'
     }
 };
 

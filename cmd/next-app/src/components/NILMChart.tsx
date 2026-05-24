@@ -104,7 +104,7 @@ function BatteryGlyph({ level, color, stroke }: { level: number; color: string; 
     );
 }
 
-const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, themeColors, siteTimezone, displayMode }: TooltipProps & { siteTimezone?: string, displayMode?: string }) => {
+const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode = true, themeColors, siteTimezone, displayMode }: TooltipProps & { siteTimezone?: string, displayMode?: string }) => {
     if (active && payload && payload.length) {
         const time = Number(label);
         const options: Intl.DateTimeFormatOptions = {
@@ -146,14 +146,13 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode, t
             text: isDarkMode ? '#f3f4f6' : '#111827',
             subText: isDarkMode ? '#d1d5db' : '#374151',
             dateText: isDarkMode ? '#9ca3af' : '#6b7280',
-            loadBg: isDarkMode ? 'rgba(147, 51, 234, 0.1)' : 'rgba(147, 51, 234, 0.05)',
-            loadText: isDarkMode ? '#c084fc' : '#9333ea',
+            loadBg: isDarkMode ? 'rgba(37, 99, 235, 0.1)' : 'rgba(37, 99, 235, 0.05)',
+            loadText: themeColors ? themeColors.load : energyHex('load', isDarkMode),
             kWVal: isDarkMode ? '#22d3ee' : '#0891b2',
-            solar: isDarkMode ? '#fbbf24' : '#d97706', // Amber-400 / Amber-600
-            battery: isDarkMode ? '#4ade80' : '#10b981', // Green-400 / Green-500
-            load: isDarkMode ? '#c084fc' : '#9333ea', // Purple-400 / Purple-600
-
-            grid: themeColors ? themeColors.gridTrace : (isDarkMode ? '#A67B5B' : '#6F4E37'), // Fallback to avoid crash if themeColors missing
+            solar: themeColors ? themeColors.solar : energyHex('solar', isDarkMode),
+            battery: themeColors ? themeColors.battery : energyHex('battery', isDarkMode),
+            load: themeColors ? themeColors.load : energyHex('load', isDarkMode),
+            grid: themeColors ? themeColors.gridTrace : energyHex('grid', isDarkMode),
         };
 
         return (
