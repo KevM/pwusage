@@ -67,6 +67,7 @@ export interface TariffV2 {
     code: string;
     name: string;
     utility: string;
+    currency?: string;
     energy_charges: Record<string, EnergyChargeRates>;
     seasons: Record<string, Season>;
     sell_tariff: {

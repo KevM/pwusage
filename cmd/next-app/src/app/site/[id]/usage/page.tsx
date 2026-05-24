@@ -78,6 +78,15 @@ export default async function UsagePage({ params, searchParams }: {
         end = getCurrentCycleStart(site.billing_start_day, nextMonthPivot, site.timezone);
     }
 
+    const siteJson = site.json as import('@/lib/tesla-client').EnergySiteInfo | null;
+    const currencyCode = siteJson?.tariff_content_v2?.currency || 'USD';
+    let currencySymbol = '$';
+    if (currencyCode === 'GBP') {
+        currencySymbol = '£';
+    } else if (currencyCode === 'EUR') {
+        currencySymbol = '€';
+    }
+
     const usage = await repo.getUsageByTOU(id, start, end);
 
     // Convert UTC instant to site-local date components for display
@@ -162,7 +171,7 @@ export default async function UsagePage({ params, searchParams }: {
 
                 <DataSyncer siteId={id} start={start} end={end} viewDate={start} />
 
-                <BillSummary usage={usage} />
+                <BillSummary usage={usage} currencySymbol={currencySymbol} />
             </div>
         </PageShell>
     );

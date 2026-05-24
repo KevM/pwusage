@@ -11,7 +11,7 @@ import { EnergyData } from '../db';
 import { energyToAveragePower, wattsToKilowatts, kilowattsToWatts } from '../energy-utils';
 import { buildSocCheckpoints, SocSample } from '../soc-checkpoints';
 
-const CHART_FONT_FAMILY = 'Verdana, Arial, sans-serif';
+const CHART_FONT_FAMILY = '"TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif';
 
 /* ------------------------------------------------------------------ */
 /*  Hour label helpers                                                */

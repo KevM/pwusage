@@ -12,10 +12,6 @@ When starting fresh work in this repo, check this file. If a session begins some
 
 **Change:** Replace `import { Temporal } from '@js-temporal/polyfill'` with `import { Temporal } from 'temporal'` (or native global if available) and remove `@js-temporal/polyfill` from `package.json`.
 
-## Update trmnl markup with Framework 3.1
-
-A new font has been introduced to look better on eInk displays.
-
 ## Investigate Tesla JWKS signature verification failures
 
 **Status:** Implemented lazy refresh strategy with fallback to nonce-only validation (2026-05-12, fix-security branch).
