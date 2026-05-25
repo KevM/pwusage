@@ -27,16 +27,25 @@ BEGIN
 END;
 $$;
 
--- Insert a placeholder for cron_secret if it doesn't exist yet.
+-- Upsert the cron_secret using the placeholder {{CRON_SECRET}}
+-- This placeholder is replaced at deployment time by GitHub Actions
+-- using the CRON_SECRET repository secret.
 DO $$
 DECLARE
   secret_id uuid;
 BEGIN
   SELECT id INTO secret_id FROM vault.decrypted_secrets WHERE name = 'cron_secret';
   
-  IF secret_id IS NULL THEN
+  IF secret_id IS NOT NULL THEN
+    PERFORM vault.update_secret(
+      secret_id,
+      '{{CRON_SECRET}}',
+      'cron_secret',
+      'Vercel cron endpoint authorization bearer token'
+    );
+  ELSE
     PERFORM vault.create_secret(
-      'placeholder-please-update-via-script',
+      '{{CRON_SECRET}}',
       'cron_secret',
       'Vercel cron endpoint authorization bearer token'
     );

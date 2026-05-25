@@ -109,11 +109,16 @@ jobs:
           version: latest
       
       - name: Prepare Migrations
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           if [ -d "db-migrations" ]; then
             echo "Found db-migrations folder. Moving to supabase/migrations..."
             mkdir -p supabase/migrations
             cp db-migrations/*.sql supabase/migrations/ 2>/dev/null || :
+            if [ -n "$CRON_SECRET" ]; then
+              sed -i "s/{{CRON_SECRET}}/${CRON_SECRET}/g" supabase/migrations/*.sql
+            fi
           else
             echo "No db-migrations folder found. Skipping migration copy."
           fi
@@ -214,11 +219,16 @@ jobs:
           psql "$DEV_DATABASE_URL" -f migration_history.sql
 
       - name: Prepare Local Migrations
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           if [ -d "db-migrations" ]; then
             echo "Found db-migrations folder. Moving to supabase/migrations..."
             mkdir -p supabase/migrations
             cp db-migrations/*.sql supabase/migrations/ 2>/dev/null || :
+            if [ -n "$CRON_SECRET" ]; then
+              sed -i "s/{{CRON_SECRET}}/${CRON_SECRET}/g" supabase/migrations/*.sql
+            fi
           else
             echo "No db-migrations folder found. Skipping migration copy."
           fi
