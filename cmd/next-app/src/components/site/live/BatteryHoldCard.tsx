@@ -47,6 +47,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     });
     const body = await res.json().catch(() => ({}));
     if (res.status === 409 && body?.error === 'needs_reauth') { setNeedsReauth(true); return { ok: false, body }; }
+    if (res.status === 422 && body?.error === 'needs_choice') { setError('A reserve choice is required.'); return { ok: false, body }; }
     if (!res.ok) { setError('Something went wrong. Try again.'); return { ok: false, body }; }
     return { ok: true, body };
   }
