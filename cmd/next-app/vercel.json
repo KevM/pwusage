@@ -7,10 +7,6 @@
         {
             "path": "/api/cron/check-users",
             "schedule": "0 8 * * *"
-        },
-        {
-            "path": "/api/cron/restore-reserve",
-            "schedule": "*/15 * * * *"
         }
     ]
 }
