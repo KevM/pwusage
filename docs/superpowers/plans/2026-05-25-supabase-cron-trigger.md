@@ -15,7 +15,7 @@ Replace the scheduled GitHub Actions workflow for battery reserve auto-restorati
 
 ### Database Migrations
 
-#### [NEW] [20260525020000_supabase_cron_trigger.sql](file:///Users/kevm/github/pwusage/.worktrees/tesla-backup-reserve/cmd/next-app/db-migrations/20260525020000_supabase_cron_trigger.sql)
+#### [NEW] [20260525030000_supabase_cron_trigger.sql](file:///Users/kevm/github/pwusage/.worktrees/tesla-backup-reserve/cmd/next-app/db-migrations/20260525030000_supabase_cron_trigger.sql)
 Create SQL migration to:
 1. Enable `pg_cron` and `pg_net` extensions.
 2. Grant schema and table privileges to the connection role `postgres`.
@@ -32,7 +32,7 @@ Delete the scheduled GitHub Actions workflow file to prevent duplicate runs.
 
 ## SQL Migration Draft
 
-Create `cmd/next-app/db-migrations/20260525020000_supabase_cron_trigger.sql`:
+Create `cmd/next-app/db-migrations/20260525030000_supabase_cron_trigger.sql`:
 
 ```sql
 -- Enable the extensions if they are not already active
