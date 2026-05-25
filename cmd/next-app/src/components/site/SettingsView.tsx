@@ -197,35 +197,6 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
             </Card>
 
             <Card>
-                <CardHeader>
-                    <CardTitle>Battery Hold Quick Link (QR)</CardTitle>
-                    <CardDescription>
-                        Scan this QR code with your phone or mobile device to jump directly to the Live view and initiate a battery hold command.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col items-center">
-                    <div className="bg-white p-3 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm mb-4">
-                        <canvas ref={canvasRef} className="w-48 h-48" />
-                    </div>
-                    <div className="flex gap-4 w-full max-w-sm">
-                        <Button
-                            variant="outline"
-                            className="w-full"
-                            onClick={() => {
-                                const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
-                                navigator.clipboard.writeText(deepLink)
-                                    .then(() => alert('Deep link URL copied to clipboard!'))
-                                    .catch(() => alert('Failed to copy link.'));
-                            }}
-                        >
-                            Copy Deep Link
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
-
-
-            <Card>
                 <CardHeader
                     action={
                         <div className="flex items-center gap-3 bg-white dark:bg-slate-900">
@@ -296,6 +267,34 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                         >
                             <Button className="w-full" size="lg" variant="outline">Buy Device</Button>
                         </a>
+                    </div>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Battery Hold Quick Link (QR)</CardTitle>
+                    <CardDescription>
+                        Scan this QR code with your phone or mobile device to jump directly to the Live view and initiate a battery hold command.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col items-center">
+                    <div className="bg-white p-3 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm mb-4">
+                        <canvas ref={canvasRef} className="w-48 h-48" />
+                    </div>
+                    <div className="flex gap-4 w-full max-w-sm">
+                        <Button
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => {
+                                const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
+                                navigator.clipboard.writeText(deepLink)
+                                    .then(() => alert('Deep link URL copied to clipboard!'))
+                                    .catch(() => alert('Failed to copy link.'));
+                            }}
+                        >
+                            Copy Deep Link
+                        </Button>
                     </div>
                 </CardContent>
             </Card>
