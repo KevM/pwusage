@@ -300,44 +300,13 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                 </CardContent>
             </Card>
 
-            <Card>
-                <CardHeader>
-                    <CardTitle>Tariff Information</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div>
-                        <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
-                            The rates shown below are synced from your Powerwall settings in the Tesla App. If you&apos;ve recently changed your Time-of-Use (TOU) rates or tariff settings in Tesla, click the button below to refresh.
-                        </p>
-                        <Button
-                            onClick={handleRefreshTariffs}
-                            disabled={refreshLoading}
-                            className="gap-2"
-                        >
-                            {refreshLoading ? (
-                                <>
-                                    <span className="inline-block animate-spin">⟳</span>
-                                    Refreshing...
-                                </>
-                            ) : (
-                                'Refresh Tariffs from Tesla'
-                            )}
-                        </Button>
-                    </div>
-
-                    {refreshStatus && (
-                        <div className={`p-3 rounded-md text-sm ${
-                            refreshStatus.type === 'success'
-                                ? 'bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200'
-                                : 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200'
-                        }`}>
-                            {refreshStatus.message}
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
-
-            <TariffList tariffs={site.tariffs} />
+            <TariffList
+                tariffs={site.tariffs}
+                onRefresh={handleRefreshTariffs}
+                refreshLoading={refreshLoading}
+                refreshStatus={refreshStatus}
+            />
         </div>
     );
 }
+

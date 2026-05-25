@@ -3,19 +3,59 @@ import { Tariff } from '@/lib/db';
 import { formatTouName, formatTimeRange } from '@/lib/format-utils';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
+import { Button } from '@/components/ui/Button';
 
 interface TariffListProps {
     tariffs: Tariff[];
+    onRefresh: () => Promise<void>;
+    refreshLoading: boolean;
+    refreshStatus: { type: 'success' | 'error'; message: string } | null;
 }
 
-export function TariffList({ tariffs }: TariffListProps) {
+export function TariffList({ tariffs, onRefresh, refreshLoading, refreshStatus }: TariffListProps) {
+    const renderRefreshSection = () => (
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 mb-4 border-b border-gray-100 dark:border-slate-800">
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+                Rates are synced from your Powerwall settings in the Tesla App. If you&apos;ve recently changed your Time-of-Use (TOU) rates or tariff settings in Tesla, refresh to update.
+            </p>
+            {refreshStatus && (
+                <div className={`p-2 rounded text-xs shrink-0 ${
+                    refreshStatus.type === 'success'
+                        ? 'bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200'
+                        : 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200'
+                }`}>
+                    {refreshStatus.message}
+                </div>
+            )}
+        </div>
+    );
+
+    const refreshButton = (
+        <Button
+            onClick={onRefresh}
+            disabled={refreshLoading}
+            size="sm"
+            className="gap-2 shrink-0"
+        >
+            {refreshLoading ? (
+                <>
+                    <span className="inline-block animate-spin">⟳</span>
+                    Refreshing...
+                </>
+            ) : (
+                'Refresh from Tesla'
+            )}
+        </Button>
+    );
+
     if (!tariffs || tariffs.length === 0) {
         return (
             <Card>
-                <CardHeader>
+                <CardHeader action={refreshButton}>
                     <CardTitle>Tariff Information</CardTitle>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-4">
+                    {renderRefreshSection()}
                     <p className="text-gray-500 dark:text-gray-400">No tariffs found for this site.</p>
                 </CardContent>
             </Card>
@@ -24,12 +64,13 @@ export function TariffList({ tariffs }: TariffListProps) {
 
     return (
         <div className="space-y-8">
-            {tariffs.map((tariff) => (
+            {tariffs.map((tariff, index) => (
                 <Card key={tariff.id}>
-                    <CardHeader>
+                    <CardHeader action={index === 0 ? refreshButton : undefined}>
                         <CardTitle>{formatTouName(tariff.name || `Tariff #${tariff.id}`)} Tariff Information</CardTitle>
                     </CardHeader>
                     <CardContent>
+                        {index === 0 && renderRefreshSection()}
                         {(!tariff.seasons || tariff.seasons.length === 0) ? (
                             <p className="text-gray-500 italic">No seasons defined.</p>
                         ) : (
