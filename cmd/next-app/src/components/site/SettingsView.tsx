@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import QRCode from 'qrcode';
+import { drawQrWithLogo } from '@/lib/qr-generator';
 import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
 import { TariffList } from './TariffList';
@@ -89,15 +89,15 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
     const [previewScale, setPreviewScale] = useState<number>(0.5);
     const [refreshLoading, setRefreshLoading] = useState(false);
     const [refreshStatus, setRefreshStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-    const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
     const pluginSettingId = extractPluginSettingId(installation);
 
-    // Generate deep link QR code on mount
-    useEffect(() => {
-        const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
-        QRCode.toDataURL(deepLink, { width: 256, margin: 2 })
-            .then(url => setQrCodeUrl(url))
-            .catch(err => console.error('Error generating QR code:', err));
+    // Callback ref to render QR code with centered logo as soon as canvas mounts
+    const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
+        if (canvas) {
+            const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
+            drawQrWithLogo(canvas, deepLink)
+                .catch(err => console.error('Error generating QR code:', err));
+        }
     }, [site.id]);
 
     const handleRefreshTariffs = async () => {
@@ -205,14 +205,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                 </CardHeader>
                 <CardContent className="flex flex-col items-center">
                     <div className="bg-white p-3 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm mb-4">
-                        {qrCodeUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={qrCodeUrl} alt="Battery Hold Deep Link QR Code" className="w-48 h-48" />
-                        ) : (
-                            <div className="w-48 h-48 flex items-center justify-center text-sm text-gray-400">
-                                Generating...
-                            </div>
-                        )}
+                        <canvas ref={canvasRef} className="w-48 h-48" />
                     </div>
                     <div className="flex gap-4 w-full max-w-sm">
                         <Button

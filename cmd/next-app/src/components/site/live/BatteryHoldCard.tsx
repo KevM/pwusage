@@ -1,9 +1,9 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import QRCode from 'qrcode';
+import { drawQrWithLogo } from '@/lib/qr-generator';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { Button } from '@/components/ui/Button';
 import { Alert, AlertDescription } from '@/components/ui/Alert';
@@ -40,7 +40,6 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
   const [showHoldModal, setShowHoldModal] = useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
-  const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(initialNotice);
 
   // Auto-trigger hold modal if ?action=park is passed in the URL (deep link)
@@ -51,15 +50,14 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     }
   }, [searchParams, soc, initialHold, needsReauth]);
 
-  // Generate deep link QR code on demand
-  useEffect(() => {
-    if (showQrModal) {
+  // Callback ref to render QR code with centered logo as soon as canvas mounts
+  const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
+    if (canvas) {
       const deepLink = `${window.location.origin}/site/${siteId}/live?action=park`;
-      QRCode.toDataURL(deepLink, { width: 256, margin: 2 })
-        .then(url => setQrCodeUrl(url))
+      drawQrWithLogo(canvas, deepLink)
         .catch(err => console.error('Error generating QR code:', err));
     }
-  }, [showQrModal, siteId]);
+  }, [siteId]);
 
   async function post(payload: Record<string, unknown>): Promise<{ ok: boolean; body: Record<string, unknown> }> {
     const res = await fetch(`/api/site/${siteId}/battery-hold`, {
@@ -190,14 +188,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
             </p>
             
             <div className="bg-white p-3 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm mb-4">
-              {qrCodeUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrCodeUrl} alt="Deep Link QR Code" className="w-48 h-48" />
-              ) : (
-                <div className="w-48 h-48 flex items-center justify-center text-sm text-gray-400">
-                  Generating...
-                </div>
-              )}
+              <canvas ref={canvasRef} className="w-48 h-48" />
             </div>
 
             <div className="flex gap-2 w-full">
