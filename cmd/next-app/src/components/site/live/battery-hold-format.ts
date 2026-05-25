@@ -1,7 +1,11 @@
-import { computeTargetReserve } from '@/lib/battery-hold-rules';
+import { planReserve } from '@/lib/battery-hold-rules';
 
 export function holdButtonLabel(soc: number): string {
-  const target = computeTargetReserve(soc);
+  const plan = planReserve(soc);
+  if (plan.ambiguous) {
+    return 'Hold battery...';
+  }
+  const target = plan.target;
   return target === 100 ? 'Hold battery at 100% (max)' : `Hold battery at ${target}%`;
 }
 
