@@ -17,6 +17,7 @@ function hold(overrides: Partial<BatteryHold> = {}): BatteryHold {
     restore_reason: null, created_at: PARK, restored_at: null,
     safety_expires_at: new Date('2026-05-25T10:00:00Z'),
     acknowledged_at: null,
+    cancelled_observed_reserve: null,
     ...overrides,
   };
 }
