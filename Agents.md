@@ -28,7 +28,12 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - **Linting**: `npm run lint` must pass.
 - **Typing**: STRICTLY avoid the `any` type. Explicitly define interfaces or types for all variables and function parameters.
 - **Build**: `npm run build` must pass before finishing tasks.
-- **Migrations**: SQL migrations in `cmd/next-app/db-migrations/`. Create a new `.sql` file with a timestamp prefix for schema changes.
+- **Migrations**: SQL migrations in `cmd/next-app/db-migrations/`.
+  - **IMPORTANT**: To avoid timestamp/version conflicts, NEVER create migration files manually. Always use the migration generator script to create new SQL migrations:
+    ```bash
+    # Run from cmd/next-app
+    npm run db:migration:create <migration_name>
+    ```
   - When pushing to PRs a GitHub Action will test any migrations against a backup of production to ensure they can be applied. Note: This does cause Trmnl device installations in the dev database to become invalid. 
 
 ## Repo Layout (Important)
