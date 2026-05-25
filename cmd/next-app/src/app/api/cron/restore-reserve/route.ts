@@ -24,10 +24,15 @@ export async function GET(request: NextRequest) {
 
   for (const hold of holds) {
     try {
-      await refreshTodayData(hold.site_id);
-      const start = new Date(hold.created_at.getTime() - LOOKBACK_MS);
-      const rows = await energyRepo.getRawEnergyData(hold.site_id, start, now);
-      const decision = evaluateHold(hold, adaptTeslaData(rows), now);
+      let decision;
+      if (hold.mode === 'timer') {
+        decision = evaluateHold(hold, [], now); // pure clock check; no samples needed
+      } else {
+        await refreshTodayData(hold.site_id);
+        const start = new Date(hold.created_at.getTime() - LOOKBACK_MS);
+        const rows = await energyRepo.getRawEnergyData(hold.site_id, start, now);
+        decision = evaluateHold(hold, adaptTeslaData(rows), now);
+      }
 
       if (!decision) {
         results.push({ siteId: hold.site_id, status: 'holding' });

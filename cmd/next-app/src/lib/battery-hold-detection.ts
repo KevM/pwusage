@@ -4,7 +4,7 @@ import type { BatteryHold } from './db';
 
 export interface RestoreDecision {
   restore: true;
-  reason: 'load_ended' | 'safety_timeout';
+  reason: 'load_ended' | 'safety_timeout' | 'timer_elapsed';
 }
 
 // A detected event whose start is within this window of the park counts as "the load".
@@ -29,6 +29,13 @@ function ts(p: PowerData): number {
  * Safety timeout is the ultimate backstop.
  */
 export function evaluateHold(hold: BatteryHold, recentPower: PowerData[], now: Date): RestoreDecision | null {
+  // Timer mode: a strict N-hour hold. No NILM — only the clock matters.
+  if (hold.mode === 'timer') {
+    return now.getTime() >= hold.safety_expires_at.getTime()
+      ? { restore: true, reason: 'timer_elapsed' }
+      : null;
+  }
+
   if (now.getTime() >= hold.safety_expires_at.getTime()) {
     return { restore: true, reason: 'safety_timeout' };
   }

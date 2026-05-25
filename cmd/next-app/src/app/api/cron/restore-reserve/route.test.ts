@@ -47,4 +47,14 @@ describe('restore-reserve cron', () => {
     expect(res.status).toBe(200);
     expect(restoreMock).not.toHaveBeenCalled();
   });
+
+  it('timer-mode holds skip the data refresh and NILM fetch', async () => {
+    getAllMock.mockResolvedValue([{ id: 2, site_id: 's2', mode: 'timer', created_at: new Date(), safety_expires_at: new Date() }]);
+    evalMock.mockReturnValue({ restore: true, reason: 'timer_elapsed' });
+    const res = await GET(req('Bearer secret') as never);
+    expect(res.status).toBe(200);
+    expect(refreshMock).not.toHaveBeenCalled();
+    expect(rawMock).not.toHaveBeenCalled();
+    expect(restoreMock).toHaveBeenCalledWith(expect.objectContaining({ siteId: 's2', reason: 'timer_elapsed' }));
+  });
 });

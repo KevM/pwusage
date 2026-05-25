@@ -11,11 +11,12 @@ const PARK = new Date('2026-05-24T18:00:00Z');
 
 function hold(overrides: Partial<BatteryHold> = {}): BatteryHold {
   return {
-    id: 1, site_id: 's', status: 'active',
+    id: 1, site_id: 's', status: 'active', mode: 'auto',
     original_reserve: 20, target_reserve: 100,
     parked_soc: 90, baseline_load_w: 500,
     restore_reason: null, created_at: PARK, restored_at: null,
     safety_expires_at: new Date('2026-05-25T10:00:00Z'),
+    acknowledged_at: null,
     ...overrides,
   };
 }
@@ -64,5 +65,21 @@ describe('evaluateHold', () => {
     const data = series([500, 8000, 8000, 8000]); // +0..+15 min, last sample still high
     const now = new Date(PARK.getTime() + 15 * 60 * 1000);
     expect(evaluateHold(hold(), data, now)).toBeNull();
+  });
+
+  it('timer mode restores exactly at safety_expires_at and never runs NILM', () => {
+    detectLoadsMock.mockReset();
+    const h = hold({ mode: 'timer', safety_expires_at: new Date(PARK.getTime() + 4 * 60 * 60 * 1000) });
+    const now = new Date(PARK.getTime() + 4 * 60 * 60 * 1000); // == expiry
+    expect(evaluateHold(h, series([8000, 8000]), now)).toEqual({ restore: true, reason: 'timer_elapsed' });
+    expect(detectLoadsMock).not.toHaveBeenCalled();
+  });
+
+  it('timer mode keeps holding before expiry regardless of load', () => {
+    detectLoadsMock.mockReset();
+    const h = hold({ mode: 'timer', safety_expires_at: new Date(PARK.getTime() + 4 * 60 * 60 * 1000) });
+    const now = new Date(PARK.getTime() + 60 * 60 * 1000); // 1h in
+    expect(evaluateHold(h, series([500, 500]), now)).toBeNull();
+    expect(detectLoadsMock).not.toHaveBeenCalled();
   });
 });

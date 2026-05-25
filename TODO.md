@@ -12,9 +12,12 @@ When starting fresh work in this repo, check this file. If a session begins some
 
 **Change:** Replace `import { Temporal } from '@js-temporal/polyfill'` with `import { Temporal } from 'temporal'` (or native global if available) and remove `@js-temporal/polyfill` from `package.json`.
 
-## Update trmnl markup with Framework 3.1
+## Node deprecation warning
 
-A new font has been introduced to look better on eInk displays.
+```bash
+(node:62351) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+```
 
 ## Investigate Tesla JWKS signature verification failures
 

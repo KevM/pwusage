@@ -107,13 +107,14 @@ export default async function SiteLivePage({ params }: { params: Promise<{ id: s
         }
     }
 
-    const [{ cycle, today }, todayTotals, todayChartRows, latestEnergyData, liveStatus, activeHold] = await Promise.all([
+    const [{ cycle, today }, todayTotals, todayChartRows, latestEnergyData, liveStatus, activeHold, activeNotice] = await Promise.all([
         repo.getCycleAndTodayTotals(id, cycleStart, todayStart, now),
         repo.getTodayTotals(id, todayStart, now),
         repo.getBucketedEnergyData(id, todayStart, now),
         repo.getLatestEnergyData(id),
         getLiveStatus(id).catch(() => null),
-        new BatteryHoldRepo().getActiveHold(id)
+        new BatteryHoldRepo().getActiveHold(id),
+        new BatteryHoldRepo().getLatestCancelledUnacked(id),
     ]);
 
     // Marginal-cost / next-cheaper orchestration lives in the shared
@@ -158,10 +159,13 @@ export default async function SiteLivePage({ params }: { params: Promise<{ id: s
                     nextStartPhraseByKey={nextStartPhraseByKey}
                     activeIsCheapest={activeIsCheapest}
                     batteryHold={activeHold ? {
+                        mode: activeHold.mode,
                         target_reserve: activeHold.target_reserve,
                         original_reserve: activeHold.original_reserve,
                         created_at: activeHold.created_at.toISOString(),
+                        safety_expires_at: activeHold.safety_expires_at.toISOString(),
                     } : null}
+                    batteryNotice={activeNotice ? { current: activeNotice.target_reserve } : null}
                 />
             </div>
         </PageShell>

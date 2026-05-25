@@ -7,7 +7,7 @@ import type { BatteryHold } from './db';
 
 export const SAFETY_HOLD_MS = 16 * 60 * 60 * 1000; // 16h backstop
 
-import { computeTargetReserve } from './battery-hold-rules';
+import { computeTargetReserve, planReserve } from './battery-hold-rules';
 export { computeTargetReserve };
 
 function isAuthError(e: unknown): boolean {
@@ -22,12 +22,20 @@ export type ParkResult =
   | { status: 'ok'; hold: BatteryHold }
   | { status: 'already_active'; hold: BatteryHold }
   | { status: 'no_soc' }
+  | { status: 'needs_choice'; options: [80, 100] }
   | { status: 'needs_reauth' }
   | { status: 'error'; message: string };
 
-export interface ParkDeps { client: TeslaClient; repo: BatteryHoldRepo; siteId: string; now?: Date; }
+export interface ParkDeps {
+  client: TeslaClient; repo: BatteryHoldRepo; siteId: string; now?: Date;
+  mode?: 'auto' | 'timer';
+  durationHours?: number;
+  reserveChoice?: 80 | 100;
+}
 
-export async function parkBattery({ client, repo, siteId, now = new Date() }: ParkDeps): Promise<ParkResult> {
+export async function parkBattery(
+  { client, repo, siteId, now = new Date(), mode = 'auto', durationHours, reserveChoice }: ParkDeps,
+): Promise<ParkResult> {
   const existing = await repo.getActiveHold(siteId);
   if (existing) return { status: 'already_active', hold: existing };
 
@@ -42,7 +50,19 @@ export async function parkBattery({ client, repo, siteId, now = new Date() }: Pa
   const soc = live?.percentage_charged;
   if (typeof soc !== 'number' || Number.isNaN(soc)) return { status: 'no_soc' };
 
-  const target = computeTargetReserve(soc);
+  const plan = planReserve(soc);
+  let target: number;
+  if (plan.ambiguous) {
+    if (reserveChoice !== 80 && reserveChoice !== 100) return { status: 'needs_choice', options: plan.options! };
+    target = reserveChoice;
+  } else {
+    target = plan.target;
+  }
+
+  const holdMs = mode === 'timer'
+    ? Math.round((durationHours ?? 0) * 60 * 60 * 1000)
+    : SAFETY_HOLD_MS;
+
   try {
     const resp = await client.setBackupReserve(siteId, target);
     if (resp?.Message && /Max Backup Reserve/i.test(resp.Message)) {
@@ -58,25 +78,43 @@ export async function parkBattery({ client, repo, siteId, now = new Date() }: Pa
     targetReserve: target,
     parkedSoc: soc,
     baselineLoadW: live.load_power,
-    safetyExpiresAt: new Date(now.getTime() + SAFETY_HOLD_MS),
+    safetyExpiresAt: new Date(now.getTime() + holdMs),
+    mode,
   });
   return { status: 'ok', hold };
 }
 
 export type RestoreResult =
   | { status: 'ok' }
+  | { status: 'reserve_changed'; current: number }
   | { status: 'no_active_hold' }
   | { status: 'needs_reauth' }
   | { status: 'error'; message: string };
 
 export interface RestoreDeps {
   client: TeslaClient; repo: BatteryHoldRepo; siteId: string;
-  reason: 'load_ended' | 'manual' | 'safety_timeout';
+  reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed';
 }
 
 export async function restoreBattery({ client, repo, siteId, reason }: RestoreDeps): Promise<RestoreResult> {
   const hold = await repo.getActiveHold(siteId);
   if (!hold) return { status: 'no_active_hold' };
+
+  // Guard: never overwrite a reserve the user changed manually mid-hold. We expect
+  // the live reserve to still equal what we parked at (target_reserve); if not,
+  // cancel the hold without writing so the user's setting stands.
+  let current: number;
+  try {
+    const info = await client.getEnergySiteInfo(siteId);
+    current = info.backup_reserve_percent;
+  } catch (e) {
+    return isAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+  }
+  if (current !== hold.target_reserve) {
+    await repo.markCancelled(hold.id, 'reserve_changed');
+    return { status: 'reserve_changed', current };
+  }
+
   try {
     await client.setBackupReserve(siteId, hold.original_reserve);
   } catch (e) {

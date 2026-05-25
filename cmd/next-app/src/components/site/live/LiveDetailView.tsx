@@ -30,7 +30,8 @@ export interface LiveDetailViewProps {
     nextCheaperPhrase: string | null;
     nextStartPhraseByKey?: Record<string, string>;
     activeIsCheapest?: boolean;
-    batteryHold: { target_reserve: number; original_reserve: number; created_at: string } | null;
+    batteryHold: { mode: 'auto' | 'timer'; target_reserve: number; original_reserve: number; created_at: string; safety_expires_at: string } | null;
+    batteryNotice: { current: number } | null;
 }
 
 export function LiveDetailView({
@@ -42,7 +43,8 @@ export function LiveDetailView({
     activePeriod, hasTariff,
     nextCheaper, nextCheaperPhrase,
     nextStartPhraseByKey, activeIsCheapest,
-    batteryHold
+    batteryHold,
+    batteryNotice
 }: LiveDetailViewProps) {
 
 
@@ -91,6 +93,7 @@ export function LiveDetailView({
                 soc={batterySoC}
                 hasTariff={hasTariff}
                 initialHold={batteryHold}
+                initialNotice={batteryNotice}
             />
         </div>
     );
