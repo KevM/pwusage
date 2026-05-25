@@ -1,7 +1,7 @@
 # Supabase Cron Trigger — Design
 
 **Date:** 2026-05-25
-**Status:** Brainstorming & Proposed Design
+**Status:** Approved design, pre-implementation
 **Branch:** `feature/supabase-cron-trigger`
 **Related Specs:** [`2026-05-24-battery-hold-for-charging-design.md`](./2026-05-24-battery-hold-for-charging-design.md)
 
@@ -48,17 +48,23 @@ We will keep all evaluation and Tesla API integration logic in the Next.js API l
 ### 2. Secure Secret Management (Supabase Vault)
 We will not commit the `CRON_SECRET` in cleartext inside SQL migration files. Instead, we will store the secret inside **Supabase Vault** (`vault.decrypted_secrets`), which encrypts the values at rest. The `pg_cron` script will query the Vault at runtime to populate the `Authorization` header.
 
-### 3. Cleanup
+### 3. Permissions Management
+By default, the `vault` schema is owned by `supabase_admin`. In order for standard connection roles (like `postgres`) to perform CRUD operations on `vault.decrypted_secrets` (e.g. via backend maintenance scripts), the migration must grant permission to the `postgres` role.
+
+### 4. Cleanup
 We will delete the scheduled GitHub Actions workflow `.github/workflows/restore-reserve-cron.yml` to prevent duplicate execution.
 
 ---
 
 ## SQL Architecture
 
-### Extension Setup
+### Extension Setup & Permissions
 ```sql
 CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
 CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
+
+GRANT USAGE ON SCHEMA vault TO postgres;
+GRANT SELECT, INSERT, UPDATE, DELETE ON vault.decrypted_secrets TO postgres;
 ```
 
 ### Dynamic Cron Query using pg_net and Vault
@@ -68,7 +74,7 @@ SELECT cron.schedule(
   '*/15 * * * *',
   $$
   SELECT net.http_get(
-    url := 'https://your-app-domain.vercel.app/api/cron/restore-reserve',
+    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'cron_target_url' LIMIT 1),
     headers := jsonb_build_object(
       'Authorization', 
       'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'cron_secret' LIMIT 1)
@@ -84,21 +90,11 @@ SELECT cron.schedule(
 
 ### 1. Hardcoded App Domain
 * **Risk:** The Vercel app domain changes or we are testing in staging/development.
-* **Mitigation:** The cron URL target can be stored as a secret/config in the Vault (e.g., `cron_target_url`). The sql script queries both `cron_target_url` and `cron_secret`.
-  
-  ```sql
-  SELECT net.http_get(
-    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'cron_target_url' LIMIT 1),
-    headers := jsonb_build_object(
-      'Authorization', 
-      'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'cron_secret' LIMIT 1)
-    )
-  );
-  ```
+* **Mitigation:** The cron URL target is stored in the Vault (e.g., `cron_target_url`). The sql script queries both `cron_target_url` and `cron_secret` dynamically.
 
 ### 2. Execution Time Limits
-* **Risk:** `pg_net` requests are non-blocking (asynchronous), but Vercel Serverless Functions have a maximum execution duration (typically 10s on Hobby, 60s/300s on Pro).
-* **Mitigation:** The Next.js `/api/cron/restore-reserve` route handles sites in parallel using `Promise.all` and returns rapidly. If the site count grows large, we will implement paging or batching. For current levels, the 10-second limit is more than sufficient.
+* **Risk:** `pg_net` requests are non-blocking (asynchronous), but Vercel Serverless Functions have a maximum execution duration.
+* **Mitigation:** The Next.js `/api/cron/restore-reserve` route handles sites in parallel using `Promise.all` and returns rapidly.
 
 ---
 

@@ -2,6 +2,11 @@
 CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
 CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
 
+-- Grant usage on vault schema and decrypted_secrets view to postgres role
+-- so the backend database connection and maintenance scripts can access it.
+GRANT USAGE ON SCHEMA vault TO postgres;
+GRANT SELECT, INSERT, UPDATE, DELETE ON vault.decrypted_secrets TO postgres;
+
 -- Insert the cron_target_url (not secret, committed to migration)
 -- We delete first to perform a clean update/insert on the view
 DELETE FROM vault.decrypted_secrets WHERE name = 'cron_target_url';
