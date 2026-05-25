@@ -90,6 +90,9 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold }: Props) 
     <SectionCard title="Hold battery for charging" density="compact">
       {body}
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      <p className="mt-3 text-[11px] text-gray-400 leading-normal italic">
+        Note: The official Tesla app caches settings aggressively. You may need to force-restart it to see updated reserve levels.
+      </p>
     </SectionCard>
   );
 }
