@@ -2,21 +2,47 @@
 CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
 CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
 
--- Grant usage on vault schema and decrypted_secrets view to postgres role
--- so the backend database connection and maintenance scripts can access it.
-GRANT USAGE ON SCHEMA vault TO postgres;
-GRANT SELECT, INSERT, UPDATE, DELETE ON vault.decrypted_secrets TO postgres;
+-- Upsert the cron_target_url dynamically using vault security definer functions.
+-- This avoids direct table writes and resolves view permission issues.
+DO $$
+DECLARE
+  secret_id uuid;
+BEGIN
+  SELECT id INTO secret_id FROM vault.decrypted_secrets WHERE name = 'cron_target_url';
+  
+  IF secret_id IS NOT NULL THEN
+    PERFORM vault.update_secret(
+      secret_id,
+      'https://pwusage.fm.rodeo/api/cron/restore-reserve',
+      'cron_target_url',
+      'Vercel API cron endpoint URL'
+    );
+  ELSE
+    PERFORM vault.create_secret(
+      'https://pwusage.fm.rodeo/api/cron/restore-reserve',
+      'cron_target_url',
+      'Vercel API cron endpoint URL'
+    );
+  END IF;
+END;
+$$;
 
--- Insert the cron_target_url (not secret, committed to migration)
--- We delete first to perform a clean update/insert on the view
-DELETE FROM vault.decrypted_secrets WHERE name = 'cron_target_url';
-INSERT INTO vault.decrypted_secrets (name, description, secret)
-VALUES ('cron_target_url', 'Vercel API cron endpoint URL', 'https://pwusage.fm.rodeo/api/cron/restore-reserve');
-
--- Insert a placeholder for cron_secret if it doesn't exist yet
-INSERT INTO vault.decrypted_secrets (name, description, secret)
-SELECT 'cron_secret', 'Vercel cron endpoint authorization bearer token', 'placeholder-please-update-via-script'
-WHERE NOT EXISTS (SELECT 1 FROM vault.decrypted_secrets WHERE name = 'cron_secret');
+-- Insert a placeholder for cron_secret if it doesn't exist yet.
+DO $$
+DECLARE
+  secret_id uuid;
+BEGIN
+  SELECT id INTO secret_id FROM vault.decrypted_secrets WHERE name = 'cron_secret';
+  
+  IF secret_id IS NULL THEN
+    PERFORM vault.create_secret(
+      'placeholder-please-update-via-script',
+      'cron_secret',
+      'Vercel cron endpoint authorization bearer token'
+    );
+  END IF;
+END;
+$$;
 
 -- Unschedule old cron trigger if it exists
 SELECT cron.unschedule('restore-reserve-trigger');
