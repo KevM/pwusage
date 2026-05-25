@@ -96,7 +96,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
         if (canvas) {
             const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
             drawQrWithLogo(canvas, deepLink)
-                .catch(err => console.error('Error generating QR code:', err));
+                .catch(err => console.error('Error generating Battery Hold QR code:', err));
         }
     }, [site.id]);
 
@@ -282,6 +282,9 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                     <div className="bg-white p-3 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm mb-4">
                         <canvas ref={canvasRef} className="w-48 h-48" />
                     </div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center max-w-sm mb-4 italic">
+                        Put this QR code near your EV charger to make it easy to start a battery hold with your personal device.
+                    </p>
                     <div className="flex gap-4 w-full max-w-sm">
                         <Button
                             variant="outline"
@@ -289,11 +292,11 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                             onClick={() => {
                                 const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
                                 navigator.clipboard.writeText(deepLink)
-                                    .then(() => alert('Deep link URL copied to clipboard!'))
+                                    .then(() => alert('Battery Hold Url copied to clipboard!'))
                                     .catch(() => alert('Failed to copy link.'));
                             }}
                         >
-                            Copy Deep Link
+                            Copy Link
                         </Button>
                     </div>
                 </CardContent>
