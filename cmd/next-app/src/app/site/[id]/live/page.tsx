@@ -1,10 +1,11 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { BatteryHoldRepo } from '@/lib/battery-hold-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { Schedule } from '@/lib/schedule';
 import { TeslaClient } from '@/lib/tesla-client';
-import { verifySiteAccess } from '@/lib/auth-checks';
+import { verifySiteAccess, getCurrentUser } from '@/lib/auth-checks';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { LiveDetailView } from '@/components/site/live/LiveDetailView';
 import type { ActivePeriod } from '@/components/site/live/PeriodCardRow';
@@ -45,11 +46,24 @@ async function getLiveStatus(siteId: string) {
     return client.getLiveStatus(siteId);
 }
 
-export default async function SiteLivePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function SiteLivePage({
+    params,
+    searchParams
+}: {
+    params: Promise<{ id: string }>;
+    searchParams: Promise<{ action?: string }>;
+}) {
     const { id } = await params;
 
     const hasAccess = await verifySiteAccess(id);
     if (!hasAccess) {
+        const user = await getCurrentUser();
+        if (!user) {
+            const { action } = await searchParams;
+            const callback = `/site/${id}/live` + (action ? `?action=${action}` : '');
+            redirect(`/login?callback=${encodeURIComponent(callback)}`);
+        }
+
         return (
             <PageShell maxWidth="xl" className="flex items-center justify-center">
                 <SectionCard className="w-full" title="Unauthorized" description="You do not have permission to view this site.">
