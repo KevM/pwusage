@@ -162,5 +162,6 @@ export interface BatteryHold {
   restored_at: Date | null;
   safety_expires_at: Date;
   acknowledged_at: Date | null;
+  cancelled_observed_reserve: number | null;
 }
 

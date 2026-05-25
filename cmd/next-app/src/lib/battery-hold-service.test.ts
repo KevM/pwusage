@@ -126,7 +126,7 @@ describe('restoreBattery', () => {
     const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'manual' });
     expect(res).toEqual({ status: 'reserve_changed', current: 50 });
     expect(client.setBackupReserve).not.toHaveBeenCalled();
-    expect(repo.markCancelled).toHaveBeenCalledWith(5, 'reserve_changed');
+    expect(repo.markCancelled).toHaveBeenCalledWith(5, 'reserve_changed', 50);
     expect(repo.markRestored).not.toHaveBeenCalled();
   });
 

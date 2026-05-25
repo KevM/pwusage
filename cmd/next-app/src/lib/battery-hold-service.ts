@@ -111,7 +111,7 @@ export async function restoreBattery({ client, repo, siteId, reason }: RestoreDe
     return isAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
   }
   if (current !== hold.target_reserve) {
-    await repo.markCancelled(hold.id, 'reserve_changed');
+    await repo.markCancelled(hold.id, 'reserve_changed', current);
     return { status: 'reserve_changed', current };
   }
 

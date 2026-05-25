@@ -165,7 +165,7 @@ export default async function SiteLivePage({ params }: { params: Promise<{ id: s
                         created_at: activeHold.created_at.toISOString(),
                         safety_expires_at: activeHold.safety_expires_at.toISOString(),
                     } : null}
-                    batteryNotice={activeNotice ? { current: activeNotice.target_reserve } : null}
+                    batteryNotice={activeNotice ? { current: activeNotice.cancelled_observed_reserve ?? activeNotice.target_reserve } : null}
                 />
             </div>
         </PageShell>

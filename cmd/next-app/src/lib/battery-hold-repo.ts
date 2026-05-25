@@ -8,6 +8,7 @@ function mapRow(row: {
   restore_reason: string | null; created_at: string | Date;
   restored_at: string | Date | null; safety_expires_at: string | Date;
   acknowledged_at: string | Date | null;
+  cancelled_observed_reserve: number | string | null;
 }): BatteryHold {
   return {
     id: Number(row.id),
@@ -23,6 +24,7 @@ function mapRow(row: {
     restored_at: row.restored_at === null ? null : new Date(row.restored_at),
     safety_expires_at: new Date(row.safety_expires_at),
     acknowledged_at: row.acknowledged_at == null ? null : new Date(row.acknowledged_at),
+    cancelled_observed_reserve: row.cancelled_observed_reserve === null || row.cancelled_observed_reserve === undefined ? null : Number(row.cancelled_observed_reserve),
   };
 }
 
@@ -70,12 +72,12 @@ export class BatteryHoldRepo {
     `, [id, reason]);
   }
 
-  async markCancelled(id: number, reason: 'reserve_changed'): Promise<void> {
+  async markCancelled(id: number, reason: 'reserve_changed', observedReserve: number): Promise<void> {
     await pool.query(`
       UPDATE "BatteryHold"
-      SET status = 'cancelled', restore_reason = $2, restored_at = now()
+      SET status = 'cancelled', restore_reason = $2, restored_at = now(), cancelled_observed_reserve = $3
       WHERE id = $1
-    `, [id, reason]);
+    `, [id, reason, observedReserve]);
   }
 
   async getLatestCancelledUnacked(siteId: string): Promise<BatteryHold | null> {

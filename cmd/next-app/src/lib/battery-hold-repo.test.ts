@@ -20,6 +20,7 @@ function dbRow(overrides: Record<string, unknown> = {}) {
     safety_expires_at: new Date('2026-05-25T10:00:00Z'),
     mode: 'auto',
     acknowledged_at: null,
+    cancelled_observed_reserve: null,
     ...overrides,
   };
 }
@@ -63,20 +64,22 @@ describe('BatteryHoldRepo', () => {
     expect(params[6]).toBe('auto');
   });
 
-  it('mapRow surfaces mode and acknowledged_at', async () => {
-    queryMock.mockResolvedValueOnce({ rows: [dbRow({ mode: 'timer', acknowledged_at: new Date('2026-05-25T11:00:00Z') })] });
+  it('mapRow surfaces mode, acknowledged_at, and cancelled_observed_reserve', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [dbRow({ mode: 'timer', acknowledged_at: new Date('2026-05-25T11:00:00Z'), cancelled_observed_reserve: 50 })] });
     const hold = await new BatteryHoldRepo().getActiveHold('site-1');
     expect(hold?.mode).toBe('timer');
     expect(hold?.acknowledged_at).toBeInstanceOf(Date);
+    expect(hold?.cancelled_observed_reserve).toBe(50);
   });
 
-  it('markCancelled sets status=cancelled and reason without a Tesla write', async () => {
+  it('markCancelled sets status=cancelled, reason, and observed reserve without a Tesla write', async () => {
     queryMock.mockResolvedValueOnce({ rowCount: 1 });
-    await new BatteryHoldRepo().markCancelled(7, 'reserve_changed');
+    await new BatteryHoldRepo().markCancelled(7, 'reserve_changed', 50);
     const [sql, params] = queryMock.mock.calls[0];
     expect(sql).toMatch(/status = 'cancelled'/);
     expect(sql).toMatch(/restored_at = now\(\)/);
-    expect(params).toEqual([7, 'reserve_changed']);
+    expect(sql).toMatch(/cancelled_observed_reserve = \$3/);
+    expect(params).toEqual([7, 'reserve_changed', 50]);
   });
 
   it('getLatestCancelledUnacked filters to unacked reserve_changed cancels', async () => {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeslaClient } from './tesla-client';
 
 function makeJsonResponse<T>(payload: T): Response {
@@ -33,6 +33,12 @@ function make401Response(): Response {
 }
 
 describe('TeslaClient rate limiting (429)', () => {
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
     afterEach(() => {
         vi.useRealTimers();
         vi.restoreAllMocks();
@@ -138,6 +144,12 @@ describe('TeslaClient rate limiting (429)', () => {
 });
 
 describe('TeslaClient.getSoeHistory', () => {
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
     afterEach(() => {
         vi.restoreAllMocks();
     });
@@ -182,6 +194,12 @@ describe('TeslaClient.getSoeHistory', () => {
 });
 
 describe('TeslaClient.setBackupReserve', () => {
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
     afterEach(() => {
         vi.restoreAllMocks();
     });
