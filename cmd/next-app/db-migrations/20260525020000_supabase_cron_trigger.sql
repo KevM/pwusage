@@ -54,7 +54,9 @@ END;
 $$;
 
 -- Unschedule old cron trigger if it exists
-SELECT cron.unschedule('restore-reserve-trigger');
+SELECT cron.unschedule('restore-reserve-trigger')
+FROM cron.job
+WHERE jobname = 'restore-reserve-trigger';
 
 -- Schedule the 15-minute HTTP check
 SELECT cron.schedule(
