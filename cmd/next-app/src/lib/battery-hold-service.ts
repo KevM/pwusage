@@ -5,7 +5,7 @@ import { TeslaTokenRepo } from './tesla-token-repo';
 import { UserRepo } from './user-repo';
 import type { BatteryHold } from './db';
 
-export const SAFETY_HOLD_MS = 16 * 60 * 60 * 1000; // 16h backstop
+export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
 
 import { computeTargetReserve, planReserve } from './battery-hold-rules';
 export { computeTargetReserve };
