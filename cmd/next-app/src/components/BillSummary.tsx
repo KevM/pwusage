@@ -12,6 +12,7 @@ interface BillSummaryProps {
     activeTariffId?: number;
     activeTouName?: string;
     alwaysExpanded?: boolean;
+    currencySymbol?: string;
 }
 
 interface BillPeriod {
@@ -41,9 +42,9 @@ function formatKwh(value: number) {
     return `${(value / 1000).toFixed(2)} kWh`;
 }
 
-function formatCurrency(value: number) {
+function formatCurrency(value: number, symbol = '$') {
     const abs = Math.abs(value).toFixed(2);
-    return value >= 0 ? `$${abs}` : `-$${abs}`;
+    return value >= 0 ? `${symbol}${abs}` : `-${symbol}${abs}`;
 }
 
 function formatCostLabel(value: number) {
@@ -123,7 +124,7 @@ function PeriodMetricsGrid({ period, emphasize = false }: { period: BillPeriod |
     );
 }
 
-export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummaryProps) {
+export function BillSummary({ usage, activeTariffId, activeTouName, currencySymbol = '$' }: BillSummaryProps) {
     const tariffGroups = groupUsageByTariff(usage);
 
     return (
@@ -176,7 +177,7 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
                                                     <TableCell className="text-right tabular-nums">{formatKwh(period.solar)}</TableCell>
                                                     <TableCell className="text-right tabular-nums">{formatKwh(period.grid)}</TableCell>
                                                     <TableCell className="text-right font-semibold tabular-nums text-gray-900 dark:text-gray-100">
-                                                        {formatCurrency(period.cost)}
+                                                        {formatCurrency(period.cost, currencySymbol)}
                                                         <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400">{formatCostLabel(period.cost)}</span>
                                                     </TableCell>
                                                 </TableRow>
@@ -189,7 +190,7 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
                                             <TableCell className="text-right font-semibold tabular-nums">{formatKwh(totals.solar)}</TableCell>
                                             <TableCell className="text-right font-semibold tabular-nums">{formatKwh(totals.grid)}</TableCell>
                                             <TableCell className="text-right font-bold tabular-nums text-gray-900 dark:text-gray-100">
-                                                {formatCurrency(totals.cost)}
+                                                {formatCurrency(totals.cost, currencySymbol)}
                                                 <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400">{formatCostLabel(totals.cost)}</span>
                                             </TableCell>
                                         </TableRow>
@@ -215,7 +216,7 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
                                                         </div>
                                                     </div>
                                                     <div className="text-right shrink-0">
-                                                        <p className="font-semibold tabular-nums text-gray-900 dark:text-gray-100">{formatCurrency(period.cost)}</p>
+                                                        <p className="font-semibold tabular-nums text-gray-900 dark:text-gray-100">{formatCurrency(period.cost, currencySymbol)}</p>
                                                         <p className="text-xs text-gray-500 dark:text-gray-400">{formatCostLabel(period.cost)}</p>
                                                     </div>
                                                 </div>
@@ -231,7 +232,7 @@ export function BillSummary({ usage, activeTariffId, activeTouName }: BillSummar
                                                 <p className="text-xs text-gray-500 dark:text-gray-400">Tariff total across all TOU periods</p>
                                             </div>
                                             <div className="text-right shrink-0">
-                                                <p className="font-bold tabular-nums text-gray-900 dark:text-gray-100">{formatCurrency(totals.cost)}</p>
+                                                <p className="font-bold tabular-nums text-gray-900 dark:text-gray-100">{formatCurrency(totals.cost, currencySymbol)}</p>
                                                 <p className="text-xs text-gray-500 dark:text-gray-400">{formatCostLabel(totals.cost)}</p>
                                             </div>
                                         </div>

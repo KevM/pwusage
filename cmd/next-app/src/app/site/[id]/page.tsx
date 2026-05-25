@@ -144,8 +144,14 @@ export default async function SitePage({ params, searchParams }: {
         return <SiteSetup siteId={id} />;
     }
 
-    // Use finalSite for the rest of the render
-    // ... we need to make sure we use finalSite.name instead of site.name below
+    const siteJson = finalSite.json as import('@/lib/tesla-client').EnergySiteInfo | null;
+    const currencyCode = siteJson?.tariff_content_v2?.currency || 'USD';
+    let currencySymbol = '$';
+    if (currencyCode === 'GBP') {
+        currencySymbol = '£';
+    } else if (currencyCode === 'EUR') {
+        currencySymbol = '€';
+    }
 
     // Live stats fetch removed as it was unused
 
@@ -308,7 +314,7 @@ export default async function SitePage({ params, searchParams }: {
                             />
                         }
                         billSummarySlot={
-                            <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} />
+                            <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} currencySymbol={currencySymbol} />
                         }
                     />
                 }

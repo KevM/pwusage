@@ -1,9 +1,0 @@
-Read cmd/next-app/tracks/tailwind-styleguide/Track.md and execute only the next step with Status: `pending`.
-
-Rules:
-- Do not work on later steps
-- Make the smallest reasonable assumption if needed and document it in Notes
-- If blocked, mark the step `blocked` and explain exactly what is needed
-- Run the step's verification commands
-- Update /Users/kevm/github/pwusage/Track.md (status, notes, execution log) before stopping
-- Do not commit or create a PR

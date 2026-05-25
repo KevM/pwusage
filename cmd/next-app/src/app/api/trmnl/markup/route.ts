@@ -639,7 +639,15 @@ export async function GET(request: Request) {
             totalBillCost += data.cost;
         }
 
-        const currency = '$'; // TODO: Settings
+        const siteInfo = site.json as import('@/lib/tesla-client').EnergySiteInfo | null;
+        const currencyCode = siteInfo?.tariff_content_v2?.currency || 'USD';
+        let currency = '$';
+        if (currencyCode === 'GBP') {
+            currency = '£';
+        } else if (currencyCode === 'EUR') {
+            currency = '€';
+        }
+
         const costStr = totalBillCost.toFixed(2);
         const isCredit = totalBillCost < 0;
         const displayCost = isCredit ? `+${currency}${Math.abs(totalBillCost).toFixed(2)}` : `${currency}${costStr}`;

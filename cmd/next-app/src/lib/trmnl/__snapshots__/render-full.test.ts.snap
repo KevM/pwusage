@@ -197,16 +197,16 @@ exports[`renderFull characterization > snapshot: energy-only 1`] = `
                 <!-- Background and Grid -->
                 <rect width="760" height="310" fill="none" />
                 <line x1="32" y1="274" x2="750" y2="274" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="278" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">-2</text><line x1="32" y1="258.79999999999995" x2="750" y2="258.79999999999995" stroke="#bbb" stroke-width="1.25" />
-                    <text x="28" y="262.79999999999995" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">0</text><line x1="32" y1="129.6" x2="750" y2="129.6" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="133.6" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">17</text><line x1="32" y1="8" x2="750" y2="8" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="12" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">33</text>
+                    <text x="28" y="278" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">-2</text><line x1="32" y1="258.79999999999995" x2="750" y2="258.79999999999995" stroke="#bbb" stroke-width="1.25" />
+                    <text x="28" y="262.79999999999995" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">0</text><line x1="32" y1="129.6" x2="750" y2="129.6" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="133.6" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">17</text><line x1="32" y1="8" x2="750" y2="8" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="12" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">33</text>
 
                 <!-- Series -->
                 <path d="M 32 258.79999999999995 L 175.6 213.20000000000002 L 319.2 167.6 L 462.8 122 L 606.4 76.39999999999999 L 750 30.8" fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M 32 167.6 L 175.6 158.48 L 319.2 149.36 L 462.8 140.23999999999998 L 606.4 131.12 L 750 122" fill="none" stroke="black" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M 32 267.92 L 175.6 266.096 L 319.2 264.272 L 462.8 262.448 L 606.4 260.624 L 750 258.79999999999995" fill="none" stroke="black" stroke-width="1" stroke-dasharray="4,4" stroke-linecap="round" stroke-linejoin="round" />
-                <text x="34" y="304" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="750" y="304" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
+                <text x="34" y="304" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="750" y="304" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
             </svg>
             
             <div class="flex flex--row" style="position: absolute; top: 6px; right: 8px; z-index: 2; background: white; padding: 2px 6px; border-radius: 2px; gap: 12px;">
@@ -297,16 +297,16 @@ exports[`renderFull characterization > snapshot: live-chart-load-timing 1`] = `
                 <!-- Background and Grid -->
                 <rect width="760" height="140" fill="none" />
                 <line x1="32" y1="112" x2="750" y2="112" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="116" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">-2</text><line x1="32" y1="106.05714285714285" x2="750" y2="106.05714285714285" stroke="#bbb" stroke-width="1.25" />
-                    <text x="28" y="110.05714285714285" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">0</text><line x1="32" y1="55.542857142857144" x2="750" y2="55.542857142857144" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="59.542857142857144" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">17</text><line x1="32" y1="8" x2="750" y2="8" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="12" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">33</text>
+                    <text x="28" y="116" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">-2</text><line x1="32" y1="106.05714285714285" x2="750" y2="106.05714285714285" stroke="#bbb" stroke-width="1.25" />
+                    <text x="28" y="110.05714285714285" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">0</text><line x1="32" y1="55.542857142857144" x2="750" y2="55.542857142857144" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="59.542857142857144" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">17</text><line x1="32" y1="8" x2="750" y2="8" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="12" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">33</text>
 
                 <!-- Series -->
                 <path d="M 32 106.05714285714285 L 175.6 88.22857142857143 L 319.2 70.4 L 462.8 52.57142857142857 L 606.4 34.74285714285714 L 750 16.914285714285715" fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M 32 70.4 L 175.6 66.83428571428571 L 319.2 63.268571428571434 L 462.8 59.70285714285714 L 606.4 56.137142857142855 L 750 52.57142857142857" fill="none" stroke="black" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M 32 109.62285714285714 L 175.6 108.90971428571429 L 319.2 108.19657142857143 L 462.8 107.48342857142856 L 606.4 106.77028571428572 L 750 106.05714285714285" fill="none" stroke="black" stroke-width="1" stroke-dasharray="4,4" stroke-linecap="round" stroke-linejoin="round" />
-                <text x="34" y="134" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="750" y="134" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
+                <text x="34" y="134" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="750" y="134" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
             </svg>
             
             <div class="flex flex--row" style="position: absolute; top: 6px; right: 8px; z-index: 2; background: white; padding: 1px 5px; border-radius: 2px; gap: 10px;">
@@ -395,16 +395,16 @@ exports[`renderFull characterization > snapshot: live-energy-bill 1`] = `
                 <!-- Background and Grid -->
                 <rect width="760" height="140" fill="none" />
                 <line x1="32" y1="112" x2="750" y2="112" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="116" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">-2</text><line x1="32" y1="106.05714285714285" x2="750" y2="106.05714285714285" stroke="#bbb" stroke-width="1.25" />
-                    <text x="28" y="110.05714285714285" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">0</text><line x1="32" y1="55.542857142857144" x2="750" y2="55.542857142857144" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="59.542857142857144" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">17</text><line x1="32" y1="8" x2="750" y2="8" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="12" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">33</text>
+                    <text x="28" y="116" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">-2</text><line x1="32" y1="106.05714285714285" x2="750" y2="106.05714285714285" stroke="#bbb" stroke-width="1.25" />
+                    <text x="28" y="110.05714285714285" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">0</text><line x1="32" y1="55.542857142857144" x2="750" y2="55.542857142857144" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="59.542857142857144" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">17</text><line x1="32" y1="8" x2="750" y2="8" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="12" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">33</text>
 
                 <!-- Series -->
                 <path d="M 32 106.05714285714285 L 175.6 88.22857142857143 L 319.2 70.4 L 462.8 52.57142857142857 L 606.4 34.74285714285714 L 750 16.914285714285715" fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M 32 70.4 L 175.6 66.83428571428571 L 319.2 63.268571428571434 L 462.8 59.70285714285714 L 606.4 56.137142857142855 L 750 52.57142857142857" fill="none" stroke="black" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M 32 109.62285714285714 L 175.6 108.90971428571429 L 319.2 108.19657142857143 L 462.8 107.48342857142856 L 606.4 106.77028571428572 L 750 106.05714285714285" fill="none" stroke="black" stroke-width="1" stroke-dasharray="4,4" stroke-linecap="round" stroke-linejoin="round" />
-                <text x="34" y="134" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="750" y="134" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
+                <text x="34" y="134" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="750" y="134" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
             </svg>
             
             <div class="flex flex--row" style="position: absolute; top: 6px; right: 8px; z-index: 2; background: white; padding: 1px 5px; border-radius: 2px; gap: 10px;">
@@ -603,11 +603,11 @@ exports[`renderFull characterization > snapshot: soc-chart-only 1`] = `
                     <line x1="24" y1="214" x2="734" y2="214" stroke="#eee" stroke-width="1" />
                     <line x1="24" y1="418" x2="734" y2="418" stroke="#eee" stroke-width="1" />
                     <path d="M 24 234.4 L 166 224.20000000000002 L 308 214 L 450 193.6 L 592 183.4 L 734 173.20000000000002" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    <text x="24" y="8" font-family="Verdana, Arial, sans-serif" font-size="10" font-weight="700" text-anchor="start">Battery Level (%)</text>
-                    <text x="756" y="14" font-family="Verdana, Arial, sans-serif" font-size="10" font-weight="700" text-anchor="end">100%</text>
-                    <text x="756" y="218" font-family="Verdana, Arial, sans-serif" font-size="10" font-weight="700" text-anchor="end">50%</text>
-                    <text x="756" y="422" font-family="Verdana, Arial, sans-serif" font-size="10" font-weight="700" text-anchor="end">0%</text>
-                    <text x="26" y="432" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="734" y="432" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
+                    <text x="24" y="8" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" font-weight="700" text-anchor="start">Battery Level (%)</text>
+                    <text x="756" y="14" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" font-weight="700" text-anchor="end">100%</text>
+                    <text x="756" y="218" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" font-weight="700" text-anchor="end">50%</text>
+                    <text x="756" y="422" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" font-weight="700" text-anchor="end">0%</text>
+                    <text x="26" y="432" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="734" y="432" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
                 </svg>
             </div>
         
@@ -641,31 +641,31 @@ exports[`renderFull characterization > snapshot: soc-glyph-only 1`] = `
                 <svg viewBox="0 0 760 40" width="100%" style="height: auto; display: block;" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
                     
                 <g transform="translate(60, 0)">
-                    <text x="-12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="end">40%</text>
+                    <text x="-12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="end">40%</text>
                     <rect x="-9" y="1" width="16" height="10" rx="1.6" fill="none" stroke="black" stroke-width="1.2"/>
                     <rect x="7" y="3.8" width="2.6" height="4.4" rx="0.7" fill="black"/>
                     <rect x="-7.2" y="2.6" width="5.4" height="6.8" rx="0.7" fill="black"/>
-                    <text x="12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="start"></text>
+                    <text x="12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="start"></text>
                 </g>
             
                 <g transform="translate(462, 0)">
-                    <text x="-12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="end">55%</text>
+                    <text x="-12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="end">55%</text>
                     <rect x="-9" y="1" width="16" height="10" rx="1.6" fill="none" stroke="black" stroke-width="1.2"/>
                     <rect x="7" y="3.8" width="2.6" height="4.4" rx="0.7" fill="black"/>
                     <rect x="-7.2" y="2.6" width="7.425000000000001" height="6.8" rx="0.7" fill="black"/>
-                    <text x="12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="start">▲</text>
+                    <text x="12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="start">▲</text>
                 </g>
             
                 <g transform="translate(730, 0)">
-                    <text x="-12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="end">65%</text>
+                    <text x="-12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="end">65%</text>
                     <rect x="-9" y="1" width="16" height="10" rx="1.6" fill="none" stroke="black" stroke-width="1.2"/>
                     <rect x="7" y="3.8" width="2.6" height="4.4" rx="0.7" fill="black"/>
                     <rect x="-7.2" y="2.6" width="8.775" height="6.8" rx="0.7" fill="black"/>
-                    <text x="12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="start">▲</text>
+                    <text x="12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="start">▲</text>
                 </g>
             
                     <line x1="30" y1="24" x2="750" y2="24" stroke="#000" stroke-width="1" />
-                    <text x="750" y="38" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="middle">12pm</text>
+                    <text x="750" y="38" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="middle">12pm</text>
                 </svg>
             </div>
         
@@ -742,16 +742,16 @@ exports[`renderFull characterization > snapshot: very-dense 1`] = `
                 <!-- Background and Grid -->
                 <rect width="760" height="138" fill="none" />
                 <line x1="32" y1="110" x2="750" y2="110" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="114" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">-2</text><line x1="32" y1="104.17142857142856" x2="750" y2="104.17142857142856" stroke="#bbb" stroke-width="1.25" />
-                    <text x="28" y="108.17142857142856" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">0</text><line x1="32" y1="54.628571428571426" x2="750" y2="54.628571428571426" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="58.628571428571426" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">17</text><line x1="32" y1="8" x2="750" y2="8" stroke="#eee" stroke-width="1" />
-                    <text x="28" y="12" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="end">33</text>
+                    <text x="28" y="114" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">-2</text><line x1="32" y1="104.17142857142856" x2="750" y2="104.17142857142856" stroke="#bbb" stroke-width="1.25" />
+                    <text x="28" y="108.17142857142856" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">0</text><line x1="32" y1="54.628571428571426" x2="750" y2="54.628571428571426" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="58.628571428571426" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">17</text><line x1="32" y1="8" x2="750" y2="8" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="12" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">33</text>
 
                 <!-- Series -->
                 <path d="M 32 104.17142857142856 L 175.6 86.68571428571428 L 319.2 69.19999999999999 L 462.8 51.714285714285715 L 606.4 34.22857142857143 L 750 16.742857142857144" fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M 32 69.19999999999999 L 175.6 65.70285714285714 L 319.2 62.20571428571429 L 462.8 58.708571428571425 L 606.4 55.21142857142857 L 750 51.714285714285715" fill="none" stroke="black" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M 32 107.66857142857144 L 175.6 106.96914285714286 L 319.2 106.26971428571429 L 462.8 105.5702857142857 L 606.4 104.87085714285715 L 750 104.17142857142856" fill="none" stroke="black" stroke-width="1" stroke-dasharray="4,4" stroke-linecap="round" stroke-linejoin="round" />
-                <text x="34" y="132" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="750" y="132" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
+                <text x="34" y="132" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="750" y="132" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
             </svg>
             
             <div class="flex flex--row" style="position: absolute; top: 4px; right: 8px; z-index: 2; background: white; padding: 1px 4px; border-radius: 2px; gap: 8px;">
@@ -781,27 +781,27 @@ exports[`renderFull characterization > snapshot: very-dense 1`] = `
                 <svg viewBox="0 0 760 20" width="100%" style="height: auto; display: block;" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
                     
                 <g transform="translate(60, 0)">
-                    <text x="-12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="end">40%</text>
+                    <text x="-12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="end">40%</text>
                     <rect x="-9" y="1" width="16" height="10" rx="1.6" fill="none" stroke="black" stroke-width="1.2"/>
                     <rect x="7" y="3.8" width="2.6" height="4.4" rx="0.7" fill="black"/>
                     <rect x="-7.2" y="2.6" width="5.4" height="6.8" rx="0.7" fill="black"/>
-                    <text x="12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="start"></text>
+                    <text x="12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="start"></text>
                 </g>
             
                 <g transform="translate(462, 0)">
-                    <text x="-12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="end">55%</text>
+                    <text x="-12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="end">55%</text>
                     <rect x="-9" y="1" width="16" height="10" rx="1.6" fill="none" stroke="black" stroke-width="1.2"/>
                     <rect x="7" y="3.8" width="2.6" height="4.4" rx="0.7" fill="black"/>
                     <rect x="-7.2" y="2.6" width="7.425000000000001" height="6.8" rx="0.7" fill="black"/>
-                    <text x="12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="start">▲</text>
+                    <text x="12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="start">▲</text>
                 </g>
             
                 <g transform="translate(730, 0)">
-                    <text x="-12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="end">65%</text>
+                    <text x="-12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="end">65%</text>
                     <rect x="-9" y="1" width="16" height="10" rx="1.6" fill="none" stroke="black" stroke-width="1.2"/>
                     <rect x="7" y="3.8" width="2.6" height="4.4" rx="0.7" fill="black"/>
                     <rect x="-7.2" y="2.6" width="8.775" height="6.8" rx="0.7" fill="black"/>
-                    <text x="12" y="9" font-family="Verdana, Arial, sans-serif" font-size="10" text-anchor="start">▲</text>
+                    <text x="12" y="9" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="10" text-anchor="start">▲</text>
                 </g>
             
                     
