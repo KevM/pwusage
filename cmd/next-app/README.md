@@ -28,13 +28,15 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `SPARKLINE_SCALE_WINDOW_HOURS`: Header sparkline y-axis clamp window in hours (default: `12`, minimum effective value: `4`).
 
 ### Deployment & CI (GitHub Actions Secrets)
-These variables are typically set as Secrets in your GitHub repository for automated deployments and backups:
-- `DISCORD_WEBHOOK`: Webhook URL for Build/Deploy status notifications.
-- `BLOB_READ_WRITE_TOKEN`: Vercel Blob token used for daily database backups.
-- `DEV_DATABASE_URL`: Connection string for the preview/staging database (used for migration verification).
+These variables are set as Secrets in your GitHub repository for automated deployments, backups, and migrations:
+- `DATABASE_URL`: The production database connection string. Used for running production migrations and creating pre-migration backups.
+- `DEV_DATABASE_URL`: Connection string for the preview/staging database (used for migration verification on PRs).
+- `CRON_SECRET`: Secret key used to authorize sub-daily cron triggers. The migration job replaces the `{{CRON_SECRET}}` placeholder in SQL migration files with this secret at deploy time.
+- `BLOB_READ_WRITE_TOKEN`: Vercel Blob token used for uploading daily/pre-migration database backups.
 - `VERCEL_TOKEN`: Vercel Personal Access Token for CLI-based deployments.
 - `VERCEL_ORG_ID`: Your Vercel Organization/Team ID.
 - `VERCEL_PROJECT_ID`: Your Vercel Project ID.
+- `DISCORD_WEBHOOK`: Discord Webhook URL for Build/Deploy status notifications.
 
 ## Cron Jobs
 
