@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import QRCode from 'qrcode';
 import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
 import { TariffList } from './TariffList';
@@ -88,7 +89,16 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
     const [previewScale, setPreviewScale] = useState<number>(0.5);
     const [refreshLoading, setRefreshLoading] = useState(false);
     const [refreshStatus, setRefreshStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+    const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
     const pluginSettingId = extractPluginSettingId(installation);
+
+    // Generate deep link QR code on mount
+    useEffect(() => {
+        const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
+        QRCode.toDataURL(deepLink, { width: 256, margin: 2 })
+            .then(url => setQrCodeUrl(url))
+            .catch(err => console.error('Error generating QR code:', err));
+    }, [site.id]);
 
     const handleRefreshTariffs = async () => {
         setRefreshLoading(true);
@@ -182,6 +192,41 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                     </div>
                     <div className="pt-2">
                         <TimezoneDisplayForm siteId={site.id} initialMode={site.timezone_display_mode || 'SITE'} />
+                    </div>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Battery Hold Quick Link (QR)</CardTitle>
+                    <CardDescription>
+                        Scan this QR code with your phone or mobile device to jump directly to the Live view and initiate a battery hold command.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col items-center">
+                    <div className="bg-white p-3 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm mb-4">
+                        {qrCodeUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={qrCodeUrl} alt="Battery Hold Deep Link QR Code" className="w-48 h-48" />
+                        ) : (
+                            <div className="w-48 h-48 flex items-center justify-center text-sm text-gray-400">
+                                Generating...
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex gap-4 w-full max-w-sm">
+                        <Button
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => {
+                                const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
+                                navigator.clipboard.writeText(deepLink)
+                                    .then(() => alert('Deep link URL copied to clipboard!'))
+                                    .catch(() => alert('Failed to copy link.'));
+                            }}
+                        >
+                            Copy Deep Link
+                        </Button>
                     </div>
                 </CardContent>
             </Card>

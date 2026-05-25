@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { SectionCard } from '@/components/ui/SectionCard';
 import type { TodayTotals, UsageData } from '@/lib/energy-repo';
 import type { EnergyData } from '@/lib/db';
@@ -88,13 +89,19 @@ export function LiveDetailView({
                 />
             </SectionCard>
 
-            <BatteryHoldCard
-                siteId={siteId}
-                soc={batterySoC}
-                hasTariff={hasTariff}
-                initialHold={batteryHold}
-                initialNotice={batteryNotice}
-            />
+            <Suspense fallback={
+                <SectionCard title="Hold battery for charging" density="compact">
+                    <p className="text-sm text-gray-500">Loading battery control...</p>
+                </SectionCard>
+            }>
+                <BatteryHoldCard
+                    siteId={siteId}
+                    soc={batterySoC}
+                    hasTariff={hasTariff}
+                    initialHold={batteryHold}
+                    initialNotice={batteryNotice}
+                />
+            </Suspense>
         </div>
     );
 }

@@ -34,7 +34,7 @@ function run() {
   const files = fs.readdirSync(migrationsDir);
   
   // Parse existing timestamps/prefixes
-  let maxPrefix = 0n;
+  let maxPrefix = BigInt(0);
   for (const file of files) {
     if (!file.endsWith('.sql')) continue;
     // Extract numerical prefix before the first letter/underscore
@@ -60,7 +60,7 @@ function run() {
   // If there's a collision or the generated prefix is not greater than the highest existing prefix,
   // increment by 1 to ensure a strictly monotonic version number.
   if (finalPrefixVal <= maxPrefix) {
-    finalPrefixVal = maxPrefix + 1n;
+    finalPrefixVal = maxPrefix + BigInt(1);
     finalPrefixStr = finalPrefixVal.toString();
   }
 

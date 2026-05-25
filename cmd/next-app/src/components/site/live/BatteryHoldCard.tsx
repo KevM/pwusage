@@ -1,8 +1,9 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import QRCode from 'qrcode';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { Button } from '@/components/ui/Button';
 import { Alert, AlertDescription } from '@/components/ui/Alert';
@@ -32,12 +33,33 @@ interface Props {
 
 export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNotice }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsReauth, setNeedsReauth] = useState(false);
   const [showHoldModal, setShowHoldModal] = useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(initialNotice);
+
+  // Auto-trigger hold modal if ?action=park is passed in the URL (deep link)
+  useEffect(() => {
+    if (searchParams.get('action') === 'park' && soc !== null && !initialHold && !needsReauth) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setShowHoldModal(true);
+    }
+  }, [searchParams, soc, initialHold, needsReauth]);
+
+  // Generate deep link QR code on demand
+  useEffect(() => {
+    if (showQrModal) {
+      const deepLink = `${window.location.origin}/site/${siteId}/live?action=park`;
+      QRCode.toDataURL(deepLink, { width: 256, margin: 2 })
+        .then(url => setQrCodeUrl(url))
+        .catch(err => console.error('Error generating QR code:', err));
+    }
+  }, [showQrModal, siteId]);
 
   async function post(payload: Record<string, unknown>): Promise<{ ok: boolean; body: Record<string, unknown> }> {
     const res = await fetch(`/api/site/${siteId}/battery-hold`, {
@@ -96,7 +118,10 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
         <p className="text-sm">
           Holding at <strong>{holdReserveText(initialHold.target_reserve)}</strong>. It {restores} (to {initialHold.original_reserve}%).
         </p>
-        <Button variant="outline" disabled={busy} onClick={() => setShowRestoreConfirm(true)}>Restore now</Button>
+        <div className="flex gap-2 items-center flex-wrap">
+          <Button variant="outline" disabled={busy} onClick={() => setShowRestoreConfirm(true)}>Restore now</Button>
+          <Button variant="outline" size="sm" onClick={() => setShowQrModal(true)}>Share QR</Button>
+        </div>
       </div>
     );
   } else if (!hasTariff || soc === null) {
@@ -107,7 +132,10 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
         <p className="text-sm">
           Parks the Powerwall at its current level so a large load (e.g. EV charging) draws from solar/grid instead of the battery.
         </p>
-        <Button disabled={busy} onClick={() => setShowHoldModal(true)}>{holdButtonLabel(soc)}</Button>
+        <div className="flex gap-2 items-center flex-wrap">
+          <Button disabled={busy} onClick={() => setShowHoldModal(true)}>{holdButtonLabel(soc)}</Button>
+          <Button variant="outline" size="sm" onClick={() => setShowQrModal(true)}>Share QR</Button>
+        </div>
       </div>
     );
   }
@@ -148,6 +176,47 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
             <div className="flex justify-end gap-2">
               <Button variant="outline" disabled={busy} onClick={() => setShowRestoreConfirm(false)}>Cancel</Button>
               <Button disabled={busy} onClick={restore}>{busy ? 'Restoring…' : 'Restore'}</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl p-6 w-full max-w-sm flex flex-col items-center">
+            <h3 className="text-lg font-bold mb-1 text-gray-900 dark:text-gray-100">Deep Link QR Code</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4 text-center">
+              Scan this QR code with your mobile device to open this page and automatically initiate a battery hold.
+            </p>
+            
+            <div className="bg-white p-3 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm mb-4">
+              {qrCodeUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={qrCodeUrl} alt="Deep Link QR Code" className="w-48 h-48" />
+              ) : (
+                <div className="w-48 h-48 flex items-center justify-center text-sm text-gray-400">
+                  Generating...
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2 w-full">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="flex-1"
+                onClick={() => {
+                  const deepLink = `${window.location.origin}/site/${siteId}/live?action=park`;
+                  navigator.clipboard.writeText(deepLink)
+                    .then(() => alert('Deep link URL copied to clipboard!'))
+                    .catch(() => alert('Failed to copy link.'));
+                }}
+              >
+                Copy Link
+              </Button>
+              <Button variant="primary" size="sm" className="flex-1" onClick={() => setShowQrModal(false)}>
+                Close
+              </Button>
             </div>
           </div>
         </div>
