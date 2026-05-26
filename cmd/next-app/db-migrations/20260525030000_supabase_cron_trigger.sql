@@ -7,13 +7,9 @@ CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
 DO $$
 DECLARE
   secret_id uuid;
-  old_secret_id uuid;
 BEGIN
   -- Clean up deprecated vault secret if it exists
-  SELECT id INTO old_secret_id FROM vault.decrypted_secrets WHERE name = 'cron_target_url';
-  IF old_secret_id IS NOT NULL THEN
-    PERFORM vault.delete_secret(old_secret_id);
-  END IF;
+  DELETE FROM vault.secrets WHERE name = 'cron_target_url';
 
   SELECT id INTO secret_id FROM vault.decrypted_secrets WHERE name = 'battery_restore_cron_target_url';
   
