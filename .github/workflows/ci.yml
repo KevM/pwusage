@@ -111,6 +111,7 @@ jobs:
       - name: Prepare Migrations
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_TARGET_URL: "https://pwusage.fm.rodeo/api/cron/restore-reserve"
         run: |
           if [ -d "db-migrations" ]; then
             echo "Found db-migrations folder. Moving to supabase/migrations..."
@@ -118,6 +119,9 @@ jobs:
             cp db-migrations/*.sql supabase/migrations/ 2>/dev/null || :
             if [ -n "$CRON_SECRET" ]; then
               sed -i "s/{{CRON_SECRET}}/${CRON_SECRET}/g" supabase/migrations/*.sql
+            fi
+            if [ -n "$CRON_TARGET_URL" ]; then
+              sed -i "s|{{CRON_TARGET_URL}}|${CRON_TARGET_URL}|g" supabase/migrations/*.sql
             fi
           else
             echo "No db-migrations folder found. Skipping migration copy."
@@ -221,6 +225,7 @@ jobs:
       - name: Prepare Local Migrations
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_TARGET_URL: "https://pwusagebeta.fm.rodeo/api/cron/restore-reserve"
         run: |
           if [ -d "db-migrations" ]; then
             echo "Found db-migrations folder. Moving to supabase/migrations..."
@@ -228,6 +233,9 @@ jobs:
             cp db-migrations/*.sql supabase/migrations/ 2>/dev/null || :
             if [ -n "$CRON_SECRET" ]; then
               sed -i "s/{{CRON_SECRET}}/${CRON_SECRET}/g" supabase/migrations/*.sql
+            fi
+            if [ -n "$CRON_TARGET_URL" ]; then
+              sed -i "s|{{CRON_TARGET_URL}}|${CRON_TARGET_URL}|g" supabase/migrations/*.sql
             fi
           else
             echo "No db-migrations folder found. Skipping migration copy."

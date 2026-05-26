@@ -13,13 +13,13 @@ BEGIN
   IF secret_id IS NOT NULL THEN
     PERFORM vault.update_secret(
       secret_id,
-      'https://pwusage.fm.rodeo/api/cron/restore-reserve',
+      '{{CRON_TARGET_URL}}',
       'cron_target_url',
       'Vercel API cron endpoint URL'
     );
   ELSE
     PERFORM vault.create_secret(
-      'https://pwusage.fm.rodeo/api/cron/restore-reserve',
+      '{{CRON_TARGET_URL}}',
       'cron_target_url',
       'Vercel API cron endpoint URL'
     );
