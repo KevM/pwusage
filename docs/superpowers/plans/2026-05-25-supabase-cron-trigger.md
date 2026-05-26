@@ -19,7 +19,7 @@ Replace the scheduled GitHub Actions workflow for battery reserve auto-restorati
 Create SQL migration to:
 1. Enable `pg_cron` and `pg_net` extensions.
 2. Grant schema and table privileges to the connection role `postgres`.
-3. Insert `cron_target_url` directly.
+3. Insert `battery_restore_cron_target_url` directly.
 4. Insert placeholder Vault keys for `cron_secret`.
 5. Schedule the 15-minute cron job to fetch Vault credentials and ping `/api/cron/restore-reserve`.
 
@@ -44,11 +44,23 @@ CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
 GRANT USAGE ON SCHEMA vault TO postgres;
 GRANT SELECT, INSERT, UPDATE, DELETE ON vault.decrypted_secrets TO postgres;
 
--- Insert the cron_target_url (not secret, committed to migration)
+-- Clean up deprecated vault secret if it exists
+DO $$
+DECLARE
+  old_secret_id uuid;
+BEGIN
+  SELECT id INTO old_secret_id FROM vault.decrypted_secrets WHERE name = 'cron_target_url';
+  IF old_secret_id IS NOT NULL THEN
+    PERFORM vault.delete_secret(old_secret_id);
+  END IF;
+END;
+$$;
+
+-- Insert the battery_restore_cron_target_url (not secret, committed to migration)
 -- We delete first to perform a clean update/insert on the view
-DELETE FROM vault.decrypted_secrets WHERE name = 'cron_target_url';
+DELETE FROM vault.decrypted_secrets WHERE name = 'battery_restore_cron_target_url';
 INSERT INTO vault.decrypted_secrets (name, description, secret)
-VALUES ('cron_target_url', 'Vercel API cron endpoint URL', 'https://pwusage.fm.rodeo/api/cron/restore-reserve');
+VALUES ('battery_restore_cron_target_url', 'Vercel API battery restore cron endpoint URL', 'https://pwusage.fm.rodeo/api/cron/restore-reserve');
 
 -- Insert a placeholder for cron_secret if it doesn't exist yet
 INSERT INTO vault.decrypted_secrets (name, description, secret)
@@ -64,7 +76,7 @@ SELECT cron.schedule(
   '*/15 * * * *',
   $$
   SELECT net.http_get(
-    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'cron_target_url' LIMIT 1),
+    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'battery_restore_cron_target_url' LIMIT 1),
     headers := jsonb_build_object(
       'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'cron_secret' LIMIT 1)
     )

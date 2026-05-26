@@ -74,7 +74,7 @@ SELECT cron.schedule(
   '*/15 * * * *',
   $$
   SELECT net.http_get(
-    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'cron_target_url' LIMIT 1),
+    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'battery_restore_cron_target_url' LIMIT 1),
     headers := jsonb_build_object(
       'Authorization', 
       'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'cron_secret' LIMIT 1)
@@ -90,7 +90,7 @@ SELECT cron.schedule(
 
 ### 1. Hardcoded App Domain
 * **Risk:** The Vercel app domain changes or we are testing in staging/development.
-* **Mitigation:** The cron URL target is stored in the Vault (e.g., `cron_target_url`). The sql script queries both `cron_target_url` and `cron_secret` dynamically.
+* **Mitigation:** The cron URL target is stored in the Vault (e.g., `battery_restore_cron_target_url`). The sql script queries both `battery_restore_cron_target_url` and `cron_secret` dynamically.
 
 ### 2. Execution Time Limits
 * **Risk:** `pg_net` requests are non-blocking (asynchronous), but Vercel Serverless Functions have a maximum execution duration.
@@ -100,4 +100,4 @@ SELECT cron.schedule(
 
 ## Open Questions
 
-- **Vault Provisioning:** Should the `cron_secret` and `cron_target_url` vault records be provisioned manually in the Supabase Dashboard, or should we include a commented skeleton in the SQL migration? (Commented skeleton is preferred to avoid breaking automated migrations if secrets are not yet present).
+- **Vault Provisioning:** Should the `cron_secret` and `battery_restore_cron_target_url` vault records be provisioned manually in the Supabase Dashboard, or should we include a commented skeleton in the SQL migration? (Commented skeleton is preferred to avoid breaking automated migrations if secrets are not yet present).
