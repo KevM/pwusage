@@ -117,12 +117,22 @@ jobs:
             echo "Found db-migrations folder. Moving to supabase/migrations..."
             mkdir -p supabase/migrations
             cp db-migrations/*.sql supabase/migrations/ 2>/dev/null || :
-            if [ -n "$CRON_SECRET" ]; then
-              sed -i "s/{{CRON_SECRET}}/${CRON_SECRET}/g" supabase/migrations/*.sql
-            fi
-            if [ -n "$BATTERY_RESTORE_CRON_TARGET_URL" ]; then
-              sed -i "s|{{BATTERY_RESTORE_CRON_TARGET_URL}}|${BATTERY_RESTORE_CRON_TARGET_URL}|g" supabase/migrations/*.sql
-            fi
+            node -e "
+              const fs = require('fs');
+              const path = require('path');
+              const files = fs.readdirSync('supabase/migrations').filter(f => f.endsWith('.sql'));
+              files.forEach(file => {
+                const filepath = path.join('supabase/migrations', file);
+                let content = fs.readFileSync(filepath, 'utf8');
+                if (process.env.CRON_SECRET) {
+                  content = content.split('{{CRON_SECRET}}').join(process.env.CRON_SECRET);
+                }
+                if (process.env.BATTERY_RESTORE_CRON_TARGET_URL) {
+                  content = content.split('{{BATTERY_RESTORE_CRON_TARGET_URL}}').join(process.env.BATTERY_RESTORE_CRON_TARGET_URL);
+                }
+                fs.writeFileSync(filepath, content, 'utf8');
+              });
+            "
           else
             echo "No db-migrations folder found. Skipping migration copy."
           fi
@@ -231,12 +241,22 @@ jobs:
             echo "Found db-migrations folder. Moving to supabase/migrations..."
             mkdir -p supabase/migrations
             cp db-migrations/*.sql supabase/migrations/ 2>/dev/null || :
-            if [ -n "$CRON_SECRET" ]; then
-              sed -i "s/{{CRON_SECRET}}/${CRON_SECRET}/g" supabase/migrations/*.sql
-            fi
-            if [ -n "$BATTERY_RESTORE_CRON_TARGET_URL" ]; then
-              sed -i "s|{{BATTERY_RESTORE_CRON_TARGET_URL}}|${BATTERY_RESTORE_CRON_TARGET_URL}|g" supabase/migrations/*.sql
-            fi
+            node -e "
+              const fs = require('fs');
+              const path = require('path');
+              const files = fs.readdirSync('supabase/migrations').filter(f => f.endsWith('.sql'));
+              files.forEach(file => {
+                const filepath = path.join('supabase/migrations', file);
+                let content = fs.readFileSync(filepath, 'utf8');
+                if (process.env.CRON_SECRET) {
+                  content = content.split('{{CRON_SECRET}}').join(process.env.CRON_SECRET);
+                }
+                if (process.env.BATTERY_RESTORE_CRON_TARGET_URL) {
+                  content = content.split('{{BATTERY_RESTORE_CRON_TARGET_URL}}').join(process.env.BATTERY_RESTORE_CRON_TARGET_URL);
+                }
+                fs.writeFileSync(filepath, content, 'utf8');
+              });
+            "
           else
             echo "No db-migrations folder found. Skipping migration copy."
           fi
