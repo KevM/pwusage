@@ -110,7 +110,7 @@ describe('parkBattery', () => {
 
 describe('restoreBattery', () => {
   it('restores to original_reserve when the current reserve matches the parked target', async () => {
-    const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100 } as BatteryHold);
+    const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100, created_at: new Date().toISOString() } as BatteryHold);
     const client = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }) });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'manual' });
@@ -120,18 +120,78 @@ describe('restoreBattery', () => {
   });
 
   it('cancels without writing when the reserve was changed outside the app', async () => {
-    const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100 } as BatteryHold);
+    const repo = fakeRepo({
+      id: 5,
+      original_reserve: 20,
+      target_reserve: 100,
+      created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    } as BatteryHold);
     const client = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 50 }) });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'manual' });
+    const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'load_ended' });
     expect(res).toEqual({ status: 'reserve_changed', current: 50 });
     expect(client.setBackupReserve).not.toHaveBeenCalled();
     expect(repo.markCancelled).toHaveBeenCalledWith(5, 'reserve_changed', 50);
     expect(repo.markRestored).not.toHaveBeenCalled();
   });
 
+  it('bypasses the guard if the restore is manual', async () => {
+    const repo = fakeRepo({
+      id: 5,
+      original_reserve: 20,
+      target_reserve: 100,
+      created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    } as BatteryHold);
+    const client = fakeClient({
+      getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 50 }),
+      setBackupReserve: vi.fn().mockResolvedValue({}),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'manual' });
+    expect(res.status).toBe('ok');
+    expect(client.getEnergySiteInfo).not.toHaveBeenCalled();
+    expect(client.setBackupReserve).toHaveBeenCalledWith('s', 20);
+  });
+
+  it('bypasses the guard if the hold is recent (under 5 minutes)', async () => {
+    const repo = fakeRepo({
+      id: 5,
+      original_reserve: 20,
+      target_reserve: 100,
+      created_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+    } as BatteryHold);
+    const client = fakeClient({
+      getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 50 }),
+      setBackupReserve: vi.fn().mockResolvedValue({}),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'load_ended' });
+    expect(res.status).toBe('ok');
+    expect(client.getEnergySiteInfo).not.toHaveBeenCalled();
+    expect(client.setBackupReserve).toHaveBeenCalledWith('s', 20);
+  });
+
+  it('bypasses the guard if the current reserve matches the original reserve (stale cache safety)', async () => {
+    const repo = fakeRepo({
+      id: 5,
+      original_reserve: 20,
+      target_reserve: 100,
+      created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    } as BatteryHold);
+    const client = fakeClient({
+      getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 20 }),
+      setBackupReserve: vi.fn().mockResolvedValue({}),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'load_ended' });
+    expect(res.status).toBe('ok');
+    expect(client.getEnergySiteInfo).toHaveBeenCalled();
+    expect(client.setBackupReserve).toHaveBeenCalledWith('s', 20);
+    expect(repo.markCancelled).not.toHaveBeenCalled();
+  });
+
   it('does not mark restored if the command fails', async () => {
-    const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100 } as BatteryHold);
+    const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100, created_at: new Date().toISOString() } as BatteryHold);
     const client = fakeClient({
       getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }),
       setBackupReserve: vi.fn().mockRejectedValue(new Error('Tesla API Error: 500')),

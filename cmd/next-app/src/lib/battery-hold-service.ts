@@ -100,19 +100,24 @@ export async function restoreBattery({ client, repo, siteId, reason }: RestoreDe
   const hold = await repo.getActiveHold(siteId);
   if (!hold) return { status: 'no_active_hold' };
 
-  // Guard: never overwrite a reserve the user changed manually mid-hold. We expect
-  // the live reserve to still equal what we parked at (target_reserve); if not,
-  // cancel the hold without writing so the user's setting stands.
-  let current: number;
-  try {
-    const info = await client.getEnergySiteInfo(siteId);
-    current = info.backup_reserve_percent;
-  } catch (e) {
-    return isAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
-  }
-  if (current !== hold.target_reserve) {
-    await repo.markCancelled(hold.id, 'reserve_changed', current);
-    return { status: 'reserve_changed', current };
+  // Guard: never overwrite a reserve the user changed manually mid-hold.
+  // We bypass this guard (saving a Tesla API read) if:
+  // 1. The restore is requested manually by the user.
+  // 2. The hold was created very recently (within 5 minutes), where the Tesla API
+  //    cache is likely stale and still showing the pre-parked reserve.
+  const isRecent = Date.now() - new Date(hold.created_at).getTime() < 5 * 60 * 1000;
+  if (reason !== 'manual' && !isRecent) {
+    let current: number;
+    try {
+      const info = await client.getEnergySiteInfo(siteId);
+      current = info.backup_reserve_percent;
+    } catch (e) {
+      return isAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+    }
+    if (current !== hold.target_reserve && current !== hold.original_reserve) {
+      await repo.markCancelled(hold.id, 'reserve_changed', current);
+      return { status: 'reserve_changed', current };
+    }
   }
 
   try {
