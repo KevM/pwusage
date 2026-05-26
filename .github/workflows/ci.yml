@@ -111,7 +111,7 @@ jobs:
       - name: Prepare Migrations
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          BATTERY_RESTORE_CRON_TARGET_URL: "https://pwusage.fm.rodeo/api/cron/restore-reserve"
+          BATTERY_RESTORE_CRON_TARGET_URL: ${{ secrets.PRODUCTION_BATTERY_RESTORE_CRON_TARGET_URL }}
         run: |
           if [ -d "db-migrations" ]; then
             echo "Found db-migrations folder. Moving to supabase/migrations..."
@@ -225,7 +225,7 @@ jobs:
       - name: Prepare Local Migrations
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          BATTERY_RESTORE_CRON_TARGET_URL: "https://pwusagebeta.fm.rodeo/api/cron/restore-reserve"
+          BATTERY_RESTORE_CRON_TARGET_URL: ${{ secrets.DEV_BATTERY_RESTORE_CRON_TARGET_URL }}
         run: |
           if [ -d "db-migrations" ]; then
             echo "Found db-migrations folder. Moving to supabase/migrations..."
