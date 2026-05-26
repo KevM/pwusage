@@ -14,6 +14,7 @@ async function run() {
 
   const [name, secret, description = ''] = args;
 
+  let success = true;
   try {
     const { pool } = await import('../src/lib/db');
 
@@ -39,8 +40,9 @@ async function run() {
 
   } catch (error) {
     console.error('Error setting Vault secret:', error);
+    success = false;
   } finally {
-    process.exit(0);
+    process.exit(success ? 0 : 1);
   }
 }
 
