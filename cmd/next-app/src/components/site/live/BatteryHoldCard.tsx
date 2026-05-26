@@ -42,7 +42,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
   const [showQrModal, setShowQrModal] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(initialNotice);
 
-  // Auto-trigger hold modal if ?action=park is passed in the URL (deep link)
+  // Auto-trigger hold modal if ?action=park is passed in the URL (via QR code)
   useEffect(() => {
     if (searchParams.get('action') === 'park' && soc !== null && !initialHold && !needsReauth) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -118,7 +118,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
         </p>
         <div className="flex gap-2 items-center flex-wrap">
           <Button variant="outline" disabled={busy} onClick={() => setShowRestoreConfirm(true)}>Restore now</Button>
-          <Button variant="outline" size="sm" onClick={() => setShowQrModal(true)}>Share QR</Button>
+          <Button variant="outline" size="sm" onClick={() => setShowQrModal(true)}>QR Code</Button>
         </div>
       </div>
     );
@@ -132,7 +132,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
         </p>
         <div className="flex gap-2 items-center flex-wrap">
           <Button disabled={busy} onClick={() => setShowHoldModal(true)}>{holdButtonLabel(soc)}</Button>
-          <Button variant="outline" size="sm" onClick={() => setShowQrModal(true)}>Share QR</Button>
+          <Button variant="outline" size="sm" onClick={() => setShowQrModal(true)}>QR Code</Button>
         </div>
       </div>
     );
@@ -182,7 +182,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
       {showQrModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl p-6 w-full max-w-sm flex flex-col items-center">
-            <h3 className="text-lg font-bold mb-1 text-gray-900 dark:text-gray-100">Deep Link QR Code</h3>
+            <h3 className="text-lg font-bold mb-1 text-gray-900 dark:text-gray-100">QR Code</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4 text-center">
               Scan this QR code with your mobile device to open this page and automatically initiate a battery hold.
             </p>
@@ -199,7 +199,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
                 onClick={() => {
                   const deepLink = `${window.location.origin}/site/${siteId}/live?action=park`;
                   navigator.clipboard.writeText(deepLink)
-                    .then(() => alert('Deep link URL copied to clipboard!'))
+                    .then(() => alert('Battery Hold link copied to clipboard!'))
                     .catch(() => alert('Failed to copy link.'));
                 }}
               >
