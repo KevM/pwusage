@@ -147,3 +147,21 @@ export interface LoadTag {
   tag: string;
   created_at: Date;
 }
+
+export interface BatteryHold {
+  id: number;
+  site_id: string;
+  status: 'active' | 'restored' | 'cancelled';
+  mode: 'auto' | 'timer';
+  original_reserve: number;
+  target_reserve: number;
+  parked_soc: number;
+  baseline_load_w: number;
+  restore_reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed' | 'reserve_changed' | null;
+  created_at: Date;
+  restored_at: Date | null;
+  safety_expires_at: Date;
+  acknowledged_at: Date | null;
+  cancelled_observed_reserve: number | null;
+}
+

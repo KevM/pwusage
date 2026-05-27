@@ -299,6 +299,50 @@ export class TeslaClient {
         const result = await this.fetch<{ response: TeslaUserInfo }>("/api/1/users/me");
         return result.response;
     }
+
+    /**
+     * Set the site's backup reserve percentage.
+     *
+     * POST /api/1/energy_sites/{site_id}/backup with `{ backup_reserve_percent }`.
+     * This is a *write* command against a live Powerwall — it changes how much
+     * battery the site holds in reserve for grid outages.
+     *
+     * @param siteId Energy site id.
+     * @param backupReservePercent Integer 0-100.
+     * @returns Tesla command response. Observed live: `{ Code: 200, Message: 'Backup reserve updated' }`.
+     *   Note: the new reserve is applied asynchronously — `site_info` can lag the
+     *   command by minutes (its `backup_reserve_percent` is cached).
+     */
+    async setBackupReserve(siteId: string, backupReservePercent: number): Promise<EnergyCommandResponse> {
+        if (!Number.isInteger(backupReservePercent) || backupReservePercent < 0 || backupReservePercent > 100) {
+            throw new Error(
+                `Invalid backup_reserve_percent: ${backupReservePercent}. Must be an integer between 0 and 100.`
+            );
+        }
+
+        const result = await this.fetch<{ response: EnergyCommandResponse }>(
+            `/api/1/energy_sites/${siteId}/backup`,
+            {
+                method: "POST",
+                body: JSON.stringify({ backup_reserve_percent: backupReservePercent }),
+            }
+        );
+        return result.response;
+    }
+}
+
+/**
+ * Tesla Fleet API command acknowledgement returned by energy site write
+ * endpoints (e.g. `/backup`).
+ *
+ * Note the PascalCase keys: the live `/backup` endpoint returns
+ * `{ "Code": 200, "Message": "Backup reserve updated" }`, which differs from the
+ * lowercase `{ code, message }` shown in some Tesla docs. Fields are optional so
+ * callers can tolerate the inconsistency across endpoints/regions.
+ */
+export interface EnergyCommandResponse {
+    Code?: number;
+    Message?: string;
 }
 
 export interface TeslaUserInfo {

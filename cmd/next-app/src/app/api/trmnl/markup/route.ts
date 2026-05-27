@@ -845,18 +845,28 @@ export async function POST(request: Request) {
 async function getQrResponse(request: Request, uuid: string | null, siteId: string | null, title: string, label: string) {
     const host = request.headers.get('host') || 'localhost:3000';
     const protocol = host.includes('localhost') ? 'http' : 'https';
+    const logoUrl = `${protocol}://${host}/apple-touch-icon.png`;
     const manageUrl = uuid
         ? `${protocol}://${host}/trmnl/manage?uuid=${uuid}`
         : `${protocol}://${host}/site/${siteId}/settings`;
 
-    // Generate QR Code
-    const qrDataUrl = await QRCode.toDataURL(manageUrl, { margin: 2, width: 300 });
+    // Generate QR Code with High error correction ('H') to support the centered logo overlay
+    const qrDataUrl = await QRCode.toDataURL(manageUrl, { 
+        margin: 2, 
+        width: 300,
+        errorCorrectionLevel: 'H'
+    });
 
     const markup = `
         <div class="view view--full">
              <div class="layout layout--col layout--center" style="padding: 20px; text-align: center;">
                 <span class="title title--small">${title}</span>
-                <img src="${qrDataUrl}" style="width: 150px; height: 150px; margin: 10px auto; display: block;" />
+                <div style="position: relative; width: 150px; height: 150px; margin: 10px auto;">
+                    <img src="${qrDataUrl}" style="width: 150px; height: 150px; display: block;" />
+                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 28px; height: 28px; background-color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <img src="${logoUrl}" style="width: 22px; height: 22px; border-radius: 50%;" />
+                    </div>
+                </div>
                 <span class="label">${label}</span>
              </div>
         </div>

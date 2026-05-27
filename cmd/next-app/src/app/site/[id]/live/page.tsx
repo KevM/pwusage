@@ -1,9 +1,11 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { EnergyRepo } from '@/lib/energy-repo';
+import { BatteryHoldRepo } from '@/lib/battery-hold-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { Schedule } from '@/lib/schedule';
 import { TeslaClient } from '@/lib/tesla-client';
-import { verifySiteAccess } from '@/lib/auth-checks';
+import { verifySiteAccess, getCurrentUser } from '@/lib/auth-checks';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { LiveDetailView } from '@/components/site/live/LiveDetailView';
 import type { ActivePeriod } from '@/components/site/live/PeriodCardRow';
@@ -44,11 +46,24 @@ async function getLiveStatus(siteId: string) {
     return client.getLiveStatus(siteId);
 }
 
-export default async function SiteLivePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function SiteLivePage({
+    params,
+    searchParams
+}: {
+    params: Promise<{ id: string }>;
+    searchParams: Promise<{ action?: string }>;
+}) {
     const { id } = await params;
 
     const hasAccess = await verifySiteAccess(id);
     if (!hasAccess) {
+        const user = await getCurrentUser();
+        if (!user) {
+            const { action } = await searchParams;
+            const callback = `/site/${id}/live` + (action ? `?action=${action}` : '');
+            redirect(`/login?callback=${encodeURIComponent(callback)}`);
+        }
+
         return (
             <PageShell maxWidth="xl" className="flex items-center justify-center">
                 <SectionCard className="w-full" title="Unauthorized" description="You do not have permission to view this site.">
@@ -66,6 +81,7 @@ export default async function SiteLivePage({ params }: { params: Promise<{ id: s
 
     const siteRepo = new SiteRepo();
     const repo = new EnergyRepo();
+    const holdRepo = new BatteryHoldRepo();
     const site = await siteRepo.getSite(id);
 
     if (!site) {
@@ -106,12 +122,14 @@ export default async function SiteLivePage({ params }: { params: Promise<{ id: s
         }
     }
 
-    const [{ cycle, today }, todayTotals, todayChartRows, latestEnergyData, liveStatus] = await Promise.all([
+    const [{ cycle, today }, todayTotals, todayChartRows, latestEnergyData, liveStatus, activeHold, activeNotice] = await Promise.all([
         repo.getCycleAndTodayTotals(id, cycleStart, todayStart, now),
         repo.getTodayTotals(id, todayStart, now),
         repo.getBucketedEnergyData(id, todayStart, now),
         repo.getLatestEnergyData(id),
-        getLiveStatus(id).catch(() => null)
+        getLiveStatus(id).catch(() => null),
+        holdRepo.getActiveHold(id),
+        holdRepo.getLatestCancelledUnacked(id),
     ]);
 
     // Marginal-cost / next-cheaper orchestration lives in the shared
@@ -155,6 +173,14 @@ export default async function SiteLivePage({ params }: { params: Promise<{ id: s
                     nextCheaperPhrase={nextCheaperPhrase}
                     nextStartPhraseByKey={nextStartPhraseByKey}
                     activeIsCheapest={activeIsCheapest}
+                    batteryHold={activeHold ? {
+                        mode: activeHold.mode,
+                        target_reserve: activeHold.target_reserve,
+                        original_reserve: activeHold.original_reserve,
+                        created_at: activeHold.created_at.toISOString(),
+                        safety_expires_at: activeHold.safety_expires_at.toISOString(),
+                    } : null}
+                    batteryNotice={activeNotice ? { current: activeNotice.cancelled_observed_reserve ?? activeNotice.target_reserve } : null}
                 />
             </div>
         </PageShell>

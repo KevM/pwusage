@@ -80,3 +80,20 @@ If you're starting from an empty DB for the Next.js app:
    ```
 
 4. Authenticate via the UI (or copy an existing access token into AppSettings)
+
+### GitHub Actions CI/CD Configuration
+
+The GitHub Actions workflow (`.github/workflows/ci.yml`) automates building, testing, database backups, migrations, and deployments to Vercel. 
+
+To configure CI/CD, set the following secrets in your GitHub repository (**Settings > Secrets and variables > Actions**):
+
+| Secret Name | Required For | Description |
+|---|---|---|
+| `DATABASE_URL` | Production Migrations & Backups | The production PostgreSQL database connection string. Used to run migrations and perform backups before migrations. |
+| `DEV_DATABASE_URL` | Migration Verification & Previews | The development/preview PostgreSQL database connection string. Used to verify migrations on PRs and configure preview deployments. |
+| `CRON_SECRET` | Migrations | The API secret used to authorize sub-daily cron triggers. The migration job replaces the `{{CRON_SECRET}}` placeholder in SQL migration files with this secret at deploy time. |
+| `BLOB_READ_WRITE_TOKEN` | Database Backups | Vercel Blob read-write token. Used to upload zipped SQL database backups before migrations run. |
+| `VERCEL_TOKEN` | Vercel Deployment | Vercel Personal Access Token used to authenticate deployments. |
+| `VERCEL_ORG_ID` | Vercel Deployment | Vercel Organization ID. |
+| `VERCEL_PROJECT_ID` | Vercel Deployment | Vercel Project ID. |
+| `DISCORD_WEBHOOK` | Notifications | Discord webhook URL used to send deployment status notifications. |

@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { SectionCard } from '@/components/ui/SectionCard';
 import type { TodayTotals, UsageData } from '@/lib/energy-repo';
 import type { EnergyData } from '@/lib/db';
@@ -7,7 +8,7 @@ import { DailyByPeriodTable } from './DailyByPeriodTable';
 import { PeriodCardRow, type ActivePeriod } from './PeriodCardRow';
 import { TodayEnergyChart } from './TodayEnergyChart';
 import { HalfHourRefresh } from './HalfHourRefresh';
-
+import { BatteryHoldCard } from './BatteryHoldCard';
 
 export interface LiveDetailViewProps {
     siteId: string;
@@ -30,6 +31,8 @@ export interface LiveDetailViewProps {
     nextCheaperPhrase: string | null;
     nextStartPhraseByKey?: Record<string, string>;
     activeIsCheapest?: boolean;
+    batteryHold: { mode: 'auto' | 'timer'; target_reserve: number; original_reserve: number; created_at: string; safety_expires_at: string } | null;
+    batteryNotice: { current: number } | null;
 }
 
 export function LiveDetailView({
@@ -40,7 +43,9 @@ export function LiveDetailView({
     todayChartRows, todayStart, now,
     activePeriod, hasTariff,
     nextCheaper, nextCheaperPhrase,
-    nextStartPhraseByKey, activeIsCheapest
+    nextStartPhraseByKey, activeIsCheapest,
+    batteryHold,
+    batteryNotice
 }: LiveDetailViewProps) {
 
 
@@ -83,6 +88,20 @@ export function LiveDetailView({
                     activeIsCheapest={activeIsCheapest}
                 />
             </SectionCard>
+
+            <Suspense fallback={
+                <SectionCard title="Hold battery for charging" density="compact">
+                    <p className="text-sm text-gray-500">Loading battery control...</p>
+                </SectionCard>
+            }>
+                <BatteryHoldCard
+                    siteId={siteId}
+                    soc={batterySoC}
+                    hasTariff={hasTariff}
+                    initialHold={batteryHold}
+                    initialNotice={batteryNotice}
+                />
+            </Suspense>
         </div>
     );
 }

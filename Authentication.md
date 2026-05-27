@@ -52,6 +52,20 @@ Route: `GET /login`
 - Stores `auth_state`, `auth_nonce`, optional `auth_callback` cookies.
 - Redirects to Tesla authorize endpoint with required scopes.
 
+Requested Fleet API scopes (`src/app/login/route.ts`): `openid`, `energy_device_data`,
+`offline_access`, `user_data`, `energy_cmds`.
+
+Energy scope split (read vs. write):
+- `energy_device_data` ("Energy Product Information") — **read-only**: history, live
+  status, `site_info`, tariff. Powers all current dashboard/Trmnl features.
+- `energy_cmds` ("Energy Product Commands") — **write commands**: backup reserve
+  (`POST /api/1/energy_sites/{id}/backup`), storm mode, off-grid reserve, operation mode.
+
+A requested scope is only granted if it is also enabled for the app's domain in the
+Tesla developer dashboard; Tesla silently drops scopes the app isn't registered for.
+After enabling a new scope, users must re-authenticate via `/login` (the authorize URL
+uses `prompt=login`) so a fresh token carries it — existing tokens are not upgraded.
+
 ### 2. OAuth callback processing
 Route: `GET /auth/tesla-callback`
 - Validates `code` and `state`.

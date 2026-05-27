@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { drawQrWithLogo } from '@/lib/qr-generator';
 import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
 import { TariffList } from './TariffList';
@@ -10,6 +11,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/com
 import { Select, Label } from '@/components/ui/Form';
 import { H2 } from '@/components/ui/Typography';
 import { Button } from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 
 
 import { SiteWithTariffs, TrmnlInstallation } from '@/lib/db';
@@ -82,6 +84,7 @@ function extractPluginSettingId(installation: TrmnlInstallation | undefined): nu
 
 export function SettingsView({ site, installation }: SettingsViewProps) {
     const router = useRouter();
+    const { toast } = useToast();
     const [previewHtml, setPreviewHtml] = useState('');
     const [previewError, setPreviewError] = useState('');
     const [previewLoading, setPreviewLoading] = useState(true);
@@ -89,6 +92,15 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
     const [refreshLoading, setRefreshLoading] = useState(false);
     const [refreshStatus, setRefreshStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
     const pluginSettingId = extractPluginSettingId(installation);
+
+    // Callback ref to render QR code with centered logo as soon as canvas mounts
+    const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
+        if (canvas) {
+            const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
+            drawQrWithLogo(canvas, deepLink)
+                .catch(err => console.error('Error generating Battery Hold QR code:', err));
+        }
+    }, [site.id]);
 
     const handleRefreshTariffs = async () => {
         setRefreshLoading(true);
@@ -186,7 +198,6 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                 </CardContent>
             </Card>
 
-
             <Card>
                 <CardHeader
                     action={
@@ -264,42 +275,42 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
 
             <Card>
                 <CardHeader>
-                    <CardTitle>Tariff Information</CardTitle>
+                    <CardTitle>Battery Hold Quick Link (QR)</CardTitle>
+                    <CardDescription>
+                        Scan this QR code with your phone or mobile device to jump directly to the Live view and initiate a battery hold command.
+                    </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                    <div>
-                        <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
-                            The rates shown below are synced from your Powerwall settings in the Tesla App. If you&apos;ve recently changed your Time-of-Use (TOU) rates or tariff settings in Tesla, click the button below to refresh.
-                        </p>
+                <CardContent className="flex flex-col items-center">
+                    <div className="bg-white p-3 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm mb-4">
+                        <canvas ref={canvasRef} className="w-48 h-48" />
+                    </div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center max-w-sm mb-4 italic">
+                        Put this QR code near your EV charger to make it easy to start a battery hold with your personal device.
+                    </p>
+                    <div className="flex gap-4 w-full max-w-sm">
                         <Button
-                            onClick={handleRefreshTariffs}
-                            disabled={refreshLoading}
-                            className="gap-2"
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => {
+                                const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
+                                navigator.clipboard.writeText(deepLink)
+                                    .then(() => toast({ title: 'Link copied', description: 'Battery Hold URL copied to clipboard!', variant: 'success' }))
+                                    .catch(() => toast({ title: 'Copy failed', description: 'Failed to copy link.', variant: 'danger' }));
+                            }}
                         >
-                            {refreshLoading ? (
-                                <>
-                                    <span className="inline-block animate-spin">⟳</span>
-                                    Refreshing...
-                                </>
-                            ) : (
-                                'Refresh Tariffs from Tesla'
-                            )}
+                            Copy Link
                         </Button>
                     </div>
-
-                    {refreshStatus && (
-                        <div className={`p-3 rounded-md text-sm ${
-                            refreshStatus.type === 'success'
-                                ? 'bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200'
-                                : 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200'
-                        }`}>
-                            {refreshStatus.message}
-                        </div>
-                    )}
                 </CardContent>
             </Card>
 
-            <TariffList tariffs={site.tariffs} />
+            <TariffList
+                tariffs={site.tariffs}
+                onRefresh={handleRefreshTariffs}
+                refreshLoading={refreshLoading}
+                refreshStatus={refreshStatus}
+            />
         </div>
     );
 }
+
