@@ -16,13 +16,13 @@ BEGIN
   IF secret_id IS NOT NULL THEN
     PERFORM vault.update_secret(
       secret_id,
-      '{{BATTERY_RESTORE_CRON_TARGET_URL}}',
+      $target_url_val${{BATTERY_RESTORE_CRON_TARGET_URL}}$target_url_val$,
       'battery_restore_cron_target_url',
       'Vercel API battery restore cron endpoint URL'
     );
   ELSE
     PERFORM vault.create_secret(
-      '{{BATTERY_RESTORE_CRON_TARGET_URL}}',
+      $target_url_val${{BATTERY_RESTORE_CRON_TARGET_URL}}$target_url_val$,
       'battery_restore_cron_target_url',
       'Vercel API battery restore cron endpoint URL'
     );
@@ -43,13 +43,13 @@ BEGIN
   IF secret_id IS NOT NULL THEN
     PERFORM vault.update_secret(
       secret_id,
-      '{{CRON_SECRET}}',
+      $cron_secret_val${{CRON_SECRET}}$cron_secret_val$,
       'cron_secret',
       'Vercel cron endpoint authorization bearer token'
     );
   ELSE
     PERFORM vault.create_secret(
-      '{{CRON_SECRET}}',
+      $cron_secret_val${{CRON_SECRET}}$cron_secret_val$,
       'cron_secret',
       'Vercel cron endpoint authorization bearer token'
     );

@@ -106,6 +106,24 @@ describe('parkBattery', () => {
     const res = await parkBattery({ client: client as any, repo: repo as any, siteId: 's', reserveChoice: 100 });
     expect(res.status).toBe('needs_reauth');
   });
+
+  it('attempts compensating restore back to original reserve when database write fails', async () => {
+    const repo = fakeRepo(null);
+    repo.createHold = vi.fn().mockRejectedValue(new Error('DB Connection Timeout'));
+    
+    const client = fakeClient({
+      getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 25 }),
+      setBackupReserve: vi.fn().mockResolvedValue({ Code: 200, Message: 'OK' }),
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await parkBattery({ client: client as any, repo: repo as any, siteId: 's', mode: 'auto', reserveChoice: 100 });
+    
+    expect(res).toEqual({ status: 'error', message: 'Database error: DB Connection Timeout' });
+    expect(client.setBackupReserve).toHaveBeenCalledTimes(2);
+    expect(client.setBackupReserve.mock.calls[0]).toEqual(['s', 100]);
+    expect(client.setBackupReserve.mock.calls[1]).toEqual(['s', 25]);
+  });
 });
 
 describe('restoreBattery', () => {

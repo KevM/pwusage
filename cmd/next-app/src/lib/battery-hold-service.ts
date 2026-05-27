@@ -71,16 +71,26 @@ export async function parkBattery(
   } catch (e) {
     return isAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
   }
-
-  const hold = await repo.createHold({
-    siteId,
-    originalReserve: info.backup_reserve_percent,
-    targetReserve: target,
-    parkedSoc: soc,
-    baselineLoadW: live.load_power,
-    safetyExpiresAt: new Date(now.getTime() + holdMs),
-    mode,
-  });
+  let hold: BatteryHold;
+  try {
+    hold = await repo.createHold({
+      siteId,
+      originalReserve: info.backup_reserve_percent,
+      targetReserve: target,
+      parkedSoc: soc,
+      baselineLoadW: live.load_power,
+      safetyExpiresAt: new Date(now.getTime() + holdMs),
+      mode,
+    });
+  } catch (dbError) {
+    console.error(`[BatteryHold] Failed to write hold to database for site ${siteId}. Attempting compensating restore to ${info.backup_reserve_percent}%...`, dbError);
+    try {
+      await client.setBackupReserve(siteId, info.backup_reserve_percent);
+    } catch (restoreError) {
+      console.error(`[BatteryHold] Compensating restore failed for site ${siteId}:`, restoreError);
+    }
+    return { status: 'error', message: `Database error: ${errMsg(dbError)}` };
+  }
   return { status: 'ok', hold };
 }
 
