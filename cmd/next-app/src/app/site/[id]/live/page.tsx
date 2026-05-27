@@ -81,6 +81,7 @@ export default async function SiteLivePage({
 
     const siteRepo = new SiteRepo();
     const repo = new EnergyRepo();
+    const holdRepo = new BatteryHoldRepo();
     const site = await siteRepo.getSite(id);
 
     if (!site) {
@@ -127,8 +128,8 @@ export default async function SiteLivePage({
         repo.getBucketedEnergyData(id, todayStart, now),
         repo.getLatestEnergyData(id),
         getLiveStatus(id).catch(() => null),
-        new BatteryHoldRepo().getActiveHold(id),
-        new BatteryHoldRepo().getLatestCancelledUnacked(id),
+        holdRepo.getActiveHold(id),
+        holdRepo.getLatestCancelledUnacked(id),
     ]);
 
     // Marginal-cost / next-cheaper orchestration lives in the shared

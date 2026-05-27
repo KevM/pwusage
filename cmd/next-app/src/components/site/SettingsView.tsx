@@ -11,6 +11,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/com
 import { Select, Label } from '@/components/ui/Form';
 import { H2 } from '@/components/ui/Typography';
 import { Button } from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 
 
 import { SiteWithTariffs, TrmnlInstallation } from '@/lib/db';
@@ -83,6 +84,7 @@ function extractPluginSettingId(installation: TrmnlInstallation | undefined): nu
 
 export function SettingsView({ site, installation }: SettingsViewProps) {
     const router = useRouter();
+    const { toast } = useToast();
     const [previewHtml, setPreviewHtml] = useState('');
     const [previewError, setPreviewError] = useState('');
     const [previewLoading, setPreviewLoading] = useState(true);
@@ -292,8 +294,8 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                             onClick={() => {
                                 const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
                                 navigator.clipboard.writeText(deepLink)
-                                    .then(() => alert('Battery Hold Url copied to clipboard!'))
-                                    .catch(() => alert('Failed to copy link.'));
+                                    .then(() => toast({ title: 'Link copied', description: 'Battery Hold URL copied to clipboard!', variant: 'success' }))
+                                    .catch(() => toast({ title: 'Copy failed', description: 'Failed to copy link.', variant: 'danger' }));
                             }}
                         >
                             Copy Link

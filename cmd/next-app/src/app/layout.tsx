@@ -5,6 +5,7 @@ import "./globals.css";
 import { GlobalHeader } from "@/components/GlobalHeader";
 import { Footer } from "@/components/Footer";
 import { getAppBaseUrl } from "@/lib/url-utils";
+import { ToastProvider } from "@/components/ui/Toast";
 
 const isPreviewDeployment = process.env.VERCEL_ENV === "preview";
 const appTitle = isPreviewDeployment ? "Powerwall Usage (Preview)" : "Powerwall Usage";
@@ -78,11 +79,13 @@ export default async function RootLayout({
         suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} antialiased flex flex-col min-h-screen`}
       >
-        <GlobalHeader showStyleGuide={showStyleGuide} />
-        <main className="flex-grow min-h-screen">
-          {children}
-        </main>
-        <Footer />
+        <ToastProvider>
+          <GlobalHeader showStyleGuide={showStyleGuide} />
+          <main className="flex-grow min-h-screen">
+            {children}
+          </main>
+          <Footer />
+        </ToastProvider>
       </body>
     </html>
   );

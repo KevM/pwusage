@@ -99,6 +99,15 @@ describe('parkBattery', () => {
     expect(repo.createHold).not.toHaveBeenCalled();
   });
 
+  it('returns error when load power is unavailable or NaN', async () => {
+    const repo = fakeRepo(null);
+    const client = fakeClient({ getLiveStatus: vi.fn().mockResolvedValue({ percentage_charged: 90, load_power: NaN }) });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await parkBattery({ client: client as any, repo: repo as any, siteId: 's' });
+    expect(res).toEqual({ status: 'error', message: 'Failed to retrieve baseline load power.' });
+    expect(repo.createHold).not.toHaveBeenCalled();
+  });
+
   it('maps a 403 to needs_reauth', async () => {
     const repo = fakeRepo(null);
     const client = fakeClient({ setBackupReserve: vi.fn().mockRejectedValue(new Error('Tesla API Error: 403 forbidden')) });

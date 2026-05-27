@@ -50,6 +50,11 @@ export async function parkBattery(
   const soc = live?.percentage_charged;
   if (typeof soc !== 'number' || Number.isNaN(soc)) return { status: 'no_soc' };
 
+  const loadPower = live?.load_power;
+  if (typeof loadPower !== 'number' || Number.isNaN(loadPower)) {
+    return { status: 'error', message: 'Failed to retrieve baseline load power.' };
+  }
+
   const plan = planReserve(soc);
   let target: number;
   if (plan.ambiguous) {
@@ -78,7 +83,7 @@ export async function parkBattery(
       originalReserve: info.backup_reserve_percent,
       targetReserve: target,
       parkedSoc: soc,
-      baselineLoadW: live.load_power,
+      baselineLoadW: loadPower,
       safetyExpiresAt: new Date(now.getTime() + holdMs),
       mode,
     });

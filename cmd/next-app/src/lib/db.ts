@@ -151,7 +151,7 @@ export interface LoadTag {
 export interface BatteryHold {
   id: number;
   site_id: string;
-  status: 'active' | 'restored' | 'failed' | 'cancelled';
+  status: 'active' | 'restored' | 'cancelled';
   mode: 'auto' | 'timer';
   original_reserve: number;
   target_reserve: number;

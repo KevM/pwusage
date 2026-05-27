@@ -10,6 +10,7 @@ import { Alert, AlertDescription } from '@/components/ui/Alert';
 import { planReserve } from '@/lib/battery-hold-rules';
 import { holdButtonLabel, holdReserveText, guardNoticeText } from './battery-hold-format';
 import { ConfirmHoldModal, type HoldChoice } from './ConfirmHoldModal';
+import { useToast } from '@/components/ui/Toast';
 
 interface ActiveHold {
   mode: 'auto' | 'timer';
@@ -34,6 +35,7 @@ interface Props {
 export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNotice }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { toast } = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsReauth, setNeedsReauth] = useState(false);
@@ -199,8 +201,8 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
                 onClick={() => {
                   const deepLink = `${window.location.origin}/site/${siteId}/live?action=park`;
                   navigator.clipboard.writeText(deepLink)
-                    .then(() => alert('Battery Hold link copied to clipboard!'))
-                    .catch(() => alert('Failed to copy link.'));
+                    .then(() => toast({ title: 'Link copied', description: 'Battery Hold link copied to clipboard!', variant: 'success' }))
+                    .catch(() => toast({ title: 'Copy failed', description: 'Failed to copy link.', variant: 'danger' }));
                 }}
               >
                 Copy Link

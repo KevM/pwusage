@@ -28,11 +28,11 @@ export async function drawQrWithLogo(
 
   // Load the logo image
   const img = new Image();
-  img.src = logoUrl;
   
-  await new Promise((resolve, reject) => {
-    img.onload = resolve;
-    img.onerror = reject;
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error(`Failed to load logo image: ${logoUrl}`));
+    img.src = logoUrl;
   });
 
   // Calculate coordinates to center the logo
