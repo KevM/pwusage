@@ -1,6 +1,7 @@
 import { cache } from 'react';
 import { pool, User, Site } from './db';
 import { TeslaClient } from './tesla-client';
+import { log } from './log';
 
 export interface UserWithSites extends User {
     sites: Site[];
@@ -165,7 +166,9 @@ export class UserRepo {
                 },
                 onTokenUpdate: async (newAccess, newRefresh) => {
                     await pool.query('UPDATE "User" SET access_token = $1, refresh_token = $2 WHERE id = $3', [newAccess, newRefresh, user.id]);
-                    console.log(`[UserRepo] Refreshed tokens for user ${user.id}`);
+                    log.info(`[UserRepo] Refreshed tokens for user ${user.id}`, {
+                        userId: user.id,
+                    });
                 }
             });
 
@@ -177,7 +180,10 @@ export class UserRepo {
             return { status: 'active' };
 
         } catch (err: unknown) {
-            console.error(`[UserRepo] Error checking user ${user.id}:`, err);
+            log.error(`[UserRepo] Error checking user ${user.id}:`, {
+                userId: user.id,
+                err: err instanceof Error ? err.message : String(err),
+            });
 
             let status = 'error';
             const errorMsg = err instanceof Error ? err.message : String(err);
@@ -226,7 +232,13 @@ export class UserRepo {
             await new Promise(r => setTimeout(r, 200));
         }
 
-        console.log(`[UserRepo] verifyAllUserStatuses: total=${users.length}, skipped=${skipCount}, active=${activeCount}, inactive=${inactiveCount}, errors=${errorCount}`);
+        log.info(`[UserRepo] verifyAllUserStatuses: total=${users.length}, skipped=${skipCount}, active=${activeCount}, inactive=${inactiveCount}, errors=${errorCount}`, {
+            total: users.length,
+            skipped: skipCount,
+            active: activeCount,
+            inactive: inactiveCount,
+            errors: errorCount,
+        });
 
         return {
             total: users.length,
