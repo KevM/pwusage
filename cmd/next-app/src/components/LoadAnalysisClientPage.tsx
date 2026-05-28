@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import NILMChart from '@/components/NILMChart';
 import { PowerData } from '@/lib/nilm/types';
 import { LoadEvent } from '@/lib/nilm/load-detection';
+import { track } from '@/lib/analytics';
 import { DateNavigator, DateNavigatorButton, DateNavigatorContent, DateNavigatorLabel } from '@/components/ui/DateNavigator';
 import { Card, CardBody, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -202,7 +203,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
         }
 
         try {
-            await fetch(`/api/site/${siteId}/analysis`, {
+            const res = await fetch(`/api/site/${siteId}/analysis`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -212,6 +213,9 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                     tag
                 })
             });
+            if (res.ok) {
+                track('load-analysis-tagged', { site_id: siteId, tag });
+            }
             fetchData(); // Refresh to see tags
         } catch (e) {
             console.error(e);
