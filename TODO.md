@@ -37,4 +37,9 @@ Currently, Tesla ID tokens are signed with keys that don't appear in the public 
 - `cmd/next-app/src/app/auth/tesla-callback/route.ts` - JWT verification with lazy refresh
 - `Security.md` section 8 - Tesla `id_token` signature verification requirements
 
+## Observability Follow-ups
+
+- [ ] Migrate remaining ~130 `console.*` callsites to `log.*` for full Better Stack coverage (low-priority follow-up to the Umami + Better Stack project).
+- [ ] Enrich `getCurrentUser()` to also return `email` so `AnalyticsIdentify` can pass it (current call passes `null`).
+
 
