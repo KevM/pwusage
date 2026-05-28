@@ -4,6 +4,7 @@ import { SiteRepo } from './site-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { UserRepo } from './user-repo';
 import type { BatteryHold } from './db';
+import { log } from './log';
 
 export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
 
@@ -71,7 +72,11 @@ export async function parkBattery(
   try {
     const resp = await client.setBackupReserve(siteId, target);
     if (resp?.Message && /Max Backup Reserve/i.test(resp.Message)) {
-      console.warn(`[BatteryHold] unexpected clamp for ${siteId}: sent ${target}, got "${resp.Message}"`);
+      log.warn(`[BatteryHold] unexpected clamp for ${siteId}: sent ${target}, got "${resp.Message}"`, {
+        siteId,
+        target,
+        response: resp.Message,
+      });
     }
   } catch (e) {
     return isAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
@@ -88,11 +93,18 @@ export async function parkBattery(
       mode,
     });
   } catch (dbError) {
-    console.error(`[BatteryHold] Failed to write hold to database for site ${siteId}. Attempting compensating restore to ${info.backup_reserve_percent}%...`, dbError);
+    log.error(`[BatteryHold] Failed to write hold to database for site ${siteId}. Attempting compensating restore to ${info.backup_reserve_percent}%...`, {
+      siteId,
+      originalReserve: info.backup_reserve_percent,
+      err: dbError instanceof Error ? dbError.message : String(dbError),
+    });
     try {
       await client.setBackupReserve(siteId, info.backup_reserve_percent);
     } catch (restoreError) {
-      console.error(`[BatteryHold] Compensating restore failed for site ${siteId}:`, restoreError);
+      log.error(`[BatteryHold] Compensating restore failed for site ${siteId}:`, {
+        siteId,
+        err: restoreError instanceof Error ? restoreError.message : String(restoreError),
+      });
     }
     return { status: 'error', message: `Database error: ${errMsg(dbError)}` };
   }
