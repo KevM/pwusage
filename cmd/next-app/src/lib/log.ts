@@ -17,11 +17,13 @@ function emit(level: Level, message: string, ctx?: Ctx): void {
         consoleFn(message);
     }
     if (lt) {
-        // Wrap in try/catch defensively so an SDK fault never breaks the caller's flow.
+        // The SDK methods return promises; attach .catch() so an async rejection
+        // never becomes an unhandled rejection. Also guard against synchronous
+        // throws (defensive belt-and-suspenders).
         try {
-            void lt[level](message, ctx);
+            lt[level](message, ctx).catch(() => { /* swallow */ });
         } catch {
-            // swallow
+            // swallow synchronous throw
         }
     }
 }

@@ -39,6 +39,24 @@ describe('log wrapper', () => {
         expect(spy).toHaveBeenCalledWith('chatter');
     });
 
+    it('forwards to Logtail when BETTERSTACK_SOURCE_TOKEN is set', async () => {
+        process.env.BETTERSTACK_SOURCE_TOKEN = 'test-token';
+        const mockInfo = vi.fn().mockResolvedValue({});
+        vi.doMock('@logtail/node', () => {
+            class MockLogtail {
+                info = mockInfo;
+                warn = vi.fn().mockResolvedValue({});
+                error = vi.fn().mockResolvedValue({});
+                debug = vi.fn().mockResolvedValue({});
+                flush = vi.fn().mockResolvedValue(undefined);
+            }
+            return { Logtail: MockLogtail };
+        });
+        const { log } = await import('./log');
+        log.info('msg', { a: 1 });
+        expect(mockInfo).toHaveBeenCalledWith('msg', { a: 1 });
+    });
+
     it('flush() resolves silently when SDK is not configured', async () => {
         const { log } = await import('./log');
         await expect(log.flush()).resolves.toBeUndefined();
