@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { formatTouName } from '../lib/format-utils';
-import { fetchSiteLiveData, isValidSiteId } from '@/lib/site-live-data-client';
+import { fetchSiteLiveData, isValidSiteId, SiteLiveDataFetchError } from '@/lib/site-live-data-client';
+import { notifyReauthNeeded } from '@/lib/reauth-signal';
 import { useVisiblePolling } from '@/lib/use-visible-polling';
 
 interface LiveStats {
@@ -25,6 +26,9 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
             setStats(data);
             setLastUpdate(new Date());
         } catch (error) {
+            if (error instanceof SiteLiveDataFetchError && error.status === 401) {
+                notifyReauthNeeded(siteId);
+            }
             if (error instanceof DOMException && error.name === 'AbortError') return;
             console.error('Failed to refresh site stats:', error);
         }

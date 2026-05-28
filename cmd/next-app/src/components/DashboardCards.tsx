@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { formatTouName } from '../lib/format-utils';
-import { fetchSiteLiveData, isValidSiteId } from '@/lib/site-live-data-client';
+import { fetchSiteLiveData, isValidSiteId, SiteLiveDataFetchError } from '@/lib/site-live-data-client';
+import { notifyReauthNeeded } from '@/lib/reauth-signal';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StatusPill } from '@/components/ui/StatusPill';
 
@@ -84,6 +85,9 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                 }));
                 setLastUpdate(new Date());
             } catch (e) {
+                if (e instanceof SiteLiveDataFetchError && e.status === 401) {
+                    notifyReauthNeeded(p.energy_site_id);
+                }
                 if (e instanceof DOMException && e.name === 'AbortError') {
                     return;
                 }

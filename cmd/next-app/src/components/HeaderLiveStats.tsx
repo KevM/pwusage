@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { fetchSiteLiveData, isValidSiteId, SiteLiveDataFetchError } from '@/lib/site-live-data-client';
 import type { SiteLiveData, SiteLiveSparklinePoint } from '@/lib/site-live-data-client';
+import { notifyReauthNeeded } from '@/lib/reauth-signal';
 import { LiveMetricChip } from '@/components/ui/LiveMetricChip';
 import { Spinner } from '@/components/ui/Spinner';
 import { MiniSparkline } from '@/components/ui/MiniSparkline';
@@ -89,6 +90,7 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
         } catch (error) {
             if (error instanceof DOMException && error.name === 'AbortError') return;
             if (error instanceof SiteLiveDataFetchError && error.status === 401) {
+                notifyReauthNeeded(siteId);
                 if (!redirectedToLogin) {
                     setRedirectedToLogin(true);
                     console.warn('[HeaderLiveStats] Unauthorized. Redirecting to login...');

@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { drawQrWithLogo } from '@/lib/qr-generator';
+import { notifyReauthNeeded } from '@/lib/reauth-signal';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { Button } from '@/components/ui/Button';
 import { Alert, AlertDescription } from '@/components/ui/Alert';
@@ -68,7 +69,11 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
       body: JSON.stringify(payload),
     });
     const body = await res.json().catch(() => ({}));
-    if (res.status === 409 && body?.error === 'needs_reauth') { setNeedsReauth(true); return { ok: false, body }; }
+    if (res.status === 409 && body?.error === 'needs_reauth') {
+      notifyReauthNeeded(siteId);
+      setNeedsReauth(true);
+      return { ok: false, body };
+    }
     if (res.status === 422 && body?.error === 'needs_choice') { setError('A reserve choice is required.'); return { ok: false, body }; }
     if (!res.ok) { setError('Something went wrong. Try again.'); return { ok: false, body }; }
     return { ok: true, body };
