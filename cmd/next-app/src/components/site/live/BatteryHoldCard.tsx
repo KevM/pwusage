@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { drawQrWithLogo } from '@/lib/qr-generator';
 import { notifyReauthNeeded } from '@/lib/reauth-signal';
+import { track } from '@/lib/analytics';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { Button } from '@/components/ui/Button';
 import { Alert, AlertDescription } from '@/components/ui/Alert';
@@ -83,7 +84,17 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     setBusy(true); setError(null); setNeedsReauth(false);
     try {
       const { ok } = await post({ action: 'park', ...choice });
-      if (ok) { setShowHoldModal(false); router.refresh(); }
+      if (ok) {
+        const props: Record<string, string | number | boolean> = {
+          site_id: siteId,
+          mode: choice.mode,
+        };
+        if (typeof choice.reserveChoice === 'number') props.target_pct = choice.reserveChoice;
+        if (typeof choice.durationHours === 'number') props.hours = choice.durationHours;
+        track('battery-hold-set', props);
+        setShowHoldModal(false);
+        router.refresh();
+      }
     } catch { setError('Network error. Try again.'); } finally { setBusy(false); }
   }
 
@@ -92,6 +103,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     try {
       const { ok, body } = await post({ action: 'restore' });
       if (ok) {
+        track('battery-hold-restored', { site_id: siteId });
         setShowRestoreConfirm(false);
         if (body?.status === 'reserve_changed') setNotice({ current: Number(body.current) });
         router.refresh();
@@ -125,7 +137,10 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
         </p>
         <div className="flex gap-2 items-center flex-wrap">
           <Button variant="outline" disabled={busy} onClick={() => setShowRestoreConfirm(true)}>Restore now</Button>
-          <Button variant="outline" size="sm" onClick={() => setShowQrModal(true)}>QR Code</Button>
+          <Button variant="outline" size="sm" onClick={() => {
+            track('qr-code-opened', { site_id: siteId });
+            setShowQrModal(true);
+          }}>QR Code</Button>
         </div>
       </div>
     );
@@ -139,7 +154,10 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
         </p>
         <div className="flex gap-2 items-center flex-wrap">
           <Button disabled={busy} onClick={() => setShowHoldModal(true)}>{holdButtonLabel(soc)}</Button>
-          <Button variant="outline" size="sm" onClick={() => setShowQrModal(true)}>QR Code</Button>
+          <Button variant="outline" size="sm" onClick={() => {
+            track('qr-code-opened', { site_id: siteId });
+            setShowQrModal(true);
+          }}>QR Code</Button>
         </div>
       </div>
     );
