@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
+import Script from "next/script";
 
 import { GlobalHeader } from "@/components/GlobalHeader";
 import { Footer } from "@/components/Footer";
+import { AnalyticsIdentify } from "@/components/AnalyticsIdentify";
 import { getAppBaseUrl } from "@/lib/url-utils";
+import { getCurrentUser } from "@/lib/auth-checks";
 import { ToastProvider } from "@/components/ui/Toast";
 
 const isPreviewDeployment = process.env.VERCEL_ENV === "preview";
@@ -57,13 +60,14 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const showStyleGuide = process.env.NODE_ENV === "development";
-  /* Sites fetching logic removed as it was only used for GlobalHeader which no longer needs it. 
+  const currentUser = await getCurrentUser();
+  /* Sites fetching logic removed as it was only used for GlobalHeader which no longer needs it.
      Keeping auth check logic if needed for other reasons, but seemingly the sites variable itself is now unused.
-     actually, let's keep it simple and just remove the sites variable and its populating logic. 
-     Wait, do we need to keep the auth token retrieval? 
+     actually, let's keep it simple and just remove the sites variable and its populating logic.
+     Wait, do we need to keep the auth token retrieval?
      The original code retrieved tokens to fetch sites.
      If we don't fetch sites, we might not need to reference the Repo or tokens here at all?
-     
+
      Let's check lines 30-58.
      It instantiates EnergyRepo and fetches sites.
      If I remove all of that, `RootLayout` becomes very simple.
@@ -75,10 +79,23 @@ export default async function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {process.env.NEXT_PUBLIC_UMAMI_SCRIPT_URL && process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID && (
+          <Script
+            src={process.env.NEXT_PUBLIC_UMAMI_SCRIPT_URL}
+            data-website-id={process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID}
+            strategy="afterInteractive"
+          />
+        )}
+      </head>
       <body
         suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} antialiased flex flex-col min-h-screen`}
       >
+        <AnalyticsIdentify
+          userId={currentUser?.id ?? null}
+          email={null}
+        />
         <ToastProvider>
           <GlobalHeader showStyleGuide={showStyleGuide} />
           <main className="flex-grow min-h-screen">
