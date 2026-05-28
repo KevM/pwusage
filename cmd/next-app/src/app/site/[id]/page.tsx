@@ -298,7 +298,9 @@ export default async function SitePage({ params, searchParams }: {
                 />
             <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />
 
+            {/* hasBatteryHold not currently available at this layer; defaults to false. TODO: add to TODO.md as a follow-up. */}
             <SiteTabs
+                siteId={id}
                 historySlot={
                     <HistoryView
                         chartNavSlot={null}

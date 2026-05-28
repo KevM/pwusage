@@ -3,18 +3,21 @@
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { ReactNode, useEffect, useRef } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { track } from '@/lib/analytics';
 
 type TabId = 'history' | 'bill' | 'settings';
 
 interface SiteTabsProps {
     children?: ReactNode; // We might not need children if we pass slots, or we use children as content
+    siteId: string;
+    hasBatteryHold?: boolean;
     historySlot: ReactNode;
     billSlot: ReactNode;
     settingsSlot: ReactNode;
     breadcrumbs?: ReactNode;
 }
 
-export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: SiteTabsProps) {
+export function SiteTabs({ siteId, hasBatteryHold = false, historySlot, billSlot, settingsSlot, breadcrumbs }: SiteTabsProps) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -32,6 +35,8 @@ export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: S
         if (initialized.current) return;
         initialized.current = true;
 
+        track('site-loaded', { site_id: siteId, has_battery_hold: hasBatteryHold });
+
         // If no view is specified in URL, check localStorage
         if (!searchParams.has('view')) {
             const lastTab = localStorage.getItem('pwusage_last_site_tab') as TabId;
@@ -41,9 +46,12 @@ export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: S
                 router.replace(`${pathname}?${params.toString()}`);
             }
         }
-    }, [pathname, router, searchParams]);
+        // intentionally only on mount
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const setTab = (tab: TabId) => {
+        track('site-tab-changed', { site_id: siteId, tab_name: tab });
         localStorage.setItem('pwusage_last_site_tab', tab);
         const params = new URLSearchParams(searchParams);
         params.set('view', tab);
