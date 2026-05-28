@@ -46,25 +46,28 @@ export default async function SitePage({ params, searchParams }: {
     const hasAccess = await verifySiteAccess(id);
     if (!hasAccess) {
         return (
-            <PageShell maxWidth="xl" className="flex items-center justify-center">
-                <SectionCard
-                    className="w-full"
-                    title="Unauthorized"
-                    description="You do not have permission to view this site."
-                >
-                    <div className="space-y-4">
-                        <Alert variant="danger">
-                            <AlertTitle>Access denied</AlertTitle>
-                            <AlertDescription>
-                                Your account is not authorized for this site.
-                            </AlertDescription>
-                        </Alert>
-                        <Link href="/products">
-                            <Button variant="outline">Return to My Products</Button>
-                        </Link>
-                    </div>
-                </SectionCard>
-            </PageShell>
+            <>
+                <LoginSuccessTracker />
+                <PageShell maxWidth="xl" className="flex items-center justify-center">
+                    <SectionCard
+                        className="w-full"
+                        title="Unauthorized"
+                        description="You do not have permission to view this site."
+                    >
+                        <div className="space-y-4">
+                            <Alert variant="danger">
+                                <AlertTitle>Access denied</AlertTitle>
+                                <AlertDescription>
+                                    Your account is not authorized for this site.
+                                </AlertDescription>
+                            </Alert>
+                            <Link href="/products">
+                                <Button variant="outline">Return to My Products</Button>
+                            </Link>
+                        </div>
+                    </SectionCard>
+                </PageShell>
+            </>
         );
     }
 
@@ -124,25 +127,33 @@ export default async function SitePage({ params, searchParams }: {
 
     if (!finalSite) {
         return (
-            <PageShell maxWidth="xl" className="flex items-center justify-center">
-                <SectionCard
-                    className="w-full"
-                    title="Site Not Found"
-                    description="We could not find a site for the selected id."
-                >
-                    <div>
-                        <Link href="/products">
-                            <Button variant="outline">Back to Products</Button>
-                        </Link>
-                    </div>
-                </SectionCard>
-            </PageShell>
+            <>
+                <LoginSuccessTracker />
+                <PageShell maxWidth="xl" className="flex items-center justify-center">
+                    <SectionCard
+                        className="w-full"
+                        title="Site Not Found"
+                        description="We could not find a site for the selected id."
+                    >
+                        <div>
+                            <Link href="/products">
+                                <Button variant="outline">Back to Products</Button>
+                            </Link>
+                        </div>
+                    </SectionCard>
+                </PageShell>
+            </>
         );
     }
 
     // If new site, BLOCK everything else and show setup wizard
     if (!hasData) {
-        return <SiteSetup siteId={id} />;
+        return (
+            <>
+                <LoginSuccessTracker />
+                <SiteSetup siteId={id} />
+            </>
+        );
     }
 
     const siteJson = finalSite.json as import('@/lib/tesla-client').EnergySiteInfo | null;
