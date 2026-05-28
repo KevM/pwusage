@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { drawQrWithLogo } from '@/lib/qr-generator';
+import { track } from '@/lib/analytics';
 import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
 import { TariffList } from './TariffList';
@@ -103,6 +104,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
     }, [site.id]);
 
     const handleRefreshTariffs = async () => {
+        track('tariffs-refreshed', { site_id: site.id });
         setRefreshLoading(true);
         setRefreshStatus(null);
         try {
