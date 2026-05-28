@@ -322,6 +322,7 @@ export async function GET(request: NextRequest) {
     // cookieStore.set('refresh_token', authData.refresh_token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' });
 
     // Update DB (Source of Truth)
+    let isNew = false;
     try {
         const { TeslaClient } = await import('@/lib/tesla-client');
         const { Importer } = await import('@/lib/importer');
@@ -369,13 +370,14 @@ export async function GET(request: NextRequest) {
 
         // Upsert User
         const userRepo = new UserRepo();
-        await userRepo.upsertOnTeslaAuth({
+        const upsertResult = await userRepo.upsertOnTeslaAuth({
             userId,
             email: userEmail ?? null,
             accessToken: authData.access_token,
             refreshToken: authData.refresh_token,
             tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
         });
+        isNew = upsertResult.isNew;
 
         // Retrieve Roles immediately
         const userRow = await userRepo.getById(userId);
@@ -423,9 +425,9 @@ export async function GET(request: NextRequest) {
     cookieStore.delete('auth_nonce');
     cookieStore.delete('auth_callback');
 
-    if (savedCallback && savedCallback.startsWith('/') && !savedCallback.startsWith('//') && !savedCallback.startsWith('/\\')) {
-        redirect(savedCallback);
-    } else {
-        redirect('/');
-    }
+    const target = (savedCallback && savedCallback.startsWith('/') && !savedCallback.startsWith('//') && !savedCallback.startsWith('/\\'))
+        ? savedCallback
+        : '/';
+    const sep = target.includes('?') ? '&' : '?';
+    redirect(`${target}${sep}login=success&new=${isNew ? '1' : '0'}`);
 }

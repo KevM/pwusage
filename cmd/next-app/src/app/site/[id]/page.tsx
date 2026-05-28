@@ -18,6 +18,7 @@ import { BillDateNav } from '@/components/BillDateNav';
 
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { TrmnlService } from '@/lib/trmnl-service';
+import { LoginSuccessTracker } from '@/components/LoginSuccessTracker';
 import { SiteTabs } from '@/components/site/SiteTabs';
 import { HistoryView } from '@/components/site/HistoryView';
 import { EstimatedBillView } from '@/components/site/EstimatedBillView';
@@ -276,12 +277,14 @@ export default async function SitePage({ params, searchParams }: {
     const installation = await trmnlService.getInstallationBySiteId(finalSite.id, { includeTokens: false });
 
     return (
-        <PageShell maxWidth="7xl" padding="compact">
-            <PageHeader
-                title={finalSite.name}
-                description="Monitor history, billing, and settings for this site."
-                className="mb-4"
-            />
+        <>
+            <LoginSuccessTracker />
+            <PageShell maxWidth="7xl" padding="compact">
+                <PageHeader
+                    title={finalSite.name}
+                    description="Monitor history, billing, and settings for this site."
+                    className="mb-4"
+                />
             <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />
 
             <SiteTabs
@@ -323,7 +326,8 @@ export default async function SitePage({ params, searchParams }: {
                 }
             >
                 {/* Fallback or shared content could go here if needed */}
-            </SiteTabs>
-        </PageShell>
+                </SiteTabs>
+            </PageShell>
+        </>
     );
 }

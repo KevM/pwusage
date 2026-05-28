@@ -114,8 +114,8 @@ export class UserRepo {
         accessToken: string;
         refreshToken: string;
         tokenExpiresAt: number;
-    }): Promise<void> {
-        await pool.query(`
+    }): Promise<{ isNew: boolean }> {
+        const res = await pool.query<{ is_new: boolean }>(`
             INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active)
             VALUES ($1, $2, $3, $4, $5, 'active', true)
             ON CONFLICT (id) DO UPDATE SET
@@ -124,7 +124,9 @@ export class UserRepo {
                 email = COALESCE(EXCLUDED.email, "User".email),
                 auth_status = 'active',
                 is_active = true
+            RETURNING (xmax = 0) AS is_new
         `, [params.userId, params.email, params.accessToken, params.refreshToken, params.tokenExpiresAt]);
+        return { isNew: res.rows[0]?.is_new === true };
     }
 
     async updateTokens(userId: string, accessToken: string, refreshToken: string): Promise<void> {

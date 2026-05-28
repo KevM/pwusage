@@ -145,18 +145,20 @@ describe('UserRepo new commands', () => {
     });
 
     it('upsertOnTeslaAuth issues INSERT ... ON CONFLICT', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [] });
+        queryMock.mockResolvedValueOnce({ rows: [{ is_new: true }] });
         const repo = new UserRepo();
         const expiresAt = Date.now() + 3600_000;
-        await repo.upsertOnTeslaAuth({
+        const result = await repo.upsertOnTeslaAuth({
             userId: 'u1',
             email: 'a@b.c',
             accessToken: 'at',
             refreshToken: 'rt',
             tokenExpiresAt: expiresAt,
         });
+        expect(result.isNew).toBe(true);
         expect(queryMock.mock.calls[0][0]).toContain('INSERT INTO "User"');
         expect(queryMock.mock.calls[0][0]).toContain('ON CONFLICT (id) DO UPDATE');
+        expect(queryMock.mock.calls[0][0]).toContain('RETURNING (xmax = 0) AS is_new');
         expect(queryMock.mock.calls[0][1]).toEqual(['u1', 'a@b.c', 'at', 'rt', expiresAt]);
     });
 

@@ -7,6 +7,7 @@ import { SiteRepo } from '@/lib/site-repo';
 import { ProductWithLiveData } from '@/components/DashboardCards';
 import { AnnouncementRepo } from '@/lib/announcement-repo';
 import { LoginAnnouncement } from '@/components/LoginAnnouncement';
+import { LoginSuccessTracker } from '@/components/LoginSuccessTracker';
 import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
 import { SectionCard } from '@/components/ui/SectionCard';
@@ -24,53 +25,56 @@ export default async function Home() {
   // If no token at all, show login screen
   if (!siteAuthToken) {
     return (
-      <div className="bg-bg-muted/30">
-        <PageShell
-          maxWidth="4xl"
-          padding="relaxed"
-          className="flex items-center justify-center"
-        >
-          <div className="w-full space-y-6">
-            <SectionCard bodyClassName="flex flex-col items-center gap-6 text-center">
-              <h1 className="text-3xl font-bold tracking-tight text-primary sm:text-4xl">
-                Powerwall Usage
-              </h1>
-              <Image
-                src="/login-summary-v2.png"
-                alt="Monitor Usage, Track Costs, Maximize Savings"
-                width={930}
-                height={375}
-                className="block w-full rounded-md border dark:hidden"
-                priority
-              />
-              <Image
-                src="/login-summary-dark-v2.png"
-                alt="Monitor Usage, Track Costs, Maximize Savings"
-                width={930}
-                height={375}
-                className="hidden w-full rounded-md border dark:block"
-                priority
-              />
-              <div className="flex flex-col items-center gap-3 sm:flex-row">
-                <Link href="/login">
-                  <Button renderAs="span" size="lg">
-                    Login with Tesla
-                  </Button>
-                </Link>
-                <Link href="/about">
-                  <Button renderAs="span" size="lg" variant="outline">
-                    Learn More
-                  </Button>
-                </Link>
-              </div>
-            </SectionCard>
+      <>
+        <LoginSuccessTracker />
+        <div className="bg-bg-muted/30">
+          <PageShell
+            maxWidth="4xl"
+            padding="relaxed"
+            className="flex items-center justify-center"
+          >
+            <div className="w-full space-y-6">
+              <SectionCard bodyClassName="flex flex-col items-center gap-6 text-center">
+                <h1 className="text-3xl font-bold tracking-tight text-primary sm:text-4xl">
+                  Powerwall Usage
+                </h1>
+                <Image
+                  src="/login-summary-v2.png"
+                  alt="Monitor Usage, Track Costs, Maximize Savings"
+                  width={930}
+                  height={375}
+                  className="block w-full rounded-md border dark:hidden"
+                  priority
+                />
+                <Image
+                  src="/login-summary-dark-v2.png"
+                  alt="Monitor Usage, Track Costs, Maximize Savings"
+                  width={930}
+                  height={375}
+                  className="hidden w-full rounded-md border dark:block"
+                  priority
+                />
+                <div className="flex flex-col items-center gap-3 sm:flex-row">
+                  <Link href="/login">
+                    <Button renderAs="span" size="lg">
+                      Login with Tesla
+                    </Button>
+                  </Link>
+                  <Link href="/about">
+                    <Button renderAs="span" size="lg" variant="outline">
+                      Learn More
+                    </Button>
+                  </Link>
+                </div>
+              </SectionCard>
 
-            <div className="flex justify-center">
-              <LoginAnnouncement announcement={latestAnnouncement} />
+              <div className="flex justify-center">
+                <LoginAnnouncement announcement={latestAnnouncement} />
+              </div>
             </div>
-          </div>
-        </PageShell>
-      </div>
+          </PageShell>
+        </div>
+      </>
     );
   }
 
