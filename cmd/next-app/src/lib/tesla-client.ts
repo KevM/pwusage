@@ -1,3 +1,5 @@
+import { log } from './log';
+
 export interface FleetProduct {
     energy_site_id?: number;
     resource_type: string;
@@ -170,7 +172,7 @@ export class TeslaClient {
         while (true) {
             if (response.status === 401 && this.config.refreshToken && !refreshAttempted) {
                 refreshAttempted = true;
-                console.log('Tesla API 401, attempting refresh...');
+                log.info('Tesla API 401, attempting refresh...');
                 try {
                     let newTokens: { access_token: string; refresh_token: string };
                     if (this.config.tokenRefreshHandler) {
@@ -189,7 +191,7 @@ export class TeslaClient {
                     response = await makeRequest(this.config.accessToken);
                     continue;
                 } catch (refreshError) {
-                    console.error('Token refresh failed:', refreshError);
+                    log.error('Token refresh failed', { err: refreshError instanceof Error ? refreshError.message : String(refreshError) });
                     if (this.config.onTokenError && refreshError instanceof Error) {
                         await this.config.onTokenError(refreshError);
                     }
@@ -202,7 +204,11 @@ export class TeslaClient {
             // number of times before surfacing the error.
             if (response.status === 429 && rateLimitAttempt < RATE_LIMIT_MAX_RETRIES) {
                 const delayMs = parseRetryAfter(response.headers.get('Retry-After'));
-                console.warn(`Tesla API 429, retrying in ${delayMs}ms (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`);
+                log.warn(`Tesla API 429, retrying in ${delayMs}ms (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`, {
+                    delayMs,
+                    attempt: rateLimitAttempt + 1,
+                    maxRetries: RATE_LIMIT_MAX_RETRIES,
+                });
                 await sleep(delayMs);
                 rateLimitAttempt++;
                 response = await makeRequest(this.config.accessToken);
@@ -243,14 +249,25 @@ export class TeslaClient {
             time_zone: timeZone
         });
 
-        console.log(`[TeslaClient] Fetching ${siteId} history: kind=energy, period=${period}, time_zone=${timeZone}`);
-        console.log(`[TeslaClient] Params: start_date=${s}, end_date=${e}`);
+        log.info(`[TeslaClient] Fetching ${siteId} history: kind=energy, period=${period}, time_zone=${timeZone}`, {
+            siteId,
+            period,
+            timeZone,
+        });
+        log.info(`[TeslaClient] Params: start_date=${s}, end_date=${e}`, {
+            start_date: s,
+            end_date: e,
+        });
 
         const teslaStart = Date.now();
         const result = await this.fetch<{ response: { time_series: EnergyHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
-        console.log(`[TeslaClient] History fetch duration: ${Date.now() - teslaStart}ms`);
+        log.info(`[TeslaClient] History fetch duration: ${Date.now() - teslaStart}ms`, {
+            durationMs: Date.now() - teslaStart,
+        });
 
-        console.log(`[TeslaClient] History Response for ${start.toISOString()}-${end.toISOString()} (${period}):`, JSON.stringify(result).substring(0, 200));
+        log.info(`[TeslaClient] History Response for ${start.toISOString()}-${end.toISOString()} (${period})`, {
+            response: JSON.stringify(result).substring(0, 200),
+        });
         return result.response?.time_series ?? [];
     }
 
@@ -285,7 +302,9 @@ export class TeslaClient {
     async getLiveStatus(siteId: string): Promise<EnergySiteLiveStatus> {
         const teslaStart = Date.now();
         const result = await this.fetch<{ response: EnergySiteLiveStatus }>(`/api/1/energy_sites/${siteId}/live_status`);
-        console.log(`[TeslaClient] Live Status fetch duration: ${Date.now() - teslaStart}ms`);
+        log.info(`[TeslaClient] Live Status fetch duration: ${Date.now() - teslaStart}ms`, {
+            durationMs: Date.now() - teslaStart,
+        });
         return result.response;
     }
 
