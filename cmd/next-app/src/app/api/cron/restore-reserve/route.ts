@@ -7,10 +7,13 @@ import { adaptTeslaData } from '@/lib/nilm/tesla-adapter';
 import { evaluateHold } from '@/lib/battery-hold-detection';
 import { refreshTodayData } from '@/lib/today-refresh';
 import { createSiteTeslaClient, restoreBattery } from '@/lib/battery-hold-service';
+import { log } from '@/lib/log';
+import { withLog } from '@/lib/with-log';
+import { pingHeartbeat } from '@/lib/heartbeat';
 
 const LOOKBACK_MS = 30 * 60 * 1000;
 
-export async function GET(request: NextRequest) {
+export const GET = withLog(async (request: NextRequest) => {
   const authHeader = request.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -51,6 +54,12 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  console.log(`[CRON] restore-reserve processed ${holds.length} hold(s): ${JSON.stringify(results)}`);
+  log.info(`[CRON] restore-reserve processed ${holds.length} hold(s): ${JSON.stringify(results)}`, {
+    processed: holds.length,
+    results,
+  });
+
+  await pingHeartbeat('restore-reserve');
+
   return NextResponse.json({ success: true, processed: holds.length, results });
-}
+});

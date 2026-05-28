@@ -3,8 +3,11 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { LoadTagRepo } from '@/lib/load-tag-repo';
+import { log } from '@/lib/log';
+import { withLog } from '@/lib/with-log';
+import { pingHeartbeat } from '@/lib/heartbeat';
 
-export async function GET(request: NextRequest) {
+export const GET = withLog(async (request: NextRequest) => {
     try {
         const authHeader = request.headers.get('authorization');
         if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -19,13 +22,18 @@ export async function GET(request: NextRequest) {
         const tagRepo = new LoadTagRepo();
         const energyResult = await energyRepo.cleanupOldEnergyData(cutoff);
         const tagResult = await tagRepo.cleanupOldTags(cutoff);
-        
+
         const result = {
             energyDeleted: energyResult.energyDeleted,
             tagsDeleted: tagResult.tagsDeleted
         };
 
-        console.log(`[CRON] Cleanup completed. Cutoff: ${cutoff.toISOString()}. Deleted: ${JSON.stringify(result)}`);
+        log.info(`[CRON] Cleanup completed. Cutoff: ${cutoff.toISOString()}. Deleted: ${JSON.stringify(result)}`, {
+            cutoff: cutoff.toISOString(),
+            ...result,
+        });
+
+        await pingHeartbeat('cleanup');
 
         return NextResponse.json({
             success: true,
@@ -35,7 +43,9 @@ export async function GET(request: NextRequest) {
         });
 
     } catch (error) {
-        console.error('[CRON] Cleanup failed:', error);
+        log.error('[CRON] Cleanup failed', {
+            err: error instanceof Error ? error.message : String(error),
+        });
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
