@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
+import { track } from '@/lib/analytics';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
@@ -139,6 +140,16 @@ function ManageContent() {
 
         fetchData();
     }, [uuid, token, searchParams, pluginSettingIdParam]);
+
+    const trackedRef = useRef(false);
+    useEffect(() => {
+        if (loading || error || trackedRef.current) return;
+        trackedRef.current = true;
+        track('trmnl-manage-viewed', {
+            site_id: selectedSite || '',
+            has_installation: Boolean(pluginSettingId),
+        });
+    }, [loading, error, selectedSite, pluginSettingId]);
 
     useEffect(() => {
         if (!selectedSite) return;

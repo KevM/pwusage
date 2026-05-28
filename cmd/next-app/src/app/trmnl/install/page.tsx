@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
+import { track } from '@/lib/analytics';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
 import { ErrorPanel, LoadingPanel } from '@/components/ui/AsyncState';
@@ -56,6 +57,8 @@ function InstallContent() {
             });
 
             if (!res.ok) throw new Error(await res.text());
+
+            track('trmnl-install-success', { site_id: siteId });
 
             // Redirect back to Trmnl
             if (callbackUrl) {
