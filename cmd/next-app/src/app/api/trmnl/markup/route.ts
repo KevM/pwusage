@@ -1,8 +1,10 @@
-import { after, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { Schedule } from '@/lib/schedule';
+import { log } from '@/lib/log';
+import { withLog } from '@/lib/with-log';
 
 
 import { Importer } from '@/lib/importer';
@@ -106,7 +108,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
     }
 }
 
-export async function GET(request: Request) {
+async function handleMarkup(request: NextRequest) {
     return withRequestContext(async () => {
         const routeStart = Date.now();
         try {
@@ -137,7 +139,7 @@ export async function GET(request: Request) {
             const trmnlInstallationRepo = new TrmnlInstallationRepo();
             const result = await trmnlInstallationRepo.findByUuidWithSite(uuid, { includeTokens: true });
             if (!result) {
-                console.log(`[TrmnlMarkup] UUID ${uuid} not found. Generating setup QR code.`);
+                log.info(`[TrmnlMarkup] UUID ${uuid} not found. Generating setup QR code.`, { uuid });
                 return getQrResponse(request, uuid, null, 'Setup Required', 'Scan to Configure');
             }
 
@@ -157,7 +159,10 @@ export async function GET(request: Request) {
                         try {
                             await trmnlInstallationRepo.updateJson(installationId, nextJson);
                         } catch (error) {
-                            console.warn(`[TrmnlMarkup] Failed to advance carousel index for installation ${installationId}:`, error);
+                            log.warn(`[TrmnlMarkup] Failed to advance carousel index for installation ${installationId}`, {
+                                installationId,
+                                err: error instanceof Error ? error.message : String(error),
+                            });
                         }
                     });
                 }
@@ -166,7 +171,12 @@ export async function GET(request: Request) {
             // Verify Bearer Token
             const authHeader = request.headers.get('Authorization');
             const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
-            console.log(`[TrmnlMarkup] UUID: ${uuid}, has auth header: ${!!authHeader}, has token: ${!!token}, stored token exists: ${!!installation.access_token}`);
+            log.info(`[TrmnlMarkup] UUID: ${uuid}, has auth header: ${!!authHeader}, has token: ${!!token}, stored token exists: ${!!installation.access_token}`, {
+                uuid,
+                hasAuthHeader: !!authHeader,
+                hasToken: !!token,
+                hasStoredToken: !!installation.access_token,
+            });
 
             let isAuthorized = false;
             if (installation.access_token) {
@@ -177,12 +187,15 @@ export async function GET(request: Request) {
                     await verifyTrmnlToken(token, uuid);
                     isAuthorized = true;
                 } catch (err) {
-                    console.warn(`[TrmnlMarkup] JWT Verification Failed for ${uuid}:`, err);
+                    log.warn(`[TrmnlMarkup] JWT Verification Failed for ${uuid}`, {
+                        uuid,
+                        err: err instanceof Error ? err.message : String(err),
+                    });
                 }
             }
 
             if (!isAuthorized) {
-                console.warn(`[TrmnlMarkup] Unauthorized access attempt for UUID ${uuid}`);
+                log.warn(`[TrmnlMarkup] Unauthorized access attempt for UUID ${uuid}`, { uuid });
                 return getQrResponse(request, uuid, null, 'Plugin Auth Failed', 'Scan to Re-link');
             }
 
@@ -201,7 +214,10 @@ export async function GET(request: Request) {
 
         // --- TESLA AUTH CHECK (Revoked) ---
         if (site.auth_status === 'revoked') {
-            console.warn(`[TrmnlMarkup] Tesla auth revoked for site ${site.id}. Showing re-auth QR code.`);
+            log.warn(`[TrmnlMarkup] Tesla auth revoked for site ${site.id}. Showing re-auth QR code.`, {
+                siteId: site.id,
+                uuid,
+            });
             return getQrResponse(request, uuid, site.id, 'Tesla Auth Expired', 'Scan to Re-authenticate');
         }
 
@@ -239,7 +255,7 @@ export async function GET(request: Request) {
         let trmnlClient: TeslaClient | null = null;
 
         if (site.refresh_token) {
-            console.log(`[Trmnl] Found refresh token for site ${site.id}, initializing client...`);
+            log.info(`[Trmnl] Found refresh token for site ${site.id}, initializing client...`, { siteId: site.id });
             const useToken = site.access_token || 'expired';
 
             const handlers = tokenRepo.getLockedRefreshHandler(site.id);
@@ -249,11 +265,11 @@ export async function GET(request: Request) {
                 tokenRefreshHandler: handlers.refreshHandler,
                 onTokenError: handlers.errorHandler,
                 onTokenUpdate: async () => {
-                    console.log(`[Trmnl] Token update callback triggered for site ${site.id}`);
+                    log.info(`[Trmnl] Token update callback triggered for site ${site.id}`, { siteId: site.id });
                 }
             });
         } else {
-            console.log(`[Trmnl] No refresh token found for site ${site.id}`);
+            log.info(`[Trmnl] No refresh token found for site ${site.id}`, { siteId: site.id });
         }
 
         // --- BLOCKING DATA FETCHES (DB only) ---
@@ -270,7 +286,7 @@ export async function GET(request: Request) {
             const startMs = Date.now();
             const res = await repo.getLatestEnergyData(site!.id);
             dbLatestMs = Date.now() - startMs;
-            console.log(`[TrmnlMarkup] DB Latest Energy Lookup: ${dbLatestMs}ms`);
+            log.info(`[TrmnlMarkup] DB Latest Energy Lookup: ${dbLatestMs}ms`, { siteId: site!.id, durationMs: dbLatestMs });
             return res;
         })();
 
@@ -278,7 +294,7 @@ export async function GET(request: Request) {
             const startMs = Date.now();
             const res = await repo.getCycleAggregates(site!.id, start, todayStart);
             dbCycleMs = Date.now() - startMs;
-            console.log(`[TrmnlMarkup] DB Cycle Aggregates Fetch: ${dbCycleMs}ms`);
+            log.info(`[TrmnlMarkup] DB Cycle Aggregates Fetch: ${dbCycleMs}ms`, { siteId: site!.id, durationMs: dbCycleMs });
             return res;
         })();
 
@@ -286,7 +302,7 @@ export async function GET(request: Request) {
             const startMs = Date.now();
             const res = await repo.getRawEnergyData(site!.id, todayStart, now);
             dbTodayMs = Date.now() - startMs;
-            console.log(`[TrmnlMarkup] DB Today Raw Fetch: ${dbTodayMs}ms`);
+            log.info(`[TrmnlMarkup] DB Today Raw Fetch: ${dbTodayMs}ms`, { siteId: site!.id, durationMs: dbTodayMs });
             return res;
         })();
 
@@ -328,10 +344,13 @@ export async function GET(request: Request) {
                 if (error instanceof Error && error.message === 'tesla_live_inline_timeout') {
                     liveInlineStatus = 'timeout';
                     fetchStatus = 'inline-timeout';
-                    console.info('[TrmnlMarkup] Inline live status fetch timed out; continuing with stale-while-refresh.');
+                    log.info('[TrmnlMarkup] Inline live status fetch timed out; continuing with stale-while-refresh.', { siteId: site.id });
                 } else {
                     liveInlineStatus = 'error';
-                    console.warn('[TrmnlMarkup] Inline live status fetch failed:', error);
+                    log.warn('[TrmnlMarkup] Inline live status fetch failed', {
+                        siteId: site.id,
+                        err: error instanceof Error ? error.message : String(error),
+                    });
                 }
             } finally {
                 refreshState.liveInFlight = false;
@@ -351,7 +370,6 @@ export async function GET(request: Request) {
             const siteId = site.id;
             backgroundStatus = 'started';
             fetchStatus = hasCachedLiveStatus ? 'cached+refreshing' : 'refreshing';
-
             const backgroundRefresh = async () => {
                 try {
                     const tasks: Promise<void>[] = [];
@@ -363,14 +381,17 @@ export async function GET(request: Request) {
                             try {
                                 const startMs = Date.now();
                                 const rows = await withTimeout(importer.getTodayData(siteId), TESLA_TODAY_TIMEOUT_MS, 'tesla_today');
-                                console.log(`[TrmnlMarkup] Tesla Today Usage Fetch (background): ${Date.now() - startMs}ms`);
+                                log.info(`[TrmnlMarkup] Tesla Today Usage Fetch (background): ${Date.now() - startMs}ms`, { siteId, durationMs: Date.now() - startMs });
                                 if (rows.length === 0) return;
                                 const missingRows = rows.filter(row => !latestTimestamp || row.timestamp.getTime() > latestTimestamp.getTime());
                                 if (missingRows.length > 0) {
                                     await importer.persistHistory(siteId, missingRows, latestTimestamp);
                                 }
                             } catch (error) {
-                                console.warn(`[TrmnlMarkup] Tesla today fetch failed (background):`, error);
+                                log.warn(`[TrmnlMarkup] Tesla today fetch failed (background)`, {
+                                    siteId,
+                                    err: error instanceof Error ? error.message : String(error),
+                                });
                             } finally {
                                 refreshState.todayInFlight = false;
                             }
@@ -384,10 +405,13 @@ export async function GET(request: Request) {
                             try {
                                 const startMs = Date.now();
                                 const status = await withTimeout(trmnlClient!.getLiveStatus(siteId), TESLA_LIVE_TIMEOUT_MS, 'tesla_live');
-                                console.log(`[TrmnlMarkup] Tesla Live Status Fetch (background): ${Date.now() - startMs}ms`);
+                                log.info(`[TrmnlMarkup] Tesla Live Status Fetch (background): ${Date.now() - startMs}ms`, { siteId, durationMs: Date.now() - startMs });
                                 setCachedLiveStatus(siteId, status);
                             } catch (error) {
-                                console.warn(`[TrmnlMarkup] Tesla live status fetch failed (background):`, error);
+                                log.warn(`[TrmnlMarkup] Tesla live status fetch failed (background)`, {
+                                    siteId,
+                                    err: error instanceof Error ? error.message : String(error),
+                                });
                             } finally {
                                 refreshState.liveInFlight = false;
                             }
@@ -396,7 +420,10 @@ export async function GET(request: Request) {
 
                     await Promise.all(tasks);
                 } catch (error) {
-                    console.error(`[TrmnlMarkup] Background Tesla refresh failed:`, error);
+                    log.error(`[TrmnlMarkup] Background Tesla refresh failed`, {
+                        siteId,
+                        err: error instanceof Error ? error.message : String(error),
+                    });
                 }
             };
             after(backgroundRefresh);
@@ -743,10 +770,10 @@ export async function GET(request: Request) {
         const markupHalfHorizontal = TrmnlRenderer.renderHalfHorizontal(renderCtx);
         const markupQuadrant = TrmnlRenderer.renderQuadrant(renderCtx);
         renderMs = Date.now() - layoutStart;
-        console.log(`[TrmnlMarkup] Rendering Logic: ${renderMs}ms`);
+        log.info(`[TrmnlMarkup] Rendering Logic: ${renderMs}ms`, { siteId: site.id, durationMs: renderMs });
 
         const totalMs = Date.now() - routeStart;
-        console.log(`[TrmnlMarkup] Total Route Logic: ${totalMs}ms`);
+        log.info(`[TrmnlMarkup] Total Route Logic: ${totalMs}ms`, { siteId: site.id, durationMs: totalMs });
 
         const dataAgeMinutes = latestTimestamp
             ? ((nowMs - latestTimestamp.getTime()) / 60000).toFixed(1)
@@ -803,13 +830,17 @@ export async function GET(request: Request) {
 
 
         } catch (error) {
-            console.error('Markup error:', error);
+            log.error('Markup error', {
+                err: error instanceof Error ? error.message : String(error),
+            });
             return NextResponse.json({ error: (error as Error).message }, { status: 500 });
         }
     });
 }
 
-export async function POST(request: Request) {
+export const GET = withLog(handleMarkup);
+
+export const POST = withLog(async (request: NextRequest) => {
     return withRequestContext(async () => {
         let uuid = new URL(request.url).searchParams.get('uuid');
 
@@ -825,22 +856,20 @@ export async function POST(request: Request) {
                     uuid = (formData.get('uuid') || formData.get('user_uuid')) as string;
                 }
             } catch {
-                console.log('[TrmnlMarkup] Failed to parse POST body');
+                log.info('[TrmnlMarkup] Failed to parse POST body');
             }
         }
 
         if (uuid) {
             const url = new URL(request.url);
             url.searchParams.set('uuid', uuid);
-            return GET(new Request(url.toString(), request));
+            return handleMarkup(new NextRequest(url.toString(), request));
         }
-
-
 
         // If we still don't have UUID, return error BUT with 400 so client knows
         return NextResponse.json({ error: 'Missing uuid parameter' }, { status: 400 });
     });
-}
+});
 
 async function getQrResponse(request: Request, uuid: string | null, siteId: string | null, title: string, label: string) {
     const host = request.headers.get('host') || 'localhost:3000';
