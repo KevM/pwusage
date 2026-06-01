@@ -16,6 +16,33 @@ export function DailyByPeriodTable({ today }: DailyByPeriodTableProps) {
 
     const fmtSigned = (kwh: number) => `${kwh >= 0 ? '+' : '−'}${Math.abs(kwh).toFixed(1)}`;
 
+    // Group and sum by TOU name to prevent duplicates
+    const groupedPeriods: {
+        touName: string;
+        tariffId: number;
+        solarProduction: number;
+        homeUsage: number;
+        gridUsage: number;
+    }[] = [];
+
+    for (const u of today) {
+        const name = u.touName ?? 'Unknown';
+        let period = groupedPeriods.find(p => p.touName === name);
+        if (!period) {
+            period = {
+                touName: name,
+                tariffId: u.tariff.id,
+                solarProduction: 0,
+                homeUsage: 0,
+                gridUsage: 0,
+            };
+            groupedPeriods.push(period);
+        }
+        period.solarProduction += u.solarProduction;
+        period.homeUsage += u.homeUsage;
+        period.gridUsage += u.gridUsage;
+    }
+
     return (
         <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -28,15 +55,14 @@ export function DailyByPeriodTable({ today }: DailyByPeriodTableProps) {
                     </tr>
                 </thead>
                 <tbody>
-                    {today.map((u) => {
-                        const name = u.touName ?? 'Unknown';
+                    {groupedPeriods.map((u) => {
                         const solarKwh = wattsToKilowatts(u.solarProduction);
                         const homeKwh = wattsToKilowatts(u.homeUsage);
                         // gridUsage positive = import; net export = -gridUsage.
                         const netExportKwh = -wattsToKilowatts(u.gridUsage);
                         return (
-                            <tr key={`${u.tariff.id}|${name}`} className="border-b border-slate-100 dark:border-slate-800">
-                                <td className="py-2 pr-4">{formatTouName(name)}</td>
+                            <tr key={`${u.tariffId}|${u.touName}`} className="border-b border-slate-100 dark:border-slate-800">
+                                <td className="py-2 pr-4">{formatTouName(u.touName)}</td>
                                 <td className={`py-2 pr-4 text-right ${energyColors.grid.text}`}>
                                     {fmtSigned(netExportKwh)} kWh
                                 </td>

@@ -83,14 +83,25 @@ function groupUsageByTariff(usage: UsageData[]): TariffGroup[] {
             tariffGroups.set(tariffName, group);
         }
 
-        group.periods.push({
-            touName: item.touName || 'Standard',
-            home: item.homeUsage,
-            grid: item.gridUsage,
-            solar: item.solarProduction,
-            battery: item.batteryChange,
-            cost: item.cost || 0,
-        });
+        const touName = item.touName || 'Standard';
+        let period = group.periods.find(p => p.touName === touName);
+        if (!period) {
+            period = {
+                touName,
+                home: 0,
+                grid: 0,
+                solar: 0,
+                battery: 0,
+                cost: 0,
+            };
+            group.periods.push(period);
+        }
+
+        period.home += item.homeUsage;
+        period.grid += item.gridUsage;
+        period.solar += item.solarProduction;
+        period.battery += item.batteryChange;
+        period.cost += item.cost || 0;
     }
 
     return Array.from(tariffGroups.values()).map((group) => ({

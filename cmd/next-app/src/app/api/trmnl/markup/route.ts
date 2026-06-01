@@ -622,15 +622,25 @@ export async function GET(request: Request) {
                 tariffGroups.set(data.tariffName, group);
             }
 
-            group.periods.push({
-                touName: data.touName,
-                label: data.label,
-                home: data.homeUsage,
-                grid: data.gridUsage,
-                solar: data.solarProduction,
-                battery: data.batteryChange,
-                cost: data.cost
-            });
+            let period = group.periods.find(p => p.touName === data.touName);
+            if (!period) {
+                period = {
+                    touName: data.touName,
+                    label: data.label,
+                    home: 0,
+                    grid: 0,
+                    solar: 0,
+                    battery: 0,
+                    cost: 0
+                };
+                group.periods.push(period);
+            }
+
+            period.home += data.homeUsage;
+            period.grid += data.gridUsage;
+            period.solar += data.solarProduction;
+            period.battery += data.batteryChange;
+            period.cost += data.cost;
         }
 
         // Calculate total cost for the summary
