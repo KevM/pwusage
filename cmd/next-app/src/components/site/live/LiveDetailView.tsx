@@ -2,10 +2,10 @@ import { Suspense } from 'react';
 import { SectionCard } from '@/components/ui/SectionCard';
 import type { TodayTotals, UsageData } from '@/lib/energy-repo';
 import type { EnergyData } from '@/lib/db';
-import type { CheaperPeriod } from '@/lib/next-cheaper-period';
+import type { LoadTimingView } from '@/lib/load-timing';
 import { DailyTotalsRow } from './DailyTotalsRow';
 import { DailyByPeriodTable } from './DailyByPeriodTable';
-import { PeriodCardRow, type ActivePeriod } from './PeriodCardRow';
+import { PeriodCardRow } from './PeriodCardRow';
 import { TodayEnergyChart } from './TodayEnergyChart';
 import { HalfHourRefresh } from './HalfHourRefresh';
 import { BatteryHoldCard } from './BatteryHoldCard';
@@ -19,18 +19,13 @@ export interface LiveDetailViewProps {
     solarPower: number;
     gridPower: number;
     loadPower: number;
-    cycle: UsageData[];
     today: UsageData[];
     todayTotals: TodayTotals;
     todayChartRows: EnergyData[];
     todayStart: Date;
     now: Date;
-    activePeriod: ActivePeriod | null;
     hasTariff: boolean;
-    nextCheaper: CheaperPeriod | null;
-    nextCheaperPhrase: string | null;
-    nextStartPhraseByKey?: Record<string, string>;
-    activeIsCheapest?: boolean;
+    loadTiming: LoadTimingView | null;
     batteryHold: { mode: 'auto' | 'timer'; target_reserve: number; original_reserve: number; created_at: string; safety_expires_at: string } | null;
     batteryNotice: { current: number } | null;
 }
@@ -39,11 +34,10 @@ export function LiveDetailView({
     siteId, siteName, siteTimezone,
     batterySoC, batteryPower,
     solarPower, gridPower, loadPower,
-    cycle, today, todayTotals,
+    today, todayTotals,
     todayChartRows, todayStart, now,
-    activePeriod, hasTariff,
-    nextCheaper, nextCheaperPhrase,
-    nextStartPhraseByKey, activeIsCheapest,
+    hasTariff,
+    loadTiming,
     batteryHold,
     batteryNotice
 }: LiveDetailViewProps) {
@@ -79,13 +73,8 @@ export function LiveDetailView({
             <SectionCard title="Load timing this cycle" density="compact" bodyClassName="space-y-3">
                 <PeriodCardRow
                     siteId={siteId}
-                    cycle={cycle}
-                    activePeriod={activePeriod}
                     hasTariff={hasTariff}
-                    nextCheaper={nextCheaper}
-                    nextCheaperPhrase={nextCheaperPhrase}
-                    nextStartPhraseByKey={nextStartPhraseByKey}
-                    activeIsCheapest={activeIsCheapest}
+                    loadTiming={loadTiming}
                 />
             </SectionCard>
 
