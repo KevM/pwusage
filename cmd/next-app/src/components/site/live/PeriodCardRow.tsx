@@ -1,7 +1,7 @@
+'use client';
+
 import Link from 'next/link';
-import type { UsageData } from '@/lib/energy-repo';
-import { computeMarginalCost } from '@/lib/marginal-cost';
-import { periodKey, type CheaperPeriod } from '@/lib/next-cheaper-period';
+import type { LoadTimingView } from '@/lib/load-timing';
 import { formatTouName, formatCentsPerKwh } from '@/lib/format-utils';
 import { PeriodCard } from './PeriodCard';
 
@@ -13,19 +13,14 @@ export interface ActivePeriod {
 
 export interface PeriodCardRowProps {
     siteId: string;
-    cycle: UsageData[];
-    activePeriod: ActivePeriod | null;
     hasTariff: boolean;
-    nextCheaper?: CheaperPeriod | null;
-    nextCheaperPhrase?: string | null;
-    nextStartPhraseByKey?: Record<string, string>;
-    activeIsCheapest?: boolean;
+    loadTiming: LoadTimingView | null;
 }
 
 function NextCheaperBanner({
     nextCheaper, nextCheaperPhrase, hasActive, activeIsCheapest
 }: {
-    nextCheaper: CheaperPeriod | null | undefined;
+    nextCheaper: { name: string; marginalCost: number } | null | undefined;
     nextCheaperPhrase: string | null | undefined;
     hasActive: boolean;
     activeIsCheapest: boolean;
@@ -55,7 +50,7 @@ function NextCheaperBanner({
     );
 }
 
-export function PeriodCardRow({ siteId, cycle, activePeriod, hasTariff, nextCheaper, nextCheaperPhrase, nextStartPhraseByKey, activeIsCheapest = false }: PeriodCardRowProps) {
+export function PeriodCardRow({ siteId, hasTariff, loadTiming }: PeriodCardRowProps) {
     if (!hasTariff) {
         return (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-gray-600 dark:border-slate-700 dark:bg-slate-800 dark:text-gray-300">
@@ -65,7 +60,7 @@ export function PeriodCardRow({ siteId, cycle, activePeriod, hasTariff, nextChea
         );
     }
 
-    if (cycle.length === 0) {
+    if (!loadTiming || !loadTiming.hasCycleData || loadTiming.periods.length === 0) {
         return (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-gray-600 dark:border-slate-700 dark:bg-slate-800 dark:text-gray-300">
                 No cycle data yet — recommendations will appear once the site reports usage.
@@ -73,35 +68,27 @@ export function PeriodCardRow({ siteId, cycle, activePeriod, hasTariff, nextChea
         );
     }
 
+    const hasActive = loadTiming.periods.some(p => p.isActive);
+
     return (
         <>
             <NextCheaperBanner
-                nextCheaper={nextCheaper}
-                nextCheaperPhrase={nextCheaperPhrase}
-                hasActive={activePeriod !== null}
-                activeIsCheapest={activeIsCheapest}
+                nextCheaper={loadTiming.nextCheaper}
+                nextCheaperPhrase={loadTiming.nextCheaper?.phrase}
+                hasActive={hasActive}
+                activeIsCheapest={loadTiming.activeIsCheapest}
             />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                {cycle.map((usage) => {
-                    const { cycleNetExportKwh, marginalCost, basis } = computeMarginalCost(usage);
-                    const name = usage.touName ?? 'Unknown';
-                    // Match active card on name + rates so same-name schedules across
-                    // seasons (which differ by rate) don't both light up.
-                    const isActive = activePeriod !== null
-                        && name === activePeriod.name
-                        && (usage.buyRate ?? 0) === activePeriod.buyRate
-                        && (usage.sellRate ?? 0) === activePeriod.sellRate;
-                    const key = periodKey(name, usage.buyRate ?? 0, usage.sellRate ?? 0);
-                    const nextStartPhrase = isActive ? null : (nextStartPhraseByKey?.[key] ?? null);
+                {loadTiming.periods.map((p) => {
                     return (
                         <PeriodCard
-                            key={`${usage.tariff.id}|${name}|${usage.buyRate ?? 0}|${usage.sellRate ?? 0}`}
-                            name={name}
-                            cycleNetExportKwh={cycleNetExportKwh}
-                            marginalCost={marginalCost}
-                            basis={basis}
-                            isActive={isActive}
-                            nextStartPhrase={nextStartPhrase}
+                            key={`${p.name}`}
+                            name={p.name}
+                            cycleNetExportKwh={p.cycleNetExportKwh}
+                            marginalCost={p.marginalCost}
+                            basis={p.basis}
+                            isActive={p.isActive}
+                            nextStartPhrase={p.nextStartPhrase}
                         />
                     );
                 })}

@@ -11,15 +11,15 @@ export interface CheaperPeriod {
 }
 
 /** Build the lookup key used to match a cycle UsageData entry to a schedule period. */
-export function periodKey(name: string, buyRate: number, sellRate: number): string {
-    return `${name}|${buyRate}|${sellRate}`;
+export function periodKey(name: string): string {
+    return name;
 }
 
 function buildMarginalByKey(cycle: UsageData[]): Map<string, MarginalCostResult> {
     const map = new Map<string, MarginalCostResult>();
     for (const u of cycle) {
         const name = u.touName ?? 'Unknown';
-        const key = periodKey(name, u.buyRate ?? 0, u.sellRate ?? 0);
+        const key = periodKey(name);
         map.set(key, computeMarginalCost(u));
     }
     return map;
@@ -104,40 +104,35 @@ export function findNextCheaperPeriod(
     if (!active) return null;
 
     const marginalByKey = buildMarginalByKey(cycle);
-    const activeKey = periodKey(
-        active.schedule.name ?? 'Unknown',
-        active.schedule.buy_rate ?? 0,
-        active.schedule.sell_rate ?? 0
-    );
+    const activeKey = periodKey(active.schedule.name ?? 'Unknown');
     const activeMarginal = marginalByKey.get(activeKey);
     if (!activeMarginal || activeMarginal.marginalCost === null) return null;
     const activeCost = activeMarginal.marginalCost;
 
     for (const t of walkScheduleTransitions(schedule, now, timeZone, maxHorizonHours)) {
-        const key = periodKey(
-            t.schedule.name ?? 'Unknown',
-            t.schedule.buy_rate ?? 0,
-            t.schedule.sell_rate ?? 0
-        );
+        const key = periodKey(t.schedule.name ?? 'Unknown');
         const marginal = marginalByKey.get(key);
-        if (
-            marginal
-            && marginal.marginalCost !== null
-            && marginal.marginalCost < activeCost
-        ) {
-            return {
-                name: t.schedule.name ?? 'Unknown',
-                startsAt: t.start,
-                marginalCost: marginal.marginalCost,
-                basis: (marginal.basis === 'neutral' ? 'buy' : marginal.basis) as 'sell' | 'buy'
-            };
+        if (marginal && marginal.marginalCost !== null) {
+            // Future marginal cost based on the transition's own rates
+            const buyRate = t.schedule.buy_rate ?? 0;
+            const sellRate = t.schedule.sell_rate ?? 0;
+            const transitionCost = marginal.basis === 'sell' ? sellRate : buyRate;
+
+            if (transitionCost < activeCost) {
+                return {
+                    name: t.schedule.name ?? 'Unknown',
+                    startsAt: t.start,
+                    marginalCost: transitionCost,
+                    basis: (marginal.basis === 'neutral' ? 'buy' : marginal.basis) as 'sell' | 'buy'
+                };
+            }
         }
     }
     return null;
 }
 
 /**
- * For each period in `cycle` (keyed by name + buy + sell rates), find the
+ * For each period in `cycle` (keyed by name), find the
  * earliest future start within the horizon. The active period's current
  * occurrence is not recorded — callers asking "when does this period next
  * occur?" don't want the in-progress start.
@@ -153,15 +148,11 @@ export function findNextStartsByKey(
     const targetKeys = new Set<string>();
     for (const u of cycle) {
         const name = u.touName ?? 'Unknown';
-        targetKeys.add(periodKey(name, u.buyRate ?? 0, u.sellRate ?? 0));
+        targetKeys.add(periodKey(name));
     }
 
     for (const t of walkScheduleTransitions(schedule, now, timeZone, maxHorizonHours)) {
-        const key = periodKey(
-            t.schedule.name ?? 'Unknown',
-            t.schedule.buy_rate ?? 0,
-            t.schedule.sell_rate ?? 0
-        );
+        const key = periodKey(t.schedule.name ?? 'Unknown');
         if (targetKeys.has(key) && !result.has(key)) {
             result.set(key, t.start);
         }

@@ -48,20 +48,78 @@ export function computeLoadTiming(
     const hasTariff = schedule.getTariffPeriod(now) !== null || cycle.length > 0;
     const hasCycleData = cycle.length > 0;
 
+    // Group/merge cycle entries by TOU name to support crossing seasons cleanly
+    const groupedCycleMap = new Map<string, UsageData>();
+    for (const u of cycle) {
+        const name = u.touName ?? 'Unknown';
+        let group = groupedCycleMap.get(name);
+        if (!group) {
+            group = {
+                start: u.start,
+                homeUsage: 0,
+                gridUsage: 0,
+                solarProduction: 0,
+                batteryChange: 0,
+                tariff: u.tariff,
+                touName: name,
+                buyRate: u.buyRate,
+                sellRate: u.sellRate
+            };
+            groupedCycleMap.set(name, group);
+        }
+        group.homeUsage += u.homeUsage;
+        group.gridUsage += u.gridUsage;
+        group.solarProduction += u.solarProduction;
+        group.batteryChange += u.batteryChange;
+    }
+
+    // Resolve current active rates to apply to grouped cycle data
+    const active = schedule.getTariffPeriod(now);
+    const currentRates = new Map<string, { buyRate: number; sellRate: number }>();
+    if (active && active.season && active.season.schedules) {
+        for (const s of active.season.schedules) {
+            const name = s.name || 'Standard';
+            if (!currentRates.has(name)) {
+                currentRates.set(name, {
+                    buyRate: s.buy_rate ?? active.season.buy_rate ?? 0,
+                    sellRate: s.sell_rate ?? active.season.sell_rate ?? 0
+                });
+            }
+        }
+    }
+
+    // Update grouped cycle entries with the current season's active rates if available
+    for (const [name, group] of groupedCycleMap.entries()) {
+        const rates = currentRates.get(name);
+        if (rates) {
+            group.buyRate = rates.buyRate;
+            group.sellRate = rates.sellRate;
+        }
+    }
+
+    // Convert back to array
+    let groupedCycle = Array.from(groupedCycleMap.values());
+
+    // Filter to only include periods in the current active season's schedules if active season is resolved
+    if (active && active.season && active.season.schedules) {
+        const activeNames = new Set(active.season.schedules.map(s => s.name || 'Standard'));
+        groupedCycle = groupedCycle.filter(u => activeNames.has(u.touName || 'Standard'));
+    }
+
     let nextCheaper: LoadTimingView['nextCheaper'] = null;
     let nextCheaperPhrase: string | null = null;
     let nextStartPhraseByKey: Record<string, string> = {};
     let activeIsCheapest = false;
 
     if (activePeriod && hasCycleData) {
-        const cheaper = findNextCheaperPeriod(schedule, now, cycle, timezone);
+        const cheaper = findNextCheaperPeriod(schedule, now, groupedCycle, timezone);
         if (cheaper) {
             const phrase = formatRelativeStart(cheaper.startsAt, now, timezone);
             nextCheaper = { name: cheaper.name, marginalCost: cheaper.marginalCost, phrase };
             nextCheaperPhrase = phrase;
         }
 
-        const nextStarts = findNextStartsByKey(schedule, now, cycle, timezone);
+        const nextStarts = findNextStartsByKey(schedule, now, groupedCycle, timezone);
         nextStartPhraseByKey = Object.fromEntries(
             Array.from(nextStarts.entries()).map(([key, start]) => [
                 key,
@@ -69,14 +127,12 @@ export function computeLoadTiming(
             ])
         );
 
-        const activeEntry = cycle.find((u) =>
+        const activeEntry = groupedCycle.find((u) =>
             (u.touName ?? 'Unknown') === activePeriod.name
-            && (u.buyRate ?? 0) === activePeriod.buyRate
-            && (u.sellRate ?? 0) === activePeriod.sellRate
         );
         const activeMarginal = activeEntry ? computeMarginalCost(activeEntry).marginalCost : null;
         if (activeMarginal !== null && activeEntry) {
-            activeIsCheapest = cycle.every((u) => {
+            activeIsCheapest = groupedCycle.every((u) => {
                 if (u === activeEntry) return true;
                 const m = computeMarginalCost(u).marginalCost;
                 return m === null || m >= activeMarginal;
@@ -84,14 +140,12 @@ export function computeLoadTiming(
         }
     }
 
-    const periods: LoadTimingPeriod[] = cycle.map((u) => {
+    const periods: LoadTimingPeriod[] = groupedCycle.map((u) => {
         const name = u.touName ?? 'Unknown';
         const { cycleNetExportKwh, marginalCost, basis } = computeMarginalCost(u);
         const isActive = activePeriod !== null
-            && name === activePeriod.name
-            && (u.buyRate ?? 0) === activePeriod.buyRate
-            && (u.sellRate ?? 0) === activePeriod.sellRate;
-        const key = periodKey(name, u.buyRate ?? 0, u.sellRate ?? 0);
+            && name === activePeriod.name;
+        const key = periodKey(name);
         const nextStartPhrase = isActive ? null : (nextStartPhraseByKey[key] ?? null);
         return { name, marginalCost, basis, cycleNetExportKwh, isActive, nextStartPhrase };
     });

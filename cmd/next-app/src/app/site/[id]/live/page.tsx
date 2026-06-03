@@ -9,10 +9,6 @@ import { verifySiteAccess, getCurrentUser } from '@/lib/auth-checks';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { LiveDetailView } from '@/components/site/live/LiveDetailView';
 import type { ActivePeriod } from '@/components/site/live/PeriodCardRow';
-import {
-    findNextCheaperPeriod,
-    type CheaperPeriod
-} from '@/lib/next-cheaper-period';
 import { computeLoadTiming } from '@/lib/load-timing';
 import { refreshTodayData } from '@/lib/today-refresh';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
@@ -132,20 +128,9 @@ export default async function SiteLivePage({
         holdRepo.getLatestCancelledUnacked(id),
     ]);
 
-    // Marginal-cost / next-cheaper orchestration lives in the shared
-    // computeLoadTiming module so the live page and the TRMNL markup route
-    // never disagree. The view consumes the full CheaperPeriod (startsAt /
-    // basis), so when a cheaper period exists re-derive it once — same
-    // inputs, same result, props stay identical to the prior inline logic.
     const loadTiming = schedule
         ? computeLoadTiming(schedule, cycle, now, site.timezone, activePeriod)
         : null;
-    const nextCheaper: CheaperPeriod | null = (schedule && loadTiming?.nextCheaper)
-        ? findNextCheaperPeriod(schedule, now, cycle, site.timezone)
-        : null;
-    const nextCheaperPhrase: string | null = loadTiming?.nextCheaperPhrase ?? null;
-    const nextStartPhraseByKey: Record<string, string> = loadTiming?.nextStartPhraseByKey ?? {};
-    const activeIsCheapest = loadTiming?.activeIsCheapest ?? false;
 
     return (
         <PageShell maxWidth="2xl" padding="none" className="px-4 py-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
@@ -161,18 +146,13 @@ export default async function SiteLivePage({
                     solarPower={liveStatus?.solar_power ?? (latestEnergyData !== null ? energyToAveragePower(latestEnergyData.solarPower) : 0)}
                     gridPower={liveStatus?.grid_power ?? (latestEnergyData !== null ? energyToAveragePower(latestEnergyData.gridPower) : 0)}
                     loadPower={liveStatus?.load_power ?? (latestEnergyData !== null ? energyToAveragePower(latestEnergyData.loadPower) : 0)}
-                    cycle={cycle}
                     today={today}
                     todayTotals={todayTotals}
                     todayChartRows={todayChartRows}
                     todayStart={todayStart}
                     now={now}
-                    activePeriod={activePeriod}
                     hasTariff={hasTariff}
-                    nextCheaper={nextCheaper}
-                    nextCheaperPhrase={nextCheaperPhrase}
-                    nextStartPhraseByKey={nextStartPhraseByKey}
-                    activeIsCheapest={activeIsCheapest}
+                    loadTiming={loadTiming}
                     batteryHold={activeHold ? {
                         mode: activeHold.mode,
                         target_reserve: activeHold.target_reserve,
