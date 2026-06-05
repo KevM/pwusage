@@ -78,11 +78,17 @@ export async function checkRefreshNeeded(token: string): Promise<string | null> 
         }
 
         if (timeRemaining < REFRESH_THRESHOLD_SECONDS) {
-            // Check if user is still active in DB before refreshing
+            // Don't extend a session for a revoked/deactivated user. Some
+            // authorization paths (e.g. SiteService.validateSiteAccess) trust the
+            // JWT claims directly without re-checking isUserActive, so refusing to
+            // refresh is what eventually locks a revoked user out of those JWT-only
+            // endpoints -- at the next normal expiry rather than the 30-day cap.
+            // (Safe here: Next 16 proxy runs on the Node.js runtime, so the
+            // user-repo / pg import works.)
             if (decoded.sub) {
                 const { isUserActive } = await import('./user-repo');
                 if (!(await isUserActive(decoded.sub))) {
-                    console.warn(`[AuthJWT] Refusal to refresh token for revoked/inactive user ${decoded.sub}`);
+                    console.warn(`[AuthJWT] Refusing to refresh token for revoked/inactive user ${decoded.sub}`);
                     return null;
                 }
             }
@@ -92,8 +98,12 @@ export async function checkRefreshNeeded(token: string): Promise<string | null> 
         }
 
         return null;
-    } catch {
-        // Invalid token, do nothing
+    } catch (err) {
+        // Verification failed (expired/tampered/malformed). Surface it: a silent
+        // catch here previously hid a broken refresh path for weeks. Logging the
+        // error name lets us distinguish "cookie present but rejected" (e.g.
+        // TokenExpiredError) from "cookie absent" when diagnosing reauth issues.
+        console.warn(`[AuthJWT] checkRefreshNeeded could not verify token: ${(err as Error)?.name ?? 'unknown error'}`);
         return null;
     }
 }

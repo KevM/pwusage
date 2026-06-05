@@ -31,7 +31,7 @@ export async function proxy(request: NextRequest) {
                 sameSite: 'lax'
             });
 
-            console.log(`[Middleware] Refreshed site_auth token for path: ${pathname}`);
+            console.log(`[Middleware/Proxy] Refreshed site_auth token for path: ${pathname}`);
             return response;
         }
     }

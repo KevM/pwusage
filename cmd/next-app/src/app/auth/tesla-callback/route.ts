@@ -409,7 +409,8 @@ export async function GET(request: NextRequest) {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
                 maxAge: COOKIE_MAX_AGE_SECONDS,
-                path: '/'
+                path: '/',
+                sameSite: 'lax'
             });
             console.log('[AuthCallback] Set site_auth token.');
         }
