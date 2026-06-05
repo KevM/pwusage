@@ -22,6 +22,7 @@ import {
 } from '@/lib/trmnl-component-config';
 import { TrmnlInstallationRepo } from '@/lib/trmnl-installation-repo';
 import { verifyTrmnlToken } from '@/lib/trmnl-auth';
+import { continueUrl } from '@/app/continue/continue-logic';
 
 export const dynamic = 'force-dynamic';
 
@@ -856,9 +857,15 @@ async function getQrResponse(request: Request, uuid: string | null, siteId: stri
     const host = request.headers.get('host') || 'localhost:3000';
     const protocol = host.includes('localhost') ? 'http' : 'https';
     const logoUrl = `${protocol}://${host}/apple-touch-icon.png`;
-    const manageUrl = uuid
-        ? `${protocol}://${host}/trmnl/manage?uuid=${uuid}`
-        : `${protocol}://${host}/site/${siteId}/settings`;
+    // Route the device QR through the /continue gate. Scanning from the iOS
+    // lock-screen / Control Center scanner opens links in a cookie-less,
+    // ephemeral context, so a direct link to the (session-gated) manage/settings
+    // page forces a futile re-auth every time. /continue forwards when a session
+    // exists and otherwise tells the user to scan with the Camera app instead.
+    const internalPath = uuid
+        ? `/trmnl/manage?uuid=${encodeURIComponent(uuid)}`
+        : `/site/${encodeURIComponent(siteId ?? '')}/settings`;
+    const manageUrl = continueUrl(`${protocol}://${host}`, internalPath);
 
     // Generate QR Code with High error correction ('H') to support the centered logo overlay
     const qrDataUrl = await QRCode.toDataURL(manageUrl, { 

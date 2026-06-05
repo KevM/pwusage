@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { drawQrWithLogo } from '@/lib/qr-generator';
+import { continueUrl } from '@/app/continue/continue-logic';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { Button } from '@/components/ui/Button';
 import { Alert, AlertDescription } from '@/components/ui/Alert';
@@ -55,7 +56,11 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
   // Callback ref to render QR code with centered logo as soon as canvas mounts
   const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
     if (canvas) {
-      const deepLink = `${window.location.origin}/site/${siteId}/live?action=park`;
+      // Route through the /continue auth gate rather than linking straight at
+      // the gated live page. If the scanner has the session it forwards
+      // invisibly; if not (e.g. opened from the iOS lock-screen scanner, which
+      // has no cookie jar) it shows mitigations instead of a confusing reauth.
+      const deepLink = continueUrl(window.location.origin, `/site/${siteId}/live?action=park`);
       drawQrWithLogo(canvas, deepLink)
         .catch(err => console.error('Error generating QR code:', err));
     }
@@ -199,7 +204,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
                 size="sm" 
                 className="flex-1"
                 onClick={() => {
-                  const deepLink = `${window.location.origin}/site/${siteId}/live?action=park`;
+                  const deepLink = continueUrl(window.location.origin, `/site/${siteId}/live?action=park`);
                   navigator.clipboard.writeText(deepLink)
                     .then(() => toast({ title: 'Link copied', description: 'Battery Hold link copied to clipboard!', variant: 'success' }))
                     .catch(() => toast({ title: 'Copy failed', description: 'Failed to copy link.', variant: 'danger' }));
