@@ -130,7 +130,7 @@ describe('Importer Sync Logic', () => {
 
     it('should trigger surgical sync in ensureRecentData when stale', async () => {
         const latestKnown = new Date(Date.now() - 30 * 60 * 1000); // 30 mins ago (Stale)
-        const mockRows = [{ timestamp: new Date(), site_id: '123', tariff_id: 1, load_power: 100, solar_power: 0, grid_power: 100, battery_power: 0, battery_soc: 50 }];
+        const mockRows = [{ timestamp: new Date(), site_id: '123', tariff_id: 1, tariff_schedule_id: null, load_power: 100, solar_power: 0, grid_power: 100, battery_power: 0, battery_soc: 50 }];
         const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue(mockRows);
 
         const result = await importer.ensureRecentData('site-123', undefined, latestKnown);

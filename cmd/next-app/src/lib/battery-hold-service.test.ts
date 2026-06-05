@@ -137,7 +137,7 @@ describe('parkBattery', () => {
 
 describe('restoreBattery', () => {
   it('restores to original_reserve when the current reserve matches the parked target', async () => {
-    const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100, created_at: new Date().toISOString() } as BatteryHold);
+    const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100, created_at: new Date().toISOString() } as unknown as BatteryHold);
     const client = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }) });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'manual' });
@@ -152,7 +152,7 @@ describe('restoreBattery', () => {
       original_reserve: 20,
       target_reserve: 100,
       created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-    } as BatteryHold);
+    } as unknown as BatteryHold);
     const client = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 50 }) });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'load_ended' });
@@ -168,7 +168,7 @@ describe('restoreBattery', () => {
       original_reserve: 20,
       target_reserve: 100,
       created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-    } as BatteryHold);
+    } as unknown as BatteryHold);
     const client = fakeClient({
       getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 50 }),
       setBackupReserve: vi.fn().mockResolvedValue({}),
@@ -186,7 +186,7 @@ describe('restoreBattery', () => {
       original_reserve: 20,
       target_reserve: 100,
       created_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-    } as BatteryHold);
+    } as unknown as BatteryHold);
     const client = fakeClient({
       getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 50 }),
       setBackupReserve: vi.fn().mockResolvedValue({}),
@@ -204,7 +204,7 @@ describe('restoreBattery', () => {
       original_reserve: 20,
       target_reserve: 100,
       created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-    } as BatteryHold);
+    } as unknown as BatteryHold);
     const client = fakeClient({
       getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 20 }),
       setBackupReserve: vi.fn().mockResolvedValue({}),
@@ -218,7 +218,7 @@ describe('restoreBattery', () => {
   });
 
   it('does not mark restored if the command fails', async () => {
-    const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100, created_at: new Date().toISOString() } as BatteryHold);
+    const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100, created_at: new Date().toISOString() } as unknown as BatteryHold);
     const client = fakeClient({
       getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }),
       setBackupReserve: vi.fn().mockRejectedValue(new Error('Tesla API Error: 500')),

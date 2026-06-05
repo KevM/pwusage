@@ -43,7 +43,8 @@ describe('TrmnlRenderer bill formatting', () => {
                 showEnergyChart: false,
                 showBatterySoc: false,
                 showEstimatedBill: true,
-                batterySocMode: 'glyph'
+                batterySocMode: 'glyph',
+                showLoadTiming: false
             }
         };
 
@@ -89,7 +90,8 @@ describe('TrmnlRenderer bill formatting', () => {
                 showEnergyChart: false,
                 showBatterySoc: false,
                 showEstimatedBill: true,
-                batterySocMode: 'glyph'
+                batterySocMode: 'glyph',
+                showLoadTiming: false
             }
         };
 

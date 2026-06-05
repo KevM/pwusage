@@ -21,6 +21,7 @@ vi.mock('./user-repo', () => ({
 
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { SiteRepo } from './site-repo';
+import { UserRepo } from './user-repo';
 
 function makeSiteJoinRow(overrides: Record<string, unknown> = {}) {
     return {
@@ -160,7 +161,7 @@ describe('TeslaTokenRepo delegates User writes to UserRepo', () => {
         siteRepo = new SiteRepo();
         siteRepo.invalidateCache('site-1');
         userRepo = { updateTokens: userRepoUpdateTokensMock, updateUserStatus: userRepoUpdateUserStatusMock };
-        tokenRepo = new TeslaTokenRepo(siteRepo, userRepo);
+        tokenRepo = new TeslaTokenRepo(siteRepo, userRepo as unknown as UserRepo);
     });
 
     it('updateSiteTokens delegates to UserRepo.updateTokens', async () => {

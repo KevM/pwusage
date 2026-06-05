@@ -166,10 +166,10 @@ describe('findNextStartsByKey', () => {
 
         const result = findNextStartsByKey(schedule, t0, cycle, 'UTC');
         // On-Peak first occurs at 20:00 UTC the same day.
-        expect(result.get(periodKey('On-Peak', 0.30, 0.03)))
+        expect(result.get(periodKey('On-Peak')))
             .toEqual(new Date(Date.UTC(2026, 2, 15, 20, 0, 0)));
         // Off-Peak (the active key) re-occurs the next day at 00:00 UTC.
-        expect(result.get(periodKey('Off-Peak', 0.10, 0.03)))
+        expect(result.get(periodKey('Off-Peak')))
             .toEqual(new Date(Date.UTC(2026, 2, 16, 0, 0, 0)));
     });
 
@@ -195,7 +195,7 @@ describe('findNextStartsByKey', () => {
         ];
 
         const result = findNextStartsByKey(schedule, t0, cycle, 'UTC');
-        expect(result.get(periodKey('On-Peak', 0.30, 0.03)))
+        expect(result.get(periodKey('On-Peak')))
             .toEqual(new Date(Date.UTC(2026, 2, 15, 20, 0, 0)));
     });
 
@@ -278,7 +278,7 @@ describe('walker against real Schedule (regression)', () => {
 
         const result = findNextStartsByKey(schedule, now, cycle, 'America/Los_Angeles');
         // Next On-Peak starts at 4 PM LA same day = 23:00 UTC Mar 16.
-        expect(result.get(periodKey('On-Peak', 0.45, 0.04)))
+        expect(result.get(periodKey('On-Peak')))
             .toEqual(new Date(Date.UTC(2026, 2, 16, 23, 0, 0)));
     });
 });
