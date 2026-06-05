@@ -18,11 +18,12 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
     const currentSiteIdParam = params?.id;
     const currentSiteId = Array.isArray(currentSiteIdParam) ? currentSiteIdParam[0] : currentSiteIdParam;
     const onLiveDetail = Boolean(currentSiteId && pathname === `/site/${currentSiteId}/live`);
+    const showLiveStats = Boolean(currentSiteId && currentSiteId !== 'undefined' && !onLiveDetail);
 
     return (
         <header className="w-full bg-white dark:bg-slate-900 p-4 md:px-8 shadow-sm">
             <div className="max-w-screen-2xl mx-auto">
-                <div className={`flex flex-wrap md:flex-nowrap items-start md:items-center gap-x-4 gap-y-3 ${onLiveDetail ? 'justify-start' : 'justify-between'}`}>
+                <div className="flex flex-wrap md:flex-nowrap items-start md:items-center gap-x-4 gap-y-3 justify-between">
                     {/* Logo Group - Always First */}
                     <div className="flex items-center gap-6 order-1 shrink-0">
                         <Link href="/" className="flex items-center gap-3 group shrink-0">
@@ -42,7 +43,7 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
                     </div>
 
                     {/* Nav Icons Group - Order 3 on Mobile (Below Live Stats), Order 3 on Desktop (Far Right) */}
-                    <div className="flex w-full justify-center gap-3 items-center order-3 md:order-3 md:w-auto shrink-0">
+                    <div className={`flex justify-center gap-3 items-center order-3 md:order-3 md:w-auto shrink-0 ${showLiveStats ? 'w-full' : 'w-auto'}`}>
                         {showStyleGuide && (
                             <Link
                                 href="/styleguide"
@@ -85,7 +86,7 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
                     </div>
 
                     {/* Live Stats Group - Order 2 on Mobile (Above Actions), Order 2 on Desktop (Center) */}
-                    {currentSiteId && currentSiteId !== 'undefined' && !onLiveDetail && (
+                    {showLiveStats && currentSiteId && (
                         <div className="order-2 md:order-2 flex flex-1 min-w-0 justify-center md:px-4 mt-1 md:mt-0">
                             <HeaderLiveStats siteId={currentSiteId} />
                         </div>

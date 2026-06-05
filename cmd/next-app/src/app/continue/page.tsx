@@ -4,9 +4,9 @@ import { headers } from 'next/headers';
 import { getCurrentUser } from '@/lib/auth-checks';
 import { PageShell } from '@/components/ui/PageShell';
 import { SectionCard } from '@/components/ui/SectionCard';
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { safeInternalPath, isIOSUserAgent } from './continue-logic';
+import { CameraScanInfographic } from './CameraScanInfographic';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,25 +43,29 @@ export default async function ContinuePage({
   const signInHref = `/login?callback=${encodeURIComponent(target)}`;
 
   return (
-    <PageShell maxWidth="xl" className="flex items-center justify-center">
+    <PageShell maxWidth="xl" fullHeight={false}>
       <SectionCard className="w-full" title="Sign in to continue" description="We couldn't find your session on this device.">
-        <div className="space-y-4">
-          {ios ? (
-            <Alert variant="warning">
-              <AlertTitle>Opened from the lock-screen scanner?</AlertTitle>
-              <AlertDescription>
-                The iPhone/iPad lock-screen and Control Center QR scanner opens links in a private window that can&apos;t see your sign-in. Scan the QR code with the <strong>Camera app</strong> instead so it opens in Safari with your session.
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <Alert variant="warning">
-              <AlertTitle>No session found</AlertTitle>
-              <AlertDescription>
-                Your browser may be blocking cookies or using a private window. Sign in to continue.
-              </AlertDescription>
-            </Alert>
-          )}
-          <Link href={signInHref}><Button>Sign in</Button></Link>
+        <div className="space-y-6">
+          {/* Primary path: just sign in. */}
+          <Link href={signInHref} className="block">
+            <Button className="w-full sm:w-auto">Sign in</Button>
+          </Link>
+
+          {/* Secondary: for folks who expected to already be signed in. */}
+          <div className="space-y-3 border-t border-gray-100 pt-5 dark:border-slate-800">
+            {ios ? (
+              <>
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  Thought you were already logged in? Try scanning the QR code with your <strong className="font-semibold">Camera app</strong> instead.
+                </p>
+                <CameraScanInfographic />
+              </>
+            ) : (
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                Thought you were already logged in? Your browser may be blocking cookies or using a private window.
+              </p>
+            )}
+          </div>
         </div>
       </SectionCard>
     </PageShell>

@@ -136,4 +136,55 @@ describe('SiteService Security', () => {
             expect(mockTeslaClient.getProducts).toHaveBeenCalled();
         });
     });
+
+    // The JWT fast-path trusts claims offline; a revoked user must be blocked here
+    // too, otherwise removing the refresh-time check would only delay (not prevent)
+    // their lockout from these JWT-only endpoints.
+    describe('revocation (isUserActive)', () => {
+        it('validateSiteAccess returns false for a revoked user without hitting the API', async () => {
+            mockTeslaClient.getProducts.mockClear();
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1' });
+
+            const service = new SiteService({
+                teslaClient: mockTeslaClient as unknown as TeslaClient,
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                isUserActive: vi.fn().mockResolvedValue(false),
+            });
+
+            expect(await service.validateSiteAccess('12345')).toBe(false);
+            expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
+        });
+
+        it('validateSiteAccess still authorizes an active user identified by sub', async () => {
+            mockTeslaClient.getProducts.mockClear();
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1' });
+
+            const service = new SiteService({
+                teslaClient: mockTeslaClient as unknown as TeslaClient,
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                isUserActive: vi.fn().mockResolvedValue(true),
+            });
+
+            expect(await service.validateSiteAccess('12345')).toBe(true);
+            expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
+        });
+
+        it('getAuthorizedSites returns no sites for a revoked user', async () => {
+            mockTeslaClient.getProducts.mockClear();
+            mockEnergyRepo.getSites.mockResolvedValue([mockSite, mockUnauthorizedSite]);
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1' });
+
+            const service = new SiteService({
+                teslaClient: mockTeslaClient as unknown as TeslaClient,
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                isUserActive: vi.fn().mockResolvedValue(false),
+            });
+
+            expect(await service.getAuthorizedSites()).toEqual([]);
+            expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
+        });
+    });
 });

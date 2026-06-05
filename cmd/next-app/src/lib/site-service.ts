@@ -2,11 +2,14 @@ import { Site } from './db';
 import { TeslaClient } from './tesla-client';
 import { SiteRepo } from './site-repo';
 import { verifySiteToken } from './auth-jwt';
+import { isUserActive as defaultIsUserActive } from './user-repo';
 
 export interface SiteServiceDeps {
     teslaClient?: Pick<TeslaClient, 'getProducts'>;
     siteRepo: Pick<SiteRepo, 'getSites'>;
     siteAuthToken?: string;
+    // Revocation check. Defaults to the real (React-cached) isUserActive; injectable for tests.
+    isUserActive?: (userId: string) => Promise<boolean>;
 }
 
 interface AuthorizedSitesOptions {
@@ -23,6 +26,12 @@ export class SiteService {
         if (this.deps.siteAuthToken) {
             const decoded = verifySiteToken(this.deps.siteAuthToken);
             if (decoded) {
+                // The JWT claims are trusted offline, so a revoked/deactivated user
+                // would otherwise keep access until the token expires. Re-check.
+                if (decoded.sub && !(await this.isUserStillActive(decoded.sub))) {
+                    console.warn(`[SiteService] getAuthorizedSites blocked for revoked/inactive user: ${decoded.sub}`);
+                    return [];
+                }
                 // console.log('[SiteService] Using JWT for authorization');
                 authorizedSiteIds = new Set(decoded.sites);
             } else {
@@ -58,6 +67,12 @@ export class SiteService {
         if (this.deps.siteAuthToken) {
             const decoded = verifySiteToken(this.deps.siteAuthToken);
             if (decoded) {
+                // The JWT claims are trusted offline, so a revoked/deactivated user
+                // would otherwise keep access until the token expires. Re-check.
+                if (decoded.sub && !(await this.isUserStillActive(decoded.sub))) {
+                    console.warn(`[SiteService] validateSiteAccess blocked for revoked/inactive user: ${decoded.sub}`);
+                    return false;
+                }
                 if (decoded.roles.includes('admin')) {
                     return true;
                 }
@@ -71,6 +86,11 @@ export class SiteService {
         console.log(`[SiteService] Validating access for ${siteId} against API...`);
         const authorizedIds = await this.fetchSitesFromApi();
         return authorizedIds.has(siteId);
+    }
+
+    private async isUserStillActive(userId: string): Promise<boolean> {
+        const isUserActive = this.deps.isUserActive ?? defaultIsUserActive;
+        return isUserActive(userId);
     }
 
     private async fetchSitesFromApi(): Promise<Set<string>> {

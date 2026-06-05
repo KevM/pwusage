@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { drawQrWithLogo } from '@/lib/qr-generator';
+import { continueUrl } from '@/app/continue/continue-logic';
 import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
 import { TariffList } from './TariffList';
@@ -96,7 +97,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
     // Callback ref to render QR code with centered logo as soon as canvas mounts
     const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
         if (canvas) {
-            const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
+            const deepLink = continueUrl(window.location.origin, `/site/${site.id}/live?action=park`);
             drawQrWithLogo(canvas, deepLink)
                 .catch(err => console.error('Error generating Battery Hold QR code:', err));
         }
@@ -292,7 +293,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                             variant="outline"
                             className="w-full"
                             onClick={() => {
-                                const deepLink = `${window.location.origin}/site/${site.id}/live?action=park`;
+                                const deepLink = continueUrl(window.location.origin, `/site/${site.id}/live?action=park`);
                                 navigator.clipboard.writeText(deepLink)
                                     .then(() => toast({ title: 'Link copied', description: 'Battery Hold URL copied to clipboard!', variant: 'success' }))
                                     .catch(() => toast({ title: 'Copy failed', description: 'Failed to copy link.', variant: 'danger' }));
