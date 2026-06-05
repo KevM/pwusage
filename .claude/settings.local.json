@@ -36,7 +36,9 @@
       "Bash(cp package.json /tmp/package.json.bak)",
       "Bash(cp package-lock.json /tmp/package-lock.json.bak)",
       "Bash(grep *)",
-      "Bash(gh pr *)"
+      "Bash(gh pr *)",
+      "Bash(npx vitest *)",
+      "Bash(npm --prefix /Users/kevm/github/pwusage/cmd/next-app run build)"
     ]
   }
 }
