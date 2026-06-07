@@ -72,10 +72,10 @@ describe('HeaderMetricsStrip Component', () => {
         const html = renderToStaticMarkup(<HeaderMetricsStrip {...defaultProps} isExpanded={false} />);
         // Battery wrapper should have 'hidden sm:inline-flex'
         expect(html).toContain('hidden sm:inline-flex');
-        // Solar label should have 'hidden md:inline'
-        expect(html).toContain('hidden md:inline');
-        // Solar sparkline should have 'max-md:hidden'
-        expect(html).toContain('max-md:hidden');
+        // Solar label should have 'hidden sm:inline'
+        expect(html).toContain('hidden sm:inline');
+        // Solar sparkline should have 'hidden lg:inline-flex'
+        expect(html).toContain('hidden lg:inline-flex');
     });
 
     it('uses expanded classes when isExpanded is true', () => {
@@ -91,13 +91,13 @@ describe('HeaderMetricsStrip Component', () => {
     it('renders detail view affordance on all states, applying hover transitions when collapsed', () => {
         const htmlCollapsed = renderToStaticMarkup(<HeaderMetricsStrip {...defaultProps} isExpanded={false} />);
         expect(htmlCollapsed).toContain('View details');
-        expect(htmlCollapsed).toContain('max-md:hidden');
+        expect(htmlCollapsed).toContain('hidden lg:inline-flex');
         expect(htmlCollapsed).toContain('opacity-0');
-        expect(htmlCollapsed).toContain('group-hover:opacity-100');
+        expect(htmlCollapsed).toContain('lg:group-hover:opacity-100');
 
         const htmlExpanded = renderToStaticMarkup(<HeaderMetricsStrip {...defaultProps} isExpanded={true} />);
         expect(htmlExpanded).toContain('View details');
-        expect(htmlExpanded).not.toContain('max-md:hidden');
+        expect(htmlExpanded).not.toContain('hidden lg:inline-flex');
         expect(htmlExpanded).toContain('opacity-100');
         expect(htmlExpanded).not.toContain('opacity-0');
     });

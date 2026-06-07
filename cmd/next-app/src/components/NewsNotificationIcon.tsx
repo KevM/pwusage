@@ -5,7 +5,11 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 
-export function NewsNotificationIcon() {
+export function NewsNotificationIcon({
+    onClick
+}: {
+    onClick?: () => void;
+}) {
     const [hasNew, setHasNew] = useState(false);
 
     useEffect(() => {
@@ -38,6 +42,7 @@ export function NewsNotificationIcon() {
     const handleClick = () => {
         setHasNew(false);
         localStorage.setItem('last_news_read', Date.now().toString());
+        onClick?.();
     };
 
     return (
