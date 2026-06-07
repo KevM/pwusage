@@ -225,7 +225,7 @@ export function HeaderMetricsStrip({
                         <BatteryActivityGlyph status={model.batteryActivity} />
                     ) : null}
                 </span>
-                <span className={`${isExpanded ? 'inline' : 'hidden md:inline'} text-xs font-semibold tabular-nums ${batteryValueClassName}`}>
+                <span className={`${isExpanded ? 'inline' : 'hidden sm:inline'} text-xs font-semibold tabular-nums ${batteryValueClassName}`}>
                     {Math.round(model.batteryPercentage)}%
                 </span>
             </div>
@@ -235,13 +235,13 @@ export function HeaderMetricsStrip({
                 <span className="text-amber-500 dark:text-amber-400 shrink-0">
                     <SolarIcon />
                 </span>
-                <span className={`${isExpanded ? 'inline' : 'hidden md:inline'} text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mr-0.5`}>
+                <span className={`${isExpanded ? 'inline' : 'hidden sm:inline'} text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mr-0.5`}>
                     Solar
                 </span>
                 <span className="text-sm font-semibold tabular-nums text-amber-700 dark:text-amber-300">
                     {model.solarFormatted}
                 </span>
-                <span className={`${isExpanded ? 'inline-flex' : 'inline-flex max-md:hidden'} items-center ml-1 shrink-0`}>
+                <span className={`${isExpanded ? 'inline-flex' : 'hidden lg:inline-flex'} items-center ml-1 shrink-0`}>
                     <MiniSparkline
                         series={solarSparkline}
                         yMin={solarScale?.minWatts}
@@ -257,13 +257,13 @@ export function HeaderMetricsStrip({
                 <span className="text-blue-500 dark:text-blue-400 shrink-0">
                     <LoadIcon />
                 </span>
-                <span className={`${isExpanded ? 'inline' : 'hidden md:inline'} text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mr-0.5`}>
+                <span className={`${isExpanded ? 'inline' : 'hidden sm:inline'} text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mr-0.5`}>
                     Load
                 </span>
                 <span className="text-sm font-semibold tabular-nums text-blue-700 dark:text-blue-300">
                     {model.loadFormatted}
                 </span>
-                <span className={`${isExpanded ? 'inline-flex' : 'inline-flex max-md:hidden'} items-center ml-1 shrink-0`}>
+                <span className={`${isExpanded ? 'inline-flex' : 'hidden lg:inline-flex'} items-center ml-1 shrink-0`}>
                     <MiniSparkline
                         series={loadSparkline}
                         yMin={loadScale?.minWatts}
@@ -279,7 +279,7 @@ export function HeaderMetricsStrip({
                 <span className="text-gray-500 dark:text-gray-400 shrink-0">
                     <GridIcon />
                 </span>
-                <span className={`${isExpanded ? 'inline' : 'hidden md:inline'} text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mr-0.5`}>
+                <span className={`${isExpanded ? 'inline' : 'hidden sm:inline'} text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mr-0.5`}>
                     Grid
                 </span>
                 <span className="text-sm font-semibold tabular-nums text-gray-900 dark:text-gray-100 flex items-center">
@@ -290,7 +290,7 @@ export function HeaderMetricsStrip({
                         </span>
                     )}
                 </span>
-                <span className={`${isExpanded ? 'inline-flex' : 'inline-flex max-md:hidden'} items-center ml-1 shrink-0`}>
+                <span className={`${isExpanded ? 'inline-flex' : 'hidden lg:inline-flex'} items-center ml-1 shrink-0`}>
                     <MiniSparkline
                         series={gridSparkline}
                         includeZero
@@ -313,7 +313,7 @@ export function HeaderMetricsStrip({
             <span className={`inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 rounded-full border hover:bg-blue-100 dark:hover:bg-blue-900/70 hover:text-blue-700 dark:hover:text-blue-300 shrink-0 min-w-0 whitespace-nowrap transition-all duration-300 ease-in-out view-details-pill ${
                 isExpanded 
                     ? 'opacity-100 w-24 px-2 border-blue-100 dark:border-blue-900/50 ml-1.5' 
-                    : 'opacity-0 w-0 px-0 border-transparent ml-0 overflow-hidden max-md:hidden group-hover:opacity-100 group-hover:w-24 group-hover:px-2 group-hover:border-blue-100 dark:group-hover:border-blue-900/50 group-hover:ml-1.5'
+                    : 'opacity-0 w-0 px-0 border-transparent ml-0 overflow-hidden hidden lg:inline-flex lg:group-hover:opacity-100 lg:group-hover:w-24 lg:group-hover:px-2 lg:group-hover:border-blue-100 dark:lg:group-hover:border-blue-900/50 lg:group-hover:ml-1.5'
             }`}>
                 <span>View details</span>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3">
