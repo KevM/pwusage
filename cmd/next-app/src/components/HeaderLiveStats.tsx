@@ -252,6 +252,28 @@ export function HeaderMetricsStrip({
                 </span>
             </div>
 
+            {/* Load */}
+            <div className="flex items-center gap-0.5 md:gap-1 shrink-0">
+                <span className="text-blue-500 dark:text-blue-400 shrink-0">
+                    <LoadIcon />
+                </span>
+                <span className={`${isExpanded ? 'inline' : 'hidden md:inline'} text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mr-0.5`}>
+                    Load
+                </span>
+                <span className="text-sm font-semibold tabular-nums text-blue-700 dark:text-blue-300">
+                    {model.loadFormatted}
+                </span>
+                <span className={`${isExpanded ? 'inline-flex' : 'inline-flex max-md:hidden'} items-center ml-1 shrink-0`}>
+                    <MiniSparkline
+                        series={loadSparkline}
+                        yMin={loadScale?.minWatts}
+                        yMax={loadScale?.maxWatts}
+                        className="h-3 w-8 shrink-0"
+                        strokeClassName="text-blue-600 dark:text-blue-300"
+                    />
+                </span>
+            </div>
+
             {/* Grid */}
             <div className="flex items-center gap-0.5 md:gap-1 shrink-0">
                 <span className="text-gray-500 dark:text-gray-400 shrink-0">
@@ -278,28 +300,6 @@ export function HeaderMetricsStrip({
                         strokeClassName="text-gray-900 dark:text-gray-100"
                         positiveStrokeClassName="text-gray-900 dark:text-gray-100"
                         negativeStrokeClassName="text-gray-400 dark:text-gray-500"
-                    />
-                </span>
-            </div>
-
-            {/* Load */}
-            <div className="flex items-center gap-0.5 md:gap-1 shrink-0">
-                <span className="text-blue-500 dark:text-blue-400 shrink-0">
-                    <LoadIcon />
-                </span>
-                <span className={`${isExpanded ? 'inline' : 'hidden md:inline'} text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mr-0.5`}>
-                    Load
-                </span>
-                <span className="text-sm font-semibold tabular-nums text-blue-700 dark:text-blue-300">
-                    {model.loadFormatted}
-                </span>
-                <span className={`${isExpanded ? 'inline-flex' : 'inline-flex max-md:hidden'} items-center ml-1 shrink-0`}>
-                    <MiniSparkline
-                        series={loadSparkline}
-                        yMin={loadScale?.minWatts}
-                        yMax={loadScale?.maxWatts}
-                        className="h-3 w-8 shrink-0"
-                        strokeClassName="text-blue-600 dark:text-blue-300"
                     />
                 </span>
             </div>
