@@ -18,8 +18,7 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
     const pathname = usePathname();
     const currentSiteIdParam = params?.id;
     const currentSiteId = Array.isArray(currentSiteIdParam) ? currentSiteIdParam[0] : currentSiteIdParam;
-    const onLiveDetail = Boolean(currentSiteId && pathname === `/site/${currentSiteId}/live`);
-    const showLiveStats = Boolean(currentSiteId && currentSiteId !== 'undefined' && !onLiveDetail);
+    const showLiveStats = Boolean(currentSiteId && currentSiteId !== 'undefined');
 
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
