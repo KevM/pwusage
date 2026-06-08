@@ -197,5 +197,41 @@ describe('Layout Engine', () => {
             expect(layoutWithoutLt.billRowsTarget).toBe(2);
             expect(layoutWithLt.billRowsTarget).toBe(1);
         });
+
+        it('flags a flow section and counts it toward density', () => {
+            const soloFlow = calculateLayoutBudget(makeCtx(), makeCfg({ showEnergyFlow: true }));
+            expect(soloFlow.hasFlowSection).toBe(true);
+            expect(soloFlow.activeSectionCount).toBe(1);
+            expect(soloFlow.flowMinHeight).toBeGreaterThan(300);
+
+            const off = calculateLayoutBudget(makeCtx(), makeCfg());
+            expect(off.hasFlowSection).toBe(false);
+            expect(off.flowMinHeight).toBe(0);
+        });
+
+        it('shrinks the flow floor when co-displayed with other sections', () => {
+            const solo = calculateLayoutBudget(makeCtx(), makeCfg({ showEnergyFlow: true }));
+            const coDisplayed = calculateLayoutBudget(
+                makeCtx({ todayGrid: 5, todaySolar: 3 }),
+                makeCfg({ showEnergyFlow: true, showLiveGrid: true, showLiveSolar: true, showLiveBattery: true, showEnergyChart: true })
+            );
+            expect(coDisplayed.flowMinHeight).toBeLessThan(solo.flowMinHeight);
+            expect(coDisplayed.isDenseLayout || coDisplayed.isVeryDenseLayout).toBe(true);
+        });
+
+        it('reaches very-dense when flow joins live + chart + soc', () => {
+            const layout = calculateLayoutBudget(
+                makeCtx({ todayGrid: 5, todaySolar: 3, batterySoc: 80 }),
+                makeCfg({
+                    showEnergyFlow: true, showLiveGrid: true, showLiveSolar: true,
+                    showLiveBattery: true, showEnergyChart: true,
+                    showBatterySoc: true, batterySocMode: 'glyph'
+                })
+            );
+            // live row + chart + SoC glyph + flow = 4 active sections.
+            expect(layout.activeSectionCount).toBe(4);
+            expect(layout.isVeryDenseLayout).toBe(true);
+            expect(layout.flowMinHeight).toBe(150);
+        });
     });
 });
