@@ -6,7 +6,7 @@ export interface TrmnlSection {
     label: string;
     configKey: 'showLiveGrid' | 'showLiveSolar' | 'showLiveBattery'
         | 'showEnergyChart' | 'showBatterySoc' | 'showEstimatedBill'
-        | 'showLoadTiming' | null;
+        | 'showLoadTiming' | 'showEnergyFlow' | null;
     isEnabled(layout: LayoutState): boolean;
     render(ctx: RenderContext, layout: LayoutState): string;
 }

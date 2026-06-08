@@ -27,6 +27,8 @@ function makeCfg(overrides?: Partial<TrmnlComponentConfig>): TrmnlComponentConfi
         showBatterySoc: false,
         showEstimatedBill: false,
         showLoadTiming: false,
+        showEnergyFlow: false,
+        flowBasis: 'cumulative',
         batterySocMode: 'glyph',
         ...overrides
     };

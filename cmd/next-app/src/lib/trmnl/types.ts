@@ -36,4 +36,7 @@ export interface RenderContext {
     /** IANA timezone of the site (e.g. 'America/Los_Angeles'). Chart hour
      *  labels render in this zone; defaults to 'UTC' downstream when absent. */
     timezone?: string;
+    /** Pre-rendered 1-bit Sankey SVG for the flow section. Built by the markup
+     *  route when showEnergyFlow is on and a tariff period (rates) exists. */
+    flowSvg?: string;
 }
