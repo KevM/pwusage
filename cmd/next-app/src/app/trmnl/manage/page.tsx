@@ -684,6 +684,29 @@ function ManageContent() {
                                                 />
                                                 <span className="leading-tight">Load timing</span>
                                             </Label>
+                                            <div className="space-y-1.5">
+                                                <Label className="flex items-start gap-2 text-sm font-normal text-gray-700 dark:text-gray-200 cursor-pointer">
+                                                    <Checkbox
+                                                        className="mt-0.5"
+                                                        checked={editingScreen?.componentConfig.showEnergyFlow ?? false}
+                                                        onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showEnergyFlow: e.target.checked }))}
+                                                    />
+                                                    <span className="leading-tight">Energy Flow Diagram</span>
+                                                </Label>
+                                                <div className="pl-6">
+                                                    <Select
+                                                        value={editingScreen?.componentConfig.flowBasis ?? 'cumulative'}
+                                                        onChange={(e) => updateEditingConfig((prev) => ({
+                                                            ...prev,
+                                                            flowBasis: e.target.value === 'snapshot' ? 'snapshot' : 'cumulative'
+                                                        }))}
+                                                        className="h-8 text-xs py-0"
+                                                    >
+                                                        <option value="snapshot">Now</option>
+                                                        <option value="cumulative">Today</option>
+                                                    </Select>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>

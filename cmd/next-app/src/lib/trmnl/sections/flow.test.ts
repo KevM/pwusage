@@ -4,7 +4,7 @@ import type { RenderContext } from '../types';
 import type { LayoutState } from '../layout-engine';
 
 function makeLayout(overrides?: Partial<LayoutState>): LayoutState {
-    return { hasFlowSection: true, flowMinHeight: 300 } as unknown as LayoutState;
+    return { hasFlowSection: true, flowMinHeight: 300, ...overrides } as unknown as LayoutState;
 }
 
 function makeCtx(overrides?: Partial<RenderContext>): RenderContext {
