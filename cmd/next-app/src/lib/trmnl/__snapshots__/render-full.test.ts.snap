@@ -9,6 +9,7 @@ exports[`renderFull characterization > snapshot: all-off 1`] = `
                     
                     
                     
+                    
             <div class="flex flex--row flex--center-x flex--center-y h--full">
                 <span class="title title--medium">No components selected</span>
             </div>
@@ -30,6 +31,81 @@ exports[`renderFull characterization > snapshot: bill-only 1`] = `
             <div class="view view--full">
                 <div class="layout layout--col gap--small h--full">
                     
+                    
+                    
+                    
+                    
+            <div class="flex flex--col w--full">
+                
+                <div class="flex flex--row flex--center-y w--full" style="justify-content: space-between; margin-bottom: 4px;">
+                    <span class="title title--small" style="font-size: 17px; line-height: 1;">Test Site</span>
+                    <span class="value value--small" style="font-size: 15px; font-weight: 700; line-height: 1;">5/1 - 6/1</span>
+                </div>
+                
+                
+                <table class="table w--full">
+                    <thead>
+                        <tr>
+                            <th>Period</th>
+                            <th>Home</th>
+                            <th>Solar</th>
+                            <th>Grid</th>
+                            <th>Batt</th>
+                            <th>Cost</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                                <tr>
+                                    <td><span class="value--small">> Off-Peak</span></td>
+                                    <td><span class="value--small">5</span></td>
+                                    <td><span class="value--small">8</span></td>
+                                    <td><span class="value--small">2</span></td>
+                                    <td><span class="value--small">0</span></td>
+                                    <td><span class="value--small">$1.23</span></td>
+                                </tr>
+                            
+                                <tr>
+                                    <td><span class="value--small">On-Peak</span></td>
+                                    <td><span class="value--small">3</span></td>
+                                    <td><span class="value--small">1</span></td>
+                                    <td><span class="value--small">-1</span></td>
+                                    <td><span class="value--small">0</span></td>
+                                    <td><span class="value--small">+$0.45</span></td>
+                                </tr>
+                            
+                        <tr>
+                            <td class="table-col">
+                                <span class="title title--medium"><strong>Total Cost</strong></span>
+                            </td>
+                            <td colspan="4"></td>
+                            <td class="table-col">
+                                <span class="title title--medium"><strong>$0.78</strong></span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+        
+            </div>
+        
+                    
+
+                     
+                </div>
+            </div>
+        "
+`;
+
+exports[`renderFull characterization > snapshot: bill-plus-flow 1`] = `
+"
+            <div class="view view--full">
+                <div class="layout layout--col gap--small h--full">
+                    
+                    
+            <div class="flex flex--row flex--center-x flex--center-y w--full" style="height: 240px; min-height: 240px; overflow: hidden;">
+                <svg data-test="flow" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+        
                     
                     
                     
@@ -98,6 +174,7 @@ exports[`renderFull characterization > snapshot: bill-plus-load-timing 1`] = `
 "
             <div class="view view--full">
                 <div class="layout layout--col gap--small h--full">
+                    
                     
                     
                     
@@ -190,6 +267,7 @@ exports[`renderFull characterization > snapshot: energy-only 1`] = `
                 <div class="layout layout--col gap--small h--full">
                     
                     
+                    
             <div class="flex flex--row flex--center-y flex--center-x w--full" style="flex: 1 1 auto; height: 310px; min-height: 310px;">
                 
             <div style="position: relative; width: 100%; height: 100%;">
@@ -221,6 +299,163 @@ exports[`renderFull characterization > snapshot: energy-only 1`] = `
                 <div class="flex flex--row flex--center-y" style="gap: 4px;">
                     <span style="display:inline-block; width: 14px; border-top: 1px dashed black;"></span>
                     <span class="value value--xsmall" style="line-height: 1; font-size: 12px;">Battery</span>
+                </div>
+            </div>
+        
+            </div>
+        
+            </div>
+        
+                    
+                    
+                    
+
+                     
+                     <div class="flex flex--row flex--center-x flex--center-y gap--medium">
+                         <span class="title title--small">Test Site</span>
+                         <span class="label label--small">5/1 - 6/1</span>
+                     </div>
+                     
+                </div>
+            </div>
+        "
+`;
+
+exports[`renderFull characterization > snapshot: flow-only 1`] = `
+"
+            <div class="view view--full">
+                <div class="layout layout--col gap--small h--full">
+                    
+                    
+            <div class="flex flex--row flex--center-x flex--center-y w--full" style="height: 448px; min-height: 448px; overflow: hidden;">
+                <svg data-test="flow" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+        
+                    
+                    
+                    
+                    
+
+                     
+                     <div class="flex flex--row flex--center-x flex--center-y gap--medium">
+                         <span class="title title--small">Test Site</span>
+                         <span class="label label--small">5/1 - 6/1</span>
+                     </div>
+                     
+                </div>
+            </div>
+        "
+`;
+
+exports[`renderFull characterization > snapshot: flow-snapshot-only 1`] = `
+"
+            <div class="view view--full">
+                <div class="layout layout--col gap--small h--full">
+                    
+                    
+            <div class="flex flex--row flex--center-x flex--center-y w--full" style="height: 448px; min-height: 448px; overflow: hidden;">
+                <svg data-test="flow" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+        
+                    
+                    
+                    
+                    
+
+                     
+                     <div class="flex flex--row flex--center-x flex--center-y gap--medium">
+                         <span class="title title--small">Test Site</span>
+                         <span class="label label--small">5/1 - 6/1</span>
+                     </div>
+                     
+                </div>
+            </div>
+        "
+`;
+
+exports[`renderFull characterization > snapshot: live-chart-flow 1`] = `
+"
+            <div class="view view--full">
+                <div class="layout layout--col gap--small h--full">
+                    
+            <div class="w--full" style="position: relative; height: 74px; min-height: 74px;">
+                
+                <div class="flex flex--row flex--center-y flex--center-x gap--xxlarge" style="height: 100%;">
+                    
+                    <div class="flex flex--row flex--center-y flex--center-x gap--small">
+                        <span class="title title--xxlarge" style="font-size: 52px; line-height: 1;">4.5</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="6 0 12 24" width="52" height="52"><path d="M7 2v11h3v9l7-12h-4l4-8z" fill="black"/></svg>
+                    </div>
+                    
+
+                    
+                    <div class="flex flex--row flex--center-y flex--center-x gap--small">
+                        <span class="title title--xxlarge" style="font-size: 52px; line-height: 1;">9.8</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="52" height="52" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5" fill="black" stroke="none"/><line x1="12" y1="1" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="6.34" y2="6.34" /><line x1="17.66" y1="17.66" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="6.34" y2="17.66" /><line x1="17.66" y1="6.34" x2="19.78" y2="4.22" /></svg>
+                    </div>
+                    
+
+                    
+                    <div class="flex flex--col flex--center-x">
+                        
+        <div class="flex flex--row flex--center-y gap--small">
+            <div class="flex flex--row flex--center-y">
+                 <span class="title title--xxlarge" style="font-size: 54px; line-height: 1;">65%</span>
+            </div>
+            <div class="flex flex--row flex--center-y gap--xsmall">
+                
+        <svg xmlns="http://www.w3.org/2000/svg" width="81" height="41" viewBox="0 0 26 14">
+            <rect x="0.5" y="0.5" width="22" height="13" rx="2" fill="none" stroke="black" stroke-width="1.5" />
+            <path d="M23 4h1.5a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5H23V4z" fill="black" />
+            <rect x="2.5" y="2.5" width="11.700000000000001" height="9" rx="0.5" fill="black" />
+        </svg>
+    
+                <div><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="black"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" transform="rotate(-90, 12, 12)"/></svg></div>
+            </div>
+        </div>
+    
+                    </div>
+                    
+                </div>
+            </div>
+        
+                    
+            <div class="flex flex--row flex--center-x flex--center-y w--full" style="height: 200px; min-height: 200px; overflow: hidden;">
+                <svg data-test="flow" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+        
+                    
+            <div class="flex flex--row flex--center-y flex--center-x w--full" style="flex: 1 1 auto; height: 250px; min-height: 250px;">
+                
+            <div style="position: relative; width: 100%; height: 100%;">
+            <svg viewBox="0 0 760 250" width="100%" height="100%" style="display: block;" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+                <!-- Background and Grid -->
+                <rect width="760" height="250" fill="none" />
+                <line x1="32" y1="214" x2="750" y2="214" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="218" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">-2</text><line x1="32" y1="202.22857142857143" x2="750" y2="202.22857142857143" stroke="#bbb" stroke-width="1.25" />
+                    <text x="28" y="206.22857142857143" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">0</text><line x1="32" y1="102.17142857142856" x2="750" y2="102.17142857142856" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="106.17142857142856" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">17</text><line x1="32" y1="8" x2="750" y2="8" stroke="#eee" stroke-width="1" />
+                    <text x="28" y="12" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="13" font-weight="700" text-anchor="end">33</text>
+
+                <!-- Series -->
+                <path d="M 32 202.22857142857143 L 175.6 166.9142857142857 L 319.2 131.6 L 462.8 96.28571428571428 L 606.4 60.97142857142857 L 750 25.65714285714286" fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M 32 131.6 L 175.6 124.53714285714285 L 319.2 117.47428571428573 L 462.8 110.41142857142856 L 606.4 103.34857142857143 L 750 96.28571428571428" fill="none" stroke="black" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M 32 209.29142857142858 L 175.6 207.87885714285716 L 319.2 206.4662857142857 L 462.8 205.05371428571428 L 606.4 203.64114285714285 L 750 202.22857142857143" fill="none" stroke="black" stroke-width="1" stroke-dasharray="4,4" stroke-linecap="round" stroke-linejoin="round" />
+                <text x="34" y="244" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="start">12am</text><text x="750" y="244" font-family=""TRMNL12", "TRMNL16", "TRMNL21", "NicoPups", "Inter Variable", Inter, sans-serif" font-size="12" font-weight="700" text-anchor="middle">12pm</text>
+            </svg>
+            
+            <div class="flex flex--row" style="position: absolute; top: 6px; right: 8px; z-index: 2; background: white; padding: 1px 5px; border-radius: 2px; gap: 10px;">
+                <div class="flex flex--row flex--center-y" style="gap: 4px;">
+                    <span style="display:inline-block; width: 12px; border-top: 3px solid black;"></span>
+                    <span class="value value--xsmall" style="line-height: 1; font-size: 11px;">Solar</span>
+                </div>
+                <div class="flex flex--row flex--center-y" style="gap: 4px;">
+                    <span style="display:inline-block; width: 12px; border-top: 1px solid black;"></span>
+                    <span class="value value--xsmall" style="line-height: 1; font-size: 11px;">Home</span>
+                </div>
+                <div class="flex flex--row flex--center-y" style="gap: 4px;">
+                    <span style="display:inline-block; width: 12px; border-top: 1px dashed black;"></span>
+                    <span class="value value--xsmall" style="line-height: 1; font-size: 11px;">Battery</span>
                 </div>
             </div>
         
@@ -289,6 +524,7 @@ exports[`renderFull characterization > snapshot: live-chart-load-timing 1`] = `
                 </div>
             </div>
         
+                    
                     
             <div class="flex flex--row flex--center-y flex--center-x w--full" style="flex: 1 1 auto; height: 140px; min-height: 140px;">
                 
@@ -387,6 +623,7 @@ exports[`renderFull characterization > snapshot: live-energy-bill 1`] = `
                 </div>
             </div>
         
+                    
                     
             <div class="flex flex--row flex--center-y flex--center-x w--full" style="flex: 1 1 auto; height: 140px; min-height: 140px;">
                 
@@ -534,6 +771,7 @@ exports[`renderFull characterization > snapshot: live-only 1`] = `
                     
                     
                     
+                    
 
                      
                      <div class="flex flex--row flex--center-x flex--center-y gap--medium">
@@ -550,6 +788,7 @@ exports[`renderFull characterization > snapshot: load-timing-only 1`] = `
 "
             <div class="view view--full">
                 <div class="layout layout--col gap--small h--full">
+                    
                     
                     
                     
@@ -595,6 +834,7 @@ exports[`renderFull characterization > snapshot: soc-chart-only 1`] = `
                     
                     
                     
+                    
             <div class="flex flex--row flex--center-x w--full" style="flex: 1 1 auto; height: 448px; min-height: 448px; align-items: stretch;">
                 
             <div style="position: relative; width: 100%; height: 100%; min-width: 280px;">
@@ -631,6 +871,7 @@ exports[`renderFull characterization > snapshot: soc-glyph-only 1`] = `
 "
             <div class="view view--full">
                 <div class="layout layout--col gap--small h--full">
+                    
                     
                     
                     
@@ -734,6 +975,7 @@ exports[`renderFull characterization > snapshot: very-dense 1`] = `
                 </div>
             </div>
         
+                    
                     
             <div class="flex flex--row flex--center-y flex--center-x w--full" style="flex: 1 1 auto; height: 138px; min-height: 138px;">
                 

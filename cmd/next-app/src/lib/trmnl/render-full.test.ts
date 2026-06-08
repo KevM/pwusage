@@ -28,6 +28,8 @@ function makeCfg(overrides?: Partial<TrmnlComponentConfig>): TrmnlComponentConfi
         showBatterySoc: false,
         showEstimatedBill: false,
         showLoadTiming: false,
+        showEnergyFlow: false,
+        flowBasis: 'cumulative',
         batterySocMode: 'glyph',
         ...overrides
     } as TrmnlComponentConfig;
@@ -66,7 +68,8 @@ function makeCtx(cfg: TrmnlComponentConfig): RenderContext {
         todaySolar: 9.8,
         seriesData: makeSeries(),
         componentConfig: cfg,
-        loadTiming
+        loadTiming,
+        flowSvg: cfg.showEnergyFlow ? '<svg data-test="flow" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg>' : undefined
     };
 }
 
@@ -84,7 +87,11 @@ const MATRIX: Array<[string, Partial<TrmnlComponentConfig>]> = [
     }],
     ['load-timing-only', { showLoadTiming: true }],
     ['bill-plus-load-timing', { showEstimatedBill: true, showLoadTiming: true }],
-    ['live-chart-load-timing', { showLiveGrid: true, showLiveSolar: true, showLiveBattery: true, showEnergyChart: true, showLoadTiming: true }]
+    ['live-chart-load-timing', { showLiveGrid: true, showLiveSolar: true, showLiveBattery: true, showEnergyChart: true, showLoadTiming: true }],
+    ['flow-only', { showEnergyFlow: true }],
+    ['flow-snapshot-only', { showEnergyFlow: true, flowBasis: 'snapshot' }],
+    ['live-chart-flow', { showLiveGrid: true, showLiveSolar: true, showLiveBattery: true, showEnergyChart: true, showEnergyFlow: true }],
+    ['bill-plus-flow', { showEstimatedBill: true, showEnergyFlow: true }]
 ];
 
 describe('renderFull characterization', () => {
