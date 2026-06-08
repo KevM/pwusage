@@ -83,4 +83,35 @@ describe('/api/trmnl/markup', () => {
 
         vi.useRealTimers();
     });
+
+    it('includes the flow svg when showEnergyFlow is enabled', async () => {
+        const componentConfig = encodeURIComponent(JSON.stringify({
+            showLiveGrid: false, showLiveSolar: false, showLiveBattery: false,
+            showEnergyChart: false, showBatterySoc: false, showEstimatedBill: false,
+            showLoadTiming: false, showEnergyFlow: true, flowBasis: 'cumulative',
+            batterySocMode: 'chart'
+        }));
+        const res = await GET(new Request(
+            `http://localhost/api/trmnl/markup?site_id=site-1&component_config=${componentConfig}`
+        ));
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.markup).toContain('<svg');
+        expect(body.markup).toContain('preserveAspectRatio="xMidYMid meet"');
+        expect(body.markup).toContain('No energy flow'); // empty fixture -> placeholder
+    });
+
+    it('omits the flow svg when showEnergyFlow is off', async () => {
+        const componentConfig = encodeURIComponent(JSON.stringify({
+            showLiveGrid: false, showLiveSolar: false, showLiveBattery: false,
+            showEnergyChart: false, showBatterySoc: false, showEstimatedBill: false,
+            showLoadTiming: false, showEnergyFlow: false, flowBasis: 'cumulative',
+            batterySocMode: 'chart'
+        }));
+        const res = await GET(new Request(
+            `http://localhost/api/trmnl/markup?site_id=site-1&component_config=${componentConfig}`
+        ));
+        const body = await res.json();
+        expect(body.markup).not.toContain('No energy flow');
+    });
 });

@@ -12,6 +12,8 @@ import { withRequestContext } from '@/lib/request-context';
 import QRCode from 'qrcode';
 import { TrmnlRenderer } from '@/lib/trmnl-renderer';
 import { computeLoadTiming } from '@/lib/load-timing';
+import { buildSnapshotModel, buildCumulativeModel } from '@/lib/sankey/build-flow-model';
+import { getRenderer } from '@/lib/sankey/renderers/registry';
 import { wattsToKilowatts } from '@/lib/energy-utils';
 import {
     DEFAULT_TRMNL_COMPONENT_CONFIG,
@@ -714,6 +716,31 @@ export async function GET(request: Request) {
             batterySoc = latestDbSocFromSeries;
         }
 
+        // --- ENERGY-FLOW SANKEY (mirror live/page.tsx data sources) ---
+        // Rendered whenever the screen wants it. Rates come from the current
+        // tariff period when one resolves, else zero (diagram is sized by
+        // energy; rates only color the $ tooltip). Reuses data already in
+        // hand — no new fetches.
+        let flowSvg: string | undefined;
+        if (componentConfig.showEnergyFlow) {
+            const rates = loadTimingActive
+                ? { buyRate: loadTimingActive.buyRate, sellRate: loadTimingActive.sellRate }
+                : { buyRate: 0, sellRate: 0 };
+            const renderer = getRenderer(site.sankey_renderer);
+            const flowModel = componentConfig.flowBasis === 'snapshot'
+                ? buildSnapshotModel(
+                    {
+                        solar: (latestLiveStatus?.solar_power ?? 0) / 1000,
+                        load: (latestLiveStatus?.load_power ?? 0) / 1000,
+                        battery: (latestLiveStatus?.battery_power ?? 0) / 1000,
+                        grid: (latestLiveStatus?.grid_power ?? 0) / 1000,
+                    },
+                    { ...rates, timestamp: now, soc: latestLiveStatus?.percentage_charged ?? undefined },
+                )
+                : buildCumulativeModel(todayRaw, { ...rates, timestamp: now, rangeStart: todayStart });
+            flowSvg = renderer(flowModel, 'mono');
+        }
+
         // Prepare Render Context
 
         let displayName = site.name || 'Powerwall';
@@ -745,7 +772,8 @@ export async function GET(request: Request) {
             seriesData: seriesData,
             timezone: tz,
             componentConfig,
-            loadTiming: loadTimingView
+            loadTiming: loadTimingView,
+            flowSvg
         };
 
         const layoutStart = Date.now();
@@ -774,6 +802,8 @@ export async function GET(request: Request) {
             `soc:${componentConfig.showBatterySoc ? 1 : 0}`,
             `bill:${componentConfig.showEstimatedBill ? 1 : 0}`,
             `lt:${componentConfig.showLoadTiming ? 1 : 0}`,
+            `flow:${componentConfig.showEnergyFlow ? 1 : 0}`,
+            `fb:${componentConfig.flowBasis}`,
             `mode:${componentConfig.batterySocMode}`
         ].join(',');
 
