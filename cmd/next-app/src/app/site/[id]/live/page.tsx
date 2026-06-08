@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
 import { BatteryHoldRepo } from '@/lib/battery-hold-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { Schedule } from '@/lib/schedule';
@@ -9,6 +9,8 @@ import { verifySiteAccess, getCurrentUser } from '@/lib/auth-checks';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { LiveDetailView } from '@/components/site/live/LiveDetailView';
 import type { ActivePeriod } from '@/components/site/live/PeriodCardRow';
+import { buildSnapshotModel, buildCumulativeModel } from '@/lib/sankey/build-flow-model';
+import { getRenderer } from '@/lib/sankey/renderers/registry';
 import { computeLoadTiming } from '@/lib/load-timing';
 import { refreshTodayData } from '@/lib/today-refresh';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
@@ -118,19 +120,48 @@ export default async function SiteLivePage({
         }
     }
 
-    const [{ cycle, today }, todayTotals, todayChartRows, latestEnergyData, liveStatus, activeHold, activeNotice] = await Promise.all([
+    const [{ cycle, today }, todayChartRows, rawEnergyRows, latestEnergyData, liveStatus, activeHold, activeNotice] = await Promise.all([
         repo.getCycleAndTodayTotals(id, cycleStart, todayStart, now),
-        repo.getTodayTotals(id, todayStart, now),
         repo.getBucketedEnergyData(id, todayStart, now),
+        repo.getRawEnergyData(id, todayStart, now),
         repo.getLatestEnergyData(id),
         getLiveStatus(id).catch(() => null),
         holdRepo.getActiveHold(id),
         holdRepo.getLatestCancelledUnacked(id),
     ]);
 
+    const todayTotals = sumTodayRows(rawEnergyRows);
+
     const loadTiming = schedule
         ? computeLoadTiming(schedule, cycle, now, site.timezone, activePeriod)
         : null;
+
+    // Sankey value-flow models (only when we have a tariff for rates + some live data).
+    let sankeySnapshotSvg: string | null = null;
+    let sankeyCumulativeSvg: string | null = null;
+    if (hasTariff && activePeriod) {
+        const renderer = getRenderer(site.sankey_renderer);
+        const rates = { buyRate: activePeriod.buyRate, sellRate: activePeriod.sellRate };
+
+        const snapshot = buildSnapshotModel(
+            {
+                solar: (liveStatus?.solar_power ?? 0) / 1000,
+                load: (liveStatus?.load_power ?? 0) / 1000,
+                battery: (liveStatus?.battery_power ?? 0) / 1000,
+                grid: (liveStatus?.grid_power ?? 0) / 1000,
+            },
+            { ...rates, timestamp: now, soc: liveStatus?.percentage_charged ?? undefined },
+        );
+
+        const cumulative = buildCumulativeModel(rawEnergyRows, {
+            ...rates,
+            timestamp: now,
+            rangeStart: todayStart,
+        });
+
+        sankeySnapshotSvg = renderer(snapshot, 'color');
+        sankeyCumulativeSvg = renderer(cumulative, 'color');
+    }
 
     return (
         <PageShell maxWidth="2xl" padding="none" className="px-4 py-4 md:px-8 md:pt-2 md:pb-6 lg:px-24 lg:pt-2 lg:pb-6">
@@ -161,6 +192,8 @@ export default async function SiteLivePage({
                         safety_expires_at: activeHold.safety_expires_at.toISOString(),
                     } : null}
                     batteryNotice={activeNotice ? { current: activeNotice.cancelled_observed_reserve ?? activeNotice.target_reserve } : null}
+                    sankeySnapshotSvg={sankeySnapshotSvg}
+                    sankeyCumulativeSvg={sankeyCumulativeSvg}
                 />
             </div>
         </PageShell>

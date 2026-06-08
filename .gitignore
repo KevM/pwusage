@@ -6,3 +6,5 @@
 **/*.gz
 **/trmnl-*-backup.json
 .worktrees/
+# Brainstorming visual companion scratch dir
+.superpowers/

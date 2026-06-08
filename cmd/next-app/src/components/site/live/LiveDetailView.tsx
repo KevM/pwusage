@@ -9,6 +9,7 @@ import { PeriodCardRow } from './PeriodCardRow';
 import { TodayEnergyChart } from './TodayEnergyChart';
 import { HalfHourRefresh } from './HalfHourRefresh';
 import { BatteryHoldCard } from './BatteryHoldCard';
+import { SankeyCard } from './SankeyCard';
 
 export interface LiveDetailViewProps {
     siteId: string;
@@ -28,6 +29,8 @@ export interface LiveDetailViewProps {
     loadTiming: LoadTimingView | null;
     batteryHold: { mode: 'auto' | 'timer'; target_reserve: number; original_reserve: number; created_at: string; safety_expires_at: string } | null;
     batteryNotice: { current: number } | null;
+    sankeySnapshotSvg: string | null;
+    sankeyCumulativeSvg: string | null;
 }
 
 export function LiveDetailView({
@@ -39,7 +42,9 @@ export function LiveDetailView({
     hasTariff,
     loadTiming,
     batteryHold,
-    batteryNotice
+    batteryNotice,
+    sankeySnapshotSvg,
+    sankeyCumulativeSvg
 }: LiveDetailViewProps) {
 
 
@@ -69,6 +74,10 @@ export function LiveDetailView({
                 <DailyByPeriodTable today={today} />
                 <HalfHourRefresh />
             </SectionCard>
+
+            {sankeySnapshotSvg && sankeyCumulativeSvg && (
+                <SankeyCard snapshotSvg={sankeySnapshotSvg} cumulativeSvg={sankeyCumulativeSvg} />
+            )}
 
             <SectionCard title="Load timing this cycle" density="compact" bodyClassName="space-y-3">
                 <PeriodCardRow

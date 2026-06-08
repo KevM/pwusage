@@ -6,6 +6,8 @@ import { drawQrWithLogo } from '@/lib/qr-generator';
 import { continueUrl } from '@/app/continue/continue-logic';
 import { BillingStartDayForm } from '@/components/BillingStartDayForm';
 import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
+import { SankeyRendererForm } from '@/components/SankeyRendererForm';
+import { DEFAULT_RENDERER_ID } from '@/lib/sankey/renderers/registry';
 import { TariffList } from './TariffList';
 import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/Card';
@@ -195,6 +197,13 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                     </div>
                     <div className="pt-2">
                         <TimezoneDisplayForm siteId={site.id} initialMode={site.timezone_display_mode || 'SITE'} />
+                    </div>
+                    <div className="pt-2">
+                        <SankeyRendererForm
+                            siteId={site.id}
+                            initialRenderer={site.sankey_renderer || DEFAULT_RENDERER_ID}
+                            options={[{ id: 'direct', label: 'Direct (multi-color)' }]}
+                        />
                     </div>
                 </CardContent>
             </Card>

@@ -16,7 +16,7 @@ export interface SiteQueryOptions {
     includeTokens?: boolean;
 }
 
-const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode';
+const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode, sankey_renderer';
 const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
 
 export class SiteRepo {
@@ -88,7 +88,7 @@ export class SiteRepo {
         const sql = `
             SELECT
                 s.id, s.user_id, s.name, s.utility, s.updated, s.installed,
-                s.timezone, s.billing_start_day, s.timezone_display_mode${jsonCol}${tokenCols},
+                s.timezone, s.billing_start_day, s.timezone_display_mode, s.sankey_renderer${jsonCol}${tokenCols},
                 t.id          AS tariff_id,
                 t.name        AS tariff_name,
                 t.updated     AS tariff_updated,
@@ -137,6 +137,7 @@ export class SiteRepo {
                     timezone: row.timezone as string,
                     billing_start_day: row.billing_start_day as number,
                     timezone_display_mode: (row.timezone_display_mode as 'SITE' | 'BROWSER') ?? undefined,
+                    sankey_renderer: (row.sankey_renderer as string) ?? undefined,
                     json: options?.includeJson ? row.json : undefined,
                     access_token: options?.includeTokens ? (row.access_token as string | null) ?? null : undefined,
                     refresh_token: options?.includeTokens ? (row.refresh_token as string | null) ?? null : undefined,
@@ -226,6 +227,11 @@ export class SiteRepo {
 
     async updateSiteTimezoneDisplayMode(siteId: string, mode: 'SITE' | 'BROWSER') {
         await pool.query('UPDATE "Site" SET timezone_display_mode = $1 WHERE id = $2', [mode, siteId]);
+        siteCache.delete(siteId);
+    }
+
+    async updateSiteSankeyRenderer(siteId: string, rendererId: string) {
+        await pool.query('UPDATE "Site" SET sankey_renderer = $1 WHERE id = $2', [rendererId, siteId]);
         siteCache.delete(siteId);
     }
 

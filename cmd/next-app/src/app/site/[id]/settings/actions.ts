@@ -45,3 +45,24 @@ export async function updateTimezoneDisplayMode(formData: FormData) {
     revalidatePath(`/site/${siteId}/settings`);
     revalidatePath(`/site/${siteId}`);
 }
+
+import { RENDERER_IDS } from '@/lib/sankey/renderers/registry';
+
+export async function updateSankeyRenderer(formData: FormData) {
+    const siteId = formData.get('siteId') as string;
+    const rendererId = formData.get('rendererId') as string;
+
+    if (!siteId || !RENDERER_IDS.includes(rendererId)) {
+        throw new Error('Invalid arguments');
+    }
+
+    if (!await verifySiteAccess(siteId)) {
+        throw new Error('Unauthorized');
+    }
+
+    const repo = new SiteRepo();
+    await repo.updateSiteSankeyRenderer(siteId, rendererId);
+
+    revalidatePath(`/site/${siteId}/settings`);
+    revalidatePath(`/site/${siteId}/live`);
+}
