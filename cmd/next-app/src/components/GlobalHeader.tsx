@@ -93,13 +93,13 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
 
                     {/* Nav Icons / Hamburger Group - Always Last (Right-aligned) */}
                     <div className="flex justify-end items-center shrink-0">
-                        {/* Hamburger Menu Toggle Button (Visible below md) */}
+                        {/* Hamburger Menu Toggle Button (only when live chip is present) */}
                         <button
                             ref={buttonRef}
                             onClick={() => setIsMenuOpen(!isMenuOpen)}
                             aria-expanded={isMenuOpen}
                             aria-label="Toggle navigation menu"
-                            className="inline-flex md:hidden items-center justify-center rounded-full text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 h-10 w-10 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer active:scale-95"
+                            className={`${showLiveStats ? 'inline-flex md:hidden' : 'hidden'} items-center justify-center rounded-full text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 h-10 w-10 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer active:scale-95`}
                         >
                             {isMenuOpen ? (
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
@@ -112,8 +112,8 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
                             )}
                         </button>
 
-                        {/* Desktop/Landscape Nav Icons Group (Visible md and above) */}
-                        <div className="flex max-md:hidden justify-end gap-3 items-center">
+                        {/* Nav Icons Group (always visible when no chip; md+ only when chip is shown) */}
+                        <div className={`flex ${showLiveStats ? 'max-md:hidden' : ''} justify-end gap-3 items-center`}>
                             {showStyleGuide && (
                                 <Link
                                     href="/styleguide"
