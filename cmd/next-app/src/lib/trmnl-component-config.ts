@@ -1,3 +1,5 @@
+import type { FlowBasis } from './sankey/flow-model';
+
 export type TrmnlBatterySocMode = 'glyph' | 'chart';
 
 export interface TrmnlComponentConfig {
@@ -8,6 +10,8 @@ export interface TrmnlComponentConfig {
     showBatterySoc: boolean;
     showEstimatedBill: boolean;
     showLoadTiming: boolean;
+    showEnergyFlow: boolean;
+    flowBasis: FlowBasis;
     batterySocMode: TrmnlBatterySocMode;
 }
 
@@ -27,6 +31,8 @@ export const DEFAULT_TRMNL_COMPONENT_CONFIG: TrmnlComponentConfig = {
     showBatterySoc: true,
     showEstimatedBill: false,
     showLoadTiming: false,
+    showEnergyFlow: false,
+    flowBasis: 'cumulative',
     batterySocMode: 'chart'
 };
 
@@ -54,6 +60,10 @@ function asBoolean(value: unknown, fallback: boolean): boolean {
 
 function asBatterySocMode(value: unknown, fallback: TrmnlBatterySocMode): TrmnlBatterySocMode {
     return value === 'glyph' || value === 'chart' ? value : fallback;
+}
+
+function asFlowBasis(value: unknown, fallback: FlowBasis): FlowBasis {
+    return value === 'snapshot' || value === 'cumulative' ? value : fallback;
 }
 
 function fromKeys(record: Record<string, unknown>, keys: string[]): unknown {
@@ -92,6 +102,8 @@ export function normalizeTrmnlComponentConfig(value: unknown): TrmnlComponentCon
         showBatterySoc: asBoolean(fromKeys(record, ['showBatterySoc', 'show_battery_soc']), DEFAULT_TRMNL_COMPONENT_CONFIG.showBatterySoc),
         showEstimatedBill: asBoolean(fromKeys(record, ['showEstimatedBill', 'show_estimated_bill']), DEFAULT_TRMNL_COMPONENT_CONFIG.showEstimatedBill),
         showLoadTiming: asBoolean(fromKeys(record, ['showLoadTiming', 'show_load_timing']), DEFAULT_TRMNL_COMPONENT_CONFIG.showLoadTiming),
+        showEnergyFlow: asBoolean(fromKeys(record, ['showEnergyFlow', 'show_energy_flow']), DEFAULT_TRMNL_COMPONENT_CONFIG.showEnergyFlow),
+        flowBasis: asFlowBasis(fromKeys(record, ['flowBasis', 'flow_basis']), DEFAULT_TRMNL_COMPONENT_CONFIG.flowBasis),
         batterySocMode: asBatterySocMode(fromKeys(record, ['batterySocMode', 'battery_soc_mode']), DEFAULT_TRMNL_COMPONENT_CONFIG.batterySocMode)
     };
 }
@@ -114,6 +126,8 @@ export function buildDefaultTrmnlComponentScreens(): TrmnlComponentScreen[] {
                 showBatterySoc: false,
                 showEstimatedBill: true,
                 showLoadTiming: true,
+                showEnergyFlow: false,
+                flowBasis: 'cumulative',
                 batterySocMode: 'chart'
             }
         }

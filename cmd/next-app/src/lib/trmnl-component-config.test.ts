@@ -33,6 +33,8 @@ describe('TRMNL component config defaults', () => {
                 showBatterySoc: true,
                 showEstimatedBill: false,
                 showLoadTiming: false,
+                showEnergyFlow: false,
+                flowBasis: 'cumulative',
                 batterySocMode: 'chart'
             }
         });
@@ -48,9 +50,37 @@ describe('TRMNL component config defaults', () => {
                 showBatterySoc: false,
                 showEstimatedBill: true,
                 showLoadTiming: true,
+                showEnergyFlow: false,
+                flowBasis: 'cumulative',
                 batterySocMode: 'chart'
             }
         });
+    });
+
+    it('defaults showEnergyFlow off and flowBasis to cumulative', () => {
+        expect(DEFAULT_TRMNL_COMPONENT_CONFIG.showEnergyFlow).toBe(false);
+        expect(DEFAULT_TRMNL_COMPONENT_CONFIG.flowBasis).toBe('cumulative');
+    });
+
+    it('reads showEnergyFlow / flowBasis from snake_case aliases', () => {
+        const stored = { show_energy_flow: true, flow_basis: 'snapshot' };
+        const cfg = normalizeTrmnlComponentConfig(stored);
+        expect(cfg.showEnergyFlow).toBe(true);
+        expect(cfg.flowBasis).toBe('snapshot');
+    });
+
+    it('falls back to default flowBasis (cumulative) for an invalid value', () => {
+        const stored = { ...DEFAULT_TRMNL_COMPONENT_CONFIG, flowBasis: 'bogus' };
+        expect(normalizeTrmnlComponentConfig(stored).flowBasis).toBe('cumulative');
+    });
+
+    it('falls back to default showEnergyFlow (false) when missing from stored config', () => {
+        const legacyStored = { ...DEFAULT_TRMNL_COMPONENT_CONFIG } as Record<string, unknown>;
+        delete legacyStored.showEnergyFlow;
+        delete legacyStored.flowBasis;
+        const cfg = normalizeTrmnlComponentConfig(legacyStored);
+        expect(cfg.showEnergyFlow).toBe(false);
+        expect(cfg.flowBasis).toBe('cumulative');
     });
 
     it('falls back to default showLoadTiming (false) when the key is missing from stored config', () => {
