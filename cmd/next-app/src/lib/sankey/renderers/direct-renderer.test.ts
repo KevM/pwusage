@@ -34,4 +34,24 @@ describe('directRenderer', () => {
     expect(svg).toContain('#000000');
     expect(svg).not.toContain('#16a34a');
   });
+
+  it('uses plain-text node labels (no emoji) under the mono theme', () => {
+    const svg = directRenderer(model, 'mono');
+    expect(svg).toContain('SOLAR');
+    expect(svg).toContain('HOME');
+    expect(svg).not.toContain('☀️');
+    expect(svg).not.toContain('🏠');
+    expect(svg).not.toContain('🔋');
+    expect(svg).not.toContain('🔌');
+  });
+
+  it('keeps emoji node labels under the color theme', () => {
+    const svg = directRenderer(model, 'color');
+    expect(svg).toContain('☀️');
+  });
+
+  it('emits preserveAspectRatio so the section can scale it to fit', () => {
+    const svg = directRenderer(model, 'mono');
+    expect(svg).toContain('preserveAspectRatio="xMidYMid meet"');
+  });
 });

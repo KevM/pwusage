@@ -24,6 +24,9 @@ const RIGHT_ORDER: NodeKey[] = ['home', 'battery', 'grid'];
 const NODE_LABEL: Record<NodeKey, string> = {
   solar: '☀️ SOLAR', home: '🏠 HOME', battery: '🔋 BATTERY', grid: '🔌 GRID',
 };
+const NODE_LABEL_MONO: Record<NodeKey, string> = {
+  solar: 'SOLAR', home: 'HOME', battery: 'BATTERY', grid: 'GRID',
+};
 
 interface Placed {
   key: NodeKey;
@@ -82,7 +85,7 @@ export const directRenderer: SankeyRenderer = (model: FlowModel, theme) => {
   const nRight = RIGHT_ORDER.filter(k => (inTotals.get(k) ?? 0) > 0).length;
 
   if (model.edges.length === 0 || totalLeft <= 0 || totalRight <= 0) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" font-family="ui-monospace,monospace"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="13" fill="currentColor" fill-opacity="0.6">No energy flow</text></svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" font-family="ui-monospace,monospace"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="13" fill="currentColor" fill-opacity="0.6">No energy flow</text></svg>`;
   }
 
   const scale = Math.min(
@@ -133,7 +136,8 @@ export const directRenderer: SankeyRenderer = (model: FlowModel, theme) => {
     const soc = p.key === 'battery' && node.soc != null ? ` ${Math.round(node.soc)}%` : '';
     const labelX = side === 'left' ? LEFT_BAR_X - 12 : RIGHT_BAR_X + BAR_W + 12;
     const anchor = side === 'left' ? 'end' : 'start';
-    const name = `${esc(NODE_LABEL[p.key])}${soc}`;
+    const labels = theme === 'mono' ? NODE_LABEL_MONO : NODE_LABEL;
+    const name = `${esc(labels[p.key])}${soc}`;
     const total = `${p.total.toFixed(2)} ${unit}`;
     return [
       `<rect x="${x}" y="${p.yTop}" width="${BAR_W}" height="${p.barH}" rx="2" fill="currentColor" fill-opacity="0.85"/>`,
@@ -147,5 +151,5 @@ export const directRenderer: SankeyRenderer = (model: FlowModel, theme) => {
     ...right.map(p => bar(p, 'right')),
   ].join('');
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" font-family="ui-monospace,monospace">${ribbons}${bars}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" font-family="ui-monospace,monospace">${ribbons}${bars}</svg>`;
 };
