@@ -41,6 +41,7 @@ export class TrmnlRenderer {
             <div class="view view--full">
                 <div class="layout layout--col gap--small h--full">
                     ${html.live ?? ''}
+                    ${html.flow ?? ''}
                     ${html.energyChart ?? ''}
                     ${html.soc ?? ''}
                     ${/* loadTiming rides the bill slot so a disabled section adds zero bytes — a separate template line would inject blank-line whitespace into every feature-off screen */ ''}${html.bill ?? ''}${html.loadTiming ?? ''}
