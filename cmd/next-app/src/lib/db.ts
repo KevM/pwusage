@@ -192,4 +192,15 @@ export interface EnergyRollupRow {
   solar_only_export_wh: number;
 }
 
+export interface SiteRoiConfig {
+  site_id: string;
+  solar_cost: number | null;
+  solar_install_date: string | null; // 'YYYY-MM-DD'
+  battery_cost: number | null;
+  battery_install_date: string | null;
+  fixed_buy_rate: number | null;
+  fixed_sell_rate: number | null;
+}
+
+
 
