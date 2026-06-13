@@ -25,7 +25,7 @@ From these, discharge source-split, discharge cost basis, period costs, arbitrag
 - **Tesla provides charge provenance directly.** `calendar_history?kind=energy` returns `battery_energy_imported_from_solar` and `battery_energy_imported_from_grid` per interval (`EnergyHistoryEntry` in `tesla-client.ts`). The importer currently **discards** them (`energy-transformer.ts` collapses everything to load/solar/grid/battery/soc).
 - **`EnergyUsage` is already dropped** (migration `20260428182618`). `EnergyRollup` is greenfield.
 - **Retention prunes raw data.** The `cleanup` cron deletes `EnergyData` older than `DATA_RETENTION_DAYS` (default 365). Therefore `EnergyRollup` is the **durable** record (daily grain, kept indefinitely), and a day must be rolled up before retention removes its 5-min rows.
-- **Tariff schedule durability.** Tariff changes are believed to create **new** `TariffSchedule` rows rather than mutating existing ones, so a historical `tariff_schedule_id` still resolves to the rates that applied then. *To verify in planning.* The whole "derive costs by join" approach depends on this.
+- **Tariff schedule durability.** Tariff changes are believed to create **new** `TariffSchedule` rows rather than mutating existing ones. This is no longer a correctness dependency — the rollup **snapshots** the resolved `buy_rate`/`sell_rate` onto each row at rollup time (see Data model) — but it's useful background for how rates are resolved during the replay.
 
 ## Conceptual model
 
@@ -46,7 +46,7 @@ The battery is a single **mixed reservoir** (weighted-average / average-cost inv
 ### Why cost basis is stored, not derived
 
 Two distinct kinds of cost:
-- **Period flow costs** — import cost, export credit, the *benefit* of `battery→home` (avoided import at the discharge period's buy rate). These are **join-derivable** from the row's own `tariff_schedule_id`. **Never stored.**
+- **Period flow costs** — import cost, export credit, the *benefit* of `battery→home` (avoided import at the discharge period's buy rate). These are simple `rate × energy`. We store the **resolved rates** (`buy_rate`/`sell_rate`) on the row but not the computed cost figures, so any cost is recomputable from the self-contained row with no join.
 - **Tank cost basis** — what stored energy cost to charge. This is **path-dependent**: a blend of every charge rate that fed the tank across prior periods/days, including occasional off-schedule grid charging (e.g. Tesla **Storm Watch** charging from grid at on-peak rates before a forecast outage). No join can recover it, because a blended tank has no single charge schedule to join to. It is stored for the same reason the tank ratio is stored — both are irreducible running state. Storing it is a memoized running aggregate, not denormalization of joinable data.
 
 A bare ratio (energy only) would give the correct source *split* but would mis-cost any energy charged off the normal off-peak rate (Storm Watch is the motivating real case). Hence the two cost columns.
@@ -83,9 +83,17 @@ tank_as_of      -- timestamptz: the last EnergyData interval folded into this ro
 
 `tank_as_of` exists because a TOU schedule can recur in two disjoint windows in a day (partial-peak morning + evening), so the carry-forward seed must be chronological, not per-schedule. The tank evolves continuously across all intervals in timestamp order; each row snapshots the continuous tank as of its last contributing interval. **Carry-forward seed = the row with the greatest `tank_as_of` strictly before the current period's first interval** (handles both day-to-day seeding and resumable mid-history backfill).
 
-**Derived at read time (never stored):**
-- Import cost / export credit / `battery→home` benefit → join `tariff_schedule_id` → `TariffSchedule` (coalescing schedule rates with the parent `TariffSeason` rates when the schedule's `buy_rate`/`sell_rate` are null — matches existing rate-resolution behavior).
-- Discharge source split and cost basis both draw against the **entry tank** (the prior period's stored tank state), for consistency: solar fraction = `prior_tank_solar_wh / (prior_tank_solar_wh + prior_tank_grid_wh)`; cost basis = `discharge_wh × (prior_tank_cost ÷ prior_tank_wh)`. (Exact when no charging occurs within the period; the accepted approximation otherwise — see below.)
+**Stored — snapshot fields (make the row self-contained):**
+```
+buy_rate    sell_rate    -- resolved (schedule rate, coalesced with season) at rollup time
+battery_soc              -- nullable; SOC as of tank_as_of (end of period)
+```
+
+`EnergyRollup` is an immutable analytical fact table, so the resolved rates are **snapshotted** onto each row instead of joined at read time. This removes any dependency on `TariffSchedule` rows being immutable — historical costs stay correct even if a tariff is later edited — and makes every cost a trivial arithmetic of stored rate × stored energy with **no join**. `battery_soc` is stored for reporting and for sanity-checking tank energy against SOC × capacity (drift detection).
+
+**Derived at read time (from stored fields, no join):**
+- Import cost / export credit / `battery→home` benefit → stored `buy_rate`/`sell_rate` × the stored period energies.
+- Discharge source split and cost basis both draw against the **entry tank** (the prior period's stored tank state): solar fraction = `prior_tank_solar_wh / (prior_tank_solar_wh + prior_tank_grid_wh)`; cost basis = `discharge_wh × (prior_tank_cost ÷ prior_tank_wh)`. (Exact when no charging occurs within the period; the accepted approximation otherwise — see below.)
 - Arbitrage P&L = discharge benefit − discharge cost basis; savings; ROI inputs.
 
 Indexes: primary/unique on `(site_id, local_date, tariff_schedule_id)`; secondary on `(site_id, local_date)` for range reads and carry-forward lookup.
@@ -163,8 +171,8 @@ Follow the existing cron auth pattern (`Bearer ${CRON_SECRET}`, see `api/cron/cl
 
 1. **Genesis seeding:** anchor on a **known-full** battery. Scan forward from the earliest available `EnergyData` to the first interval where `battery_soc ≥ FULL_THRESHOLD` (e.g. 98%); seed the tank from the **contiguous charge run-up** that filled it (sum `battery_charge_from_solar/grid` over the immediately preceding charging intervals, valued at each interval's rates). If no full anchor exists in the data, seed empty. This needs no battery-capacity datum and self-corrects within a cycle.
 2. **Cron mechanism:** `vercel.json` cron with `Bearer ${CRON_SECRET}` auth (matches `cleanup`/`check-users`). Fires in UTC; processes each site's previous local day computed from `Site.timezone`.
-3. **Columns:** stay minimal — energy edges + tank state + `tank_as_of` only. No stored rates, no SOC column. Rates always joined (relies on the durability guarantee).
+3. **Columns:** energy edges + tank state + `tank_as_of`, plus **snapshotted `buy_rate`/`sell_rate`** and a nullable **`battery_soc`** (end of period). Rates are frozen on the row (no join, no immutability dependency); SOC aids reporting and tank drift-detection.
 
 ## Open questions (resolve in planning)
 
-1. **Confirm `TariffSchedule` immutability** (new rows on change, never in-place edits) — verify against the tariff-edit code path.
+*(None blocking.)* `TariffSchedule` immutability is **no longer a correctness dependency** — `buy_rate`/`sell_rate` are snapshotted onto each `EnergyRollup` row at rollup time, so later tariff edits cannot rewrite historical costs.

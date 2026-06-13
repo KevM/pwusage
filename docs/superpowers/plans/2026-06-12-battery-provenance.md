@@ -4,7 +4,7 @@
 
 **Goal:** Track the solar-vs-grid origin and cost basis of energy stored in the Powerwall, and roll up per-tariff-period energy flows daily, so every battery discharge can be attributed to a source and a dollar cost.
 
-**Architecture:** A daily cron replays each site's 5-minute `EnergyData` in timestamp order through a weighted-average "tank" (running `{solarWh, gridWh, solarCost, gridCost}`), writing one `EnergyRollup` row per `(site, local_date, tariff_schedule_id)`. The tank carries forward chronologically via a `tank_as_of` timestamp. Charge source comes from Tesla's `battery_energy_imported_from_solar/grid` (newly persisted), falling back to the existing sankey merit-order allocation. All period costs are derived at read time by joining `TariffSchedule`.
+**Architecture:** A daily cron replays each site's 5-minute `EnergyData` in timestamp order through a weighted-average "tank" (running `{solarWh, gridWh, solarCost, gridCost}`), writing one `EnergyRollup` row per `(site, local_date, tariff_schedule_id)`. The tank carries forward chronologically via a `tank_as_of` timestamp. Charge source comes from Tesla's `battery_energy_imported_from_solar/grid` (newly persisted), falling back to the existing sankey merit-order allocation. Resolved `buy_rate`/`sell_rate` are snapshotted onto each rollup row, so period costs are stored-rate × stored-energy with no join, and an `EnergyRollup` row is fully self-contained.
 
 **Tech Stack:** TypeScript, Next.js App Router, raw `pg` (node-postgres), Vitest, Vercel cron. Reuses `src/lib/sankey/build-flow-model.ts` (`allocateEdges`, `energyDataToInstant`) and `src/lib/schedule.ts` (`Schedule`, `TariffPeriod`).
 
@@ -45,19 +45,9 @@ All commands below run from `cmd/next-app/`.
 
 ---
 
-## Task 0: Verify TariffSchedule immutability (spec open question)
+## Task 0: (removed)
 
-**Files:** none (investigation only)
-
-- [ ] **Step 1: Confirm tariff edits append rather than mutate**
-
-Run: `grep -rn "UPDATE \"TariffSchedule\"\|DELETE FROM \"TariffSchedule\"\|INSERT INTO \"TariffSchedule\"" src/lib`
-
-Expected: tariff changes create new `TariffSchedule` rows (INSERT), with no in-place `UPDATE`/`DELETE` of rate columns on historical rows. If you find in-place rate mutation, STOP and flag: the "derive costs by join" approach in this plan would silently rewrite historical costs, and the spec needs revisiting (store resolved rates on the rollup row instead).
-
-- [ ] **Step 2: Record the finding**
-
-Note the result in the PR description. No commit.
+The earlier "verify `TariffSchedule` immutability" gate is no longer needed: `buy_rate`/`sell_rate` are snapshotted onto each `EnergyRollup` row at rollup time (Task 6), so later tariff edits cannot rewrite historical costs. No action required. Proceed to Task 1.
 
 ---
 
@@ -99,6 +89,12 @@ CREATE TABLE IF NOT EXISTS "EnergyRollup" (
     tank_solar_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
     tank_grid_cost  DOUBLE PRECISION NOT NULL DEFAULT 0,
     tank_as_of      TIMESTAMPTZ NOT NULL,
+
+    -- Snapshot fields: resolved rates frozen at rollup time (no join needed),
+    -- and end-of-period SOC.
+    buy_rate    DOUBLE PRECISION NOT NULL DEFAULT 0,
+    sell_rate   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_soc DOUBLE PRECISION,
 
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -644,7 +640,7 @@ describe('replayRows', () => {
             row('2026-01-01T13:00:00Z', { battery_power: 5000, solar_power: 5000, load_power: 0,
                 battery_charge_from_solar: 5000, battery_charge_from_grid: 0 }),
             // Discharge 4500 Wh to home (battery_power - = discharge).
-            row('2026-01-01T19:00:00Z', { battery_power: -4500, load_power: 4500 }),
+            row('2026-01-01T19:00:00Z', { battery_power: -4500, load_power: 4500, battery_soc: 55 }),
         ];
 
         const { rollups, endTank } = replayRows(rows, schedule, 'UTC', EMPTY_TANK);
@@ -656,6 +652,9 @@ describe('replayRows', () => {
         expect(r.solarToBatteryWh).toBeCloseTo(5000, 3);
         expect(r.gridToBatteryWh).toBeCloseTo(4000, 3);
         expect(r.batteryToHomeWh).toBeCloseTo(4500, 3);
+        expect(r.buyRate).toBeCloseTo(0.11, 6);
+        expect(r.sellRate).toBeCloseTo(0.04, 6);
+        expect(r.batterySoc).toBe(55); // SOC of the last interval
         // After charging: 5000 solar + 4000 grid = 9000; discharge 4500 = half.
         expect(endTank.solarWh).toBeCloseTo(2500, 3);
         expect(endTank.gridWh).toBeCloseTo(2000, 3);
@@ -706,6 +705,9 @@ export interface PeriodRollup {
     gridToBatteryWh: number;
     batteryToHomeWh: number;
     batteryToGridWh: number;
+    buyRate: number;          // resolved rate snapshot for this period
+    sellRate: number;
+    batterySoc: number | null; // SOC as of tankAsOf (end of period)
     tank: Tank;       // end-of-period snapshot of the continuous tank
     tankAsOf: Date;   // timestamp of the last interval folded into this row
 }
@@ -720,6 +722,7 @@ function emptyRollup(siteId: string, localDate: string, scheduleId: number): Per
         siteId, localDate, tariffScheduleId: scheduleId,
         loadWh: 0, solarToHomeWh: 0, solarToBatteryWh: 0, solarToGridWh: 0,
         gridToHomeWh: 0, gridToBatteryWh: 0, batteryToHomeWh: 0, batteryToGridWh: 0,
+        buyRate: 0, sellRate: 0, batterySoc: null,
         tank: EMPTY_TANK, tankAsOf: new Date(0),
     };
 }
@@ -775,6 +778,9 @@ export function replayRows(
         r.gridToBatteryWh += gridToBatteryWh;
         r.batteryToHomeWh += batteryToHomeWh;
         r.batteryToGridWh += batteryToGridWh;
+        r.buyRate = rates.buyRate;   // constant across the period (one schedule)
+        r.sellRate = rates.sellRate;
+        r.batterySoc = row.battery_soc; // SOC of the latest interval = end of period
         r.tank = tank;            // continuous tank as of this interval
         r.tankAsOf = row.timestamp;
     }
@@ -944,7 +950,7 @@ import type { Tank } from './tank';
 export class RollupRepo {
     async upsertRollups(rows: PeriodRollup[]): Promise<void> {
         if (rows.length === 0) return;
-        const cols = 16;
+        const cols = 19;
         const placeholders: string[] = [];
         const params: unknown[] = [];
         let p = 1;
@@ -957,6 +963,7 @@ export class RollupRepo {
                 r.loadWh, r.solarToHomeWh, r.solarToBatteryWh, r.solarToGridWh,
                 r.gridToHomeWh, r.gridToBatteryWh, r.batteryToHomeWh, r.batteryToGridWh,
                 r.tank.solarWh, r.tank.gridWh, r.tank.solarCost, r.tank.gridCost, r.tankAsOf,
+                r.buyRate, r.sellRate, r.batterySoc,
             );
         }
         await pool.query(`
@@ -964,7 +971,8 @@ export class RollupRepo {
                 site_id, local_date, tariff_schedule_id,
                 load_wh, solar_to_home_wh, solar_to_battery_wh, solar_to_grid_wh,
                 grid_to_home_wh, grid_to_battery_wh, battery_to_home_wh, battery_to_grid_wh,
-                tank_solar_wh, tank_grid_wh, tank_solar_cost, tank_grid_cost, tank_as_of
+                tank_solar_wh, tank_grid_wh, tank_solar_cost, tank_grid_cost, tank_as_of,
+                buy_rate, sell_rate, battery_soc
             ) VALUES ${placeholders.join(', ')}
             ON CONFLICT(site_id, local_date, tariff_schedule_id) DO UPDATE SET
                 load_wh = EXCLUDED.load_wh,
@@ -980,6 +988,9 @@ export class RollupRepo {
                 tank_solar_cost = EXCLUDED.tank_solar_cost,
                 tank_grid_cost = EXCLUDED.tank_grid_cost,
                 tank_as_of = EXCLUDED.tank_as_of,
+                buy_rate = EXCLUDED.buy_rate,
+                sell_rate = EXCLUDED.sell_rate,
+                battery_soc = EXCLUDED.battery_soc,
                 updated_at = now()
         `, params);
     }
@@ -1379,4 +1390,4 @@ git commit -m "docs: note EnergyRollup data model and Phase 2 ROI readiness"
 - **Units:** tank/rollup energy is **Wh**; rates are **$/kWh**; `allocateEdges` returns **kWh** (hence `× 1000`). Costs are dollars.
 - **Idempotency:** every persistence path upserts on the primary key; re-running any day or the whole backfill is safe.
 - **Retention coupling:** the rollup cron (08:00 UTC) runs before `cleanup` (09:00 UTC) so a day is rolled up before its raw rows can be pruned.
-- **Out of this plan (by design):** read-time derivations (discharge source split, discharge cost basis, arbitrage P&L) and any reporting UI. Per the spec these are computed by consumers from the stored rollup + `TariffSchedule` join; add a thin `derivations.ts` helper when the first consumer (existing reports or Phase 2 ROI) needs it. This plan delivers the durable data foundation only.
+- **Out of this plan (by design):** read-time derivations (discharge source split, discharge cost basis, arbitrage P&L) and any reporting UI. These are simple arithmetic over the self-contained rollup row (stored rates × stored energies; no join); add a thin `derivations.ts` helper when the first consumer (existing reports or Phase 2 ROI) needs it. This plan delivers the durable data foundation only.
