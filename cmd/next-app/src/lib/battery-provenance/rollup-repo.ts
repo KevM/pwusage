@@ -5,7 +5,7 @@ import type { Tank } from './tank';
 export class RollupRepo {
     async upsertRollups(rows: PeriodRollup[]): Promise<void> {
         if (rows.length === 0) return;
-        const cols = 19;
+        const cols = 21;
         const placeholders: string[] = [];
         const params: unknown[] = [];
         let p = 1;
@@ -19,6 +19,7 @@ export class RollupRepo {
                 r.gridToHomeWh, r.gridToBatteryWh, r.batteryToHomeWh, r.batteryToGridWh,
                 r.tank.solarWh, r.tank.gridWh, r.tank.solarCost, r.tank.gridCost, r.tankAsOf,
                 r.buyRate, r.sellRate, r.batterySoc,
+                r.solarOnlyImportWh, r.solarOnlyExportWh,
             );
         }
         await pool.query(`
@@ -27,7 +28,8 @@ export class RollupRepo {
                 load_wh, solar_to_home_wh, solar_to_battery_wh, solar_to_grid_wh,
                 grid_to_home_wh, grid_to_battery_wh, battery_to_home_wh, battery_to_grid_wh,
                 tank_solar_wh, tank_grid_wh, tank_solar_cost, tank_grid_cost, tank_as_of,
-                buy_rate, sell_rate, battery_soc
+                buy_rate, sell_rate, battery_soc,
+                solar_only_import_wh, solar_only_export_wh
             ) VALUES ${placeholders.join(', ')}
             ON CONFLICT(site_id, local_date, tariff_schedule_id) DO UPDATE SET
                 load_wh = EXCLUDED.load_wh,
@@ -46,6 +48,8 @@ export class RollupRepo {
                 buy_rate = EXCLUDED.buy_rate,
                 sell_rate = EXCLUDED.sell_rate,
                 battery_soc = EXCLUDED.battery_soc,
+                solar_only_import_wh = EXCLUDED.solar_only_import_wh,
+                solar_only_export_wh = EXCLUDED.solar_only_export_wh,
                 updated_at = now()
         `, params);
     }
@@ -74,4 +78,20 @@ export class RollupRepo {
         const res = await pool.query(`SELECT 1 FROM "EnergyRollup" WHERE site_id = $1 LIMIT 1`, [siteId]);
         return res.rows.length > 0;
     }
+
+    async getAllForSite(siteId: string): Promise<import('../db').EnergyRollupRow[]> {
+        const res = await pool.query(
+            `SELECT site_id, local_date::text AS local_date, tariff_schedule_id,
+                    load_wh, solar_to_home_wh, solar_to_battery_wh, solar_to_grid_wh,
+                    grid_to_home_wh, grid_to_battery_wh, battery_to_home_wh, battery_to_grid_wh,
+                    tank_solar_wh, tank_grid_wh, tank_solar_cost, tank_grid_cost, tank_as_of,
+                    buy_rate, sell_rate, battery_soc,
+                    solar_only_import_wh, solar_only_export_wh
+             FROM "EnergyRollup" WHERE site_id = $1
+             ORDER BY local_date ASC, tank_as_of ASC`,
+            [siteId],
+        );
+        return res.rows as import('../db').EnergyRollupRow[];
+    }
 }
+
