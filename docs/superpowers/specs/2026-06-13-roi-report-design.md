@@ -92,6 +92,8 @@ updated_at           timestamptz   NOT NULL DEFAULT now()
 
 A component participates in the dashboard only when its cost is set; the payback/decomposition requires the fixed-rate fields to be set (otherwise the dashboard shows an empty state prompting for them).
 
+**Keying stays Phase-1-pure.** `EnergyRollup` remains keyed by the **active** `tariff_schedule_id` only. Comparison/ROI tariff schedules **never** FK or key it; all counterfactual pricing is read-time arithmetic over the plan-agnostic stored energies. (Pricing a *different* TOU schedule — shifted peak windows — needs a finer plan-agnostic grain than the rollup holds; that's the Phase 2b hourly profile, kept entirely separate.)
+
 ### Explicitly *not* in this phase
 
 - **Fixed / recurring monthly charges** (daily meter/supply charge, service fees) — they belong on the **`Tariff`** model, owned by the future **bill-estimation** feature. They **cancel between the fixed-plan cells** (so `solarValue = A − C` is unaffected), but the fixed-vs-TOU plan *difference* would land in `batteryValue`/`totalSaved`. v1 is **energy-only**; this difference is a documented refinement.
@@ -135,6 +137,7 @@ Reads all `EnergyRollup` rows + `SiteRoiConfig` (no Tesla calls, no joins) and f
 - **Decompositions:** `solarValue = A − C`; `batteryValue = C − F`; `totalSaved = A − F`. Secondary: `batteryHardwareValue = C − E`; `touPlanValue = E − F`.
 - **Aggregates:** lifetime totals (solar / battery / combined, plus the hardware/TOU split) + a **monthly-bucketed cumulative series** for the chart.
 - **Projection (whole-history average rate):** `annualRate = totalSaved / daysOfData × 365`; per component `breakEvenDate = today + (cost − savedToDate) / componentAnnualRate`; a `lowConfidence` flag when `daysOfData < 365` (partial-season bias).
+- **Plan classification & recommendation:** `classifyTariff(activeTariff)` → `fixed | TOU`, by whether the schedule's buy rates vary across the day. Marks the user's *actual* matrix cell (E if fixed, F if TOU) — detected, not assumed. For a TOU user, if cell E < cell F, surface a "consider a flat plan (~$X/yr)" recommendation; this is robust because cell E's bias *overstates* flat cost, so it can't false-positive. (A fixed user's "should I switch to TOU?" needs a comparison TOU schedule + the hourly profile — Phase 2b.)
 
 ### Arbitrage estimate (`arbitrage-service.ts`)
 
@@ -153,7 +156,7 @@ Per period, drawing on the Phase 1 tank (entry tank = the prior period's stored 
 New top-level **`savings`** tab in `SiteTabs`, labeled **"Savings"** (alongside `history` / `bill` / `settings`). Both surfaces — payback dashboard and estimated arbitrage panel — live on this one page. (`TabId` union and the `localStorage` last-tab list both gain `savings`.)
 
 - **Payback hero:** combined "% recovered", `$ saved of $cost`, projected break-even, progress bar.
-- **Scenario-matrix comparison:** the 2×3 grid of bills (system × plan), with the realistic diagonal (A→C→F) emphasized and cell E footnoted. Makes both the savings steps and the rate-plan question (E vs F) explicit.
+- **Scenario-matrix comparison:** the 2×3 grid of bills (system × plan), with the realistic diagonal (A→C→F) emphasized and cell E footnoted. The user's actual plan cell is marked **"you are here"** (from plan detection, not assumed); the cheaper option in their system row is highlighted, with a plan-switch recommendation banner when it isn't their current plan. Makes both the savings steps and the rate-plan question (E vs F) explicit. (A fixed user sees the TOU column as a "define a TOU plan to compare" prompt → 2b.)
 - **Twin component cards:** ☀️ Solar / 🔋 Battery — progress bar, `saved / cost`, projected date.
 - **Cumulative savings chart:** monthly points climbing toward a dashed system-cost line.
 - **Estimated arbitrage panel:** net P&L, discharge source-split bar, losing-cycle flags — under an "Estimated" heading.
@@ -168,6 +171,15 @@ New top-level **`savings`** tab in `SiteTabs`, labeled **"Savings"** (alongside 
 - **Unit — arbitrage:** source-split from entry tank; benefit vs cost-basis P&L; losing-cycle flag fires on an expensive-grid-charge period and not on a normal off-peak→on-peak cycle.
 - **Integration:** a synthetic day through the replay asserts stored `solar_only_import_wh/export_wh`; `batteryValue === C − F`; a Storm-Watch day raises a losing-cycle flag.
 - **Idempotency:** re-running the rollup yields identical counterfactual columns.
+
+## Deferred to Phase 2b — plan-agnostic hourly profile & TOU-to-TOU what-ifs
+
+The highest-value follow-on: let the user test **alternative TOU schedules** — e.g. "my utility lets me pick my on-peak window; is 6am–6pm better than 7am–7pm?" Re-pricing under *different time windows* needs energy at a **re-bucketable, plan-agnostic grain**, which the period-keyed `EnergyRollup` structurally cannot provide.
+
+- **New artifact:** a durable **hourly energy profile** — `(site_id, local_date, hour)` → `load_wh`, `solar_only_import/export_wh`, `actual_import/export_wh`. Plan-agnostic, ~24 rows/day (heavily compressed vs 5-min), populated in the same rollup pass (5-min netting preserved within each hour). Prices **any** plan — flat, current TOU, or a shifted-peak TOU — by re-bucketing hours into its periods at read time.
+- **Comparison plans reuse the tariff editor:** a candidate schedule is a `Tariff` flagged reporting-only, used purely as a read-time bucketing spec — never referenced by any rollup.
+- **Migration note:** when 2b lands, the `solar_only_*` columns move from `EnergyRollup` to the hourly profile (single counterfactual substrate), reverting `EnergyRollup` to exactly Phase 1. v1 accepts that small rework as the cost of shipping payback sooner.
+- **Caveat:** the Solar+Battery what-if is behavior-fixed (re-pricing actual flows under new windows; a real window change would also re-tune the Powerwall). Directional, exact for the No-Solar/Solar-only rows. Matches the "expose estimates" philosophy.
 
 ## Out of scope (future)
 
@@ -186,4 +198,7 @@ New top-level **`savings`** tab in `SiteTabs`, labeled **"Savings"** (alongside 
 7. **Projection:** **whole-history average rate**, with a low-confidence caveat under a year of data.
 8. **Fixed charges:** **energy-only v1, document the seam** — they belong on `Tariff` (bill-estimation), cancel between the fixed-plan cells, and their fixed-vs-TOU difference is a future refinement.
 9. **Placement:** a new first-class **"Savings"** tab in `SiteTabs` (option A), holding both surfaces. Friendly label over "ROI"; doesn't foreclose a later "Money"/"Reports" grouping if more analytical views arrive.
+10. **Plan detection:** classify the active tariff as fixed/TOU from its schedule rates; mark the actual matrix cell "you are here" and recommend a flat plan when cheaper (robust against false-positives via cell E's bias direction).
+11. **Comparison-plan FK:** **none** — `EnergyRollup` stays keyed by the active schedule; comparison pricing is read-time over plan-agnostic energies.
+12. **Phase 2b (deferred):** a plan-agnostic **hourly energy profile** unlocks TOU-to-TOU what-ifs (shift-my-peak-window) and fixed-user→TOU comparison; reuses the tariff editor for reporting-only comparison plans; `solar_only_*` migrate there when it lands.
 ```
