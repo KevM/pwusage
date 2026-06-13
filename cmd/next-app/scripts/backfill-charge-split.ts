@@ -17,6 +17,10 @@ async function main() {
     const { Importer } = await import('../src/lib/importer');
     const { SiteRepo } = await import('../src/lib/site-repo');
     const { pool } = await import('../src/lib/db');
+    const { RollupRepo } = await import('../src/lib/battery-provenance/rollup-repo');
+    const { RollupService } = await import('../src/lib/battery-provenance/rollup-service');
+    const { EnergyRepo } = await import('../src/lib/energy-repo');
+    const { localDateKey } = await import('../src/lib/battery-provenance/local-day');
 
     // Fetch site & user token
     const siteRepo = new SiteRepo();
@@ -25,6 +29,16 @@ async function main() {
         console.error(`Site ${siteId} not found in database!`);
         process.exit(1);
     }
+
+    const energyRepo = new EnergyRepo();
+    const rollupRepo = new RollupRepo();
+    const rollupService = new RollupService({
+        loadSite: async () => ({ id: site.id, timezone: site.timezone, tariffs: site.tariffs ?? [] }),
+        loadEnergyData: (id, start, end) => energyRepo.getRawEnergyData(id, start, end),
+        getSeedTank: (id, beforeTs) => rollupRepo.getSeedTank(id, beforeTs),
+        hasAnyRollup: (id) => rollupRepo.hasAnyRollup(id),
+        upsertRollups: (rows) => rollupRepo.upsertRollups(rows),
+    });
 
     const installDate = new Date(site.installed);
     let start = new Date(installDate);
@@ -85,6 +99,12 @@ async function main() {
         try {
             const rows = await fetchWithRetry(chunkStart, next);
             allRows.push(...rows);
+            
+            const localDate = localDateKey(chunkStart, site.timezone);
+            const { rollupCount } = await rollupService.rollupDay(siteId, localDate);
+            if (rollupCount > 0) {
+                console.log(`  [Rollup] Completed rollup for ${localDate} (${rollupCount} periods)`);
+            }
         } catch (e) {
             console.error(`Failed all retry attempts for ${chunkStart.toISOString().slice(0, 10)}. Skipping day to prevent crash:`, e);
         }
