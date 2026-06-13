@@ -4,17 +4,18 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { ReactNode, useEffect, useRef } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 
-type TabId = 'history' | 'bill' | 'settings';
+type TabId = 'history' | 'bill' | 'savings' | 'settings';
 
 interface SiteTabsProps {
     children?: ReactNode; // We might not need children if we pass slots, or we use children as content
     historySlot: ReactNode;
     billSlot: ReactNode;
+    savingsSlot: ReactNode;
     settingsSlot: ReactNode;
     breadcrumbs?: ReactNode;
 }
 
-export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: SiteTabsProps) {
+export function SiteTabs({ historySlot, billSlot, savingsSlot, settingsSlot, breadcrumbs }: SiteTabsProps) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -35,7 +36,7 @@ export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: S
         // If no view is specified in URL, check localStorage
         if (!searchParams.has('view')) {
             const lastTab = localStorage.getItem('pwusage_last_site_tab') as TabId;
-            if (lastTab && ['history', 'bill', 'settings'].includes(lastTab) && lastTab !== 'bill') {
+            if (lastTab && ['history', 'bill', 'savings', 'settings'].includes(lastTab) && lastTab !== 'bill') {
                 const params = new URLSearchParams(searchParams);
                 params.set('view', lastTab);
                 router.replace(`${pathname}?${params.toString()}`);
@@ -76,6 +77,12 @@ export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: S
                                 </svg>
                                 Estimated Bill
                             </TabsTrigger>
+                            <TabsTrigger value="savings" className="flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                                </svg>
+                                Savings
+                            </TabsTrigger>
                             <TabsTrigger value="settings" className="flex items-center gap-2">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -96,6 +103,9 @@ export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: S
                     <TabsContent value="bill">
                     {billSlot}
                     </TabsContent>
+                    <TabsContent value="savings">
+                    {savingsSlot}
+                    </TabsContent>
                     <TabsContent value="settings">
                     {settingsSlot}
                     </TabsContent>
@@ -104,3 +114,4 @@ export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: S
         </div>
     );
 }
+
