@@ -6,8 +6,9 @@ dotenv.config({ path: path.resolve(__dirname, '../.env'), override: true });
 
 async function main() {
     const siteId = process.argv[2];
+    const startDateArg = process.argv[3];
     if (!siteId) {
-        console.error('usage: npx tsx scripts/backfill-charge-split.ts <siteId>');
+        console.error('usage: npx tsx scripts/backfill-charge-split.ts <siteId> [startDateYYYY-MM-DD]');
         process.exit(1);
     }
 
@@ -26,10 +27,18 @@ async function main() {
     }
 
     const installDate = new Date(site.installed);
-    const start = new Date(installDate);
+    let start = new Date(installDate);
+    if (startDateArg) {
+        const parsedDate = new Date(startDateArg);
+        if (isNaN(parsedDate.getTime())) {
+            console.error(`Invalid startDate format: "${startDateArg}". Please use YYYY-MM-DD.`);
+            process.exit(1);
+        }
+        start = parsedDate;
+    }
     const end = new Date(Date.now() - 24 * 60 * 60 * 1000); // Up to yesterday
     
-    // Ensure we start at midnight of the install date
+    // Ensure we start at midnight of the target date
     start.setUTCHours(0, 0, 0, 0);
     end.setUTCHours(23, 59, 59, 999);
 
@@ -44,7 +53,7 @@ async function main() {
     const importer = new Importer(client);
 
     console.log(`Site: ${site.name} (Installed: ${installDate.toISOString().slice(0, 10)})`);
-    console.log(`Starting rate-limited charge-split backfill from install date ${start.toISOString().slice(0, 10)} to yesterday ${end.toISOString().slice(0, 10)}...`);
+    console.log(`Starting rate-limited charge-split backfill from start date ${start.toISOString().slice(0, 10)} to yesterday ${end.toISOString().slice(0, 10)}...`);
 
     const allRows = [];
     const dayMs = 24 * 60 * 60 * 1000;
