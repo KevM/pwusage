@@ -388,7 +388,7 @@ export class EnergyRepo {
     async getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
         const queryStart = Date.now();
         const res = await pool.query(`
-            SELECT site_id, timestamp, tariff_id, tariff_schedule_id, load_power, solar_power, grid_power, battery_power, battery_soc
+            SELECT site_id, timestamp, tariff_id, tariff_schedule_id, load_power, solar_power, grid_power, battery_power, battery_soc, battery_charge_from_solar, battery_charge_from_grid
             FROM "EnergyData"
             WHERE site_id = $1
             AND timestamp >= $2
@@ -408,6 +408,8 @@ export class EnergyRepo {
             grid_power: Number(row.grid_power),
             battery_power: Number(row.battery_power),
             battery_soc: row.battery_soc === null || row.battery_soc === undefined ? null : Number(row.battery_soc),
+            battery_charge_from_solar: row.battery_charge_from_solar === null || row.battery_charge_from_solar === undefined ? null : Number(row.battery_charge_from_solar),
+            battery_charge_from_grid: row.battery_charge_from_grid === null || row.battery_charge_from_grid === undefined ? null : Number(row.battery_charge_from_grid),
         })) as EnergyData[];
     }
 
@@ -500,6 +502,8 @@ export class EnergyRepo {
         grid_power: number;
         battery_power: number;
         battery_soc: number | null;
+        battery_charge_from_solar?: number | null;
+        battery_charge_from_grid?: number | null;
     }>): Promise<void> {
         if (rows.length === 0) return;
 
@@ -507,16 +511,20 @@ export class EnergyRepo {
         const params: unknown[] = [];
         let p = 1;
         for (const r of rows) {
-            valuePlaceholders.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
+            valuePlaceholders.push(
+                `($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`
+            );
             params.push(
                 r.site_id, r.tariff_id, r.timestamp,
                 r.load_power, r.solar_power, r.grid_power, r.battery_power,
-                r.battery_soc, r.tariff_schedule_id ?? null
+                r.battery_soc, r.tariff_schedule_id ?? null,
+                r.battery_charge_from_solar ?? null,
+                r.battery_charge_from_grid ?? null
             );
         }
 
         await pool.query(`
-            INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, tariff_schedule_id)
+            INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, tariff_schedule_id, battery_charge_from_solar, battery_charge_from_grid)
             VALUES ${valuePlaceholders.join(', ')}
             ON CONFLICT(timestamp, site_id) DO UPDATE SET
                 tariff_id = EXCLUDED.tariff_id,
@@ -525,7 +533,9 @@ export class EnergyRepo {
                 grid_power = EXCLUDED.grid_power,
                 battery_power = EXCLUDED.battery_power,
                 battery_soc = COALESCE(EXCLUDED.battery_soc, "EnergyData".battery_soc),
-                tariff_schedule_id = EXCLUDED.tariff_schedule_id
+                tariff_schedule_id = EXCLUDED.tariff_schedule_id,
+                battery_charge_from_solar = COALESCE(EXCLUDED.battery_charge_from_solar, "EnergyData".battery_charge_from_solar),
+                battery_charge_from_grid = COALESCE(EXCLUDED.battery_charge_from_grid, "EnergyData".battery_charge_from_grid)
         `, params);
     }
 

@@ -118,6 +118,8 @@ export interface EnergyData {
   grid_power: number;
   battery_power: number;
   battery_soc: number | null;
+  battery_charge_from_solar?: number | null;
+  battery_charge_from_grid?: number | null;
 }
 
 

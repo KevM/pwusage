@@ -13,6 +13,8 @@ export interface EnergyDataRow {
     grid_power: number;
     battery_power: number;
     battery_soc: number | null;
+    battery_charge_from_solar: number | null;
+    battery_charge_from_grid: number | null;
 }
 
 export interface TransformContext {
@@ -74,6 +76,12 @@ export function transformEnergyPoints(
             grid_power: grid * scale,
             battery_power: battery * scale,
             battery_soc: findNearestSoc(socSamples, ts.getTime()),
+            battery_charge_from_solar: h.battery_energy_imported_from_solar !== undefined && h.battery_energy_imported_from_solar !== null
+                ? h.battery_energy_imported_from_solar * scale
+                : null,
+            battery_charge_from_grid: h.battery_energy_imported_from_grid !== undefined && h.battery_energy_imported_from_grid !== null
+                ? h.battery_energy_imported_from_grid * scale
+                : null,
         });
     }
 

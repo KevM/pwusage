@@ -90,6 +90,8 @@ export class Importer {
             grid_power: row.grid_power,
             battery_power: row.battery_power,
             battery_soc: row.battery_soc,
+            battery_charge_from_solar: row.battery_charge_from_solar,
+            battery_charge_from_grid: row.battery_charge_from_grid,
         })));
         console.log(`[Importer] Background persistence complete for site ${siteId}`);
     }
@@ -402,6 +404,8 @@ export class Importer {
                 grid_power: row.grid_power,
                 battery_power: row.battery_power,
                 battery_soc: row.battery_soc,
+                battery_charge_from_solar: row.battery_charge_from_solar,
+                battery_charge_from_grid: row.battery_charge_from_grid,
             })));
             return energyDatas;
         }

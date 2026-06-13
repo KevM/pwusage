@@ -125,4 +125,28 @@ describe('transformEnergyPoints', () => {
         expect(row.site_id).toBe('my-site');
         expect(row.tariff_id).toBe(42);
     });
+
+    it('carries Tesla battery charge source into the row without scaling (short duration)', () => {
+        const history = [
+            makeEntry({
+                battery_energy_imported_from_solar: 600,
+                battery_energy_imported_from_grid: 200,
+            }),
+        ];
+        const [row] = transformEnergyPoints(history, [], 'day', 1, CONTEXT);
+        expect(row.battery_charge_from_solar).toBe(600);
+        expect(row.battery_charge_from_grid).toBe(200);
+    });
+
+    it('carries Tesla battery charge source into the row with scaling (long duration)', () => {
+        const history = [
+            makeEntry({
+                battery_energy_imported_from_solar: 600,
+                battery_energy_imported_from_grid: 200,
+            }),
+        ];
+        const [row] = transformEnergyPoints(history, [], 'day', 24, CONTEXT);
+        expect(row.battery_charge_from_solar).toBe(600000);
+        expect(row.battery_charge_from_grid).toBe(200000);
+    });
 });
