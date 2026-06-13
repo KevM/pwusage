@@ -17,12 +17,15 @@ import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 
 
-import { SiteWithTariffs, TrmnlInstallation } from '@/lib/db';
+import { SiteWithTariffs, TrmnlInstallation, SiteRoiConfig } from '@/lib/db';
+import { RoiConfigForm } from './RoiConfigForm';
 
 interface SettingsViewProps {
     site: SiteWithTariffs;
     installation: TrmnlInstallation | undefined;
+    roiConfig?: SiteRoiConfig | null;
 }
+
 
 function parseInstallationJson(value: unknown): Record<string, unknown> | null {
     if (!value) return null;
@@ -85,7 +88,8 @@ function extractPluginSettingId(installation: TrmnlInstallation | undefined): nu
     return null;
 }
 
-export function SettingsView({ site, installation }: SettingsViewProps) {
+export function SettingsView({ site, installation, roiConfig }: SettingsViewProps) {
+
     const router = useRouter();
     const { toast } = useToast();
     const [previewHtml, setPreviewHtml] = useState('');
@@ -314,6 +318,8 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                 </CardContent>
             </Card>
 
+            <RoiConfigForm siteId={site.id} initial={roiConfig ?? null} />
+
             <TariffList
                 tariffs={site.tariffs}
                 onRefresh={handleRefreshTariffs}
@@ -323,4 +329,5 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
         </div>
     );
 }
+
 
