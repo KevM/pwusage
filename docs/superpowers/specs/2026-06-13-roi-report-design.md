@@ -134,7 +134,7 @@ Per period, drawing on the Phase 1 tank (entry tank = the prior period's stored 
 
 ## UI
 
-New **`roi`** tab in `SiteTabs` (alongside `history` / `bill` / `settings`).
+New top-level **`savings`** tab in `SiteTabs`, labeled **"Savings"** (alongside `history` / `bill` / `settings`). Both surfaces — payback dashboard and estimated arbitrage panel — live on this one page. (`TabId` union and the `localStorage` last-tab list both gain `savings`.)
 
 - **Payback hero:** combined "% recovered", `$ saved of $cost`, projected break-even, progress bar.
 - **Decision-ladder comparison:** the three rungs (No Solar/Fixed, Solar/Fixed, Solar+Battery/TOU) as comparative bills, making the savings steps explicit.
@@ -168,4 +168,5 @@ New **`roi`** tab in `SiteTabs` (alongside `history` / `bill` / `settings`).
 6. **Arbitrage panel:** **in scope**, presented **as an estimate** (matching monthly-bill estimation). This is what makes Phase 1's provenance pay off.
 7. **Projection:** **whole-history average rate**, with a low-confidence caveat under a year of data.
 8. **Fixed charges:** **energy-only v1, document the seam** — they belong on `Tariff` (bill-estimation), cancel within the fixed rungs, and their fixed-vs-TOU difference is a future refinement.
+9. **Placement:** a new first-class **"Savings"** tab in `SiteTabs` (option A), holding both surfaces. Friendly label over "ROI"; doesn't foreclose a later "Money"/"Reports" grouping if more analytical views arrive.
 ```
