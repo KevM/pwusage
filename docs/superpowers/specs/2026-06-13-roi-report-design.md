@@ -19,26 +19,39 @@ A per-site report with two surfaces:
 1. **Payback dashboard** (Layout A) — for solar, battery, and combined: cumulative savings to date, % of capital cost recovered, projected break-even date, and a cumulative-savings curve climbing toward the system-cost line. Savings are measured against the **real-world decision ladder** below.
 2. **Estimated arbitrage panel** — a clearly-labeled *estimate* (matching the `EstimatedBillView` convention) of where the battery's value came from: discharge source-split, net arbitrage P&L, and flags for losing cycles (e.g. Storm Watch grid-charging). This is what finally puts Phase 1's tank provenance to work.
 
-## Conceptual model — the real-world decision ladder
+## Conceptual model — the scenario matrix
 
-A solar customer would **not** rationally sit on a TOU plan without a battery (no ability to shift load ⇒ TOU only hurts). So the honest counterfactuals are the choices households actually make, each on the rate plan they'd actually pick:
+The report rests on a 2×3 matrix: **system** (No Solar / Solar, no battery / Solar + Battery) × **rate plan** (Fixed flat / TOU). Every cell is a bill computable from already-stored data — physical flows priced under a plan — so the whole matrix is read-side only (no storage beyond the two `solar_only` columns).
 
-| Rung | Scenario | Rate plan | Bill source |
-|---|---|---|---|
-| 1 | **No Solar** | Fixed (flat) | `load_wh × fixedBuy` (exact) |
-| 2 | **Solar, no battery** | Fixed (flat) | solar-only flows priced at flat rate |
-| 3 | **Solar + Battery** (actual) | TOU | real metered flows × snapshotted TOU rates |
+|  | Fixed (flat) | TOU |
+|---|---|---|
+| **No Solar** | A · `load_wh × fixedBuy` — exact | B · `Σ load_wh × buy_rate` — exact |
+| **Solar, no battery** | C · solar-only flows × flat — exact | D · solar-only flows × TOU — exact |
+| **Solar + Battery** | E · **actual** flows × flat — good¹ | F · **actual metered bill** (TOU) — actual |
 
-Savings decomposition along the ladder:
-- `solarValue   = rung1 − rung2`  — both on the **fixed** plan; isolates what panels save a flat-rate household.
-- `batteryValue = rung2 − rung3`  — the battery **and** the TOU plan it unlocks, **bundled on purpose** (the battery is what earns the right to be on TOU; separating them recreates the strawman).
-- `totalSaved   = rung1 − rung3   = solarValue + batteryValue` (by construction).
+¹ Cell E prices the real (TOU-optimized) battery flows at the flat rate — "my exact usage, billed flat." It diverges from a truly flat-optimized battery only by (a) round-trip losses on grid-charged energy and (b) rare missed solar-to-battery storage, because under a flat rate a grid charge→discharge cycle is just **time-shifting an import, and time has no price on a flat plan**. Both leaks are second-order; shown with a one-line footnote. (A truly flat-optimal dispatch would need a battery re-simulation — out of scope, and unnecessary given how small the gap is.)
 
-**Physical flows are rate-agnostic.** The solar-only import/export Wh are the same regardless of which plan prices them, so the data model stores energies once and the read side prices each rung under the right plan.
+### Headline payback — the realistic diagonal
+
+A no-battery household would **not** rationally sit on TOU (nothing to shift ⇒ TOU only hurts; cell D > cell C, which the matrix shows). So the payback headline runs the diagonal of choices people actually make: **A → C → F**.
+- `solarValue   = A − C`  — both on the **fixed** plan; what panels save a flat-rate household.
+- `batteryValue = C − F`  — the battery **and** the TOU plan it unlocks (bundled: the battery is what earns the right to be on TOU).
+- `totalSaved   = A − F   = solarValue + batteryValue` (by construction).
+
+### Secondary — splitting battery hardware from the TOU plan
+
+The full matrix additionally lets us decompose `batteryValue` along the bottom row, holding the system fixed:
+- `batteryHardwareValue = C − E`  — adding the battery while staying on flat (self-consumption value).
+- `touPlanValue         = E − F`  — switching to TOU given you have the battery (the arbitrage value the plan unlocks).
+- `batteryHardwareValue + touPlanValue = C − F = batteryValue` (E cancels).
+
+This answers the rate-plan question ("is TOU actually beating flat for my system?") separately from the hardware question, using cell E's "good" estimate.
+
+**Physical flows are rate-agnostic.** Solar-only import/export Wh and the actual edge flows are the same regardless of which plan prices them, so the data model stores energies once and the read side prices every cell under the right plan.
 
 ### Why the solar-only flows must be simulated at 5-min, not period grain
 
-A TOU period can span many hours (on-peak 8am–8pm). Within one period, midday solar surplus and evening load are offset in time; netting them at period grain (`Σload − Σsolar`) pretends solar covers the evening — impossible without a battery — which **understates rung 2's cost and therefore the battery's value.** So solar-only import/export is accumulated **per 5-min interval** (`net = load − solar`; positive ⇒ import, negative ⇒ export), then summed. (Rung 1 has no such issue — a flat rate is constant, so `load_wh × fixedBuy` is exact at any grain.)
+A TOU period can span many hours (on-peak 8am–8pm). Within one period, midday solar surplus and evening load are offset in time; netting them at period grain (`Σload − Σsolar`) pretends solar covers the evening — impossible without a battery — which **understates cells C/D and therefore the battery's value.** So solar-only import/export is accumulated **per 5-min interval** (`net = load − solar`; positive ⇒ import, negative ⇒ export), then summed. (The No-Solar cells have no such issue — load × rate is exact at any grain.)
 
 ### Why store the solar-only result durably
 
@@ -47,7 +60,7 @@ A TOU period can span many hours (on-peak 8am–8pm). Within one period, midday 
 ### Why the arbitrage panel needs Phase 1 (and the payback number doesn't)
 
 Two different questions:
-- **"Is the battery worth it?"** (payback) → `rung2 − rung3`. Answered by re-simulating without the battery; needs **no** provenance. It is also the *correct* measure — it automatically absorbs round-trip losses, which a naive provenance P&L overstates.
+- **"Is the battery worth it?"** (payback) → `C − F`. Answered by re-pricing the matrix; needs **no** provenance. It is also the *correct* measure — it automatically absorbs round-trip losses, which a naive provenance P&L overstates.
 - **"Is the battery being used *well* — where does its value come from, where does it lose money?"** (arbitrage estimate) → needs the tank's **cost basis**, because it scores each charge→discharge as a trade. This is the only *actionable* part of the report (e.g. "Storm Watch cost you $148 — limit it to storm season"), and it directly serves `GOALS.md`'s optimization mission.
 
 ## Data model
@@ -59,7 +72,7 @@ solar_only_import_wh   integer  NOT NULL DEFAULT 0   -- Wh imported, solar-only 
 solar_only_export_wh   integer  NOT NULL DEFAULT 0   -- Wh exported, solar-only (no-battery) scenario, 5-min sim
 ```
 
-Energies, not dollars — consistent with Phase 1. Priced at read time under whichever plan the rung uses. `NOT NULL DEFAULT 0` is safe: the replay always (re)writes these; the default only covers the migration instant before backfill re-runs.
+Energies, not dollars — consistent with Phase 1. Priced at read time under whichever plan each cell uses. `NOT NULL DEFAULT 0` is safe: the replay always (re)writes these; the default only covers the migration instant before backfill re-runs.
 
 ### `SiteRoiConfig` — new table
 
@@ -71,8 +84,8 @@ solar_cost           numeric       NULL   -- net cost after incentives
 solar_install_date   date          NULL
 battery_cost         numeric       NULL   -- net cost after incentives
 battery_install_date date          NULL
-fixed_buy_rate       numeric       NULL   -- $/kWh import on the flat plan (rungs 1 & 2)
-fixed_sell_rate      numeric       NULL   -- $/kWh export/NEM credit on the flat plan (rung 2)
+fixed_buy_rate       numeric       NULL   -- $/kWh import on the flat plan (cells A, C, E)
+fixed_sell_rate      numeric       NULL   -- $/kWh export/NEM credit on the flat plan (cells C, E)
 created_at           timestamptz   NOT NULL DEFAULT now()
 updated_at           timestamptz   NOT NULL DEFAULT now()
 ```
@@ -81,8 +94,8 @@ A component participates in the dashboard only when its cost is set; the payback
 
 ### Explicitly *not* in this phase
 
-- **Fixed / recurring monthly charges** (daily meter/supply charge, service fees) — they belong on the **`Tariff`** model, owned by the future **bill-estimation** feature. Under the ladder they **cancel within the two fixed rungs** (so `solarValue` is unaffected), but the fixed-vs-TOU plan *difference* would land in `batteryValue`/`totalSaved`. v1 is **energy-only**; this difference is a documented refinement.
-- **Solar-specific fixed fees / minimum bills** — the case where even rung-3's fixed charges diverge from the flat plan; future.
+- **Fixed / recurring monthly charges** (daily meter/supply charge, service fees) — they belong on the **`Tariff`** model, owned by the future **bill-estimation** feature. They **cancel between the fixed-plan cells** (so `solarValue = A − C` is unaffected), but the fixed-vs-TOU plan *difference* would land in `batteryValue`/`totalSaved`. v1 is **energy-only**; this difference is a documented refinement.
+- **Solar-specific fixed fees / minimum bills** — the case where even cell F's fixed charges diverge from the flat plan; future.
 - **Literal per-cycle trade detection / precise "Storm Watch" labeling** — v1 flags losing cycles by a derivable heuristic (below), not by reconstructing discrete charge/discharge events.
 - **Round-trip-loss line item** — derivable (cumulative charge Wh − discharge Wh, valued at blended basis) but a later refinement; v1's payback already absorbs losses correctly.
 
@@ -112,12 +125,15 @@ No battery, no tank — purely load vs solar. Lives in `battery-provenance/` (e.
 
 Reads all `EnergyRollup` rows + `SiteRoiConfig` (no Tesla calls, no joins) and folds:
 
-- **Per period:**
-  - `rung1Cost = load_wh × fixedBuy`
-  - `rung2Cost = solar_only_import_wh × fixedBuy − solar_only_export_wh × fixedSell`
-  - `rung3Cost (actual) = (grid_to_home_wh + grid_to_battery_wh) × buy_rate − (solar_to_grid_wh + battery_to_grid_wh) × sell_rate`  (TOU snapshotted rates)
-  - `solarValue = rung1 − rung2`; `batteryValue = rung2 − rung3`; `totalSaved = rung1 − rung3`
-- **Aggregates:** lifetime totals (solar / battery / combined) + a **monthly-bucketed cumulative series** for the chart.
+- **Per period — the six matrix cells** (let `actualImport = grid_to_home_wh + grid_to_battery_wh`, `actualExport = solar_to_grid_wh + battery_to_grid_wh`):
+  - `A = load_wh × fixedBuy`
+  - `B = load_wh × buy_rate`
+  - `C = solar_only_import_wh × fixedBuy − solar_only_export_wh × fixedSell`
+  - `D = solar_only_import_wh × buy_rate − solar_only_export_wh × sell_rate`
+  - `E = actualImport × fixedBuy − actualExport × fixedSell`
+  - `F (actual) = actualImport × buy_rate − actualExport × sell_rate`  (TOU snapshotted rates)
+- **Decompositions:** `solarValue = A − C`; `batteryValue = C − F`; `totalSaved = A − F`. Secondary: `batteryHardwareValue = C − E`; `touPlanValue = E − F`.
+- **Aggregates:** lifetime totals (solar / battery / combined, plus the hardware/TOU split) + a **monthly-bucketed cumulative series** for the chart.
 - **Projection (whole-history average rate):** `annualRate = totalSaved / daysOfData × 365`; per component `breakEvenDate = today + (cost − savedToDate) / componentAnnualRate`; a `lowConfidence` flag when `daysOfData < 365` (partial-season bias).
 
 ### Arbitrage estimate (`arbitrage-service.ts`)
@@ -137,7 +153,7 @@ Per period, drawing on the Phase 1 tank (entry tank = the prior period's stored 
 New top-level **`savings`** tab in `SiteTabs`, labeled **"Savings"** (alongside `history` / `bill` / `settings`). Both surfaces — payback dashboard and estimated arbitrage panel — live on this one page. (`TabId` union and the `localStorage` last-tab list both gain `savings`.)
 
 - **Payback hero:** combined "% recovered", `$ saved of $cost`, projected break-even, progress bar.
-- **Decision-ladder comparison:** the three rungs (No Solar/Fixed, Solar/Fixed, Solar+Battery/TOU) as comparative bills, making the savings steps explicit.
+- **Scenario-matrix comparison:** the 2×3 grid of bills (system × plan), with the realistic diagonal (A→C→F) emphasized and cell E footnoted. Makes both the savings steps and the rate-plan question (E vs F) explicit.
 - **Twin component cards:** ☀️ Solar / 🔋 Battery — progress bar, `saved / cost`, projected date.
 - **Cumulative savings chart:** monthly points climbing toward a dashed system-cost line.
 - **Estimated arbitrage panel:** net P&L, discharge source-split bar, losing-cycle flags — under an "Estimated" heading.
@@ -148,25 +164,26 @@ New top-level **`savings`** tab in `SiteTabs`, labeled **"Savings"** (alongside 
 ## Testing
 
 - **Unit — `simulateSolarOnly`:** per-interval netting; all-solar (export only), all-load (import only), zero; a period-grain-would-differ guard (protects the 5-min requirement).
-- **Unit — payback derivations:** the three rung costs and `solarValue + batteryValue === totalSaved`; rung-3 actual-cost formula; component omission when cost/fixed-rate unset; projection + break-even + `lowConfidence` boundary at 365 days.
+- **Unit — payback derivations:** all six cell costs; `solarValue + batteryValue === totalSaved` and `batteryHardwareValue + touPlanValue === batteryValue` (E cancels); cell-F actual-cost formula; cell D > C on a TOU-unfriendly solar-only day; component omission when cost/fixed-rate unset; projection + break-even + `lowConfidence` boundary at 365 days.
 - **Unit — arbitrage:** source-split from entry tank; benefit vs cost-basis P&L; losing-cycle flag fires on an expensive-grid-charge period and not on a normal off-peak→on-peak cycle.
-- **Integration:** a synthetic day through the replay asserts stored `solar_only_import_wh/export_wh`; `batteryValue === rung2 − rung3`; a Storm-Watch day raises a losing-cycle flag.
+- **Integration:** a synthetic day through the replay asserts stored `solar_only_import_wh/export_wh`; `batteryValue === C − F`; a Storm-Watch day raises a losing-cycle flag.
 - **Idempotency:** re-running the rollup yields identical counterfactual columns.
 
 ## Out of scope (future)
 
 - **Bill-estimation fixed/recurring charges** — Tariff-level schema + consumption; documented here only as the metadata home.
+- **True flat-optimal battery re-dispatch** for cell E — v1 uses the "actual flows × flat" estimate instead (the gap is only round-trip loss + rare missed-solar).
 - **Solar-specific fixed fees / minimum bills**, **round-trip-loss line item**, **literal per-cycle trade detection / precise Storm-Watch labeling**, **detailed financial model** (itemized credits, financing, degradation).
 
 ## Resolved decisions (from brainstorming)
 
 1. **Headline:** whole-system payback ("have solar + Powerwall paid for themselves, and when").
-2. **Baseline:** the **real-world decision ladder** — No Solar/Fixed → Solar/Fixed → Solar+Battery/TOU — not a same-tariff strawman.
+2. **Baseline:** a full **2×3 scenario matrix** (system × Fixed/TOU). Headline payback runs the realistic diagonal (No Solar/Fixed → Solar/Fixed → Solar+Battery/TOU), not a same-tariff strawman. All six cells are read-side only; cell E (Solar+Batt on Fixed) is a "good" estimate (actual flows × flat) with a small round-trip-loss footnote, enabling a secondary battery-hardware-vs-TOU-plan split.
 3. **Capital costs:** solar and battery captured **separately** (net cost + install date), in a dedicated **`SiteRoiConfig`** table.
 4. **Fixed-rate source:** a **manual flat buy + sell rate** in `SiteRoiConfig` (the realistic plan a no-battery household would choose).
 5. **Counterfactual accuracy/durability:** simulate solar-only at 5-min and **store** per-period energies on `EnergyRollup`; re-fetch history for backfill ⇒ exact throughout.
 6. **Arbitrage panel:** **in scope**, presented **as an estimate** (matching monthly-bill estimation). This is what makes Phase 1's provenance pay off.
 7. **Projection:** **whole-history average rate**, with a low-confidence caveat under a year of data.
-8. **Fixed charges:** **energy-only v1, document the seam** — they belong on `Tariff` (bill-estimation), cancel within the fixed rungs, and their fixed-vs-TOU difference is a future refinement.
+8. **Fixed charges:** **energy-only v1, document the seam** — they belong on `Tariff` (bill-estimation), cancel between the fixed-plan cells, and their fixed-vs-TOU difference is a future refinement.
 9. **Placement:** a new first-class **"Savings"** tab in `SiteTabs` (option A), holding both surfaces. Friendly label over "ROI"; doesn't foreclose a later "Money"/"Reports" grouping if more analytical views arrive.
 ```
