@@ -78,7 +78,10 @@ battery_to_home_wh  battery_to_grid_wh
 ```
 tank_solar_wh   tank_grid_wh
 tank_solar_cost tank_grid_cost
+tank_as_of      -- timestamptz: the last EnergyData interval folded into this row's tank
 ```
+
+`tank_as_of` exists because a TOU schedule can recur in two disjoint windows in a day (partial-peak morning + evening), so the carry-forward seed must be chronological, not per-schedule. The tank evolves continuously across all intervals in timestamp order; each row snapshots the continuous tank as of its last contributing interval. **Carry-forward seed = the row with the greatest `tank_as_of` strictly before the current period's first interval** (handles both day-to-day seeding and resumable mid-history backfill).
 
 **Derived at read time (never stored):**
 - Import cost / export credit / `battery→home` benefit → join `tariff_schedule_id` → `TariffSchedule` (coalescing schedule rates with the parent `TariffSeason` rates when the schedule's `buy_rate`/`sell_rate` are null — matches existing rate-resolution behavior).
@@ -156,10 +159,12 @@ Follow the existing cron auth pattern (`Bearer ${CRON_SECRET}`, see `api/cron/cl
 
 - The ROI report UI and the **counterfactual** scenarios (no-solar, solar-only-no-battery). Those re-simulate over `EnergyRollup` (+ retained `EnergyData` where present) and are *enabled* by, but not part of, this foundation.
 
+## Resolved decisions (from planning)
+
+1. **Genesis seeding:** anchor on a **known-full** battery. Scan forward from the earliest available `EnergyData` to the first interval where `battery_soc ≥ FULL_THRESHOLD` (e.g. 98%); seed the tank from the **contiguous charge run-up** that filled it (sum `battery_charge_from_solar/grid` over the immediately preceding charging intervals, valued at each interval's rates). If no full anchor exists in the data, seed empty. This needs no battery-capacity datum and self-corrects within a cycle.
+2. **Cron mechanism:** `vercel.json` cron with `Bearer ${CRON_SECRET}` auth (matches `cleanup`/`check-users`). Fires in UTC; processes each site's previous local day computed from `Site.timezone`.
+3. **Columns:** stay minimal — energy edges + tank state + `tank_as_of` only. No stored rates, no SOC column. Rates always joined (relies on the durability guarantee).
+
 ## Open questions (resolve in planning)
 
-1. **Genesis seeding:** at the very first rolled-up period for a site, seed the tank empty (early pre-charge discharges attributed to an `unknown`/residual that we ignore), or seed from initial `battery_soc × capacity` with an assumed split? Empty is simplest; the transient is negligible over full history.
-2. **Confirm `TariffSchedule` immutability** (new rows on change, never in-place edits).
-3. **Cron registration mechanism** (vercel.json vs Supabase pg_cron) and per-site timezone handling for `local_date`.
-4. **`battery_soc` use:** do we need SOC at all in the rollup, or is it purely energy-flow + tank driven? (Currently not stored in `EnergyRollup`.)
-5. Whether to store the period's resolved `buy_rate`/`sell_rate` as a convenience snapshot, or always join. (Leaning: always join, per the durability guarantee.)
+1. **Confirm `TariffSchedule` immutability** (new rows on change, never in-place edits) — verify against the tariff-edit code path.
