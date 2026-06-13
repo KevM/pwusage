@@ -28,6 +28,9 @@ import { SiteRoiConfigRepo } from '@/lib/roi/roi-config-repo';
 import { buildRoiSummary } from '@/lib/roi/roi-service';
 import { classifyTariff } from '@/lib/roi/classify-tariff';
 import { SavingsView } from '@/components/site/savings/SavingsView';
+import { computeArbitrage } from '@/lib/roi/arbitrage-service';
+import { ArbitragePanel } from '@/components/site/savings/ArbitragePanel';
+
 
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -283,6 +286,7 @@ export default async function SitePage({ params, searchParams }: {
 
     const roiConfig = await new SiteRoiConfigRepo().get(finalSite.id);
     let roiSummary = null;
+    let arbitrage = null;
     if (roiConfig && roiConfig.fixed_buy_rate != null && roiConfig.fixed_sell_rate != null
         && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {
         const rollups = await new RollupRepo().getAllForSite(finalSite.id);
@@ -295,7 +299,9 @@ export default async function SitePage({ params, searchParams }: {
             plan,
             new Date(),
         );
+        arbitrage = computeArbitrage(rollups);
     }
+
 
 
     return (
@@ -342,8 +348,9 @@ export default async function SitePage({ params, searchParams }: {
                     />
                 }
                 savingsSlot={
-                    <SavingsView summary={roiSummary} />
+                    <SavingsView summary={roiSummary} arbitrageSlot={arbitrage ? <ArbitragePanel summary={arbitrage} /> : null} />
                 }
+
                 settingsSlot={
                     <SettingsView site={finalSite} installation={installation} roiConfig={roiConfig} />
                 }
