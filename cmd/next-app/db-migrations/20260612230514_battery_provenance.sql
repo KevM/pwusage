@@ -6,8 +6,8 @@
 
 -- 1. Persist Tesla's per-interval battery charge source (Wh). Nullable:
 --    historical rows we cannot re-fetch fall back to sankey-derived split.
-ALTER TABLE "EnergyData" ADD COLUMN IF NOT EXISTS battery_charge_from_solar INTEGER;
-ALTER TABLE "EnergyData" ADD COLUMN IF NOT EXISTS battery_charge_from_grid INTEGER;
+ALTER TABLE "EnergyData" ADD COLUMN IF NOT EXISTS battery_charge_from_solar DOUBLE PRECISION;
+ALTER TABLE "EnergyData" ADD COLUMN IF NOT EXISTS battery_charge_from_grid DOUBLE PRECISION;
 
 -- 2. One row per (site, local calendar date, tariff period).
 CREATE TABLE IF NOT EXISTS "EnergyRollup" (
