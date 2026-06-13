@@ -44,17 +44,47 @@ async function main() {
     const importer = new Importer(client);
 
     console.log(`Site: ${site.name} (Installed: ${installDate.toISOString().slice(0, 10)})`);
-    console.log(`Starting charge-split backfill from install date ${start.toISOString().slice(0, 10)} to yesterday ${end.toISOString().slice(0, 10)}...`);
+    console.log(`Starting rate-limited charge-split backfill from install date ${start.toISOString().slice(0, 10)} to yesterday ${end.toISOString().slice(0, 10)}...`);
 
-    const rows = await importer.importRange(
-        siteId,
-        start,
-        end,
-        'day',
-        (d) => console.log('imported', d.toISOString().slice(0, 10))
-    );
+    const allRows = [];
+    const dayMs = 24 * 60 * 60 * 1000;
+    let cursor = new Date(start);
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-    console.log(`done: ${rows.length} rows re-imported with charge split`);
+    const fetchWithRetry = async (chunkStart: Date, next: Date, retries = 3, initialDelay = 5000): Promise<any[]> => {
+        let delay = initialDelay;
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                return await importer.importRange(siteId, chunkStart, next, 'day');
+            } catch (e) {
+                if (attempt === retries) {
+                    throw e;
+                }
+                console.warn(`[Attempt ${attempt + 1}/${retries + 1}] Error importing ${chunkStart.toISOString().slice(0, 10)}, backing off ${delay / 1000}s and retrying...`, e);
+                await sleep(delay);
+                delay *= 2; // Exponential backoff
+            }
+        }
+        return [];
+    };
+
+    while (cursor < end) {
+        const next = new Date(Math.min(cursor.getTime() + dayMs - 1, end.getTime()));
+        const chunkStart = new Date(cursor);
+        console.log(`Importing day: ${chunkStart.toISOString().slice(0, 10)}...`);
+
+        try {
+            const rows = await fetchWithRetry(chunkStart, next);
+            allRows.push(...rows);
+        } catch (e) {
+            console.error(`Failed all retry attempts for ${chunkStart.toISOString().slice(0, 10)}. Skipping day to prevent crash:`, e);
+        }
+
+        cursor = new Date(cursor.getTime() + dayMs);
+        await sleep(2500); // 2.5s delay between days to avoid 529 site overloaded errors
+    }
+
+    console.log(`done: ${allRows.length} rows re-imported with charge split`);
 }
 
 main()
