@@ -5,7 +5,7 @@ import { chargeTank, EMPTY_TANK, type Tank } from './tank';
 
 export interface GenesisSeed {
     seed: Tank;
-    anchorIndex: number; // index of the first full-SOC row; replay begins here
+    anchorTimestamp: Date; // timestamp of the first full-SOC row
 }
 
 /**
@@ -36,5 +36,5 @@ export function computeGenesisSeed(
         const gridWh = r.battery_charge_from_grid ?? Math.max(r.battery_power - solarWh, 0);
         tank = chargeTank(tank, solarWh, gridWh, buyRate, sellRate);
     }
-    return { seed: tank, anchorIndex };
+    return { seed: tank, anchorTimestamp: ordered[anchorIndex].timestamp };
 }

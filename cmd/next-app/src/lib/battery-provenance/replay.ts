@@ -52,6 +52,9 @@ export function replayRows(
     schedule: Schedule,
     timeZone: string,
     seed: Tank,
+    options?: {
+        genesisAnchorTimestamp?: Date;
+    }
 ): { rollups: PeriodRollup[]; endTank: Tank } {
     const ordered = [...rows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     const byKey = new Map<string, PeriodRollup>();
@@ -72,10 +75,13 @@ export function replayRows(
         const chargeSolarWh = row.battery_charge_from_solar ?? solarToBatteryWh;
         const chargeGridWh = row.battery_charge_from_grid ?? gridToBatteryWh;
 
-        tank = chargeTank(tank, chargeSolarWh, chargeGridWh, rates.buyRate, rates.sellRate);
-        const dischargeWh = batteryToHomeWh + batteryToGridWh;
-        if (dischargeWh > 0) {
-            tank = dischargeTank(tank, dischargeWh).tank;
+        const shouldSimulateTank = !options?.genesisAnchorTimestamp || row.timestamp.getTime() > options.genesisAnchorTimestamp.getTime();
+        if (shouldSimulateTank) {
+            tank = chargeTank(tank, chargeSolarWh, chargeGridWh, rates.buyRate, rates.sellRate);
+            const dischargeWh = batteryToHomeWh + batteryToGridWh;
+            if (dischargeWh > 0) {
+                tank = dischargeTank(tank, dischargeWh).tank;
+            }
         }
 
         const localDate = localDateKey(row.timestamp, timeZone);

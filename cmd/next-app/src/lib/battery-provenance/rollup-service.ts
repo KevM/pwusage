@@ -34,18 +34,20 @@ export class RollupService {
 
         const seedRow = await this.deps.getSeedTank(siteId, start);
         let seed: Tank = seedRow?.tank ?? EMPTY_TANK;
-        let dayRows = rows;
+        let genesisAnchorTimestamp: Date | undefined;
 
         // Genesis: no prior rollup anywhere → anchor on a full battery.
         if (!seedRow && !(await this.deps.hasAnyRollup(siteId))) {
             const genesis = computeGenesisSeed(rows, schedule, site.timezone);
             if (genesis) {
                 seed = genesis.seed;
-                dayRows = rows.slice(genesis.anchorIndex);
+                genesisAnchorTimestamp = genesis.anchorTimestamp;
             }
         }
 
-        const { rollups } = replayRows(dayRows, schedule, site.timezone, seed);
+        const { rollups } = replayRows(rows, schedule, site.timezone, seed, {
+            genesisAnchorTimestamp,
+        });
         const forDate = rollups.filter(r => r.localDate === localDate);
         await this.deps.upsertRollups(forDate);
         return { rollupCount: forDate.length };

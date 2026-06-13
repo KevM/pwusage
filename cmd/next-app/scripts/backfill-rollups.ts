@@ -1,4 +1,3 @@
-import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 
@@ -18,6 +17,7 @@ async function main() {
     const { RollupRepo } = await import('../src/lib/battery-provenance/rollup-repo');
     const { RollupService } = await import('../src/lib/battery-provenance/rollup-service');
     const { localDateKey } = await import('../src/lib/battery-provenance/local-day');
+    const { pool } = await import('../src/lib/db');
 
     const siteRepo = new SiteRepo();
     const energyRepo = new EnergyRepo();
@@ -35,12 +35,13 @@ async function main() {
 
     // Earliest local date present.
     console.log('Finding earliest energy data point...');
-    const earliest = await energyRepo.getRawEnergyData(siteId, new Date(0), new Date());
-    if (earliest.length === 0) {
+    const res = await pool.query('SELECT MIN(timestamp) as min_ts FROM "EnergyData" WHERE site_id = $1', [siteId]);
+    const firstVal = res.rows[0]?.min_ts;
+    if (!firstVal) {
         console.log('no energy data found for site');
         return;
     }
-    const first = earliest.reduce((a, b) => a.timestamp < b.timestamp ? a : b).timestamp;
+    const first = new Date(firstVal);
 
     let cursor = new Date(`${localDateKey(first, site.timezone)}T12:00:00Z`);
     const stop = new Date(Date.now() - 24 * 60 * 60 * 1000);

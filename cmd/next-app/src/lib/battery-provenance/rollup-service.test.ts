@@ -40,4 +40,40 @@ describe('RollupService.rollupDay', () => {
         expect(persisted[0].tank.solarWh + persisted[0].tank.gridWh).toBeCloseTo(4000, 2);
         expect(persisted[0].localDate).toBe('2026-01-02');
     });
+
+    it('runs genesis path when no prior rollups exist, seeding at anchor and replaying full day edges', async () => {
+        const persisted: PeriodRollup[] = [];
+        const deps: RollupDeps = {
+            loadSite: async () => ({ id: 'S1', timezone: 'UTC', tariffs }) as never,
+            loadEnergyData: async () => [
+                row('2026-01-02T00:00:00Z', { battery_soc: 50, battery_power: 0 }),
+                // Run-up inclusive of anchor
+                row('2026-01-02T06:00:00Z', { battery_soc: 70, battery_power: 3000, grid_power: 3000, battery_charge_from_grid: 3000 }),
+                row('2026-01-02T12:00:00Z', { battery_soc: 99, battery_power: 3000, solar_power: 3000, battery_charge_from_solar: 3000 }), // anchor
+                // Discharge after anchor
+                row('2026-01-02T18:00:00Z', { battery_soc: 60, battery_power: -3000, load_power: 3000 }),
+            ],
+            getSeedTank: async () => null,
+            hasAnyRollup: async () => false,
+            upsertRollups: async (r) => { persisted.push(...r); },
+        };
+        const svc = new RollupService(deps);
+        const result = await svc.rollupDay('S1', '2026-01-02');
+
+        expect(result.rollupCount).toBe(1);
+        expect(persisted).toHaveLength(1);
+        const rollup = persisted[0];
+
+        // Seeding charges 3000 grid + 3000 solar = 6000 Wh.
+        // Discharging after anchor draws 3000 Wh proportionally: half solar (1500 Wh), half grid (1500 Wh) drawn.
+        // Final tank: 1500 solar, 1500 grid.
+        expect(rollup.tank.solarWh).toBeCloseTo(1500, 2);
+        expect(rollup.tank.gridWh).toBeCloseTo(1500, 2);
+
+        // Edges should accumulate the entire day (not drop run-up edges)
+        // solarToBatteryWh = 3000 (from anchor row at 12:00)
+        // gridToBatteryWh = 3000 (from run-up row at 06:00)
+        expect(rollup.solarToBatteryWh).toBeCloseTo(3000, 2);
+        expect(rollup.gridToBatteryWh).toBeCloseTo(3000, 2);
+    });
 });

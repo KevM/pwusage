@@ -31,7 +31,7 @@ describe('computeGenesisSeed', () => {
         ];
         const result = computeGenesisSeed(rows, schedule, 'UTC', 98);
         expect(result).not.toBeNull();
-        expect(result!.anchorIndex).toBe(2);
+        expect(result!.anchorTimestamp.toISOString()).toBe('2026-01-01T02:00:00.000Z');
         expect(result!.seed.gridWh).toBeCloseTo(3000, 3);
         expect(result!.seed.solarWh).toBeCloseTo(3000, 3);
         expect(result!.seed.gridCost).toBeCloseTo(0.33, 6);  // 3 kWh * 0.11
