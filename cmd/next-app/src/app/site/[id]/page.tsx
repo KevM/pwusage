@@ -25,11 +25,13 @@ import { SettingsView } from '@/components/site/SettingsView';
 import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
 import { RollupRepo } from '@/lib/battery-provenance/rollup-repo';
 import { SiteRoiConfigRepo } from '@/lib/roi/roi-config-repo';
-import { buildRoiSummary } from '@/lib/roi/roi-service';
+import { buildRoiSummary, monthlyCumulative } from '@/lib/roi/roi-service';
 import { classifyTariff } from '@/lib/roi/classify-tariff';
 import { SavingsView } from '@/components/site/savings/SavingsView';
 import { computeArbitrage } from '@/lib/roi/arbitrage-service';
 import { ArbitragePanel } from '@/components/site/savings/ArbitragePanel';
+import { SavingsChart } from '@/components/site/savings/SavingsChart';
+
 
 
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/Alert';
@@ -287,20 +289,24 @@ export default async function SitePage({ params, searchParams }: {
     const roiConfig = await new SiteRoiConfigRepo().get(finalSite.id);
     let roiSummary = null;
     let arbitrage = null;
+    let savingsSeries = null;
     if (roiConfig && roiConfig.fixed_buy_rate != null && roiConfig.fixed_sell_rate != null
         && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {
         const rollups = await new RollupRepo().getAllForSite(finalSite.id);
-        const activeTariff = (finalSite.tariffs ?? [])[0];
+        const activeTariff = finalSite.tariffs.find(t => t.id === activeTariffId) || (finalSite.tariffs ?? [])[0];
         const plan = activeTariff ? classifyTariff(activeTariff) : 'tou';
+        const configInputs = { fixedBuyRate: roiConfig.fixed_buy_rate, fixedSellRate: roiConfig.fixed_sell_rate };
         roiSummary = buildRoiSummary(
             rollups,
-            { fixedBuyRate: roiConfig.fixed_buy_rate, fixedSellRate: roiConfig.fixed_sell_rate },
+            configInputs,
             { solarCost: roiConfig.solar_cost, batteryCost: roiConfig.battery_cost },
             plan,
             new Date(),
         );
         arbitrage = computeArbitrage(rollups);
+        savingsSeries = monthlyCumulative(rollups, configInputs);
     }
+
 
 
 
@@ -348,8 +354,13 @@ export default async function SitePage({ params, searchParams }: {
                     />
                 }
                 savingsSlot={
-                    <SavingsView summary={roiSummary} arbitrageSlot={arbitrage ? <ArbitragePanel summary={arbitrage} /> : null} />
+                    <SavingsView
+                        summary={roiSummary}
+                        arbitrageSlot={arbitrage ? <ArbitragePanel summary={arbitrage} /> : null}
+                        chartSlot={savingsSeries && roiConfig ? <SavingsChart series={savingsSeries} systemCost={(roiConfig.solar_cost ?? 0) + (roiConfig.battery_cost ?? 0)} /> : null}
+                    />
                 }
+
 
                 settingsSlot={
                     <SettingsView site={finalSite} installation={installation} roiConfig={roiConfig} />

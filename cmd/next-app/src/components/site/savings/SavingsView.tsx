@@ -5,7 +5,15 @@ import { SavingsEmptyState } from './SavingsEmptyState';
 
 const usd = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
-export function SavingsView({ summary, arbitrageSlot }: { summary: RoiSummary | null; arbitrageSlot?: React.ReactNode }) {
+export function SavingsView({
+    summary,
+    arbitrageSlot,
+    chartSlot
+}: {
+    summary: RoiSummary | null;
+    arbitrageSlot?: React.ReactNode;
+    chartSlot?: React.ReactNode;
+}) {
     if (!summary) return <SavingsEmptyState />;
     return (
         <div className="space-y-6 max-w-5xl mx-auto">
@@ -17,6 +25,12 @@ export function SavingsView({ summary, arbitrageSlot }: { summary: RoiSummary | 
                 </div>
             )}
             <ScenarioMatrix summary={summary} />
+            {summary.actualPlan === 'fixed' && (
+                <div className="rounded-lg border border-gray-200 dark:border-slate-800 bg-bg-muted/30 p-3 text-xs text-foreground/80 text-center">
+                    ℹ️ You are on a fixed-rate plan. TOU comparison columns use your current flat rates (defining a custom TOU comparison plan is coming soon).
+                </div>
+            )}
+            {chartSlot}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {summary.components.filter(c => c.kind !== 'combined').map(c => (
                     <div key={c.kind} className="rounded-lg border border-gray-200 dark:border-slate-800 p-4 bg-bg-base">
