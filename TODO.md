@@ -38,3 +38,11 @@ Currently, Tesla ID tokens are signed with keys that don't appear in the public 
 - `Security.md` section 8 - Tesla `id_token` signature verification requirements
 
 
+## Phase 2: ROI Report & Counterfactuals
+
+**Status:** Ready to begin. Stored rates and energy flows are now recorded in `EnergyRollup` per period.
+
+**Task:** Implement read-time derivations (discharge source split, discharge cost basis, arbitrage P&L) and reporting UI. This is unblocked by the Battery Power Provenance data foundation.
+
+
+

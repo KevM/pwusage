@@ -91,8 +91,8 @@ Tables (PascalCase quoted identifiers):
 - `Tariff`: Billing rate plans per site
 - `TariffSeason`: Seasonal date ranges within a tariff (`from_month`/`from_day` → `to_month`/`to_day`) with buy/sell rates
 - `TariffSchedule`: TOU period definitions within a season (day-of-week + hour/minute windows) with buy/sell rates
-- `EnergyData`: 5-minute energy samples (`load_power, solar_power, grid_power, battery_power, battery_soc`) keyed by `(timestamp, site_id, tariff_id)`
-- `EnergyUsage`: Aggregate usage per tariff and start time
+- `EnergyData`: 5-minute energy samples (`load_power, solar_power, grid_power, battery_power, battery_soc, battery_charge_from_solar, battery_charge_from_grid`) keyed by `(timestamp, site_id, tariff_id)`
+- `EnergyRollup`: Per-tariff-period daily rolled-up energy flows and end-of-period battery tank states, keyed by `(site_id, local_date, tariff_schedule_id)`
 - `TrmnlInstallation`: Trmnl device configs (UUID, linked `site_id`, access token)
 - `AppSettings`: Key/value app config
 
@@ -103,13 +103,13 @@ TOU period assignment for an `EnergyData` row is computed at read time by `Sched
 **Creating a Migration:**
 ```bash
 cd cmd/next-app
-# Create a new file in db-migrations/ with timestamp prefix
-touch db-migrations/$(date +%Y%m%d_%H%M%S)_add_column.sql
+# Do not create migration files manually. Always use the generator script:
+npm run db:migration:create <migration_name>
 ```
 
 **Running Migrations Locally:**
 ```bash
-supabase migration up --db-url "postgresql://user:pass@localhost/pwusage"
+# Migrations are applied via local/dev postgres connection
 ```
 
 **CI/CD Behavior:**
