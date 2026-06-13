@@ -23,6 +23,12 @@ import { HistoryView } from '@/components/site/HistoryView';
 import { EstimatedBillView } from '@/components/site/EstimatedBillView';
 import { SettingsView } from '@/components/site/SettingsView';
 import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
+import { RollupRepo } from '@/lib/battery-provenance/rollup-repo';
+import { SiteRoiConfigRepo } from '@/lib/roi/roi-config-repo';
+import { buildRoiSummary } from '@/lib/roi/roi-service';
+import { classifyTariff } from '@/lib/roi/classify-tariff';
+import { SavingsView } from '@/components/site/savings/SavingsView';
+
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
@@ -275,6 +281,23 @@ export default async function SitePage({ params, searchParams }: {
     const trmnlService = new TrmnlService();
     const installation = await trmnlService.getInstallationBySiteId(finalSite.id, { includeTokens: false });
 
+    const roiConfig = await new SiteRoiConfigRepo().get(finalSite.id);
+    let roiSummary = null;
+    if (roiConfig && roiConfig.fixed_buy_rate != null && roiConfig.fixed_sell_rate != null
+        && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {
+        const rollups = await new RollupRepo().getAllForSite(finalSite.id);
+        const activeTariff = (finalSite.tariffs ?? [])[0];
+        const plan = activeTariff ? classifyTariff(activeTariff) : 'tou';
+        roiSummary = buildRoiSummary(
+            rollups,
+            { fixedBuyRate: roiConfig.fixed_buy_rate, fixedSellRate: roiConfig.fixed_sell_rate },
+            { solarCost: roiConfig.solar_cost, batteryCost: roiConfig.battery_cost },
+            plan,
+            new Date(),
+        );
+    }
+
+
     return (
         <PageShell maxWidth="7xl" padding="compact">
             <PageHeader
@@ -318,9 +341,13 @@ export default async function SitePage({ params, searchParams }: {
                         }
                     />
                 }
-                settingsSlot={
-                    <SettingsView site={finalSite} installation={installation} />
+                savingsSlot={
+                    <SavingsView summary={roiSummary} />
                 }
+                settingsSlot={
+                    <SettingsView site={finalSite} installation={installation} roiConfig={roiConfig} />
+                }
+
             >
                 {/* Fallback or shared content could go here if needed */}
             </SiteTabs>

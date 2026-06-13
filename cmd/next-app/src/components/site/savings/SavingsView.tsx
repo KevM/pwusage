@@ -12,7 +12,7 @@ export function SavingsView({ summary, arbitrageSlot }: { summary: RoiSummary | 
             <PaybackHero summary={summary} />
             {summary.recommendation && (
                 <div className="rounded-lg border border-green-600 bg-green-600/10 dark:border-green-500 dark:bg-green-950/20 p-3 text-sm">
-                    💡 You're on TOU, but a flat plan looks ~{usd(summary.recommendation.annualSaving)}/yr cheaper for your usage.
+                    💡 You&apos;re on TOU, but a flat plan looks ~{usd(summary.recommendation.annualSaving)}/yr cheaper for your usage.
                     <span className="opacity-70"> (Estimate holds your behavior fixed; the real flat saving is likely a bit larger.)</span>
                 </div>
             )}
