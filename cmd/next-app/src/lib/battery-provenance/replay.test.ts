@@ -70,4 +70,19 @@ describe('replayRows', () => {
         expect(endTank.solarWh).toBeCloseTo(5000, 3);
         expect(endTank.gridWh).toBeCloseTo(0, 3);
     });
+
+    describe('replayRows solar-only accumulation', () => {
+        it('sums per-interval solar-only import/export across a period', () => {
+            const schedule = new Schedule(tariffs, 'UTC');
+            const rows = [
+                row('2026-01-01T10:00:00Z', { load_power: 500, solar_power: 200 }), // import 300
+                row('2026-01-01T10:05:00Z', { load_power: 100, solar_power: 400 }), // export 300
+            ];
+            const { rollups } = replayRows(rows, schedule, 'UTC', EMPTY_TANK);
+            expect(rollups).toHaveLength(1);
+            expect(rollups[0].solarOnlyImportWh).toBe(300);
+            expect(rollups[0].solarOnlyExportWh).toBe(300);
+        });
+    });
 });
+

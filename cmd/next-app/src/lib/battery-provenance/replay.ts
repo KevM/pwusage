@@ -5,6 +5,8 @@ import type { EdgeCategory } from '../sankey/flow-model';
 import { resolveRates } from './rates';
 import { chargeTank, dischargeTank, EMPTY_TANK, type Tank } from './tank';
 import { localDateKey } from './local-day';
+import { solarOnlyNet } from './counterfactual';
+
 
 const WH_PER_KWH = 1000;
 
@@ -20,7 +22,10 @@ export interface PeriodRollup {
     gridToBatteryWh: number;
     batteryToHomeWh: number;
     batteryToGridWh: number;
+    solarOnlyImportWh: number;
+    solarOnlyExportWh: number;
     buyRate: number;          // resolved rate snapshot for this period
+
     sellRate: number;
     batterySoc: number | null; // SOC as of tankAsOf (end of period)
     tank: Tank;       // end-of-period snapshot of the continuous tank
@@ -37,7 +42,9 @@ function emptyRollup(siteId: string, localDate: string, scheduleId: number): Per
         siteId, localDate, tariffScheduleId: scheduleId,
         loadWh: 0, solarToHomeWh: 0, solarToBatteryWh: 0, solarToGridWh: 0,
         gridToHomeWh: 0, gridToBatteryWh: 0, batteryToHomeWh: 0, batteryToGridWh: 0,
+        solarOnlyImportWh: 0, solarOnlyExportWh: 0,
         buyRate: 0, sellRate: 0, batterySoc: null,
+
         tank: EMPTY_TANK, tankAsOf: new Date(0),
     };
 }
@@ -99,7 +106,11 @@ export function replayRows(
         r.gridToBatteryWh += gridToBatteryWh;
         r.batteryToHomeWh += batteryToHomeWh;
         r.batteryToGridWh += batteryToGridWh;
+        const so = solarOnlyNet(row.load_power, row.solar_power);
+        r.solarOnlyImportWh += so.importWh;
+        r.solarOnlyExportWh += so.exportWh;
         r.buyRate = rates.buyRate;   // constant across the period (one schedule)
+
         r.sellRate = rates.sellRate;
         r.batterySoc = row.battery_soc; // SOC of the latest interval = end of period
         r.tank = tank;            // continuous tank as of this interval
