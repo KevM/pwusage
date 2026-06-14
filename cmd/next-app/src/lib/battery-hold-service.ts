@@ -145,7 +145,7 @@ export async function restoreBattery({ client, repo, siteId, reason }: RestoreDe
 }
 
 /** Build a TeslaClient for a site (null if no usable tokens). Mirrors today-refresh.ts. */
-export async function createSiteTeslaClient(siteId: string): Promise<TeslaClient | null> {
+export async function createSiteTeslaClient(siteId: string, maxRetryDelayMs?: number): Promise<TeslaClient | null> {
   const tokens = await new UserRepo().getTokensForSite(siteId);
   if (!tokens?.access_token || !tokens?.refresh_token) return null;
   const tokenRepo = new TeslaTokenRepo(new SiteRepo());
@@ -156,5 +156,6 @@ export async function createSiteTeslaClient(siteId: string): Promise<TeslaClient
     tokenRefreshHandler: handlers.refreshHandler,
     onTokenError: handlers.errorHandler,
     onTokenUpdate: () => {},
+    maxRetryDelayMs,
   });
 }

@@ -153,6 +153,21 @@ describe('TeslaClient rate limiting (429)', () => {
         // 1 initial attempt + RATE_LIMIT_MAX_RETRIES retries
         expect(fetchMock).toHaveBeenCalledTimes(6);
     });
+
+    it('fails fast when Retry-After delay exceeds maxRetryDelayMs', async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(make429Response('10')) // Retry-After = 10s
+            .mockResolvedValueOnce(makeJsonResponse({ response: [], count: 0 }));
+
+        const client = new TeslaClient({ accessToken: 'tok', maxRetryDelayMs: 5000 }); // max delay = 5s
+        const promise = client.getProducts();
+
+        await expect(promise).rejects.toThrow(/Tesla API Error: 429/);
+        // Should not have done a second attempt (fetchMock called 1 time)
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('TeslaClient transient overload (529) + backoff', () => {

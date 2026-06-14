@@ -18,6 +18,7 @@ const SITES_PER_TICK = parseInt(process.env.INDEX_HISTORY_SITES_PER_TICK || '1',
 const BUDGET_MS = 50_000; // Leave 10s buffer before Vercel 60s limit
 const RETENTION_DAYS = parseInt(process.env.DATA_RETENTION_DAYS || '365', 10);
 const FETCH_CONCURRENCY = parseInt(process.env.INDEX_HISTORY_FETCH_CONCURRENCY || '6', 10);
+const TESLA_MAX_RETRY_DELAY_MS = parseInt(process.env.TESLA_MAX_RETRY_DELAY_MS || '5000', 10);
 
 export async function GET(request: NextRequest) {
   if (request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
     const job = await backfillRepo.claimNext();
     if (!job) break;
 
-    const client = await createSiteTeslaClient(job.site_id);
+    const client = await createSiteTeslaClient(job.site_id, TESLA_MAX_RETRY_DELAY_MS);
     if (!client) {
       await backfillRepo.markError(job.site_id, 'no Tesla tokens');
       continue;

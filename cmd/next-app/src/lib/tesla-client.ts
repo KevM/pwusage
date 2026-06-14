@@ -109,6 +109,7 @@ export interface TeslaClientConfig {
     onTokenUpdate?: (accessToken: string, refreshToken: string) => void;
     onTokenError?: (error: Error) => void;
     tokenRefreshHandler?: (refreshToken: string) => Promise<{ access_token: string; refresh_token: string }>;
+    maxRetryDelayMs?: number;
 }
 
 const RATE_LIMIT_MAX_RETRIES = 5;
@@ -220,6 +221,11 @@ export class TeslaClient {
             // backoff with jitter.
             if (isRetryableStatus(response.status) && rateLimitAttempt < RATE_LIMIT_MAX_RETRIES) {
                 const delayMs = parseRetryAfter(response.headers.get('Retry-After')) ?? backoffDelay(rateLimitAttempt);
+                const maxDelay = this.config.maxRetryDelayMs ?? RATE_LIMIT_MAX_DELAY_MS;
+                if (delayMs > maxDelay) {
+                    console.warn(`Tesla API ${response.status}: Retry-After (${delayMs}ms) exceeds maxRetryDelayMs (${maxDelay}ms). Failing fast.`);
+                    break;
+                }
                 console.warn(`Tesla API ${response.status}, retrying in ${delayMs}ms (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`);
                 await sleep(delayMs);
                 rateLimitAttempt++;
