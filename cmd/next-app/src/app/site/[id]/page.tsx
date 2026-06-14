@@ -33,7 +33,8 @@ import { ArbitragePanel } from '@/components/site/savings/ArbitragePanel';
 import { SavingsChart } from '@/components/site/savings/SavingsChart';
 import { RollupBackfillRepo } from '@/lib/battery-provenance/rollup-backfill-repo';
 import { localDateKey } from '@/lib/battery-provenance/local-day';
-import { resolveFixedBaseline } from '@/lib/roi/resolve-fixed-baseline';
+import { pickCurrentFixedBaseline } from '@/lib/roi/resolve-fixed-baseline';
+import { ComparisonTariffRepo } from '@/lib/roi/comparison-tariff-repo';
 
 
 
@@ -289,6 +290,9 @@ export default async function SitePage({ params, searchParams }: {
     const trmnlService = new TrmnlService();
     const installation = await trmnlService.getInstallationBySiteId(finalSite.id, { includeTokens: false });
 
+    const comparisonPlans = await new ComparisonTariffRepo().listFixedComparisons(finalSite.id);
+    const fixedPlanName = comparisonPlans[0]?.name;
+
     const roiConfig = await new SiteRoiConfigRepo().get(finalSite.id);
     let roiSummary = null;
     let arbitrage = null;
@@ -305,7 +309,7 @@ export default async function SitePage({ params, searchParams }: {
         }
     }
 
-    const fixedBaseline = await resolveFixedBaseline(finalSite.id);
+    const fixedBaseline = pickCurrentFixedBaseline(comparisonPlans);
     if (fixedBaseline && roiConfig && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {
         const rollups = await new RollupRepo().getAllForSite(finalSite.id);
         const activeTariff = finalSite.tariffs.find(t => t.id === activeTariffId) || (finalSite.tariffs ?? [])[0];
@@ -375,6 +379,8 @@ export default async function SitePage({ params, searchParams }: {
                         backfill={backfill}
                         arbitrageSlot={arbitrage ? <ArbitragePanel summary={arbitrage} /> : null}
                         chartSlot={savingsSeries && roiConfig ? <SavingsChart series={savingsSeries} systemCost={(roiConfig.solar_cost ?? 0) + (roiConfig.battery_cost ?? 0)} /> : null}
+                        fixedPlanName={fixedPlanName}
+                        meteredPlanName={finalSite.tariffs?.[0]?.name ?? 'Your plan'}
                     />
                 }
 

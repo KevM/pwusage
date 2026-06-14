@@ -13,12 +13,16 @@ export function SavingsView({
     chartSlot,
     siteId,
     backfill,
+    fixedPlanName,
+    meteredPlanName,
 }: {
     summary: RoiSummary | null;
     arbitrageSlot?: React.ReactNode;
     chartSlot?: React.ReactNode;
     siteId: string;
     backfill: RollupBackfill | null;
+    fixedPlanName?: string;
+    meteredPlanName?: string;
 }) {
     const indexing = backfill?.status === 'pending' || backfill?.status === 'running';
     if (!summary || indexing) {
@@ -38,7 +42,7 @@ export function SavingsView({
                     <span className="opacity-70"> (Estimate holds your behavior fixed; the real flat saving is likely a bit larger.)</span>
                 </div>
             )}
-            <ScenarioMatrix summary={summary} />
+            <ScenarioMatrix summary={summary} fixedPlanName={fixedPlanName} meteredPlanName={meteredPlanName} />
             {summary.actualPlan === 'fixed' && (
                 <div className="rounded-lg border border-gray-200 dark:border-slate-800 bg-bg-muted/30 p-3 text-xs text-foreground/80 text-center">
                     ℹ️ You are on a fixed-rate plan. TOU comparison columns use your current flat rates (defining a custom TOU comparison plan is coming soon).

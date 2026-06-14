@@ -2,7 +2,9 @@ import type { RoiSummary } from '@/lib/roi/roi-service';
 
 const usd = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
-export function ScenarioMatrix({ summary }: { summary: RoiSummary }) {
+export function ScenarioMatrix({ summary, fixedPlanName, meteredPlanName }: {
+    summary: RoiSummary; fixedPlanName?: string; meteredPlanName?: string;
+}) {
     const m = summary.matrix;
     const hereFixed = summary.actualPlan === 'fixed'; // actual cell is E (fixed) else F (tou)
     const cell = (label: string, value: number, here: boolean, cheaper: boolean) => (
@@ -14,8 +16,12 @@ export function ScenarioMatrix({ summary }: { summary: RoiSummary }) {
     return (
         <div className="grid grid-cols-3 gap-2 text-sm">
             <div />
-            <div className="text-center text-xs font-semibold opacity-70 flex items-center justify-center">Fixed</div>
-            <div className="text-center text-xs font-semibold opacity-70 flex items-center justify-center">TOU</div>
+            <div className="text-center text-xs font-semibold opacity-70 flex flex-col items-center justify-center">
+                <span>Fixed</span>{fixedPlanName && <span className="font-normal opacity-80">{fixedPlanName}</span>}
+            </div>
+            <div className="text-center text-xs font-semibold opacity-70 flex flex-col items-center justify-center">
+                <span>TOU</span>{meteredPlanName && <span className="font-normal opacity-80">{meteredPlanName}</span>}
+            </div>
 
             <div className="flex items-center text-xs font-semibold">No Solar</div>
             {cell('A', m.A, false, false)}{cell('B', m.B, false, false)}
