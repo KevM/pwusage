@@ -32,15 +32,21 @@ export class RollupBackfillRepo {
     );
   }
 
-  /** Atomically claim one incomplete site (oldest opt-in first); reclaim stale 'running' or 'error' rows. */
+  /** Atomically claim one incomplete site (oldest opt-in first); reclaim stale 'running' or 'error' rows (excluding N >= 5 retries). */
   async claimNext(staleMinutes = 10): Promise<RollupBackfill | null> {
     const res = await pool.query(
-      `UPDATE "RollupBackfill" SET status = 'running', updated_at = now()
+      `UPDATE "RollupBackfill"
+       SET status = 'running',
+           last_error = CASE
+             WHEN last_error LIKE '[attempts=%' THEN substring(last_error from '^\\\[attempts=\\d+\\\]') || ' (retrying...)'
+             ELSE NULL
+           END,
+           updated_at = now()
        WHERE site_id = (
          SELECT site_id FROM "RollupBackfill"
          WHERE status = 'pending'
             OR (status = 'running' AND updated_at < now() - ($1 || ' minutes')::interval)
-            OR (status = 'error' AND updated_at < now() - interval '1 hour')
+            OR (status = 'error' AND updated_at < now() - interval '1 hour' AND (last_error IS NULL OR last_error NOT LIKE '[attempts=5]%'))
          ORDER BY created_at
          FOR UPDATE SKIP LOCKED
          LIMIT 1
@@ -65,7 +71,20 @@ export class RollupBackfillRepo {
   }
 
   async markError(siteId: string, message: string): Promise<void> {
-    await pool.query(`UPDATE "RollupBackfill" SET status = 'error', last_error = $2, updated_at = now() WHERE site_id = $1`, [siteId, message.slice(0, 500)]);
+    const current = await this.get(siteId);
+    let attempts = 1;
+    if (current && current.last_error) {
+      const match = current.last_error.match(/^\[attempts=(\d+)\]/);
+      if (match) {
+        attempts = parseInt(match[1], 10) + 1;
+      }
+    }
+    const cleanMsg = message.replace(/^\[attempts=\d+\]\s*/, '');
+    const newError = `[attempts=${attempts}] ${cleanMsg}`.slice(0, 500);
+    await pool.query(
+      `UPDATE "RollupBackfill" SET status = 'error', last_error = $2, updated_at = now() WHERE site_id = $1`,
+      [siteId, newError],
+    );
   }
 
   /** Heal-on-return: re-open a complete row whose coverage no longer reaches `target`. Keeps genesis_anchored. */

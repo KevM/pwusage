@@ -65,10 +65,25 @@ describe('RollupBackfillRepo', () => {
     expect(params).toEqual(['s1', '2026-06-15']);
   });
 
-  it('claimNext includes reclaiming error rows older than 1 hour', async () => {
+  it('claimNext includes reclaiming error rows older than 1 hour and excluding attempts=5', async () => {
     q().mockResolvedValueOnce({ rows: [{ site_id: 's1' }] });
     await new RollupBackfillRepo().claimNext(10);
     const [sql] = q().mock.calls.at(-1)!;
-    expect(sql).toContain("status = 'error' AND updated_at < now() - interval '1 hour'");
+    expect(sql).toContain("status = 'error' AND updated_at < now() - interval '1 hour' AND (last_error IS NULL OR last_error NOT LIKE '[attempts=5]%')");
+    expect(sql).toContain("last_error = CASE");
+    expect(sql).toContain("WHEN last_error LIKE '[attempts=%' THEN substring(last_error from '^\\\[attempts=\\d+\\\]') || ' (retrying...)'");
+  });
+
+  it('markError reads previous error and increments attempts prefix', async () => {
+    // 1st mock: get() returns existing backfill with [attempts=2] prefix
+    q().mockResolvedValueOnce({ rows: [{ site_id: 's1', last_error: '[attempts=2] something failed' }] });
+    // 2nd mock: query for update
+    q().mockResolvedValueOnce({ rows: [] });
+    
+    await new RollupBackfillRepo().markError('s1', 'new error message');
+    
+    const [sql, params] = q().mock.calls.at(-1)!;
+    expect(sql).toContain('UPDATE "RollupBackfill" SET status = \'error\'');
+    expect(params).toEqual(['s1', '[attempts=3] new error message']);
   });
 });
