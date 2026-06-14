@@ -74,19 +74,21 @@ Migration created via `npm run db:migration:create rollup_backfill` (idempotent,
 
 Driven by Supabase **pg_cron** every 15 min, mirroring the `restore-reserve` trigger: a new vault secret `index_history_cron_target_url` + reused `cron_secret`; `net.http_get` with the bearer header. Auth: `Authorization: Bearer ${CRON_SECRET}`.
 
+**Time limits — what actually bounds a tick.** The pg_cron job only enqueues a `net.http_get`; **pg_net is fire-and-forget** (async background worker, statement returns in ms), so no Postgres statement/cron time limit applies — the work runs entirely in the Vercel function. The real bound is therefore the **Vercel function timeout (300s default)**; the route sets `export const maxDuration = 300` to claim the full budget. pg_net's own HTTP timeout (default ~5s) will log a "timeout" in `net._http_response` whenever the worker runs longer — this is a **cosmetic log artifact only**: the function keeps running and commits its work, and the worker is resumable, so a dropped/timed-out response loses nothing. (Optionally raise `timeout_milliseconds` in the `net.http_get` call to keep the log clean; correctness never depends on pg_net waiting.)
+
 Per tick, within a bounded budget:
 
 1. **Pick work.** Select sites with `status IN ('pending','running')`, FIFO by `created_at` (a heal and a first index are equal-priority; both are user-initiated). Process up to `INDEX_HISTORY_SITES_PER_TICK` (default 1).
 2. **Lock.** `pg_try_advisory_lock(hashtext(site_id))` so overlapping ticks never double-process a site; if not acquired, skip to the next site. Set `status = 'running'`.
-3. **Walk forward** from `cursor_date` until `INDEX_HISTORY_DAYS_PER_TICK` (default ~45) days processed or `cursor_date > newest_date`:
+3. **Walk forward** from `cursor_date` until **whichever comes first** — `INDEX_HISTORY_DAYS_PER_TICK` (default ~45) days processed, a **~250s wall-clock budget** elapsed (so a slow Tesla run exits cleanly before the 300s hard kill), or `cursor_date > newest_date`:
    - Determine the day's existing `EnergyData` coverage (count + first/last sample).
    - **Fetch:** `ensureDataForRange(site, dayStart, dayEnd)`. `planImport` fetches only the missing slice (free if already complete).
    - **Roll up — egress-aware:**
      - If the day was fetched **in full** (`count === 0` before the fetch), feed the **in-memory** rows from `ensureDataForRange` straight into the replay — **no DB read-back**. This is the multi-year tail and the dominant egress term.
      - Otherwise (day already partly/fully in DB), `rollupDay` reads the full day from the DB as today.
    - **Genesis:** pass `forceGenesisAtStart = (cursor_date === oldest_date)` so the install day anchors a full battery even when later (nightly-produced) rollups already exist for the site.
-   - Advance `cursor_date += 1 day`, `days_done += 1`.
-4. **Persist.** Write `cursor_date`/`days_done`. If `cursor_date > newest_date` → `status = 'complete'`. On any error → `status = 'error'`, `last_error = …`, **cursor preserved** so it resumes next tick.
+   - Advance `cursor_date += 1 day`, `days_done += 1`, and **commit this progress incrementally** (per day, or in small batches) — so an unexpected hard timeout loses at most the in-flight day and the next tick resumes from the committed cursor.
+4. **Finalize.** If `cursor_date > newest_date` → `status = 'complete'`. On any error → `status = 'error'`, `last_error = …`, **cursor preserved** (already committed) so it resumes next tick. Because progress is committed incrementally, neither the Vercel timeout nor a pg_net drop can roll back completed days.
 5. Release the advisory lock (auto-released on connection close regardless).
 
 At `*/15` this is ~96 ticks/day; chunk-size × frequency is the Tesla throttle. Knobs: `INDEX_HISTORY_DAYS_PER_TICK`, `INDEX_HISTORY_SITES_PER_TICK`, pg_cron schedule.
@@ -195,7 +197,7 @@ The tooltip mechanism follows existing UI primitives (a lightweight popover or n
 ## Testing
 
 - **Opt-in route:** creates the row with correct bounds; idempotent on existing `pending`/`running`/`complete`; resets `error` → `pending`; `verifySiteAccess` enforced.
-- **Worker:** advances cursor by the chunk budget; resumes from `cursor_date` across ticks; marks `complete` at `newest_date`; error path sets `status='error'` + `last_error` and **preserves** the cursor; advisory lock prevents concurrent double-processing.
+- **Worker:** advances cursor by the chunk budget; **stops at the ~250s wall-clock guard even when days remain under the day cap**; commits cursor incrementally so a simulated mid-tick abort resumes from the last committed day with no lost/duplicated work; resumes from `cursor_date` across ticks; marks `complete` at `newest_date`; error path sets `status='error'` + `last_error` and **preserves** the cursor; advisory lock prevents concurrent double-processing.
 - **Genesis force-anchor (critical):** with later rollups already present for the site, the first backfilled day (`cursor === oldest_date`) anchors a full battery rather than `EMPTY_TANK`; the tank chains correctly forward.
 - **Memory-feed:** a fully-fetched day rolls up from the in-memory rows without a DB read (assert `loadEnergyData` not called); a partial day falls back to a DB read.
 - **Heal-on-return:** a `complete` row with `newest_date < yesterday` is re-opened from the parked cursor; the worker re-rolls the gap and re-chains the tank; a no-data day in the gap advances the cursor without re-flagging.
