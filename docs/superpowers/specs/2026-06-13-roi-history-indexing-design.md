@@ -37,7 +37,7 @@ An **opt-in, gradual, self-healing history indexer**:
 - **The replay is sequential.** Genesis anchors a full battery at the earliest day; the tank (provenance Wh + cost basis) carries forward via `getSeedTank`. Backfill must walk **forward** from `oldest_date`, and a gap heal must re-replay *through* the gap to re-chain the tank for the days after it.
 - **`ensureDataForRange` ≠ rollup.** It only writes raw `EnergyData`; producing the rollup is a separate `rollupDay` call. The worker does both, per day.
 - **`planImport` already skips complete days.** It re-fetches a day only when `count === 0 || forceRefetch || missingStart || missingEnd` (`import-planner.ts`). A complete, already-rolled day costs **zero Tesla**; the rollup on top is an idempotent upsert. Safe to call liberally.
-- **`ensureDataForRange` returns the imported rows in memory.** For a day fetched in full (`count === 0` before fetch), those rows *are* the whole day — they can feed the replay directly, with no DB read-back.
+- **The importer can fetch without persisting.** `fetchRange` (`importer/index.ts`) pulls history from Tesla and runs `processHistory` (a pure transform), returning rows **without** the `insertEnergyDataBatch` write that `ensureDataForRange`/`loadInterval` perform. So a pre-retention day can be reconstructed Tesla → memory → rollup with **no `EnergyData` written or read** — which is what removes the bloat/cleanup concern entirely.
 
 ## Data model — `RollupBackfill` (new table)
 
@@ -81,11 +81,8 @@ Per tick, within a bounded budget:
 1. **Pick work.** Select sites with `status IN ('pending','running')`, FIFO by `created_at` (a heal and a first index are equal-priority; both are user-initiated). Process up to `INDEX_HISTORY_SITES_PER_TICK` (default 1).
 2. **Lock.** `pg_try_advisory_lock(hashtext(site_id))` so overlapping ticks never double-process a site; if not acquired, skip to the next site. Set `status = 'running'`.
 3. **Walk forward** from `cursor_date` until **whichever comes first** — `INDEX_HISTORY_DAYS_PER_TICK` (default ~45) days processed, a **~250s wall-clock budget** elapsed (so a slow Tesla run exits cleanly before the 300s hard kill), or `cursor_date > newest_date`:
-   - Determine the day's existing `EnergyData` coverage (count + first/last sample).
-   - **Fetch:** `ensureDataForRange(site, dayStart, dayEnd)`. `planImport` fetches only the missing slice (free if already complete).
-   - **Roll up — egress-aware:**
-     - If the day was fetched **in full** (`count === 0` before the fetch), feed the **in-memory** rows from `ensureDataForRange` straight into the replay — **no DB read-back**. This is the multi-year tail and the dominant egress term.
-     - Otherwise (day already partly/fully in DB), `rollupDay` reads the full day from the DB as today.
+   - **Pre-retention day** (older than the retention cutoff, i.e. the multi-year tail being reconstructed): **`fetchRange(site, dayStart, dayEnd)`** — pull from Tesla, transform in memory, and feed the rows **straight into the replay**. `fetchRange` runs `processHistory` (a pure transform) and returns rows **without ever persisting `EnergyData`**, so these days have **zero `EnergyData` footprint** — no write, no read-back. This is the dominant case and the reason there is no bloat and no cleanup interaction.
+   - **Within-retention day** (newer than the cutoff): keep the normal path — read the existing day from the DB if present, else `ensureDataForRange` to **persist** it (recent `EnergyData` legitimately lives in the DB for live views / NILM / battery-hold). `planImport` fetches only the missing slice (free if already complete). Then roll up. These DB reads are the only residual egress and are bounded to ~the last year.
    - **Genesis:** pass `forceGenesisAtStart = (cursor_date === oldest_date)` so the install day anchors a full battery even when later (nightly-produced) rollups already exist for the site.
    - Advance `cursor_date += 1 day`, `days_done += 1`, and **commit this progress incrementally** (per day, or in small batches) — so an unexpected hard timeout loses at most the in-flight day and the next tick resumes from the committed cursor.
 4. **Finalize.** If `cursor_date > newest_date` → `status = 'complete'`. On any error → `status = 'error'`, `last_error = …`, **cursor preserved** (already committed) so it resumes next tick. Because progress is committed incrementally, neither the Vercel timeout nor a pg_net drop can roll back completed days.
@@ -95,12 +92,12 @@ At `*/15` this is ~96 ticks/day; chunk-size × frequency is the Tesla throttle. 
 
 ### RollupService / replay change
 
-`RollupService.rollupDay` gains an optional pre-loaded-rows path and a `forceGenesisAtStart` flag:
+`RollupService.rollupDay` gains an optional **pre-loaded-rows** path and a `forceGenesisAtStart` flag:
 
-- When rows are supplied, skip `loadEnergyData`; still read the (tiny) seed tank via `getSeedTank`.
+- When rows are supplied (the pre-retention `fetchRange` path), skip `loadEnergyData` entirely — roll up directly from the in-memory rows; still read the (tiny) seed tank via `getSeedTank`.
 - `forceGenesisAtStart` makes the genesis branch fire on the first backfilled day even though `hasAnyRollup(site)` is true (the normal case when re-indexing a site that already has forward rollups). Without it, that day would seed `EMPTY_TANK` and corrupt the whole chain. **This is the single most important correctness test.**
 
-The `EnergyDataRow` (importer output) vs `EnergyData` (replay input) shapes must be reconciled by a thin adapter or a shared type — verified in tests.
+`fetchRange` returns `EnergyDataRow[]` (importer output); the replay consumes `EnergyData`. Reconcile the shapes with a thin adapter or a shared type — verified in tests. (`fetchRange` returns Tesla's full-day rows unfiltered; the replay buckets by local date, and `rollupDay` already filters its output to the target `localDate`, so a day's rows map cleanly.)
 
 ## Heal on return — cursor-based, on Savings-tab load
 
@@ -144,13 +141,13 @@ Rationale: partial data exists **only because the user was active that day** (a 
 
 This makes the dangerous "present-but-wrong" partial rollup impossible — every missing day is *absent* (cursor/heal-detectable), never silently incorrect.
 
-## Egress strategy
+## Egress & storage strategy
 
-DB read egress ≈ 5-min `EnergyData` rows shipped to Node (~288/day). The rollup *output* and report reads are negligible by comparison.
+DB egress/footprint ≈ 5-min `EnergyData` rows shipped to/from Node (~288/day). The rollup *output* and report reads are negligible by comparison.
 
-- **Backfill rolls up from memory** for every day fetched in full — the multi-year purged tail, which dominates — so that bulk costs **zero read egress**.
-- Residual reads are bounded: recent in-DB days during the initial index, plus the small per-day nightly read.
-- The replay stays in **TypeScript** (one tested source of truth). A full in-DB (PL/pgSQL) rollup that would eliminate *all* read egress is explicitly **deferred** — it would duplicate the tank cost-basis logic in SQL with high divergence risk; revisit only if residual egress proves prohibitive.
+- **Pre-retention days never touch `EnergyData` at all.** The dominant case — the multi-year tail — uses `fetchRange` (Tesla → memory → replay → upsert rollup), so it incurs **no `EnergyData` read and no write**. This is also what makes the backfill completely independent of `cron/cleanup`: there is no scratch data to bloat the table or to race the cleanup (see below).
+- **Residual reads are bounded** to within-retention days that are already in the DB (read during the initial index) plus the small per-day rollup-cron read. These are the legitimately-retained recent rows.
+- The replay stays in **TypeScript** (one tested source of truth). A full in-DB (PL/pgSQL) rollup that would eliminate *all* residual read egress is explicitly **deferred** — it would duplicate the tank cost-basis logic in SQL with high divergence risk; revisit only if residual egress proves prohibitive.
 
 ## UI — Savings tab
 
@@ -192,14 +189,14 @@ The tooltip mechanism follows existing UI primitives (a lightweight popover or n
 
 - **Worker vs worker:** advisory lock per site.
 - **Worker vs rollup cron:** both call idempotent `rollupDay`. The backfill operates on historical dates behind `newest_date`; the hourly cron fires per site shortly after its local midnight on a separate cadence, so the two rarely coincide, and when they do the idempotent upsert makes it a harmless re-write. No `newest_date` offset is needed — idempotency is the guarantee.
-- **EnergyData bloat:** re-fetched pre-retention days repopulate `EnergyData`; the next daily `cron/cleanup` purges them again (they're >365d). Fetch→rollup happen in one request so cleanup cannot race; bounded by chunk size. (Optional later refinement: delete re-fetched pre-retention rows right after rollup; v1 relies on cleanup.)
+- **`cron/cleanup`: untouched, no coordination.** Because pre-retention days are reconstructed via `fetchRange` (in-memory, never persisted), the backfill writes **no** scratch `EnergyData`. So there is nothing to bloat the table and nothing for cleanup to delete out from under an in-flight, multi-day backfill — the cleanup race simply cannot occur. No per-site suppression, no proactive scratch-delete, no awareness of `RollupBackfill` in the cleanup job.
 
 ## Testing
 
 - **Opt-in route:** creates the row with correct bounds; idempotent on existing `pending`/`running`/`complete`; resets `error` → `pending`; `verifySiteAccess` enforced.
 - **Worker:** advances cursor by the chunk budget; **stops at the ~250s wall-clock guard even when days remain under the day cap**; commits cursor incrementally so a simulated mid-tick abort resumes from the last committed day with no lost/duplicated work; resumes from `cursor_date` across ticks; marks `complete` at `newest_date`; error path sets `status='error'` + `last_error` and **preserves** the cursor; advisory lock prevents concurrent double-processing.
 - **Genesis force-anchor (critical):** with later rollups already present for the site, the first backfilled day (`cursor === oldest_date`) anchors a full battery rather than `EMPTY_TANK`; the tank chains correctly forward.
-- **Memory-feed:** a fully-fetched day rolls up from the in-memory rows without a DB read (assert `loadEnergyData` not called); a partial day falls back to a DB read.
+- **Pre-retention fetch-only:** a pre-retention day rolls up from `fetchRange`'s in-memory rows with **no `EnergyData` read or write** (assert neither `loadEnergyData` nor `insertEnergyDataBatch` is called); a within-retention day reads/persists via the normal DB path.
 - **Heal-on-return:** a `complete` row with `newest_date < yesterday` is re-opened from the parked cursor; the worker re-rolls the gap and re-chains the tank; a no-data day in the gap advances the cursor without re-flagging.
 - **Hourly timezone selection:** a site is selected only when its local time is in the 2–5 band; selection is DST-safe (spring-forward day still selects within the band); a site already holding a complete yesterday-local rollup is skipped (dedup across band hours); half-hour-offset zones land in the band.
 - **Partial/empty/complete rule:** empty day → no import, no rollup; partial day → finish-import then roll a complete day; complete day → roll with zero Tesla; finish-import that still can't complete → skip (no partial rollup persisted).
@@ -224,6 +221,6 @@ The tooltip mechanism follows existing UI primitives (a lightweight popover or n
 6. **Gap healing:** on Savings-tab load, re-open a `complete` row when `newest_date < yesterday`; the parked cursor resumes through the gap.
 7. **Partial-day safety:** the rollup cron finishes partial days before rolling and skips empty days, so a partial rollup is never persisted.
 7b. **Rollup cadence:** `cron/rollup` moves to hourly, processing each site ~1–2 h after its own local midnight via a DST-safe 2–5 local-hour band with complete-day dedup; replaces the single 8am-UTC run and removes the need for a `newest_date` boundary offset.
-8. **Egress:** roll up from in-memory imported rows for fully-fetched days; keep the replay in TypeScript; defer the full in-DB rollup.
+8. **Egress & cleanup:** reconstruct pre-retention days via `fetchRange` (Tesla → memory → rollup, never persisting `EnergyData`), so the backfill has zero scratch footprint and `cron/cleanup` needs no coordination; keep the replay in TypeScript; defer the full in-DB rollup.
 9. **Genesis:** `forceGenesisAtStart` when `cursor === oldest_date` so re-indexing a site that already has forward rollups anchors correctly.
 10. **Admin visibility:** the admin site list shows a per-site indexing badge with hover details (read-only in v1), via a `LEFT JOIN "RollupBackfill"` on the existing admin query.
