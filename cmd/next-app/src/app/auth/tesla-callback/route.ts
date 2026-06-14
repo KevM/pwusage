@@ -170,10 +170,16 @@ function getDiscoveryEndpointFromIssuer(issuer: string): string | null {
         console.warn('[AuthCallback] Issuer not from Tesla domain:', issuer);
         return null;
     }
-    // Construct discovery endpoint from issuer
-    // e.g., https://auth.tesla.com/oauth2/v3/nts -> https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration
+    // Explicit mapping for Tesla Fleet API / OIDC issuers
+    if (issuer === 'https://auth.tesla.com/oauth2/v3/nts') {
+        return 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/thirdparty/.well-known/openid-configuration';
+    }
+    if (issuer === 'https://auth.tesla.com/oauth2/v3') {
+        return 'https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration';
+    }
+    // Fallback construct discovery endpoint from issuer
     const parts = issuer.split('/');
-    const baseUrl = parts.slice(0, -1).join('/'); // Remove /nts or other suffix
+    const baseUrl = parts.slice(0, -1).join('/'); // Remove suffix
     return `${baseUrl}/.well-known/openid-configuration`;
 }
 
