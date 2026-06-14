@@ -1,19 +1,42 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { RollupBackfill } from '@/lib/db';
 import { Card, CardContent } from '@/components/ui/Card';
+import { isBackfillInProcess, isTerminalBackfillError } from '@/lib/roi/savings-status';
+
+const REFRESH_MS = 10 * 60 * 1000; // 10 min: let progress advance without a manual reload
 
 export function IndexingStatus({ siteId, backfill }: { siteId: string; backfill: RollupBackfill | null }) {
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [started, setStarted] = useState(false);
 
-  if (backfill && (backfill.status === 'pending' || backfill.status === 'running')) {
+  const inProcess = isBackfillInProcess(backfill);
+
+  useEffect(() => {
+    if (!inProcess) return;
+    const timer = setInterval(() => router.refresh(), REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [inProcess, router]);
+
+  if (inProcess && backfill) {
     const pct = backfill.days_total > 0 ? Math.round((backfill.days_done / backfill.days_total) * 100) : 0;
+    const isError = backfill.status === 'error';
+    const terminal = isTerminalBackfillError(backfill);
     return (
       <Card><CardContent className="py-6">
         <p className="font-semibold mb-2 text-foreground">Indexing your history… {pct}%</p>
         <div className="h-2 rounded-full bg-bg-muted overflow-hidden"><div className="h-full bg-primary" style={{ width: `${pct}%` }} /></div>
-        <p className="text-xs opacity-70 mt-2 text-foreground/80">Reconstructed back to {backfill.cursor_date}. This runs in the background; check back later.</p>
+        {!isError && (
+          <p className="text-xs opacity-70 mt-2 text-foreground/80">Reconstructed back to {backfill.cursor_date}. This runs in the background; check back later.</p>
+        )}
+        {isError && !terminal && (
+          <p className="text-xs mt-2 text-amber-700 dark:text-amber-300">Paused — will retry automatically. Reconstructed back to {backfill.cursor_date}.</p>
+        )}
+        {isError && terminal && (
+          <p className="text-xs mt-2 text-amber-700 dark:text-amber-300">Reconstruction paused — it will resume later. Reconstructed back to {backfill.cursor_date}.</p>
+        )}
       </CardContent></Card>
     );
   }
