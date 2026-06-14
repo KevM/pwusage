@@ -15,7 +15,7 @@ import type { EnergyData } from '@/lib/db';
 
 const DAYS_PER_TICK = parseInt(process.env.INDEX_HISTORY_DAYS_PER_TICK || '45', 10);
 const SITES_PER_TICK = parseInt(process.env.INDEX_HISTORY_SITES_PER_TICK || '1', 10);
-const BUDGET_MS = 50_000; // Leave 10s buffer before Vercel 60s limit
+const BUDGET_MS = parseInt(process.env.INDEX_HISTORY_BUDGET_MS || '8000', 10); // Safe default for 10s Hobby limits
 const RETENTION_DAYS = parseInt(process.env.DATA_RETENTION_DAYS || '365', 10);
 const FETCH_CONCURRENCY = parseInt(process.env.INDEX_HISTORY_FETCH_CONCURRENCY || '2', 10);
 const STAGGER_MS = parseInt(process.env.INDEX_HISTORY_STAGGER_MS || '1000', 10);
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
   const processed: Array<{ siteId: string }> = [];
 
   for (let i = 0; i < SITES_PER_TICK; i++) {
-    const job = await backfillRepo.claimNext();
+    const job = await backfillRepo.claimNext(3); // Reclaim stale running jobs after 3 minutes (safe for Hobby timeouts)
     if (!job) break;
 
     const client = await createSiteTeslaClient(job.site_id, TESLA_MAX_RETRY_DELAY_MS);
