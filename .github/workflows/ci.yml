@@ -240,6 +240,15 @@ jobs:
           psql "$DEV_DATABASE_URL" -c "TRUNCATE supabase_migrations.schema_migrations"
           psql "$DEV_DATABASE_URL" -f migration_history.sql
 
+          # Scrub Tesla credentials from the Dev copy. The Dev DB is restored from
+          # prod (~54 users' tokens), and the beta cron workers run unattended on a
+          # schedule against ALL of them. Tesla refresh tokens are single-use/rotated,
+          # so a beta refresh would invalidate the SHARED token and cause prod to
+          # self-revoke that user (and restore-reserve would send real battery
+          # commands). createSiteTeslaClient() returns null when either token is
+          # missing, so every cron worker safely no-ops on "no tokens".
+          psql "$DEV_DATABASE_URL" -c "UPDATE \"User\" SET access_token = NULL, refresh_token = NULL;"
+
       - name: Prepare Local Migrations
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
