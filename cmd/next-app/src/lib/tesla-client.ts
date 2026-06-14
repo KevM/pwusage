@@ -160,9 +160,9 @@ export class TeslaClient {
 
     constructor(config: TeslaClientConfig | string) {
         if (typeof config === 'string') {
-            this.config = { accessToken: config };
+            this.config = { accessToken: config, maxRetryDelayMs: 5000 };
         } else {
-            this.config = config;
+            this.config = { maxRetryDelayMs: 5000, ...config };
         }
     }
 
