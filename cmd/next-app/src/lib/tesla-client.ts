@@ -111,18 +111,25 @@ export interface TeslaClientConfig {
     tokenRefreshHandler?: (refreshToken: string) => Promise<{ access_token: string; refresh_token: string }>;
 }
 
-const RATE_LIMIT_MAX_RETRIES = 2;
+const RATE_LIMIT_MAX_RETRIES = 5;
 const RATE_LIMIT_DEFAULT_DELAY_MS = 1000;
 const RATE_LIMIT_MAX_DELAY_MS = 60_000;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** 429 (rate limited) and 529 (server overloaded) are both transient — back off
+ *  and retry rather than failing the whole request/tick. */
+function isRetryableStatus(status: number): boolean {
+    return status === 429 || status === 529;
+}
+
 /**
  * Parse an HTTP `Retry-After` header (delta-seconds or HTTP-date) into a delay
- * in milliseconds, falling back to a default and capping absurd values.
+ * in milliseconds, capping absurd values. Returns `null` when the header is
+ * absent or unparseable so the caller can fall back to exponential backoff.
  */
-function parseRetryAfter(header: string | null): number {
-    if (!header) return RATE_LIMIT_DEFAULT_DELAY_MS;
+function parseRetryAfter(header: string | null): number | null {
+    if (!header) return null;
 
     const seconds = Number(header);
     if (Number.isFinite(seconds)) {
@@ -134,7 +141,16 @@ function parseRetryAfter(header: string | null): number {
         return Math.min(Math.max(dateMs - Date.now(), 0), RATE_LIMIT_MAX_DELAY_MS);
     }
 
-    return RATE_LIMIT_DEFAULT_DELAY_MS;
+    return null;
+}
+
+/** Exponential backoff with jitter for when Tesla omits a `Retry-After` header.
+ *  attempt 0 → ~1s, 1 → ~2s, 2 → ~4s … capped at RATE_LIMIT_MAX_DELAY_MS. The
+ *  jitter (up to +25%) de-synchronizes concurrent backfill workers. */
+function backoffDelay(attempt: number): number {
+    const base = Math.min(RATE_LIMIT_DEFAULT_DELAY_MS * 2 ** attempt, RATE_LIMIT_MAX_DELAY_MS);
+    const jitter = base * 0.25 * Math.random();
+    return Math.min(base + jitter, RATE_LIMIT_MAX_DELAY_MS);
 }
 
 export class TeslaClient {
@@ -198,11 +214,13 @@ export class TeslaClient {
                 }
             }
 
-            // Honor Tesla's rate limiting: back off on 429 and retry a bounded
-            // number of times before surfacing the error.
-            if (response.status === 429 && rateLimitAttempt < RATE_LIMIT_MAX_RETRIES) {
-                const delayMs = parseRetryAfter(response.headers.get('Retry-After'));
-                console.warn(`Tesla API 429, retrying in ${delayMs}ms (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`);
+            // Honor Tesla's throttling: back off on 429 (rate limited) and 529
+            // (overloaded) and retry a bounded number of times before surfacing
+            // the error. Use Tesla's Retry-After when present, else exponential
+            // backoff with jitter.
+            if (isRetryableStatus(response.status) && rateLimitAttempt < RATE_LIMIT_MAX_RETRIES) {
+                const delayMs = parseRetryAfter(response.headers.get('Retry-After')) ?? backoffDelay(rateLimitAttempt);
+                console.warn(`Tesla API ${response.status}, retrying in ${delayMs}ms (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`);
                 await sleep(delayMs);
                 rateLimitAttempt++;
                 response = await makeRequest(this.config.accessToken);

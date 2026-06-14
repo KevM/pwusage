@@ -22,6 +22,18 @@ function make429Response(retryAfter?: string): Response {
     } as unknown as Response;
 }
 
+function make529Response(retryAfter?: string): Response {
+    const headers = new Headers();
+    if (retryAfter !== undefined) headers.set('Retry-After', retryAfter);
+    return {
+        ok: false,
+        status: 529,
+        headers,
+        json: async () => ({}),
+        text: async () => 'overloaded',
+    } as unknown as Response;
+}
+
 function make401Response(): Response {
     return {
         ok: false,
@@ -135,11 +147,62 @@ describe('TeslaClient rate limiting (429)', () => {
         const promise = client.getProducts();
         const assertion = expect(promise).rejects.toThrow(/429/);
 
-        await vi.advanceTimersByTimeAsync(60_000);
+        await vi.advanceTimersByTimeAsync(300_000);
         await assertion;
 
-        // 1 initial attempt + 2 retries
-        expect(fetchMock).toHaveBeenCalledTimes(3);
+        // 1 initial attempt + RATE_LIMIT_MAX_RETRIES retries
+        expect(fetchMock).toHaveBeenCalledTimes(6);
+    });
+});
+
+describe('TeslaClient transient overload (529) + backoff', () => {
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it('retries after a 529 overload, waiting the Retry-After interval, then returns the result', async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(make529Response('1'))
+            .mockResolvedValueOnce(makeJsonResponse({ response: [], count: 0 }));
+
+        const client = new TeslaClient({ accessToken: 'tok' });
+        const promise = client.getProducts();
+
+        await vi.advanceTimersByTimeAsync(1000);
+        const result = await promise;
+
+        expect(result).toEqual([]);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('backs off (no Retry-After header) and retries more than twice before succeeding', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(Math, 'random').mockReturnValue(0); // deterministic backoff
+        const fetchMock = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(make529Response()) // no header -> exponential backoff
+            .mockResolvedValueOnce(make429Response()) // no header -> exponential backoff
+            .mockResolvedValueOnce(make529Response()) // no header -> exponential backoff
+            .mockResolvedValueOnce(makeJsonResponse({ response: [], count: 0 }));
+
+        const client = new TeslaClient({ accessToken: 'tok' });
+        const promise = client.getProducts();
+
+        await vi.advanceTimersByTimeAsync(120_000);
+        const result = await promise;
+
+        expect(result).toEqual([]);
+        // 3 retries (> the old cap of 2) then success
+        expect(fetchMock).toHaveBeenCalledTimes(4);
     });
 });
 
