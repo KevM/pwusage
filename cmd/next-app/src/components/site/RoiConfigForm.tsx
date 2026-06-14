@@ -44,15 +44,17 @@ export function RoiConfigForm({ siteId, initial }: { siteId: string; initial: Si
                 <CardTitle>ROI / Savings</CardTitle>
                 <CardDescription>System costs for ROI calculations.</CardDescription>
             </CardHeader>
-            <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {field('Solar net cost ($)', 'solar_cost')}
-                {field('Solar install date', 'solar_install_date', 'date')}
-                {field('Battery net cost ($)', 'battery_cost')}
-                {field('Battery install date', 'battery_install_date', 'date')}
-                <div className="sm:col-span-2 mt-2">
-                    <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save ROI settings'}</Button>
-                </div>
-            </CardContent>
+            <form onSubmit={(e) => { e.preventDefault(); save(); }}>
+                <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {field('Solar net cost ($)', 'solar_cost')}
+                    {field('Solar install date', 'solar_install_date', 'date')}
+                    {field('Battery net cost ($)', 'battery_cost')}
+                    {field('Battery install date', 'battery_install_date', 'date')}
+                    <div className="sm:col-span-2 mt-2">
+                        <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save ROI settings'}</Button>
+                    </div>
+                </CardContent>
+            </form>
         </Card>
     );
 }

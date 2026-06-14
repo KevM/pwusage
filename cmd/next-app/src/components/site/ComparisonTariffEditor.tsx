@@ -73,15 +73,15 @@ export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
                             TOU comparison plans arrive in a later update. For now the TOU column uses your metered plan ({meteredPlanName}).
                         </p>
                     ) : (
-                        <>
+                        <form onSubmit={(e) => { e.preventDefault(); save(); }} className="space-y-3">
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="flex flex-col gap-1"><Label>Plan name</Label><Input value={form.name} onChange={set('name')} /></div>
                                 <div className="flex flex-col gap-1"><Label>Effective from</Label><Input type="date" value={form.effective_from} onChange={set('effective_from')} /></div>
                                 <div className="flex flex-col gap-1"><Label>Buy rate $/kWh</Label><Input type="number" step="0.00001" value={form.buy_rate} onChange={set('buy_rate')} /></div>
                                 <div className="flex flex-col gap-1"><Label>Sell rate $/kWh</Label><Input type="number" step="0.00001" value={form.sell_rate} onChange={set('sell_rate')} /></div>
                             </div>
-                            <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save plan'}</Button>
-                        </>
+                            <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save plan'}</Button>
+                        </form>
                     )}
                 </div>
             </CardContent>
