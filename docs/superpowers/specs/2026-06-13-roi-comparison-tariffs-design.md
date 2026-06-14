@@ -23,12 +23,12 @@ Replace the fixed-baseline scalars with a first-class **comparison plan**: a `Ta
 
 ## Scope cut (decided in brainstorming)
 
-- **In:** the `reporting_only` flag + exclusion plumbing; the comparison-tariff editor with a Fixed/TOU toggle; read-side pricing of the Fixed column from the reporting-only Fixed tariff at a **single current rate**; an **`effective_from` date captured per tariff version, used for display/ordering only** (the editor lets the user enter a rate timeline; the UI labels and orders versions by date).
+- **In:** the `reporting_only` flag + exclusion plumbing; the comparison-tariff editor with a Fixed/TOU toggle; read-side pricing of the Fixed column from the reporting-only Fixed tariff at a **single current rate**; an **`effective_from` date captured per tariff version, used for display/ordering only** (the editor lets the user enter a rate timeline; the UI labels and orders versions by date); **human-readable plan names** — comparison plans are user-named (the existing `Tariff.name`), surfaced in the editor and matrix columns, metered plan badged "Your plan" (see Naming).
 - **Display, not priced (this phase):** captured `effective_from` dates are **not** wired into pricing — all history is priced at the current (latest) version's rate, exactly as today. To avoid implying accuracy we don't deliver, the UI states plainly that historical rates are captured but **not yet applied** (pricing uses the current rate). So the originating $0.16580→$0.19342 overstatement is **not** corrected this phase.
 - **Deferred to F1:** applying the captured `effective_from` to **comparison-column pricing** (cells A/C/E) — a read-side resolver that prices each rollup row at the comparison rate in effect on its date. Cheap (no re-rollup); this is what finally corrects the fixed-column history and turns the displayed dates into real pricing.
 - **Deferred to F2:** the **metered** tariff's historical correction (cell F) — metered `Schedule` date-resolution + re-rollup of the snapshotted rates.
 - **Deferred to 2b:** the toggle's **independent-TOU** branch — an arbitrary TOU comparison plan with different windows needs the plan-agnostic hourly profile to re-bucket; the period-keyed `EnergyRollup` can't. Until 2b, the TOU branch can only reuse the actual metered tariff as the baseline (which the matrix already does).
-- **No data migration.** Existing `SiteRoiConfig.fixed_buy_rate` / `fixed_sell_rate` values are **not** ported. The fixed baseline starts empty; the user re-enters it once through the new editor. Those two columns are left in place as **deprecated/unused** (no migration spent dropping them).
+- **No migration of the fixed scalars.** Existing `SiteRoiConfig.fixed_buy_rate` / `fixed_sell_rate` values are **not** ported. The fixed baseline starts empty; the user re-enters it once through the new editor. Those two columns are left in place as **deprecated/unused** (no migration spent dropping them). The phase does include two small *schema* migrations — the new `Tariff` columns and a fill-if-blank metered-name backfill (see Naming).
 
 ## What a flat tariff is (precisely)
 
@@ -67,6 +67,15 @@ effective_from  date     NULL     -- when this version's rates took effect
 
 Keeps investment metadata (costs, install dates). `fixed_buy_rate` / `fixed_sell_rate` become **deprecated/unused**; no migration.
 
+## Naming
+
+`Tariff.name` is already `NOT NULL` and is the **versioning identity** (`(site_id, name, version)` and `(site_id, name) WHERE is_current` are unique), so it doubles as the user-facing label — no new column.
+
+- **Comparison plans are user-named** at creation (e.g. "PG&E flat (my baseline)"); the name is the label *and* the lineage key. A rate timeline is multiple versions sharing one name. Free in-place **renaming is out of scope for v1** (it would rewrite the lineage key); editing a plan edits its rates/dates, not its name. If renaming is needed later it's an "update every version in the lineage" operation.
+- **Metered plan label:** surface the existing `name` with a "Your plan" badge; a small **fill-if-blank migration** sets `name = 'Standard'` only where the current value is empty/whitespace — never clobbering a meaningful imported utility name. It touches only blank-named tariffs.
+- **Uniqueness validation:** the `(site_id, name) WHERE is_current` unique index means two current plans can't share a name. The editor rejects a duplicate name **inline** (e.g. naming a comparison plan "Standard" when the metered plan is "Standard") rather than surfacing a DB error.
+- The metered plan is **read-only** in the comparison manager (managed in the existing tariff editor); it appears there only so the user can see which plan the TOU column represents.
+
 ## Exclusion plumbing (the real risk surface)
 
 A reporting-only tariff must never leak into metered pricing. The audit:
@@ -102,7 +111,9 @@ When `null` (baseline not configured), the Savings surface shows the existing em
 ## UI
 
 - **Comparison-tariff editor with a Fixed/TOU toggle**, reusing the existing tariff-editor components in a `reporting_only` context. **Fixed** mode collapses to a single buy + sell pair and mints the flat chain above (with the `0..6` day-of-week fix). **TOU** mode opens the full schedule but is a **placeholder** until 2b — it falls back to the actual metered tariff as the baseline.
-- **Rate timeline:** the editor captures `effective_from` per version and lets the user enter more than one Fixed version. Comparison plans are **labeled and ordered by `effective_from`** (derived ranges; latest shown as "current").
+- **Naming:** a required name field per comparison plan, with inline duplicate-name validation against the site's current plans. The metered plan is shown **read-only**, badged "Your plan", so the user sees which plan the TOU column represents.
+- **Rate timeline:** the editor captures `effective_from` per version and lets the user enter more than one Fixed version, nested under the plan. Comparison plans are **labeled and ordered by `effective_from`** (derived ranges; latest shown as "current").
+- **Matrix columns carry the concrete plan name** under the generic type — "Fixed · <comparison name>", "TOU · <metered name>" — so it's unambiguous which plan instantiates each baseline. "You are here" marks the metered cell.
 - **Honest "not yet applied" note:** when a timeline has more than one version, the UI states plainly that historical rates are captured but not yet applied to pricing — pricing uses the current rate (until F1). This is the required guard against implying date-resolved accuracy we haven't built.
 - The fixed-rate inputs **leave `RoiConfigForm`** (which keeps costs + install dates). The form/route that previously wrote `fixed_buy_rate` / `fixed_sell_rate` (`api/site/[id]/roi-config`) stops doing so; the baseline is written via the comparison-tariff editor instead.
 
@@ -112,6 +123,7 @@ When `null` (baseline not configured), the Savings surface shows the existing em
 - **Exclusion:** the metered `Schedule` / `getTariffPeriod` never returns a `reporting_only` tariff; the importer skips them. A site with both a metered TOU tariff and a reporting-only Fixed tariff prices cell F from the TOU tariff only.
 - **Read-side parity:** the Fixed column (A/C/E) priced from a reporting-only Fixed tariff at rate *r* equals the pre-refactor scalar math at the same *r* (regression guard on the fold).
 - **Effective-date display:** multiple Fixed versions are ordered by `effective_from` with correct derived ranges; pricing still uses the current version for **all** rows (parity with single-rate behavior); the "not yet applied" note renders when >1 version exists.
+- **Naming/uniqueness:** the editor rejects a comparison plan whose name duplicates an existing current plan for the site (guards the `(site_id, name) WHERE is_current` index); the fill-if-blank migration sets `name = 'Standard'` on an empty/whitespace-named tariff and leaves a real-named tariff untouched.
 - **Empty state:** no reporting-only Fixed tariff ⇒ `resolveFixedBaseline` returns `null` ⇒ Savings shows the empty state, no crash.
 
 ## Honest caveat
@@ -137,3 +149,4 @@ Activates the toggle's independent-TOU branch and TOU-to-TOU what-ifs (shift-my-
 4. **Effective dates: capture + display now, price later.** Add `effective_from` per `Tariff` version this phase for labeling/ordering; pricing stays single-current-rate with an explicit "not yet applied" note. Comparison-column date pricing → F1; metered correction → F2. Chosen to avoid the perception trap of showing dates that don't affect numbers, while still capturing the timeline forward-compatibly.
 5. **No migration:** existing fixed scalars not ported; user re-enters once; columns left deprecated.
 6. **Flag boundary:** exclude reporting-only tariffs at the metered-`Schedule` construction boundary via a single cohesive helper, not scattered call-site checks.
+7. **Naming:** reuse `Tariff.name` (already required + the lineage key) as the label — no new column. Comparison plans user-named; metered plan labeled via a fill-if-blank "Standard" backfill + a "Your plan" badge; the editor enforces per-site name uniqueness inline; no free-rename in v1.
