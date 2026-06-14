@@ -113,6 +113,8 @@ Instead, the worker forces genesis on **every** day until one anchors, tracked b
 
 Because the backfill replays the whole early history, this anchors at the **earliest true full-charge event** rather than at an arbitrary first calendar day — strictly better provenance than the original single-shot genesis. A heal re-opening a `complete` row leaves `genesis_anchored` **untouched** (`true`) — the chain is already anchored; the heal resumes mid-history and must carry forward, never re-anchor.
 
+**Provisioning caveat.** The `≥98%` anchor lands on a Powerwall's *first real 100% charge*, which is solar-fed (excess generation) on solar sites and grid-fed on grid-only sites — matching `computeGenesisSeed`'s measured-split-else-grid default. The earlier commissioning charge (grid, to a ~20–30% baseline) is typically *non-contiguous* with that fill, so it isn't captured; on a solar site this slightly **under-counts grid cost basis** in the seed (no error on grid-only sites). The miss is bounded by one partial charge and washes out within a cycle or two as the tank turns over — a documented seam, not a correctness defect.
+
 Plan-time detail to verify: how `replayRows` treats the anchor day's intervals **before** `anchorTimestamp` — additive flows should still accrue for the full day while tank accounting starts at the anchor.
 
 ## Heal on return — cursor-based, on Savings-tab load
