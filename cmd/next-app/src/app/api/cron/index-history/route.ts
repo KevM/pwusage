@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300; // claim the full Vercel budget
+export const maxDuration = 60; // Vercel Hobby budget limit is 60s
 
 import { NextRequest, NextResponse } from 'next/server';
 import { SiteRepo } from '@/lib/site-repo';
@@ -15,7 +15,7 @@ import type { EnergyData } from '@/lib/db';
 
 const DAYS_PER_TICK = parseInt(process.env.INDEX_HISTORY_DAYS_PER_TICK || '45', 10);
 const SITES_PER_TICK = parseInt(process.env.INDEX_HISTORY_SITES_PER_TICK || '1', 10);
-const BUDGET_MS = 250_000;
+const BUDGET_MS = 50_000; // Leave 10s buffer before Vercel 60s limit
 const RETENTION_DAYS = parseInt(process.env.DATA_RETENTION_DAYS || '365', 10);
 
 export async function GET(request: NextRequest) {
