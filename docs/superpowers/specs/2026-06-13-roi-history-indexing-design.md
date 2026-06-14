@@ -8,7 +8,7 @@
 
 The ROI / Savings report computes lifetime payback by folding **durable `EnergyRollup`** rows. But a site only has rollups for the days it was actually processed:
 
-- `rollupDay` is invoked from exactly one place — the nightly `cron/rollup` — and only ever for **yesterday**, for whatever `EnergyData` happens to exist.
+- `rollupDay` is invoked from exactly one place — `cron/rollup` — and only ever for **yesterday**, for whatever `EnergyData` happens to exist. (This spec also moves that cron to an hourly, timezone-aware cadence — see below.)
 - `EnergyData` (the 5-min source) is **activity-driven**: it is imported only on page loads (`/api/import`, `/api/sync`, `/site/[id]/live`) and the restore-reserve cron (battery-hold sites only). Nothing imports it for a dormant site.
 - `EnergyData` older than `DATA_RETENTION_DAYS` (default 365) is purged by `cron/cleanup`; the durable rollup is what survives.
 
@@ -112,9 +112,25 @@ No gap-detection SQL: the cursor *is* the coverage high-water mark, so trailing 
 
 Interim correctness while a heal is pending: the nightly cron seeds the just-returned days from the stale pre-gap tank, so provenance/arbitrage is briefly off for those days; the heal corrects it. Lifetime *payback* (no provenance needed) is simply missing the gap days until healed.
 
-## Nightly cron hardening — never persist a partial-day rollup
+## Hourly, timezone-aware rollup cron — never persist a partial-day rollup
 
-`cron/rollup` keeps rolling up **yesterday** for every site, but the per-site action is keyed on that day's existing `EnergyData`:
+`cron/rollup` changes from a single `0 8 * * *` UTC run to **hourly** (`0 * * * *`), processing each site ~1–2 h after **its own** local midnight rather than at one global UTC time. This guarantees the day being rolled is fully elapsed and published by Tesla (directly mitigating the partial-day risk), and it spreads Tesla/DB load into timezone waves instead of an 8am-UTC thundering herd.
+
+### Site selection (DST-safe)
+
+Each hourly run selects only the sites currently in an early-morning **band** in their own timezone:
+
+```
+EXTRACT(hour FROM now() AT TIME ZONE site.timezone) BETWEEN 2 AND 5
+```
+
+- A **band**, not an exact hour, so DST "spring forward" (which skips 2am) can never cause a site to miss its window; half-hour zones (e.g. UTC+5:30) still land in the band.
+- For each selected site, the target day is **yesterday (site-local)**, but it is **skipped if it already has a complete rollup**. That completeness check is the natural dedup: the first qualifying hour rolls the day; later hours in the band no-op. Idempotent upsert covers any DST "fall back" double-touch.
+- Only ~1/24 of sites match each run (cheap `WHERE` filter), so total daily work is unchanged — just redistributed.
+
+### Per-day rule (unchanged)
+
+For the selected (site, yesterday-local) the action is keyed on that day's existing `EnergyData`:
 
 | Day's existing data | Action |
 |---|---|
@@ -122,7 +138,7 @@ Interim correctness while a heal is pending: the nightly cron seeds the just-ret
 | **Partial** (`count > 0` but `missingStart`/`missingEnd`) | `ensureDataForRange` to **finish the day** (planImport fetches only the missing slice), then `rollupDay` on complete data. |
 | **Complete** | `rollupDay` directly — zero Tesla. |
 
-Rationale: partial data exists **only because the user was active that day** (a load triggered the 14-day auto-import, leaving the in-progress day partial). We therefore spend Tesla *only to finish a day the user already started* — never on a fully dormant day, and never persisting a partial rollup. Safety net: if the finish-import still cannot complete the day (rare Tesla lag), skip the rollup; the next nightly run or a heal catches it.
+Rationale: partial data exists **only because the user was active that day** (a load triggered the 14-day auto-import, leaving the in-progress day partial). We therefore spend Tesla *only to finish a day the user already started* — never on a fully dormant day, and never persisting a partial rollup. Safety net: if the finish-import still cannot complete the day (rare Tesla lag), skip the rollup; a later hourly run or a heal catches it.
 
 This makes the dangerous "present-but-wrong" partial rollup impossible — every missing day is *absent* (cursor/heal-detectable), never silently incorrect.
 
@@ -146,7 +162,7 @@ Reads `RollupBackfill` alongside `SiteRoiConfig`:
 ## Concurrency & interaction notes
 
 - **Worker vs worker:** advisory lock per site.
-- **Worker vs nightly cron:** both call idempotent `rollupDay`; the backfill operates on historical dates behind `newest_date`, the cron on yesterday. Any boundary overlap is a harmless idempotent re-upsert. (Optionally set `newest_date = yesterday − 1` to keep clear of the nightly write.)
+- **Worker vs rollup cron:** both call idempotent `rollupDay`. The backfill operates on historical dates behind `newest_date`; the hourly cron fires per site shortly after its local midnight on a separate cadence, so the two rarely coincide, and when they do the idempotent upsert makes it a harmless re-write. No `newest_date` offset is needed — idempotency is the guarantee.
 - **EnergyData bloat:** re-fetched pre-retention days repopulate `EnergyData`; the next daily `cron/cleanup` purges them again (they're >365d). Fetch→rollup happen in one request so cleanup cannot race; bounded by chunk size. (Optional later refinement: delete re-fetched pre-retention rows right after rollup; v1 relies on cleanup.)
 
 ## Testing
@@ -156,7 +172,8 @@ Reads `RollupBackfill` alongside `SiteRoiConfig`:
 - **Genesis force-anchor (critical):** with later rollups already present for the site, the first backfilled day (`cursor === oldest_date`) anchors a full battery rather than `EMPTY_TANK`; the tank chains correctly forward.
 - **Memory-feed:** a fully-fetched day rolls up from the in-memory rows without a DB read (assert `loadEnergyData` not called); a partial day falls back to a DB read.
 - **Heal-on-return:** a `complete` row with `newest_date < yesterday` is re-opened from the parked cursor; the worker re-rolls the gap and re-chains the tank; a no-data day in the gap advances the cursor without re-flagging.
-- **Nightly partial/empty/complete rule:** empty day → no import, no rollup; partial day → finish-import then roll a complete day; complete day → roll with zero Tesla; finish-import that still can't complete → skip (no partial rollup persisted).
+- **Hourly timezone selection:** a site is selected only when its local time is in the 2–5 band; selection is DST-safe (spring-forward day still selects within the band); a site already holding a complete yesterday-local rollup is skipped (dedup across band hours); half-hour-offset zones land in the band.
+- **Partial/empty/complete rule:** empty day → no import, no rollup; partial day → finish-import then roll a complete day; complete day → roll with zero Tesla; finish-import that still can't complete → skip (no partial rollup persisted).
 - **Idempotency:** re-running any processed day yields identical rollup rows (incl. `solar_only_*`).
 - **Integration:** a synthetic multi-day site indexed end-to-end produces continuous rollups with correct `solar_only_*` and a continuous tank chain across a seeded gap.
 
@@ -175,6 +192,7 @@ Reads `RollupBackfill` alongside `SiteRoiConfig`:
 4. **Orchestration:** Supabase pg_cron every 15 min → bounded, resumable worker endpoint (reuses the restore-reserve pattern).
 5. **Coverage model:** cursor-based ledger (`RollupBackfill`), not rollup-row inference — robust to no-data days.
 6. **Gap healing:** on Savings-tab load, re-open a `complete` row when `newest_date < yesterday`; the parked cursor resumes through the gap.
-7. **Partial-day safety:** nightly cron finishes partial days before rolling and skips empty days, so a partial rollup is never persisted.
+7. **Partial-day safety:** the rollup cron finishes partial days before rolling and skips empty days, so a partial rollup is never persisted.
+7b. **Rollup cadence:** `cron/rollup` moves to hourly, processing each site ~1–2 h after its own local midnight via a DST-safe 2–5 local-hour band with complete-day dedup; replaces the single 8am-UTC run and removes the need for a `newest_date` boundary offset.
 8. **Egress:** roll up from in-memory imported rows for fully-fetched days; keep the replay in TypeScript; defer the full in-DB rollup.
 9. **Genesis:** `forceGenesisAtStart` when `cursor === oldest_date` so re-indexing a site that already has forward rollups anchors correctly.
