@@ -16,7 +16,17 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   const oldest = localDateKey(new Date(site.installed), site.timezone);
   const newest = localDateKey(new Date(Date.now() - 86400_000), site.timezone); // yesterday, site-local
-  await new RollupBackfillRepo().enqueue(id, oldest, newest);
+
+  const backfillRepo = new RollupBackfillRepo();
+  const existing = await backfillRepo.get(id);
+  if (existing) {
+    if (existing.status === 'error') {
+      await backfillRepo.retry(id, newest);
+    }
+    // If running, pending, or complete, treat as a no-op
+  } else {
+    await backfillRepo.enqueue(id, oldest, newest);
+  }
 
   return NextResponse.json({ success: true });
 }

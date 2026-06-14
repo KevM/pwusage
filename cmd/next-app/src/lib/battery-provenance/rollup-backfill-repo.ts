@@ -32,7 +32,7 @@ export class RollupBackfillRepo {
     );
   }
 
-  /** Atomically claim one incomplete site (oldest opt-in first); reclaim stale 'running'. */
+  /** Atomically claim one incomplete site (oldest opt-in first); reclaim stale 'running' or 'error' rows. */
   async claimNext(staleMinutes = 10): Promise<RollupBackfill | null> {
     const res = await pool.query(
       `UPDATE "RollupBackfill" SET status = 'running', updated_at = now()
@@ -40,6 +40,7 @@ export class RollupBackfillRepo {
          SELECT site_id FROM "RollupBackfill"
          WHERE status = 'pending'
             OR (status = 'running' AND updated_at < now() - ($1 || ' minutes')::interval)
+            OR (status = 'error' AND updated_at < now() - interval '1 hour')
          ORDER BY created_at
          FOR UPDATE SKIP LOCKED
          LIMIT 1
@@ -77,5 +78,17 @@ export class RollupBackfillRepo {
       [siteId, targetNewestDate],
     );
     return (res.rowCount ?? 0) > 0;
+  }
+
+  /** Manual retry: reset an error row to pending and advance the newest target, preserving cursor progress. */
+  async retry(siteId: string, newestDate: string): Promise<void> {
+    await pool.query(
+      `UPDATE "RollupBackfill"
+       SET status = 'pending', newest_date = $2,
+           days_total = days_total + ($2::date - newest_date),
+           last_error = NULL, updated_at = now()
+       WHERE site_id = $1 AND status = 'error'`,
+      [siteId, newestDate],
+    );
   }
 }

@@ -294,9 +294,15 @@ export default async function SitePage({ params, searchParams }: {
     let savingsSeries = null;
 
     const backfillRepo = new RollupBackfillRepo();
-    const yesterday = localDateKey(new Date(siteNow.getTime() - 86400_000), finalSite.timezone);
-    await backfillRepo.reopenIfBehind(finalSite.id, yesterday); // heal a dormant gap on visit
-    const backfill = await backfillRepo.get(finalSite.id);
+    let backfill = await backfillRepo.get(finalSite.id);
+    if (backfill && backfill.status === 'complete') {
+        // eslint-disable-next-line react-hooks/purity
+        const yesterday = localDateKey(new Date(Date.now() - 86400_000), finalSite.timezone);
+        const reopened = await backfillRepo.reopenIfBehind(finalSite.id, yesterday); // heal a dormant gap on visit
+        if (reopened) {
+            backfill = await backfillRepo.get(finalSite.id);
+        }
+    }
 
     if (roiConfig && roiConfig.fixed_buy_rate != null && roiConfig.fixed_sell_rate != null
         && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {

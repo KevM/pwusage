@@ -55,4 +55,20 @@ describe('RollupBackfillRepo', () => {
     expect(sql).toContain('newest_date <'); // guard
     expect(params).toEqual(['s1', '2026-06-12']);
   });
+
+  it('retry sets status=pending and updates newest_date and days_total for error rows', async () => {
+    q().mockResolvedValueOnce({ rows: [] });
+    await new RollupBackfillRepo().retry('s1', '2026-06-15');
+    const [sql, params] = q().mock.calls.at(-1)!;
+    expect(sql).toContain("status = 'pending'");
+    expect(sql).toContain("status = 'error'");
+    expect(params).toEqual(['s1', '2026-06-15']);
+  });
+
+  it('claimNext includes reclaiming error rows older than 1 hour', async () => {
+    q().mockResolvedValueOnce({ rows: [{ site_id: 's1' }] });
+    await new RollupBackfillRepo().claimNext(10);
+    const [sql] = q().mock.calls.at(-1)!;
+    expect(sql).toContain("status = 'error' AND updated_at < now() - interval '1 hour'");
+  });
 });
