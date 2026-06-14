@@ -13,7 +13,6 @@ export function RoiConfigForm({ siteId, initial }: { siteId: string; initial: Si
     const [form, setForm] = useState({
         solar_cost: initial?.solar_cost ?? '', solar_install_date: initial?.solar_install_date ?? '',
         battery_cost: initial?.battery_cost ?? '', battery_install_date: initial?.battery_install_date ?? '',
-        fixed_buy_rate: initial?.fixed_buy_rate ?? '', fixed_sell_rate: initial?.fixed_sell_rate ?? '',
     });
     const [saving, setSaving] = useState(false);
     const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value });
@@ -43,15 +42,13 @@ export function RoiConfigForm({ siteId, initial }: { siteId: string; initial: Si
         <Card>
             <CardHeader>
                 <CardTitle>ROI / Savings</CardTitle>
-                <CardDescription>System costs and the flat rate plan to compare against.</CardDescription>
+                <CardDescription>System costs for ROI calculations.</CardDescription>
             </CardHeader>
             <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {field('Solar net cost ($)', 'solar_cost')}
                 {field('Solar install date', 'solar_install_date', 'date')}
                 {field('Battery net cost ($)', 'battery_cost')}
                 {field('Battery install date', 'battery_install_date', 'date')}
-                {field('Flat plan buy rate ($/kWh)', 'fixed_buy_rate', 'number', '0.001')}
-                {field('Flat plan sell rate ($/kWh)', 'fixed_sell_rate', 'number', '0.001')}
                 <div className="sm:col-span-2 mt-2">
                     <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save ROI settings'}</Button>
                 </div>

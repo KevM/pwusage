@@ -18,8 +18,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         solar_install_date: str(body.solar_install_date),
         battery_cost: num(body.battery_cost),
         battery_install_date: str(body.battery_install_date),
-        fixed_buy_rate: num(body.fixed_buy_rate),
-        fixed_sell_rate: num(body.fixed_sell_rate),
+        fixed_buy_rate: null,
+        fixed_sell_rate: null,
     });
     return NextResponse.json({ success: true });
 }

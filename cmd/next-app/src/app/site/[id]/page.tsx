@@ -386,7 +386,7 @@ export default async function SitePage({ params, searchParams }: {
 
 
                 settingsSlot={
-                    <SettingsView site={finalSite} installation={installation} roiConfig={roiConfig} />
+                    <SettingsView site={finalSite} installation={installation} roiConfig={roiConfig} comparisonPlans={comparisonPlans} />
                 }
 
             >
