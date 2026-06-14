@@ -23,7 +23,7 @@ export interface BackfillDeps {
   now: () => number;
 }
 
-export interface TickOptions { daysPerTick: number; budgetMs: number; }
+export interface TickOptions { daysPerTick: number; budgetMs: number; concurrency?: number; }
 
 export class BackfillService {
   constructor(private deps: BackfillDeps) {}
@@ -34,32 +34,56 @@ export class BackfillService {
     let daysDone = job.daysDone;
     let anchored = job.genesisAnchored;
     const startedAt = d.now();
+    const concurrency = Math.max(1, opts.concurrency ?? 1);
 
     try {
       const site = await d.loadSite(job.siteId);
       let processed = 0;
+
       while (
         cursor <= job.newestDate &&
         processed < opts.daysPerTick &&
         d.now() - startedAt < opts.budgetMs
       ) {
-        const { start, end } = d.localDayBounds(cursor, site.timezone);
-        const forceGenesisAtStart = !anchored;
-
-        let res: { genesisAnchored: boolean };
-        if (end.getTime() < d.retentionCutoff().getTime()) {
-          const rows = await d.fetchRange(site, start, end);          // Tesla → memory, never persisted
-          res = await d.rollupDay(site.id, cursor, { rows, forceGenesisAtStart });
-        } else {
-          await d.ensureData(site.id, start, end);                    // persist recent EnergyData
-          res = await d.rollupDay(site.id, cursor, { forceGenesisAtStart });
+        // Build the next batch of days (ascending), bounded by concurrency,
+        // the remaining day-per-tick cap, and newest_date.
+        const batch: Array<{ date: string; start: Date; end: Date; isOld: boolean }> = [];
+        let scan = cursor;
+        while (
+          batch.length < concurrency &&
+          processed + batch.length < opts.daysPerTick &&
+          scan <= job.newestDate
+        ) {
+          const { start, end } = d.localDayBounds(scan, site.timezone);
+          batch.push({ date: scan, start, end, isOld: end.getTime() < d.retentionCutoff().getTime() });
+          scan = addLocalDays(scan, 1);
         }
-        if (!anchored && res.genesisAnchored) anchored = true;
 
-        cursor = addLocalDays(cursor, 1);
-        daysDone += 1;
-        processed += 1;
-        await d.recordProgress(site.id, cursor, daysDone, anchored); // incremental commit
+        // Fetch every day in the batch concurrently. Pre-retention days return rows
+        // held in memory (never persisted); within-retention days are persisted via
+        // ensureData and rolled up from the DB below.
+        const fetched = await Promise.all(
+          batch.map(async (day) => {
+            if (day.isOld) return await d.fetchRange(site, day.start, day.end);
+            await d.ensureData(site.id, day.start, day.end);
+            return undefined;
+          }),
+        );
+
+        // Roll up the batch sequentially to preserve tank-state continuity.
+        for (let i = 0; i < batch.length; i++) {
+          const day = batch[i];
+          const forceGenesisAtStart = !anchored;
+          const res = day.isOld
+            ? await d.rollupDay(site.id, day.date, { rows: fetched[i], forceGenesisAtStart })
+            : await d.rollupDay(site.id, day.date, { forceGenesisAtStart });
+          if (!anchored && res.genesisAnchored) anchored = true;
+
+          cursor = addLocalDays(day.date, 1);
+          daysDone += 1;
+          processed += 1;
+          await d.recordProgress(site.id, cursor, daysDone, anchored);
+        }
       }
       if (cursor > job.newestDate) await d.markComplete(site.id);
     } catch (e) {

@@ -77,4 +77,57 @@ describe('BackfillService.processSite', () => {
     expect(deps.markError).toHaveBeenCalledWith('S1', 'boom');
     expect(deps.markComplete).not.toHaveBeenCalled();
   });
+
+  it('fetches a batch of pre-retention days in parallel (up to concurrency)', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const fetchRange = vi.fn(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await Promise.resolve(); // yield so sibling fetches can start before this one resolves
+      active -= 1;
+      return [] as EnergyData[];
+    });
+    const deps = makeDeps({ fetchRange });
+    await new BackfillService(deps).processSite(
+      job({ newestDate: '2021-06-03' }), // 3 days -> one batch
+      { daysPerTick: 100, budgetMs: 1e9, concurrency: 3 },
+    );
+    expect(fetchRange).toHaveBeenCalledTimes(3);
+    expect(maxActive).toBe(3);
+  });
+
+  it('rolls up batched days in ascending date order despite concurrent fetch', async () => {
+    const deps = makeDeps();
+    await new BackfillService(deps).processSite(
+      job({ newestDate: '2021-06-03' }),
+      { daysPerTick: 100, budgetMs: 1e9, concurrency: 3 },
+    );
+    const dates = (deps.rollupDay as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
+    expect(dates).toEqual(['2021-06-01', '2021-06-02', '2021-06-03']);
+  });
+
+  it('caps a batch at daysPerTick even when concurrency is larger', async () => {
+    const deps = makeDeps();
+    await new BackfillService(deps).processSite(
+      job(), // 5 days available
+      { daysPerTick: 2, budgetMs: 1e9, concurrency: 5 },
+    );
+    expect((deps.fetchRange as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    expect((deps.rollupDay as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    expect(deps.recordProgress).toHaveBeenLastCalledWith('S1', '2021-06-03', 2, false);
+    expect(deps.markComplete).not.toHaveBeenCalled();
+  });
+
+  it('does not start a new batch once the budget is exhausted', async () => {
+    let t = 0;
+    const deps = makeDeps({ now: () => (t += 100) }); // startedAt=100, first while-check=200
+    await new BackfillService(deps).processSite(
+      job(), // 5 days available
+      { daysPerTick: 100, budgetMs: 150, concurrency: 2 },
+    );
+    // Batch 1 (2 days) runs; the budget check before batch 2 fails -> stop mid-job.
+    expect((deps.rollupDay as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    expect(deps.markComplete).not.toHaveBeenCalled();
+  });
 });
