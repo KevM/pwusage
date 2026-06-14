@@ -20,12 +20,20 @@ export type { EnergyDataRow } from './energy-transformer';
 
 
 
+export interface ImporterOptions {
+    /** Fetch Tesla SOE history alongside energy history (populates battery_soc).
+     *  Defaults to true. Disable for high-volume backfill workflows to halve
+     *  Tesla API calls and avoid 429s — SOE is optional for rollups. */
+    fetchSoe?: boolean;
+}
+
 export class Importer {
     private client: TeslaClient;
     private repo: EnergyRepo;
     private siteRepo: SiteRepo;
     private userRepo: UserRepo;
     private tariffRepo: TariffRepo;
+    private fetchSoe: boolean;
 
 
     // Prevent multiple simultaneous syncs (persist across HMR in dev)
@@ -37,12 +45,13 @@ export class Importer {
         return (global as unknown as { importerMaintenanceCache?: Map<string, number> }).importerMaintenanceCache ??= new Map<string, number>();
     }
 
-    constructor(client: TeslaClient) {
+    constructor(client: TeslaClient, options?: ImporterOptions) {
         this.client = client;
         this.repo = new EnergyRepo();
         this.siteRepo = new SiteRepo();
         this.userRepo = new UserRepo();
         this.tariffRepo = new TariffRepo();
+        this.fetchSoe = options?.fetchSoe ?? true;
     }
 
 
@@ -236,10 +245,12 @@ export class Importer {
 
             const history = await this.client.getEnergyHistory(site.id, cursor, next, period, site.timezone);
             let soeHistory: SoeHistoryEntry[] = [];
-            try {
-                soeHistory = await this.client.getSoeHistory(site.id, cursor, next, period, site.timezone);
-            } catch (error) {
-                console.warn(`[Importer] SOE history fetch failed for ${site.id} (${cursor.toISOString()}-${next.toISOString()})`, error);
+            if (this.fetchSoe) {
+                try {
+                    soeHistory = await this.client.getSoeHistory(site.id, cursor, next, period, site.timezone);
+                } catch (error) {
+                    console.warn(`[Importer] SOE history fetch failed for ${site.id} (${cursor.toISOString()}-${next.toISOString()})`, error);
+                }
             }
             if (history && history.length > 0) {
                 const rows = await this.processHistory(
@@ -355,10 +366,12 @@ export class Importer {
             throw err;
         }
         let soeHistory: SoeHistoryEntry[] = [];
-        try {
-            soeHistory = await this.client.getSoeHistory(site.id, start, actualEnd, period, site.timezone);
-        } catch (error) {
-            console.warn(`[Importer] SOE history fetch failed for ${site.id} (${start.toISOString()}-${actualEnd.toISOString()})`, error);
+        if (this.fetchSoe) {
+            try {
+                soeHistory = await this.client.getSoeHistory(site.id, start, actualEnd, period, site.timezone);
+            } catch (error) {
+                console.warn(`[Importer] SOE history fetch failed for ${site.id} (${start.toISOString()}-${actualEnd.toISOString()})`, error);
+            }
         }
 
         // Update last_checked_at if we successfully called the API

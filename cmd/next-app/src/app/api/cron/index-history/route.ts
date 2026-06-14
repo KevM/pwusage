@@ -41,7 +41,10 @@ export async function GET(request: NextRequest) {
       await backfillRepo.markError(job.site_id, 'no Tesla tokens');
       continue;
     }
-    const importer = new Importer(client);
+    // Skip Tesla SOE history in the backfill workflow: it doubles Tesla API
+    // calls and triggers 429s. SOE only feeds the optional battery_soc snapshot
+    // and genesis anchoring, neither of which the rollup energy math depends on.
+    const importer = new Importer(client, { fetchSoe: false });
     const rollupService = new RollupService({
       loadSite: async (id) => {
         const s = await siteRepo.getSite(id);

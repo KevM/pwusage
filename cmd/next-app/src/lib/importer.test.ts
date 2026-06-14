@@ -198,6 +198,47 @@ describe('Importer Sync Logic', () => {
         expect(rows[0].grid_power).toBe(64);
     });
 
+    describe('SOE fetch toggle', () => {
+        const range = { start: new Date('2026-04-27T00:00:00Z'), end: new Date('2026-04-28T00:00:00Z') };
+        const site = {
+            id: 'site-123',
+            timezone: 'America/Chicago',
+            installed: new Date('2025-01-01T00:00:00Z'),
+            tariffs: [],
+        } as unknown as Parameters<Importer['fetchRange']>[0];
+
+        beforeEach(() => {
+            (mockClient.getEnergyHistory as unknown as ReturnType<typeof vi.fn>) = vi.fn().mockResolvedValue([]);
+            (mockClient.getSoeHistory as unknown as ReturnType<typeof vi.fn>) = vi.fn().mockResolvedValue([]);
+        });
+
+        it('fetches SOE history by default in fetchRange', async () => {
+            await importer.fetchRange(site, range.start, range.end, 'day');
+            expect(mockClient.getSoeHistory).toHaveBeenCalled();
+        });
+
+        it('skips SOE history in fetchRange when constructed with fetchSoe: false', async () => {
+            const noSoe = new Importer(mockClient, { fetchSoe: false });
+            await noSoe.fetchRange(site, range.start, range.end, 'day');
+            expect(mockClient.getEnergyHistory).toHaveBeenCalled();
+            expect(mockClient.getSoeHistory).not.toHaveBeenCalled();
+        });
+
+        it('skips SOE history in loadInterval when constructed with fetchSoe: false', async () => {
+            const noSoe = new Importer(mockClient, { fetchSoe: false });
+            (noSoe as unknown as { siteRepo: unknown }).siteRepo = {
+                getSite: vi.fn().mockResolvedValue(site),
+                invalidateCache: vi.fn(),
+            };
+            (noSoe as unknown as { repo: unknown }).repo = {
+                insertEnergyDataBatch: vi.fn(),
+            };
+            await noSoe.importRange('site-123', range.start, range.end, 'day');
+            expect(mockClient.getEnergyHistory).toHaveBeenCalled();
+            expect(mockClient.getSoeHistory).not.toHaveBeenCalled();
+        });
+    });
+
     it('audits coverage using site midnight when start is non-midnight', async () => {
         // Simulate the bug: caller passes autoBackfillLimit at 14:30, which has full-day data
         // Without the fix, early-day rows are omitted from existingTimestamps, falsely triggering re-import
