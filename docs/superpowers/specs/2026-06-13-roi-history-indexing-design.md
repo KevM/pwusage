@@ -159,6 +159,33 @@ Reads `RollupBackfill` alongside `SiteRoiConfig`:
 - **`complete`** → the normal ROI report. (A `complete` row with `newest_date < yesterday` is re-opened on load per heal-on-return, then renders as `running`.)
 - **`error`** → a retry affordance (re-`POST` resets to `pending`).
 
+## Admin — indexing status in the site list
+
+The admin dashboard (`AdminDashboard.tsx`, fed by `UserRepo.getAllUsers()`) is a per-user table whose **Sites** column lists each user's sites. Augment that column so an admin can see, at a glance, where every site sits in the migration and drill into the details on hover.
+
+### Data
+
+Extend the admin query to include each site's `RollupBackfill` summary (a `LEFT JOIN "RollupBackfill" ON site_id`, so un-opted-in sites come back `NULL`). Per site, surface: `status`, `oldest_date`, `cursor_date`, `newest_date`, `days_done`, `days_total`, `last_error`, `updated_at`. Egress/perf is negligible — admin-only, one small row per opted-in site. Authz is the existing `isUserAdmin()` gate; no new endpoint.
+
+### UI — status badge + hover details
+
+Beside each site name, render a compact **status badge** derived from the row:
+
+| Row state | Badge | Tone |
+|---|---|---|
+| no row | "Not indexed" | muted |
+| `pending` | "Queued" | neutral |
+| `running` | "Indexing N%" (`days_done/days_total`) | in-progress |
+| `complete` | "Indexed" | success |
+| `error` | "Error" | danger |
+
+On **hover**, a tooltip shows the migration detail:
+- `status`, percent complete (`days_done / days_total`)
+- current `cursor_date`, and the full range `oldest_date → newest_date`
+- `updated_at` (last progress) and, if `status = 'error'`, `last_error`
+
+The tooltip mechanism follows existing UI primitives (a lightweight popover or native `title`); content is the contract here, not the widget. This is read-only — no admin action to start/stop a migration in v1 (the worker self-drives; opt-in is user-initiated).
+
 ## Concurrency & interaction notes
 
 - **Worker vs worker:** advisory lock per site.
@@ -174,6 +201,7 @@ Reads `RollupBackfill` alongside `SiteRoiConfig`:
 - **Heal-on-return:** a `complete` row with `newest_date < yesterday` is re-opened from the parked cursor; the worker re-rolls the gap and re-chains the tank; a no-data day in the gap advances the cursor without re-flagging.
 - **Hourly timezone selection:** a site is selected only when its local time is in the 2–5 band; selection is DST-safe (spring-forward day still selects within the band); a site already holding a complete yesterday-local rollup is skipped (dedup across band hours); half-hour-offset zones land in the band.
 - **Partial/empty/complete rule:** empty day → no import, no rollup; partial day → finish-import then roll a complete day; complete day → roll with zero Tesla; finish-import that still can't complete → skip (no partial rollup persisted).
+- **Admin status:** the admin query LEFT-JOINs `RollupBackfill` (un-opted-in sites → no row → "Not indexed"); badge state maps correctly for each status; `running` shows the right percent; the hover detail includes cursor/range/updated_at and surfaces `last_error` on `error`.
 - **Idempotency:** re-running any processed day yields identical rollup rows (incl. `solar_only_*`).
 - **Integration:** a synthetic multi-day site indexed end-to-end produces continuous rollups with correct `solar_only_*` and a continuous tank chain across a seeded gap.
 
@@ -196,3 +224,4 @@ Reads `RollupBackfill` alongside `SiteRoiConfig`:
 7b. **Rollup cadence:** `cron/rollup` moves to hourly, processing each site ~1–2 h after its own local midnight via a DST-safe 2–5 local-hour band with complete-day dedup; replaces the single 8am-UTC run and removes the need for a `newest_date` boundary offset.
 8. **Egress:** roll up from in-memory imported rows for fully-fetched days; keep the replay in TypeScript; defer the full in-DB rollup.
 9. **Genesis:** `forceGenesisAtStart` when `cursor === oldest_date` so re-indexing a site that already has forward rollups anchors correctly.
+10. **Admin visibility:** the admin site list shows a per-site indexing badge with hover details (read-only in v1), via a `LEFT JOIN "RollupBackfill"` on the existing admin query.
