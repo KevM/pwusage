@@ -396,3 +396,19 @@ describe('SiteRepo current-version tariff filter', () => {
         expect(sql).toContain('t.is_current');
     });
 });
+
+describe('SiteRepo metered tariff loading', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+        new SiteRepo().invalidateCache('site-1');
+    });
+
+    it('excludes reporting-only tariffs from the loaded site', async () => {
+        queryMock.mockResolvedValue({ rows: [] });
+        await new SiteRepo().getSite('site-1');
+        const sql = String(queryMock.mock.calls[0][0]);
+        expect(sql).toMatch(/Tariff".*ON.*is_current/s);
+        expect(sql).toMatch(/NOT\s+t\.reporting_only/);
+    });
+});
+

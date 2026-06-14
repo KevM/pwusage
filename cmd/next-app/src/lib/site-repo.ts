@@ -93,6 +93,8 @@ export class SiteRepo {
                 t.name        AS tariff_name,
                 t.updated     AS tariff_updated,
                 t.site_id     AS tariff_site_id,
+                t.reporting_only AS tariff_reporting_only,
+                t.effective_from::text AS tariff_effective_from,
                 ts.id         AS season_id,
                 ts.name       AS season_name,
                 ts.from_month, ts.from_day, ts.to_month, ts.to_day,
@@ -106,7 +108,7 @@ export class SiteRepo {
                 sch.to_day_of_week,   sch.to_hour,  sch.to_minute
             FROM "Site" s
             LEFT JOIN "User"           u   ON u.id          = s.user_id
-            LEFT JOIN "Tariff"         t   ON t.site_id     = s.id AND t.is_current
+            LEFT JOIN "Tariff"         t   ON t.site_id     = s.id AND t.is_current AND NOT t.reporting_only
             LEFT JOIN "TariffSeason"   ts  ON ts.tariff_id  = t.id
             LEFT JOIN "TariffSchedule" sch ON sch.season_id = ts.id
             WHERE s.id = ANY($1::text[])
@@ -155,6 +157,8 @@ export class SiteRepo {
                     site_id: row.tariff_site_id as string,
                     updated: new Date(row.tariff_updated as string | Date),
                     name: (row.tariff_name as string | null) ?? null,
+                    reporting_only: row.tariff_reporting_only === true,
+                    effective_from: (row.tariff_effective_from as string | null) ?? null,
                     seasons: [],
                 };
                 tariffMap.set(tariffId, tariff);
