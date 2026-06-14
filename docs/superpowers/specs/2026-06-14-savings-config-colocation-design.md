@@ -92,14 +92,15 @@ States:
 
 `cmd/next-app/src/components/site/savings/IndexingStatus.tsx`
 
-- Render branches keyed off status:
+- Render branches keyed off status (no action buttons in any error branch):
   - `pending` | `running`: progress card (unchanged).
-  - `error`: an "in process" card — progress bar at last cursor plus a "Paused — will retry
-    automatically" note. For the terminal case (`last_error` starts with `[attempts=5]`, which the
-    cron no longer reclaims), surface a manual **Retry** button that POSTs to the same
-    `/index-history` route (the handler routes `error` → `retry()`).
+  - `error`, non-terminal (`last_error` not `[attempts=5]…`): "in process" card — progress bar at
+    last cursor plus a "Paused — will retry automatically" note.
+  - `error`, terminal (`last_error` starts with `[attempts=5]`, which the cron no longer reclaims):
+    "Reconstruction paused — it will resume later" message, **no button** (avoids users hammering a
+    failing Tesla API).
   - no backfill row (`null`): the "Index history" start CTA (unchanged).
-  - The bug fix: the start CTA is now reachable **only** when `backfill == null`, never for `error`.
+  - The bug fix: the start CTA is reachable **only** when `backfill == null`, never for `error`.
 - While the backfill is in process (`pending` | `running` | `error`), a `useEffect` registers a
   10-minute `setInterval` calling `router.refresh()`, cleared on unmount/status change.
 
@@ -128,7 +129,7 @@ States:
 
 | Condition | Render |
 |---|---|
-| backfill pending / running / error | `IndexingStatus` only (takeover, self-refresh); error shows "paused, retrying" + terminal Retry |
+| backfill pending / running / error | `IndexingStatus` only (takeover, self-refresh); error shows "paused, retrying" (terminal: "paused, will resume later", no button) |
 | summary null, not in process | `SavingsSettings` (open) + index-history start CTA if `backfill == null` |
 | summary present, not in process | savings output + `SavingsSettings` (collapsed) |
 
@@ -137,9 +138,9 @@ States:
 - `SavingsView`: state-selection tests — pending/running/**error** → takeover; unconfigured (no
   backfill) → settings expanded + start CTA; configured → savings output present + settings collapsed.
 - `SavingsSettings`: toggle expands/collapses; `defaultOpen` honored.
-- `IndexingStatus`: **start CTA renders only when `backfill == null`**; `error` status renders the
-  paused/retrying card (not the start button); terminal `[attempts=5]` error renders the Retry
-  button. With fake timers, `router.refresh()` fires on the 10-minute interval while in process and
-  the interval is cleared on unmount.
+- `IndexingStatus`: **start CTA renders only when `backfill == null`**; non-terminal `error` renders
+  the paused/retrying card (not the start button); terminal `[attempts=5]` error renders the
+  "paused, will resume later" message with no button. With fake timers, `router.refresh()` fires on
+  the 10-minute interval while in process and the interval is cleared on unmount.
 - Run `npm run lint` and `npm run build` to confirm the removed `SettingsView` props and deleted
   `SavingsEmptyState` leave no dangling references.
