@@ -17,6 +17,15 @@ Two pieces of savings UX are split from where they belong:
 2. **Rollup status fills in but never updates.** When a historical rollup (backfill) is in process,
    `IndexingStatus` shows a progress card, but the page only advances on a manual reload.
 
+3. **The start button reappears mid-index.** The UI treats only `pending`/`running` as "in
+   progress." A backfill that hits a recoverable error flips to `status === 'error'` while still
+   being an in-flight job — the cron's `claimNext` automatically reclaims `error` rows (after 1h, up
+   to 5 attempts; see `rollup-backfill-repo.ts`). During that window `IndexingStatus` falls through
+   to its default branch and renders the "Index history" *start* button. Given the recent run of
+   Tesla 529 "overload" errors, the `error` state is hit often, so the button reappears
+   intermittently mid-index. (The POST handler already routes `error` → `retry()` preserving the
+   cursor, so clicking is not destructive — but the button is wrong UX.)
+
 ## Goals
 
 - Co-locate all savings-related configuration on the Savings tab.
@@ -24,6 +33,8 @@ Two pieces of savings UX are split from where they belong:
   at.
 - Keep the in-process rollup as a full-screen takeover, but let progress advance and the view fill in
   automatically (~10 min refresh).
+- Treat a backfill that is in an `error` state as still in process (it auto-retries), not as
+  "not started." Only offer the "Index history" *start* CTA when no backfill row exists.
 
 ## Non-goals
 
@@ -57,15 +68,22 @@ untouched.
 
 `cmd/next-app/src/components/site/savings/SavingsView.tsx`
 
-Gains props `roiConfig` and `comparisonPlans`. Selects among three states:
+Gains props `roiConfig` and `comparisonPlans`. The "in process" predicate is widened to include the
+`error` state, since an `error` backfill is still an auto-retrying in-flight job:
 
-- **Indexing in process** (`backfill.status` is `pending` or `running`): full-screen takeover —
-  render `IndexingStatus` only. Unchanged except `IndexingStatus` now self-refreshes.
-- **Not configured** (`summary == null`, not indexing): lead with `SavingsSettings` expanded
-  (`defaultOpen=true`); also render the `IndexingStatus` "Index history" prompt when no backfill
-  exists yet. `SavingsEmptyState` is removed — the inline config replaces its "go to Settings →"
-  message.
-- **Configured** (`summary != null`, not indexing): render savings output first (PaybackHero,
+```ts
+const inProcess = backfill != null && backfill.status !== 'complete';
+```
+
+States:
+
+- **Indexing in process** (`inProcess`, i.e. `pending` | `running` | `error`): full-screen takeover —
+  render `IndexingStatus` only, now self-refreshing.
+- **Not configured** (`summary == null`, not in process): lead with `SavingsSettings` expanded
+  (`defaultOpen=true`); also render the `IndexingStatus` "Index history" start prompt when no
+  backfill row exists yet. `SavingsEmptyState` is removed — the inline config replaces its "go to
+  Settings →" message.
+- **Configured** (`summary != null`, not in process): render savings output first (PaybackHero,
   recommendation note, ScenarioMatrix, fixed-plan note, chart, component cards, arbitrage), then
   `SavingsSettings` collapsed (`defaultOpen=false`) at the bottom. The existing incomplete-backfill
   banner (`showBackfillPrompt`) stays above the output.
@@ -74,9 +92,16 @@ Gains props `roiConfig` and `comparisonPlans`. Selects among three states:
 
 `cmd/next-app/src/components/site/savings/IndexingStatus.tsx`
 
-- While `backfill.status` is `pending`/`running`, a `useEffect` registers a 10-minute `setInterval`
-  that calls `router.refresh()`, cleared on unmount/status change.
-- Visual presentation of the progress card is unchanged.
+- Render branches keyed off status:
+  - `pending` | `running`: progress card (unchanged).
+  - `error`: an "in process" card — progress bar at last cursor plus a "Paused — will retry
+    automatically" note. For the terminal case (`last_error` starts with `[attempts=5]`, which the
+    cron no longer reclaims), surface a manual **Retry** button that POSTs to the same
+    `/index-history` route (the handler routes `error` → `retry()`).
+  - no backfill row (`null`): the "Index history" start CTA (unchanged).
+  - The bug fix: the start CTA is now reachable **only** when `backfill == null`, never for `error`.
+- While the backfill is in process (`pending` | `running` | `error`), a `useEffect` registers a
+  10-minute `setInterval` calling `router.refresh()`, cleared on unmount/status change.
 
 ### 4. `SettingsView` (modified)
 
@@ -103,16 +128,18 @@ Gains props `roiConfig` and `comparisonPlans`. Selects among three states:
 
 | Condition | Render |
 |---|---|
-| backfill pending/running | `IndexingStatus` only (takeover, self-refresh) |
-| summary null, not indexing | `SavingsSettings` (open) + index-history prompt if no backfill |
-| summary present, not indexing | savings output + `SavingsSettings` (collapsed) |
+| backfill pending / running / error | `IndexingStatus` only (takeover, self-refresh); error shows "paused, retrying" + terminal Retry |
+| summary null, not in process | `SavingsSettings` (open) + index-history start CTA if `backfill == null` |
+| summary present, not in process | savings output + `SavingsSettings` (collapsed) |
 
 ## Testing
 
-- `SavingsView`: state-selection tests — indexing → takeover; unconfigured → settings expanded;
-  configured → savings output present + settings collapsed.
+- `SavingsView`: state-selection tests — pending/running/**error** → takeover; unconfigured (no
+  backfill) → settings expanded + start CTA; configured → savings output present + settings collapsed.
 - `SavingsSettings`: toggle expands/collapses; `defaultOpen` honored.
-- `IndexingStatus`: with fake timers, `router.refresh()` fires on the 10-minute interval while
-  running and the interval is cleared on unmount.
+- `IndexingStatus`: **start CTA renders only when `backfill == null`**; `error` status renders the
+  paused/retrying card (not the start button); terminal `[attempts=5]` error renders the Retry
+  button. With fake timers, `router.refresh()` fires on the 10-minute interval while in process and
+  the interval is cleared on unmount.
 - Run `npm run lint` and `npm run build` to confirm the removed `SettingsView` props and deleted
   `SavingsEmptyState` leave no dangling references.
