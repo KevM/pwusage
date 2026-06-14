@@ -1,0 +1,42 @@
+'use client';
+import { useState } from 'react';
+import type { SiteRoiConfig } from '@/lib/db';
+import type { ComparisonPlan } from '@/lib/roi/comparison-tariff-repo';
+import { RoiConfigForm } from '@/components/site/RoiConfigForm';
+import { ComparisonTariffEditor } from '@/components/site/ComparisonTariffEditor';
+
+export function SavingsSettings({
+  siteId,
+  roiConfig,
+  comparisonPlans,
+  meteredPlanName,
+  defaultOpen,
+}: {
+  siteId: string;
+  roiConfig: SiteRoiConfig | null;
+  comparisonPlans: ComparisonPlan[];
+  meteredPlanName: string;
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div className="space-y-4">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 text-sm font-medium text-foreground/80 hover:text-foreground cursor-pointer"
+        aria-expanded={open}
+      >
+        <span className={`transition-transform ${open ? 'rotate-90' : ''}`}>▸</span>
+        ⚙️ Savings settings
+      </button>
+      {open && (
+        <div className="space-y-6">
+          <RoiConfigForm siteId={siteId} initial={roiConfig} />
+          <ComparisonTariffEditor siteId={siteId} plans={comparisonPlans} meteredPlanName={meteredPlanName} />
+        </div>
+      )}
+    </div>
+  );
+}
