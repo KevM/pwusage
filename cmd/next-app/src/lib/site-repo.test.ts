@@ -407,7 +407,7 @@ describe('SiteRepo metered tariff loading', () => {
         queryMock.mockResolvedValue({ rows: [] });
         await new SiteRepo().getSite('site-1');
         const sql = String(queryMock.mock.calls[0][0]);
-        expect(sql).toMatch(/Tariff".*ON.*is_current/s);
+        expect(sql).toMatch(/Tariff"[\s\S]*ON[\s\S]*is_current/);
         expect(sql).toMatch(/NOT\s+t\.reporting_only/);
     });
 });
