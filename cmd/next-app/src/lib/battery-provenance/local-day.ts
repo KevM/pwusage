@@ -28,3 +28,10 @@ export function localDayBoundsUtc(localDate: string, timeZone: string): { start:
     const end = new Date(endGuess.getTime() - tzOffsetMs(endGuess, timeZone));
     return { start, end };
 }
+
+/** Add n whole days to a 'YYYY-MM-DD' string (calendar arithmetic, timezone-independent). */
+export function addLocalDays(localDate: string, n: number): string {
+    const d = new Date(`${localDate}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+}

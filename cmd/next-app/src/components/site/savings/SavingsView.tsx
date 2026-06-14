@@ -2,19 +2,33 @@ import type { RoiSummary } from '@/lib/roi/roi-service';
 import { PaybackHero } from './PaybackHero';
 import { ScenarioMatrix } from './ScenarioMatrix';
 import { SavingsEmptyState } from './SavingsEmptyState';
+import { IndexingStatus } from './IndexingStatus';
+import type { RollupBackfill } from '@/lib/db';
 
 const usd = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
 export function SavingsView({
     summary,
     arbitrageSlot,
-    chartSlot
+    chartSlot,
+    siteId,
+    backfill,
 }: {
     summary: RoiSummary | null;
     arbitrageSlot?: React.ReactNode;
     chartSlot?: React.ReactNode;
+    siteId: string;
+    backfill: RollupBackfill | null;
 }) {
-    if (!summary) return <SavingsEmptyState />;
+    const indexing = backfill?.status === 'pending' || backfill?.status === 'running';
+    if (!summary || indexing) {
+        return (
+            <div className="space-y-6 max-w-5xl mx-auto">
+                <IndexingStatus siteId={siteId} backfill={backfill} />
+                {!summary && !backfill && <SavingsEmptyState />}
+            </div>
+        );
+    }
     return (
         <div className="space-y-6 max-w-5xl mx-auto">
             <PaybackHero summary={summary} />

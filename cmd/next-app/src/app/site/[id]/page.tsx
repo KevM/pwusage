@@ -31,6 +31,8 @@ import { SavingsView } from '@/components/site/savings/SavingsView';
 import { computeArbitrage } from '@/lib/roi/arbitrage-service';
 import { ArbitragePanel } from '@/components/site/savings/ArbitragePanel';
 import { SavingsChart } from '@/components/site/savings/SavingsChart';
+import { RollupBackfillRepo } from '@/lib/battery-provenance/rollup-backfill-repo';
+import { localDateKey } from '@/lib/battery-provenance/local-day';
 
 
 
@@ -290,6 +292,12 @@ export default async function SitePage({ params, searchParams }: {
     let roiSummary = null;
     let arbitrage = null;
     let savingsSeries = null;
+
+    const backfillRepo = new RollupBackfillRepo();
+    const yesterday = localDateKey(new Date(siteNow.getTime() - 86400_000), finalSite.timezone);
+    await backfillRepo.reopenIfBehind(finalSite.id, yesterday); // heal a dormant gap on visit
+    const backfill = await backfillRepo.get(finalSite.id);
+
     if (roiConfig && roiConfig.fixed_buy_rate != null && roiConfig.fixed_sell_rate != null
         && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {
         const rollups = await new RollupRepo().getAllForSite(finalSite.id);
@@ -356,6 +364,8 @@ export default async function SitePage({ params, searchParams }: {
                 savingsSlot={
                     <SavingsView
                         summary={roiSummary}
+                        siteId={finalSite.id}
+                        backfill={backfill}
                         arbitrageSlot={arbitrage ? <ArbitragePanel summary={arbitrage} /> : null}
                         chartSlot={savingsSeries && roiConfig ? <SavingsChart series={savingsSeries} systemCost={(roiConfig.solar_cost ?? 0) + (roiConfig.battery_cost ?? 0)} /> : null}
                     />

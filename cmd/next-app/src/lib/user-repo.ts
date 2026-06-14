@@ -67,8 +67,20 @@ export class UserRepo {
 
         // Fetch all sites (optimization: fetch all and map in memory instead of N+1 queries)
         // We also strip tokens from Site results here
-        const siteRes = await pool.query('SELECT id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode FROM "Site"');
-        const sites = siteRes.rows as Site[];
+        const siteRes = await pool.query(`
+          SELECT s.id, s.user_id, s.name, s.utility, s.updated, s.installed, s.timezone,
+                 s.billing_start_day, s.timezone_display_mode,
+                 rb.status AS backfill_status, rb.days_done AS backfill_days_done,
+                 rb.days_total AS backfill_days_total, rb.cursor_date::text AS backfill_cursor,
+                 rb.newest_date::text AS backfill_newest, rb.oldest_date::text AS backfill_oldest,
+                 rb.last_error AS backfill_error, rb.updated_at AS backfill_updated
+          FROM "Site" s
+          LEFT JOIN "RollupBackfill" rb ON rb.site_id = s.id`);
+        const sites = siteRes.rows as (Site & {
+          backfill_status: string | null; backfill_days_done: number | null; backfill_days_total: number | null;
+          backfill_cursor: string | null; backfill_newest: string | null; backfill_oldest: string | null;
+          backfill_error: string | null; backfill_updated: Date | null;
+        })[];
 
         // Map sites to users
         const usersWithSites: UserWithSites[] = users.map(user => {

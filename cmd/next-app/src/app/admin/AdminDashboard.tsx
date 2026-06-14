@@ -98,15 +98,33 @@ export function AdminDashboard({ users }: AdminDashboardProps) {
                                             <TableCell className="px-6 py-4 whitespace-nowrap">
                                                 <div className="flex flex-col gap-1">
                                                     {user.sites.length > 0 ? (
-                                                        user.sites.map((site) => (
-                                                            <Link
-                                                                key={site.id}
-                                                                href={`/site/${site.id}`}
-                                                                className="text-xs font-medium text-primary hover:text-primary/80"
-                                                            >
-                                                                {site.name}
-                                                            </Link>
-                                                        ))
+                                                        user.sites.map((site) => {
+                                                            const s = site as typeof site & {
+                                                                backfill_status?: string | null; backfill_days_done?: number | null; backfill_days_total?: number | null;
+                                                                backfill_cursor?: string | null; backfill_oldest?: string | null; backfill_newest?: string | null;
+                                                                backfill_error?: string | null; backfill_updated?: string | null;
+                                                            };
+                                                            const pct = s.backfill_days_total ? Math.round((s.backfill_days_done! / s.backfill_days_total) * 100) : 0;
+                                                            const label = !s.backfill_status ? 'Not indexed'
+                                                                : s.backfill_status === 'pending' ? 'Queued'
+                                                                : s.backfill_status === 'running' ? `Indexing ${pct}%`
+                                                                : s.backfill_status === 'complete' ? 'Indexed' : 'Error';
+                                                            const tone = !s.backfill_status ? 'bg-gray-100 text-gray-500 dark:bg-slate-800'
+                                                                : s.backfill_status === 'complete' ? 'bg-green-100 text-green-700 dark:bg-green-950/40'
+                                                                : s.backfill_status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-950/40'
+                                                                : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40';
+                                                            const title = s.backfill_status
+                                                                ? `status=${s.backfill_status} ${pct}% (${s.backfill_days_done}/${s.backfill_days_total})\n`
+                                                                  + `cursor ${s.backfill_cursor}  range ${s.backfill_oldest}→${s.backfill_newest}\n`
+                                                                  + `updated ${s.backfill_updated ?? ''}${s.backfill_error ? `\nerror: ${s.backfill_error}` : ''}`
+                                                                : 'No history indexing for this site';
+                                                            return (
+                                                                <div key={site.id} className="flex items-center gap-2">
+                                                                    <Link href={`/site/${site.id}`} className="text-xs font-medium text-primary hover:text-primary/80">{site.name}</Link>
+                                                                    <span title={title} className={`text-[10px] px-1.5 py-0.5 rounded font-medium select-none ${tone}`}>{label}</span>
+                                                                </div>
+                                                            );
+                                                        })
                                                     ) : (
                                                         <span className="text-xs text-gray-400 italic">No Sites</span>
                                                     )}

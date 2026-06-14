@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { RollupService, type RollupDeps } from './rollup-service';
 import { Schedule } from '../schedule';
 import type { EnergyData } from '../db';
@@ -76,4 +76,50 @@ describe('RollupService.rollupDay', () => {
         expect(rollup.solarToBatteryWh).toBeCloseTo(3000, 2);
         expect(rollup.gridToBatteryWh).toBeCloseTo(3000, 2);
     });
+
+    it('forces genesis even when rollups already exist, anchoring at the full-SOC moment', async () => {
+        const persisted: PeriodRollup[] = [];
+        const deps: RollupDeps = {
+            loadSite: async () => ({ id: 'S1', timezone: 'UTC', tariffs }) as never,
+            loadEnergyData: async () => [
+                row('2026-01-02T06:00:00Z', { battery_soc: 70, battery_power: 3000, grid_power: 3000, battery_charge_from_grid: 3000 }),
+                row('2026-01-02T12:00:00Z', { battery_soc: 99, battery_power: 3000, solar_power: 3000, battery_charge_from_solar: 3000 }), // anchor
+                row('2026-01-02T18:00:00Z', { battery_soc: 60, battery_power: -3000, load_power: 3000 }),
+            ],
+            getSeedTank: async () => null,
+            hasAnyRollup: async () => true, // would normally SKIP genesis
+            upsertRollups: async (r) => { persisted.push(...r); },
+        };
+        const result = await new RollupService(deps).rollupDay('S1', '2026-01-02', { forceGenesisAtStart: true });
+        expect(result.genesisAnchored).toBe(true);
+        // Anchored full battery (6000 Wh) then discharged 3000 → 3000 remaining, NOT EMPTY_TANK.
+        expect(persisted[0].tank.solarWh + persisted[0].tank.gridWh).toBeCloseTo(3000, 2);
+    });
+
+    it('reports genesisAnchored=false when forced but the day has no full-SOC row', async () => {
+        const deps: RollupDeps = {
+            loadSite: async () => ({ id: 'S1', timezone: 'UTC', tariffs }) as never,
+            loadEnergyData: async () => [ row('2026-01-02T12:00:00Z', { battery_soc: 50, load_power: 1000, grid_power: 1000 }) ],
+            getSeedTank: async () => null,
+            hasAnyRollup: async () => true,
+            upsertRollups: async () => {},
+        };
+        const result = await new RollupService(deps).rollupDay('S1', '2026-01-02', { forceGenesisAtStart: true });
+        expect(result.genesisAnchored).toBe(false);
+    });
+
+    it('uses supplied rows and never calls loadEnergyData', async () => {
+        const loadEnergyData = vi.fn();
+        const deps: RollupDeps = {
+            loadSite: async () => ({ id: 'S1', timezone: 'UTC', tariffs }) as never,
+            loadEnergyData,
+            getSeedTank: async () => null,
+            hasAnyRollup: async () => false,
+            upsertRollups: async () => {},
+        };
+        const rows = [ row('2026-01-02T12:00:00Z', { battery_soc: 99, solar_power: 3000, battery_power: 3000, battery_charge_from_solar: 3000 }) ];
+        await new RollupService(deps).rollupDay('S1', '2026-01-02', { rows });
+        expect(loadEnergyData).not.toHaveBeenCalled();
+    });
 });
+

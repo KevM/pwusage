@@ -202,5 +202,18 @@ export interface SiteRoiConfig {
   fixed_sell_rate: number | null;
 }
 
+export interface RollupBackfill {
+  site_id: string;
+  status: 'pending' | 'running' | 'complete' | 'error';
+  oldest_date: string;  // 'YYYY-MM-DD'
+  cursor_date: string;  // 'YYYY-MM-DD' — next local day to process
+  newest_date: string;  // 'YYYY-MM-DD'
+  days_done: number;
+  days_total: number;
+  genesis_anchored: boolean;
+  last_error: string | null;
+}
+
+
 
 

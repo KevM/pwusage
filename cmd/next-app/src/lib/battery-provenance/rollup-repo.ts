@@ -79,6 +79,15 @@ export class RollupRepo {
         return res.rows.length > 0;
     }
 
+    /** True if any rollup row already exists for this local date (⇒ the day was rolled, i.e. complete). */
+    async hasRollupForDate(siteId: string, localDate: string): Promise<boolean> {
+        const res = await pool.query(
+            `SELECT 1 FROM "EnergyRollup" WHERE site_id = $1 AND local_date = $2 LIMIT 1`,
+            [siteId, localDate],
+        );
+        return res.rows.length > 0;
+    }
+
     async getAllForSite(siteId: string): Promise<import('../db').EnergyRollupRow[]> {
         const res = await pool.query(
             `SELECT site_id, local_date::text AS local_date, tariff_schedule_id,
