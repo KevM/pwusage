@@ -1,0 +1,180 @@
+# ROI History Indexing — Opt-In Backfill, Gap Healing & Egress-Aware Rollup
+
+**Date:** 2026-06-13
+**Status:** Design approved, pending spec review
+**Branch context:** `feat/roi` — builds on the Phase 1 battery-provenance foundation and the Phase 2 ROI report (`2026-06-13-roi-report-design.md`). Depends on the durable `EnergyRollup` (incl. the Phase 2 `solar_only_*` columns) and the `RollupService` / `replayRows` write path.
+
+## Problem
+
+The ROI / Savings report computes lifetime payback by folding **durable `EnergyRollup`** rows. But a site only has rollups for the days it was actually processed:
+
+- `rollupDay` is invoked from exactly one place — the nightly `cron/rollup` — and only ever for **yesterday**, for whatever `EnergyData` happens to exist.
+- `EnergyData` (the 5-min source) is **activity-driven**: it is imported only on page loads (`/api/import`, `/api/sync`, `/site/[id]/live`) and the restore-reserve cron (battery-hold sites only). Nothing imports it for a dormant site.
+- `EnergyData` older than `DATA_RETENTION_DAYS` (default 365) is purged by `cron/cleanup`; the durable rollup is what survives.
+
+Consequences:
+
+1. **New users** have no history before signup, even though Tesla retains their full history back to install. Lifetime payback is meaningless without it.
+2. **Existing users** may never have had a rollup run, or only have a partial range.
+3. **Dormant periods** leave holes — both historical and ongoing — and the nightly cron structurally cannot backfill a multi-day gap (it only does yesterday).
+4. The Phase 2 `solar_only_*` columns default to `0` on pre-existing rollup rows and must be recomputed by re-running the replay.
+
+We need a way to reconstruct a site's **complete, continuous** rollup history from install to yesterday, on demand, without exhausting Tesla API quota or database egress.
+
+## Goal
+
+An **opt-in, gradual, self-healing history indexer**:
+
+- A site is indexed only when its owner opts in (the report is gated on `SiteRoiConfig` anyway). No proactive fleet-wide Tesla spend.
+- Indexing re-fetches 5-min history from Tesla back to install and replays it into durable rollups, **oldest → newest**, throttled to a few sites' worth of progress per day.
+- Once indexed, a site **self-heals** dormancy gaps on its next Savings-tab visit.
+- The nightly cron is hardened so it never persists a rollup computed from partial data.
+- The backfill minimizes DB egress by rolling up from rows already held in memory after the Tesla fetch.
+
+## Key facts that shape the design
+
+- **Tesla retains full history regardless of our activity.** Any un-indexed range — pre-signup history or a dormancy gap — is recoverable by re-fetching. A gap is just an un-indexed range.
+- **The replay is sequential.** Genesis anchors a full battery at the earliest day; the tank (provenance Wh + cost basis) carries forward via `getSeedTank`. Backfill must walk **forward** from `oldest_date`, and a gap heal must re-replay *through* the gap to re-chain the tank for the days after it.
+- **`ensureDataForRange` ≠ rollup.** It only writes raw `EnergyData`; producing the rollup is a separate `rollupDay` call. The worker does both, per day.
+- **`planImport` already skips complete days.** It re-fetches a day only when `count === 0 || forceRefetch || missingStart || missingEnd` (`import-planner.ts`). A complete, already-rolled day costs **zero Tesla**; the rollup on top is an idempotent upsert. Safe to call liberally.
+- **`ensureDataForRange` returns the imported rows in memory.** For a day fetched in full (`count === 0` before fetch), those rows *are* the whole day — they can feed the replay directly, with no DB read-back.
+
+## Data model — `RollupBackfill` (new table)
+
+One **permanent** row per opted-in site. It is the site's coverage ledger and the cursor for resumable work. Coverage is tracked by the cursor, **not** inferred from which rollup rows exist (a day with no Tesla data must not look perpetually "missing").
+
+```
+site_id      text         PK, FK → Site
+status       text         NOT NULL   -- 'pending' | 'running' | 'complete' | 'error'
+oldest_date  date         NOT NULL   -- floor; = site.installed (planImport also floors here)
+cursor_date  date         NOT NULL   -- next local day to process; walks forward
+newest_date  date         NOT NULL   -- ceiling; = yesterday at (re)enroll time
+days_done    integer      NOT NULL DEFAULT 0
+days_total   integer      NOT NULL DEFAULT 0   -- for UI progress
+last_error   text         NULL
+created_at   timestamptz  NOT NULL DEFAULT now()
+updated_at   timestamptz  NOT NULL DEFAULT now()
+```
+
+Invariants:
+- Processed range is `[oldest_date, cursor_date)`. `status = 'complete'` ⟺ `cursor_date > newest_date`.
+- The cursor advances **regardless of whether a day yielded rollup rows** (empty/no-data days are processed-and-skipped, never re-flagged).
+- The row is never deleted; `status` cycles `complete → pending` when a heal re-opens it.
+
+Migration created via `npm run db:migration:create rollup_backfill` (idempotent, per repo convention).
+
+## Opt-in — `POST /api/site/[id]/index-history`
+
+- Authz: `verifySiteAccess(siteId)`.
+- Upserts a `RollupBackfill` row: `oldest_date = site.installed`, `cursor_date = oldest_date`, `newest_date = yesterday (site-local)`, `status = 'pending'`, `days_total = newest_date − oldest_date`.
+- Idempotent: if a row exists and is `running`/`pending`/`complete`, no-op (or, for `complete`, treat as a heal — see below). An `error` row is reset to `pending` (retry).
+- This is the **only** way a site's first index begins. No auto-enrollment, no activity scan.
+
+## Worker — `GET /api/cron/index-history`
+
+Driven by Supabase **pg_cron** every 15 min, mirroring the `restore-reserve` trigger: a new vault secret `index_history_cron_target_url` + reused `cron_secret`; `net.http_get` with the bearer header. Auth: `Authorization: Bearer ${CRON_SECRET}`.
+
+Per tick, within a bounded budget:
+
+1. **Pick work.** Select sites with `status IN ('pending','running')`, FIFO by `created_at` (a heal and a first index are equal-priority; both are user-initiated). Process up to `INDEX_HISTORY_SITES_PER_TICK` (default 1).
+2. **Lock.** `pg_try_advisory_lock(hashtext(site_id))` so overlapping ticks never double-process a site; if not acquired, skip to the next site. Set `status = 'running'`.
+3. **Walk forward** from `cursor_date` until `INDEX_HISTORY_DAYS_PER_TICK` (default ~45) days processed or `cursor_date > newest_date`:
+   - Determine the day's existing `EnergyData` coverage (count + first/last sample).
+   - **Fetch:** `ensureDataForRange(site, dayStart, dayEnd)`. `planImport` fetches only the missing slice (free if already complete).
+   - **Roll up — egress-aware:**
+     - If the day was fetched **in full** (`count === 0` before the fetch), feed the **in-memory** rows from `ensureDataForRange` straight into the replay — **no DB read-back**. This is the multi-year tail and the dominant egress term.
+     - Otherwise (day already partly/fully in DB), `rollupDay` reads the full day from the DB as today.
+   - **Genesis:** pass `forceGenesisAtStart = (cursor_date === oldest_date)` so the install day anchors a full battery even when later (nightly-produced) rollups already exist for the site.
+   - Advance `cursor_date += 1 day`, `days_done += 1`.
+4. **Persist.** Write `cursor_date`/`days_done`. If `cursor_date > newest_date` → `status = 'complete'`. On any error → `status = 'error'`, `last_error = …`, **cursor preserved** so it resumes next tick.
+5. Release the advisory lock (auto-released on connection close regardless).
+
+At `*/15` this is ~96 ticks/day; chunk-size × frequency is the Tesla throttle. Knobs: `INDEX_HISTORY_DAYS_PER_TICK`, `INDEX_HISTORY_SITES_PER_TICK`, pg_cron schedule.
+
+### RollupService / replay change
+
+`RollupService.rollupDay` gains an optional pre-loaded-rows path and a `forceGenesisAtStart` flag:
+
+- When rows are supplied, skip `loadEnergyData`; still read the (tiny) seed tank via `getSeedTank`.
+- `forceGenesisAtStart` makes the genesis branch fire on the first backfilled day even though `hasAnyRollup(site)` is true (the normal case when re-indexing a site that already has forward rollups). Without it, that day would seed `EMPTY_TANK` and corrupt the whole chain. **This is the single most important correctness test.**
+
+The `EnergyDataRow` (importer output) vs `EnergyData` (replay input) shapes must be reconciled by a thin adapter or a shared type — verified in tests.
+
+## Heal on return — cursor-based, on Savings-tab load
+
+When the report loads server-side, after reading `SiteRoiConfig` + `RollupBackfill`:
+
+- **No `RollupBackfill` row** → don't enqueue; the UI shows the **"Index history"** opt-in. (First index always requires the explicit opt-in.)
+- **Row `complete` but `newest_date < yesterday`** (site-local) → re-open: set `newest_date = yesterday`, `status = 'pending'`, bump `days_total`. `cursor_date` is already parked at the first unprocessed day (the first dormant day), so the worker resumes there and walks through the gap to yesterday, re-chaining the tank across it and re-rolling any nightly-produced tail (idempotent).
+- **Row `running`/`pending`** → show progress; nothing to do.
+
+No gap-detection SQL: the cursor *is* the coverage high-water mark, so trailing dormancy gaps are detected by a single date comparison. (Interior gaps cannot form after a day is processed, because durable rollups never disappear.)
+
+Interim correctness while a heal is pending: the nightly cron seeds the just-returned days from the stale pre-gap tank, so provenance/arbitrage is briefly off for those days; the heal corrects it. Lifetime *payback* (no provenance needed) is simply missing the gap days until healed.
+
+## Nightly cron hardening — never persist a partial-day rollup
+
+`cron/rollup` keeps rolling up **yesterday** for every site, but the per-site action is keyed on that day's existing `EnergyData`:
+
+| Day's existing data | Action |
+|---|---|
+| **None** (`count === 0`) | Do nothing — no import, no rollup. Dormant day; deferred to heal-on-return. |
+| **Partial** (`count > 0` but `missingStart`/`missingEnd`) | `ensureDataForRange` to **finish the day** (planImport fetches only the missing slice), then `rollupDay` on complete data. |
+| **Complete** | `rollupDay` directly — zero Tesla. |
+
+Rationale: partial data exists **only because the user was active that day** (a load triggered the 14-day auto-import, leaving the in-progress day partial). We therefore spend Tesla *only to finish a day the user already started* — never on a fully dormant day, and never persisting a partial rollup. Safety net: if the finish-import still cannot complete the day (rare Tesla lag), skip the rollup; the next nightly run or a heal catches it.
+
+This makes the dangerous "present-but-wrong" partial rollup impossible — every missing day is *absent* (cursor/heal-detectable), never silently incorrect.
+
+## Egress strategy
+
+DB read egress ≈ 5-min `EnergyData` rows shipped to Node (~288/day). The rollup *output* and report reads are negligible by comparison.
+
+- **Backfill rolls up from memory** for every day fetched in full — the multi-year purged tail, which dominates — so that bulk costs **zero read egress**.
+- Residual reads are bounded: recent in-DB days during the initial index, plus the small per-day nightly read.
+- The replay stays in **TypeScript** (one tested source of truth). A full in-DB (PL/pgSQL) rollup that would eliminate *all* read egress is explicitly **deferred** — it would duplicate the tank cost-basis logic in SQL with high divergence risk; revisit only if residual egress proves prohibitive.
+
+## UI — Savings tab
+
+Reads `RollupBackfill` alongside `SiteRoiConfig`:
+
+- **No row** → **"Index history"** button (`POST /api/site/[id]/index-history`), with a note that it runs in the background and may take a while for long histories.
+- **`pending`/`running`** → progress: "Indexing your history…" with `days_done / days_total` and the current `cursor_date`.
+- **`complete`** → the normal ROI report. (A `complete` row with `newest_date < yesterday` is re-opened on load per heal-on-return, then renders as `running`.)
+- **`error`** → a retry affordance (re-`POST` resets to `pending`).
+
+## Concurrency & interaction notes
+
+- **Worker vs worker:** advisory lock per site.
+- **Worker vs nightly cron:** both call idempotent `rollupDay`; the backfill operates on historical dates behind `newest_date`, the cron on yesterday. Any boundary overlap is a harmless idempotent re-upsert. (Optionally set `newest_date = yesterday − 1` to keep clear of the nightly write.)
+- **EnergyData bloat:** re-fetched pre-retention days repopulate `EnergyData`; the next daily `cron/cleanup` purges them again (they're >365d). Fetch→rollup happen in one request so cleanup cannot race; bounded by chunk size. (Optional later refinement: delete re-fetched pre-retention rows right after rollup; v1 relies on cleanup.)
+
+## Testing
+
+- **Opt-in route:** creates the row with correct bounds; idempotent on existing `pending`/`running`/`complete`; resets `error` → `pending`; `verifySiteAccess` enforced.
+- **Worker:** advances cursor by the chunk budget; resumes from `cursor_date` across ticks; marks `complete` at `newest_date`; error path sets `status='error'` + `last_error` and **preserves** the cursor; advisory lock prevents concurrent double-processing.
+- **Genesis force-anchor (critical):** with later rollups already present for the site, the first backfilled day (`cursor === oldest_date`) anchors a full battery rather than `EMPTY_TANK`; the tank chains correctly forward.
+- **Memory-feed:** a fully-fetched day rolls up from the in-memory rows without a DB read (assert `loadEnergyData` not called); a partial day falls back to a DB read.
+- **Heal-on-return:** a `complete` row with `newest_date < yesterday` is re-opened from the parked cursor; the worker re-rolls the gap and re-chains the tank; a no-data day in the gap advances the cursor without re-flagging.
+- **Nightly partial/empty/complete rule:** empty day → no import, no rollup; partial day → finish-import then roll a complete day; complete day → roll with zero Tesla; finish-import that still can't complete → skip (no partial rollup persisted).
+- **Idempotency:** re-running any processed day yields identical rollup rows (incl. `solar_only_*`).
+- **Integration:** a synthetic multi-day site indexed end-to-end produces continuous rollups with correct `solar_only_*` and a continuous tank chain across a seeded gap.
+
+## Out of scope / deferred
+
+- **Full in-DB (PL/pgSQL) rollup** — deferred behind measured residual egress.
+- **Interior intra-day holes** from Powerwall outages (the completeness check guards trailing partial days, not mid-day gaps) — a separate data-quality concern.
+- **Proactive nightly indexing of dormant sites** — explicitly rejected; healing is on-return only.
+- **Auto-enrollment / launch migration** — rejected in favor of pure opt-in.
+
+## Resolved decisions (from brainstorming)
+
+1. **Trigger:** explicit per-site opt-in ("Index history"); no auto-enrollment, no launch migration.
+2. **Depth:** full history, re-fetched from Tesla back to `site.installed`.
+3. **Enrollment scope:** any site whose owner opts in (new or existing, active or dormant).
+4. **Orchestration:** Supabase pg_cron every 15 min → bounded, resumable worker endpoint (reuses the restore-reserve pattern).
+5. **Coverage model:** cursor-based ledger (`RollupBackfill`), not rollup-row inference — robust to no-data days.
+6. **Gap healing:** on Savings-tab load, re-open a `complete` row when `newest_date < yesterday`; the parked cursor resumes through the gap.
+7. **Partial-day safety:** nightly cron finishes partial days before rolling and skips empty days, so a partial rollup is never persisted.
+8. **Egress:** roll up from in-memory imported rows for fully-fetched days; keep the replay in TypeScript; defer the full in-DB rollup.
+9. **Genesis:** `forceGenesisAtStart` when `cursor === oldest_date` so re-indexing a site that already has forward rollups anchors correctly.
