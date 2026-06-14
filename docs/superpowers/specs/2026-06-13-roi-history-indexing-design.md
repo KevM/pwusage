@@ -49,11 +49,12 @@ status       text         NOT NULL   -- 'pending' | 'running' | 'complete' | 'er
 oldest_date  date         NOT NULL   -- floor; = site.installed (planImport also floors here)
 cursor_date  date         NOT NULL   -- next local day to process; walks forward
 newest_date  date         NOT NULL   -- ceiling; = yesterday at (re)enroll time
-days_done    integer      NOT NULL DEFAULT 0
-days_total   integer      NOT NULL DEFAULT 0   -- for UI progress
-last_error   text         NULL
-created_at   timestamptz  NOT NULL DEFAULT now()
-updated_at   timestamptz  NOT NULL DEFAULT now()
+days_done        integer      NOT NULL DEFAULT 0
+days_total       integer      NOT NULL DEFAULT 0   -- for UI progress
+genesis_anchored boolean      NOT NULL DEFAULT false  -- has the tank chain anchored yet (see Genesis)
+last_error       text         NULL
+created_at       timestamptz  NOT NULL DEFAULT now()
+updated_at       timestamptz  NOT NULL DEFAULT now()
 ```
 
 Invariants:
@@ -83,7 +84,7 @@ Per tick, within a bounded budget:
 3. **Walk forward** from `cursor_date` until **whichever comes first** — `INDEX_HISTORY_DAYS_PER_TICK` (default ~45) days processed, a **~250s wall-clock budget** elapsed (so a slow Tesla run exits cleanly before the 300s hard kill), or `cursor_date > newest_date`:
    - **Pre-retention day** (older than the retention cutoff, i.e. the multi-year tail being reconstructed): **`fetchRange(site, dayStart, dayEnd)`** — pull from Tesla, transform in memory, and feed the rows **straight into the replay**. `fetchRange` runs `processHistory` (a pure transform) and returns rows **without ever persisting `EnergyData`**, so these days have **zero `EnergyData` footprint** — no write, no read-back. This is the dominant case and the reason there is no bloat and no cleanup interaction.
    - **Within-retention day** (newer than the cutoff): keep the normal path — read the existing day from the DB if present, else `ensureDataForRange` to **persist** it (recent `EnergyData` legitimately lives in the DB for live views / NILM / battery-hold). `planImport` fetches only the missing slice (free if already complete). Then roll up. These DB reads are the only residual egress and are bounded to ~the last year.
-   - **Genesis:** pass `forceGenesisAtStart = (cursor_date === oldest_date)` so the install day anchors a full battery even when later (nightly-produced) rollups already exist for the site.
+   - **Genesis:** while `genesis_anchored` is `false`, pass `forceGenesisAtStart = true` so the day re-runs `computeGenesisSeed` even though later (nightly-produced) rollups already exist for the site. `rollupDay` reports back whether the tank **anchored** this day (a `≥98%` SOC row was found); on the first day that anchors, set `genesis_anchored = true` and stop forcing. Subsequent days carry forward normally via `getSeedTank`. (See **Genesis anchoring** below.)
    - Advance `cursor_date += 1 day`, `days_done += 1`, and **commit this progress incrementally** (per day, or in small batches) — so an unexpected hard timeout loses at most the in-flight day and the next tick resumes from the committed cursor.
 4. **Finalize.** If `cursor_date > newest_date` → `status = 'complete'`. On any error → `status = 'error'`, `last_error = …`, **cursor preserved** (already committed) so it resumes next tick. Because progress is committed incrementally, neither the Vercel timeout nor a pg_net drop can roll back completed days.
 5. Release the advisory lock (auto-released on connection close regardless).
@@ -92,19 +93,34 @@ At `*/15` this is ~96 ticks/day; chunk-size × frequency is the Tesla throttle. 
 
 ### RollupService / replay change
 
-`RollupService.rollupDay` gains an optional **pre-loaded-rows** path and a `forceGenesisAtStart` flag:
+`RollupService.rollupDay` gains an optional **pre-loaded-rows** path, a `forceGenesisAtStart` input, and a `genesisAnchored` result:
 
 - When rows are supplied (the pre-retention `fetchRange` path), skip `loadEnergyData` entirely — roll up directly from the in-memory rows; still read the (tiny) seed tank via `getSeedTank`.
-- `forceGenesisAtStart` makes the genesis branch fire on the first backfilled day even though `hasAnyRollup(site)` is true (the normal case when re-indexing a site that already has forward rollups). Without it, that day would seed `EMPTY_TANK` and corrupt the whole chain. **This is the single most important correctness test.**
+- `forceGenesisAtStart` ORs into the genesis condition (`forceGenesisAtStart || (!seedRow && !hasAnyRollup)`) so the branch fires even though `hasAnyRollup(site)` is true (the normal case when re-indexing a site that already has forward rollups). Without it, that day would seed `EMPTY_TANK` and corrupt the whole chain. **This is the single most important correctness test.**
+- `rollupDay` returns whether genesis **anchored** this day — i.e. `computeGenesisSeed` returned non-null (a `≥98%` SOC row existed). The worker uses this to flip `genesis_anchored`.
 
 `fetchRange` returns `EnergyDataRow[]` (importer output); the replay consumes `EnergyData`. Reconcile the shapes with a thin adapter or a shared type — verified in tests. (`fetchRange` returns Tesla's full-day rows unfiltered; the replay buckets by local date, and `rollupDay` already filters its output to the target `localDate`, so a day's rows map cleanly.)
+
+### Genesis anchoring — force until the chain first anchors
+
+`computeGenesisSeed` ([genesis.ts](../../cmd/next-app/src/lib/battery-provenance/genesis.ts)) anchors the tank on the **first row where `battery_soc ≥ 98%`**, reconstructing the charge run that filled it. The install day might not contain such a moment, so forcing genesis on `cursor === oldest_date` *only* would silently fall through to `EMPTY_TANK` and never anchor.
+
+Instead, the worker forces genesis on **every** day until one anchors, tracked by the persisted `genesis_anchored` flag (so it survives across ticks):
+
+- While `genesis_anchored = false`: call `rollupDay(..., forceGenesisAtStart = true)`. The day's additive flows (`load_wh`, edge flows, `solar_only_*`) are captured normally; the tank is best-effort (EMPTY-seeded) until an anchor appears — the same inherent limitation genesis always has for the unobservable pre-anchor period.
+- The **first** day whose data contains a `≥98%` SOC row anchors the tank at that real full-battery moment; the worker sets `genesis_anchored = true`.
+- From then on (`forceGenesisAtStart = false`), days chain forward normally via `getSeedTank`, which finds the rows the backfill just wrote.
+
+Because the backfill replays the whole early history, this anchors at the **earliest true full-charge event** rather than at an arbitrary first calendar day — strictly better provenance than the original single-shot genesis. A heal re-opening a `complete` row leaves `genesis_anchored` **untouched** (`true`) — the chain is already anchored; the heal resumes mid-history and must carry forward, never re-anchor.
+
+Plan-time detail to verify: how `replayRows` treats the anchor day's intervals **before** `anchorTimestamp` — additive flows should still accrue for the full day while tank accounting starts at the anchor.
 
 ## Heal on return — cursor-based, on Savings-tab load
 
 When the report loads server-side, after reading `SiteRoiConfig` + `RollupBackfill`:
 
 - **No `RollupBackfill` row** → don't enqueue; the UI shows the **"Index history"** opt-in. (First index always requires the explicit opt-in.)
-- **Row `complete` but `newest_date < yesterday`** (site-local) → re-open: set `newest_date = yesterday`, `status = 'pending'`, bump `days_total`. `cursor_date` is already parked at the first unprocessed day (the first dormant day), so the worker resumes there and walks through the gap to yesterday, re-chaining the tank across it and re-rolling any nightly-produced tail (idempotent).
+- **Row `complete` but `newest_date < yesterday`** (site-local) → re-open: set `newest_date = yesterday`, `status = 'pending'`, bump `days_total`, and **leave `genesis_anchored = true`** (the chain is already anchored; a heal resumes mid-history and must carry forward, never re-anchor). `cursor_date` is already parked at the first unprocessed day (the first dormant day), so the worker resumes there and walks through the gap to yesterday, re-chaining the tank across it and re-rolling any nightly-produced tail (idempotent).
 - **Row `running`/`pending`** → show progress; nothing to do.
 
 No gap-detection SQL: the cursor *is* the coverage high-water mark, so trailing dormancy gaps are detected by a single date comparison. (Interior gaps cannot form after a day is processed, because durable rollups never disappear.)
@@ -197,7 +213,8 @@ The tooltip mechanism follows existing UI primitives (a lightweight popover or n
 
 - **Opt-in route:** creates the row with correct bounds; idempotent on existing `pending`/`running`/`complete`; resets `error` → `pending`; `verifySiteAccess` enforced.
 - **Worker:** advances cursor by the chunk budget; **stops at the ~250s wall-clock guard even when days remain under the day cap**; commits cursor incrementally so a simulated mid-tick abort resumes from the last committed day with no lost/duplicated work; resumes from `cursor_date` across ticks; marks `complete` at `newest_date`; error path sets `status='error'` + `last_error` and **preserves** the cursor; advisory lock prevents concurrent double-processing.
-- **Genesis force-anchor (critical):** with later rollups already present for the site, the first backfilled day (`cursor === oldest_date`) anchors a full battery rather than `EMPTY_TANK`; the tank chains correctly forward.
+- **Genesis force-anchor (critical):** with later rollups already present for the site, a forced-genesis day anchors a full battery rather than `EMPTY_TANK`, and the tank chains correctly forward.
+- **Genesis force-until-anchor:** when the first backfilled day(s) have **no** `≥98%` SOC row, the worker keeps forcing genesis day-by-day (additive flows still captured), anchors on the first day that does, sets `genesis_anchored`, and then stops forcing; a heal on an already-`complete` site never re-forces genesis (`genesis_anchored` stays `true`).
 - **Pre-retention fetch-only:** a pre-retention day rolls up from `fetchRange`'s in-memory rows with **no `EnergyData` read or write** (assert neither `loadEnergyData` nor `insertEnergyDataBatch` is called); a within-retention day reads/persists via the normal DB path.
 - **Heal-on-return:** a `complete` row with `newest_date < yesterday` is re-opened from the parked cursor; the worker re-rolls the gap and re-chains the tank; a no-data day in the gap advances the cursor without re-flagging.
 - **Hourly timezone selection:** a site is selected only when its local time is in the 2–5 band; selection is DST-safe (spring-forward day still selects within the band); a site already holding a complete yesterday-local rollup is skipped (dedup across band hours); half-hour-offset zones land in the band.
@@ -224,5 +241,5 @@ The tooltip mechanism follows existing UI primitives (a lightweight popover or n
 7. **Partial-day safety:** the rollup cron finishes partial days before rolling and skips empty days, so a partial rollup is never persisted.
 7b. **Rollup cadence:** `cron/rollup` moves to hourly, processing each site ~1–2 h after its own local midnight via a DST-safe 2–5 local-hour band with complete-day dedup; replaces the single 8am-UTC run and removes the need for a `newest_date` boundary offset.
 8. **Egress & cleanup:** reconstruct pre-retention days via `fetchRange` (Tesla → memory → rollup, never persisting `EnergyData`), so the backfill has zero scratch footprint and `cron/cleanup` needs no coordination; keep the replay in TypeScript; defer the full in-DB rollup.
-9. **Genesis:** `forceGenesisAtStart` when `cursor === oldest_date` so re-indexing a site that already has forward rollups anchors correctly.
+9. **Genesis:** force genesis on every backfilled day until the tank first anchors (first `≥98%` SOC row), tracked by a persisted `genesis_anchored` flag — anchoring at the earliest real full-charge event, robust to an install day with no full-SOC moment; heals never re-anchor.
 10. **Admin visibility:** the admin site list shows a per-site indexing badge with hover details (read-only in v1), via a `LEFT JOIN "RollupBackfill"` on the existing admin query.
