@@ -17,16 +17,11 @@ import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 
 
-import { SiteWithTariffs, TrmnlInstallation, SiteRoiConfig } from '@/lib/db';
-import { RoiConfigForm } from './RoiConfigForm';
-import { ComparisonTariffEditor } from './ComparisonTariffEditor';
-import type { ComparisonPlan } from '@/lib/roi/comparison-tariff-repo';
+import { SiteWithTariffs, TrmnlInstallation } from '@/lib/db';
 
 interface SettingsViewProps {
     site: SiteWithTariffs;
     installation: TrmnlInstallation | undefined;
-    roiConfig?: SiteRoiConfig | null;
-    comparisonPlans?: ComparisonPlan[];
 }
 
 
@@ -91,7 +86,7 @@ function extractPluginSettingId(installation: TrmnlInstallation | undefined): nu
     return null;
 }
 
-export function SettingsView({ site, installation, roiConfig, comparisonPlans }: SettingsViewProps) {
+export function SettingsView({ site, installation }: SettingsViewProps) {
 
     const router = useRouter();
     const { toast } = useToast();
@@ -321,9 +316,6 @@ export function SettingsView({ site, installation, roiConfig, comparisonPlans }:
                 </CardContent>
             </Card>
 
-            <RoiConfigForm siteId={site.id} initial={roiConfig ?? null} />
-
-            <ComparisonTariffEditor siteId={site.id} plans={comparisonPlans ?? []} meteredPlanName={site.tariffs?.[0]?.name ?? 'Standard'} />
 
             <TariffList
                 tariffs={site.tariffs}

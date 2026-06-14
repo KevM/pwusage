@@ -377,6 +377,8 @@ export default async function SitePage({ params, searchParams }: {
                         summary={roiSummary}
                         siteId={finalSite.id}
                         backfill={backfill}
+                        roiConfig={roiConfig}
+                        comparisonPlans={comparisonPlans}
                         arbitrageSlot={arbitrage ? <ArbitragePanel summary={arbitrage} /> : null}
                         chartSlot={savingsSeries && roiConfig ? <SavingsChart series={savingsSeries} systemCost={(roiConfig.solar_cost ?? 0) + (roiConfig.battery_cost ?? 0)} /> : null}
                         fixedPlanName={fixedPlanName}
@@ -386,7 +388,7 @@ export default async function SitePage({ params, searchParams }: {
 
 
                 settingsSlot={
-                    <SettingsView site={finalSite} installation={installation} roiConfig={roiConfig} comparisonPlans={comparisonPlans} />
+                    <SettingsView site={finalSite} installation={installation} />
                 }
 
             >
