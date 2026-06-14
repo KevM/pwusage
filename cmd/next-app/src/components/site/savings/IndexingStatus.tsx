@@ -13,17 +13,18 @@ export function IndexingStatus({ siteId, backfill }: { siteId: string; backfill:
   const [started, setStarted] = useState(false);
 
   const inProcess = isBackfillInProcess(backfill);
+  const terminal = isTerminalBackfillError(backfill);
+  const shouldRefresh = inProcess && !terminal;
 
   useEffect(() => {
-    if (!inProcess) return;
+    if (!shouldRefresh) return;
     const timer = setInterval(() => router.refresh(), REFRESH_MS);
     return () => clearInterval(timer);
-  }, [inProcess, router]);
+  }, [shouldRefresh, router]);
 
   if (inProcess && backfill) {
     const pct = backfill.days_total > 0 ? Math.round((backfill.days_done / backfill.days_total) * 100) : 0;
     const isError = backfill.status === 'error';
-    const terminal = isTerminalBackfillError(backfill);
     return (
       <Card><CardContent className="py-6">
         <p className="font-semibold mb-2 text-foreground">Indexing your history… {pct}%</p>
@@ -35,7 +36,7 @@ export function IndexingStatus({ siteId, backfill }: { siteId: string; backfill:
           <p className="text-xs mt-2 text-amber-700 dark:text-amber-300">Paused — will retry automatically. Reconstructed back to {backfill.cursor_date}.</p>
         )}
         {isError && terminal && (
-          <p className="text-xs mt-2 text-amber-700 dark:text-amber-300">Reconstruction paused — it will resume later. Reconstructed back to {backfill.cursor_date}.</p>
+          <p className="text-xs mt-2 text-amber-700 dark:text-amber-300">Reconstruction paused — contact support to resume. Reconstructed back to {backfill.cursor_date}.</p>
         )}
       </CardContent></Card>
     );
@@ -45,7 +46,10 @@ export function IndexingStatus({ siteId, backfill }: { siteId: string; backfill:
     setBusy(true);
     try {
       const res = await fetch(`/api/site/${siteId}/index-history`, { method: 'POST' });
-      if (res.ok) setStarted(true);
+      if (res.ok) {
+        setStarted(true);
+        router.refresh();
+      }
     } finally { setBusy(false); }
   };
 

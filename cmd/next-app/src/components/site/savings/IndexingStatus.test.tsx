@@ -31,7 +31,7 @@ describe('IndexingStatus', () => {
 
   it('shows a paused message with no button on a terminal error', () => {
     const html = renderToStaticMarkup(<IndexingStatus siteId="s1" backfill={bf({ status: 'error', last_error: '[attempts=5] 529 overload' })} />);
-    expect(html).toMatch(/resume later/i);
+    expect(html).toMatch(/contact support/i);
     expect(html).not.toContain('Index history');
   });
 });
