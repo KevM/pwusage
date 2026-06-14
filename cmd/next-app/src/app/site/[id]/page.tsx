@@ -33,6 +33,7 @@ import { ArbitragePanel } from '@/components/site/savings/ArbitragePanel';
 import { SavingsChart } from '@/components/site/savings/SavingsChart';
 import { RollupBackfillRepo } from '@/lib/battery-provenance/rollup-backfill-repo';
 import { localDateKey } from '@/lib/battery-provenance/local-day';
+import { resolveFixedBaseline } from '@/lib/roi/resolve-fixed-baseline';
 
 
 
@@ -304,12 +305,12 @@ export default async function SitePage({ params, searchParams }: {
         }
     }
 
-    if (roiConfig && roiConfig.fixed_buy_rate != null && roiConfig.fixed_sell_rate != null
-        && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {
+    const fixedBaseline = await resolveFixedBaseline(finalSite.id);
+    if (fixedBaseline && roiConfig && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {
         const rollups = await new RollupRepo().getAllForSite(finalSite.id);
         const activeTariff = finalSite.tariffs.find(t => t.id === activeTariffId) || (finalSite.tariffs ?? [])[0];
         const plan = activeTariff ? classifyTariff(activeTariff) : 'tou';
-        const configInputs = { fixedBuyRate: roiConfig.fixed_buy_rate, fixedSellRate: roiConfig.fixed_sell_rate };
+        const configInputs = fixedBaseline;
         roiSummary = buildRoiSummary(
             rollups,
             configInputs,
