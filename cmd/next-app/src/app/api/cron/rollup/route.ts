@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // Vercel Hobby cap; loops in-band sites + may fetch partial days from Tesla
 
 import { NextRequest, NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
