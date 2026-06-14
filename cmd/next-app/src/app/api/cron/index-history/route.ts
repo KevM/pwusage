@@ -17,7 +17,8 @@ const DAYS_PER_TICK = parseInt(process.env.INDEX_HISTORY_DAYS_PER_TICK || '45', 
 const SITES_PER_TICK = parseInt(process.env.INDEX_HISTORY_SITES_PER_TICK || '1', 10);
 const BUDGET_MS = 50_000; // Leave 10s buffer before Vercel 60s limit
 const RETENTION_DAYS = parseInt(process.env.DATA_RETENTION_DAYS || '365', 10);
-const FETCH_CONCURRENCY = parseInt(process.env.INDEX_HISTORY_FETCH_CONCURRENCY || '6', 10);
+const FETCH_CONCURRENCY = parseInt(process.env.INDEX_HISTORY_FETCH_CONCURRENCY || '2', 10);
+const STAGGER_MS = parseInt(process.env.INDEX_HISTORY_STAGGER_MS || '1000', 10);
 const TESLA_MAX_RETRY_DELAY_MS = parseInt(process.env.TESLA_MAX_RETRY_DELAY_MS || '5000', 10);
 
 export async function GET(request: NextRequest) {
@@ -73,7 +74,7 @@ export async function GET(request: NextRequest) {
     await service.processSite(
       { siteId: job.site_id, oldestDate: job.oldest_date, cursorDate: job.cursor_date,
         newestDate: job.newest_date, daysDone: job.days_done, genesisAnchored: job.genesis_anchored },
-      { daysPerTick: DAYS_PER_TICK, budgetMs: BUDGET_MS, concurrency: FETCH_CONCURRENCY },
+      { daysPerTick: DAYS_PER_TICK, budgetMs: BUDGET_MS, concurrency: FETCH_CONCURRENCY, staggerMs: STAGGER_MS },
     );
     processed.push({ siteId: job.site_id });
   }

@@ -23,7 +23,7 @@ export interface BackfillDeps {
   now: () => number;
 }
 
-export interface TickOptions { daysPerTick: number; budgetMs: number; concurrency?: number; }
+export interface TickOptions { daysPerTick: number; budgetMs: number; concurrency?: number; staggerMs?: number; }
 
 export class BackfillService {
   constructor(private deps: BackfillDeps) {}
@@ -59,11 +59,14 @@ export class BackfillService {
           scan = addLocalDays(scan, 1);
         }
 
-        // Fetch every day in the batch concurrently. Pre-retention days return rows
-        // held in memory (never persisted); within-retention days are persisted via
+        // Fetch every day in the batch concurrently, but optionaly staggered by staggerMs to prevent rate limits.
+        // Pre-retention days return rows held in memory (never persisted); within-retention days are persisted via
         // ensureData and rolled up from the DB below.
         const fetched = await Promise.all(
-          batch.map(async (day) => {
+          batch.map(async (day, index) => {
+            if (index > 0 && opts.staggerMs && opts.staggerMs > 0) {
+              await new Promise((resolve) => setTimeout(resolve, index * opts.staggerMs!));
+            }
             if (day.isOld) return await d.fetchRange(site, day.start, day.end);
             await d.ensureData(site.id, day.start, day.end);
             return undefined;

@@ -1,4 +1,7 @@
 
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // Extend Vercel Hobby execution limit to 60s
+
 import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
 import { TeslaClient } from '@/lib/tesla-client';

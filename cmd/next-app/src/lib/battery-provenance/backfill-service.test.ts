@@ -130,4 +130,27 @@ describe('BackfillService.processSite', () => {
     expect((deps.rollupDay as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
     expect(deps.markComplete).not.toHaveBeenCalled();
   });
+
+  it('staggers concurrent fetches when staggerMs is provided', async () => {
+    vi.useFakeTimers();
+    const startTimes: number[] = [];
+    const fetchRange = vi.fn(async () => {
+      startTimes.push(Date.now());
+      return [] as EnergyData[];
+    });
+    const deps = makeDeps({ fetchRange, now: () => Date.now() });
+
+    const promise = new BackfillService(deps).processSite(
+      job({ newestDate: '2021-06-03' }),
+      { daysPerTick: 100, budgetMs: 1e9, concurrency: 3, staggerMs: 1000 },
+    );
+
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(fetchRange).toHaveBeenCalledTimes(3);
+    expect(startTimes[1] - startTimes[0]).toBe(1000);
+    expect(startTimes[2] - startTimes[0]).toBe(2000);
+    vi.useRealTimers();
+  });
 });
