@@ -139,6 +139,8 @@ For the selected (site, yesterday-local) the action is keyed on that day's exist
 
 Rationale: partial data exists **only because the user was active that day** (a load triggered the 14-day auto-import, leaving the in-progress day partial). We therefore spend Tesla *only to finish a day the user already started* — never on a fully dormant day, and never persisting a partial rollup. Safety net: if the finish-import still cannot complete the day (rare Tesla lag), skip the rollup; a later hourly run or a heal catches it.
 
+**Persist path — not fetch-only.** Yesterday is **within retention**, so finishing it with `ensureDataForRange` (which *writes* the missing slice to `EnergyData`) is correct and intended: recent data legitimately lives in the DB for live views / NILM / battery-hold, and persisting it also means a later backfill/heal reads it for free instead of re-fetching. The non-persisting `fetchRange` path is reserved for the **backfill's pre-retention days only**; the daily rollup always uses the normal persist path.
+
 This makes the dangerous "present-but-wrong" partial rollup impossible — every missing day is *absent* (cursor/heal-detectable), never silently incorrect.
 
 ## Egress & storage strategy
