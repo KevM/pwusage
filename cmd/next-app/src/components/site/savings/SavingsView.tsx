@@ -25,16 +25,26 @@ export function SavingsView({
     meteredPlanName?: string;
 }) {
     const indexing = backfill?.status === 'pending' || backfill?.status === 'running';
-    if (!summary || indexing) {
+    const showBackfillPrompt = !backfill || backfill.status !== 'complete';
+
+    if (!summary) {
         return (
             <div className="space-y-6 max-w-5xl mx-auto">
                 <IndexingStatus siteId={siteId} backfill={backfill} />
-                {!summary && !backfill && <SavingsEmptyState />}
+                {!backfill && <SavingsEmptyState />}
+            </div>
+        );
+    }
+    if (indexing) {
+        return (
+            <div className="space-y-6 max-w-5xl mx-auto">
+                <IndexingStatus siteId={siteId} backfill={backfill} />
             </div>
         );
     }
     return (
         <div className="space-y-6 max-w-5xl mx-auto">
+            {showBackfillPrompt && <IndexingStatus siteId={siteId} backfill={backfill} />}
             <PaybackHero summary={summary} />
             {summary.recommendation && (
                 <div className="rounded-lg border border-green-600 bg-green-600/10 dark:border-green-500 dark:bg-green-950/20 p-3 text-sm">
