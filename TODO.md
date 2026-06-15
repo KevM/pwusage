@@ -6,23 +6,9 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
-## ROI F1 — Comparison-column past-dating (read-side pricing)
+## ROI F1 / F2 — FOLDED into the Flexible Plan Comparison Matrix
 
-**Depends on:** the reporting-only comparison-tariff foundation (`docs/superpowers/specs/2026-06-13-roi-comparison-tariffs-design.md`), which already ships the `Tariff.effective_from` column (captured + displayed, not yet priced).
-
-Wire the captured `effective_from` into the **comparison** columns (cells A/C/E): replace the current-version resolver with a per-row `resolveFixedBaseline(siteId, localDate)` that prices each rollup row at the comparison rate in effect on its date.
-
-- Read-side, **no re-rollup** — the rollup stores rate-agnostic energies, so this is pure arithmetic and doesn't touch the metered `Schedule`.
-- Corrects the fixed-baseline history (the originating $0.16580→$0.19342 overstatement on early years) and removes the spec's "historical rates not yet applied" note.
-- **Out of scope:** future-dated rate changes (unknowable forward; projection carries the latest rate flat).
-
-## ROI F2 — Metered historical correction (Schedule date-resolution + re-rollup)
-
-**Depends on:** the `effective_from` column from the foundation phase (independent of F1).
-
-Make the **metered** `Schedule` resolve the version whose `effective_from` window covers a timestamp (with `is_current` fallback so undated versions behave exactly as today; `getTariffPeriodByComponents` currently ignores the year and first-matches across versions). Then re-replay 5-min history through the corrected schedule (reuse the history-indexing backfill).
-
-Cell F's TOU rate is snapshotted into each `EnergyRollup` at write time and the row is keyed by the version's `tariff_schedule_id`, so an in-place re-price won't do. Closes "the hole where my past tariff period is not representative of reality."
+**Status (2026-06-15):** F1 (comparison-column past-dating) and F2 (metered historical correction) are **superseded** by `docs/superpowers/specs/2026-06-15-flexible-comparison-matrix-design.md`. That design retires `EnergyRollup` for a plan-agnostic **hourly profile** + on-read date-resolved pricing engine, which prices every column (comparison *and* metered) date-resolved from one substrate — subsuming both F1 and F2. The standalone F1 plan (`docs/superpowers/plans/2026-06-15-roi-f1-fixed-column-pricing.md`) is marked superseded; do not execute it. Implement via the matrix design's Phases B/C/D instead.
 
 ## Flat-file archive for old EnergyData (retention escape hatch)
 

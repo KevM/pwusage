@@ -1,5 +1,7 @@
 # ROI F1 — Fixed Comparison Column Per-Period Pricing — Implementation Plan
 
+> **⚠️ SUPERSEDED (2026-06-15) — do not execute.** Folded into the Flexible Plan Comparison Matrix design (`docs/superpowers/specs/2026-06-15-flexible-comparison-matrix-design.md`). This plan reads `EnergyRollup`, which that design retires in favor of the hourly-profile pricing engine. The date-resolution *timeline* concept here carries forward, but the data source changes — implement it via the engine in Phase C, not standalone. Kept for reference only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Price the savings-matrix Fixed column (cells A/C/E) at the fixed comparison rate in effect on each rollup row's date, instead of a single current rate applied to all history.
