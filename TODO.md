@@ -24,6 +24,12 @@ Make the **metered** `Schedule` resolve the version whose `effective_from` windo
 
 Cell F's TOU rate is snapshotted into each `EnergyRollup` at write time and the row is keyed by the version's `tariff_schedule_id`, so an in-place re-price won't do. Closes "the hole where my past tariff period is not representative of reality."
 
+## Flat-file archive for old EnergyData (retention escape hatch)
+
+**Context:** As of 2026-06-15 (`feat/roi`), `DATA_RETENTION_DAYS` defaults to `0` = keep forever (`src/lib/retention.ts`), so raw 5-minute `EnergyData` is never pruned and the history backfill persists every day. This is what lets the Savings feature re-bucket raw energy into arbitrary tariff TOU windows across full history — it **supersedes the old "2b" plan-agnostic hourly-profile idea** (we keep raw samples instead of a derived hourly aggregate).
+
+**Deferred work:** before unbounded `EnergyData` becomes a storage problem (projection: ~30 MB/active-site/year, ~0.45 GB/yr for the current active base — comfortable for years), build a cold-storage archive: export old raw samples to flat-file storage (e.g. Vercel Blob) and re-hydrate them on demand for savings calculations, so a finite live DB window can be reintroduced without losing the ability to price historical plan-vs-plan comparisons.
+
 ## Remove Temporal polyfill after Node.js 26 LTS
 
 `src/lib/billing-cycle.ts` now uses `@js-temporal/polyfill` for timezone-aware date arithmetic. Once Node.js 26 reaches LTS (~mid-2026), remove the polyfill dependency and use native `Temporal` from the runtime instead.
