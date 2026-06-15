@@ -15,10 +15,17 @@ import type { EnergyData } from '@/lib/db';
 
 const DAYS_PER_TICK = parseInt(process.env.INDEX_HISTORY_DAYS_PER_TICK || '45', 10);
 const SITES_PER_TICK = parseInt(process.env.INDEX_HISTORY_SITES_PER_TICK || '1', 10);
-const BUDGET_MS = parseInt(process.env.INDEX_HISTORY_BUDGET_MS || '8000', 10); // Safe default for 10s Hobby limits
+// Budget leaves a ~10s buffer under maxDuration=60. Tesla's data-request ceiling
+// is ~60 calls/min (shared per account), so 429s are governed by the sustained
+// call rate, not this budget. The throttle is concurrency(2) + stagger: the
+// stagger only delays the 2nd+ fetch in a batch, so it requires concurrency >= 2
+// to take effect. At concurrency 2 with a ~2.5s stagger we issue ~2 calls per
+// ~3.2s (~37/min), comfortably under the limit, while the larger budget lets
+// each tick do real work.
+const BUDGET_MS = parseInt(process.env.INDEX_HISTORY_BUDGET_MS || '50000', 10);
 const RETENTION_DAYS = parseInt(process.env.DATA_RETENTION_DAYS || '365', 10);
 const FETCH_CONCURRENCY = parseInt(process.env.INDEX_HISTORY_FETCH_CONCURRENCY || '2', 10);
-const STAGGER_MS = parseInt(process.env.INDEX_HISTORY_STAGGER_MS || '1000', 10);
+const STAGGER_MS = parseInt(process.env.INDEX_HISTORY_STAGGER_MS || '2500', 10);
 const TESLA_MAX_RETRY_DELAY_MS = parseInt(process.env.TESLA_MAX_RETRY_DELAY_MS || '5000', 10);
 
 export async function GET(request: NextRequest) {
