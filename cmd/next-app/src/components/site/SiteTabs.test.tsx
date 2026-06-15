@@ -7,11 +7,11 @@ describe('tabLabelClass', () => {
     });
 
     it('hides inactive tab labels on mobile but shows them on desktop', () => {
-        expect(tabLabelClass('history', 'bill')).toBe('sr-only md:not-sr-only');
+        expect(tabLabelClass('history', 'bill')).toBe('hidden sm:inline');
     });
 
     it('treats each tab independently of the others', () => {
-        expect(tabLabelClass('settings', 'savings')).toBe('sr-only md:not-sr-only');
+        expect(tabLabelClass('settings', 'savings')).toBe('hidden sm:inline');
         expect(tabLabelClass('savings', 'savings')).toBe('inline');
     });
 });

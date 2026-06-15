@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 type TabId = 'history' | 'bill' | 'savings' | 'settings';
 
 export function tabLabelClass(tabId: TabId, activeTab: TabId): string {
-    return tabId === activeTab ? 'inline' : 'sr-only md:not-sr-only';
+    return tabId === activeTab ? 'inline' : 'hidden sm:inline';
 }
 
 interface SiteTabsProps {
