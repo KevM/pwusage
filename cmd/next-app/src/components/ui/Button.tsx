@@ -22,7 +22,7 @@ export function Button({
 }: ButtonProps) {
 
     // Base styles that apply to all buttons
-    const baseStyles = "inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:pointer-events-none disabled:cursor-not-allowed";
+    const baseStyles = "inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ring-offset-bg-base dark:ring-offset-slate-900 disabled:pointer-events-none disabled:cursor-not-allowed";
 
     // Variant styles utilizing the new Frosted theme
     const variants = {

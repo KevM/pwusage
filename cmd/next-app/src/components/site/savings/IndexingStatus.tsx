@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { RollupBackfill } from '@/lib/db';
 import { Card, CardContent } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
 import { isBackfillInProcess, isTerminalBackfillError } from '@/lib/roi/savings-status';
 
 const REFRESH_MS = 10 * 60 * 1000; // 10 min: let progress advance without a manual reload
@@ -59,7 +60,7 @@ export function IndexingStatus({ siteId, backfill }: { siteId: string; backfill:
       <p className="opacity-70 mb-4 text-foreground/80">We can reconstruct your savings back to install. This runs in the background and may take a while.</p>
       {started
         ? <p className="text-sm text-primary">Indexing started — check back soon.</p>
-        : <button onClick={start} disabled={busy} className="rounded-md bg-primary text-white px-4 py-2 disabled:opacity-60 hover:bg-primary/95 cursor-pointer font-medium text-sm transition-colors">{busy ? 'Starting…' : 'Index history'}</button>}
+        : <Button onClick={start} disabled={busy}>{busy ? 'Starting…' : 'Index history'}</Button>}
     </CardContent></Card>
   );
 }

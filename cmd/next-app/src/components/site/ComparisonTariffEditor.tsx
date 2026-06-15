@@ -63,9 +63,9 @@ export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
                         <span className="text-sm font-medium">Add comparison plan</span>
                         <div className="ml-auto inline-flex rounded-md border border-gray-300 dark:border-slate-700 overflow-hidden text-sm">
                             <button type="button" onClick={() => setMode('fixed')}
-                                className={`px-3 py-1 ${mode === 'fixed' ? 'bg-primary/10 text-primary' : 'text-gray-500'}`}>Fixed</button>
+                                className={`px-3 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:z-10 ${mode === 'fixed' ? 'bg-primary/10 text-primary' : 'text-gray-500'}`}>Fixed</button>
                             <button type="button" onClick={() => setMode('tou')}
-                                className={`px-3 py-1 ${mode === 'tou' ? 'bg-primary/10 text-primary' : 'text-gray-500'}`}>TOU</button>
+                                className={`px-3 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:z-10 ${mode === 'tou' ? 'bg-primary/10 text-primary' : 'text-gray-500'}`}>TOU</button>
                         </div>
                     </div>
                     {mode === 'tou' ? (
