@@ -64,6 +64,7 @@ export function Button({
     return (
         <button
             className={`${resolvedStyles} ${className}`}
+            tabIndex={props.disabled ? -1 : (props.tabIndex ?? 0)}
             {...props}
         >
             {content}
