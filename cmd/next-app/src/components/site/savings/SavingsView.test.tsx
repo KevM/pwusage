@@ -15,13 +15,13 @@ const bf = (over: Partial<RollupBackfill>): RollupBackfill => ({
 const base = { siteId: 's1', roiConfig: null, comparisonPlans: [], meteredPlanName: 'Standard' };
 
 describe('SavingsView', () => {
-  it('shows the indexing takeover (no start CTA, no settings) on a recoverable error', () => {
+  it('shows the indexing progress and collapsed settings on a recoverable error', () => {
     const html = renderToStaticMarkup(
       <SavingsView {...base} summary={null} backfill={bf({ status: 'error', last_error: '[attempts=2] 529' })} />,
     );
     expect(html).toMatch(/retry automatically/i);
     expect(html).not.toContain('Index history');
-    expect(html).not.toContain('Savings settings');
+    expect(html).toContain('Savings settings');
   });
 
   it('shows expanded settings and the start CTA when nothing is set up', () => {

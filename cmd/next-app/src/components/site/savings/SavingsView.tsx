@@ -41,11 +41,12 @@ export function SavingsView({
         />
     );
 
-    // In-process backfill (pending | running | error): full-screen takeover.
+    // In-process backfill (pending | running | error): show progress and settings.
     if (state === 'in-process') {
         return (
             <div className="space-y-6 max-w-5xl mx-auto">
                 <IndexingStatus siteId={siteId} backfill={backfill} />
+                {settings(false)}
             </div>
         );
     }
