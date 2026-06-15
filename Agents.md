@@ -35,6 +35,17 @@ Authentication and authorization documentation is consolidated in [`Authenticati
     npm run db:migration:create <migration_name>
     ```
   - When pushing to PRs a GitHub Action will test any migrations against a backup of production to ensure they can be applied. Note: This does cause Trmnl device installations in the dev database to become invalid. 
+  - **Row Level Security (RLS)**: Whenever a new table is created, you must always enable Row Level Security (RLS) and restrict public/anonymous/authenticated access while granting all permissions to the `service_role` role. For example:
+    ```sql
+    ALTER TABLE "MyNewTable" ENABLE ROW LEVEL SECURITY;
+    REVOKE ALL ON "MyNewTable" FROM PUBLIC;
+    REVOKE ALL ON "MyNewTable" FROM anon;
+    REVOKE ALL ON "MyNewTable" FROM authenticated;
+    GRANT ALL ON "MyNewTable" TO service_role;
+    -- If using serial/sequence:
+    GRANT ALL ON SEQUENCE "MyNewTable_id_seq" TO service_role;
+    ```
+
 
 ## Repo Layout (Important)
 - Primary active app under development is in `cmd/next-app` (App Router code is under `cmd/next-app/src`).
