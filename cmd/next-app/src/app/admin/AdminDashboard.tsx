@@ -109,10 +109,10 @@ export function AdminDashboard({ users }: AdminDashboardProps) {
                                                                 : s.backfill_status === 'pending' ? 'Queued'
                                                                 : s.backfill_status === 'running' ? `Indexing ${pct}%`
                                                                 : s.backfill_status === 'complete' ? 'Indexed' : 'Error';
-                                                            const tone = !s.backfill_status ? 'bg-gray-100 text-gray-500 dark:bg-slate-800'
-                                                                : s.backfill_status === 'complete' ? 'bg-green-100 text-green-700 dark:bg-green-950/40'
-                                                                : s.backfill_status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-950/40'
-                                                                : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40';
+                                                            const tone = !s.backfill_status ? 'bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-gray-400'
+                                                                : s.backfill_status === 'complete' ? 'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-300'
+                                                                : s.backfill_status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                                                                : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300';
                                                             const title = s.backfill_status
                                                                 ? `status=${s.backfill_status} ${pct}% (${s.backfill_days_done}/${s.backfill_days_total})\n`
                                                                   + `cursor ${s.backfill_cursor}  range ${s.backfill_oldest}→${s.backfill_newest}\n`
