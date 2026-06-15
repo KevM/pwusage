@@ -75,6 +75,7 @@ export async function GET(request: NextRequest) {
       rollupDay: (id, localDate, opts) => rollupService.rollupDay(id, localDate, opts),
       recordProgress: (id, cursor, done, anchored) => backfillRepo.recordProgress(id, cursor, done, anchored),
       markComplete: (id) => backfillRepo.markComplete(id),
+      markPending: (id) => backfillRepo.markPending(id),
       markError: (id, msg) => backfillRepo.markError(id, msg),
       retentionCutoff: () => new Date(Date.now() - RETENTION_DAYS * 86400_000),
       localDayBounds: (localDate, tz) => localDayBoundsUtc(localDate, tz),

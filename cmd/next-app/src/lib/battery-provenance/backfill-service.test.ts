@@ -15,6 +15,7 @@ function makeDeps(over: Partial<BackfillDeps> = {}): BackfillDeps {
     rollupDay: vi.fn(async () => ({ genesisAnchored: false })),
     recordProgress: vi.fn(async () => {}),
     markComplete: vi.fn(async () => {}),
+    markPending: vi.fn(async () => {}),
     markError: vi.fn(async () => {}),
     retentionCutoff: () => new Date('2025-06-12T00:00:00Z'),
     localDayBounds: (d: string) => ({ start: new Date(`${d}T00:00:00Z`), end: new Date(`${d}T23:59:59.999Z`) }),
@@ -57,6 +58,37 @@ describe('BackfillService.processSite', () => {
     const deps = makeDeps();
     await new BackfillService(deps).processSite(job(), { daysPerTick: 100, budgetMs: 1e9 });
     expect(deps.markComplete).toHaveBeenCalledWith('S1');
+  });
+
+  it('releases the job back to pending when it stops at the day-per-tick cap', async () => {
+    const deps = makeDeps();
+    await new BackfillService(deps).processSite(job(), { daysPerTick: 2, budgetMs: 1e9 });
+    // Re-drive: the remainder goes back on the queue so the next tick claims it
+    // immediately instead of waiting out the running-row stale window.
+    expect(deps.markPending).toHaveBeenCalledWith('S1');
+    expect(deps.markComplete).not.toHaveBeenCalled();
+  });
+
+  it('releases the job back to pending when the budget is exhausted', async () => {
+    let t = 0;
+    const deps = makeDeps({ now: () => (t += 100) });
+    await new BackfillService(deps).processSite(job(), { daysPerTick: 100, budgetMs: 150 });
+    expect(deps.markPending).toHaveBeenCalledWith('S1');
+    expect(deps.markComplete).not.toHaveBeenCalled();
+  });
+
+  it('does not release to pending once the job completes', async () => {
+    const deps = makeDeps();
+    await new BackfillService(deps).processSite(job(), { daysPerTick: 100, budgetMs: 1e9 });
+    expect(deps.markComplete).toHaveBeenCalledWith('S1');
+    expect(deps.markPending).not.toHaveBeenCalled();
+  });
+
+  it('does not release to pending on error (stays running for stale-reclaim)', async () => {
+    const deps = makeDeps({ rollupDay: vi.fn(async () => { throw new Error('boom'); }) });
+    await new BackfillService(deps).processSite(job(), { daysPerTick: 100, budgetMs: 1e9 });
+    expect(deps.markError).toHaveBeenCalledWith('S1', 'boom');
+    expect(deps.markPending).not.toHaveBeenCalled();
   });
 
   it('flips genesis_anchored once a day anchors, stops forcing after', async () => {

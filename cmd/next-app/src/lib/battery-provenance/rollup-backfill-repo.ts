@@ -70,6 +70,12 @@ export class RollupBackfillRepo {
     await pool.query(`UPDATE "RollupBackfill" SET status = 'complete', last_error = NULL, updated_at = now() WHERE site_id = $1`, [siteId]);
   }
 
+  /** Re-drive: release an unfinished job back to the queue so the next tick can
+   *  claim it immediately, rather than waiting out the 'running' stale window. */
+  async markPending(siteId: string): Promise<void> {
+    await pool.query(`UPDATE "RollupBackfill" SET status = 'pending', updated_at = now() WHERE site_id = $1`, [siteId]);
+  }
+
   async markError(siteId: string, message: string): Promise<void> {
     const current = await this.get(siteId);
     let attempts = 1;

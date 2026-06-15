@@ -17,6 +17,7 @@ export interface BackfillDeps {
   rollupDay: (siteId: string, localDate: string, opts: { rows?: EnergyData[]; forceGenesisAtStart: boolean }) => Promise<{ genesisAnchored: boolean }>;
   recordProgress: (siteId: string, cursorDate: string, daysDone: number, genesisAnchored: boolean) => Promise<void>;
   markComplete: (siteId: string) => Promise<void>;
+  markPending: (siteId: string) => Promise<void>;
   markError: (siteId: string, message: string) => Promise<void>;
   retentionCutoff: () => Date;
   localDayBounds: (localDate: string, tz: string) => { start: Date; end: Date };
@@ -88,7 +89,16 @@ export class BackfillService {
           await d.recordProgress(site.id, cursor, daysDone, anchored);
         }
       }
-      if (cursor > job.newestDate) await d.markComplete(site.id);
+      if (cursor > job.newestDate) {
+        await d.markComplete(site.id);
+      } else {
+        // Re-drive: the job isn't finished, so release it back to the queue
+        // (pending) instead of leaving it 'running'. Otherwise the next tick
+        // can't re-claim it until the 'running' stale window expires, which —
+        // being longer than the cron cadence — idles every other tick. The
+        // stale-reclaim path then covers only genuine crashes.
+        await d.markPending(site.id);
+      }
     } catch (e) {
       await d.markError(job.siteId, e instanceof Error ? e.message : String(e));
     }

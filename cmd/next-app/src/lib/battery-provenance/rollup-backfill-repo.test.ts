@@ -46,6 +46,14 @@ describe('RollupBackfillRepo', () => {
     expect(params).toEqual(['s1', '2021-07-15', 44, true]);
   });
 
+  it('markPending releases the row back to pending', async () => {
+    q().mockResolvedValueOnce({ rows: [] });
+    await new RollupBackfillRepo().markPending('s1');
+    const [sql, params] = q().mock.calls.at(-1)!;
+    expect(sql).toContain("status = 'pending'");
+    expect(params).toEqual(['s1']);
+  });
+
   it('reopenIfBehind re-opens a complete row when newest_date < target', async () => {
     q().mockResolvedValueOnce({ rowCount: 1, rows: [] });
     const reopened = await new RollupBackfillRepo().reopenIfBehind('s1', '2026-06-12');
