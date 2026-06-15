@@ -21,12 +21,14 @@
     /* Frosted theme dark mode inversions */
     --theme-primary: #D4DDE2;
     --theme-bg-base: #1a1a1a;
+    --theme-bg-muted: #2a323d;
   }
 }
 
 .dark {
   --theme-primary: #D4DDE2;
   --theme-bg-base: #1a1a1a;
+  --theme-bg-muted: #2a323d;
 }
 
 /* Keep `inline` here: Tailwind v4 semantic color utilities (e.g. `text-primary`, `bg-primary`)
