@@ -24,7 +24,7 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `JWT_EXPIRY_DAYS`: Session duration in days (default: `7`).
 - `JWT_REFRESH_THRESHOLD_HOURS`: Refresh token if expiration is within this many hours (default: `24`).
 - `CRON_SECRET`: Secret key used to authorize Vercel Cron Job requests.
-- `DATA_RETENTION_DAYS`: Number of days to keep energy data before cleanup (default: `365`).
+- `DATA_RETENTION_DAYS`: Number of days of raw 5-minute `EnergyData` (and `LoadTag`) history to keep before the cleanup cron prunes older rows. **Default: `0` (keep forever).** Unset, empty, `0`, or any non-positive value all mean *keep all history indefinitely* — the cleanup cron skips deletion and the history backfill persists raw samples for every day instead of discarding pre-cutoff days. This is the current policy because the **Savings** feature re-buckets raw energy into arbitrary tariff TOU windows to compare plans (Fixed *and* TOU) across full history, which is only possible while the underlying 5-minute samples still exist. Set a positive integer (e.g. `365`) to re-enable finite pruning. A future flat-file archive is intended to replace "keep forever" — cold-storing old samples and re-hydrating them for savings calculations — at which point a finite live window can be reintroduced.
 - `SPARKLINE_SCALE_WINDOW_HOURS`: Header sparkline y-axis clamp window in hours (default: `12`, minimum effective value: `4`).
 
 ### Deployment & CI (GitHub Actions Secrets)
@@ -43,7 +43,7 @@ These variables are set as Secrets in your GitHub repository for automated deplo
 The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for background maintenance. These are configured in `vercel.json`:
 
 - **User Status Check** (`/api/cron/check-users`): Runs daily at 08:00 UTC. Verifies Tesla Fleet API credentials for all users to ensure tokens are valid and active. Updates `last_checked_at` and `auth_status`.
-- **Data Cleanup** (`/api/cron/cleanup`): Runs daily at 09:00 UTC. Automatically removes historical `EnergyData` and `LoadTag` records older than `DATA_RETENTION_DAYS` to manage database growth.
+- **Data Cleanup** (`/api/cron/cleanup`): Runs daily at 09:00 UTC. Removes historical `EnergyData` and `LoadTag` records older than `DATA_RETENTION_DAYS` to manage database growth. When `DATA_RETENTION_DAYS` is `0`/unset (the default — keep forever), the job is a no-op and returns `{ retentionDisabled: true }`, preserving the full raw history the Savings comparisons depend on.
 
 ## Getting Started
 

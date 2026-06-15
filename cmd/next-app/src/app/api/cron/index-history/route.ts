@@ -11,6 +11,7 @@ import { BackfillService } from '@/lib/battery-provenance/backfill-service';
 import { localDayBoundsUtc } from '@/lib/battery-provenance/local-day';
 import { createSiteTeslaClient } from '@/lib/battery-hold-service';
 import { Importer } from '@/lib/importer';
+import { retentionCutoff } from '@/lib/retention';
 import type { EnergyData } from '@/lib/db';
 
 const DAYS_PER_TICK = parseInt(process.env.INDEX_HISTORY_DAYS_PER_TICK || '45', 10);
@@ -23,7 +24,6 @@ const SITES_PER_TICK = parseInt(process.env.INDEX_HISTORY_SITES_PER_TICK || '1',
 // ~3.2s (~37/min), comfortably under the limit, while the larger budget lets
 // each tick do real work.
 const BUDGET_MS = parseInt(process.env.INDEX_HISTORY_BUDGET_MS || '50000', 10);
-const RETENTION_DAYS = parseInt(process.env.DATA_RETENTION_DAYS || '365', 10);
 const FETCH_CONCURRENCY = parseInt(process.env.INDEX_HISTORY_FETCH_CONCURRENCY || '2', 10);
 const STAGGER_MS = parseInt(process.env.INDEX_HISTORY_STAGGER_MS || '2500', 10);
 const TESLA_MAX_RETRY_DELAY_MS = parseInt(process.env.TESLA_MAX_RETRY_DELAY_MS || '5000', 10);
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
       markComplete: (id) => backfillRepo.markComplete(id),
       markPending: (id) => backfillRepo.markPending(id),
       markError: (id, msg) => backfillRepo.markError(id, msg),
-      retentionCutoff: () => new Date(Date.now() - RETENTION_DAYS * 86400_000),
+      retentionCutoff: () => retentionCutoff(),
       localDayBounds: (localDate, tz) => localDayBoundsUtc(localDate, tz),
       now: () => Date.now(),
     });

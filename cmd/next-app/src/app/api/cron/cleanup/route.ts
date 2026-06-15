@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { LoadTagRepo } from '@/lib/load-tag-repo';
+import { retentionDays } from '@/lib/retention';
 
 export async function GET(request: NextRequest) {
     try {
@@ -11,9 +12,16 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const retentionDays = parseInt(process.env.DATA_RETENTION_DAYS || '365', 10);
+        const days = retentionDays();
+        if (days == null) {
+            // Keep-forever: full raw history is retained so the savings feature can
+            // re-bucket energy into any tariff's TOU windows. Nothing to delete.
+            console.log('[CRON] Cleanup skipped — data retention disabled (keep forever).');
+            return NextResponse.json({ success: true, retentionDisabled: true });
+        }
+
         const cutoff = new Date();
-        cutoff.setDate(cutoff.getDate() - retentionDays);
+        cutoff.setDate(cutoff.getDate() - days);
 
         const energyRepo = new EnergyRepo();
         const tagRepo = new LoadTagRepo();
@@ -29,7 +37,7 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json({
             success: true,
-            retentionDays,
+            retentionDays: days,
             cutoff: cutoff.toISOString(),
             deleted: result
         });
