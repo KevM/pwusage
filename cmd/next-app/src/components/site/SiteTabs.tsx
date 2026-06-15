@@ -6,6 +6,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 
 type TabId = 'history' | 'bill' | 'savings' | 'settings';
 
+export function tabLabelClass(tabId: TabId, activeTab: TabId): string {
+    return tabId === activeTab ? 'inline' : 'sr-only md:not-sr-only';
+}
+
 interface SiteTabsProps {
     children?: ReactNode; // We might not need children if we pass slots, or we use children as content
     historySlot: ReactNode;
