@@ -6,7 +6,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { isBackfillInProcess, isTerminalBackfillError } from '@/lib/roi/savings-status';
 
-const REFRESH_MS = 10 * 60 * 1000; // 10 min: let progress advance without a manual reload
+const REFRESH_MS = 3 * 60 * 1000; // 3 min: let progress advance without a manual reload
 
 export function IndexingStatus({ siteId, backfill }: { siteId: string; backfill: RollupBackfill | null }) {
   const router = useRouter();
