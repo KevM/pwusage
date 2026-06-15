@@ -239,6 +239,32 @@ describe('Importer Sync Logic', () => {
         });
     });
 
+    describe('fetchRange day-boundary clamp', () => {
+        const site = {
+            id: 'site-123',
+            timezone: 'America/Chicago',
+            installed: new Date('2023-01-01T00:00:00Z'),
+            tariffs: [],
+        } as unknown as Parameters<Importer['fetchRange']>[0];
+
+        // Tesla returns no time_series when end_date is the exact next-midnight for a
+        // full-day request. fetchRange must subtract 1s like loadInterval does, else
+        // every pre-retention backfill day comes back empty.
+        it('subtracts 1s from the day-boundary end before calling Tesla', async () => {
+            const getEnergyHistory = vi.fn().mockResolvedValue([]);
+            (mockClient.getEnergyHistory as unknown as ReturnType<typeof vi.fn>) = getEnergyHistory;
+            (mockClient.getSoeHistory as unknown as ReturnType<typeof vi.fn>) = vi.fn().mockResolvedValue([]);
+
+            const start = new Date('2024-01-02T06:00:00Z'); // local midnight (Chicago, winter)
+            const end = new Date('2024-01-03T06:00:00Z');   // next local midnight
+            await importer.fetchRange(site, start, end, 'day');
+
+            expect(getEnergyHistory).toHaveBeenCalledTimes(1);
+            const passedEnd = getEnergyHistory.mock.calls[0][2] as Date;
+            expect(passedEnd.getTime()).toBe(end.getTime() - 1000);
+        });
+    });
+
     it('audits coverage using site midnight when start is non-midnight', async () => {
         // Simulate the bug: caller passes autoBackfillLimit at 14:30, which has full-day data
         // Without the fix, early-day rows are omitted from existingTimestamps, falsely triggering re-import

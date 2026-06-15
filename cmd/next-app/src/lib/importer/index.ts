@@ -15,6 +15,20 @@ function logSync(msg: string) {
     console.log(`[${ts}] [Importer] ${msg}`);
 }
 
+/**
+ * Tesla's calendar_history returns no time_series when end_date is the exact
+ * next-midnight boundary for a full-day ('day'/'hour') request. Subtracting 1s
+ * keeps the request safely inside the requested day's data window. Both the
+ * within-retention (loadInterval) and pre-retention backfill (fetchRange) paths
+ * must apply this or full days come back empty.
+ */
+export function clampDayBoundaryEnd(end: Date, period: string): Date {
+    if (period === 'day' || period === 'hour') {
+        return new Date(end.getTime() - 1000);
+    }
+    return end;
+}
+
 export type { EnergyDataRow } from './energy-transformer';
 
 
@@ -242,14 +256,15 @@ export class Importer {
 
         while (cursor < end) {
             const next = new Date(Math.min(cursor.getTime() + chunkMs, end.getTime()));
+            const fetchEnd = clampDayBoundaryEnd(next, period);
 
-            const history = await this.client.getEnergyHistory(site.id, cursor, next, period, site.timezone);
+            const history = await this.client.getEnergyHistory(site.id, cursor, fetchEnd, period, site.timezone);
             let soeHistory: SoeHistoryEntry[] = [];
             if (this.fetchSoe) {
                 try {
-                    soeHistory = await this.client.getSoeHistory(site.id, cursor, next, period, site.timezone);
+                    soeHistory = await this.client.getSoeHistory(site.id, cursor, fetchEnd, period, site.timezone);
                 } catch (error) {
-                    console.warn(`[Importer] SOE history fetch failed for ${site.id} (${cursor.toISOString()}-${next.toISOString()})`, error);
+                    console.warn(`[Importer] SOE history fetch failed for ${site.id} (${cursor.toISOString()}-${fetchEnd.toISOString()})`, error);
                 }
             }
             if (history && history.length > 0) {
@@ -342,13 +357,7 @@ export class Importer {
     }
 
     private async loadInterval(site: SiteWithTariffs, start: Date, end: Date, period: string): Promise<EnergyDataRow[]> {
-        let actualEnd = new Date(end);
-
-        if (period === 'day' || period === 'hour') {
-            // Tesla API can be finicky about exact midnight boundaries for full days.
-            // Subtracting 1s ensures we are safely within the previous day's data availability window.
-            actualEnd = new Date(actualEnd.getTime() - 1000);
-        }
+        const actualEnd = clampDayBoundaryEnd(end, period);
 
         console.log(`[Import] loadInterval ${start.toISOString()} - ${actualEnd.toISOString()} (${period})`);
         let history;
