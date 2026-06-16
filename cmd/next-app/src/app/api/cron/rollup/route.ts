@@ -6,6 +6,7 @@ import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { RollupService } from '@/lib/battery-provenance/rollup-service';
 import { RollupRepo } from '@/lib/battery-provenance/rollup-repo';
+import { HourlyRepo } from '@/lib/battery-provenance/hourly-repo';
 import { localDateKey, localDayBoundsUtc } from '@/lib/battery-provenance/local-day';
 import { classifyDayCoverage } from '@/lib/battery-provenance/day-coverage';
 import { isInRollupBand } from '@/lib/battery-provenance/rollup-window';
@@ -22,6 +23,7 @@ export async function GET(request: NextRequest) {
     const siteRepo = new SiteRepo();
     const energyRepo = new EnergyRepo();
     const rollupRepo = new RollupRepo();
+    const hourlyRepo = new HourlyRepo();
     const now = new Date();
     const results: Array<{ siteId: string; localDate: string; action: string }> = [];
 
@@ -35,6 +37,7 @@ export async function GET(request: NextRequest) {
       getSeedTank: (siteId, beforeTs) => rollupRepo.getSeedTank(siteId, beforeTs),
       hasAnyRollup: (siteId) => rollupRepo.hasAnyRollup(siteId),
       upsertRollups: (rows) => rollupRepo.upsertRollups(rows),
+      upsertHourly: (rows) => hourlyRepo.upsertHourly(rows),
     });
 
     const siteIds = await siteRepo.getSiteIds();

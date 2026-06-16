@@ -30,6 +30,7 @@ describe('RollupService.rollupDay', () => {
             getSeedTank: async () => ({ tank: { solarWh: 0, gridWh: 2000, solarCost: 0, gridCost: 0.22 }, tankAsOf: new Date('2026-01-01T23:55:00Z') }),
             hasAnyRollup: async () => true,
             upsertRollups: async (r) => { persisted.push(...r); },
+            upsertHourly: async () => {},
         };
         const svc = new RollupService(deps);
         const result = await svc.rollupDay('S1', '2026-01-02');
@@ -56,6 +57,7 @@ describe('RollupService.rollupDay', () => {
             getSeedTank: async () => null,
             hasAnyRollup: async () => false,
             upsertRollups: async (r) => { persisted.push(...r); },
+            upsertHourly: async () => {},
         };
         const svc = new RollupService(deps);
         const result = await svc.rollupDay('S1', '2026-01-02');
@@ -89,6 +91,7 @@ describe('RollupService.rollupDay', () => {
             getSeedTank: async () => null,
             hasAnyRollup: async () => true, // would normally SKIP genesis
             upsertRollups: async (r) => { persisted.push(...r); },
+            upsertHourly: async () => {},
         };
         const result = await new RollupService(deps).rollupDay('S1', '2026-01-02', { forceGenesisAtStart: true });
         expect(result.genesisAnchored).toBe(true);
@@ -103,6 +106,7 @@ describe('RollupService.rollupDay', () => {
             getSeedTank: async () => null,
             hasAnyRollup: async () => true,
             upsertRollups: async () => {},
+            upsertHourly: async () => {},
         };
         const result = await new RollupService(deps).rollupDay('S1', '2026-01-02', { forceGenesisAtStart: true });
         expect(result.genesisAnchored).toBe(false);
@@ -116,10 +120,30 @@ describe('RollupService.rollupDay', () => {
             getSeedTank: async () => null,
             hasAnyRollup: async () => false,
             upsertRollups: async () => {},
+            upsertHourly: async () => {},
         };
         const rows = [ row('2026-01-02T12:00:00Z', { battery_soc: 99, solar_power: 3000, battery_power: 3000, battery_charge_from_solar: 3000 }) ];
         await new RollupService(deps).rollupDay('S1', '2026-01-02', { rows });
         expect(loadEnergyData).not.toHaveBeenCalled();
+    });
+
+    it('dual-writes hourly buckets for the rolled day', async () => {
+        const upsertHourly = vi.fn();
+        const service = new RollupService({
+            loadSite: async () => ({ id: 's1', timezone: 'America/Los_Angeles', tariffs }) as never,
+            loadEnergyData: async () => [
+                row('2026-01-02T13:00:00Z', { battery_power: 5000, solar_power: 5000, battery_charge_from_solar: 5000, battery_charge_from_grid: 0 }),
+            ],
+            getSeedTank: async () => null,
+            hasAnyRollup: async () => false,
+            upsertRollups: vi.fn(),
+            upsertHourly,
+        });
+        await service.rollupDay('s1', '2026-01-02');
+        expect(upsertHourly).toHaveBeenCalledTimes(1);
+        const buckets = upsertHourly.mock.calls[0][0];
+        expect(buckets.length).toBeGreaterThan(0);
+        expect(buckets.every((b: { localDate: string }) => b.localDate === '2026-01-02')).toBe(true);
     });
 });
 

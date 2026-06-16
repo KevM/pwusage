@@ -2,6 +2,7 @@ import { Schedule } from '../schedule';
 import type { Tariff } from '../db';
 import type { EnergyData } from '../db';
 import { replayRows, type PeriodRollup } from './replay';
+import { aggregateHourly, type HourlyBucket } from './hourly-profile';
 import { computeGenesisSeed } from './genesis';
 import { EMPTY_TANK, type Tank } from './tank';
 import { localDayBoundsUtc } from './local-day';
@@ -18,6 +19,7 @@ export interface RollupDeps {
     getSeedTank: (siteId: string, beforeTs: Date) => Promise<{ tank: Tank; tankAsOf: Date } | null>;
     hasAnyRollup: (siteId: string) => Promise<boolean>;
     upsertRollups: (rows: PeriodRollup[]) => Promise<void>;
+    upsertHourly: (rows: HourlyBucket[]) => Promise<void>;
 }
 
 export class RollupService {
@@ -57,6 +59,8 @@ export class RollupService {
         });
         const forDate = rollups.filter(r => r.localDate === localDate);
         await this.deps.upsertRollups(forDate);
+        const hourly = aggregateHourly(rows, site.timezone).filter(b => b.localDate === localDate);
+        await this.deps.upsertHourly(hourly);
         return { rollupCount: forDate.length, genesisAnchored };
     }
 }

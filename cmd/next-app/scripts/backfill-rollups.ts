@@ -15,6 +15,7 @@ async function main() {
     const { SiteRepo } = await import('../src/lib/site-repo');
     const { EnergyRepo } = await import('../src/lib/energy-repo');
     const { RollupRepo } = await import('../src/lib/battery-provenance/rollup-repo');
+    const { HourlyRepo } = await import('../src/lib/battery-provenance/hourly-repo');
     const { RollupService } = await import('../src/lib/battery-provenance/rollup-service');
     const { localDateKey } = await import('../src/lib/battery-provenance/local-day');
     const { pool } = await import('../src/lib/db');
@@ -22,6 +23,7 @@ async function main() {
     const siteRepo = new SiteRepo();
     const energyRepo = new EnergyRepo();
     const rollupRepo = new RollupRepo();
+    const hourlyRepo = new HourlyRepo();
     const site = await siteRepo.getSite(siteId);
     if (!site) throw new Error(`site ${siteId} not found`);
 
@@ -31,6 +33,7 @@ async function main() {
         getSeedTank: (id, beforeTs) => rollupRepo.getSeedTank(id, beforeTs),
         hasAnyRollup: (id) => rollupRepo.hasAnyRollup(id),
         upsertRollups: (rows) => rollupRepo.upsertRollups(rows),
+        upsertHourly: (rows) => hourlyRepo.upsertHourly(rows),
     });
 
     // Earliest local date present.
