@@ -56,12 +56,17 @@ describe('ComparisonTariffRepo.editComparisonVersion', () => {
             buyRate: 0.31, sellRate: 0.06, effectiveFrom: '2025-06-01',
         });
         const sqls = clientQueryMock.mock.calls.map(sqlOf);
-        const tariffUpd = sqls.find(s => s.includes('UPDATE "Tariff"'))!;
+        const tariffUpd = sqls.find(s => s.includes('UPDATE "Tariff" SET effective_from'))!;
         expect(tariffUpd).toMatch(/effective_from/);
         expect(tariffUpd).toMatch(/reporting_only/);
         expect(tariffUpd).toMatch(/RETURNING id/);
         expect(sqls.some(s => s.includes('UPDATE "TariffSeason"'))).toBe(true);
         expect(sqls.some(s => s.includes('UPDATE "TariffSchedule"'))).toBe(true);
+        const demote = sqls.find(s => s.includes('SET is_current = false'))!;
+        expect(demote).toMatch(/reporting_only/);
+        const promote = sqls.find(s => s.includes('SET is_current = true'))!;
+        expect(promote).toMatch(/ORDER BY effective_from DESC NULLS LAST, version DESC/);
+        expect(promote).toMatch(/reporting_only/);
         expect(sqls).toContain('COMMIT');
     });
 

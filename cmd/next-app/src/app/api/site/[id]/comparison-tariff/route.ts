@@ -4,6 +4,12 @@ import { ComparisonTariffRepo } from '@/lib/roi/comparison-tariff-repo';
 
 export const dynamic = 'force-dynamic';
 
+const isBlank = (val: unknown) => {
+    if (val === undefined || val === null) return true;
+    if (typeof val === 'string' && val.trim() === '') return true;
+    return false;
+};
+
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
     if (!(await verifySiteAccess(id))) {
@@ -16,7 +22,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const effectiveFrom = body.effective_from ? String(body.effective_from) : null;
     const intent = body.intent === 'append-version' ? 'append-version' : 'create';
 
-    if (!name || !Number.isFinite(buyRate) || !Number.isFinite(sellRate)) {
+    if (!name || isBlank(body.buy_rate) || isBlank(body.sell_rate) || !Number.isFinite(buyRate) || !Number.isFinite(sellRate)) {
         return NextResponse.json({ error: 'name, buy_rate and sell_rate are required' }, { status: 400 });
     }
 
@@ -44,9 +50,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const sellRate = Number(body.sell_rate);
     const effectiveFrom = body.effective_from ? String(body.effective_from) : null;
 
-    if (!name || !Number.isInteger(version) || !Number.isFinite(buyRate) || !Number.isFinite(sellRate)) {
+    if (!name || !Number.isInteger(version) || isBlank(body.buy_rate) || isBlank(body.sell_rate) || !Number.isFinite(buyRate) || !Number.isFinite(sellRate)) {
         return NextResponse.json({ error: 'name, version, buy_rate and sell_rate are required' }, { status: 400 });
     }
+
 
     await new ComparisonTariffRepo().editComparisonVersion(id, name, version, { buyRate, sellRate, effectiveFrom });
     return NextResponse.json({ success: true });

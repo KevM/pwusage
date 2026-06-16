@@ -59,6 +59,20 @@ export class ComparisonTariffRepo {
                   WHERE season_id IN (SELECT id FROM "TariffSeason" WHERE tariff_id = $1)`,
                 [tariffId, input.buyRate, input.sellRate],
             );
+            await client.query(
+                `UPDATE "Tariff" SET is_current = false
+                  WHERE site_id = $1 AND name = $2 AND reporting_only`,
+                [siteId, name],
+            );
+            await client.query(
+                `UPDATE "Tariff" SET is_current = true
+                  WHERE id = (
+                    SELECT id FROM "Tariff"
+                     WHERE site_id = $1 AND name = $2 AND reporting_only
+                     ORDER BY effective_from DESC NULLS LAST, version DESC
+                     LIMIT 1)`,
+                [siteId, name],
+            );
             await client.query('COMMIT');
         } catch (e) {
             await client.query('ROLLBACK');
@@ -130,8 +144,6 @@ export class ComparisonTariffRepo {
         );
         return res.rows[0]?.exists === true;
     }
-
-
 
     /** Append a reporting-only Fixed version for (site, name); demote the prior
      *  current version of that same name only. Mints a full-year flat season +

@@ -62,6 +62,30 @@ export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
         if (ok) setEditing(null);
     }
 
+    async function handleDeletePlan(name: string) {
+        if (typeof window !== 'undefined' && !window.confirm(`Are you sure you want to delete the plan "${name}" and all of its versions?`)) return;
+        const ok = await send('DELETE', { name }, 'Plan deleted.');
+        if (ok) {
+            if (addVersionFor === name) {
+                setAddVersionFor(null);
+                setForm(EMPTY);
+            }
+            if (editing?.startsWith(`${name}@`)) {
+                setEditing(null);
+            }
+        }
+    }
+
+    async function handleDeleteVersion(name: string, version: number) {
+        if (typeof window !== 'undefined' && !window.confirm(`Are you sure you want to delete version ${version} of "${name}"?`)) return;
+        const ok = await send('DELETE', { name, version }, 'Version deleted.');
+        if (ok) {
+            if (editing === `${name}@${version}`) {
+                setEditing(null);
+            }
+        }
+    }
+
     return (
         <Card>
             <CardHeader><CardTitle>Comparison plans</CardTitle>
@@ -73,7 +97,7 @@ export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
                         <div className="flex items-center gap-2">
                             <div className="font-medium">{plan.name}</div>
                             <button type="button" tabIndex={0} disabled={busy}
-                                onClick={() => send('DELETE', { name: plan.name }, 'Plan deleted.')}
+                                onClick={() => handleDeletePlan(plan.name)}
                                 className="ml-auto text-xs text-red-600 dark:text-red-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1">
                                 Delete plan
                             </button>
@@ -101,12 +125,13 @@ export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
                                         <span className="text-gray-500 dark:text-gray-400">{v.effective_from ?? 'undated'}{v.is_current ? ' · current' : ''}</span>
                                         <span className="ml-auto flex gap-2">
                                             <button type="button" tabIndex={0} onClick={() => beginEdit(plan.name, v)} className="text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1">Edit</button>
-                                            <button type="button" tabIndex={0} disabled={busy} onClick={() => send('DELETE', { name: plan.name, version: v.version }, 'Version deleted.')} className="text-xs text-red-600 dark:text-red-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1">Delete</button>
+                                            <button type="button" tabIndex={0} disabled={busy} onClick={() => handleDeleteVersion(plan.name, v.version)} className="text-xs text-red-600 dark:text-red-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1">Delete</button>
                                         </span>
                                     </div>
                                 );
                             })}
                         </div>
+
                         <button type="button" tabIndex={0}
                             onClick={() => { setAddVersionFor(plan.name); setForm(EMPTY); }}
                             className="mt-2 text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1">

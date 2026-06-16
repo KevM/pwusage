@@ -57,6 +57,13 @@ describe('comparison-tariff route', () => {
         expect(appendMock).toHaveBeenCalled();
     });
 
+    it('POST 400 when buy_rate or sell_rate is empty/blank', async () => {
+        const res = await POST(req({ name: 'EV', buy_rate: '', sell_rate: 0.1 }) as never, ctx as never);
+        expect(res.status).toBe(400);
+        const res2 = await POST(req({ name: 'EV', buy_rate: 0.1, sell_rate: '   ' }) as never, ctx as never);
+        expect(res2.status).toBe(400);
+    });
+
     it('POST 409 when the name collides with the metered plan', async () => {
         meteredMock.mockResolvedValue(true);
         const res = await POST(req({ name: 'Standard', buy_rate: 0.3, sell_rate: 0 }) as never, ctx as never);
@@ -74,6 +81,14 @@ describe('comparison-tariff route', () => {
         expect(res.status).toBe(400);
         expect(editMock).not.toHaveBeenCalled();
     });
+
+    it('PATCH 400 when buy_rate or sell_rate is empty/blank', async () => {
+        const res = await PATCH(req({ name: 'EV', version: 2, buy_rate: '', sell_rate: 0.1 }) as never, ctx as never);
+        expect(res.status).toBe(400);
+        const res2 = await PATCH(req({ name: 'EV', version: 2, buy_rate: 0.1, sell_rate: '   ' }) as never, ctx as never);
+        expect(res2.status).toBe(400);
+    });
+
 
     it('DELETE with a version removes that version', async () => {
         const res = await DELETE(req({ name: 'EV', version: 1 }) as never, ctx as never);
