@@ -23,7 +23,7 @@ import { HistoryView } from '@/components/site/HistoryView';
 import { EstimatedBillView } from '@/components/site/EstimatedBillView';
 import { SettingsView } from '@/components/site/SettingsView';
 import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
-import { RollupRepo } from '@/lib/battery-provenance/rollup-repo';
+
 import { SiteRoiConfigRepo } from '@/lib/roi/roi-config-repo';
 import { buildRoiSummary, monthlyCumulative } from '@/lib/roi/roi-service';
 import { flatTimeline, meteredTimeline } from '@/lib/roi/plan-timeline';
@@ -328,9 +328,7 @@ export default async function SitePage({ params, searchParams }: {
         );
         savingsSeries = monthlyCumulative(hourly, fixedTl, meteredTl);
 
-        // Arbitrage still reads EnergyRollup (Phase C2 re-grains tank replay to hourly on read).
-        const rollups = await new RollupRepo().getAllForSite(finalSite.id);
-        arbitrage = computeArbitrage(rollups);
+        arbitrage = computeArbitrage(hourly, meteredTl);
     }
 
 
