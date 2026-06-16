@@ -8,6 +8,12 @@ export interface FixedComparisonInputRow {
     effectiveFrom: string | null; // 'YYYY-MM-DD'
 }
 
+export interface EditVersionInput {
+    buyRate: number;
+    sellRate: number;
+    effectiveFrom: string | null; // 'YYYY-MM-DD'
+}
+
 export interface ComparisonVersion {
     version: number;
     is_current: boolean;
@@ -22,6 +28,111 @@ export interface ComparisonPlan {
 }
 
 export class ComparisonTariffRepo {
+    /** Edit one reporting-only Fixed comparison version's rates + effective_from.
+     *  A Fixed plan carries its rate on BOTH the season and its schedule, so update
+     *  both. Guarded `reporting_only` so a metered tariff is never touched; a non-match
+     *  rolls back. */
+    async editComparisonVersion(siteId: string, name: string, version: number, input: EditVersionInput): Promise<void> {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query('SELECT 1 FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+
+            const tRes = await client.query(
+                `UPDATE "Tariff" SET effective_from = $4, updated = NOW()
+                  WHERE site_id = $1 AND name = $2 AND version = $3 AND reporting_only
+                  RETURNING id`,
+                [siteId, name, version, input.effectiveFrom],
+            );
+            if (tRes.rowCount === 0) {
+                await client.query('ROLLBACK');
+                return;
+            }
+            const tariffId = tRes.rows[0].id;
+
+            await client.query(
+                `UPDATE "TariffSeason" SET buy_rate = $2, sell_rate = $3 WHERE tariff_id = $1`,
+                [tariffId, input.buyRate, input.sellRate],
+            );
+            await client.query(
+                `UPDATE "TariffSchedule" SET buy_rate = $2, sell_rate = $3
+                  WHERE season_id IN (SELECT id FROM "TariffSeason" WHERE tariff_id = $1)`,
+                [tariffId, input.buyRate, input.sellRate],
+            );
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
+    }
+
+    /** Delete one reporting-only comparison version (cascade drops its season/schedule).
+     *  If it was the current version, promote the latest remaining version of the same
+     *  name to current. Guarded `reporting_only` so EnergyData's metered tariff can never
+     *  be cascade-deleted. A non-match rolls back. */
+    async deleteComparisonVersion(siteId: string, name: string, version: number): Promise<void> {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query('SELECT 1 FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+
+            const del = await client.query(
+                `DELETE FROM "Tariff"
+                  WHERE site_id = $1 AND name = $2 AND version = $3 AND reporting_only
+                  RETURNING is_current`,
+                [siteId, name, version],
+            );
+            if (del.rowCount === 0) {
+                await client.query('ROLLBACK');
+                return;
+            }
+
+            if (del.rows[0].is_current === true) {
+                await client.query(
+                    `UPDATE "Tariff" SET is_current = true
+                      WHERE id = (
+                        SELECT id FROM "Tariff"
+                         WHERE site_id = $1 AND name = $2 AND reporting_only
+                         ORDER BY effective_from DESC NULLS LAST, version DESC
+                         LIMIT 1)`,
+                    [siteId, name],
+                );
+            }
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
+    }
+
+    /** Delete an entire reporting-only comparison plan (all versions; cascade drops
+     *  their seasons/schedules). Guarded `reporting_only`. */
+    async deleteComparisonPlan(siteId: string, name: string): Promise<void> {
+        await pool.query(
+            `DELETE FROM "Tariff" WHERE site_id = $1 AND name = $2 AND reporting_only`,
+            [siteId, name],
+        );
+    }
+
+    /** True when a *current comparison* plan already uses this name, so "add new plan"
+     *  doesn't silently append a version to an existing plan (use "+ add version" for that). */
+    async comparisonNameInUse(siteId: string, name: string): Promise<boolean> {
+        const res = await pool.query(
+            `SELECT EXISTS(
+                SELECT 1 FROM "Tariff"
+                 WHERE site_id = $1 AND name = $2 AND reporting_only AND is_current
+             ) AS exists`,
+            [siteId, name],
+        );
+        return res.rows[0]?.exists === true;
+    }
+
+
+
     /** Append a reporting-only Fixed version for (site, name); demote the prior
      *  current version of that same name only. Mints a full-year flat season +
      *  all-day/all-week schedule. */
