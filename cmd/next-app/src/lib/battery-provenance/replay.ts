@@ -1,14 +1,9 @@
 import type { EnergyData } from '../db';
 import { Schedule } from '../schedule';
-import { allocateEdges, energyDataToInstant } from '../sankey/build-flow-model';
-import type { EdgeCategory } from '../sankey/flow-model';
 import { resolveRates } from './rates';
 import { chargeTank, dischargeTank, EMPTY_TANK, type Tank } from './tank';
 import { localDateKey } from './local-day';
-import { solarOnlyNet } from './counterfactual';
-
-
-const WH_PER_KWH = 1000;
+import { intervalFlows } from './interval-flows';
 
 export interface PeriodRollup {
     siteId: string;
@@ -32,10 +27,7 @@ export interface PeriodRollup {
     tankAsOf: Date;   // timestamp of the last interval folded into this row
 }
 
-function edgeWh(edges: ReturnType<typeof allocateEdges>, category: EdgeCategory): number {
-    const e = edges.find(x => x.category === category);
-    return e ? e.energy * WH_PER_KWH : 0;
-}
+
 
 function emptyRollup(siteId: string, localDate: string, scheduleId: number): PeriodRollup {
     return {
@@ -71,21 +63,16 @@ export function replayRows(
         const period = schedule.getTariffPeriod(row.timestamp);
         if (!period || row.tariff_schedule_id == null) continue; // unkeyable; skip
         const rates = resolveRates(period);
-        const edges = allocateEdges(energyDataToInstant(row), { buyRate: 0, sellRate: 0 });
-
-        const solarToBatteryWh = edgeWh(edges, 'solar-battery');
-        const gridToBatteryWh = edgeWh(edges, 'grid-battery');
-        const batteryToHomeWh = edgeWh(edges, 'battery-home');
-        const batteryToGridWh = edgeWh(edges, 'battery-export'); // allocator names battery→grid 'battery-export'
+        const f = intervalFlows(row);
 
         // Prefer Tesla's measured charge source; fall back to sankey allocation.
-        const chargeSolarWh = row.battery_charge_from_solar ?? solarToBatteryWh;
-        const chargeGridWh = row.battery_charge_from_grid ?? gridToBatteryWh;
+        const chargeSolarWh = row.battery_charge_from_solar ?? f.solarToBatteryWh;
+        const chargeGridWh = row.battery_charge_from_grid ?? f.gridToBatteryWh;
 
         const shouldSimulateTank = !options?.genesisAnchorTimestamp || row.timestamp.getTime() > options.genesisAnchorTimestamp.getTime();
         if (shouldSimulateTank) {
             tank = chargeTank(tank, chargeSolarWh, chargeGridWh, rates.buyRate, rates.sellRate);
-            const dischargeWh = batteryToHomeWh + batteryToGridWh;
+            const dischargeWh = f.batteryToHomeWh + f.batteryToGridWh;
             if (dischargeWh > 0) {
                 tank = dischargeTank(tank, dischargeWh).tank;
             }
@@ -98,17 +85,16 @@ export function replayRows(
             r = emptyRollup(row.site_id, localDate, row.tariff_schedule_id);
             byKey.set(key, r);
         }
-        r.loadWh += edgeWh(edges, 'solar-home') + edgeWh(edges, 'grid-home') + batteryToHomeWh; // = home load served
-        r.solarToHomeWh += edgeWh(edges, 'solar-home');
-        r.solarToBatteryWh += solarToBatteryWh;
-        r.solarToGridWh += edgeWh(edges, 'solar-export');
-        r.gridToHomeWh += edgeWh(edges, 'grid-home');
-        r.gridToBatteryWh += gridToBatteryWh;
-        r.batteryToHomeWh += batteryToHomeWh;
-        r.batteryToGridWh += batteryToGridWh;
-        const so = solarOnlyNet(row.load_power, row.solar_power);
-        r.solarOnlyImportWh += so.importWh;
-        r.solarOnlyExportWh += so.exportWh;
+        r.loadWh += f.loadWh;
+        r.solarToHomeWh += f.solarToHomeWh;
+        r.solarToBatteryWh += f.solarToBatteryWh;
+        r.solarToGridWh += f.solarToGridWh;
+        r.gridToHomeWh += f.gridToHomeWh;
+        r.gridToBatteryWh += f.gridToBatteryWh;
+        r.batteryToHomeWh += f.batteryToHomeWh;
+        r.batteryToGridWh += f.batteryToGridWh;
+        r.solarOnlyImportWh += f.solarOnlyImportWh;
+        r.solarOnlyExportWh += f.solarOnlyExportWh;
         r.buyRate = rates.buyRate;   // constant across the period (one schedule)
 
         r.sellRate = rates.sellRate;
