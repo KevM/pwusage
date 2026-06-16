@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { localDateKey, localDayBoundsUtc, addLocalDays } from './local-day';
+import { localDateKey, localDayBoundsUtc, addLocalDays, localHour } from './local-day';
 
 describe('local-day', () => {
     it('maps an instant to its local calendar date', () => {
@@ -22,3 +22,18 @@ describe('local-day', () => {
         });
     });
 });
+
+describe('localHour', () => {
+    it('returns the local clock hour in the site timezone', () => {
+        // 2026-01-07T11:30:00Z is 03:30 in America/Los_Angeles (UTC-8)
+        expect(localHour(new Date('2026-01-07T11:30:00Z'), 'America/Los_Angeles')).toBe(3);
+        // …and 11:30 in UTC
+        expect(localHour(new Date('2026-01-07T11:30:00Z'), 'UTC')).toBe(11);
+    });
+
+    it('maps local midnight to hour 0', () => {
+        // 2026-01-07T08:00:00Z is 00:00 in America/Los_Angeles
+        expect(localHour(new Date('2026-01-07T08:00:00Z'), 'America/Los_Angeles')).toBe(0);
+    });
+});
+

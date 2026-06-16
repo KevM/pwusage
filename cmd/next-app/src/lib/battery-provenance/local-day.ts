@@ -35,3 +35,14 @@ export function addLocalDays(localDate: string, n: number): string {
     d.setUTCDate(d.getUTCDate() + n);
     return d.toISOString().slice(0, 10);
 }
+
+/** Local clock hour (0..23) for the instant in the given IANA timezone. */
+export function localHour(ts: Date, timeZone: string): number {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone, hour: '2-digit', hour12: false,
+    }).formatToParts(ts);
+    let hour = Number(parts.find(p => p.type === 'hour')!.value);
+    if (hour === 24) hour = 0; // some ICU builds render local midnight as 24
+    return hour;
+}
+
