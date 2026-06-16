@@ -44,3 +44,20 @@ describe('HourlyRepo.getAllForSite', () => {
         expect(sql).toMatch(/ORDER BY local_date ASC, hour ASC/);
     });
 });
+
+describe('HourlyRepo.hasHourlyForDate', () => {
+    beforeEach(() => poolQueryMock.mockReset());
+    it('returns true when a row exists for the (site,date)', async () => {
+        poolQueryMock.mockResolvedValue({ rows: [{ '1': 1 }] });
+        const has = await new HourlyRepo().hasHourlyForDate('s1', '2026-01-07');
+        expect(has).toBe(true);
+        const sql = String(poolQueryMock.mock.calls[0][0]);
+        expect(sql).toMatch(/FROM "EnergyHourly" WHERE site_id = \$1 AND local_date = \$2 LIMIT 1/);
+        expect(poolQueryMock.mock.calls[0][1]).toEqual(['s1', '2026-01-07']);
+    });
+    it('returns false when no row exists', async () => {
+        poolQueryMock.mockResolvedValue({ rows: [] });
+        expect(await new HourlyRepo().hasHourlyForDate('s1', '2026-01-07')).toBe(false);
+    });
+});
+

@@ -54,4 +54,13 @@ export class HourlyRepo {
         );
         return res.rows as EnergyHourlyRow[];
     }
+
+    /** True if any hourly bucket already exists for this local date (⇒ the day was built). */
+    async hasHourlyForDate(siteId: string, localDate: string): Promise<boolean> {
+        const res = await pool.query(
+            `SELECT 1 FROM "EnergyHourly" WHERE site_id = $1 AND local_date = $2 LIMIT 1`,
+            [siteId, localDate],
+        );
+        return res.rows.length > 0;
+    }
 }
