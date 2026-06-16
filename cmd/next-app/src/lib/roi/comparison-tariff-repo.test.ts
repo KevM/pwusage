@@ -10,26 +10,7 @@ import { ComparisonTariffRepo } from './comparison-tariff-repo';
 
 function sqlOf(call: unknown[]): string { return String(call[0]); }
 
-describe('ComparisonTariffRepo.appendFixedComparison', () => {
-    beforeEach(() => {
-        clientQueryMock.mockReset();
-        connectMock.mockResolvedValue({ query: clientQueryMock, release: releaseMock });
-        clientQueryMock.mockResolvedValue({ rows: [{ next: 1, id: 42 }] });
-    });
 
-    it('demotes only the same-named current version, then inserts a reporting-only version with effective_from', async () => {
-        await new ComparisonTariffRepo().appendFixedComparison('site-1', {
-            name: 'PG&E flat', buyRate: 0.1658, sellRate: 0.08, effectiveFrom: '2024-01-01',
-        });
-        const sqls = clientQueryMock.mock.calls.map(sqlOf);
-        const demote = sqls.find(s => s.includes('SET is_current = false'));
-        expect(demote).toMatch(/name = \$2/);
-        expect(demote).toMatch(/reporting_only/);
-        const insert = sqls.find(s => s.includes('INSERT INTO "Tariff"'));
-        expect(insert).toMatch(/reporting_only/);
-        expect(insert).toMatch(/effective_from/);
-    });
-});
 
 describe('ComparisonTariffRepo.nameInUseByMetered', () => {
     beforeEach(() => { poolQueryMock.mockReset(); });
@@ -43,45 +24,7 @@ describe('ComparisonTariffRepo.nameInUseByMetered', () => {
     });
 });
 
-describe('ComparisonTariffRepo.editComparisonVersion', () => {
-    beforeEach(() => {
-        clientQueryMock.mockReset();
-        connectMock.mockResolvedValue({ query: clientQueryMock, release: releaseMock });
-        // Tariff UPDATE returns the row id; subsequent UPDATEs return empty.
-        clientQueryMock.mockResolvedValue({ rows: [{ id: 42 }], rowCount: 1 });
-    });
 
-    it('updates the Tariff effective_from and both season + schedule rates, guarded reporting_only', async () => {
-        await new ComparisonTariffRepo().editComparisonVersion('site-1', 'EV Plan', 2, {
-            buyRate: 0.31, sellRate: 0.06, effectiveFrom: '2025-06-01',
-        });
-        const sqls = clientQueryMock.mock.calls.map(sqlOf);
-        const tariffUpd = sqls.find(s => s.includes('UPDATE "Tariff" SET effective_from'))!;
-        expect(tariffUpd).toMatch(/effective_from/);
-        expect(tariffUpd).toMatch(/reporting_only/);
-        expect(tariffUpd).toMatch(/RETURNING id/);
-        expect(sqls.some(s => s.includes('UPDATE "TariffSeason"'))).toBe(true);
-        expect(sqls.some(s => s.includes('UPDATE "TariffSchedule"'))).toBe(true);
-        const demote = sqls.find(s => s.includes('SET is_current = false'))!;
-        expect(demote).toMatch(/reporting_only/);
-        const promote = sqls.find(s => s.includes('SET is_current = true'))!;
-        expect(promote).toMatch(/ORDER BY effective_from DESC NULLS LAST, version DESC/);
-        expect(promote).toMatch(/reporting_only/);
-        expect(sqls).toContain('COMMIT');
-    });
-
-    it('rolls back without touching children when the version is not a reporting-only match', async () => {
-        clientQueryMock.mockReset();
-        connectMock.mockResolvedValue({ query: clientQueryMock, release: releaseMock });
-        clientQueryMock.mockResolvedValue({ rows: [], rowCount: 0 }); // Tariff UPDATE matched nothing
-        await new ComparisonTariffRepo().editComparisonVersion('site-1', 'Metered', 1, {
-            buyRate: 0.5, sellRate: 0, effectiveFrom: null,
-        });
-        const sqls = clientQueryMock.mock.calls.map(sqlOf);
-        expect(sqls.some(s => s.includes('UPDATE "TariffSeason"'))).toBe(false);
-        expect(sqls).toContain('ROLLBACK');
-    });
-});
 
 describe('ComparisonTariffRepo.deleteComparisonVersion', () => {
     function setup(deletedRow: { is_current: boolean } | null) {
@@ -149,6 +92,117 @@ describe('ComparisonTariffRepo.comparisonNameInUse', () => {
         expect(sql).toMatch(/is_current/);
     });
 });
+
+describe('ComparisonTariffRepo.getPlanStructure', () => {
+    beforeEach(() => { poolQueryMock.mockReset(); });
+
+    it('assembles seasons + windows for (site, name, version) without a reporting_only guard', async () => {
+        poolQueryMock.mockResolvedValue({ rows: [
+            { tariff_name: 'EV', season_id: 1, season_name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+              season_buy_rate: 0, season_sell_rate: 0, schedule_id: 10, schedule_name: 'Peak',
+              schedule_buy_rate: 0.45, schedule_sell_rate: 0.06, from_day_of_week: 0, to_day_of_week: 4,
+              from_hour: 16, from_minute: 0, to_hour: 21, to_minute: 0 },
+            { tariff_name: 'EV', season_id: 1, season_name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+              season_buy_rate: 0, season_sell_rate: 0, schedule_id: 11, schedule_name: 'Off',
+              schedule_buy_rate: 0.18, schedule_sell_rate: 0.06, from_day_of_week: 0, to_day_of_week: 6,
+              from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 },
+        ] });
+        const out = await new ComparisonTariffRepo().getPlanStructure('site-1', 'EV', 2);
+        const sql = sqlOf(poolQueryMock.mock.calls[0]);
+        expect(sql).not.toMatch(/reporting_only/);  // reads span metered + comparison
+        expect(sql).toMatch(/version = \$3/);
+        expect(out?.name).toBe('EV');
+        expect(out?.seasons.length).toBe(1);
+        expect(out?.seasons[0].schedules.length).toBe(2);
+        expect(out?.seasons[0].schedules[0].buy_rate).toBe(0.45);
+    });
+
+    it('returns null when nothing matches', async () => {
+        poolQueryMock.mockResolvedValue({ rows: [] });
+        const out = await new ComparisonTariffRepo().getPlanStructure('site-1', 'Nope', 1);
+        expect(out).toBeNull();
+    });
+});
+
+describe('ComparisonTariffRepo.saveComparisonStructure', () => {
+    const seasons = [{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0, sell_rate: 0,
+        schedules: [
+            { name: 'Peak', buy_rate: 0.45, sell_rate: 0.06, from_day_of_week: 0, to_day_of_week: 4, from_hour: 16, from_minute: 0, to_hour: 21, to_minute: 0 },
+            { name: 'Off', buy_rate: 0.18, sell_rate: 0.06, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 },
+        ],
+    }];
+
+    beforeEach(() => {
+        clientQueryMock.mockReset();
+        connectMock.mockResolvedValue({ query: clientQueryMock, release: releaseMock });
+        clientQueryMock.mockResolvedValue({ rows: [{ next: 3, id: 42 }], rowCount: 1 });
+    });
+
+    it('create: demotes current, inserts a reporting-only Tariff + season + each window', async () => {
+        await new ComparisonTariffRepo().saveComparisonStructure('site-1', 'EV', '2025-01-01', seasons, 'create');
+        const sqls = clientQueryMock.mock.calls.map(sqlOf);
+        expect(sqls.find(s => s.includes('SET is_current = false'))).toMatch(/reporting_only/);
+        expect(sqls.find(s => s.includes('INSERT INTO "Tariff"'))).toMatch(/reporting_only/);
+        expect(sqls.some(s => s.includes('INSERT INTO "TariffSeason"'))).toBe(true);
+        const insertScheduleCalls = sqls.filter(s => s.includes('INSERT INTO "TariffSchedule"'));
+        expect(insertScheduleCalls.length).toBe(2); // two windows
+        expect(sqls).toContain('COMMIT');
+    });
+
+    it('replace: deletes the version\'s existing seasons (guarded reporting_only) then re-inserts', async () => {
+        await new ComparisonTariffRepo().saveComparisonStructure('site-1', 'EV', '2025-01-01', seasons, 'replace', 2);
+        const sqls = clientQueryMock.mock.calls.map(sqlOf);
+        const del = sqls.find(s => s.includes('DELETE FROM "TariffSeason"'));
+        expect(del).toMatch(/reporting_only/);
+        expect(del).toMatch(/version = \$3/);
+        expect(sqls.some(s => s.includes('INSERT INTO "TariffSeason"'))).toBe(true);
+        expect(sqls).toContain('COMMIT');
+    });
+
+    it('canonicalizes an all-same-rate season to a single window before persisting', async () => {
+        const flatish = [{
+            name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0, sell_rate: 0,
+            schedules: [
+                { name: 'A', buy_rate: 0.2, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 16, to_minute: 0 },
+                { name: 'B', buy_rate: 0.2, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 16, from_minute: 0, to_hour: 24, to_minute: 0 },
+            ],
+        }];
+        await new ComparisonTariffRepo().saveComparisonStructure('site-1', 'Flat', null, flatish, 'create');
+        const sqls = clientQueryMock.mock.calls.map(sqlOf);
+        expect(sqls.filter(s => s.includes('INSERT INTO "TariffSchedule"')).length).toBe(1); // collapsed
+    });
+});
+
+describe('ComparisonTariffRepo.renameComparisonPlan', () => {
+    beforeEach(() => { poolQueryMock.mockReset(); });
+    it('renames all reporting-only versions of the name, guarded reporting_only', async () => {
+        poolQueryMock.mockResolvedValue({ rows: [], rowCount: 2 });
+        await new ComparisonTariffRepo().renameComparisonPlan('site-1', 'Old', 'New');
+        const sql = sqlOf(poolQueryMock.mock.calls[0]);
+        expect(sql).toMatch(/UPDATE "Tariff" SET name = \$3/);
+        expect(sql).toMatch(/reporting_only/);
+        expect(poolQueryMock.mock.calls[0][1]).toEqual(['site-1', 'Old', 'New']);
+    });
+});
+
+describe('ComparisonTariffRepo.listFixedComparisons kind', () => {
+    beforeEach(() => { poolQueryMock.mockReset(); });
+    it('marks a version TOU when its windows have differing buy rates, else fixed', async () => {
+        poolQueryMock.mockResolvedValue({ rows: [
+            { name: 'EV', version: 2, is_current: true, effective_from: '2025-01-01', buy_rate: 0, sell_rate: 0, distinct_buy_rates: 2 },
+            { name: 'Flat', version: 1, is_current: true, effective_from: null, buy_rate: 0.2, sell_rate: 0.05, distinct_buy_rates: 1 },
+        ] });
+        const plans = await new ComparisonTariffRepo().listFixedComparisons('site-1');
+        const ev = plans.find(p => p.name === 'EV')!;
+        const flat = plans.find(p => p.name === 'Flat')!;
+        expect(ev.versions[0].kind).toBe('tou');
+        expect(flat.versions[0].kind).toBe('fixed');
+    });
+});
+
+
+
 
 
 

@@ -9,8 +9,8 @@ import type { ComparisonPlan } from '@/lib/roi/comparison-tariff-repo';
 
 const plans: ComparisonPlan[] = [
     { name: 'EV Plan', versions: [
-        { version: 2, is_current: true, effective_from: '2025-06-01', buy_rate: 0.30, sell_rate: 0.05 },
-        { version: 1, is_current: false, effective_from: '2024-01-01', buy_rate: 0.20, sell_rate: 0.04 },
+        { version: 2, is_current: true, effective_from: '2025-06-01', buy_rate: 0.30, sell_rate: 0.05, kind: 'fixed' },
+        { version: 1, is_current: false, effective_from: '2024-01-01', buy_rate: 0.20, sell_rate: 0.04, kind: 'fixed' },
     ] },
 ];
 

@@ -7,7 +7,7 @@ import { ComparisonTariffRepo, type ComparisonPlan } from './comparison-tariff-r
 export function pickCurrentFixedBaseline(plans: ComparisonPlan[]): RoiInputs | null {
     let best: { eff: string; v: ComparisonPlan['versions'][number] } | null = null;
     for (const plan of plans) {
-        const current = plan.versions.find(v => v.is_current);
+        const current = plan.versions.find(v => v.is_current && v.kind === 'fixed');
         if (!current) continue;
         const eff = current.effective_from ?? '0000-01-01';
         if (!best || eff > best.eff) best = { eff, v: current };

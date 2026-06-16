@@ -26,7 +26,7 @@ import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
 
 import { SiteRoiConfigRepo } from '@/lib/roi/roi-config-repo';
 import { buildRoiSummary, monthlyCumulative } from '@/lib/roi/roi-service';
-import { flatTimeline, meteredTimeline, comparisonPlanTimeline } from '@/lib/roi/plan-timeline';
+import { flatTimeline, meteredTimeline, comparisonStructTimeline } from '@/lib/roi/plan-timeline';
 import { buildExtendedGrid, type GridColumnInput } from '@/lib/roi/extended-grid';
 import { HourlyRepo } from '@/lib/battery-provenance/hourly-repo';
 import { classifyTariff } from '@/lib/roi/classify-tariff';
@@ -294,6 +294,7 @@ export default async function SitePage({ params, searchParams }: {
     const installation = await trmnlService.getInstallationBySiteId(finalSite.id, { includeTokens: false });
 
         const comparisonPlans = await new ComparisonTariffRepo().listFixedComparisons(finalSite.id);
+        const comparisonStructures = await new ComparisonTariffRepo().listComparisonStructures(finalSite.id);
 
     const roiConfig = await new SiteRoiConfigRepo().get(finalSite.id);
     let roiSummary = null;
@@ -334,8 +335,12 @@ export default async function SitePage({ params, searchParams }: {
         const meteredPlanName = finalSite.tariffs?.[0]?.name ?? 'Your plan';
         const gridColumns: GridColumnInput[] = [
             { name: meteredPlanName, type: 'metered', isMetered: true, timeline: meteredTl },
-            ...comparisonPlans.map(p => ({
-                name: p.name, type: 'fixed' as const, isMetered: false, timeline: comparisonPlanTimeline(p),
+            ...comparisonStructures.map(g => ({
+                name: g.name,
+                // g.tariffs is ordered newest effective_from first, so [0] is the current version.
+                type: classifyTariff(g.tariffs[0]),
+                isMetered: false,
+                timeline: comparisonStructTimeline(g.tariffs, finalSite.timezone),
             })),
         ];
         extendedGrid = buildExtendedGrid(hourly, gridColumns);

@@ -1,7 +1,6 @@
 import { Schedule } from '../schedule';
 import { resolveRates } from '../battery-provenance/rates';
 import type { Tariff } from '../db';
-import type { ComparisonPlan } from './comparison-tariff-repo';
 
 export interface Rate { buy: number; sell: number; }
 
@@ -67,16 +66,12 @@ export function meteredTimeline(tariffs: Tariff[], timeZone: string): PlanTimeli
     return scheduleTimeline(versions);
 }
 
-/** A date-resolved FLAT timeline from a Fixed comparison plan's versions.
- *  Comparison plans are Fixed-only today (one buy/sell pair per version), so the rate is
- *  hour-independent; date resolution reuses the shared `pickByDate` rule. */
-export function comparisonPlanTimeline(plan: ComparisonPlan): PlanTimeline {
-    const sortedAsc = [...plan.versions].sort((a, b) =>
-        (a.effective_from ?? '0000-01-01').localeCompare(b.effective_from ?? '0000-01-01'));
-    return {
-        rateAt(localDate: string): Rate {
-            const v = pickByDate(sortedAsc, x => x.effective_from, localDate);
-            return v ? { buy: v.buy_rate, sell: v.sell_rate } : ZERO;
-        },
-    };
+/** A date-resolved timeline for one comparison plan, built from its full Tariff→Season→Schedule
+ *  versions (Fixed = the degenerate one-window schedule). Replaces the flat comparisonPlanTimeline. */
+export function comparisonStructTimeline(tariffs: Tariff[], timeZone: string): PlanTimeline {
+    const versions: TimelineVersion[] = tariffs.map(t => ({
+        effectiveFrom: t.effective_from ?? null,
+        schedule: new Schedule([t], timeZone),
+    }));
+    return scheduleTimeline(versions);
 }
