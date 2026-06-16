@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { flatTimeline, scheduleTimeline, meteredTimeline } from './plan-timeline';
+import { flatTimeline, scheduleTimeline, meteredTimeline, comparisonPlanTimeline } from './plan-timeline';
 import { Schedule } from '../schedule';
 import type { Tariff } from '../db';
+import type { ComparisonPlan } from './comparison-tariff-repo';
 
 /** Build a one-season Tariff. `windows` become TariffSchedules (day 0..6, hour-aligned). */
 function makeTariff(over: {
@@ -90,5 +91,45 @@ describe('meteredTimeline', () => {
     it('returns zero rates when no metered tariff exists', () => {
         const tl = meteredTimeline([], 'America/Los_Angeles');
         expect(tl.rateAt('2026-01-01', 0)).toEqual({ buy: 0, sell: 0 });
+    });
+});
+
+describe('comparisonPlanTimeline', () => {
+    const plan: ComparisonPlan = {
+        name: 'EV Plan',
+        versions: [
+            // newest first (as listFixedComparisons returns), unsorted on purpose
+            { version: 2, is_current: true, effective_from: '2025-06-01', buy_rate: 0.30, sell_rate: 0.05 },
+            { version: 1, is_current: false, effective_from: '2024-01-01', buy_rate: 0.20, sell_rate: 0.04 },
+        ],
+    };
+
+    it('flat: rate is independent of hour', () => {
+        const tl = comparisonPlanTimeline(plan);
+        expect(tl.rateAt('2025-07-01', 0)).toEqual(tl.rateAt('2025-07-01', 18));
+    });
+
+    it('resolves the version in effect on the date', () => {
+        const tl = comparisonPlanTimeline(plan);
+        expect(tl.rateAt('2024-06-01', 9)).toEqual({ buy: 0.20, sell: 0.04 }); // v1 window
+        expect(tl.rateAt('2025-07-01', 9)).toEqual({ buy: 0.30, sell: 0.05 }); // v2 window
+        expect(tl.rateAt('2025-06-01', 9)).toEqual({ buy: 0.30, sell: 0.05 }); // inclusive on effective_from
+    });
+
+    it('carries the earliest version backward before its effective_from', () => {
+        const tl = comparisonPlanTimeline(plan);
+        expect(tl.rateAt('2023-01-01', 9)).toEqual({ buy: 0.20, sell: 0.04 });
+    });
+
+    it('treats a null effective_from as "since the beginning"', () => {
+        const tl = comparisonPlanTimeline({
+            name: 'Old', versions: [{ version: 1, is_current: true, effective_from: null, buy_rate: 0.15, sell_rate: 0.03 }],
+        });
+        expect(tl.rateAt('1999-01-01', 0)).toEqual({ buy: 0.15, sell: 0.03 });
+    });
+
+    it('returns zero when the plan has no versions', () => {
+        const tl = comparisonPlanTimeline({ name: 'Empty', versions: [] });
+        expect(tl.rateAt('2025-01-01', 0)).toEqual({ buy: 0, sell: 0 });
     });
 });
