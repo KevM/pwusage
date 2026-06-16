@@ -38,7 +38,13 @@
       "Bash(grep *)",
       "Bash(gh pr *)",
       "Bash(npx vitest *)",
-      "Bash(npm --prefix /Users/kevm/github/pwusage/cmd/next-app run build)"
+      "Bash(npm --prefix /Users/kevm/github/pwusage/cmd/next-app run build)",
+      "Read(//Users/kevm/.claude/skills/brainstorming/**)",
+      "Bash(sed -n '1,200p' scripts/frame-template.html)",
+      "Bash(scripts/stop-server.sh /Users/kevm/github/pwusage/.superpowers/brainstorm/68519-1781308180)",
+      "Bash(lsof -nP -iTCP:54284 -sTCP:LISTEN)",
+      "Bash(/Users/kevm/.claude/skills/brainstorming/scripts/start-server.sh --project-dir /Users/kevm/github/pwusage)",
+      "Bash(/Users/kevm/.claude/skills/brainstorming/scripts/stop-server.sh /Users/kevm/github/pwusage/.superpowers/brainstorm/11693-1781575956)"
     ]
   }
 }
