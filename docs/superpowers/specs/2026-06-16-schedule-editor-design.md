@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-16
 **Status:** Design approved (brainstorm), pending spec review
-**Branch context:** `feat/roi`. Realizes the **clone-and-tweak TOU authoring** half that was deferred from the Phase D plan-manager-CRUD plan (`2026-06-16-flexible-matrix-phase-d-plan-manager-crud.md`), and is governed by decision 10 of the parent design (`2026-06-15-flexible-comparison-matrix-design.md`). The manager-CRUD slice (list + per-plan/per-version delete, Fixed create/edit) already shipped; this design **unifies** that Fixed-specific authoring into a single Schedule Editor.
+**Branch context:** `feat/roi`. Realizes the **clone-and-tweak TOU authoring** half that was deferred from the Phase D plan-manager-CRUD plan (`2026-06-16-flexible-matrix-phase-d-plan-manager-crud.md`), and is governed by decision 10 of the parent design (`2026-06-15-flexible-comparison-matrix-design.md`). The manager-CRUD slice (list + per-plan/per-version delete, Fixed create/edit) already shipped; this design **unifies** that Fixed-specific authoring into a single Schedule Editor. It also **supersedes** the parent design's "from-scratch TOU schedule authoring is out of scope" stance (decision 10 / Out of scope): once the editor is a full schedule editor, create-from-scratch is the same editor on a blank seed, so it is included rather than deferred.
 
 ## Problem
 
@@ -14,7 +14,7 @@ During brainstorming the framing sharpened: a Fixed plan and a TOU plan are not 
 
 1. **One Schedule Editor, not Fixed-vs-TOU modes.** Fixed = a schedule with a single 24/7 window in a single all-year season. TOU = the same editor once a second window or season exists. The "Fixed / TOU" label is **derived** (via the existing `classifyTariff`), never a stored type or an authoring fork.
 2. **Full editing scope.** The user can edit window rates, window day/time ranges, add/remove windows, and add/remove/retime seasons. This is functionally a from-scratch editor; a clone is only a convenient starting seed.
-3. **Clone is a client-side seed, not a server operation.** "Start from \<source\>" fetches that source's parsed structure and pre-fills the editor. There is no server-side deep-copy path — the server only ever persists whatever full structure the editor submits. Clone, tweak, and from-scratch collapse into one write path.
+3. **Two co-equal entry paths into one editor: create-from-scratch and clone.** "Create new" opens the editor on a blank seed — the degenerate single all-year / 24/7 window, itself a valid coverage-passing plan to shape. "Clone from \<source\>" fetches a metered or comparison version's parsed structure and pre-fills the editor instead. Both are client-side seeds; there is no server-side deep-copy path — the server only ever persists whatever full structure the editor submits. Create-from-scratch, clone, and tweak collapse into one write path.
 4. **Coverage validation is load-bearing and uniform.** Because the user can reshape structure arbitrarily, the safety invariant is *coverage*: the whole year must be partitioned by seasons, and within each season every `(weekday, hour)` must resolve to a window. Validated client-side (drives the heatmap, blocks Save) **and** server-side (authoritative, rejects with 400). The degenerate flat plan passes trivially.
 5. **Layout = form tables + live coverage heatmap** (Option C from brainstorming). Editing is form-based (matches the window data model and existing `TariffList` display); a read-only heatmap driven by the **real resolver** renders the 7×24 coverage per season and lights gaps red. The preview *is* the validator made visible.
 6. **Unify the just-shipped Fixed path.** The dedicated flat create form, `appendFixedComparison`, and the rate-only `editComparisonVersion` are folded into the unified editor + a general `saveComparisonStructure`. `fixed-comparison.ts`'s flat builder survives only as the editor's initial seed state.
@@ -66,7 +66,7 @@ The production resolver is **most-specific-window-wins**: it sorts a season's sc
   - `seasonCalendarGaps(seasons)` → days of a reference (leap) year matched by zero or by >1 season.
   - `windowCoverage(season)` → the 7×24 grid of resolved/unresolved cells + the gap list, computed via the same resolution semantics as `lib/schedule.ts`.
   Shared by the client heatmap and the server-side validation so "valid" means the same thing in both.
-- **`src/components/site/ScheduleEditor.tsx`** (`'use client'`) — the form-tables + heatmap editor. Renders seasons (date-range fields + window table) with add/remove for windows and seasons, a "start from" seed picker, and the live coverage heatmap. Save disabled while any gap exists.
+- **`src/components/site/ScheduleEditor.tsx`** (`'use client'`) — the form-tables + heatmap editor. Renders seasons (date-range fields + window table) with add/remove for windows and seasons, an entry chooser (**Create from scratch** → blank single-window seed, or **Clone from** a metered/comparison version), and the live coverage heatmap. Save disabled while any gap exists.
 
 **Modified:**
 - **`src/lib/roi/comparison-tariff-repo.ts`** — add `getPlanStructure(siteId, name, version)` (full parsed seasons/schedules for seeding + editing — reads **any** of the site's tariffs, metered or comparison, since the metered plan is a valid clone seed; reads need no `reporting_only` guard) and `saveComparisonStructure(siteId, name, effectiveFrom, seasons, intent)` (create / append-version / replace-in-place), all `reporting_only`-guarded, reusing the transactional insert pattern of the current `appendFixedComparison`. Retire `appendFixedComparison` and the rate-only `editComparisonVersion` once the editor uses the general path (`deleteComparisonVersion`, `deleteComparisonPlan`, `comparisonNameInUse`, `nameInUseByMetered` are reused unchanged). The plan listing (`listFixedComparisons`) is extended to carry enough per version to derive a Fixed/TOU **kind** (e.g. window count) so the manager can badge each plan — Fixed shows its flat rate, TOU shows the badge — and to feed the grid (below).
@@ -76,9 +76,9 @@ The production resolver is **most-specific-window-wins**: it sorts a season's sc
 - **`src/components/site/ComparisonTariffEditor.tsx`** — replace the flat create form and rate-only inline edit with entry points into `ScheduleEditor` (Add plan; per-version Edit; per-plan + add version), plus the derived Fixed/TOU badge. The list/delete affordances already shipped stay.
 - **`src/lib/roi/fixed-comparison.ts`** — repurposed as "seed a single 24/7 all-year window"; the editor's blank-flat starting state.
 
-## Data flow — the clone seed
+## Data flow — seeding the editor
 
-The list stays lightweight (names, versions, effective dates, derived Fixed/TOU badge). The editor fetches full structure **on demand** for exactly the one plan being edited or used as a seed, via `GET`. This avoids passing every plan's full season/schedule tree into the page just to render a manager list. The metered structure is already available server-side (`finalSite.tariffs`) and is offered as a seed source.
+Create-from-scratch needs no fetch (the blank single-window seed is built client-side). Clone fetches one source's structure on demand. The list stays lightweight (names, versions, effective dates, derived Fixed/TOU badge). The editor fetches full structure **on demand** for exactly the one plan being edited or used as a seed, via `GET`. This avoids passing every plan's full season/schedule tree into the page just to render a manager list. The metered structure is already available server-side (`finalSite.tariffs`) and is offered as a seed source.
 
 ## Edit semantics (mirrors the shipped manager)
 
