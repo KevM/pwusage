@@ -17,7 +17,7 @@ async function main() {
     const { Importer } = await import('../src/lib/importer');
     const { SiteRepo } = await import('../src/lib/site-repo');
     const { pool } = await import('../src/lib/db');
-    const { RollupRepo } = await import('../src/lib/battery-provenance/rollup-repo');
+
     const { HourlyRepo } = await import('../src/lib/battery-provenance/hourly-repo');
     const { RollupService } = await import('../src/lib/battery-provenance/rollup-service');
     const { EnergyRepo } = await import('../src/lib/energy-repo');
@@ -32,14 +32,11 @@ async function main() {
     }
 
     const energyRepo = new EnergyRepo();
-    const rollupRepo = new RollupRepo();
+
     const hourlyRepo = new HourlyRepo();
     const rollupService = new RollupService({
         loadSite: async () => ({ id: site.id, timezone: site.timezone, tariffs: site.tariffs ?? [] }),
         loadEnergyData: (id, start, end) => energyRepo.getRawEnergyData(id, start, end),
-        getSeedTank: (id, beforeTs) => rollupRepo.getSeedTank(id, beforeTs),
-        hasAnyRollup: (id) => rollupRepo.hasAnyRollup(id),
-        upsertRollups: (rows) => rollupRepo.upsertRollups(rows),
         upsertHourly: (rows) => hourlyRepo.upsertHourly(rows),
     });
 
@@ -106,7 +103,7 @@ async function main() {
             const localDate = localDateKey(chunkStart, site.timezone);
             const { rollupCount } = await rollupService.rollupDay(siteId, localDate);
             if (rollupCount > 0) {
-                console.log(`  [Rollup] Completed rollup for ${localDate} (${rollupCount} periods)`);
+                console.log(`  [Hourly] Built ${rollupCount} hourly buckets for ${localDate}`);
             }
         } catch (e) {
             console.error(`Failed all retry attempts for ${chunkStart.toISOString().slice(0, 10)}. Skipping day to prevent crash:`, e);

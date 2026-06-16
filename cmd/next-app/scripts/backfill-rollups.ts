@@ -14,7 +14,7 @@ async function main() {
     // Dynamic imports to prevent hoisting order issues with DATABASE_URL
     const { SiteRepo } = await import('../src/lib/site-repo');
     const { EnergyRepo } = await import('../src/lib/energy-repo');
-    const { RollupRepo } = await import('../src/lib/battery-provenance/rollup-repo');
+
     const { HourlyRepo } = await import('../src/lib/battery-provenance/hourly-repo');
     const { RollupService } = await import('../src/lib/battery-provenance/rollup-service');
     const { localDateKey } = await import('../src/lib/battery-provenance/local-day');
@@ -22,7 +22,7 @@ async function main() {
 
     const siteRepo = new SiteRepo();
     const energyRepo = new EnergyRepo();
-    const rollupRepo = new RollupRepo();
+
     const hourlyRepo = new HourlyRepo();
     const site = await siteRepo.getSite(siteId);
     if (!site) throw new Error(`site ${siteId} not found`);
@@ -30,9 +30,6 @@ async function main() {
     const service = new RollupService({
         loadSite: async () => ({ id: site.id, timezone: site.timezone, tariffs: site.tariffs ?? [] }),
         loadEnergyData: (id, start, end) => energyRepo.getRawEnergyData(id, start, end),
-        getSeedTank: (id, beforeTs) => rollupRepo.getSeedTank(id, beforeTs),
-        hasAnyRollup: (id) => rollupRepo.hasAnyRollup(id),
-        upsertRollups: (rows) => rollupRepo.upsertRollups(rows),
         upsertHourly: (rows) => hourlyRepo.upsertHourly(rows),
     });
 
@@ -54,7 +51,7 @@ async function main() {
         const localDate = localDateKey(cursor, site.timezone);
         const { rollupCount } = await service.rollupDay(siteId, localDate);
         if (rollupCount > 0) {
-            console.log(`Rolled up date ${localDate}: ${rollupCount} periods`);
+            console.log(`Built hourly buckets for ${localDate}: ${rollupCount} hours`);
         }
         cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
     }

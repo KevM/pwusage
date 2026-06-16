@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { RollupService } from '@/lib/battery-provenance/rollup-service';
-import { RollupRepo } from '@/lib/battery-provenance/rollup-repo';
+
 import { HourlyRepo } from '@/lib/battery-provenance/hourly-repo';
 import { localDateKey, localDayBoundsUtc } from '@/lib/battery-provenance/local-day';
 import { classifyDayCoverage } from '@/lib/battery-provenance/day-coverage';
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
 
     const siteRepo = new SiteRepo();
     const energyRepo = new EnergyRepo();
-    const rollupRepo = new RollupRepo();
+
     const hourlyRepo = new HourlyRepo();
     const now = new Date();
     const results: Array<{ siteId: string; localDate: string; action: string }> = [];
@@ -34,9 +34,6 @@ export async function GET(request: NextRequest) {
         return { id: site.id, timezone: site.timezone, tariffs: site.tariffs ?? [] };
       },
       loadEnergyData: (siteId, start, end) => energyRepo.getRawEnergyData(siteId, start, end),
-      getSeedTank: (siteId, beforeTs) => rollupRepo.getSeedTank(siteId, beforeTs),
-      hasAnyRollup: (siteId) => rollupRepo.hasAnyRollup(siteId),
-      upsertRollups: (rows) => rollupRepo.upsertRollups(rows),
       upsertHourly: (rows) => hourlyRepo.upsertHourly(rows),
     });
 
@@ -49,7 +46,7 @@ export async function GET(request: NextRequest) {
 
         // Target yesterday-local
         const localDate = localDateKey(new Date(now.getTime() - 86400_000), site.timezone);
-        if (await rollupRepo.hasRollupForDate(siteId, localDate)) {
+        if (await hourlyRepo.hasHourlyForDate(siteId, localDate)) {
           results.push({ siteId, localDate, action: 'skip-already-rolled' });
           continue;
         }

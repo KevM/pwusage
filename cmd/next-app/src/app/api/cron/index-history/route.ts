@@ -4,7 +4,7 @@ export const maxDuration = 60; // Vercel Hobby budget limit is 60s
 import { NextRequest, NextResponse } from 'next/server';
 import { SiteRepo } from '@/lib/site-repo';
 import { EnergyRepo } from '@/lib/energy-repo';
-import { RollupRepo } from '@/lib/battery-provenance/rollup-repo';
+
 import { HourlyRepo } from '@/lib/battery-provenance/hourly-repo';
 import { RollupService } from '@/lib/battery-provenance/rollup-service';
 import { RollupBackfillRepo } from '@/lib/battery-provenance/rollup-backfill-repo';
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
 
   const siteRepo = new SiteRepo();
   const energyRepo = new EnergyRepo();
-  const rollupRepo = new RollupRepo();
+
   const hourlyRepo = new HourlyRepo();
   const backfillRepo = new RollupBackfillRepo();
   const processed: Array<{ siteId: string }> = [];
@@ -61,9 +61,6 @@ export async function GET(request: NextRequest) {
         return { id: s.id, timezone: s.timezone, tariffs: s.tariffs ?? [] };
       },
       loadEnergyData: (id, start, end) => energyRepo.getRawEnergyData(id, start, end),
-      getSeedTank: (id, beforeTs) => rollupRepo.getSeedTank(id, beforeTs),
-      hasAnyRollup: (id) => rollupRepo.hasAnyRollup(id),
-      upsertRollups: (rows) => rollupRepo.upsertRollups(rows),
       upsertHourly: (rows) => hourlyRepo.upsertHourly(rows),
     });
 
