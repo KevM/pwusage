@@ -194,6 +194,23 @@ export interface EnergyRollupRow {
   solar_only_export_wh: number;
 }
 
+export interface EnergyHourlyRow {
+  site_id: string;
+  local_date: string; // 'YYYY-MM-DD', site-local
+  hour: number;       // 0..23, site-local clock hour
+  load_wh: number;
+  solar_to_home_wh: number;
+  solar_to_battery_wh: number;
+  solar_to_grid_wh: number;
+  grid_to_home_wh: number;
+  grid_to_battery_wh: number;
+  battery_to_home_wh: number;
+  battery_to_grid_wh: number;
+  solar_only_import_wh: number;
+  solar_only_export_wh: number;
+}
+
+
 export interface SiteRoiConfig {
   site_id: string;
   solar_cost: number | null;
