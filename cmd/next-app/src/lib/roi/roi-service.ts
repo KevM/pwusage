@@ -1,41 +1,58 @@
 // roi-service.ts
-import type { EnergyRollupRow } from '../db';
+import type { EnergyHourlyRow } from '../db';
+import type { PlanTimeline } from './plan-timeline';
 
 const WH_PER_KWH = 1000;
 
+/** Retained for resolve-fixed-baseline.ts (the current Fixed baseline as flat scalars). */
 export interface RoiInputs {
     fixedBuyRate: number;
     fixedSellRate: number;
 }
 
-export interface MatrixTotals {
-    A: number; B: number; C: number; D: number; E: number; F: number;
-    solarValue: number;        // A − C
-    batteryValue: number;      // C − F
-    totalSaved: number;        // A − F
-    batteryHardwareValue: number; // C − E
-    touPlanValue: number;         // E − F
+export interface ColumnBills {
+    noSolar: number;       // load priced at this plan
+    solar: number;         // solar-only counterfactual priced at this plan
+    solarBattery: number;  // actual import/export priced at this plan
 }
 
-/** Sum the six scenario-matrix bills across rollup rows. Costs in dollars. */
-export function computeMatrixTotals(rows: EnergyRollupRow[], inputs: RoiInputs): MatrixTotals {
-    let A = 0, B = 0, C = 0, D = 0, E = 0, F = 0;
+/** Price the three system configs against ONE plan timeline, summed over hourly rows.
+ *  The N-column matrix (Phase D) maps this over many timelines; C1 uses Fixed + Metered. */
+export function priceColumn(timeline: PlanTimeline, rows: EnergyHourlyRow[]): ColumnBills {
+    let noSolar = 0, solar = 0, solarBattery = 0;
     for (const r of rows) {
+        const { buy, sell } = timeline.rateAt(r.local_date, r.hour);
         const load = Number(r.load_wh) / WH_PER_KWH;
         const soImp = Number(r.solar_only_import_wh) / WH_PER_KWH;
         const soExp = Number(r.solar_only_export_wh) / WH_PER_KWH;
         const actImp = (Number(r.grid_to_home_wh) + Number(r.grid_to_battery_wh)) / WH_PER_KWH;
         const actExp = (Number(r.solar_to_grid_wh) + Number(r.battery_to_grid_wh)) / WH_PER_KWH;
-        const buy = Number(r.buy_rate);
-        const sell = Number(r.sell_rate);
-
-        A += load * inputs.fixedBuyRate;
-        B += load * buy;
-        C += soImp * inputs.fixedBuyRate - soExp * inputs.fixedSellRate;
-        D += soImp * buy - soExp * sell;
-        E += actImp * inputs.fixedBuyRate - actExp * inputs.fixedSellRate;
-        F += actImp * buy - actExp * sell;
+        noSolar += load * buy;
+        solar += soImp * buy - soExp * sell;
+        solarBattery += actImp * buy - actExp * sell;
     }
+    return { noSolar, solar, solarBattery };
+}
+
+export interface MatrixTotals {
+    A: number; B: number; C: number; D: number; E: number; F: number;
+    solarValue: number;           // A − C
+    batteryValue: number;         // C − F
+    totalSaved: number;           // A − F
+    batteryHardwareValue: number; // C − E
+    touPlanValue: number;         // E − F
+}
+
+/** Six scenario-matrix bills: Fixed column → A,C,E; Metered column → B,D,F. Dollars. */
+export function computeMatrixTotals(
+    rows: EnergyHourlyRow[],
+    fixed: PlanTimeline,
+    metered: PlanTimeline,
+): MatrixTotals {
+    const fx = priceColumn(fixed, rows);
+    const me = priceColumn(metered, rows);
+    const A = fx.noSolar, C = fx.solar, E = fx.solarBattery;
+    const B = me.noSolar, D = me.solar, F = me.solarBattery;
     return {
         A, B, C, D, E, F,
         solarValue: A - C,
@@ -87,14 +104,17 @@ function component(kind: RoiComponent['kind'], cost: number, savedToDate: number
 }
 
 export function buildRoiSummary(
-    rows: EnergyRollupRow[],
-    inputs: RoiInputs,
+    rows: EnergyHourlyRow[],
+    fixed: PlanTimeline,
+    metered: PlanTimeline,
     config: RoiConfigInputs,
     actualPlan: 'fixed' | 'tou',
     today: Date,
 ): RoiSummary {
-    const matrix = computeMatrixTotals(rows, inputs);
-    const firstDate = rows.length ? rows.reduce((m, r) => (r.local_date < m ? r.local_date : m), rows[0].local_date) : today.toISOString().slice(0, 10);
+    const matrix = computeMatrixTotals(rows, fixed, metered);
+    const firstDate = rows.length
+        ? rows.reduce((m, r) => (r.local_date < m ? r.local_date : m), rows[0].local_date)
+        : today.toISOString().slice(0, 10);
     const days = daysBetween(firstDate, today);
 
     const components: RoiComponent[] = [];
@@ -117,8 +137,12 @@ export function buildRoiSummary(
 export interface MonthPoint { month: string; cumulativeSaved: number; }
 
 /** Cumulative totalSaved bucketed by 'YYYY-MM', ascending. */
-export function monthlyCumulative(rows: EnergyRollupRow[], inputs: RoiInputs): MonthPoint[] {
-    const byMonth = new Map<string, EnergyRollupRow[]>();
+export function monthlyCumulative(
+    rows: EnergyHourlyRow[],
+    fixed: PlanTimeline,
+    metered: PlanTimeline,
+): MonthPoint[] {
+    const byMonth = new Map<string, EnergyHourlyRow[]>();
     for (const r of rows) {
         const m = r.local_date.slice(0, 7);
         (byMonth.get(m) ?? byMonth.set(m, []).get(m)!).push(r);
@@ -126,7 +150,7 @@ export function monthlyCumulative(rows: EnergyRollupRow[], inputs: RoiInputs): M
     const months = [...byMonth.keys()].sort();
     let cum = 0;
     return months.map(month => {
-        cum += computeMatrixTotals(byMonth.get(month)!, inputs).totalSaved;
+        cum += computeMatrixTotals(byMonth.get(month)!, fixed, metered).totalSaved;
         return { month, cumulativeSaved: cum };
     });
 }

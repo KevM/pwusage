@@ -26,6 +26,8 @@ import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
 import { RollupRepo } from '@/lib/battery-provenance/rollup-repo';
 import { SiteRoiConfigRepo } from '@/lib/roi/roi-config-repo';
 import { buildRoiSummary, monthlyCumulative } from '@/lib/roi/roi-service';
+import { flatTimeline, meteredTimeline } from '@/lib/roi/plan-timeline';
+import { HourlyRepo } from '@/lib/battery-provenance/hourly-repo';
 import { classifyTariff } from '@/lib/roi/classify-tariff';
 import { SavingsView } from '@/components/site/savings/SavingsView';
 import { computeArbitrage } from '@/lib/roi/arbitrage-service';
@@ -311,19 +313,24 @@ export default async function SitePage({ params, searchParams }: {
 
     const fixedBaseline = pickCurrentFixedBaseline(comparisonPlans);
     if (fixedBaseline && roiConfig && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {
-        const rollups = await new RollupRepo().getAllForSite(finalSite.id);
+        const hourly = await new HourlyRepo().getAllForSite(finalSite.id);
         const activeTariff = finalSite.tariffs.find(t => t.id === activeTariffId) || (finalSite.tariffs ?? [])[0];
         const plan = activeTariff ? classifyTariff(activeTariff) : 'tou';
-        const configInputs = fixedBaseline;
+        const fixedTl = flatTimeline(fixedBaseline.fixedBuyRate, fixedBaseline.fixedSellRate);
+        const meteredTl = meteredTimeline(finalSite.tariffs, finalSite.timezone);
         roiSummary = buildRoiSummary(
-            rollups,
-            configInputs,
+            hourly,
+            fixedTl,
+            meteredTl,
             { solarCost: roiConfig.solar_cost, batteryCost: roiConfig.battery_cost },
             plan,
             new Date(),
         );
+        savingsSeries = monthlyCumulative(hourly, fixedTl, meteredTl);
+
+        // Arbitrage still reads EnergyRollup (Phase C2 re-grains tank replay to hourly on read).
+        const rollups = await new RollupRepo().getAllForSite(finalSite.id);
         arbitrage = computeArbitrage(rollups);
-        savingsSeries = monthlyCumulative(rollups, configInputs);
     }
 
 
