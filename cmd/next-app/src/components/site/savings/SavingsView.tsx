@@ -2,7 +2,8 @@ import type { RoiSummary } from '@/lib/roi/roi-service';
 import type { RollupBackfill, SiteRoiConfig } from '@/lib/db';
 import type { ComparisonPlan } from '@/lib/roi/comparison-tariff-repo';
 import { PaybackHero } from './PaybackHero';
-import { ScenarioMatrix } from './ScenarioMatrix';
+import { ExtendedGrid } from './ExtendedGrid';
+import type { ExtendedGridModel } from '@/lib/roi/extended-grid';
 import { IndexingStatus } from './IndexingStatus';
 import { SavingsSettings } from './SavingsSettings';
 import { selectSavingsViewState } from '@/lib/roi/savings-status';
@@ -17,7 +18,7 @@ export function SavingsView({
     backfill,
     roiConfig,
     comparisonPlans,
-    fixedPlanName,
+    extendedGrid,
     meteredPlanName,
 }: {
     summary: RoiSummary | null;
@@ -27,7 +28,7 @@ export function SavingsView({
     backfill: RollupBackfill | null;
     roiConfig: SiteRoiConfig | null;
     comparisonPlans: ComparisonPlan[];
-    fixedPlanName?: string;
+    extendedGrid: ExtendedGridModel | null;
     meteredPlanName?: string;
 }) {
     const state = selectSavingsViewState(summary, backfill);
@@ -73,10 +74,10 @@ export function SavingsView({
                     <span className="opacity-70"> (Estimate holds your behavior fixed; the real flat saving is likely a bit larger.)</span>
                 </div>
             )}
-            <ScenarioMatrix summary={summary!} fixedPlanName={fixedPlanName} meteredPlanName={meteredPlanName} />
+            {extendedGrid && <ExtendedGrid grid={extendedGrid} />}
             {summary!.actualPlan === 'fixed' && (
                 <div className="rounded-lg border border-gray-200 dark:border-slate-800 bg-bg-muted/30 p-3 text-xs text-foreground/80 text-center">
-                    ℹ️ You are on a fixed-rate plan. TOU comparison columns use your current flat rates (defining a custom TOU comparison plan is coming soon).
+                    ℹ️ You are on a fixed-rate plan. Add comparison plans in settings to see more columns; custom TOU comparison plans are coming soon.
                 </div>
             )}
             {chartSlot}

@@ -26,7 +26,8 @@ import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
 
 import { SiteRoiConfigRepo } from '@/lib/roi/roi-config-repo';
 import { buildRoiSummary, monthlyCumulative } from '@/lib/roi/roi-service';
-import { flatTimeline, meteredTimeline } from '@/lib/roi/plan-timeline';
+import { flatTimeline, meteredTimeline, comparisonPlanTimeline } from '@/lib/roi/plan-timeline';
+import { buildExtendedGrid, type GridColumnInput } from '@/lib/roi/extended-grid';
 import { HourlyRepo } from '@/lib/battery-provenance/hourly-repo';
 import { classifyTariff } from '@/lib/roi/classify-tariff';
 import { SavingsView } from '@/components/site/savings/SavingsView';
@@ -292,13 +293,13 @@ export default async function SitePage({ params, searchParams }: {
     const trmnlService = new TrmnlService();
     const installation = await trmnlService.getInstallationBySiteId(finalSite.id, { includeTokens: false });
 
-    const comparisonPlans = await new ComparisonTariffRepo().listFixedComparisons(finalSite.id);
-    const fixedPlanName = comparisonPlans[0]?.name;
+        const comparisonPlans = await new ComparisonTariffRepo().listFixedComparisons(finalSite.id);
 
     const roiConfig = await new SiteRoiConfigRepo().get(finalSite.id);
     let roiSummary = null;
     let arbitrage = null;
     let savingsSeries = null;
+    let extendedGrid = null;
 
     const backfillRepo = new RollupBackfillRepo();
     let backfill = await backfillRepo.get(finalSite.id);
@@ -329,6 +330,15 @@ export default async function SitePage({ params, searchParams }: {
         savingsSeries = monthlyCumulative(hourly, fixedTl, meteredTl);
 
         arbitrage = computeArbitrage(hourly, meteredTl);
+
+        const meteredPlanName = finalSite.tariffs?.[0]?.name ?? 'Your plan';
+        const gridColumns: GridColumnInput[] = [
+            { name: meteredPlanName, type: 'metered', isMetered: true, timeline: meteredTl },
+            ...comparisonPlans.map(p => ({
+                name: p.name, type: 'fixed' as const, isMetered: false, timeline: comparisonPlanTimeline(p),
+            })),
+        ];
+        extendedGrid = buildExtendedGrid(hourly, gridColumns);
     }
 
 
@@ -386,7 +396,7 @@ export default async function SitePage({ params, searchParams }: {
                         comparisonPlans={comparisonPlans}
                         arbitrageSlot={arbitrage ? <ArbitragePanel summary={arbitrage} /> : null}
                         chartSlot={savingsSeries && roiConfig ? <SavingsChart series={savingsSeries} systemCost={(roiConfig.solar_cost ?? 0) + (roiConfig.battery_cost ?? 0)} /> : null}
-                        fixedPlanName={fixedPlanName}
+                        extendedGrid={extendedGrid}
                         meteredPlanName={finalSite.tariffs?.[0]?.name ?? 'Your plan'}
                     />
                 }
