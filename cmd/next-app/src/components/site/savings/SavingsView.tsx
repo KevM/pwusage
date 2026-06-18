@@ -20,6 +20,7 @@ export function SavingsView({
     comparisonPlans,
     extendedGrid,
     meteredPlanName,
+    meteredPlanVersion,
 }: {
     summary: RoiSummary | null;
     arbitrageSlot?: React.ReactNode;
@@ -30,6 +31,7 @@ export function SavingsView({
     comparisonPlans: ComparisonPlan[];
     extendedGrid: ExtendedGridModel | null;
     meteredPlanName?: string;
+    meteredPlanVersion?: number | null;
 }) {
     const state = selectSavingsViewState(summary, backfill);
     const settings = (defaultOpen: boolean) => (
@@ -38,6 +40,7 @@ export function SavingsView({
             roiConfig={roiConfig}
             comparisonPlans={comparisonPlans}
             meteredPlanName={meteredPlanName ?? 'Standard'}
+            meteredPlanVersion={meteredPlanVersion}
             defaultOpen={defaultOpen}
         />
     );

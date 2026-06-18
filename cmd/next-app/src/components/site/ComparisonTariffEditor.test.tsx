@@ -46,4 +46,12 @@ describe('ComparisonTariffEditor', () => {
         expect(html).not.toMatch(/coming soon/i);
         expect(html).not.toMatch(/Date-based pricing arrives/i);
     });
+
+    it('accepts a meteredPlanVersion prop (clone-from-metered wiring)', () => {
+        const html = renderToStaticMarkup(
+            <ComparisonTariffEditor siteId="s1" plans={plans} meteredPlanName="Standard" meteredPlanVersion={3} />,
+        );
+        expect(html).toContain('EV Plan');            // still renders the list
+        expect(html).toMatch(/add comparison plan/i); // entry point intact
+    });
 });

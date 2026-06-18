@@ -10,12 +10,14 @@ export function SavingsSettings({
   roiConfig,
   comparisonPlans,
   meteredPlanName,
+  meteredPlanVersion,
   defaultOpen,
 }: {
   siteId: string;
   roiConfig: SiteRoiConfig | null;
   comparisonPlans: ComparisonPlan[];
   meteredPlanName: string;
+  meteredPlanVersion?: number | null;
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -35,7 +37,7 @@ export function SavingsSettings({
       {open && (
         <div className="space-y-6">
           <RoiConfigForm siteId={siteId} initial={roiConfig} />
-          <ComparisonTariffEditor siteId={siteId} plans={comparisonPlans} meteredPlanName={meteredPlanName} />
+          <ComparisonTariffEditor siteId={siteId} plans={comparisonPlans} meteredPlanName={meteredPlanName} meteredPlanVersion={meteredPlanVersion} />
         </div>
       )}
     </div>

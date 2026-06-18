@@ -403,6 +403,7 @@ export default async function SitePage({ params, searchParams }: {
                         chartSlot={savingsSeries && roiConfig ? <SavingsChart series={savingsSeries} systemCost={(roiConfig.solar_cost ?? 0) + (roiConfig.battery_cost ?? 0)} /> : null}
                         extendedGrid={extendedGrid}
                         meteredPlanName={finalSite.tariffs?.[0]?.name ?? 'Your plan'}
+                        meteredPlanVersion={finalSite.tariffs?.[0]?.version ?? null}
                     />
                 }
 

@@ -21,8 +21,8 @@ interface EditorState {
 
 const blankSeed = (): ParsedSeason[] => buildFixedComparisonInput({ name: '', buyRate: 0, sellRate: 0 }).seasons;
 
-export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
-    siteId: string; plans: ComparisonPlan[]; meteredPlanName: string;
+export function ComparisonTariffEditor({ siteId, plans, meteredPlanName, meteredPlanVersion }: {
+    siteId: string; plans: ComparisonPlan[]; meteredPlanName: string; meteredPlanVersion?: number | null;
 }) {
     const router = useRouter();
     const { toast } = useToast();
@@ -33,10 +33,14 @@ export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
     const [renaming, setRenaming] = useState<string | null>(null);
     const [renameTo, setRenameTo] = useState('');
 
-    // clone seeds: each comparison plan's current version (metered-clone is a deferred follow-on).
-    // key encodes name + version so onClone can resolve it via GET.
-    const cloneSources: CloneSource[] = plans.flatMap(p =>
-        p.versions.filter(v => v.is_current).map(v => ({ label: `${p.name} (current)`, key: `${p.name}@${v.version}` })));
+    // clone seeds: the user's real metered plan first (most useful), then each comparison
+    // plan's current version. key encodes name + version so onClone resolves it via GET.
+    const cloneSources: CloneSource[] = [
+        ...(meteredPlanVersion != null
+            ? [{ label: `${meteredPlanName} (metered)`, key: `${meteredPlanName}@${meteredPlanVersion}` }]
+            : []),
+        ...plans.flatMap(p => p.versions.filter(v => v.is_current).map(v => ({ label: `${p.name} (current)`, key: `${p.name}@${v.version}` }))),
+    ];
 
     async function fetchStructure(name: string, version: number): Promise<ParsedSeason[]> {
         const res = await fetch(`${base}?name=${encodeURIComponent(name)}&version=${version}`);
