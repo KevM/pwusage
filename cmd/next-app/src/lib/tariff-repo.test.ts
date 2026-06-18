@@ -138,3 +138,52 @@ describe('TariffRepo.addTariffVersion — effective_from stamping', () => {
         expect(call[1]).not.toContain('2026-06-18');
     });
 });
+
+describe('TariffRepo.setMeteredEffectiveFrom', () => {
+    beforeEach(() => { vi.clearAllMocks(); });
+    it('updates one metered version effective_from, guarded to non-reporting', async () => {
+        const poolQuery = (await import('./db')).pool.query as ReturnType<typeof vi.fn>;
+        poolQuery.mockResolvedValue({ rowCount: 1 });
+        await new TariffRepo().setMeteredEffectiveFrom('site-1', 3, '2025-09-01');
+        const sql = String(poolQuery.mock.calls[0][0]);
+        expect(sql).toMatch(/UPDATE "Tariff" SET effective_from/);
+        expect(sql).toMatch(/NOT reporting_only/);
+        expect(poolQuery.mock.calls[0][1]).toEqual(['site-1', 3, '2025-09-01']);
+    });
+    it('accepts null to clear a date', async () => {
+        const poolQuery = (await import('./db')).pool.query as ReturnType<typeof vi.fn>;
+        poolQuery.mockResolvedValue({ rowCount: 1 });
+        await new TariffRepo().setMeteredEffectiveFrom('site-1', 1, null);
+        expect(poolQuery.mock.calls[0][1]).toEqual(['site-1', 1, null]);
+    });
+});
+
+describe('TariffRepo.addHistoricMeteredVersion', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        connectMock.mockResolvedValue({ query: clientQueryMock, release: releaseMock });
+    });
+    it('inserts a non-current metered version dated in the past, named like the current plan', async () => {
+        clientQueryMock.mockImplementation(async (sql: string) => {
+            if (sql.includes('SELECT name')) return { rows: [{ name: 'PG&E' }] };
+            if (sql.includes('MAX(version)')) return { rows: [{ next: 4 }] };
+            if (sql.includes('INSERT INTO "Tariff"')) return { rows: [{ id: 9 }] };
+            if (sql.includes('INSERT INTO "TariffSeason"')) return { rows: [{ id: 90 }] };
+            return { rows: [] };
+        });
+
+        await new TariffRepo().addHistoricMeteredVersion('site-1', parsed, '2022-01-01');
+
+        const sqls = clientQueryMock.mock.calls.map(sqlOf);
+        // does NOT demote the current Tesla version
+        expect(sqls.some(s => s.includes('is_current = false'))).toBe(false);
+        const insert = clientQueryMock.mock.calls.find(c => String(c[0]).includes('INSERT INTO "Tariff"'))!;
+        expect(String(insert[0])).toMatch(/reporting_only/);
+        expect(String(insert[0])).toMatch(/effective_from/);
+        // params: site, name (from current), version, content_hash, effective_from
+        expect(insert[1]).toEqual(expect.arrayContaining(['site-1', 'PG&E', 4, '2022-01-01']));
+        // inserted as not-current, not reporting-only (literals in the VALUES clause)
+        expect(String(insert[0])).toMatch(/false,\s*false/);
+        expect(sqls.some(s => s.includes('COMMIT'))).toBe(true);
+    });
+});

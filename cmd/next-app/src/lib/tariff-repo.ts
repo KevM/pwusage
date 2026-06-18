@@ -181,4 +181,75 @@ export class TariffRepo {
             client.release();
         }
     }
+
+    /** Correct/set a metered version's effective date (the date-resolution boundary).
+     *  Guarded to non-reporting so it can never touch a comparison plan. */
+    async setMeteredEffectiveFrom(siteId: string, version: number, effectiveFrom: string | null): Promise<void> {
+        await pool.query(
+            `UPDATE "Tariff" SET effective_from = $3, updated = NOW()
+              WHERE site_id = $1 AND version = $2 AND NOT reporting_only`,
+            [siteId, version, effectiveFrom],
+        );
+    }
+
+    /** Insert a user-authored historic metered version: a past plan the importer never saw.
+     *  Shares the current metered plan's name, is NOT current (the Tesla version stays current),
+     *  and is reporting_only = false so the metered timeline includes it. Date drives ordering,
+     *  not the (monotonic) version number. */
+    async addHistoricMeteredVersion(siteId: string, parsed: ParsedTariff, effectiveFrom: string): Promise<void> {
+        const newHash = tariffContentHash(parsed);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query('SELECT 1 FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+
+            // Name the historic version after the current metered plan (same plan, earlier in time).
+            const nameRes = await client.query(
+                `SELECT name FROM "Tariff" WHERE site_id = $1 AND is_current AND NOT reporting_only LIMIT 1`,
+                [siteId],
+            );
+            const planName = (nameRes.rows[0]?.name as string | undefined) ?? parsed.name;
+
+            const verRes = await client.query(
+                'SELECT COALESCE(MAX(version), 0) + 1 AS next FROM "Tariff" WHERE site_id = $1',
+                [siteId],
+            );
+            const version = verRes.rows[0].next;
+
+            const tariffRes = await client.query(
+                `INSERT INTO "Tariff"(site_id, name, version, is_current, reporting_only, content_hash, effective_from, updated)
+                 VALUES ($1, $2, $3, false, false, $4, $5, NOW())
+                 RETURNING id`,
+                [siteId, planName, version, newHash, effectiveFrom],
+            );
+            const tariffId = tariffRes.rows[0].id;
+
+            for (const season of parsed.seasons) {
+                const seasonRes = await client.query(
+                    `INSERT INTO "TariffSeason"(tariff_id, name, from_month, from_day, to_month, to_day, buy_rate, sell_rate)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     RETURNING id`,
+                    [tariffId, season.name, season.from_month, season.from_day, season.to_month, season.to_day, season.buy_rate, season.sell_rate],
+                );
+                const seasonId = seasonRes.rows[0].id;
+                for (const schedule of season.schedules) {
+                    await client.query(
+                        `INSERT INTO "TariffSchedule"(season_id, name, buy_rate, sell_rate, from_day_of_week, to_day_of_week, from_hour, from_minute, to_hour, to_minute)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                        [
+                            seasonId, schedule.name, schedule.buy_rate, schedule.sell_rate,
+                            schedule.from_day_of_week, schedule.to_day_of_week,
+                            schedule.from_hour, schedule.from_minute, schedule.to_hour, schedule.to_minute,
+                        ],
+                    );
+                }
+            }
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
+    }
 }
