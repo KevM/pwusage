@@ -44,7 +44,7 @@ describe('TariffRepo.addTariffVersion', () => {
             return { rows: [] };
         });
 
-        await new TariffRepo().addTariffVersion('site-1', parsed);
+        await new TariffRepo().addTariffVersion('site-1', parsed, '2026-06-18');
 
         const sqls = clientQueryMock.mock.calls.map(sqlOf);
         expect(sqls.some((s) => s.includes('DELETE FROM'))).toBe(false);
@@ -61,7 +61,7 @@ describe('TariffRepo.addTariffVersion', () => {
             return { rows: [] };
         });
 
-        await new TariffRepo().addTariffVersion('site-1', parsed);
+        await new TariffRepo().addTariffVersion('site-1', parsed, '2026-06-18');
 
         const sqls = clientQueryMock.mock.calls.map(sqlOf);
         expect(sqls.some((s) => s.includes('INSERT INTO "Tariff"'))).toBe(false);
@@ -100,5 +100,41 @@ describe('TariffRepo.listMeteredVersions', () => {
         expect(versions[0].effective_from).toBe('2026-01-01');
         expect(versions[0].seasons?.[0].schedules?.[0].buy_rate).toBe(0.2);
         expect(versions[1].effective_from).toBeNull();
+    });
+});
+
+describe('TariffRepo.addTariffVersion — effective_from stamping', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        connectMock.mockResolvedValue({ query: clientQueryMock, release: releaseMock });
+    });
+
+    function mockSeq(nextVersion: number) {
+        clientQueryMock.mockImplementation(async (sql: string) => {
+            if (sql.includes('SELECT content_hash')) return { rows: [{ content_hash: 'STALE' }] };
+            if (sql.includes('MAX(version)')) return { rows: [{ next: nextVersion }] };
+            if (sql.includes('INSERT INTO "Tariff"')) return { rows: [{ id: 8 }] };
+            if (sql.includes('INSERT INTO "TariffSeason"')) return { rows: [{ id: 80 }] };
+            return { rows: [] };
+        });
+    }
+    function tariffInsertCall() {
+        return clientQueryMock.mock.calls.find(c => String(c[0]).includes('INSERT INTO "Tariff"'))!;
+    }
+
+    it('stamps the detection date on a non-first version', async () => {
+        mockSeq(3);
+        await new TariffRepo().addTariffVersion('site-1', parsed, '2026-06-18');
+        const call = tariffInsertCall();
+        expect(String(call[0])).toMatch(/effective_from/);
+        expect(call[1]).toContain('2026-06-18');
+    });
+
+    it('leaves the first version (version 1) undated so it carries backward', async () => {
+        mockSeq(1);
+        await new TariffRepo().addTariffVersion('site-1', parsed, '2026-06-18');
+        const call = tariffInsertCall();
+        expect(call[1]).toContain(null);
+        expect(call[1]).not.toContain('2026-06-18');
     });
 });

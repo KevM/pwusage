@@ -106,7 +106,7 @@ export class TariffRepo {
      * versions survives and the importer's snapshot can never go stale.
      * No-op when the current version already has identical content.
      */
-    async addTariffVersion(siteId: string, parsed: ParsedTariff): Promise<void> {
+    async addTariffVersion(siteId: string, parsed: ParsedTariff, detectionDate: string): Promise<void> {
         const newHash = tariffContentHash(parsed);
         const client = await pool.connect();
         try {
@@ -138,12 +138,16 @@ export class TariffRepo {
             );
             const version = verRes.rows[0].next;
 
+            // First version carries backward (null); later versions are dated to detection (the
+            // honest upper bound — Tesla's payload has no real effective date; user can correct it).
+            const effectiveFrom = version === 1 ? null : detectionDate;
+
             // Insert the new version.
             const tariffRes = await client.query(
-                `INSERT INTO "Tariff"(site_id, name, version, is_current, content_hash, updated)
-                 VALUES ($1, $2, $3, true, $4, NOW())
+                `INSERT INTO "Tariff"(site_id, name, version, is_current, content_hash, effective_from, updated)
+                 VALUES ($1, $2, $3, true, $4, $5, NOW())
                  RETURNING id`,
-                [siteId, parsed.name, version, newHash]
+                [siteId, parsed.name, version, newHash, effectiveFrom]
             );
             const tariffId = tariffRes.rows[0].id;
 

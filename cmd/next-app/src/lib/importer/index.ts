@@ -9,6 +9,7 @@ import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
 import { planImport, splitAtUtcMidnight, auditDays } from './import-planner';
 import { getSiteMidnight } from '../date-utils';
+import { localDateKey } from '../battery-provenance/local-day';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -333,7 +334,8 @@ export class Importer {
                 const parsed = info.tariff_content_v2
                     ? parseTariffContent(info.tariff_content_v2, info.site_name ?? 'Utility Tariff')
                     : buildDefaultTariff('Default Rate');
-                await this.tariffRepo.addTariffVersion(siteId, parsed);
+                const detectionDate = localDateKey(new Date(), info.installation_time_zone);
+                await this.tariffRepo.addTariffVersion(siteId, parsed, detectionDate);
             } else {
                 console.log(`Tariff content unchanged for site ${siteId}, skipping tariff update.`);
             }
