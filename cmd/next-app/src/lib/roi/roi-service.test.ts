@@ -6,8 +6,8 @@ import {
     buildRoiSummary,
     monthlyCumulative,
 } from './roi-service';
-import { flatTimeline } from './plan-timeline';
-import type { EnergyHourlyRow } from '../db';
+import { flatTimeline, comparisonStructTimeline } from './plan-timeline';
+import type { EnergyHourlyRow, Tariff } from '../db';
 
 function hour(over: Partial<EnergyHourlyRow>): EnergyHourlyRow {
     return {
@@ -94,3 +94,43 @@ describe('monthlyCumulative', () => {
         expect(series[1].cumulativeSaved).toBeGreaterThan(series[0].cumulativeSaved);
     });
 });
+
+describe('computeMatrixTotals — date-resolved Fixed baseline', () => {
+    // A Fixed baseline with a rate change: $0.10/kWh before 2026-06-01, $0.20/kWh after.
+    function flatVersion(id: number, eff: string | null, buy: number): Tariff {
+        return {
+            id, site_id: 's1', updated: new Date('2026-01-01T00:00:00Z'), name: 'Flat',
+            reporting_only: true, effective_from: eff,
+            seasons: [{
+                id, tariff_id: id, name: 'All Year',
+                from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: buy, sell_rate: 0.05,
+                schedules: [{
+                    id: 100 + id, season_id: id, name: 'W', buy_rate: buy, sell_rate: 0.05,
+                    from_day_of_week: 0, to_day_of_week: 6, from_hour: null, from_minute: 0, to_hour: null, to_minute: 0,
+                }],
+            }],
+        } as Tariff;
+    }
+
+    it('prices each date at the version in effect, not the flattened current rate', () => {
+        const baselineTariffs = [flatVersion(2, '2026-06-01', 0.20), flatVersion(1, null, 0.10)]; // newest first
+        const dateResolved = comparisonStructTimeline(baselineTariffs, 'America/Los_Angeles');
+        const flatCurrent = flatTimeline(0.20, 0.05); // what the old flatten-to-current path produced
+        const meteredTl = flatTimeline(0.24, 0.04);
+
+        // load-only rows: one in the old period, one in the new. totalSaved = A − F, and F = 0 (no system flows),
+        // so totalSaved equals the no-solar load bill priced at the baseline.
+        const rows = [
+            hour({ local_date: '2026-01-01', load_wh: 10000 }), // old period → date-resolved @ 0.10
+            hour({ local_date: '2026-07-01', load_wh: 10000 }), // new period → 0.20
+        ];
+
+        const dr = computeMatrixTotals(rows, dateResolved, meteredTl).totalSaved;
+        const flat = computeMatrixTotals(rows, flatCurrent, meteredTl).totalSaved;
+
+        expect(dr).toBeCloseTo(10 * 0.10 + 10 * 0.20, 6);   // 3.0 — honours the historical rate
+        expect(flat).toBeCloseTo(10 * 0.20 + 10 * 0.20, 6); // 4.0 — flattened overstates the old period
+        expect(flat - dr).toBeCloseTo(1.0, 6);
+    });
+});
+

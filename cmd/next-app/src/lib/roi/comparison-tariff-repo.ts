@@ -16,6 +16,11 @@ export interface ComparisonPlan {
     versions: ComparisonVersion[]; // newest effective_from first
 }
 
+/** One comparison plan's full version history (newest version first), as returned by
+ *  listComparisonStructures. Used to build a date-resolved timeline for the plan. */
+export type ComparisonStructure = { name: string; tariffs: Tariff[] };
+
+
 export class ComparisonTariffRepo {
 
 
@@ -265,7 +270,7 @@ export class ComparisonTariffRepo {
 
     /** All reporting-only plans for a site as full Tariff→Season→Schedule structures, grouped
      *  by name (newest effective_from first). Powers date-resolved grid column pricing. */
-    async listComparisonStructures(siteId: string): Promise<{ name: string; tariffs: Tariff[] }[]> {
+    async listComparisonStructures(siteId: string): Promise<ComparisonStructure[]> {
         const res = await pool.query(
             `SELECT t.id AS tariff_id, t.name AS tariff_name, t.updated AS tariff_updated,
                     t.site_id AS tariff_site_id, t.reporting_only AS tariff_reporting_only,

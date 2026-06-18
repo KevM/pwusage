@@ -26,7 +26,7 @@ import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
 
 import { SiteRoiConfigRepo } from '@/lib/roi/roi-config-repo';
 import { buildRoiSummary, monthlyCumulative } from '@/lib/roi/roi-service';
-import { flatTimeline, meteredTimeline, comparisonStructTimeline } from '@/lib/roi/plan-timeline';
+import { meteredTimeline, comparisonStructTimeline } from '@/lib/roi/plan-timeline';
 import { buildExtendedGrid, type GridColumnInput } from '@/lib/roi/extended-grid';
 import { HourlyRepo } from '@/lib/battery-provenance/hourly-repo';
 import { classifyTariff } from '@/lib/roi/classify-tariff';
@@ -36,7 +36,7 @@ import { ArbitragePanel } from '@/components/site/savings/ArbitragePanel';
 import { SavingsChart } from '@/components/site/savings/SavingsChart';
 import { RollupBackfillRepo } from '@/lib/battery-provenance/rollup-backfill-repo';
 import { localDateKey } from '@/lib/battery-provenance/local-day';
-import { pickCurrentFixedBaseline } from '@/lib/roi/resolve-fixed-baseline';
+import { pickFixedBaselineStructure } from '@/lib/roi/resolve-fixed-baseline';
 import { ComparisonTariffRepo } from '@/lib/roi/comparison-tariff-repo';
 
 
@@ -313,12 +313,12 @@ export default async function SitePage({ params, searchParams }: {
         }
     }
 
-    const fixedBaseline = pickCurrentFixedBaseline(comparisonPlans);
-    if (fixedBaseline && roiConfig && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {
+    const baseline = pickFixedBaselineStructure(comparisonStructures);
+    if (baseline && roiConfig && (roiConfig.solar_cost != null || roiConfig.battery_cost != null)) {
         const hourly = await new HourlyRepo().getAllForSite(finalSite.id);
         const activeTariff = finalSite.tariffs.find(t => t.id === activeTariffId) || (finalSite.tariffs ?? [])[0];
         const plan = activeTariff ? classifyTariff(activeTariff) : 'tou';
-        const fixedTl = flatTimeline(fixedBaseline.fixedBuyRate, fixedBaseline.fixedSellRate);
+        const fixedTl = comparisonStructTimeline(baseline.tariffs, finalSite.timezone);
         const meteredTl = meteredTimeline(finalSite.tariffs, finalSite.timezone);
         roiSummary = buildRoiSummary(
             hourly,

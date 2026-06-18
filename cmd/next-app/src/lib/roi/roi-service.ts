@@ -4,12 +4,6 @@ import type { PlanTimeline } from './plan-timeline';
 
 const WH_PER_KWH = 1000;
 
-/** Retained for resolve-fixed-baseline.ts (the current Fixed baseline as flat scalars). */
-export interface RoiInputs {
-    fixedBuyRate: number;
-    fixedSellRate: number;
-}
-
 export interface ColumnBills {
     noSolar: number;       // load priced at this plan
     solar: number;         // solar-only counterfactual priced at this plan
