@@ -6,10 +6,6 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
-## ROI F1 / F2 — FOLDED into the Flexible Plan Comparison Matrix
-
-**Status (2026-06-15):** F1 (comparison-column past-dating) and F2 (metered historical correction) are **superseded** by `docs/superpowers/specs/2026-06-15-flexible-comparison-matrix-design.md`. That design retires `EnergyRollup` for a plan-agnostic **hourly profile** + on-read date-resolved pricing engine, which prices every column (comparison *and* metered) date-resolved from one substrate — subsuming both F1 and F2. The standalone F1 plan (`docs/superpowers/plans/2026-06-15-roi-f1-fixed-column-pricing.md`) is marked superseded; do not execute it. Implement via the matrix design's Phases B/C/D instead.
-
 ## Flat-file archive for old EnergyData (retention escape hatch)
 
 **Context:** As of 2026-06-15 (`feat/roi`), `DATA_RETENTION_DAYS` defaults to `0` = keep forever (`src/lib/retention.ts`), so raw 5-minute `EnergyData` is never pruned and the history backfill persists every day. This is what lets the Savings feature re-bucket raw energy into arbitrary tariff TOU windows across full history — it **supersedes the old "2b" plan-agnostic hourly-profile idea** (we keep raw samples instead of a derived hourly aggregate).
@@ -46,13 +42,4 @@ Currently, Tesla ID tokens are signed with keys that don't appear in the public 
 **Related files:**
 - `cmd/next-app/src/app/auth/tesla-callback/route.ts` - JWT verification with lazy refresh
 - `Security.md` section 8 - Tesla `id_token` signature verification requirements
-
-
-## Phase 2: ROI Report & Counterfactuals
-
-**Status:** Ready to begin. Stored rates and energy flows are now recorded in `EnergyRollup` per period.
-
-**Task:** Implement read-time derivations (discharge source split, discharge cost basis, arbitrage P&L) and reporting UI. This is unblocked by the Battery Power Provenance data foundation.
-
-
 
