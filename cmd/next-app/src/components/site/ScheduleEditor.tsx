@@ -4,7 +4,7 @@ import { Label, Input, Select } from '@/components/ui/Form';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { windowCoverage, scheduleHasGaps } from '@/lib/roi/tou-coverage';
-import type { ParsedSeason, ParsedSchedule } from '@/lib/importer/tariff-parser';
+import type { ParsedSeason } from '@/lib/importer/tariff-parser';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; // Tesla 0=Mon … 6=Sun
 
