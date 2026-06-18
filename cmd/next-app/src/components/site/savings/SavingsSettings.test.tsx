@@ -5,7 +5,7 @@ import { SavingsSettings } from './SavingsSettings';
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
-const props = { siteId: 's1', roiConfig: null, comparisonPlans: [], meteredPlanName: 'Standard' };
+const props = { siteId: 's1', roiConfig: null, comparisonPlans: [], meteredPlanName: 'Standard', meteredVersions: [] };
 
 describe('SavingsSettings', () => {
   it('renders the config forms when defaultOpen is true', () => {

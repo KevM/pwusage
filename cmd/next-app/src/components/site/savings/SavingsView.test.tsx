@@ -12,7 +12,7 @@ const bf = (over: Partial<RollupBackfill>): RollupBackfill => ({
   ...over,
 });
 
-const base = { siteId: 's1', roiConfig: null, comparisonPlans: [], meteredPlanName: 'Standard', extendedGrid: null };
+const base = { siteId: 's1', roiConfig: null, comparisonPlans: [], meteredPlanName: 'Standard', extendedGrid: null, meteredVersions: [] };
 
 describe('SavingsView', () => {
   it('shows the indexing progress and collapsed settings on a recoverable error', () => {

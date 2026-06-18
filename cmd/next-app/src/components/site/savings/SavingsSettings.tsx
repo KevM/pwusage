@@ -4,6 +4,7 @@ import type { SiteRoiConfig } from '@/lib/db';
 import type { ComparisonPlan } from '@/lib/roi/comparison-tariff-repo';
 import { RoiConfigForm } from '@/components/site/RoiConfigForm';
 import { ComparisonTariffEditor } from '@/components/site/ComparisonTariffEditor';
+import { MeteredTariffEditor, type MeteredVersionSummary } from '@/components/site/MeteredTariffEditor';
 
 export function SavingsSettings({
   siteId,
@@ -11,6 +12,7 @@ export function SavingsSettings({
   comparisonPlans,
   meteredPlanName,
   meteredPlanVersion,
+  meteredVersions,
   defaultOpen,
 }: {
   siteId: string;
@@ -18,6 +20,7 @@ export function SavingsSettings({
   comparisonPlans: ComparisonPlan[];
   meteredPlanName: string;
   meteredPlanVersion?: number | null;
+  meteredVersions: MeteredVersionSummary[];
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -38,6 +41,7 @@ export function SavingsSettings({
         <div className="space-y-6">
           <RoiConfigForm siteId={siteId} initial={roiConfig} />
           <ComparisonTariffEditor siteId={siteId} plans={comparisonPlans} meteredPlanName={meteredPlanName} meteredPlanVersion={meteredPlanVersion} />
+          <MeteredTariffEditor siteId={siteId} versions={meteredVersions} />
         </div>
       )}
     </div>

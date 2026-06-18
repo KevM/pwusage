@@ -7,6 +7,7 @@ import type { ExtendedGridModel } from '@/lib/roi/extended-grid';
 import { IndexingStatus } from './IndexingStatus';
 import { SavingsSettings } from './SavingsSettings';
 import { selectSavingsViewState } from '@/lib/roi/savings-status';
+import type { MeteredVersionSummary } from '@/components/site/MeteredTariffEditor';
 
 const usd = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
@@ -21,6 +22,7 @@ export function SavingsView({
     extendedGrid,
     meteredPlanName,
     meteredPlanVersion,
+    meteredVersions,
 }: {
     summary: RoiSummary | null;
     arbitrageSlot?: React.ReactNode;
@@ -32,6 +34,7 @@ export function SavingsView({
     extendedGrid: ExtendedGridModel | null;
     meteredPlanName?: string;
     meteredPlanVersion?: number | null;
+    meteredVersions: MeteredVersionSummary[];
 }) {
     const state = selectSavingsViewState(summary, backfill);
     const settings = (defaultOpen: boolean) => (
@@ -41,6 +44,7 @@ export function SavingsView({
             comparisonPlans={comparisonPlans}
             meteredPlanName={meteredPlanName ?? 'Standard'}
             meteredPlanVersion={meteredPlanVersion}
+            meteredVersions={meteredVersions}
             defaultOpen={defaultOpen}
         />
     );

@@ -39,6 +39,7 @@ import { localDateKey } from '@/lib/battery-provenance/local-day';
 import { pickFixedBaselineStructure } from '@/lib/roi/resolve-fixed-baseline';
 import { ComparisonTariffRepo } from '@/lib/roi/comparison-tariff-repo';
 import { TariffRepo } from '@/lib/tariff-repo';
+import type { MeteredVersionSummary } from '@/components/site/MeteredTariffEditor';
 
 
 
@@ -294,8 +295,16 @@ export default async function SitePage({ params, searchParams }: {
     const trmnlService = new TrmnlService();
     const installation = await trmnlService.getInstallationBySiteId(finalSite.id, { includeTokens: false });
 
-        const comparisonPlans = await new ComparisonTariffRepo().listFixedComparisons(finalSite.id);
-        const comparisonStructures = await new ComparisonTariffRepo().listComparisonStructures(finalSite.id);
+    const comparisonPlans = await new ComparisonTariffRepo().listFixedComparisons(finalSite.id);
+    const comparisonStructures = await new ComparisonTariffRepo().listComparisonStructures(finalSite.id);
+    const meteredVersions = await new TariffRepo().listMeteredVersions(finalSite.id);
+    const meteredVersionSummaries = meteredVersions.map(t => ({
+        version: t.version ?? 0,
+        effective_from: t.effective_from ?? null,
+        is_current: t.id === activeTariffId,
+        kind: classifyTariff(t),
+        buy_rate: t.seasons?.[0]?.schedules?.[0]?.buy_rate ?? t.seasons?.[0]?.buy_rate ?? 0,
+    }));
 
     const roiConfig = await new SiteRoiConfigRepo().get(finalSite.id);
     let roiSummary = null;
@@ -320,7 +329,6 @@ export default async function SitePage({ params, searchParams }: {
         const activeTariff = finalSite.tariffs.find(t => t.id === activeTariffId) || (finalSite.tariffs ?? [])[0];
         const plan = activeTariff ? classifyTariff(activeTariff) : 'tou';
         const fixedTl = comparisonStructTimeline(baseline.tariffs, finalSite.timezone);
-        const meteredVersions = await new TariffRepo().listMeteredVersions(finalSite.id);
         const meteredTl = meteredTimeline(meteredVersions, finalSite.timezone);
         roiSummary = buildRoiSummary(
             hourly,
@@ -406,6 +414,7 @@ export default async function SitePage({ params, searchParams }: {
                         extendedGrid={extendedGrid}
                         meteredPlanName={finalSite.tariffs?.[0]?.name ?? 'Your plan'}
                         meteredPlanVersion={finalSite.tariffs?.[0]?.version ?? null}
+                        meteredVersions={meteredVersionSummaries}
                     />
                 }
 
