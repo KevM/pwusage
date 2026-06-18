@@ -19,25 +19,27 @@ export interface MeteredVersionSummary {
 
 const blankSeed = (): ParsedSeason[] => buildFixedComparisonInput({ name: '', buyRate: 0, sellRate: 0 }).seasons;
 
+type EditState = { version: number; seasons: ParsedSeason[]; effectiveFrom: string };
+
 export function MeteredTariffEditor({ siteId, versions }: { siteId: string; versions: MeteredVersionSummary[] }) {
     const router = useRouter();
     const { toast } = useToast();
     const base = `/api/site/${siteId}/metered-tariff`;
 
     const [busy, setBusy] = useState(false);
-    const [editingDate, setEditingDate] = useState<number | null>(null); // version being date-edited
+    const [editingDate, setEditingDate] = useState<number | null>(null); // Tesla-current date edit
     const [dateValue, setDateValue] = useState('');
     const [adding, setAdding] = useState(false);
+    const [editing, setEditing] = useState<EditState | null>(null); // historic rate+date edit
 
-    const earliestVersion = versions.reduce((min, v) => Math.min(min, v.version), Infinity);
-    const hasUndated = versions.some(v => v.effective_from === null);
+    const floorVersion = versions.reduce((f, v) =>
+        (v.effective_from ?? '9999') < (f.effective_from ?? '9999') ? v : f, versions[0]);
 
     async function send(method: string, body: unknown, okMsg: string): Promise<boolean> {
         setBusy(true);
         try {
             const res = await fetch(base, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            if (res.status === 400 || res.status === 409) { const j = await res.json(); throw new Error(j.error); }
-            if (!res.ok) throw new Error('request failed');
+            if (res.status >= 400) { const j = await res.json(); throw new Error(j.error || 'request failed'); }
             toast({ title: 'Saved', description: okMsg, variant: 'success' });
             router.refresh();
             return true;
@@ -53,8 +55,27 @@ export function MeteredTariffEditor({ siteId, versions }: { siteId: string; vers
     }
 
     async function onSaveHistoric(payload: SchedulePayload): Promise<boolean> {
-        const ok = await send('POST', { effective_from: payload.effectiveFrom || null, seasons: payload.seasons }, 'Historic plan added.');
+        const ok = await send('POST', { switch_date: payload.effectiveFrom || null, seasons: payload.seasons }, 'Historic plan added.');
         if (ok) setAdding(false);
+        return ok;
+    }
+
+    async function openEdit(version: number, effectiveFrom: string | null) {
+        setBusy(true);
+        try {
+            const res = await fetch(`${base}?version=${version}`);
+            if (!res.ok) throw new Error('Could not load that version.');
+            const j = await res.json() as { seasons: ParsedSeason[] };
+            setEditing({ version, seasons: j.seasons, effectiveFrom: effectiveFrom ?? '' });
+        } catch (e) {
+            toast({ title: 'Error', description: e instanceof Error ? e.message : 'Could not load.', variant: 'danger' });
+        } finally { setBusy(false); }
+    }
+
+    async function onSaveEdit(payload: SchedulePayload): Promise<boolean> {
+        if (!editing) return false;
+        const ok = await send('PUT', { version: editing.version, effective_from: payload.effectiveFrom || null, seasons: payload.seasons }, 'Plan updated.');
+        if (ok) setEditing(null);
         return ok;
     }
 
@@ -62,7 +83,7 @@ export function MeteredTariffEditor({ siteId, versions }: { siteId: string; vers
         return (
             <Card>
                 <CardHeader><CardTitle>Add a historic plan</CardTitle>
-                    <CardDescription>Enter a metered plan that was in effect in the past. Set the date it took effect — it prices your history before your current plan.</CardDescription>
+                    <CardDescription>Enter a metered plan that ran before your current one. The date you set is when you switched <em>off</em> it onto your next plan — it anchors at your install date and prices the history before the switch.</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <ScheduleEditor
@@ -80,10 +101,32 @@ export function MeteredTariffEditor({ siteId, versions }: { siteId: string; vers
         );
     }
 
+    if (editing) {
+        return (
+            <Card>
+                <CardHeader><CardTitle>Edit historic plan</CardTitle>
+                    <CardDescription>Adjust this past plan&apos;s rates and the date it took effect.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <ScheduleEditor
+                        name="Your plan"
+                        nameLocked
+                        effectiveFrom={editing.effectiveFrom}
+                        initialSeasons={editing.seasons}
+                        cloneSources={[]}
+                        onClone={async () => []}
+                        onSave={onSaveEdit}
+                        onCancel={() => setEditing(null)}
+                    />
+                </CardContent>
+            </Card>
+        );
+    }
+
     return (
         <Card>
             <CardHeader><CardTitle>Metered plan history</CardTitle>
-                <CardDescription>Your real plan over time. Rates come from Tesla; set when each version took effect so your savings price each period correctly.</CardDescription>
+                <CardDescription>Your real plan over time, anchored at your install date. Rates for your current plan come from Tesla; set when each version took effect so your savings price each period correctly.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
                 {versions.map(v => (
@@ -100,22 +143,23 @@ export function MeteredTariffEditor({ siteId, versions }: { siteId: string; vers
                         ) : (
                             <>
                                 <span className="text-gray-500 dark:text-gray-400">
-                                    {v.effective_from ?? (v.version === earliestVersion ? 'from the beginning' : 'undated')}
+                                    {v.version === floorVersion?.version ? `since ${v.effective_from}` : v.effective_from}
                                     {v.is_current ? ' · current' : ''}
                                 </span>
-                                <button type="button" tabIndex={0} disabled={busy}
-                                    onClick={() => { setEditingDate(v.version); setDateValue(v.effective_from ?? ''); }}
-                                    className="ml-auto text-xs text-primary hover:underline rounded px-1">Set date</button>
+                                {v.is_current ? (
+                                    <button type="button" tabIndex={0} disabled={busy}
+                                        onClick={() => { setEditingDate(v.version); setDateValue(v.effective_from ?? ''); }}
+                                        className="ml-auto text-xs text-primary hover:underline rounded px-1">Set date</button>
+                                ) : (
+                                    <button type="button" tabIndex={0} disabled={busy}
+                                        onClick={() => openEdit(v.version, v.effective_from)}
+                                        className="ml-auto text-xs text-primary hover:underline rounded px-1">Edit</button>
+                                )}
                             </>
                         )}
                     </div>
                 ))}
-                {hasUndated && versions.length > 0 && (
-                    <p className="text-xs text-amber-600 dark:text-amber-500">
-                        ⚠️ Please set your current plan&apos;s start date first before adding historic plans.
-                    </p>
-                )}
-                <Button type="button" onClick={() => setAdding(true)} disabled={busy || hasUndated}>Add historic plan</Button>
+                <Button type="button" onClick={() => setAdding(true)} disabled={busy}>Add historic plan</Button>
             </CardContent>
         </Card>
     );

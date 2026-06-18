@@ -335,7 +335,8 @@ export class Importer {
                     ? parseTariffContent(info.tariff_content_v2, info.site_name ?? 'Utility Tariff')
                     : buildDefaultTariff('Default Rate');
                 const detectionDate = localDateKey(new Date(), info.installation_time_zone);
-                await this.tariffRepo.addTariffVersion(siteId, parsed, detectionDate);
+                const installDate = localDateKey(new Date(info.installation_date), info.installation_time_zone);
+                await this.tariffRepo.addTariffVersion(siteId, parsed, detectionDate, installDate);
             } else {
                 console.log(`Tariff content unchanged for site ${siteId}, skipping tariff update.`);
             }
