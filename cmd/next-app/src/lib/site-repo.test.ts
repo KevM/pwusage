@@ -31,6 +31,7 @@ function makeSiteJoinRow(overrides: Record<string, unknown> = {}) {
         tariff_name: null,
         tariff_updated: null,
         tariff_site_id: null,
+        tariff_version: null,
         season_id: null,
         season_name: null,
         from_month: null, from_day: null,
@@ -409,6 +410,18 @@ describe('SiteRepo metered tariff loading', () => {
         const sql = String(queryMock.mock.calls[0][0]);
         expect(sql).toMatch(/Tariff"[\s\S]*ON[\s\S]*is_current/);
         expect(sql).toMatch(/NOT\s+t\.reporting_only/);
+    });
+
+    it('exposes the metered tariff version on the loaded site', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow({
+            tariff_id: 7, tariff_name: 'Standard', tariff_updated: new Date('2026-01-01T00:00:00Z'),
+            tariff_site_id: 'site-1', tariff_reporting_only: false, tariff_effective_from: '2025-01-01',
+            tariff_version: 3,
+        })] });
+        const repo = new SiteRepo();
+        repo.invalidateCache('site-1');
+        const site = await repo.getSite('site-1');
+        expect(site?.tariffs?.[0]?.version).toBe(3);
     });
 });
 

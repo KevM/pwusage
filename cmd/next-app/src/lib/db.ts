@@ -79,6 +79,7 @@ export interface Tariff {
   name: string | null;
   reporting_only?: boolean;        // true ⇒ comparison plan, excluded from metered pricing
   effective_from?: string | null;  // 'YYYY-MM-DD'; display/ordering only this phase
+  version?: number;                // current metered version; used as a clone seed key
   seasons?: TariffSeason[];
 }
 

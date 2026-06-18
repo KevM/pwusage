@@ -95,6 +95,7 @@ export class SiteRepo {
                 t.site_id     AS tariff_site_id,
                 t.reporting_only AS tariff_reporting_only,
                 t.effective_from::text AS tariff_effective_from,
+                t.version     AS tariff_version,
                 ts.id         AS season_id,
                 ts.name       AS season_name,
                 ts.from_month, ts.from_day, ts.to_month, ts.to_day,
@@ -159,6 +160,7 @@ export class SiteRepo {
                     name: (row.tariff_name as string | null) ?? null,
                     reporting_only: row.tariff_reporting_only === true,
                     effective_from: (row.tariff_effective_from as string | null) ?? null,
+                    version: row.tariff_version != null ? Number(row.tariff_version) : undefined,
                     seasons: [],
                 };
                 tariffMap.set(tariffId, tariff);
