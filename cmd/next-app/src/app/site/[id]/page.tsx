@@ -298,7 +298,7 @@ export default async function SitePage({ params, searchParams }: {
     const comparisonPlans = await new ComparisonTariffRepo().listFixedComparisons(finalSite.id);
     const comparisonStructures = await new ComparisonTariffRepo().listComparisonStructures(finalSite.id);
     const meteredVersions = await new TariffRepo().listMeteredVersions(finalSite.id);
-    const meteredVersionSummaries = meteredVersions.map(t => ({
+    const meteredVersionSummaries: MeteredVersionSummary[] = meteredVersions.map(t => ({
         version: t.version ?? 0,
         effective_from: t.effective_from ?? null,
         is_current: t.id === activeTariffId,
