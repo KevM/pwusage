@@ -69,6 +69,17 @@ describe('metered-tariff PATCH', () => {
         expect(res.status).toBe(200);
         expect(setDateMock).toHaveBeenCalledWith('s1', 1, null);
     });
+    it('blocks clearing the date when another version is undated', async () => {
+        listMock.mockResolvedValue([
+            { version: 2, effective_from: '2026-01-01' },
+            { version: 1, effective_from: null },
+        ]);
+        const res = await PATCH(req({ version: 2, effective_from: null }), { params });
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error).toMatch(/Only the earliest plan version can have its date cleared/);
+        expect(setDateMock).not.toHaveBeenCalled();
+    });
 });
 
 describe('metered-tariff POST (add historic version)', () => {

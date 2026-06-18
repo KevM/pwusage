@@ -27,13 +27,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     if (effectiveFrom === null && existingVersions.length > 1) {
-        const otherVersions = existingVersions.filter(v => v.version !== version);
-        const minOtherDate = otherVersions.reduce((min, v) => {
-            if (!v.effective_from) return min;
-            return !min || v.effective_from < min ? v.effective_from : min;
-        }, null as string | null);
-
-        if (targetVersion.effective_from && minOtherDate && targetVersion.effective_from > minOtherDate) {
+        const others = existingVersions.filter(v => v.version !== version);
+        const someOtherUndated = others.some(v => v.effective_from === null);
+        const someOtherEarlier = targetVersion.effective_from != null &&
+            others.some(v => v.effective_from != null && v.effective_from < targetVersion.effective_from!);
+        if (someOtherUndated || someOtherEarlier) {
             return NextResponse.json({ error: 'Only the earliest plan version can have its date cleared.' }, { status: 400 });
         }
     }
