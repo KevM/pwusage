@@ -11,11 +11,54 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; // Tesla 0=Mon �
 export interface CloneSource { label: string; key: string }
 export interface SchedulePayload { name: string; effectiveFrom: string; seasons: ParsedSeason[] }
 
-function blankWindow(): ParsedSchedule {
+// Editable counterpart types allowing transient empty strings in inputs
+interface EditableSchedule {
+    name: string;
+    buy_rate: number | string;
+    sell_rate: number | string;
+    from_day_of_week: number;
+    to_day_of_week: number;
+    from_hour: number | string;
+    from_minute: number;
+    to_hour: number | string;
+    to_minute: number;
+}
+
+interface EditableSeason {
+    name: string;
+    from_month: number | string;
+    from_day: number | string;
+    to_month: number | string;
+    to_day: number | string;
+    buy_rate: number;
+    sell_rate: number;
+    schedules: EditableSchedule[];
+}
+
+function blankWindow(): EditableSchedule {
     return {
-        name: 'Window', buy_rate: 0, sell_rate: 0,
-        from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0,
+        name: 'Window', buy_rate: '', sell_rate: '',
+        from_day_of_week: 0, to_day_of_week: 6, from_hour: '', from_minute: 0, to_hour: '', to_minute: 0,
     };
+}
+
+function cleanSeasons(seasons: EditableSeason[]): ParsedSeason[] {
+    return seasons.map(s => ({
+        ...s,
+        from_month: s.from_month === '' ? 0 : Number(s.from_month),
+        from_day: s.from_day === '' ? 0 : Number(s.from_day),
+        to_month: s.to_month === '' ? 0 : Number(s.to_month),
+        to_day: s.to_day === '' ? 0 : Number(s.to_day),
+        buy_rate: Number(s.buy_rate) || 0,
+        sell_rate: Number(s.sell_rate) || 0,
+        schedules: s.schedules.map(w => ({
+            ...w,
+            buy_rate: w.buy_rate === '' ? 0 : Number(w.buy_rate),
+            sell_rate: w.sell_rate === '' ? 0 : Number(w.sell_rate),
+            from_hour: w.from_hour === '' ? 0 : Number(w.from_hour),
+            to_hour: w.to_hour === '' ? 0 : Number(w.to_hour),
+        }))
+    }));
 }
 
 /** Route-agnostic schedule structure editor. Owns no HTTP and no comparison-vs-metered
@@ -40,16 +83,17 @@ export function ScheduleEditor({
 
     const [name, setName] = useState(initialName);
     const [effFrom, setEffFrom] = useState(effectiveFrom);
-    const [seasons, setSeasons] = useState<ParsedSeason[]>(() => structuredClone(initialSeasons));
+    const [seasons, setSeasons] = useState<EditableSeason[]>(() => structuredClone(initialSeasons) as EditableSeason[]);
     const [busy, setBusy] = useState(false);
 
-    const hasGaps = scheduleHasGaps(seasons);
+    const cleanedSeasons = cleanSeasons(seasons);
+    const hasGaps = scheduleHasGaps(cleanedSeasons);
 
     // ---- structure mutation helpers (immutable) ----
-    function patchSeason(si: number, patch: Partial<ParsedSeason>) {
+    function patchSeason(si: number, patch: Partial<EditableSeason>) {
         setSeasons(prev => prev.map((s, i) => (i === si ? { ...s, ...patch } : s)));
     }
-    function patchWindow(si: number, wi: number, patch: Partial<ParsedSchedule>) {
+    function patchWindow(si: number, wi: number, patch: Partial<EditableSchedule>) {
         setSeasons(prev => prev.map((s, i) => i === si
             ? { ...s, schedules: s.schedules.map((w, j) => (j === wi ? { ...w, ...patch } : w)) }
             : s));
@@ -76,7 +120,7 @@ export function ScheduleEditor({
         setBusy(true);
         try {
             const next = await onClone(src.key);
-            setSeasons(structuredClone(next));
+            setSeasons(structuredClone(next) as EditableSeason[]);
             toast({ title: 'Cloned', description: `Seeded from ${src.label}.`, variant: 'success' });
         } catch (e) {
             toast({ title: 'Error', description: e instanceof Error ? e.message : 'Clone failed.', variant: 'danger' });
@@ -86,7 +130,7 @@ export function ScheduleEditor({
     async function save() {
         setBusy(true);
         try {
-            const ok = await onSave({ name: name.trim(), effectiveFrom: effFrom, seasons });
+            const ok = await onSave({ name: name.trim(), effectiveFrom: effFrom, seasons: cleanSeasons(seasons) });
             if (ok) onCancel();
         } finally { setBusy(false); }
     }
@@ -116,7 +160,8 @@ export function ScheduleEditor({
             )}
 
             {seasons.map((season, si) => {
-                const { grid } = windowCoverage(season);
+                const cleanedSeason = cleanSeasons([season])[0];
+                const { grid } = windowCoverage(cleanedSeason);
                 return (
                     <div key={si} className="rounded-md border border-gray-200 dark:border-slate-800 p-3 space-y-3">
                         <div className="flex items-center gap-2">
@@ -127,10 +172,10 @@ export function ScheduleEditor({
                             )}
                         </div>
                         <div className="grid grid-cols-4 gap-2 text-xs">
-                            <div className="flex flex-col gap-1"><Label>From month</Label><Input type="number" min={1} max={12} value={season.from_month} onChange={(e) => patchSeason(si, { from_month: Number(e.target.value) })} /></div>
-                            <div className="flex flex-col gap-1"><Label>From day</Label><Input type="number" min={1} max={31} value={season.from_day} onChange={(e) => patchSeason(si, { from_day: Number(e.target.value) })} /></div>
-                            <div className="flex flex-col gap-1"><Label>To month</Label><Input type="number" min={1} max={12} value={season.to_month} onChange={(e) => patchSeason(si, { to_month: Number(e.target.value) })} /></div>
-                            <div className="flex flex-col gap-1"><Label>To day</Label><Input type="number" min={1} max={31} value={season.to_day} onChange={(e) => patchSeason(si, { to_day: Number(e.target.value) })} /></div>
+                            <div className="flex flex-col gap-1"><Label>From month</Label><Input type="number" min={1} max={12} value={season.from_month} onChange={(e) => patchSeason(si, { from_month: e.target.value })} /></div>
+                            <div className="flex flex-col gap-1"><Label>From day</Label><Input type="number" min={1} max={31} value={season.from_day} onChange={(e) => patchSeason(si, { from_day: e.target.value })} /></div>
+                            <div className="flex flex-col gap-1"><Label>To month</Label><Input type="number" min={1} max={12} value={season.to_month} onChange={(e) => patchSeason(si, { to_month: e.target.value })} /></div>
+                            <div className="flex flex-col gap-1"><Label>To day</Label><Input type="number" min={1} max={31} value={season.to_day} onChange={(e) => patchSeason(si, { to_day: e.target.value })} /></div>
                         </div>
 
                         <div className="space-y-2">
@@ -146,11 +191,11 @@ export function ScheduleEditor({
                                             {DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
                                         </Select>
                                     </div>
-                                    <div className="flex flex-col gap-1"><Label>From hour</Label><Input type="number" min={0} max={24} value={w.from_hour} onChange={(e) => patchWindow(si, wi, { from_hour: Number(e.target.value) })} /></div>
-                                    <div className="flex flex-col gap-1"><Label>To hour</Label><Input type="number" min={0} max={24} value={w.to_hour} onChange={(e) => patchWindow(si, wi, { to_hour: Number(e.target.value) })} /></div>
-                                    <div className="flex flex-col gap-1"><Label>Buy $/kWh</Label><Input type="number" step="0.00001" value={w.buy_rate} onChange={(e) => patchWindow(si, wi, { buy_rate: Number(e.target.value) })} /></div>
+                                    <div className="flex flex-col gap-1"><Label>From hour</Label><Input type="number" min={0} max={24} value={w.from_hour} onChange={(e) => patchWindow(si, wi, { from_hour: e.target.value })} /></div>
+                                    <div className="flex flex-col gap-1"><Label>To hour</Label><Input type="number" min={0} max={24} value={w.to_hour} onChange={(e) => patchWindow(si, wi, { to_hour: e.target.value })} /></div>
+                                    <div className="flex flex-col gap-1"><Label>Buy $/kWh</Label><Input type="number" step="0.00001" value={w.buy_rate} onChange={(e) => patchWindow(si, wi, { buy_rate: e.target.value })} /></div>
                                     <div className="flex items-end gap-1">
-                                        <div className="flex flex-col gap-1 flex-1"><Label>Sell $/kWh</Label><Input type="number" step="0.00001" value={w.sell_rate} onChange={(e) => patchWindow(si, wi, { sell_rate: Number(e.target.value) })} /></div>
+                                        <div className="flex flex-col gap-1 flex-1"><Label>Sell $/kWh</Label><Input type="number" step="0.00001" value={w.sell_rate} onChange={(e) => patchWindow(si, wi, { sell_rate: e.target.value })} /></div>
                                         {season.schedules.length > 1 && (
                                             <button type="button" tabIndex={0} onClick={() => removeWindow(si, wi)}
                                                 className="text-xs text-red-600 dark:text-red-400 hover:underline rounded px-1 pb-2">✕</button>
@@ -170,6 +215,7 @@ export function ScheduleEditor({
                                     <div className="flex gap-px">
                                         {row.map((covered, hour) => (
                                             <span key={hour}
+                                                // data-gap is used for node static-rendering assertions in tests (asserting coverage gaps)
                                                 data-gap={covered ? undefined : 'true'}
                                                 title={`${DAYS[weekday]} ${String(hour).padStart(2, '0')}:00${covered ? '' : ' — uncovered'}`}
                                                 className={`inline-block h-2.5 w-2.5 rounded-[1px] ${covered ? 'bg-primary/40' : 'bg-red-500'}`} />
@@ -190,6 +236,7 @@ export function ScheduleEditor({
             )}
 
             <div className="flex gap-2">
+                {/* data-disabled is preserved in node-env static markup tests to assert Save-button state */}
                 <Button type="button" data-disabled={String(hasGaps || busy)} disabled={hasGaps || busy} onClick={save}>
                     {busy ? 'Saving…' : 'Save plan'}
                 </Button>
