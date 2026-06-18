@@ -29,8 +29,8 @@ export function MeteredTariffEditor({ siteId, versions }: { siteId: string; vers
     const [dateValue, setDateValue] = useState('');
     const [adding, setAdding] = useState(false);
 
-    // earliest = lowest version number (carry-back anchor; may be undated)
     const earliestVersion = versions.reduce((min, v) => Math.min(min, v.version), Infinity);
+    const hasUndated = versions.some(v => v.effective_from === null);
 
     async function send(method: string, body: unknown, okMsg: string): Promise<boolean> {
         setBusy(true);
@@ -110,7 +110,12 @@ export function MeteredTariffEditor({ siteId, versions }: { siteId: string; vers
                         )}
                     </div>
                 ))}
-                <Button type="button" onClick={() => setAdding(true)} disabled={busy}>Add historic plan</Button>
+                {hasUndated && versions.length > 0 && (
+                    <p className="text-xs text-amber-600 dark:text-amber-500">
+                        ⚠️ Please set your current plan&apos;s start date first before adding historic plans.
+                    </p>
+                )}
+                <Button type="button" onClick={() => setAdding(true)} disabled={busy || hasUndated}>Add historic plan</Button>
             </CardContent>
         </Card>
     );

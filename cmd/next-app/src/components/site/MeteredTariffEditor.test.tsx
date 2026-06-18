@@ -22,8 +22,19 @@ describe('MeteredTariffEditor', () => {
         expect(html).toContain('0.16000');
     });
 
-    it('offers an \"add historic plan\" action', () => {
+    it('disables the add button and shows a warning when there is an undated version', () => {
         const html = renderToStaticMarkup(<MeteredTariffEditor siteId="s1" versions={versions} />);
-        expect(html).toMatch(/add historic plan/i);
+        expect(html).toContain('disabled=""');
+        expect(html).toContain("set your current plan&#x27;s start date first");
+    });
+
+    it('enables the add button and hides warning when all versions are dated', () => {
+        const datedVersions: MeteredVersionSummary[] = [
+            { version: 2, effective_from: '2026-01-01', is_current: true, kind: 'tou', buy_rate: 0.3 },
+            { version: 1, effective_from: '2024-01-01', is_current: false, kind: 'fixed', buy_rate: 0.16 },
+        ];
+        const html = renderToStaticMarkup(<MeteredTariffEditor siteId="s1" versions={datedVersions} />);
+        expect(html).not.toContain('disabled=""');
+        expect(html).not.toContain("set your current plan&#x27;s start date first");
     });
 });
