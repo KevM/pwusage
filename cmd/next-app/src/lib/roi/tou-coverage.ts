@@ -110,3 +110,25 @@ export function scheduleHasGaps(seasons: ParsedSeason[]): boolean {
     return seasons.some(s => windowCoverage(s).gaps.length > 0);
 }
 
+/** First human-readable coverage problem in a structure, or null when fully covered.
+ *  Shared by the comparison and metered tariff routes. */
+export function coverageError(seasons: ParsedSeason[]): string | null {
+    if (!Array.isArray(seasons) || seasons.length === 0) return 'At least one season is required.';
+    const calGaps = seasonCalendarGaps(seasons);
+    if (calGaps.length > 0) {
+        const g = calGaps[0];
+        return g.count === 0
+            ? `No season covers ${g.month}/${g.day} — every day of the year must belong to a season.`
+            : `${g.month}/${g.day} is covered by ${g.count} seasons — seasons must not overlap.`;
+    }
+    for (const s of seasons) {
+        const { gaps } = windowCoverage(s);
+        if (gaps.length > 0) {
+            const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            const c = gaps[0];
+            return `Season "${s.name}" leaves ${days[c.weekday]} ${String(c.hour).padStart(2, '0')}:00 unpriced — every hour must be covered by a window.`;
+        }
+    }
+    return null;
+}
+
