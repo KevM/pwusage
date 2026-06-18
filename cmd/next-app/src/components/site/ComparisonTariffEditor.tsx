@@ -2,13 +2,24 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/Card';
-import { Label, Input } from '@/components/ui/Form';
+import { Input } from '@/components/ui/Form';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
+import { ScheduleEditor, type CloneSource, type SchedulePayload } from '@/components/site/ScheduleEditor';
+import { buildFixedComparisonInput } from '@/lib/roi/fixed-comparison';
 import type { ComparisonPlan, ComparisonVersion } from '@/lib/roi/comparison-tariff-repo';
+import type { ParsedSeason } from '@/lib/importer/tariff-parser';
 
-type CreateForm = { name: string; buy_rate: string; sell_rate: string; effective_from: string };
-const EMPTY: CreateForm = { name: '', buy_rate: '', sell_rate: '', effective_from: '' };
+type EditorIntent = 'create' | 'append-version' | 'replace';
+interface EditorState {
+    intent: EditorIntent;
+    planName: string;
+    version?: number;
+    effectiveFrom: string;
+    seasons: ParsedSeason[];
+}
+
+const blankSeed = (): ParsedSeason[] => buildFixedComparisonInput({ name: '', buyRate: 0, sellRate: 0 }).seasons;
 
 export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
     siteId: string; plans: ComparisonPlan[]; meteredPlanName: string;
@@ -17,15 +28,38 @@ export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
     const { toast } = useToast();
     const base = `/api/site/${siteId}/comparison-tariff`;
 
-    // create form (intent depends on `addVersionFor`: a plan name => append-version, else create)
-    const [form, setForm] = useState<CreateForm>(EMPTY);
-    const [addVersionFor, setAddVersionFor] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
-    const set = (k: keyof CreateForm) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value });
+    const [editor, setEditor] = useState<EditorState | null>(null);
+    const [renaming, setRenaming] = useState<string | null>(null);
+    const [renameTo, setRenameTo] = useState('');
 
-    // inline edit state: keyed by `${plan}@${version}`
-    const [editing, setEditing] = useState<string | null>(null);
-    const [editForm, setEditForm] = useState({ buy_rate: '', sell_rate: '', effective_from: '' });
+    // clone seeds: each comparison plan's current version (metered-clone is a deferred follow-on).
+    // key encodes name + version so onClone can resolve it via GET.
+    const cloneSources: CloneSource[] = plans.flatMap(p =>
+        p.versions.filter(v => v.is_current).map(v => ({ label: `${p.name} (current)`, key: `${p.name}@${v.version}` })));
+
+    async function fetchStructure(name: string, version: number): Promise<ParsedSeason[]> {
+        const res = await fetch(`${base}?name=${encodeURIComponent(name)}&version=${version}`);
+        if (!res.ok) throw new Error('Could not load that version.');
+        const j = await res.json() as { seasons: ParsedSeason[] };
+        return j.seasons;
+    }
+
+    // injected into ScheduleEditor: resolve a clone key (`name@version`) to its structure.
+    async function onClone(key: string): Promise<ParsedSeason[]> {
+        const at = key.lastIndexOf('@');
+        return fetchStructure(key.slice(0, at), Number(key.slice(at + 1)));
+    }
+
+    // injected into ScheduleEditor: persist the authored structure per the open intent.
+    async function onSave(payload: SchedulePayload): Promise<boolean> {
+        const ed = editor!;
+        const common = { name: payload.name, effective_from: payload.effectiveFrom || null, seasons: payload.seasons };
+        if (ed.intent === 'replace') {
+            return send('PATCH', { ...common, version: ed.version }, 'Version updated.');
+        }
+        return send('POST', { intent: ed.intent, ...common }, 'Comparison plan saved.');
+    }
 
     async function send(method: string, body: unknown, okMsg: string) {
         setBusy(true);
@@ -42,48 +76,62 @@ export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
         } finally { setBusy(false); }
     }
 
-    async function saveCreate() {
-        const intent = addVersionFor ? 'append-version' : 'create';
-        const name = addVersionFor ?? form.name;
-        const ok = await send('POST', { intent, name, buy_rate: form.buy_rate, sell_rate: form.sell_rate, effective_from: form.effective_from }, 'Comparison plan updated.');
-        if (ok) { setForm(EMPTY); setAddVersionFor(null); }
+    function openCreate() {
+        setEditor({ intent: 'create', planName: '', effectiveFrom: '', seasons: blankSeed() });
+    }
+    function openAddVersion(name: string) {
+        setEditor({ intent: 'append-version', planName: name, effectiveFrom: '', seasons: blankSeed() });
+    }
+    async function openEdit(name: string, v: ComparisonVersion) {
+        setBusy(true);
+        try {
+            const seasons = await fetchStructure(name, v.version);
+            setEditor({ intent: 'replace', planName: name, version: v.version, effectiveFrom: v.effective_from ?? '', seasons });
+        } catch (e) {
+            toast({ title: 'Error', description: e instanceof Error ? e.message : 'Could not load.', variant: 'danger' });
+        } finally { setBusy(false); }
     }
 
-    function beginEdit(plan: string, v: ComparisonVersion) {
-        setEditing(`${plan}@${v.version}`);
-        setEditForm({ buy_rate: String(v.buy_rate), sell_rate: String(v.sell_rate), effective_from: v.effective_from ?? '' });
-    }
-    async function saveEdit(plan: string, version: number) {
-        const ok = await send('PATCH', {
-            name: plan, version,
-            buy_rate: editForm.buy_rate, sell_rate: editForm.sell_rate,
-            effective_from: editForm.effective_from || null,
-        }, 'Version updated.');
-        if (ok) setEditing(null);
+    async function handleRename(oldName: string) {
+        const newName = renameTo.trim();
+        if (!newName || newName === oldName) { setRenaming(null); return; }
+        const ok = await send('PATCH', { intent: 'rename', name: oldName, newName }, 'Plan renamed.');
+        if (ok) { setRenaming(null); setRenameTo(''); }
     }
 
     async function handleDeletePlan(name: string) {
-        if (typeof window !== 'undefined' && !window.confirm(`Are you sure you want to delete the plan "${name}" and all of its versions?`)) return;
+        if (typeof window !== 'undefined' && !window.confirm(`Delete the plan "${name}" and all of its versions?`)) return;
         const ok = await send('DELETE', { name }, 'Plan deleted.');
-        if (ok) {
-            if (addVersionFor === name) {
-                setAddVersionFor(null);
-                setForm(EMPTY);
-            }
-            if (editing?.startsWith(`${name}@`)) {
-                setEditing(null);
-            }
-        }
+        if (ok && editor?.planName === name) setEditor(null);
+    }
+    async function handleDeleteVersion(name: string, version: number) {
+        if (typeof window !== 'undefined' && !window.confirm(`Delete version ${version} of "${name}"?`)) return;
+        await send('DELETE', { name, version }, 'Version deleted.');
     }
 
-    async function handleDeleteVersion(name: string, version: number) {
-        if (typeof window !== 'undefined' && !window.confirm(`Are you sure you want to delete version ${version} of "${name}"?`)) return;
-        const ok = await send('DELETE', { name, version }, 'Version deleted.');
-        if (ok) {
-            if (editing === `${name}@${version}`) {
-                setEditing(null);
-            }
-        }
+    if (editor) {
+        const heading = editor.intent === 'create' ? 'Add comparison plan'
+            : editor.intent === 'append-version' ? `Add version to ${editor.planName}`
+                : `Edit ${editor.planName} (v${editor.version})`;
+        return (
+            <Card>
+                <CardHeader><CardTitle>{heading}</CardTitle>
+                    <CardDescription>Shape the schedule — a single 24/7 window is a Fixed plan; add windows or seasons for Time-of-Use.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <ScheduleEditor
+                        name={editor.planName}
+                        nameLocked={editor.intent !== 'create'}
+                        effectiveFrom={editor.effectiveFrom}
+                        initialSeasons={editor.seasons}
+                        cloneSources={editor.intent === 'create' ? cloneSources : []}
+                        onClone={onClone}
+                        onSave={onSave}
+                        onCancel={() => setEditor(null)}
+                    />
+                </CardContent>
+            </Card>
+        );
     }
 
     return (
@@ -95,77 +143,43 @@ export function ComparisonTariffEditor({ siteId, plans, meteredPlanName }: {
                 {plans.map(plan => (
                     <div key={plan.name} className="rounded-lg border border-gray-200 dark:border-slate-800 p-3">
                         <div className="flex items-center gap-2">
-                            <div className="font-medium">{plan.name}</div>
-                            <button type="button" tabIndex={0} disabled={busy}
-                                onClick={() => handleDeletePlan(plan.name)}
-                                className="ml-auto text-xs text-red-600 dark:text-red-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1">
-                                Delete plan
-                            </button>
+                            {renaming === plan.name ? (
+                                <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); handleRename(plan.name); }}>
+                                    <Input className="max-w-48" value={renameTo} onChange={(e) => setRenameTo(e.target.value)} />
+                                    <Button type="submit" size="sm" disabled={busy}>Save</Button>
+                                    <button type="button" tabIndex={0} onClick={() => setRenaming(null)} className="text-xs text-gray-500 hover:underline">Cancel</button>
+                                </form>
+                            ) : (
+                                <>
+                                    <div className="font-medium">{plan.name}</div>
+                                    <button type="button" tabIndex={0} onClick={() => { setRenaming(plan.name); setRenameTo(plan.name); }}
+                                        className="text-xs text-primary hover:underline rounded px-1">Rename</button>
+                                </>
+                            )}
+                            <button type="button" tabIndex={0} disabled={busy} onClick={() => handleDeletePlan(plan.name)}
+                                className="ml-auto text-xs text-red-600 dark:text-red-400 hover:underline rounded px-1">Delete plan</button>
                         </div>
                         <div className="mt-2 space-y-2 text-sm">
-                            {plan.versions.map(v => {
-                                const key = `${plan.name}@${v.version}`;
-                                if (editing === key) {
-                                    return (
-                                        <form key={v.version} onSubmit={(e) => { e.preventDefault(); saveEdit(plan.name, v.version); }}
-                                            className="grid grid-cols-2 gap-2 rounded-md bg-bg-muted/40 p-2">
-                                            <div className="flex flex-col gap-1"><Label>Buy $/kWh</Label><Input type="number" step="0.00001" value={editForm.buy_rate} onChange={(e) => setEditForm({ ...editForm, buy_rate: e.target.value })} /></div>
-                                            <div className="flex flex-col gap-1"><Label>Sell $/kWh</Label><Input type="number" step="0.00001" value={editForm.sell_rate} onChange={(e) => setEditForm({ ...editForm, sell_rate: e.target.value })} /></div>
-                                            <div className="flex flex-col gap-1"><Label>Effective from</Label><Input type="date" value={editForm.effective_from} onChange={(e) => setEditForm({ ...editForm, effective_from: e.target.value })} /></div>
-                                            <div className="flex items-end gap-2">
-                                                <Button type="submit" disabled={busy}>Save</Button>
-                                                <button type="button" tabIndex={0} onClick={() => setEditing(null)} className="text-xs text-gray-500 hover:underline">Cancel</button>
-                                            </div>
-                                        </form>
-                                    );
-                                }
-                                return (
-                                    <div key={v.version} className="flex items-center gap-3">
-                                        <span className="font-mono">${v.buy_rate.toFixed(5)} / kWh</span>
-                                        <span className="text-gray-500 dark:text-gray-400">{v.effective_from ?? 'undated'}{v.is_current ? ' · current' : ''}</span>
-                                        <span className="ml-auto flex gap-2">
-                                            <button type="button" tabIndex={0} onClick={() => beginEdit(plan.name, v)} className="text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1">Edit</button>
-                                            <button type="button" tabIndex={0} disabled={busy} onClick={() => handleDeleteVersion(plan.name, v.version)} className="text-xs text-red-600 dark:text-red-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1">Delete</button>
-                                        </span>
-                                    </div>
-                                );
-                            })}
+                            {plan.versions.map(v => (
+                                <div key={v.version} className="flex items-center gap-3">
+                                    {v.kind === 'tou'
+                                        ? <span className="rounded bg-secondary/60 px-1.5 py-0.5 text-xs font-medium">TOU</span>
+                                        : <span className="font-mono">${v.buy_rate.toFixed(5)} / kWh</span>}
+                                    <span className="text-gray-500 dark:text-gray-400">{v.effective_from ?? 'undated'}{v.is_current ? ' · current' : ''}</span>
+                                    <span className="ml-auto flex gap-2">
+                                        <button type="button" tabIndex={0} disabled={busy} onClick={() => openEdit(plan.name, v)} className="text-xs text-primary hover:underline rounded px-1">Edit</button>
+                                        <button type="button" tabIndex={0} disabled={busy} onClick={() => handleDeleteVersion(plan.name, v.version)} className="text-xs text-red-600 dark:text-red-400 hover:underline rounded px-1">Delete</button>
+                                    </span>
+                                </div>
+                            ))}
                         </div>
-
-                        <button type="button" tabIndex={0}
-                            onClick={() => { setAddVersionFor(plan.name); setForm(EMPTY); }}
-                            className="mt-2 text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1">
-                            + add version
-                        </button>
+                        <button type="button" tabIndex={0} disabled={busy} onClick={() => openAddVersion(plan.name)}
+                            className="mt-2 text-xs text-primary hover:underline rounded px-1">+ add version</button>
                     </div>
                 ))}
 
-                <div className="rounded-lg border border-dashed border-gray-300 dark:border-slate-700 p-3 space-y-3">
-                    <div className="text-sm font-medium">
-                        {addVersionFor ? `Add version to ${addVersionFor}` : 'Add comparison plan'}
-                    </div>
-                    <form onSubmit={(e) => { e.preventDefault(); saveCreate(); }} className="space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                            {!addVersionFor && (
-                                <div className="flex flex-col gap-1"><Label>Plan name</Label><Input value={form.name} onChange={set('name')} /></div>
-                            )}
-                            <div className="flex flex-col gap-1"><Label>Effective from</Label><Input type="date" value={form.effective_from} onChange={set('effective_from')} /></div>
-                            <div className="flex flex-col gap-1"><Label>Buy rate $/kWh</Label><Input type="number" step="0.00001" value={form.buy_rate} onChange={set('buy_rate')} /></div>
-                            <div className="flex flex-col gap-1"><Label>Sell rate $/kWh</Label><Input type="number" step="0.00001" value={form.sell_rate} onChange={set('sell_rate')} /></div>
-                        </div>
-                        <div className="flex gap-2">
-                            <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save plan'}</Button>
-                            {addVersionFor && (
-                                <button type="button" tabIndex={0} onClick={() => { setAddVersionFor(null); setForm(EMPTY); }} className="text-xs text-gray-500 hover:underline">Cancel</button>
-                            )}
-                        </div>
-                    </form>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Custom TOU comparison plans are coming soon. For now, comparison plans are flat (Fixed) rates.
-                    </p>
-                </div>
+                <Button type="button" onClick={openCreate} disabled={busy}>Add comparison plan</Button>
             </CardContent>
         </Card>
     );
 }
-

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canonicalizeSeasons, windowCoverage, seasonCalendarGaps, isFixedSchedule } from './tou-coverage';
+import { canonicalizeSeasons, windowCoverage, seasonCalendarGaps, isFixedSchedule, scheduleHasGaps } from './tou-coverage';
 import type { ParsedSeason, ParsedSchedule } from '../importer/tariff-parser';
 
 function win(p: Partial<ParsedSchedule>): ParsedSchedule {
@@ -90,5 +90,29 @@ describe('canonicalizeSeasons + isFixedSchedule', () => {
         const summer = season({ from_month: 6, from_day: 1, to_month: 9, to_day: 30, schedules: [win({ buy_rate: 0.30 })] });
         const winter = season({ from_month: 10, from_day: 1, to_month: 5, to_day: 31, schedules: [win({ buy_rate: 0.20 })] });
         expect(isFixedSchedule([summer, winter])).toBe(false);
+    });
+});
+
+describe('scheduleHasGaps', () => {
+    const flatWindow = {
+        name: 'Flat', buy_rate: 0.3, sell_rate: 0.05,
+        from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0,
+    };
+    const allYear = (schedules: typeof flatWindow[]) => ([{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+        buy_rate: 0.3, sell_rate: 0.05, schedules,
+    }]);
+
+    it('is false for a full-year/full-week flat plan', () => {
+        expect(scheduleHasGaps(allYear([flatWindow]))).toBe(false);
+    });
+
+    it('is true when a window leaves hours uncovered', () => {
+        expect(scheduleHasGaps(allYear([{ ...flatWindow, from_hour: 6, to_hour: 22 }]))).toBe(true);
+    });
+
+    it('is true when seasons leave a calendar day uncovered', () => {
+        const jan = { name: 'Jan', from_month: 1, from_day: 1, to_month: 1, to_day: 31, buy_rate: 0.3, sell_rate: 0.05, schedules: [flatWindow] };
+        expect(scheduleHasGaps([jan])).toBe(true); // Feb–Dec uncovered
     });
 });

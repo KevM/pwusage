@@ -100,3 +100,13 @@ export function isFixedSchedule(seasons: ParsedSeason[]): boolean {
     if (rates.length === 0) return true;
     return rates.every(r => Math.abs(r - rates[0]) < EPS);
 }
+
+/** True when a structure is not fully covered: any calendar day matched by ≠1 season,
+ *  or any (weekday, hour) left unresolved in any season. Mirrors the server's coverage
+ *  check (route `coverageError`); the editor disables Save while this is true. */
+export function scheduleHasGaps(seasons: ParsedSeason[]): boolean {
+    if (seasons.length === 0) return true;
+    if (seasonCalendarGaps(seasons).length > 0) return true;
+    return seasons.some(s => windowCoverage(s).gaps.length > 0);
+}
+
