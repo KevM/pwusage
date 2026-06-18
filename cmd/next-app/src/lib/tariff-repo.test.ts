@@ -68,3 +68,37 @@ describe('TariffRepo.addTariffVersion', () => {
         expect(sqls.some((s) => s.includes('UPDATE "Tariff" SET is_current = false'))).toBe(false);
     });
 });
+
+describe('TariffRepo.listMeteredVersions', () => {
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it('selects all non-reporting versions (no is_current filter), newest effective_from first', async () => {
+        const poolQuery = (await import('./db')).pool.query as ReturnType<typeof vi.fn>;
+        poolQuery.mockResolvedValue({ rows: [
+            { tariff_id: 2, tariff_name: 'PG&E', tariff_updated: '2026-01-01', tariff_site_id: 'site-1',
+              tariff_reporting_only: false, tariff_effective_from: '2026-01-01',
+              season_id: 20, season_name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+              season_buy_rate: 0.2, season_sell_rate: 0.05, schedule_id: 200, schedule_name: 'W',
+              schedule_buy_rate: 0.2, schedule_sell_rate: 0.05,
+              from_day_of_week: 0, from_hour: 0, from_minute: 0, to_day_of_week: 6, to_hour: 24, to_minute: 0 },
+            { tariff_id: 1, tariff_name: 'PG&E', tariff_updated: '2024-01-01', tariff_site_id: 'site-1',
+              tariff_reporting_only: false, tariff_effective_from: null,
+              season_id: 10, season_name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+              season_buy_rate: 0.1, season_sell_rate: 0.05, schedule_id: 100, schedule_name: 'W',
+              schedule_buy_rate: 0.1, schedule_sell_rate: 0.05,
+              from_day_of_week: 0, from_hour: 0, from_minute: 0, to_day_of_week: 6, to_hour: 24, to_minute: 0 },
+        ] });
+
+        const versions = await new TariffRepo().listMeteredVersions('site-1');
+
+        const sql = String(poolQuery.mock.calls[0][0]);
+        expect(sql).toMatch(/NOT t\.reporting_only/);
+        expect(sql).not.toMatch(/is_current/);
+        expect(sql).toMatch(/effective_from DESC NULLS LAST/);
+        expect(poolQuery.mock.calls[0][1]).toEqual(['site-1']);
+        expect(versions).toHaveLength(2);
+        expect(versions[0].effective_from).toBe('2026-01-01');
+        expect(versions[0].seasons?.[0].schedules?.[0].buy_rate).toBe(0.2);
+        expect(versions[1].effective_from).toBeNull();
+    });
+});

@@ -38,6 +38,7 @@ import { RollupBackfillRepo } from '@/lib/battery-provenance/rollup-backfill-rep
 import { localDateKey } from '@/lib/battery-provenance/local-day';
 import { pickFixedBaselineStructure } from '@/lib/roi/resolve-fixed-baseline';
 import { ComparisonTariffRepo } from '@/lib/roi/comparison-tariff-repo';
+import { TariffRepo } from '@/lib/tariff-repo';
 
 
 
@@ -319,7 +320,8 @@ export default async function SitePage({ params, searchParams }: {
         const activeTariff = finalSite.tariffs.find(t => t.id === activeTariffId) || (finalSite.tariffs ?? [])[0];
         const plan = activeTariff ? classifyTariff(activeTariff) : 'tou';
         const fixedTl = comparisonStructTimeline(baseline.tariffs, finalSite.timezone);
-        const meteredTl = meteredTimeline(finalSite.tariffs, finalSite.timezone);
+        const meteredVersions = await new TariffRepo().listMeteredVersions(finalSite.id);
+        const meteredTl = meteredTimeline(meteredVersions, finalSite.timezone);
         roiSummary = buildRoiSummary(
             hourly,
             fixedTl,

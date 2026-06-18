@@ -12,7 +12,10 @@ Consequences, given `pickByDate` carries the *earliest* version backward and `nu
 - A site whose Tesla rate plan changed during observation has **multiple null-dated versions**, all colliding at `0000-01-01`. The tie resolves by array order, so the whole history is priced under one ambiguously-chosen version — **silent mispricing**.
 - There is no way to record a metered plan that was in effect **before** the app started observing (historic entry), so payback/savings for older energy can't price correctly.
 
-Three connected gaps:
+There is also a **load-bearing wiring gap discovered during planning:** the site query joins tariffs with `t.is_current AND NOT t.reporting_only` ([site-repo.ts:73](../../cmd/next-app/src/lib/site-repo.ts)), so `finalSite.tariffs` — what `page.tsx` feeds to `meteredTimeline` — contains only the **current** metered version. So even with correct dates, multi-version metered date-resolution never happens today; the savings timeline must instead be fed *all* metered versions via a new loader.
+
+Connected gaps:
+0. **Loader:** the metered timeline is fed only the current version (`site.tariffs` is `is_current`-filtered); multi-version date-resolution needs all versions.
 1. **Forward:** when the importer detects a tariff change and appends a version, it doesn't set `effective_from`.
 2. **Existing data:** old Tesla-sourced versions already in the DB are all null-dated.
 3. **Historic:** no way to introduce metered tariff versions that were effective in the past.
