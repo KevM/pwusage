@@ -388,8 +388,12 @@ export async function GET(request: Request) {
                             } catch (error) {
                                 console.warn(`[TrmnlMarkup] Tesla today fetch failed (background):`, error);
                             } finally {
-                                await siteRepo.releaseImportLock(siteId, lockId);
                                 refreshState.todayInFlight = false;
+                                try {
+                                    await siteRepo.releaseImportLock(siteId, lockId);
+                                } catch (err) {
+                                    console.error(`[TrmnlMarkup] Failed to release DB import lock for site ${siteId}:`, err);
+                                }
                             }
                         })());
                     }

@@ -169,11 +169,15 @@ export class Importer {
 
             return allRows;
         } finally {
-            if (dbLockAcquired) {
-                await this.siteRepo.releaseImportLock(siteId, lockId);
-            }
             if (inMemoryAdded) {
                 Importer.pendingSyncs.delete(siteId);
+            }
+            if (dbLockAcquired) {
+                try {
+                    await this.siteRepo.releaseImportLock(siteId, lockId);
+                } catch (err) {
+                    console.error(`[Importer] Failed to release DB import lock for site ${siteId}:`, err);
+                }
             }
         }
     }

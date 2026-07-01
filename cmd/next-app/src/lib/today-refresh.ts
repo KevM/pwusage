@@ -129,7 +129,11 @@ export async function refreshTodayData(siteId: string): Promise<RefreshTodayResu
             errorMessage: error instanceof Error ? error.message : String(error)
         };
     } finally {
-        await siteRepo.releaseImportLock(siteId, lockId);
         state.inFlight = false;
+        try {
+            await siteRepo.releaseImportLock(siteId, lockId);
+        } catch (err) {
+            console.error(`[TodayRefresh] Failed to release DB import lock for site ${siteId}:`, err);
+        }
     }
 }
