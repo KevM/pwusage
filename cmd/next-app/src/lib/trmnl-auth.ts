@@ -55,3 +55,22 @@ export function verifyTrmnlToken(token: string, expectedUuid: string): Promise<V
         });
     });
 }
+
+export async function verifyTrmnlRequestAuth(
+    token: string,
+    uuid: string,
+    installation: { access_token?: string | null } | null
+): Promise<boolean> {
+    if (!token) return false;
+    if (installation?.access_token && safeTimingSafeEqual(token, installation.access_token)) {
+        return true;
+    }
+    try {
+        await verifyTrmnlToken(token, uuid);
+        return true;
+    } catch (err) {
+        console.warn(`[verifyTrmnlRequestAuth] Token verification failed for ${uuid}:`, err);
+        return false;
+    }
+}
+

@@ -3,8 +3,6 @@ import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { Schedule } from '@/lib/schedule';
-
-
 import { Importer } from '@/lib/importer';
 import { TeslaClient, EnergySiteLiveStatus } from '@/lib/tesla-client';
 import { verifySiteAccess } from '@/lib/auth-checks';
@@ -12,7 +10,6 @@ import { withRequestContext } from '@/lib/request-context';
 import QRCode from 'qrcode';
 import { TrmnlRenderer } from '@/lib/trmnl-renderer';
 import { computeLoadTiming } from '@/lib/load-timing';
-import { wattsToKilowatts } from '@/lib/energy-utils';
 import {
     DEFAULT_TRMNL_COMPONENT_CONFIG,
     extractTrmnlCarouselIndex,
@@ -20,10 +17,13 @@ import {
     normalizeTrmnlComponentConfig
 } from '@/lib/trmnl-component-config';
 import { TrmnlInstallationRepo } from '@/lib/trmnl-installation-repo';
-import { verifyTrmnlToken, safeTimingSafeEqual } from '@/lib/trmnl-auth';
+import { verifyTrmnlRequestAuth } from '@/lib/trmnl-auth';
 import { continueUrl } from '@/app/continue/continue-logic';
+import { getCurrentCycleStart, addMonthsInSiteTimezone } from '@/lib/billing-cycle';
+import { aggregateUsage } from '@/lib/tou-aggregation';
 
 export const dynamic = 'force-dynamic';
+
 
 
 
@@ -119,20 +119,7 @@ export async function GET(request: Request) {
             const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
             console.log(`[TrmnlMarkup] UUID: ${uuid}, has auth header: ${!!authHeader}, has token: ${!!token}, stored token exists: ${!!installation.access_token}`);
 
-            let isAuthorized = false;
-            if (token) {
-                if (installation.access_token && safeTimingSafeEqual(token, installation.access_token)) {
-                    isAuthorized = true;
-                } else {
-                    // Fallback: verify via Trmnl JWT
-                    try {
-                        await verifyTrmnlToken(token, uuid);
-                        isAuthorized = true;
-                    } catch (err) {
-                        console.warn(`[TrmnlMarkup] Token verification failed for ${uuid}:`, err);
-                    }
-                }
-            }
+            const isAuthorized = token ? await verifyTrmnlRequestAuth(token, uuid, installation) : false;
 
             if (!isAuthorized) {
                 console.warn(`[TrmnlMarkup] Unauthorized access attempt for UUID ${uuid}`);
@@ -180,33 +167,9 @@ export async function GET(request: Request) {
 
         // Calculate bill for current period using site-local time components
         const now = new Date();
-        const siteLocalNowStr = now.toLocaleString('en-US', { timeZone: site.timezone, year: 'numeric', month: 'numeric', day: 'numeric' });
-        const [mStr, dStr, yStr] = siteLocalNowStr.split('/');
-        const siteYear = parseInt(yStr);
-        const siteMonth = parseInt(mStr) - 1;
-        const siteDate = parseInt(dStr);
+        const start = getCurrentCycleStart(site.billing_start_day || 1, now, site.timezone);
+        const cycleEnd = addMonthsInSiteTimezone(start, 1, site.timezone);
 
-        const billingStartDay = site.billing_start_day || 1;
-        let billingYear = siteYear;
-        let billingMonth = siteMonth;
-
-        if (siteDate < billingStartDay) {
-            billingMonth -= 1;
-            if (billingMonth < 0) {
-                billingMonth = 11;
-                billingYear -= 1;
-            }
-        }
-
-        // Construct a safe middle-of-day Date for the site to avoid UTC wrapping issues
-        const billingStartPivot = new Date(Date.UTC(billingYear, billingMonth, billingStartDay, 12, 0, 0));
-        const start = EnergyRepo.getSiteMidnight(billingStartPivot, site.timezone);
-
-        // End is now (to show current usage)
-
-        // Calculate Cycle End for Display (Start + 1 Month)
-        const cycleEnd = new Date(start);
-        cycleEnd.setMonth(cycleEnd.getMonth() + 1);
 
         // --- AUTH & CLIENT INIT ---
         let trmnlClient: TeslaClient | null = null;
@@ -410,248 +373,20 @@ export async function GET(request: Request) {
 
         // --- IN-MEMORY AGGREGATION (TOU Stats & Chart Extraction) ---
         const aggregationStart = Date.now();
-
-        // Determine site-local "today" window once, then use numeric boundary checks per row
         const schedule = new Schedule(site.tariffs, tz);
-        const tariffMap = new Map<number, import('@/lib/db').Tariff>();
-        const scheduleMap = new Map<number, import('@/lib/db').TariffSchedule>();
-        site.tariffs.forEach(t => {
-            tariffMap.set(t.id, t);
-            if (t.seasons) {
-                t.seasons.forEach(season => {
-                    if (season.schedules) {
-                        season.schedules.forEach(s => scheduleMap.set(s.id, s));
-                    }
-                });
-            }
-        });
+        const { tariffGroups, totalBillCost, seriesData, latestSeriesSoc } = aggregateUsage(
+            site,
+            priorAggregates,
+            todayRaw,
+            schedule
+        );
+        aggregationMs = Date.now() - aggregationStart;
 
-        const aggregation = new Map<string, {
-            tariff: import('@/lib/db').Tariff;
-            tariffName: string;
-            touName: string;
-            label: string;
-            homeUsage: number;
-            gridUsage: number;
-            solarProduction: number;
-            batteryChange: number;
-            cost: number;
-            buyRate: number;
-            sellRate: number;
-        }>();
-        const touLabelCache = new Map<string, string>();
-        const getTouLabel = (name: string): string => {
-            const cached = touLabelCache.get(name);
-            if (cached) return cached;
-            const label = (name || 'Standard')
-                .replace(/_/g, ' ')
-                .toLowerCase()
-                .replace(/\b\w/g, c => c.toUpperCase())
-                .replace(' ', '-');
-            touLabelCache.set(name, label);
-            return label;
-        };
-        const scheduleKeyCache = new WeakMap<object, string>();
-        const fallbackKeyCache = new Map<number, string>();
-
-        const seriesData: import('@/lib/db').EnergyData[] = [];
-        // Today's scalar totals come from the canonical helper so this route
-        // and the live page never disagree on "today so far". Computed on the
-        // same `todayRaw` rows we use for per-period aggregation below.
         const todayTotals = sumTodayRows(todayRaw);
         const todayHome = todayTotals.homeKwh;
         const todayGrid = todayTotals.gridNetKwh;
         const todaySolar = todayTotals.solarKwh;
-        let latestSeriesSoc: { value: number; timestamp: Date } | null = null;
 
-        // Pass 1: Prior day aggregates
-        for (const row of priorAggregates) {
-            let touName = 'Unknown';
-            let tariffName = 'Unknown';
-            let buyRate = 0;
-            let sellRate = 0;
-            let currentTariff = site.tariffs[0];
-
-            if (row.tariff_schedule_id != null) {
-                // Look up the schedule by its ID (populated by insertEnergyData with corrected logic)
-                const sched = scheduleMap.get(row.tariff_schedule_id);
-                if (sched) {
-                    touName = sched.name || 'Standard';
-                    buyRate = sched.buy_rate || 0;
-                    sellRate = sched.sell_rate || 0;
-                }
-            } else {
-                // Fallback: tariff_schedule_id is null (old data or no matching period).
-                // Recalculate using the midpoint of the aggregated day.
-                const tp = schedule.getTariffPeriod(row.day);
-                if (tp) {
-                    touName = tp.schedule.name || 'Standard';
-                    buyRate = tp.schedule.buy_rate || 0;
-                    sellRate = tp.schedule.sell_rate || 0;
-                }
-            }
-            const t = tariffMap.get(row.tariff_id);
-            if (t) {
-                tariffName = t.name || 'Unknown';
-                currentTariff = t;
-            }
-
-            const key = `${currentTariff.id}|${touName}|${buyRate}|${sellRate}`;
-            let data = aggregation.get(key);
-            if (!data) {
-                data = {
-                    tariff: currentTariff,
-                    tariffName: tariffName,
-                    touName: touName,
-                    label: getTouLabel(touName),
-                    homeUsage: 0,
-                    gridUsage: 0,
-                    solarProduction: 0,
-                    batteryChange: 0,
-                    cost: 0,
-                    buyRate,
-                    sellRate
-                };
-                aggregation.set(key, data);
-            }
-
-            data.homeUsage += row.load_power;
-            data.gridUsage += row.grid_power;
-            data.solarProduction += row.solar_power;
-            data.batteryChange += row.battery_power;
-        }
-
-        // Pass 2: Today's raw rows
-        for (const row of todayRaw) {
-            const ts = row.timestamp;
-            const tp = schedule.getTariffPeriod(ts);
-
-            seriesData.push(row);
-            if (typeof row.battery_soc === 'number') {
-                latestSeriesSoc = { value: row.battery_soc, timestamp: ts };
-            }
-
-            let touName = 'Unknown';
-            let tariffName = 'Unknown';
-            let buyRate = 0;
-            let sellRate = 0;
-            let currentTariff = site.tariffs[0];
-            let key = '';
-
-            if (tp) {
-                touName = tp.schedule.name || 'Standard';
-                tariffName = tp.tariff.name || 'Unknown';
-                buyRate = tp.schedule.buy_rate || 0;
-                sellRate = tp.schedule.sell_rate || 0;
-                currentTariff = tp.tariff;
-                const scheduleObj = tp.schedule as unknown as object;
-                const cachedKey = scheduleKeyCache.get(scheduleObj);
-                if (cachedKey) {
-                    key = cachedKey;
-                } else {
-                    key = `${currentTariff.id}|${touName}|${buyRate}|${sellRate}`;
-                    scheduleKeyCache.set(scheduleObj, key);
-                }
-            } else {
-                const t = tariffMap.get(row.tariff_id);
-                if (t) {
-                    tariffName = t.name || 'Unknown';
-                    currentTariff = t;
-                }
-                const cachedFallbackKey = fallbackKeyCache.get(currentTariff.id);
-                if (cachedFallbackKey) {
-                    key = cachedFallbackKey;
-                } else {
-                    key = `${currentTariff.id}|${touName}|${buyRate}|${sellRate}`;
-                    fallbackKeyCache.set(currentTariff.id, key);
-                }
-            }
-
-            let data = aggregation.get(key);
-            if (!data) {
-                data = {
-                    tariff: currentTariff,
-                    tariffName: tariffName,
-                    touName: touName,
-                    label: getTouLabel(touName),
-                    homeUsage: 0,
-                    gridUsage: 0,
-                    solarProduction: 0,
-                    batteryChange: 0,
-                    cost: 0,
-                    buyRate,
-                    sellRate
-                };
-                aggregation.set(key, data);
-            }
-
-            data.homeUsage += row.load_power;
-            data.gridUsage += row.grid_power;
-            data.solarProduction += row.solar_power;
-            data.batteryChange += row.battery_power;
-        }
-        aggregationMs = Date.now() - aggregationStart;
-
-        // Compute each period cost from NET grid usage so displayed Grid and Cost stay consistent.
-        for (const data of aggregation.values()) {
-            const gridKwh = wattsToKilowatts(data.gridUsage);
-            if (gridKwh >= 0) {
-                data.cost = gridKwh * Math.abs(data.buyRate);
-            } else {
-                data.cost = -Math.abs(gridKwh) * Math.abs(data.sellRate);
-            }
-        }
-
-        // (today totals already in kWh via sumTodayRows above)
-
-        // Group by tariff for the renderer
-        const tariffGroups = new Map<string, {
-            tariffId: number;
-            tariffName: string;
-            periods: {
-                touName: string;
-                label: string;
-                home: number;
-                grid: number;
-                solar: number;
-                battery: number;
-                cost: number;
-            }[];
-        }>();
-
-        for (const data of aggregation.values()) {
-            let group = tariffGroups.get(data.tariffName);
-            if (!group) {
-                group = { tariffId: data.tariff.id, tariffName: data.tariffName, periods: [] };
-                tariffGroups.set(data.tariffName, group);
-            }
-
-            let period = group.periods.find(p => p.touName === data.touName);
-            if (!period) {
-                period = {
-                    touName: data.touName,
-                    label: data.label,
-                    home: 0,
-                    grid: 0,
-                    solar: 0,
-                    battery: 0,
-                    cost: 0
-                };
-                group.periods.push(period);
-            }
-
-            period.home += data.homeUsage;
-            period.grid += data.gridUsage;
-            period.solar += data.solarProduction;
-            period.battery += data.batteryChange;
-            period.cost += data.cost;
-        }
-
-        // Calculate total cost for the summary
-        let totalBillCost = 0;
-        for (const data of aggregation.values()) {
-            totalBillCost += data.cost;
-        }
 
         const siteInfo = site.json as import('@/lib/tesla-client').EnergySiteInfo | null;
         const currencyCode = siteInfo?.tariff_content_v2?.currency || 'USD';
@@ -734,7 +469,7 @@ export async function GET(request: Request) {
         const renderCtx = {
             siteName: displayName,
             dateRange: `${start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: tz })} - ${cycleEnd.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: tz })}`,
-            tariffGroups: Array.from(tariffGroups.values()),
+            tariffGroups: tariffGroups,
             totalCost: totalBillCost,
             costLabel: costLabel,
             displayCost: displayCost,

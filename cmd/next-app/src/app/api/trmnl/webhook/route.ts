@@ -58,6 +58,7 @@ export async function POST(request: Request) {
         const isJwtFormat = tokenParts.length === 3;
 
         let payload: VerifiedTrmnlTokenPayload;
+        let matchedInstallation: import('@/lib/db').TrmnlInstallation | undefined;
 
         if (isJwtFormat) {
             // Production: JWT-signed webhook
@@ -70,7 +71,6 @@ export async function POST(request: Request) {
         } else {
             // Opaque token: We MUST verify it against a stored access_token in the DB.
             const service = new TrmnlService();
-            let matchedInstallation: import('@/lib/db').TrmnlInstallation | undefined;
 
             // 1. Check existing installation by uuid
             const existing = await service.getInstallationByUuid(user.uuid, { includeTokens: true });
@@ -145,7 +145,11 @@ export async function POST(request: Request) {
         //    However, usually the user goes through the Install Flow -> Trmnl Connect -> Setup API -> Webhook.
         //    So the installation should exist.
 
-        const existing = await service.getInstallationByUuid(user.uuid);
+        // Reuse the already-fetched installation if it matches user.uuid
+        const existing = (matchedInstallation && matchedInstallation.uuid === user.uuid)
+            ? matchedInstallation
+            : await service.getInstallationByUuid(user.uuid);
+
         if (existing) {
             const screens = extractTrmnlComponentScreens(existing.json);
             const carouselIndex = extractTrmnlCarouselIndex(existing.json, screens.length);
