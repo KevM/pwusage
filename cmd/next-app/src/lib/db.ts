@@ -73,6 +73,8 @@ export interface Site {
   import_lock_id?: string | null;
   import_lock_expires?: number | string;
   last_import_at?: number | string;
+  last_live_refresh_at?: number | string;
+  live_status_cache?: unknown | null;
 }
 
 export interface Tariff {

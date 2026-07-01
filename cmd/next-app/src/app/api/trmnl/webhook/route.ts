@@ -5,7 +5,7 @@ import {
     extractTrmnlCarouselIndex,
     mergeTrmnlComponentScreensIntoInstallationJson
 } from '@/lib/trmnl-component-config';
-import { verifyTrmnlToken, VerifiedTrmnlTokenPayload } from '@/lib/trmnl-auth';
+import { verifyTrmnlToken, VerifiedTrmnlTokenPayload, safeTimingSafeEqual } from '@/lib/trmnl-auth';
 import { SiteRepo } from '@/lib/site-repo';
 import { UserRepo } from '@/lib/user-repo';
 
@@ -68,6 +68,44 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: 'Unauthorized: Invalid token' }, { status: 401 });
             }
         } else {
+            // Opaque token: We MUST verify it against a stored access_token in the DB.
+            const service = new TrmnlService();
+            let matchedInstallation: import('@/lib/db').TrmnlInstallation | undefined;
+
+            // 1. Check existing installation by uuid
+            const existing = await service.getInstallationByUuid(user.uuid, { includeTokens: true });
+            if (existing && existing.access_token && safeTimingSafeEqual(token, existing.access_token)) {
+                matchedInstallation = existing;
+            }
+
+            // 2. Check pending by plugin_setting_id
+            if (!matchedInstallation && user.plugin_setting_id) {
+                const bodyPluginId = coercePositiveInt(user.plugin_setting_id);
+                if (bodyPluginId !== null) {
+                    const pending = await service.getInstallationByPendingPluginId(bodyPluginId);
+                    if (pending && pending.access_token && safeTimingSafeEqual(token, pending.access_token)) {
+                        matchedInstallation = pending;
+                    }
+                }
+            }
+
+            // 3. Check latest loose pending installation (within 15 min window)
+            if (!matchedInstallation) {
+                const loosePending = await service.getLatestLoosePendingInstallation();
+                if (loosePending && loosePending.access_token && safeTimingSafeEqual(token, loosePending.access_token)) {
+                    // Check if it's within the 15-minute window
+                    const ageMs = new Date().getTime() - new Date(loosePending.created_at).getTime();
+                    if (ageMs < 15 * 60 * 1000) {
+                        matchedInstallation = loosePending;
+                    }
+                }
+            }
+
+            if (!matchedInstallation) {
+                console.warn(`[TrmnlWebhook] Rejecting opaque token for ${user.uuid}: No matching installation or token mismatch`);
+                return NextResponse.json({ error: 'Unauthorized: Invalid opaque token' }, { status: 401 });
+            }
+
             // Opaque token: Accept as valid and extract user info from webhook body
             // (used by dev/preview plugins that don't support JWT signing)
             payload = {
