@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
+import { safeTimingSafeEqual } from '@/lib/trmnl-auth';
 
 export async function POST(request: Request) {
     try {
@@ -32,16 +33,16 @@ export async function POST(request: Request) {
         const token = authHeader.split(' ')[1];
         let isAuthorized = false;
 
-        if (installation.access_token) {
-            isAuthorized = token === installation.access_token;
+        if (installation.access_token && safeTimingSafeEqual(token, installation.access_token)) {
+            isAuthorized = true;
         } else {
-            // If no local access_token, verify via Trmnl JWT
+            // If no local access_token matches, verify via Trmnl JWT
             try {
                 const { verifyTrmnlToken } = await import('@/lib/trmnl-auth');
                 await verifyTrmnlToken(token, user_uuid);
                 isAuthorized = true;
             } catch (err) {
-                console.warn(`[TrmnlUninstall] JWT Verification Failed for ${user_uuid}:`, err);
+                console.warn(`[TrmnlUninstall] Token verification failed for ${user_uuid}:`, err);
             }
         }
 

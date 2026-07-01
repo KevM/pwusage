@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
+import crypto from 'crypto';
 
 const TRMNL_JWKS_URI = 'https://trmnl.com/.well-known/jwks.json';
 
@@ -26,6 +27,18 @@ function getKey(header: jwt.JwtHeader, callback: jwt.SigningKeyCallback) {
         const signingKey = key?.getPublicKey();
         callback(null, signingKey);
     });
+}
+
+export function safeTimingSafeEqual(a: string | null | undefined, b: string | null | undefined): boolean {
+    if (!a || !b) {
+        return false;
+    }
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+    if (bufA.length !== bufB.length) {
+        return false;
+    }
+    return crypto.timingSafeEqual(bufA, bufB);
 }
 
 export function verifyTrmnlToken(token: string, expectedUuid: string): Promise<VerifiedTrmnlTokenPayload> {

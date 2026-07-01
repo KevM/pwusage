@@ -17,20 +17,15 @@ import {
     DEFAULT_TRMNL_COMPONENT_CONFIG,
     extractTrmnlCarouselIndex,
     extractTrmnlComponentScreens,
-    mergeTrmnlComponentScreensIntoInstallationJson,
     normalizeTrmnlComponentConfig
 } from '@/lib/trmnl-component-config';
 import { TrmnlInstallationRepo } from '@/lib/trmnl-installation-repo';
-import { verifyTrmnlToken } from '@/lib/trmnl-auth';
+import { verifyTrmnlToken, safeTimingSafeEqual } from '@/lib/trmnl-auth';
 import { continueUrl } from '@/app/continue/continue-logic';
 
 export const dynamic = 'force-dynamic';
 
-interface LiveStatusCacheEntry {
-    data: EnergySiteLiveStatus;
-    fetchedAt: number;
-    expiresAt: number;
-}
+
 
 interface TeslaRefreshState {
     todayInFlight: boolean;
@@ -47,33 +42,7 @@ const TESLA_TODAY_TIMEOUT_MS = 8000;
 const TESLA_LIVE_TIMEOUT_MS = 3000;
 const TESLA_LIVE_INLINE_TIMEOUT_MS = 900;
 
-function getLiveStatusCache(): Map<string, LiveStatusCacheEntry> {
-    const globalState = global as unknown as { trmnlLiveStatusCache?: Map<string, LiveStatusCacheEntry> };
-    if (!globalState.trmnlLiveStatusCache) {
-        globalState.trmnlLiveStatusCache = new Map<string, LiveStatusCacheEntry>();
-    }
-    return globalState.trmnlLiveStatusCache;
-}
 
-function getCachedLiveStatus(siteId: string): LiveStatusCacheEntry | undefined {
-    const cache = getLiveStatusCache();
-    const cached = cache.get(siteId);
-    if (!cached) return undefined;
-    if (cached.expiresAt <= Date.now()) {
-        cache.delete(siteId);
-        return undefined;
-    }
-    return cached;
-}
-
-function setCachedLiveStatus(siteId: string, data: EnergySiteLiveStatus): void {
-    const now = Date.now();
-    getLiveStatusCache().set(siteId, {
-        data,
-        fetchedAt: now,
-        expiresAt: now + LIVE_STATUS_CACHE_TTL_MS
-    });
-}
 
 function getTeslaRefreshState(siteId: string): TeslaRefreshState {
     const globalState = global as unknown as { trmnlTeslaRefreshState?: Map<string, TeslaRefreshState> };
@@ -144,25 +113,6 @@ export async function GET(request: Request) {
 
             installation = result.installation;
             site = result.site;
-            if (!componentConfigParam) {
-                const screens = extractTrmnlComponentScreens(installation.json);
-                const currentIndex = extractTrmnlCarouselIndex(installation.json, screens.length);
-                componentConfig = screens[currentIndex].componentConfig;
-
-                const nextIndex = screens.length > 1 ? (currentIndex + 1) % screens.length : 0;
-                if (installation.id && nextIndex !== currentIndex) {
-                    const nextJson = mergeTrmnlComponentScreensIntoInstallationJson(installation.json ?? null, screens, nextIndex);
-                    const trmnlInstallationRepo = new TrmnlInstallationRepo();
-                    const installationId = installation.id;
-                    after(async () => {
-                        try {
-                            await trmnlInstallationRepo.updateJson(installationId, nextJson);
-                        } catch (error) {
-                            console.warn(`[TrmnlMarkup] Failed to advance carousel index for installation ${installationId}:`, error);
-                        }
-                    });
-                }
-            }
 
             // Verify Bearer Token
             const authHeader = request.headers.get('Authorization');
@@ -170,21 +120,43 @@ export async function GET(request: Request) {
             console.log(`[TrmnlMarkup] UUID: ${uuid}, has auth header: ${!!authHeader}, has token: ${!!token}, stored token exists: ${!!installation.access_token}`);
 
             let isAuthorized = false;
-            if (installation.access_token) {
-                isAuthorized = token === installation.access_token;
-            } else if (token) {
-                // Fallback: If no local access_token, verify via Trmnl JWT
-                try {
-                    await verifyTrmnlToken(token, uuid);
+            if (token) {
+                if (installation.access_token && safeTimingSafeEqual(token, installation.access_token)) {
                     isAuthorized = true;
-                } catch (err) {
-                    console.warn(`[TrmnlMarkup] JWT Verification Failed for ${uuid}:`, err);
+                } else {
+                    // Fallback: verify via Trmnl JWT
+                    try {
+                        await verifyTrmnlToken(token, uuid);
+                        isAuthorized = true;
+                    } catch (err) {
+                        console.warn(`[TrmnlMarkup] Token verification failed for ${uuid}:`, err);
+                    }
                 }
             }
 
             if (!isAuthorized) {
                 console.warn(`[TrmnlMarkup] Unauthorized access attempt for UUID ${uuid}`);
                 return getQrResponse(request, uuid, null, 'Plugin Auth Failed', 'Scan to Re-link');
+            }
+
+            const screens = extractTrmnlComponentScreens(installation.json);
+            const currentIndex = extractTrmnlCarouselIndex(installation.json, screens.length);
+
+            if (!componentConfigParam) {
+                componentConfig = screens[currentIndex].componentConfig;
+
+                const nextIndex = screens.length > 1 ? (currentIndex + 1) % screens.length : 0;
+                if (installation.id && nextIndex !== currentIndex) {
+                    const trmnlInstallationRepo = new TrmnlInstallationRepo();
+                    const installationId = installation.id;
+                    after(async () => {
+                        try {
+                            await trmnlInstallationRepo.updateCarouselIndex(installationId, nextIndex);
+                        } catch (error) {
+                            console.warn(`[TrmnlMarkup] Failed to advance carousel index for installation ${installationId}:`, error);
+                        }
+                    });
+                }
             }
 
         } else if (siteIdParam) {
@@ -300,10 +272,21 @@ export async function GET(request: Request) {
             ? await repo.getUsageByTOU(site!.id, start, now)
             : [];
 
-        let liveStatusEntry = getCachedLiveStatus(site.id);
-        let liveStatus: EnergySiteLiveStatus | undefined = liveStatusEntry?.data;
-        let hasCachedLiveStatus = Boolean(liveStatus);
+        // Load live status cache from the Site record
+        let liveStatus: EnergySiteLiveStatus | undefined = undefined;
+        let lastLiveRefreshAt = 0;
+        let hasCachedLiveStatus = false;
         const nowMs = Date.now();
+
+        if (site.live_status_cache) {
+            const cachedAgeMs = nowMs - Number(site.last_live_refresh_at || 0);
+            if (cachedAgeMs < LIVE_STATUS_CACHE_TTL_MS) {
+                liveStatus = site.live_status_cache as EnergySiteLiveStatus;
+                hasCachedLiveStatus = true;
+            }
+            lastLiveRefreshAt = Number(site.last_live_refresh_at || 0);
+        }
+
         let fetchStatus = trmnlClient ? 'background-throttled' : 'skipped';
         let backgroundStatus = trmnlClient ? 'throttled' : 'skipped';
         let liveInlineMs = 0;
@@ -319,12 +302,14 @@ export async function GET(request: Request) {
                 const inlineLive = await withTimeout(trmnlClient.getLiveStatus(site.id), TESLA_LIVE_INLINE_TIMEOUT_MS, 'tesla_live_inline');
                 liveInlineMs = Date.now() - liveInlineStart;
                 liveInlineStatus = 'success';
-                setCachedLiveStatus(site.id, inlineLive);
-                liveStatusEntry = getCachedLiveStatus(site.id);
+                
+                // Write to DB cache
+                await siteRepo.updateLiveStatusCache(site.id, inlineLive, Date.now());
+                
                 liveStatus = inlineLive;
                 hasCachedLiveStatus = true;
                 fetchStatus = 'live-inline';
-                refreshState.lastLiveRefreshAt = Date.now();
+                lastLiveRefreshAt = Date.now();
             } catch (error) {
                 if (error instanceof Error && error.message === 'tesla_live_inline_timeout') {
                     liveInlineStatus = 'timeout';
@@ -343,7 +328,7 @@ export async function GET(request: Request) {
             ? !refreshState.todayInFlight && (nowMs - refreshState.lastTodayRefreshAt >= TESLA_REFRESH_MIN_INTERVAL_MS)
             : false;
         const shouldRefreshLive = trmnlClient
-            ? !refreshState.liveInFlight && (nowMs - refreshState.lastLiveRefreshAt >= TESLA_REFRESH_MIN_INTERVAL_MS)
+            ? !refreshState.liveInFlight && (nowMs - lastLiveRefreshAt >= TESLA_REFRESH_MIN_INTERVAL_MS)
             : false;
 
         // --- TESLA REFRESH (lifecycle-bound background) ---
@@ -404,7 +389,7 @@ export async function GET(request: Request) {
                                 const startMs = Date.now();
                                 const status = await withTimeout(trmnlClient!.getLiveStatus(siteId), TESLA_LIVE_TIMEOUT_MS, 'tesla_live');
                                 console.log(`[TrmnlMarkup] Tesla Live Status Fetch (background): ${Date.now() - startMs}ms`);
-                                setCachedLiveStatus(siteId, status);
+                                await siteRepo.updateLiveStatusCache(siteId, status, Date.now());
                             } catch (error) {
                                 console.warn(`[TrmnlMarkup] Tesla live status fetch failed (background):`, error);
                             } finally {
@@ -702,7 +687,7 @@ export async function GET(request: Request) {
         let batteryStatus: 'charging' | 'discharging' | 'idle' = 'idle';
 
         const latestLiveStatus = liveStatus as EnergySiteLiveStatus | undefined;
-        const liveStatusAgeMs = liveStatusEntry ? Math.max(0, nowMs - liveStatusEntry.fetchedAt) : null;
+        const liveStatusAgeMs = lastLiveRefreshAt > 0 ? Math.max(0, nowMs - lastLiveRefreshAt) : null;
         const isSocStale = liveStatusAgeMs !== null && liveStatusAgeMs > SOC_STALE_AFTER_MS;
         const isFresh = (ts: Date | null | undefined): ts is Date => {
             if (!ts) return false;
@@ -748,7 +733,7 @@ export async function GET(request: Request) {
 
         const renderCtx = {
             siteName: displayName,
-            dateRange: `${start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })} - ${cycleEnd.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}`,
+            dateRange: `${start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: tz })} - ${cycleEnd.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: tz })}`,
             tariffGroups: Array.from(tariffGroups.values()),
             totalCost: totalBillCost,
             costLabel: costLabel,
@@ -872,9 +857,12 @@ export async function POST(request: Request) {
 }
 
 async function getQrResponse(request: Request, uuid: string | null, siteId: string | null, title: string, label: string) {
-    const host = request.headers.get('host') || 'localhost:3000';
-    const protocol = host.includes('localhost') ? 'http' : 'https';
-    const logoUrl = `${protocol}://${host}/apple-touch-icon.png`;
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || (() => {
+        const host = request.headers.get('host') || 'localhost:3000';
+        const protocol = host.includes('localhost') ? 'http' : 'https';
+        return `${protocol}://${host}`;
+    })();
+    const logoUrl = `${baseUrl}/apple-touch-icon.png`;
     // Route the device QR through the /continue gate. Scanning from the iOS
     // lock-screen / Control Center scanner opens links in a cookie-less,
     // ephemeral context, so a direct link to the (session-gated) manage/settings
@@ -883,7 +871,7 @@ async function getQrResponse(request: Request, uuid: string | null, siteId: stri
     const internalPath = uuid
         ? `/trmnl/manage?uuid=${encodeURIComponent(uuid)}`
         : `/site/${encodeURIComponent(siteId ?? '')}/settings`;
-    const manageUrl = continueUrl(`${protocol}://${host}`, internalPath);
+    const manageUrl = continueUrl(baseUrl, internalPath);
 
     // Generate QR Code with High error correction ('H') to support the centered logo overlay
     const qrDataUrl = await QRCode.toDataURL(manageUrl, { 

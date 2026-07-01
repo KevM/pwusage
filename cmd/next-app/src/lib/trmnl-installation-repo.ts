@@ -15,7 +15,10 @@ export class TrmnlInstallationRepo {
         const installation = await this.findByUuid(uuid);
         if (!installation) return undefined;
 
-        const site = await new SiteRepo().getSite(installation.site_id, options);
+        const site = await new SiteRepo().getSite(installation.site_id, {
+            ...options,
+            includeJson: true
+        });
         if (!site) return undefined;
 
         if (!options.includeTokens) {
@@ -108,6 +111,13 @@ export class TrmnlInstallationRepo {
         await pool.query(
             'UPDATE "TrmnlInstallation" SET json = $1 WHERE id = $2',
             [json, id]
+        );
+    }
+
+    async updateCarouselIndex(id: number, carouselIndex: number): Promise<void> {
+        await pool.query(
+            'UPDATE "TrmnlInstallation" SET json = jsonb_set(COALESCE(json, \'{}\'::jsonb), \'{carousel_index}\', to_jsonb($1::int), true) WHERE id = $2',
+            [carouselIndex, id]
         );
     }
 

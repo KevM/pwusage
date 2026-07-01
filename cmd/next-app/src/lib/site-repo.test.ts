@@ -380,6 +380,18 @@ describe('SiteRepo new commands and queries', () => {
             'site-1', 'Home', 'PG&E', installed, 'America/Chicago', JSON.stringify({ foo: 'bar' })
         ]);
     });
+
+    it('updateLiveStatusCache updates the live status columns and invalidates the cache', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new SiteRepo();
+        const testStatus = { percentage_charged: 80 };
+        await repo.updateLiveStatusCache('site-1', testStatus, 1234567890);
+        
+        expect(queryMock).toHaveBeenCalledWith(
+            expect.stringMatching(/UPDATE\s+"Site"\s+SET\s+live_status_cache\s*=\s*\$1,\s*last_live_refresh_at\s*=\s*\$2/i),
+            [JSON.stringify(testStatus), 1234567890, 'site-1']
+        );
+    });
 });
 
 describe('SiteRepo current-version tariff filter', () => {

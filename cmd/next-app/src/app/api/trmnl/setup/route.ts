@@ -64,7 +64,7 @@ export async function POST(request: Request) {
             try {
                 const parts = accessToken.split('.');
                 if (parts.length === 3) {
-                    const payload = JSON.parse(atob(parts[1]));
+                    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
                     if (payload.user_uuid) {
                         deviceUuid = payload.user_uuid;
                         console.log(`[TrmnlSetup] Extracted UUID from JWT: ${deviceUuid}`);

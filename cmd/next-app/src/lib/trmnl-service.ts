@@ -8,41 +8,12 @@ export class TrmnlService {
         return this.dbRepo.create(siteId, uuid, pluginSettingId, details, accessToken);
     }
 
-    // Simplified in-memory cache for installations to avoid redundant DB hits during high-frequency polling
-    private static getCache(): Map<string, { data: TrmnlInstallation, expires: number }> {
-        const globalForTrmnl = global as unknown as { installationCache: Map<string, { data: TrmnlInstallation, expires: number }> };
-        if (!globalForTrmnl.installationCache) {
-            globalForTrmnl.installationCache = new Map();
-        }
-        return globalForTrmnl.installationCache;
-    }
-
-    private static readonly CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes for polled installations
-
-    invalidateInstallationCache(uuid: string) {
-        TrmnlService.getCache().delete(uuid);
-    }
-
     async updateInstallation(uuid: string, pluginSettingId: number) {
         await this.dbRepo.updatePluginId(uuid, pluginSettingId);
-        TrmnlService.getCache().delete(uuid);
     }
 
     async getInstallationByUuid(uuid: string, options: { includeTokens?: boolean } = {}): Promise<TrmnlInstallation | undefined> {
-        const now = Date.now();
-        const cached = TrmnlService.getCache().get(uuid);
-        // Cache always includes tokens for simplicity, but we strip them if not requested
-        let installation: TrmnlInstallation | undefined;
-
-        if (cached && cached.expires > now) {
-            installation = cached.data;
-        } else {
-            installation = await this.dbRepo.findByUuid(uuid);
-
-            if (installation) {
-                TrmnlService.getCache().set(uuid, { data: installation, expires: now + TrmnlService.CACHE_TTL_MS });
-            }
-        }
+        const installation = await this.dbRepo.findByUuid(uuid);
 
         if (installation && !options.includeTokens) {
             // eslint-disable-next-line @typescript-eslint/no-unused-vars

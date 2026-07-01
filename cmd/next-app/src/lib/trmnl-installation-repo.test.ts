@@ -98,6 +98,16 @@ describe('TrmnlInstallationRepo', () => {
         );
     });
 
+    it('updateCarouselIndex updates only the carousel_index key inside json column', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new TrmnlInstallationRepo();
+        await repo.updateCarouselIndex(42, 2);
+        expect(queryMock).toHaveBeenCalledWith(
+            expect.stringContaining('UPDATE "TrmnlInstallation" SET json = jsonb_set(COALESCE(json, \'{}\'::jsonb), \'{carousel_index}\', to_jsonb($1::int), true) WHERE id = $2'),
+            [2, 42]
+        );
+    });
+
     it('claimPendingById links pending device', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
         const repo = new TrmnlInstallationRepo();

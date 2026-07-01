@@ -234,8 +234,6 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Failed to save installation' }, { status: 500 });
         }
 
-        trmnlService.invalidateInstallationCache(uuid);
-
         // Update refresh token in Site table (Source of Truth) if available
 
 
