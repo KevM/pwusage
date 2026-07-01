@@ -67,12 +67,26 @@ function run() {
   const filename = `${finalPrefixStr}_${migrationName}.sql`;
   const filepath = path.join(migrationsDir, filename);
 
-  const initialContent = `-- Migration: ${migrationName}\n-- Created at: ${new Date().toISOString()}\n\n`;
+  const initialContent = `-- Migration: ${migrationName}
+-- Created at: ${new Date().toISOString()}
+
+-- TODO: If this migration creates a new table, you MUST enable Row Level Security (RLS)!
+-- ALTER TABLE "MyNewTable" ENABLE ROW LEVEL SECURITY;
+-- REVOKE ALL ON "MyNewTable" FROM PUBLIC;
+-- REVOKE ALL ON "MyNewTable" FROM anon;
+-- REVOKE ALL ON "MyNewTable" FROM authenticated;
+-- GRANT ALL ON "MyNewTable" TO service_role;
+--
+-- If using serial/sequence:
+-- GRANT ALL ON SEQUENCE "MyNewTable_id_seq" TO service_role;
+`;
   fs.writeFileSync(filepath, initialContent, 'utf8');
 
   console.log(`\nSuccessfully created new migration file:`);
   console.log(`  File: cmd/next-app/db-migrations/${filename}`);
   console.log(`  Path: ${filepath}\n`);
+  console.log(`\x1b[33m%s\x1b[0m`, `⚠️  REMINDER: If this migration creates a new table, you MUST enable Row Level Security (RLS)!`);
+  console.log(`   Boilerplate has been added to the top of the file as comments for your convenience.\n`);
 }
 
 run();
