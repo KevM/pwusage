@@ -38,13 +38,27 @@ export async function POST(request: Request) {
         });
 
         const importer = new Importer(client);
+        const errors: Record<string, string> = {};
+        let successCount = 0;
 
         for (const siteId of authorizedSites) {
-            console.log(`Auto-importing site ${siteId} (last 14 days)`);
-            await importer.ensureDataForRange(siteId, autoBackfillLimit, now);
+            try {
+                console.log(`Auto-importing site ${siteId} (last 14 days)`);
+                await importer.ensureDataForRange(siteId, autoBackfillLimit, now);
+                successCount++;
+            } catch (err) {
+                console.error(`Auto-import failed for site ${siteId}:`, err);
+                errors[siteId] = err instanceof Error ? err.message : String(err);
+            }
         }
 
-        return NextResponse.json({ success: true, sitesImported: authorizedSites.length, granularity });
+        return NextResponse.json({
+            success: successCount > 0 || authorizedSites.length === 0,
+            sitesImported: authorizedSites.length,
+            successCount,
+            errors: Object.keys(errors).length > 0 ? errors : undefined,
+            granularity
+        });
     } catch (error) {
         console.error('Import error:', error);
         return NextResponse.json({ error: (error as Error).message }, { status: 500 });
