@@ -102,6 +102,23 @@ describe('Importer Sync Logic', () => {
         expect(importSpy).toHaveBeenCalledWith('site-123', expect.anything(), expect.anything(), 'day');
     });
 
+    it('should throw an error when all planned windows fail to import', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+        
+        vi.spyOn(importer, 'importRange').mockRejectedValue(new Error('Tesla API Offline'));
+
+        const start = new Date('2026-01-10T00:00:00Z');
+        const end = new Date('2026-01-10T23:59:59Z');
+
+        await expect(importer.ensureDataForRange('site-123', start, end))
+            .rejects.toThrow('Tesla API Offline');
+    });
+
     it('should NOT trigger import when data exists', async () => {
         // Mock repo methods with data
         const rows = [];

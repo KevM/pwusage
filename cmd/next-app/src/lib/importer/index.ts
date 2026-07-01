@@ -145,6 +145,9 @@ export class Importer {
             });
 
             const allRows: EnergyDataRow[] = [];
+            let successCount = 0;
+            let lastError: Error | null = null;
+
             for (const window of windows) {
                 const dateStr = window.start.toISOString().split('T')[0];
                 if (onProgress) onProgress(`Importing ${dateStr}...`);
@@ -152,10 +155,16 @@ export class Importer {
                 try {
                     const rows = await this.importRange(siteId, window.start, window.end, 'day');
                     allRows.push(...rows);
+                    successCount++;
                 } catch (error) {
                     console.error(`[Importer] Failed to import window ${window.start.toISOString()} - ${window.end.toISOString()}:`, error);
                     if (onProgress) onProgress(`Error importing ${dateStr}: ${error instanceof Error ? error.message : String(error)}`);
+                    lastError = error instanceof Error ? error : new Error(String(error));
                 }
+            }
+
+            if (windows.length > 0 && successCount === 0) {
+                throw lastError || new Error(`All ${windows.length} import windows failed`);
             }
 
             return allRows;
