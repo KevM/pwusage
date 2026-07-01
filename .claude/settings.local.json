@@ -38,7 +38,10 @@
       "Bash(grep *)",
       "Bash(gh pr *)",
       "Bash(npx vitest *)",
-      "Bash(npm --prefix /Users/kevm/github/pwusage/cmd/next-app run build)"
+      "Bash(npm --prefix /Users/kevm/github/pwusage/cmd/next-app run build)",
+      "Bash(xargs -I{} basename {})",
+      "Skill(code-review)",
+      "Skill(code-review:*)"
     ]
   }
 }
