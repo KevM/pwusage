@@ -52,12 +52,16 @@ export async function POST(request: Request) {
             }
         }
 
+        const allFailed = authorizedSites.length > 0 && successCount === 0;
+
         return NextResponse.json({
-            success: successCount > 0 || authorizedSites.length === 0,
+            success: !allFailed,
             sitesImported: authorizedSites.length,
             successCount,
             errors: Object.keys(errors).length > 0 ? errors : undefined,
             granularity
+        }, {
+            status: allFailed ? 502 : 200
         });
     } catch (error) {
         console.error('Import error:', error);
