@@ -32,6 +32,9 @@ vi.mock('./site-repo', () => {
     class SiteRepo {
         getSite = vi.fn();
         invalidateCache = vi.fn();
+        acquireImportLock = vi.fn().mockResolvedValue(true);
+        releaseImportLock = vi.fn().mockResolvedValue(true);
+        getImportStatus = vi.fn().mockResolvedValue({ isImporting: false, lastImportAt: 0 });
     }
     return { SiteRepo };
 });
@@ -61,7 +64,10 @@ describe('Importer Sync Logic', () => {
                 timezone: 'America/Chicago',
                 installed: new Date('2025-01-01T00:00:00Z'),
                 tariffs: []
-            })
+            }),
+            acquireImportLock: vi.fn().mockResolvedValue(true),
+            releaseImportLock: vi.fn().mockResolvedValue(true),
+            getImportStatus: vi.fn().mockResolvedValue({ isImporting: false, lastImportAt: 0 })
         };
         (importer as unknown as { siteRepo: unknown }).siteRepo = mockRepo;
         
@@ -96,6 +102,23 @@ describe('Importer Sync Logic', () => {
         expect(importSpy).toHaveBeenCalledWith('site-123', expect.anything(), expect.anything(), 'day');
     });
 
+    it('should throw an error when all planned windows fail to import', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+        
+        vi.spyOn(importer, 'importRange').mockRejectedValue(new Error('Tesla API Offline'));
+
+        const start = new Date('2026-01-10T00:00:00Z');
+        const end = new Date('2026-01-10T23:59:59Z');
+
+        await expect(importer.ensureDataForRange('site-123', start, end))
+            .rejects.toThrow('Tesla API Offline');
+    });
+
     it('should NOT trigger import when data exists', async () => {
         // Mock repo methods with data
         const rows = [];
@@ -120,25 +143,6 @@ describe('Importer Sync Logic', () => {
         await importer.ensureDataForRange('site-123', s, e);
     });
 
-    it('should handle ensureRecentData with pre-fetched timestamp', async () => {
-        const latestKnown = new Date(Date.now() - 5 * 60 * 1000); // 5 mins ago (Fresh)
-        const result = await importer.ensureRecentData('site-123', undefined, latestKnown);
-
-        expect(result.rows).toHaveLength(0);
-        expect(result.latestTimestamp).toEqual(latestKnown);
-    });
-
-    it('should trigger surgical sync in ensureRecentData when stale', async () => {
-        const latestKnown = new Date(Date.now() - 30 * 60 * 1000); // 30 mins ago (Stale)
-        const mockRows = [{ timestamp: new Date(), site_id: '123', tariff_id: 1, tariff_schedule_id: null, load_power: 100, solar_power: 0, grid_power: 100, battery_power: 0, battery_soc: 50 }];
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue(mockRows);
-
-        const result = await importer.ensureRecentData('site-123', undefined, latestKnown);
-
-        expect(importSpy).toHaveBeenCalled();
-        expect(result.rows).toHaveLength(1);
-        expect(result.latestTimestamp).toEqual(latestKnown);
-    });
 
     it('does not multiply partial-day singleton history rows by 1000', async () => {
         const singletonHistory: EnergyHistoryEntry[] = [

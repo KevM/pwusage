@@ -261,6 +261,57 @@ export class SiteRepo {
         this.invalidateCache(params.id);
     }
 
+    async acquireImportLock(params: {
+        siteId: string;
+        lockId: string;
+        lockDurationMs?: number;
+        force?: boolean;
+        minIntervalMs?: number;
+    }): Promise<boolean> {
+        const { siteId, lockId, lockDurationMs = 60000, force = false, minIntervalMs = 0 } = params;
+        const now = Date.now();
+        const expires = now + lockDurationMs;
+
+        if (force) {
+            const result = await pool.query(`
+                UPDATE "Site"
+                SET import_lock_id = $1, import_lock_expires = $2, last_import_at = $3
+                WHERE id = $4
+            `, [lockId, expires, now, siteId]);
+            return (result.rowCount ?? 0) > 0;
+        }
+
+        const result = await pool.query(`
+            UPDATE "Site"
+            SET import_lock_id = $1, import_lock_expires = $2, last_import_at = $3
+            WHERE id = $4 
+              AND (import_lock_id IS NULL OR import_lock_expires < $5)
+              AND (last_import_at IS NULL OR $5 - last_import_at >= $6)
+        `, [lockId, expires, now, siteId, now, minIntervalMs]);
+        return (result.rowCount ?? 0) > 0;
+    }
+
+    async releaseImportLock(siteId: string, lockId: string): Promise<boolean> {
+        const result = await pool.query(`
+            UPDATE "Site"
+            SET import_lock_id = NULL, import_lock_expires = 0
+            WHERE id = $1 AND import_lock_id = $2
+        `, [siteId, lockId]);
+        return (result.rowCount ?? 0) > 0;
+    }
+
+    async getImportStatus(siteId: string): Promise<{ isImporting: boolean; lastImportAt: number }> {
+        const res = await pool.query('SELECT import_lock_id, import_lock_expires, last_import_at FROM "Site" WHERE id = $1', [siteId]);
+        if (res.rows.length === 0) {
+            return { isImporting: false, lastImportAt: 0 };
+        }
+        const row = res.rows[0];
+        const now = Date.now();
+        const isImporting = !!(row.import_lock_id && Number(row.import_lock_expires) >= now);
+        const lastImportAt = row.last_import_at ? Number(row.last_import_at) : 0;
+        return { isImporting, lastImportAt };
+    }
+
     // Utility
     invalidateCache(siteId: string) {
         siteCache.delete(siteId);

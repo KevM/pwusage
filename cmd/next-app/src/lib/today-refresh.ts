@@ -69,11 +69,27 @@ export async function refreshTodayData(siteId: string): Promise<RefreshTodayResu
         return { status: 'no-tokens' };
     }
 
+    const siteRepo = new SiteRepo();
+    const lockId = crypto.randomUUID();
+    const acquired = await siteRepo.acquireImportLock({
+        siteId,
+        lockId,
+        lockDurationMs: 60000,
+        minIntervalMs: REFRESH_MIN_INTERVAL_MS
+    });
+
+    if (!acquired) {
+        const status = await siteRepo.getImportStatus(siteId);
+        if (status.isImporting) {
+            return { status: 'in-flight' };
+        }
+        return { status: 'throttled' };
+    }
+
     state.inFlight = true;
-    state.lastRefreshAt = now;
+    state.lastRefreshAt = Date.now();
 
     try {
-        const siteRepo = new SiteRepo();
         const energyRepo = new EnergyRepo();
         const tokenRepo = new TeslaTokenRepo(siteRepo);
         const handlers = tokenRepo.getLockedRefreshHandler(siteId);
@@ -96,11 +112,17 @@ export async function refreshTodayData(siteId: string): Promise<RefreshTodayResu
         if (rows.length === 0) return { status: 'no-new-rows' };
 
         const latestMs = latest?.timestamp?.getTime() ?? 0;
-        const newRows = rows.filter((r) => r.timestamp.getTime() > latestMs);
-        if (newRows.length === 0) return { status: 'no-new-rows' };
+        const hasNewRows = rows.some((r) => r.timestamp.getTime() > latestMs);
 
-        await importer.persistHistory(siteId, newRows, latest?.timestamp ?? null);
-        return { status: 'persisted', rowsPersisted: newRows.length };
+        // Problem 5: Drop strict pre-filter and let persistHistory do the job.
+        const rowsPersisted = await importer.persistHistory(siteId, rows, latest?.timestamp ?? null);
+        if (rowsPersisted === 0) return { status: 'no-new-rows' };
+
+        if (!hasNewRows) {
+            return { status: 'no-new-rows' };
+        }
+
+        return { status: 'persisted', rowsPersisted };
     } catch (error) {
         return {
             status: 'error',
@@ -108,5 +130,10 @@ export async function refreshTodayData(siteId: string): Promise<RefreshTodayResu
         };
     } finally {
         state.inFlight = false;
+        try {
+            await siteRepo.releaseImportLock(siteId, lockId);
+        } catch (err) {
+            console.error(`[TodayRefresh] Failed to release DB import lock for site ${siteId}:`, err);
+        }
     }
 }
