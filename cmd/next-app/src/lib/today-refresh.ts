@@ -83,9 +83,6 @@ export async function refreshTodayData(siteId: string): Promise<RefreshTodayResu
         if (status.isImporting) {
             return { status: 'in-flight' };
         }
-        if (Date.now() - status.lastImportAt < REFRESH_MIN_INTERVAL_MS) {
-            return { status: 'throttled' };
-        }
         return { status: 'throttled' };
     }
 
@@ -114,9 +111,16 @@ export async function refreshTodayData(siteId: string): Promise<RefreshTodayResu
 
         if (rows.length === 0) return { status: 'no-new-rows' };
 
+        const latestMs = latest?.timestamp?.getTime() ?? 0;
+        const hasNewRows = rows.some((r) => r.timestamp.getTime() > latestMs);
+
         // Problem 5: Drop strict pre-filter and let persistHistory do the job.
         const rowsPersisted = await importer.persistHistory(siteId, rows, latest?.timestamp ?? null);
         if (rowsPersisted === 0) return { status: 'no-new-rows' };
+
+        if (!hasNewRows) {
+            return { status: 'no-new-rows' };
+        }
 
         return { status: 'persisted', rowsPersisted };
     } catch (error) {

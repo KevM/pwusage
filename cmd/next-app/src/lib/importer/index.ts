@@ -107,27 +107,27 @@ export class Importer {
         }
 
         const lockId = crypto.randomUUID();
-        const acquired = await this.siteRepo.acquireImportLock({
-            siteId,
-            lockId,
-            lockDurationMs: 300000, // 5 minutes for full range sync
-            force
-        });
-
-        if (!acquired) {
-            logSync(`Skip: DB lock busy for site ${siteId}`);
-            if (inMemoryAdded) {
-                Importer.pendingSyncs.delete(siteId);
-            }
-            return [];
-        }
-
-        logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
+        let dbLockAcquired = false;
 
         try {
             if (onProgress) onProgress(`Checking data coverage...`);
             const site = await this.siteRepo.getSite(siteId);
             if (!site) throw new Error(`Site ${siteId} not found in database`);
+
+            const acquired = await this.siteRepo.acquireImportLock({
+                siteId,
+                lockId,
+                lockDurationMs: 300000, // 5 minutes for full range sync
+                force
+            });
+
+            if (!acquired) {
+                logSync(`Skip: DB lock busy for site ${siteId}`);
+                return [];
+            }
+            dbLockAcquired = true;
+
+            logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
 
             const auditStartTime = getSiteMidnight(start, site.timezone);
             const existingTimestamps = await this.repo.getExistingTimestamps(
@@ -160,7 +160,9 @@ export class Importer {
 
             return allRows;
         } finally {
-            await this.siteRepo.releaseImportLock(siteId, lockId);
+            if (dbLockAcquired) {
+                await this.siteRepo.releaseImportLock(siteId, lockId);
+            }
             if (inMemoryAdded) {
                 Importer.pendingSyncs.delete(siteId);
             }
