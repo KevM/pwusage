@@ -70,6 +70,9 @@ export interface Site {
   billing_start_day: number;
   timezone_display_mode?: 'SITE' | 'BROWSER';
   sankey_renderer?: string;
+  import_lock_id?: string | null;
+  import_lock_expires?: number | string;
+  last_import_at?: number | string;
 }
 
 export interface Tariff {

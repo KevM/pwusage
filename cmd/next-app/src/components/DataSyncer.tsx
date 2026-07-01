@@ -174,11 +174,16 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
                 const hotEnd = new Date(targetDate);
                 hotEnd.setDate(hotEnd.getDate() + 3);
 
+                // CLAMP TO NOW: Prevent requesting future data
+                const now = new Date();
+                const safeNow = new Date(now.getTime() + 60 * 60 * 1000);
+                const cappedHotEnd = hotEnd > safeNow ? safeNow : hotEnd;
+
                 // Force a sync of the hot zone. 
                 // We pass refreshAfter=true to update the chart.
                 // Note: We need a fresh signal if possible, or just ignore abortion for interval?
                 // Using the main signal means if the component unmounts, this stops too.
-                runSyncStep(hotStart, hotEnd, signal, true);
+                runSyncStep(hotStart, cappedHotEnd, signal, true);
             }, 60 * 60 * 1000); // 1 hour
         }
 

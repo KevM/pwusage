@@ -69,11 +69,30 @@ export async function refreshTodayData(siteId: string): Promise<RefreshTodayResu
         return { status: 'no-tokens' };
     }
 
+    const siteRepo = new SiteRepo();
+    const lockId = crypto.randomUUID();
+    const acquired = await siteRepo.acquireImportLock({
+        siteId,
+        lockId,
+        lockDurationMs: 60000,
+        minIntervalMs: REFRESH_MIN_INTERVAL_MS
+    });
+
+    if (!acquired) {
+        const status = await siteRepo.getImportStatus(siteId);
+        if (status.isImporting) {
+            return { status: 'in-flight' };
+        }
+        if (Date.now() - status.lastImportAt < REFRESH_MIN_INTERVAL_MS) {
+            return { status: 'throttled' };
+        }
+        return { status: 'throttled' };
+    }
+
     state.inFlight = true;
-    state.lastRefreshAt = now;
+    state.lastRefreshAt = Date.now();
 
     try {
-        const siteRepo = new SiteRepo();
         const energyRepo = new EnergyRepo();
         const tokenRepo = new TeslaTokenRepo(siteRepo);
         const handlers = tokenRepo.getLockedRefreshHandler(siteId);
@@ -95,18 +114,18 @@ export async function refreshTodayData(siteId: string): Promise<RefreshTodayResu
 
         if (rows.length === 0) return { status: 'no-new-rows' };
 
-        const latestMs = latest?.timestamp?.getTime() ?? 0;
-        const newRows = rows.filter((r) => r.timestamp.getTime() > latestMs);
-        if (newRows.length === 0) return { status: 'no-new-rows' };
+        // Problem 5: Drop strict pre-filter and let persistHistory do the job.
+        const rowsPersisted = await importer.persistHistory(siteId, rows, latest?.timestamp ?? null);
+        if (rowsPersisted === 0) return { status: 'no-new-rows' };
 
-        await importer.persistHistory(siteId, newRows, latest?.timestamp ?? null);
-        return { status: 'persisted', rowsPersisted: newRows.length };
+        return { status: 'persisted', rowsPersisted };
     } catch (error) {
         return {
             status: 'error',
             errorMessage: error instanceof Error ? error.message : String(error)
         };
     } finally {
+        await siteRepo.releaseImportLock(siteId, lockId);
         state.inFlight = false;
     }
 }

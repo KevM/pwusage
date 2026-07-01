@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planImport, splitAtUtcMidnight, auditDays } from './import-planner';
+import { planImport, splitAtSiteMidnight, auditDays } from './import-planner';
 
 // America/Chicago is UTC-6 in winter, so site midnight = 06:00 UTC
 const TZ = 'America/Chicago';
@@ -60,6 +60,21 @@ describe('planImport', () => {
         expect(result).toHaveLength(1);
     });
 
+    it('returns a window when there is an interior gap', () => {
+        // Points at start and end of day, but a huge gap in the middle
+        const existingTimestamps = [
+            DAY1_START.getTime() + 5 * 60 * 1000,
+            DAY1_END.getTime() - 5 * 60 * 1000,
+        ];
+        const result = planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingTimestamps,
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(result).toHaveLength(1);
+    });
+
     it('returns window even when fully covered if forceRefetch is true', () => {
         const result = planImport({
             requestedRange: { start: DAY1_START, end: DAY1_END },
@@ -96,42 +111,40 @@ describe('planImport', () => {
     });
 });
 
-describe('splitAtUtcMidnight', () => {
-    it('returns a single window that does not cross UTC midnight', () => {
+describe('splitAtSiteMidnight', () => {
+    it('returns a single window that does not cross site midnight', () => {
         const w = {
             start: new Date('2026-01-10T06:00:00.000Z'),
             end: new Date('2026-01-10T20:00:00.000Z'),
         };
-        expect(splitAtUtcMidnight(w)).toHaveLength(1);
+        expect(splitAtSiteMidnight(w, TZ)).toHaveLength(1);
     });
 
-    it('splits a window crossing UTC midnight into two chunks', () => {
+    it('splits a window crossing site midnight into two chunks', () => {
         const w = {
             start: new Date('2026-01-10T20:00:00.000Z'),
-            end: new Date('2026-01-11T04:00:00.000Z'),
+            end: new Date('2026-01-11T12:00:00.000Z'),
         };
-        const result = splitAtUtcMidnight(w);
+        const result = splitAtSiteMidnight(w, TZ);
         expect(result).toHaveLength(2);
-        expect(result[0].end.getUTCHours()).toBe(0);
-        expect(result[0].end.getUTCMinutes()).toBe(0);
-        expect(result[1].start.getUTCHours()).toBe(0);
-        expect(result[1].start.getUTCMinutes()).toBe(0);
+        expect(result[0].end.getTime()).toBe(DAY1_END.getTime()); // Jan 11 midnight Chicago = Jan 11 06:00 UTC
+        expect(result[1].start.getTime()).toBe(DAY1_END.getTime());
     });
 
     it('preserves start and end of the original window across chunks', () => {
         const start = new Date('2026-01-10T20:00:00.000Z');
-        const end = new Date('2026-01-11T04:00:00.000Z');
-        const result = splitAtUtcMidnight({ start, end });
+        const end = new Date('2026-01-11T12:00:00.000Z');
+        const result = splitAtSiteMidnight({ start, end }, TZ);
         expect(result[0].start.getTime()).toBe(start.getTime());
         expect(result[result.length - 1].end.getTime()).toBe(end.getTime());
     });
 
     it('splits a 48h window into three chunks', () => {
         const w = {
-            start: new Date('2026-01-10T06:00:00.000Z'),
-            end: new Date('2026-01-12T06:00:00.000Z'),
+            start: new Date('2026-01-10T00:00:00.000Z'),
+            end: new Date('2026-01-12T00:00:00.000Z'),
         };
-        expect(splitAtUtcMidnight(w)).toHaveLength(3);
+        expect(splitAtSiteMidnight(w, TZ)).toHaveLength(3);
     });
 });
 
@@ -159,6 +172,7 @@ describe('auditDays', () => {
         expect(results[0].firstInWindow).toBe(DAY1_START.getTime());
         expect(results[0].missingStart).toBe(false);
         expect(results[0].missingEnd).toBe(false);
+        expect(results[0].hasInteriorGap).toBe(false);
     });
 
     it('flags missingStart when gap at beginning exceeds threshold', () => {
@@ -170,6 +184,33 @@ describe('auditDays', () => {
         });
         expect(results[0].missingStart).toBe(true);
         expect(results[0].missingEnd).toBe(true);
+        expect(results[0].hasInteriorGap).toBe(false);
+    });
+
+    it('flags hasInteriorGap when mid-day gap exists', () => {
+        const results = auditDays({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingTimestamps: [
+                DAY1_START.getTime() + 5 * 60 * 1000,
+                DAY1_START.getTime() + 10 * 60 * 1000,
+                DAY1_START.getTime() + 70 * 60 * 1000, // 60 min gap (>30m threshold)
+            ],
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(results[0].hasInteriorGap).toBe(true);
+    });
+
+    it('clamps planned windows to now (avoids future days)', () => {
+        const results = auditDays({
+            requestedRange: { start: DAY1_START, end: new Date('2026-01-20T00:00:00.000Z') },
+            existingTimestamps: [],
+            timezone: TZ,
+            now: DAY1_END, // only Jan 10 is past or present, Jan 11 is in the future
+        });
+        // Since now is Jan 11 midnight (DAY1_END), requestedRange.end is clamped to Jan 11 06:00.
+        // So it should only plan Jan 10 (1 day).
+        expect(results).toHaveLength(1);
     });
 
     it('returns empty array for range with no days', () => {

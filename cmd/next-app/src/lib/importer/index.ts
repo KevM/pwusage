@@ -7,7 +7,7 @@ import { UserRepo } from '../user-repo';
 import { TariffRepo } from '../tariff-repo';
 import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
-import { planImport, splitAtUtcMidnight, auditDays } from './import-planner';
+import { planImport, splitAtSiteMidnight, auditDays } from './import-planner';
 import { getSiteMidnight } from '../date-utils';
 
 function logSync(msg: string) {
@@ -33,9 +33,7 @@ export class Importer {
         return (global as unknown as { importerPendingSyncs?: Set<string> }).importerPendingSyncs ??= new Set<string>();
     }
 
-    private static get maintenanceCache(): Map<string, number> {
-        return (global as unknown as { importerMaintenanceCache?: Map<string, number> }).importerMaintenanceCache ??= new Map<string, number>();
-    }
+
 
     constructor(client: TeslaClient) {
         this.client = client;
@@ -59,11 +57,11 @@ export class Importer {
         return this.fetchRange(site, start, now, 'day');
     }
 
-    async persistHistory(siteId: string, rows: EnergyDataRow[], latestTimestamp: Date | null) {
-        if (rows.length === 0) return;
+    async persistHistory(siteId: string, rows: EnergyDataRow[], latestTimestamp: Date | null): Promise<number> {
+        if (rows.length === 0) return 0;
 
         const site = await this.siteRepo.getSite(siteId);
-        if (!site) return;
+        if (!site) return 0;
 
         // Surgical Filter: only insert rows around or newer than what we have.
         // We allow a 10-minute overlap to catch any points that might have changed or were synthetic.
@@ -75,7 +73,7 @@ export class Importer {
 
         if (filteredRows.length === 0) {
             console.log(`[Importer] No new or updated rows to persist for site ${siteId}`);
-            return;
+            return 0;
         }
 
         console.log(`[Importer] Background persisting ${filteredRows.length} rows for site ${siteId} (Filtered from ${rows.length})`);
@@ -92,66 +90,7 @@ export class Importer {
             battery_soc: row.battery_soc,
         })));
         console.log(`[Importer] Background persistence complete for site ${siteId}`);
-    }
-
-    /**
-     * Lightweight version of ensureDataForRange for active dashboard users.
-     * Only checks the last ~1 hour of data to ensure the 'Today' chart and totals are fresh.
-     * Avoids full-day coverage checks and gap loops for historical data.
-     */
-    async ensureRecentData(siteId: string, onProgress?: (msg: string) => void, latestKnown?: Date): Promise<{ rows: EnergyDataRow[], latestTimestamp: Date | null }> {
-        if (Importer.pendingSyncs.has(siteId)) {
-            if (onProgress) onProgress(`Skip: Sync already in progress.`);
-            return { rows: [], latestTimestamp: null };
-        }
-        Importer.pendingSyncs.add(siteId);
-
-        try {
-            const site = await this.siteRepo.getSite(siteId);
-            if (!site) return { rows: [], latestTimestamp: null };
-
-            const now = new Date();
-
-            let fetchStart: Date;
-            let latest: Date | null = null;
-
-            if (latestKnown) {
-                latest = latestKnown;
-            } else {
-                const latestRow = await this.repo.getLatestTimestamp(siteId);
-                if (latestRow) {
-                    latest = latestRow;
-                }
-            }
-
-            if (!latest) {
-                // No data at all? Start from site midnight (UTC)
-                fetchStart = EnergyRepo.getSiteMidnight(now, site.timezone);
-            } else {
-                const diffMinutes = (now.getTime() - latest.getTime()) / (60 * 1000);
-
-                console.log(`[Importer] Latest data point: ${latest.toISOString()}. Age: ${diffMinutes.toFixed(1)}m`);
-
-                if (diffMinutes <= 15) {
-                    // Already fresh
-                    if (onProgress) onProgress(`Data is fresh (${diffMinutes.toFixed(1)}m old).`);
-                    return { rows: [], latestTimestamp: latest };
-                }
-
-                // SURGICAL: Fetch from the last point we have, with a 10 min overlap to catch updates
-                fetchStart = new Date(latest.getTime() - 10 * 60 * 1000);
-            }
-
-            // 2. Data is stale, fetch just the surgical slice
-            const sliceStr = latest ? "surgical slice" : "initial daily sweep";
-            if (onProgress) onProgress(`Refreshing ${sliceStr} (${fetchStart.toISOString().substring(11, 16)} to now)...`);
-
-            // We fetch from the gap start to NOW.
-            const rows = await this.importRange(siteId, fetchStart, now, 'day');
-            return { rows, latestTimestamp: latest };
-        } finally {
-            Importer.pendingSyncs.delete(siteId);
-        }
+        return filteredRows.length;
     }
 
     async ensureDataForRange(siteId: string, start: Date, end: Date, onProgress?: (msg: string) => void, options?: { force?: boolean }): Promise<EnergyDataRow[]> {
@@ -160,7 +99,29 @@ export class Importer {
             logSync(`Skip: Data for range already being synced for site ${siteId}`);
             return [];
         }
-        if (!force) Importer.pendingSyncs.add(siteId);
+
+        let inMemoryAdded = false;
+        if (!force) {
+            Importer.pendingSyncs.add(siteId);
+            inMemoryAdded = true;
+        }
+
+        const lockId = crypto.randomUUID();
+        const acquired = await this.siteRepo.acquireImportLock({
+            siteId,
+            lockId,
+            lockDurationMs: 300000, // 5 minutes for full range sync
+            force
+        });
+
+        if (!acquired) {
+            logSync(`Skip: DB lock busy for site ${siteId}`);
+            if (inMemoryAdded) {
+                Importer.pendingSyncs.delete(siteId);
+            }
+            return [];
+        }
+
         logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
 
         try {
@@ -188,24 +149,22 @@ export class Importer {
                 const dateStr = window.start.toISOString().split('T')[0];
                 if (onProgress) onProgress(`Importing ${dateStr}...`);
                 logSync(`Importing window: ${window.start.toISOString()} - ${window.end.toISOString()}`);
-                const rows = await this.importRange(siteId, window.start, window.end, 'day');
-                allRows.push(...rows);
+                try {
+                    const rows = await this.importRange(siteId, window.start, window.end, 'day');
+                    allRows.push(...rows);
+                } catch (error) {
+                    console.error(`[Importer] Failed to import window ${window.start.toISOString()} - ${window.end.toISOString()}:`, error);
+                    if (onProgress) onProgress(`Error importing ${dateStr}: ${error instanceof Error ? error.message : String(error)}`);
+                }
             }
 
-            Importer.maintenanceCache.set(siteId, Date.now());
             return allRows;
         } finally {
-            Importer.pendingSyncs.delete(siteId);
+            await this.siteRepo.releaseImportLock(siteId, lockId);
+            if (inMemoryAdded) {
+                Importer.pendingSyncs.delete(siteId);
+            }
         }
-    }
-
-    /**
-     * Helper to check if maintenance is needed
-     */
-    static shouldRunMaintenance(siteId: string): boolean {
-        const last = Importer.maintenanceCache.get(siteId) || 0;
-        const oneHour = 60 * 60 * 1000;
-        return (Date.now() - last) > oneHour;
     }
 
     async importRange(siteId: string, start: Date, end: Date, period: string = 'day', onProgress?: (date: Date) => void): Promise<EnergyDataRow[]> {
@@ -216,7 +175,7 @@ export class Importer {
             throw new Error(`Site ${siteId} not found in database`);
         }
 
-        for (const chunk of splitAtUtcMidnight({ start, end })) {
+        for (const chunk of splitAtSiteMidnight({ start, end }, site.timezone)) {
             if (onProgress) onProgress(chunk.start);
             const rows = await this.loadInterval(site, chunk.start, chunk.end, period);
             allRows.push(...rows);
@@ -232,13 +191,15 @@ export class Importer {
         while (cursor < end) {
             const next = new Date(Math.min(cursor.getTime() + chunkMs, end.getTime()));
 
-            const history = await this.client.getEnergyHistory(site.id, cursor, next, period, site.timezone);
-            let soeHistory: SoeHistoryEntry[] = [];
-            try {
-                soeHistory = await this.client.getSoeHistory(site.id, cursor, next, period, site.timezone);
-            } catch (error) {
-                console.warn(`[Importer] SOE history fetch failed for ${site.id} (${cursor.toISOString()}-${next.toISOString()})`, error);
-            }
+            const [history, soeHistory] = await Promise.all([
+                this.client.getEnergyHistory(site.id, cursor, next, period, site.timezone),
+                this.client.getSoeHistory(site.id, cursor, next, period, site.timezone)
+                    .catch(error => {
+                        console.warn(`[Importer] SOE history fetch failed for ${site.id} (${cursor.toISOString()}-${next.toISOString()})`, error);
+                        return [] as SoeHistoryEntry[];
+                    })
+            ]);
+
             if (history && history.length > 0) {
                 const rows = await this.processHistory(
                     site,
@@ -338,9 +299,20 @@ export class Importer {
         }
 
         console.log(`[Import] loadInterval ${start.toISOString()} - ${actualEnd.toISOString()} (${period})`);
-        let history;
+        let history: EnergyHistoryEntry[] = [];
+        let soeHistory: SoeHistoryEntry[] = [];
+
         try {
-            history = await this.client.getEnergyHistory(site.id, start, actualEnd, period, site.timezone);
+            const [historyRes, soeRes] = await Promise.all([
+                this.client.getEnergyHistory(site.id, start, actualEnd, period, site.timezone),
+                this.client.getSoeHistory(site.id, start, actualEnd, period, site.timezone)
+                    .catch(error => {
+                        console.warn(`[Importer] SOE history fetch failed for ${site.id} (${start.toISOString()}-${actualEnd.toISOString()})`, error);
+                        return [] as SoeHistoryEntry[];
+                    })
+            ]);
+            history = historyRes;
+            soeHistory = soeRes;
         } catch (err: unknown) {
             const errorMsg = err instanceof Error ? err.message : String(err);
             if (errorMsg.includes('401') || errorMsg.includes('login_required')) {
@@ -352,15 +324,9 @@ export class Importer {
             }
             throw err;
         }
-        let soeHistory: SoeHistoryEntry[] = [];
-        try {
-            soeHistory = await this.client.getSoeHistory(site.id, start, actualEnd, period, site.timezone);
-        } catch (error) {
-            console.warn(`[Importer] SOE history fetch failed for ${site.id} (${start.toISOString()}-${actualEnd.toISOString()})`, error);
-        }
 
         // Update last_checked_at if we successfully called the API
-        if (history && site.user_id) {
+        if (history && history.length > 0 && site.user_id) {
             await this.userRepo.updateLastChecked(site.user_id);
         }
 

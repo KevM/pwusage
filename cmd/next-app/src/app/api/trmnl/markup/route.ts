@@ -353,34 +353,48 @@ export async function GET(request: Request) {
             backgroundStatus = 'started';
             fetchStatus = hasCachedLiveStatus ? 'cached+refreshing' : 'refreshing';
 
+            if (shouldRefreshToday) {
+                refreshState.todayInFlight = true;
+                refreshState.lastTodayRefreshAt = Date.now();
+            }
+            if (shouldRefreshLive) {
+                refreshState.liveInFlight = true;
+                refreshState.lastLiveRefreshAt = Date.now();
+            }
+
             const backgroundRefresh = async () => {
                 try {
                     const tasks: Promise<void>[] = [];
 
                     if (shouldRefreshToday) {
-                        refreshState.todayInFlight = true;
-                        refreshState.lastTodayRefreshAt = Date.now();
                         tasks.push((async () => {
+                            const lockId = crypto.randomUUID();
+                            const acquired = await siteRepo.acquireImportLock({
+                                siteId,
+                                lockId,
+                                lockDurationMs: 60000,
+                                minIntervalMs: TESLA_REFRESH_MIN_INTERVAL_MS
+                            });
+                            if (!acquired) {
+                                refreshState.todayInFlight = false;
+                                return;
+                            }
                             try {
                                 const startMs = Date.now();
                                 const rows = await withTimeout(importer.getTodayData(siteId), TESLA_TODAY_TIMEOUT_MS, 'tesla_today');
                                 console.log(`[TrmnlMarkup] Tesla Today Usage Fetch (background): ${Date.now() - startMs}ms`);
-                                if (rows.length === 0) return;
-                                const missingRows = rows.filter(row => !latestTimestamp || row.timestamp.getTime() > latestTimestamp.getTime());
-                                if (missingRows.length > 0) {
-                                    await importer.persistHistory(siteId, missingRows, latestTimestamp);
-                                }
+                                // Drop strict pre-filter, let persistHistory do the job.
+                                await importer.persistHistory(siteId, rows, latestTimestamp);
                             } catch (error) {
                                 console.warn(`[TrmnlMarkup] Tesla today fetch failed (background):`, error);
                             } finally {
+                                await siteRepo.releaseImportLock(siteId, lockId);
                                 refreshState.todayInFlight = false;
                             }
                         })());
                     }
 
                     if (shouldRefreshLive) {
-                        refreshState.liveInFlight = true;
-                        refreshState.lastLiveRefreshAt = Date.now();
                         tasks.push((async () => {
                             try {
                                 const startMs = Date.now();

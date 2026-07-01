@@ -99,9 +99,13 @@ export async function GET(
             const force = searchParams.get('force') === 'true';
             importer = new Importer(teslaClient);
             console.error(`[Analysis] Calling ensureDataForRange for ${siteId}, force=${force}`);
-            await importer.ensureDataForRange(siteId, start, queryEnd, (msg) => {
-                console.error(`[Analysis Progress] ${msg}`);
-            }, { force });
+            try {
+                await importer.ensureDataForRange(siteId, start, queryEnd, (msg) => {
+                    console.error(`[Analysis Progress] ${msg}`);
+                }, { force });
+            } catch (err) {
+                console.error(`[Analysis] Auto-sync failed (gracefully continuing with DB data):`, err);
+            }
         } else {
             // Fallback for audit if no tokens (though TeslaClient might throw later)
             importer = new Importer(null as unknown as TeslaClient);
