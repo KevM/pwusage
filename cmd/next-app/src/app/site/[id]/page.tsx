@@ -226,16 +226,17 @@ export default async function SitePage({ params, searchParams }: {
     // Since we know 'start' year/month/billingDay match the intended Site Time.
     // We can just construct the string manually.
 
-    const getDisplayLabel = (d: Date, includeYear: boolean) => {
+    const startComponents = getSiteLocalComponents(start, finalSite.timezone);
+    const endComponents = getSiteLocalComponents(end, finalSite.timezone);
+
+    const getDisplayLabel = (comps: { year: number; month: number; day: number }, includeYear: boolean) => {
         const mNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        const { year, month, day } = getSiteLocalComponents(d, finalSite.timezone);
-        if (includeYear) return `${mNames[month - 1]} ${day}, ${year}`;
-        return `${mNames[month - 1]} ${day}`;
+        if (includeYear) return `${mNames[comps.month - 1]} ${comps.day}, ${comps.year}`;
+        return `${mNames[comps.month - 1]} ${comps.day}`;
     };
 
-    const dateRangeLabel = `${getDisplayLabel(start, false)} - ${getDisplayLabel(end, true)}`;
+    const dateRangeLabel = `${getDisplayLabel(startComponents, false)} - ${getDisplayLabel(endComponents, true)}`;
 
-    const startComponents = getSiteLocalComponents(start, finalSite.timezone);
     const currentMonthVal = `${startComponents.year}-${String(startComponents.month).padStart(2, '0')}`;
     const fullBillDateStr = `${startComponents.year}-${String(startComponents.month).padStart(2, '0')}-${String(billingDay).padStart(2, '0')}`;
 

@@ -4,16 +4,41 @@ import { Temporal } from '@js-temporal/polyfill';
  * Timezone-aware date utilities built on the Temporal polyfill.
  */
 
+// Cache of validated, valid timezone strings.
+const VALID_TIMEZONE_CACHE = new Set<string>(['UTC']);
+
 /**
  * Helper to check if a timezone is valid, falling back to 'UTC' if not.
+ * Logs an error to console on invalid timezone configuration.
+ * Memoized to avoid per-call validation overhead.
  */
 function getValidTimezone(tz: string): string {
-    try {
-        Temporal.Now.instant().toZonedDateTimeISO(tz);
-        return tz;
-    } catch {
+    if (!tz) {
         return 'UTC';
     }
+    if (VALID_TIMEZONE_CACHE.has(tz)) {
+        return tz;
+    }
+    try {
+        Temporal.Now.instant().toZonedDateTimeISO(tz);
+        VALID_TIMEZONE_CACHE.add(tz);
+        return tz;
+    } catch (e) {
+        console.error(`[date-utils] Invalid timezone configuration: "${tz}". Falling back to UTC.`, e);
+        return 'UTC';
+    }
+}
+
+/**
+ * Helper to convert a Temporal PlainDate to a JS Date object at site-local midnight.
+ */
+function toMidnightZoned(plainDate: Temporal.PlainDate, tz: string): Date {
+    const useTz = getValidTimezone(tz);
+    const midnight = plainDate.toZonedDateTime({
+        timeZone: useTz,
+        plainTime: '00:00:00'
+    });
+    return new Date(midnight.toInstant().epochMilliseconds);
 }
 
 /**
@@ -44,16 +69,11 @@ export function getSiteTodayMidnight(tz: string): Date {
 
 /**
  * Parses a "YYYY-MM-DD" string as midnight in the site's local timezone and returns a UTC Date object.
- * Throws if the date string is malformed or invalid (e.g. "2026-02-30").
+ * Note: Throws on malformed/invalid date inputs, but invalid timezones are silently logged and fall back to UTC.
  */
 export function parseSiteLocalDateToMidnight(dateStr: string, tz: string): Date {
-    const useTz = getValidTimezone(tz);
     const plainDate = Temporal.PlainDate.from(dateStr);
-    const midnight = plainDate.toZonedDateTime({
-        timeZone: useTz,
-        plainTime: '00:00:00'
-    });
-    return new Date(midnight.toInstant().epochMilliseconds);
+    return toMidnightZoned(plainDate, tz);
 }
 
 /**
@@ -81,17 +101,8 @@ export function getSiteLocalDate(
     day: number,
     timeZone: string
 ): Date {
-    const useTz = getValidTimezone(timeZone);
-    const date = Temporal.PlainDate.from({
-        year,
-        month,
-        day
-    });
-    const midnight = date.toZonedDateTime({
-        timeZone: useTz,
-        plainTime: '00:00:00'
-    });
-    return new Date(midnight.toInstant().epochMilliseconds);
+    const plainDate = Temporal.PlainDate.from({ year, month, day });
+    return toMidnightZoned(plainDate, timeZone);
 }
 
 /**
@@ -106,7 +117,7 @@ export function addMonthsInSiteTimezone(
     const instant = Temporal.Instant.from(date.toISOString());
     const zoned = instant.toZonedDateTimeISO(useTz);
     const newZoned = zoned.add({ months });
-    return new Date(newZoned.toInstant().toString());
+    return new Date(newZoned.toInstant().epochMilliseconds);
 }
 
 /**
