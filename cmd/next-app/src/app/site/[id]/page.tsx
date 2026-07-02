@@ -1,23 +1,14 @@
-import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
+import { SiteService } from '@/lib/site-service';
+import { cookies } from 'next/headers';
 import Link from 'next/link';
 
-
 import { BillSummary } from '@/components/BillSummary';
-
 import { DataSyncer } from '@/components/DataSyncer';
-
-import { TeslaClient } from '@/lib/tesla-client';
-import { Schedule } from '@/lib/schedule';
-import { Importer } from '@/lib/importer';
 import { redirect } from 'next/navigation';
 import { SiteSetup } from '@/components/SiteSetup';
 import { BillDateNav } from '@/components/BillDateNav';
 
-
-import { verifySiteAccess } from '@/lib/auth-checks';
-import { TrmnlService } from '@/lib/trmnl-service';
 import { SiteTabs } from '@/components/site/SiteTabs';
 import { HistoryView } from '@/components/site/HistoryView';
 import { EstimatedBillView } from '@/components/site/EstimatedBillView';
@@ -28,14 +19,6 @@ import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionCard } from '@/components/ui/SectionCard';
-import { getCurrentCycleStart } from '@/lib/billing-cycle';
-import {
-    getSiteTodayMidnight,
-    safeParseSiteLocalDateToMidnight,
-    addMonthsInSiteTimezone,
-    getSiteLocalComponents,
-    formatSiteDate
-} from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,13 +28,18 @@ export default async function SitePage({ params, searchParams }: {
 }) {
     const { id } = await params;
     const { date: queryDate } = await searchParams;
-    const siteRepo = new SiteRepo();
-    const repo = new EnergyRepo();
-    const tokenRepo = new TeslaTokenRepo(siteRepo);
-    let site = await siteRepo.getSite(id, { includeTokens: true });
 
-    const hasAccess = await verifySiteAccess(id);
-    if (!hasAccess) {
+    const cookieStore = await cookies();
+    const siteAuthToken = cookieStore.get('site_auth')?.value;
+    const siteRepo = new SiteRepo();
+    const siteService = new SiteService({
+        siteRepo,
+        siteAuthToken
+    });
+
+    const result = await siteService.loadSitePageData(id, queryDate);
+
+    if (result.status === 'unauthorized') {
         return (
             <PageShell maxWidth="xl" className="flex items-center justify-center">
                 <SectionCard
@@ -75,61 +63,12 @@ export default async function SitePage({ params, searchParams }: {
         );
     }
 
-    // 1. Get tokens from DB
-    const accessToken = site?.access_token;
-    const refreshToken = site?.refresh_token;
-
-    const handlers = tokenRepo.getLockedRefreshHandler(id);
-    const teslaClient = new TeslaClient({
-        accessToken: accessToken!,
-        refreshToken: refreshToken!, // Type assertion as we expect valid sites to have tokens
-        tokenRefreshHandler: handlers.refreshHandler,
-        onTokenError: handlers.errorHandler,
-        onTokenUpdate: async () => {
-            console.log('Token update callback triggered (Site Page).');
-        }
-    });
-
-    const importer = new Importer(teslaClient);
-    try {
-        // Only run ensureSite if we don't have the site, or if we suspect it's stale/broken
-        // Since AuthCallback runs ensureSite, we generally expect it to exist.
-        if (!site) {
-            console.log(`[SitePage] Site ${id} missing in DB, running ensureSite...`);
-            const ensureResult = await importer.ensureSite(id);
-            if (ensureResult) {
-                site = ensureResult;
-            }
-        }
-    } catch (error) {
-        console.error('Failed to ensure site:', error);
-        if ((error as Error).message && ((error as Error).message.includes('401') || (error as Error).message.includes('invalid authentication') || (error as Error).message.includes('Tesla API Error: 401'))) {
-            // ... (redirect logic)
-            console.log('Redirecting to login due to auth failure...');
-            redirect('/login');
-        }
-
-        // If we still don't have data, we can't proceed
-        if (!await repo.hasData(id)) {
-            // But wait, if ensureSite failed, maybe we *can* show SiteSetup if we have the site record?
-            // If ensureSite failed, likely API error.
-            throw error;
-        }
+    if (result.status === 'auth-failure') {
+        console.log('Redirecting to login due to auth failure...');
+        redirect('/login');
     }
 
-    // Check if new site (no data)
-    const hasData = await repo.hasData(id);
-
-    // If we have no data, it's possible the DB was wiped but the cache is stale.
-    // We must ensure the site exists in the DB before proceeding.
-    if (!hasData && site) {
-        // Force ensure site to handle "ghost" site scenario (cached but deleted from DB)
-        await importer.ensureSite(id);
-    }
-
-    const finalSite = await siteRepo.getSite(id);
-
-    if (!finalSite) {
+    if (result.status === 'not-found') {
         return (
             <PageShell maxWidth="xl" className="flex items-center justify-center">
                 <SectionCard
@@ -147,111 +86,34 @@ export default async function SitePage({ params, searchParams }: {
         );
     }
 
-    // If new site, BLOCK everything else and show setup wizard
-    if (!hasData) {
+    if (result.status === 'needs-setup') {
         return <SiteSetup siteId={id} />;
     }
 
-    const siteJson = finalSite.json as import('@/lib/tesla-client').EnergySiteInfo | null;
-    const currencyCode = siteJson?.tariff_content_v2?.currency || 'USD';
-    let currencySymbol = '$';
-    if (currencyCode === 'GBP') {
-        currencySymbol = '£';
-    } else if (currencyCode === 'EUR') {
-        currencySymbol = '€';
-    }
-
-    // Live stats fetch removed as it was unused
-
-
-    // Get hourly data for the requested date (from query param) or today (in site timezone)
-    // We must use the Site's Time to determine "Today", otherwise
-    // Server UTC might be "Tomorrow" while Site is still "Today".
-    const siteNow = getSiteTodayMidnight(finalSite.timezone);
-
-    let refDate = siteNow;
-    let dateStr = formatSiteDate(siteNow, finalSite.timezone);
-
-    if (queryDate) {
-        const parsed = safeParseSiteLocalDateToMidnight(queryDate, finalSite.timezone);
-        if (parsed) {
-            refDate = parsed;
-            dateStr = queryDate;
-        }
-    }
-
-    // Calculate period based on billing start day
-    const billingDay = finalSite.billing_start_day || 1;
-
-    const start = getCurrentCycleStart(billingDay, refDate, finalSite.timezone);
-    // End date is start date + 1 month
-    const end = addMonthsInSiteTimezone(start, 1, finalSite.timezone);
-
-    const usage = await repo.getUsageByTOU(id, start, end);
-
-    // Determine active tariff ID and TOU Name
-    let activeTariffId: number | undefined;
-    let activeTouName: string | undefined;
-    if (finalSite.tariffs.length > 0) {
-        const schedule = new Schedule(finalSite.tariffs, finalSite.timezone);
-        const tariffPeriod = schedule.getTariffPeriod(new Date());
-        if (tariffPeriod) {
-            activeTariffId = tariffPeriod.tariff.id;
-            activeTouName = tariffPeriod.schedule.name || undefined;
-        }
-    }
-
-    // Navigation dates
-    const prevDate = addMonthsInSiteTimezone(start, -1, finalSite.timezone);
-    const nextDate = end;
-
-    // Format for display (Server Side to avoid browser timezone shift)
-
-
-    // We want the Start Date and End Date displayed in the header.
-    // NOTE: 'start' and 'end' are constructed as local midnight at server logic, 
-    // but they effectively represent the billing day.
-    // We can just format them.
-    // However, Intl.DateTimeFormat with timeZone might shift if 'start' (created via new Date(y,m,d))
-    // doesn't align with the timezone.
-    // Actually, we constructed 'start' using getSiteNow logic components?
-    // No, 'start' was constructed via `new Date(startYear, startMonth, billingDay)`.
-    // This is "Server Local Midnight".
-    // If Server is UTC, and Site is CST.
-    // Nov 10 00:00 UTC -> Nov 9 18:00 CST.
-    // If we format with 'timeZone: finalSite.timezone' (CST), it will print "Nov 9".
-    // THIS IS THE PROBLEM.
-
-    // We want to display the "intended" date.
-    // Since we know 'start' year/month/billingDay match the intended Site Time.
-    // We can just construct the string manually.
-
-    const startComponents = getSiteLocalComponents(start, finalSite.timezone);
-    const endComponents = getSiteLocalComponents(end, finalSite.timezone);
-
-    const getDisplayLabel = (comps: { year: number; month: number; day: number }, includeYear: boolean) => {
-        const mNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        if (includeYear) return `${mNames[comps.month - 1]} ${comps.day}, ${comps.year}`;
-        return `${mNames[comps.month - 1]} ${comps.day}`;
-    };
-
-    const dateRangeLabel = `${getDisplayLabel(startComponents, false)} - ${getDisplayLabel(endComponents, true)}`;
-
-    const currentMonthVal = `${startComponents.year}-${String(startComponents.month).padStart(2, '0')}`;
-    const fullBillDateStr = `${startComponents.year}-${String(startComponents.month).padStart(2, '0')}-${String(billingDay).padStart(2, '0')}`;
-
-    // Check if next month would be in the future
-    const isCurrentPeriod = siteNow >= start && siteNow < end;
-
-    // Additional Fetch for Settings View (Trmnl)
-    // We explicitly do NOT include tokens here as they are passed to a client component
-    const trmnlService = new TrmnlService();
-    const installation = await trmnlService.getInstallationBySiteId(finalSite.id, { includeTokens: false });
+    const {
+        site,
+        installation,
+        billingDay,
+        prevDateStr,
+        nextDateStr,
+        isCurrentPeriod,
+        dateRangeLabel,
+        currentMonthVal,
+        fullBillDateStr,
+        usage,
+        activeTariffId,
+        activeTouName,
+        currencySymbol,
+        dateStr,
+        start,
+        end,
+        refDate
+    } = result;
 
     return (
         <PageShell maxWidth="7xl" padding="compact">
             <PageHeader
-                title={finalSite.name}
+                title={site.name}
                 description="Monitor history, billing, and settings for this site."
                 className="mb-4"
             />
@@ -264,10 +126,10 @@ export default async function SitePage({ params, searchParams }: {
                         analysisSlot={
                             <LoadAnalysisClientPage
                                 siteId={id}
-                                siteName={finalSite.name}
+                                siteName={site.name}
                                 defaultDate={dateStr}
-                                siteTimezone={finalSite.timezone}
-                                displayMode={finalSite.timezone_display_mode || 'SITE'}
+                                siteTimezone={site.timezone}
+                                displayMode={site.timezone_display_mode || 'SITE'}
                             />
                         }
                     />
@@ -278,8 +140,8 @@ export default async function SitePage({ params, searchParams }: {
                             <BillDateNav
                                 siteId={id}
                                 billingDay={billingDay}
-                                prevDateStr={formatSiteDate(prevDate, finalSite.timezone)}
-                                nextDateStr={formatSiteDate(nextDate, finalSite.timezone)}
+                                prevDateStr={prevDateStr}
+                                nextDateStr={nextDateStr}
                                 isCurrentPeriod={isCurrentPeriod}
                                 dateRangeLabel={dateRangeLabel}
                                 currentMonthVal={currentMonthVal}
@@ -292,7 +154,7 @@ export default async function SitePage({ params, searchParams }: {
                     />
                 }
                 settingsSlot={
-                    <SettingsView site={finalSite} installation={installation} />
+                    <SettingsView site={site} installation={installation} />
                 }
             >
                 {/* Fallback or shared content could go here if needed */}

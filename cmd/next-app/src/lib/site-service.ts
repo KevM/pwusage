@@ -1,16 +1,71 @@
-import { Site } from './db';
-import { TeslaClient } from './tesla-client';
+import { Site, SiteWithTariffs, TrmnlInstallation } from './db';
+import { TeslaClient, TeslaClientConfig } from './tesla-client';
 import { SiteRepo } from './site-repo';
 import { verifySiteToken } from './auth-jwt';
 import { isUserActive as defaultIsUserActive } from './user-repo';
+import { EnergyRepo, UsageData } from './energy-repo';
+import { TeslaTokenRepo } from './tesla-token-repo';
+import { TrmnlService } from './trmnl-service';
+import { Importer } from './importer';
+import { Schedule } from './schedule';
+import { getCurrentCycleStart } from './billing-cycle';
+import {
+    getSiteTodayMidnight,
+    safeParseSiteLocalDateToMidnight,
+    addMonthsInSiteTimezone,
+    getSiteLocalComponents,
+    formatSiteDate
+} from './date-utils';
+
+function isTeslaAuthError(error: unknown): boolean {
+    if (error instanceof Error) {
+        return (
+            error.message.includes('401') ||
+            error.message.includes('invalid authentication') ||
+            error.message.includes('Tesla API Error: 401')
+        );
+    }
+    return false;
+}
 
 export interface SiteServiceDeps {
     teslaClient?: Pick<TeslaClient, 'getProducts'>;
-    siteRepo: Pick<SiteRepo, 'getSites'>;
+    siteRepo: SiteRepo;
     siteAuthToken?: string;
     // Revocation check. Defaults to the real (React-cached) isUserActive; injectable for tests.
     isUserActive?: (userId: string) => Promise<boolean>;
+    energyRepo?: Pick<EnergyRepo, 'hasData' | 'getUsageByTOU'>;
+    teslaTokenRepo?: Pick<TeslaTokenRepo, 'getLockedRefreshHandler'>;
+    trmnlService?: Pick<TrmnlService, 'getInstallationBySiteId'>;
+    teslaClientCreator?: (config: TeslaClientConfig) => TeslaClient;
+    importerCreator?: (client: TeslaClient) => Pick<Importer, 'ensureSite'>;
 }
+
+export type SitePageDataResult =
+    | { status: 'unauthorized' }
+    | { status: 'auth-failure' }
+    | { status: 'not-found' }
+    | { status: 'needs-setup'; siteId: string }
+    | {
+        status: 'ready';
+        site: SiteWithTariffs;
+        installation: TrmnlInstallation | undefined;
+        billingDay: number;
+        prevDateStr: string;
+        nextDateStr: string;
+        isCurrentPeriod: boolean;
+        dateRangeLabel: string;
+        currentMonthVal: string;
+        fullBillDateStr: string;
+        usage: UsageData[];
+        activeTariffId: number | undefined;
+        activeTouName: string | undefined;
+        currencySymbol: string;
+        dateStr: string;
+        start: Date;
+        end: Date;
+        refDate: Date;
+      };
 
 interface AuthorizedSitesOptions {
     includeJson?: boolean;
@@ -60,6 +115,166 @@ export class SiteService {
 
         // Filter sites to only those the user is authorized for
         return allSites.filter(s => authorizedSiteIds.has(s.id));
+    }
+
+    async loadSitePageData(siteId: string, queryDate?: string): Promise<SitePageDataResult> {
+        const hasAccess = await this.validateSiteAccess(siteId);
+        if (!hasAccess) {
+            return { status: 'unauthorized' };
+        }
+
+        const siteRepo = this.deps.siteRepo;
+        const energyRepo = this.deps.energyRepo || new EnergyRepo();
+        const teslaTokenRepo = this.deps.teslaTokenRepo || new TeslaTokenRepo(siteRepo);
+        const trmnlService = this.deps.trmnlService || new TrmnlService();
+
+        let site = await siteRepo.getSite(siteId, { includeTokens: true });
+
+        const accessToken = site?.access_token;
+        const refreshToken = site?.refresh_token;
+
+        const handlers = teslaTokenRepo.getLockedRefreshHandler(siteId);
+        const config: TeslaClientConfig = {
+            accessToken: accessToken!,
+            refreshToken: refreshToken!,
+            tokenRefreshHandler: handlers.refreshHandler,
+            onTokenError: handlers.errorHandler,
+            onTokenUpdate: async () => {
+                console.log('Token update callback triggered (Site Page Service).');
+            }
+        };
+
+        const teslaClient = this.deps.teslaClientCreator
+            ? this.deps.teslaClientCreator(config)
+            : new TeslaClient(config);
+
+        const importer = this.deps.importerCreator
+            ? this.deps.importerCreator(teslaClient)
+            : new Importer(teslaClient);
+
+        try {
+            if (!site) {
+                console.log(`[SitePageData] Site ${siteId} missing in DB, running ensureSite...`);
+                const ensureResult = await importer.ensureSite(siteId);
+                if (ensureResult) {
+                    site = ensureResult;
+                }
+            }
+        } catch (error) {
+            console.error('Failed to ensure site:', error);
+            if (isTeslaAuthError(error)) {
+                console.log('Returning auth-failure due to auth failure...');
+                return { status: 'auth-failure' };
+            }
+
+            const hasData = await energyRepo.hasData(siteId);
+            if (!hasData) {
+                throw error;
+            }
+        }
+
+        const hasData = await energyRepo.hasData(siteId);
+
+        if (!hasData && site) {
+            try {
+                await importer.ensureSite(siteId);
+            } catch (error) {
+                console.error('Failed to ensure site on ghost-site recovery:', error);
+                if (isTeslaAuthError(error)) {
+                    return { status: 'auth-failure' };
+                }
+                throw error;
+            }
+        }
+
+        const finalSite = await siteRepo.getSite(siteId);
+
+        if (!finalSite) {
+            return { status: 'not-found' };
+        }
+
+        if (!hasData) {
+            return { status: 'needs-setup', siteId };
+        }
+
+        const siteJson = finalSite.json as import('@/lib/tesla-client').EnergySiteInfo | null;
+        const currencyCode = siteJson?.tariff_content_v2?.currency || 'USD';
+        let currencySymbol = '$';
+        if (currencyCode === 'GBP') {
+            currencySymbol = '£';
+        } else if (currencyCode === 'EUR') {
+            currencySymbol = '€';
+        }
+
+        const siteNow = getSiteTodayMidnight(finalSite.timezone);
+        let refDate = siteNow;
+        let dateStr = formatSiteDate(siteNow, finalSite.timezone);
+
+        if (queryDate) {
+            const parsed = safeParseSiteLocalDateToMidnight(queryDate, finalSite.timezone);
+            if (parsed) {
+                refDate = parsed;
+                dateStr = queryDate;
+            }
+        }
+
+        const billingDay = finalSite.billing_start_day || 1;
+        const start = getCurrentCycleStart(billingDay, refDate, finalSite.timezone);
+        const end = addMonthsInSiteTimezone(start, 1, finalSite.timezone);
+
+        const usage = await energyRepo.getUsageByTOU(siteId, start, end);
+
+        let activeTariffId: number | undefined;
+        let activeTouName: string | undefined;
+        if (finalSite.tariffs && finalSite.tariffs.length > 0) {
+            const schedule = new Schedule(finalSite.tariffs, finalSite.timezone);
+            const tariffPeriod = schedule.getTariffPeriod(new Date());
+            if (tariffPeriod) {
+                activeTariffId = tariffPeriod.tariff.id;
+                activeTouName = tariffPeriod.schedule.name || undefined;
+            }
+        }
+
+        const prevDate = addMonthsInSiteTimezone(start, -1, finalSite.timezone);
+        const nextDate = end;
+
+        const startComponents = getSiteLocalComponents(start, finalSite.timezone);
+        const endComponents = getSiteLocalComponents(end, finalSite.timezone);
+
+        const getDisplayLabel = (comps: { year: number; month: number; day: number }, includeYear: boolean) => {
+            const mNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            if (includeYear) return `${mNames[comps.month - 1]} ${comps.day}, ${comps.year}`;
+            return `${mNames[comps.month - 1]} ${comps.day}`;
+        };
+
+        const dateRangeLabel = `${getDisplayLabel(startComponents, false)} - ${getDisplayLabel(endComponents, true)}`;
+        const currentMonthVal = `${startComponents.year}-${String(startComponents.month).padStart(2, '0')}`;
+        const fullBillDateStr = `${startComponents.year}-${String(startComponents.month).padStart(2, '0')}-${String(billingDay).padStart(2, '0')}`;
+
+        const isCurrentPeriod = siteNow >= start && siteNow < end;
+
+        const installation = await trmnlService.getInstallationBySiteId(finalSite.id, { includeTokens: false });
+
+        return {
+            status: 'ready',
+            site: finalSite,
+            installation,
+            billingDay,
+            prevDateStr: formatSiteDate(prevDate, finalSite.timezone),
+            nextDateStr: formatSiteDate(nextDate, finalSite.timezone),
+            isCurrentPeriod,
+            dateRangeLabel,
+            currentMonthVal,
+            fullBillDateStr,
+            usage,
+            activeTariffId,
+            activeTouName,
+            currencySymbol,
+            dateStr,
+            start,
+            end,
+            refDate
+        };
     }
 
     async validateSiteAccess(siteId: string): Promise<boolean> {

@@ -1,9 +1,12 @@
 
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { SiteService } from './site-service';
 import { Site } from './db';
 import { FleetProduct, TeslaClient } from './tesla-client';
 import { SiteRepo } from './site-repo';
+import { EnergyRepo } from './energy-repo';
+import { TeslaTokenRepo } from './tesla-token-repo';
+import { TrmnlService } from './trmnl-service';
 import * as authJwt from './auth-jwt';
 
 // Mock auth-jwt to verify it's being called
@@ -190,6 +193,174 @@ describe('SiteService Security', () => {
 
             expect(await service.getAuthorizedSites()).toEqual([]);
             expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('loadSitePageData', () => {
+        const mockSiteData = {
+            id: '12345',
+            name: 'Test Site',
+            timezone: 'America/New_York',
+            billing_start_day: 15,
+            tariffs: []
+        };
+
+        const mockEnergyRepo = {
+            hasData: vi.fn(),
+            getUsageByTOU: vi.fn()
+        };
+
+        const mockTeslaTokenRepo = {
+            getLockedRefreshHandler: vi.fn().mockReturnValue({
+                refreshHandler: vi.fn(),
+                errorHandler: vi.fn()
+            })
+        };
+
+        const mockTrmnlService = {
+            getInstallationBySiteId: vi.fn().mockResolvedValue({ id: 'inst-123' })
+        };
+
+        const mockImporter = {
+            ensureSite: vi.fn()
+        };
+
+        beforeEach(() => {
+            vi.resetAllMocks();
+            // Default to authorized
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1' });
+            mockTeslaTokenRepo.getLockedRefreshHandler.mockReturnValue({
+                refreshHandler: vi.fn(),
+                errorHandler: vi.fn()
+            });
+            mockTrmnlService.getInstallationBySiteId.mockResolvedValue({ id: 'inst-123' });
+        });
+
+        it('returns unauthorized when validateSiteAccess fails', async () => {
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue(null); // Unauthorized
+
+            const service = new SiteService({
+                siteRepo: { getSites: vi.fn(), getSite: vi.fn() } as unknown as SiteRepo,
+                siteAuthToken: 'invalid',
+                isUserActive: vi.fn().mockResolvedValue(true)
+            });
+
+            const result = await service.loadSitePageData('12345');
+            expect(result.status).toBe('unauthorized');
+        });
+
+        it('returns not-found when site does not exist in DB and ensureSite cannot create it', async () => {
+            const mockSiteRepo = {
+                getSites: vi.fn(),
+                getSite: vi.fn().mockResolvedValue(null) // site not found
+            };
+
+            mockImporter.ensureSite.mockResolvedValue(null);
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                isUserActive: vi.fn().mockResolvedValue(true),
+                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+                teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+                trmnlService: mockTrmnlService as unknown as TrmnlService,
+                teslaClientCreator: vi.fn().mockReturnValue({}),
+                importerCreator: vi.fn().mockReturnValue(mockImporter)
+            });
+
+            const result = await service.loadSitePageData('12345');
+            expect(result.status).toBe('not-found');
+            expect(mockImporter.ensureSite).toHaveBeenCalledWith('12345');
+        });
+
+        it('returns needs-setup when site exists but energy repo has no data', async () => {
+            const mockSiteRepo = {
+                getSites: vi.fn(),
+                getSite: vi.fn().mockResolvedValue(mockSiteData)
+            };
+
+            mockEnergyRepo.hasData.mockResolvedValue(false);
+            mockImporter.ensureSite.mockResolvedValue(mockSiteData);
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                isUserActive: vi.fn().mockResolvedValue(true),
+                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+                teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+                trmnlService: mockTrmnlService as unknown as TrmnlService,
+                teslaClientCreator: vi.fn().mockReturnValue({}),
+                importerCreator: vi.fn().mockReturnValue(mockImporter)
+            });
+
+            const result = await service.loadSitePageData('12345');
+            expect(result.status).toBe('needs-setup');
+            expect(result).toEqual({ status: 'needs-setup', siteId: '12345' });
+        });
+
+        it('returns auth-failure when ensureSite throws a 401 error and DB has no data', async () => {
+            const mockSiteRepo = {
+                getSites: vi.fn(),
+                getSite: vi.fn().mockResolvedValue(null) // missing in DB initially
+            };
+
+            mockEnergyRepo.hasData.mockResolvedValue(false);
+            mockImporter.ensureSite.mockRejectedValue(new Error('Tesla API Error: 401 Unauthorized'));
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                isUserActive: vi.fn().mockResolvedValue(true),
+                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+                teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+                trmnlService: mockTrmnlService as unknown as TrmnlService,
+                teslaClientCreator: vi.fn().mockReturnValue({}),
+                importerCreator: vi.fn().mockReturnValue(mockImporter)
+            });
+
+            const result = await service.loadSitePageData('12345');
+            expect(result.status).toBe('auth-failure');
+        });
+
+        it('returns ready status with full calculated data when site has data', async () => {
+            const mockSiteRepo = {
+                getSites: vi.fn(),
+                getSite: vi.fn().mockResolvedValue({
+                    ...mockSiteData,
+                    json: {
+                        tariff_content_v2: {
+                            currency: 'GBP'
+                        }
+                    }
+                })
+            };
+
+            mockEnergyRepo.hasData.mockResolvedValue(true);
+            mockEnergyRepo.getUsageByTOU.mockResolvedValue([{ some: 'usage' }]);
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                isUserActive: vi.fn().mockResolvedValue(true),
+                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+                teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+                trmnlService: mockTrmnlService as unknown as TrmnlService,
+                teslaClientCreator: vi.fn().mockReturnValue({}),
+                importerCreator: vi.fn().mockReturnValue(mockImporter)
+            });
+
+            const result = await service.loadSitePageData('12345', '2026-07-02');
+            expect(result.status).toBe('ready');
+            if (result.status === 'ready') {
+                expect(result.currencySymbol).toBe('£');
+                expect(result.billingDay).toBe(15);
+                expect(result.isCurrentPeriod).toBeDefined();
+                expect(result.prevDateStr).toBeDefined();
+                expect(result.nextDateStr).toBeDefined();
+                expect(result.dateRangeLabel).toBeDefined();
+                expect(result.usage).toEqual([{ some: 'usage' }]);
+                expect(result.installation).toEqual({ id: 'inst-123' });
+            }
         });
     });
 });

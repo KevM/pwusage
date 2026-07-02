@@ -7,6 +7,7 @@ export default defineConfig({
     test: {
         environment: 'node',
         setupFiles: ['./vitest.setup.ts'],
+        exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/.vercel/**'],
         alias: {
             '@': path.resolve(__dirname, './src')
         }
