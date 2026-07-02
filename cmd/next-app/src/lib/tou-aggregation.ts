@@ -27,7 +27,7 @@ function getTouLabel(name: string): string {
         .replace(/_/g, ' ')
         .toLowerCase()
         .replace(/\b\w/g, c => c.toUpperCase())
-        .replace(' ', '-');
+        .replace(/ /g, '-');
 }
 
 
@@ -90,7 +90,8 @@ export function aggregateUsage(
         } else {
             // Fallback: tariff_schedule_id is null.
             // Recalculate using the midpoint of the aggregated day.
-            const tp = schedule.getTariffPeriod(row.day);
+            const midpoint = new Date(row.day.getTime() + 12 * 60 * 60 * 1000);
+            const tp = schedule.getTariffPeriod(midpoint);
             if (tp) {
                 touName = tp.schedule.name || 'Standard';
                 buyRate = tp.schedule.buy_rate || 0;

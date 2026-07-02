@@ -29,12 +29,10 @@ export class Schedule {
     }
 
     private getLocalParts(d: Date): { month: number, day: number, hour: number, weekday: number, year: number } {
-        // Memoize based on hour-level timestamp to handle 5-min intervals efficiently
-        // We use YYYY-MM-DD-HH as a key.
-        // Actually, just round to the hour.
-        const hourTs = new Date(d);
-        hourTs.setMinutes(0, 0, 0);
-        const memoKey = hourTs.getTime().toString();
+        // Memoize based on 15-minute intervals to handle timezone offsets of 30 or 45 mins.
+        // Within any 15-minute window, the local hour/day/month/year/weekday will be constant.
+        const intervalMs = 15 * 60 * 1000;
+        const memoKey = Math.floor(d.getTime() / intervalMs).toString();
 
         const cached = this.memo.get(memoKey);
         if (cached) return cached;
@@ -244,6 +242,10 @@ export class Schedule {
     }
 
     private matchSeason(month: number, day: number, season: TariffSeason): boolean {
+        if (season.from_month === season.to_month) {
+            return month === season.from_month && day >= season.from_day && day <= season.to_day;
+        }
+
         let betweenFromTo = true;
         if (season.to_month < season.from_month) {
             betweenFromTo = false;
@@ -253,23 +255,11 @@ export class Schedule {
             if (month > season.from_month && month < season.to_month) {
                 return true;
             }
-            if (month === season.from_month && day >= season.from_day) { // Changed > to >= for inclusive start day?
-                // Standard convention: if strictly within months, day doesn't matter.
-                // If on boundary month, check day.
-                // season.from_day check: usually inclusive.
-                // Original logic for strict equality: month === from && day > from.
-                // If from_day is 1, and today is 1st. 1 > 1 is False. 
-                // So "day 1" is NOT included? That seems wrong. usually inclusive.
-                // I will change to >=.
+            if (month === season.from_month && day >= season.from_day) {
                 return true;
             }
-            if (month === season.to_month && day <= season.to_day) { // Changed < to <=
+            if (month === season.to_month && day <= season.to_day) {
                 return true;
-            }
-            // Wait, mixed months?
-            // If from_month == to_month?
-            if (season.from_month === season.to_month) {
-                return month === season.from_month && day >= season.from_day && day <= season.to_day;
             }
         } else {
             // Wrap around year (e.g. Nov to Mar)

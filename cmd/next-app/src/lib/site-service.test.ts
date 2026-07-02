@@ -102,7 +102,7 @@ describe('SiteService Security', () => {
             expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
         });
 
-        it('should return false if JWT does not contain site', async () => {
+        it('should return false if JWT does not contain site and not fall back to API', async () => {
             // Mock verify to return authorized object
             vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [] });
 
@@ -112,15 +112,20 @@ describe('SiteService Security', () => {
                 siteAuthToken: 'valid_token'
             });
 
-            // Note: validateSiteAccess falls back to API if JWT fails to validate?
-            // "1. Fast, offline check... if (sites && sites.includes(siteId)) return true;"
-            // It falls through to "2. Fallback to API".
-            // So if JWT says No, it double checks with API.
-            mockTeslaClient.getProducts.mockResolvedValue([{ energy_site_id: 12345 }]); // API also says No to 999
+            mockTeslaClient.getProducts.mockResolvedValue([{ energy_site_id: 12345 }]);
 
             const isValid = await service.validateSiteAccess('999');
             expect(isValid).toBe(false);
-            expect(mockTeslaClient.getProducts).toHaveBeenCalled();
+            expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
+        });
+
+        it('should return false without throwing if no teslaClient is provided and JWT is missing/invalid', async () => {
+            const service = new SiteService({
+                siteRepo: mockEnergyRepo as unknown as SiteRepo
+            });
+
+            const isValid = await service.validateSiteAccess('12345');
+            expect(isValid).toBe(false);
         });
 
         it('should return true via API if JWT missing', async () => {

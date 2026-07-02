@@ -188,7 +188,8 @@ export class EnergyRepo {
                     sellRate = sched.sell_rate || 0;
                 }
             } else {
-                const tp = schedule.getTariffPeriod(row.day);
+                const midpoint = new Date(row.day.getTime() + 12 * 60 * 60 * 1000);
+                const tp = schedule.getTariffPeriod(midpoint);
                 if (tp) {
                     touName = tp.schedule.name || 'Standard';
                     buyRate = tp.schedule.buy_rate || 0;
@@ -196,8 +197,13 @@ export class EnergyRepo {
                 }
             }
 
-            const tariff = tariffMap.get(row.tariff_id);
-            const tariffName = tariff?.name || 'Unknown';
+            const tariff = tariffMap.get(row.tariff_id) || {
+                id: row.tariff_id,
+                site_id: siteId,
+                name: 'Unknown',
+                updated: new Date()
+            };
+            const tariffName = tariff.name || 'Unknown';
             const key = `${tariffName}|${touName}|${buyRate}|${sellRate}`;
 
             let data = aggregation.get(key);
@@ -208,7 +214,7 @@ export class EnergyRepo {
                     gridUsage: 0,
                     solarProduction: 0,
                     batteryChange: 0,
-                    tariff: tariff!,
+                    tariff: tariff,
                     touName: touName,
                     cost: 0,
                     buyRate: buyRate,
@@ -449,45 +455,6 @@ export class EnergyRepo {
         })) as EnergyData[];
     }
 
-    async getRawEnergyDataWithTz(siteId: string, start: Date, end: Date, targetTimezone?: string): Promise<EnergyData[]> {
-        if (!targetTimezone) {
-            return this.getRawEnergyData(siteId, start, end);
-        }
-
-        const sql = `
-            WITH converted AS (
-                SELECT
-                    *,
-                    timestamp AT TIME ZONE $4 as target_ts
-                FROM "EnergyData"
-                WHERE site_id = $1
-                AND timestamp >= ($2::timestamptz - INTERVAL '1 day')
-                AND timestamp <= ($3::timestamptz + INTERVAL '1 day')
-            )
-            SELECT * FROM converted
-            WHERE target_ts >= $2::timestamptz
-            AND target_ts < $3::timestamptz
-            ORDER BY target_ts ASC
-        `;
-
-        const res = await pool.query(sql, [
-            siteId,
-            start,
-            end,
-            targetTimezone
-        ]);
-
-        return res.rows.map(row => ({
-            ...row,
-            timestamp: new Date(row.target_ts),
-            site_id: row.site_id.toString(),
-            load_power: Number(row.load_power),
-            solar_power: Number(row.solar_power),
-            grid_power: Number(row.grid_power),
-            battery_power: Number(row.battery_power),
-            battery_soc: row.battery_soc === null || row.battery_soc === undefined ? null : Number(row.battery_soc),
-        })) as EnergyData[];
-    }
 
     // === Commands ===
     async insertEnergyDataBatch(rows: Array<{
