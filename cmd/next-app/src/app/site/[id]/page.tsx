@@ -31,11 +31,10 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import {
     getSiteTodayMidnight,
-    parseSiteLocalDateToMidnight,
+    safeParseSiteLocalDateToMidnight,
     addMonthsInSiteTimezone,
     getSiteLocalComponents,
-    formatSiteDate,
-    getSiteTodayDateStr
+    formatSiteDate
 } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
@@ -170,23 +169,19 @@ export default async function SitePage({ params, searchParams }: {
     // Server UTC might be "Tomorrow" while Site is still "Today".
     const siteNow = getSiteTodayMidnight(finalSite.timezone);
 
-    let dateStr: string;
+    let refDate = siteNow;
+    let dateStr = formatSiteDate(siteNow, finalSite.timezone);
 
     if (queryDate) {
-        dateStr = queryDate;
-    } else {
-        dateStr = getSiteTodayDateStr(finalSite.timezone);
+        const parsed = safeParseSiteLocalDateToMidnight(queryDate, finalSite.timezone);
+        if (parsed) {
+            refDate = parsed;
+            dateStr = queryDate;
+        }
     }
 
     // Calculate period based on billing start day
     const billingDay = finalSite.billing_start_day || 1;
-
-    // Determine reference date: queryDate or siteNow
-    // We treat queryDate as a Site-local date for the site.
-    let refDate = siteNow;
-    if (queryDate) {
-        refDate = parseSiteLocalDateToMidnight(queryDate, finalSite.timezone);
-    }
 
     const start = getCurrentCycleStart(billingDay, refDate, finalSite.timezone);
     // End date is start date + 1 month
@@ -208,10 +203,7 @@ export default async function SitePage({ params, searchParams }: {
 
     // Navigation dates
     const prevDate = addMonthsInSiteTimezone(start, -1, finalSite.timezone);
-    const nextDate = addMonthsInSiteTimezone(start, 1, finalSite.timezone);
-    const fmtDate = (d: Date) => {
-        return formatSiteDate(d, finalSite.timezone);
-    };
+    const nextDate = end;
 
     // Format for display (Server Side to avoid browser timezone shift)
 
@@ -285,8 +277,8 @@ export default async function SitePage({ params, searchParams }: {
                             <BillDateNav
                                 siteId={id}
                                 billingDay={billingDay}
-                                prevDateStr={fmtDate(prevDate)}
-                                nextDateStr={fmtDate(nextDate)}
+                                prevDateStr={formatSiteDate(prevDate, finalSite.timezone)}
+                                nextDateStr={formatSiteDate(nextDate, finalSite.timezone)}
                                 isCurrentPeriod={isCurrentPeriod}
                                 dateRangeLabel={dateRangeLabel}
                                 currentMonthVal={currentMonthVal}

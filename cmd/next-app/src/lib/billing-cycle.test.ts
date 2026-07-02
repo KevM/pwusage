@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { getCurrentCycleStart, getSiteLocalDate, addMonthsInSiteTimezone } from './billing-cycle';
+import { getCurrentCycleStart } from './billing-cycle';
+import { getSiteLocalDate, addMonthsInSiteTimezone } from './date-utils';
 
 describe('getCurrentCycleStart — UTC site', () => {
     it('returns this month at site-tz midnight when on the billing day', () => {

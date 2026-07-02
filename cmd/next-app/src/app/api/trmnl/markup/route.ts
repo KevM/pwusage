@@ -19,7 +19,8 @@ import {
 import { TrmnlInstallationRepo } from '@/lib/trmnl-installation-repo';
 import { verifyTrmnlRequestAuth } from '@/lib/trmnl-auth';
 import { continueUrl } from '@/app/continue/continue-logic';
-import { getCurrentCycleStart, addMonthsInSiteTimezone } from '@/lib/billing-cycle';
+import { getCurrentCycleStart } from '@/lib/billing-cycle';
+import { addMonthsInSiteTimezone } from '@/lib/date-utils';
 import { aggregateUsage } from '@/lib/tou-aggregation';
 
 export const dynamic = 'force-dynamic';

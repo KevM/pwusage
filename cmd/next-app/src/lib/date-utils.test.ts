@@ -4,8 +4,10 @@ import {
     getSiteTodayDateStr,
     getSiteTodayMidnight,
     parseSiteLocalDateToMidnight,
+    safeParseSiteLocalDateToMidnight,
     getSiteLocalDate,
     addMonthsInSiteTimezone,
+    addDaysInSiteTimezone,
     getSiteLocalComponents,
     formatSiteDate
 } from './date-utils';
@@ -76,5 +78,18 @@ describe('new centralized date-utils', () => {
     it('formatSiteDate formats Date in site timezone correctly', () => {
         const d = new Date('2026-07-02T05:00:00Z'); // July 1 in LA
         expect(formatSiteDate(d, tz)).toBe('2026-07-01');
+    });
+
+    it('safeParseSiteLocalDateToMidnight parses valid and returns null on invalid dates', () => {
+        expect(safeParseSiteLocalDateToMidnight('2026-07-02', tz)?.toISOString()).toBe('2026-07-02T07:00:00.000Z');
+        expect(safeParseSiteLocalDateToMidnight('2026-02-30', tz)).toBeNull();
+        expect(safeParseSiteLocalDateToMidnight('garbage', tz)).toBeNull();
+        expect(safeParseSiteLocalDateToMidnight(null, tz)).toBeNull();
+    });
+
+    it('addDaysInSiteTimezone handles standard and transition additions correctly', () => {
+        const base = parseSiteLocalDateToMidnight('2026-03-07', tz); // Day before spring-forward
+        const nextDay = addDaysInSiteTimezone(base, 1, tz);
+        expect(nextDay.toISOString()).toBe('2026-03-08T08:00:00.000Z'); // LA spring forward, midnight is 08:00 UTC
     });
 });

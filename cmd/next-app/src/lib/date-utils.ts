@@ -5,6 +5,18 @@ import { Temporal } from '@js-temporal/polyfill';
  */
 
 /**
+ * Helper to check if a timezone is valid, falling back to 'UTC' if not.
+ */
+function getValidTimezone(tz: string): string {
+    try {
+        Temporal.Now.instant().toZonedDateTimeISO(tz);
+        return tz;
+    } catch {
+        return 'UTC';
+    }
+}
+
+/**
  * Helper to get site-timezone midnight as a global Date object (UTC timestamp)
  * for any given input Date.
  */
@@ -13,22 +25,14 @@ export function getSiteMidnight(d: Date, tz: string): Date {
         console.error(`[getSiteMidnight] Invalid Date received`);
         return new Date();
     }
-    const instant = Temporal.Instant.from(d.toISOString());
-    const zoned = instant.toZonedDateTimeISO(tz);
-    const midnight = zoned.toPlainDate().toZonedDateTime({
-        timeZone: tz,
-        plainTime: '00:00:00'
-    });
-    return new Date(midnight.toInstant().epochMilliseconds);
+    return parseSiteLocalDateToMidnight(formatSiteDate(d, tz), tz);
 }
 
 /**
  * Returns today's date string (e.g. "2024-05-01") in the site's local timezone.
  */
 export function getSiteTodayDateStr(tz: string): string {
-    const instant = Temporal.Now.instant();
-    const zoned = instant.toZonedDateTimeISO(tz);
-    return zoned.toPlainDate().toString();
+    return formatSiteDate(new Date(), tz);
 }
 
 /**
@@ -40,14 +44,32 @@ export function getSiteTodayMidnight(tz: string): Date {
 
 /**
  * Parses a "YYYY-MM-DD" string as midnight in the site's local timezone and returns a UTC Date object.
+ * Throws if the date string is malformed or invalid (e.g. "2026-02-30").
  */
 export function parseSiteLocalDateToMidnight(dateStr: string, tz: string): Date {
+    const useTz = getValidTimezone(tz);
     const plainDate = Temporal.PlainDate.from(dateStr);
     const midnight = plainDate.toZonedDateTime({
-        timeZone: tz,
+        timeZone: useTz,
         plainTime: '00:00:00'
     });
     return new Date(midnight.toInstant().epochMilliseconds);
+}
+
+/**
+ * Safely parses a "YYYY-MM-DD" string as midnight in the site's local timezone.
+ * Returns null if the date string is malformed, invalid, or null/undefined.
+ */
+export function safeParseSiteLocalDateToMidnight(
+    dateStr: string | null | undefined,
+    tz: string
+): Date | null {
+    if (!dateStr) return null;
+    try {
+        return parseSiteLocalDateToMidnight(dateStr, tz);
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -59,18 +81,17 @@ export function getSiteLocalDate(
     day: number,
     timeZone: string
 ): Date {
+    const useTz = getValidTimezone(timeZone);
     const date = Temporal.PlainDate.from({
         year,
         month,
         day
     });
-
     const midnight = date.toZonedDateTime({
-        timeZone,
-        plainTime: Temporal.PlainTime.from('00:00:00')
+        timeZone: useTz,
+        plainTime: '00:00:00'
     });
-
-    return new Date(midnight.toInstant().toString());
+    return new Date(midnight.toInstant().epochMilliseconds);
 }
 
 /**
@@ -81,10 +102,26 @@ export function addMonthsInSiteTimezone(
     months: number,
     timeZone: string
 ): Date {
+    const useTz = getValidTimezone(timeZone);
     const instant = Temporal.Instant.from(date.toISOString());
-    const zoned = instant.toZonedDateTimeISO(timeZone);
+    const zoned = instant.toZonedDateTimeISO(useTz);
     const newZoned = zoned.add({ months });
     return new Date(newZoned.toInstant().toString());
+}
+
+/**
+ * Given a UTC instant, add or subtract days in the site's timezone and return the new UTC instant.
+ */
+export function addDaysInSiteTimezone(
+    date: Date,
+    days: number,
+    timeZone: string
+): Date {
+    const useTz = getValidTimezone(timeZone);
+    const instant = Temporal.Instant.from(date.toISOString());
+    const zoned = instant.toZonedDateTimeISO(useTz);
+    const newZoned = zoned.add({ days });
+    return new Date(newZoned.toInstant().epochMilliseconds);
 }
 
 /**
@@ -94,8 +131,9 @@ export function getSiteLocalComponents(
     utcDate: Date,
     timeZone: string
 ): { year: number; month: number; day: number } {
+    const useTz = getValidTimezone(timeZone);
     const instant = Temporal.Instant.from(utcDate.toISOString());
-    const zoned = instant.toZonedDateTimeISO(timeZone);
+    const zoned = instant.toZonedDateTimeISO(useTz);
     return {
         year: zoned.year,
         month: zoned.month,

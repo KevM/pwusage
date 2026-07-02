@@ -1,7 +1,8 @@
 import { Temporal } from '@js-temporal/polyfill';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { getCurrentCycleStart, getSiteLocalDate, addMonthsInSiteTimezone } from '@/lib/billing-cycle';
+import { getCurrentCycleStart } from '@/lib/billing-cycle';
+import { getSiteLocalDate, addMonthsInSiteTimezone } from '@/lib/date-utils';
 
 import { BillSummary } from '@/components/BillSummary';
 import { BillDateNav } from '@/components/BillDateNav';

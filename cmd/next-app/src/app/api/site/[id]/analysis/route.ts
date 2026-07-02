@@ -14,8 +14,7 @@ import { Schedule } from '@/lib/schedule';
 import { TeslaClient } from '@/lib/tesla-client';
 import { Importer } from '@/lib/importer';
 import { withRequestContext } from '@/lib/request-context';
-import { getSiteTodayMidnight, parseSiteLocalDateToMidnight } from '@/lib/date-utils';
-import { Temporal } from '@js-temporal/polyfill';
+import { getSiteTodayMidnight, safeParseSiteLocalDateToMidnight, addDaysInSiteTimezone } from '@/lib/date-utils';
 
 const repo = new EnergyRepo();
 const siteRepo = new SiteRepo();
@@ -42,16 +41,17 @@ export async function GET(
         let start: Date;
 
         if (dateParam) {
-            start = parseSiteLocalDateToMidnight(dateParam, tz);
+            start = safeParseSiteLocalDateToMidnight(dateParam, tz) || new Date(NaN);
         } else {
             start = getSiteTodayMidnight(tz);
         }
 
-        const nextDayZoned = Temporal.Instant.from(start.toISOString())
-            .toZonedDateTimeISO(tz)
-            .add({ days: 1 });
-        const queryEnd = new Date(nextDayZoned.toInstant().epochMilliseconds);
-        const end = new Date(queryEnd.getTime() - 1); // 23:59:59.999
+        const queryEnd = isNaN(start.getTime())
+            ? new Date(NaN)
+            : addDaysInSiteTimezone(start, 1, tz);
+        const end = isNaN(queryEnd.getTime())
+            ? new Date(NaN)
+            : new Date(queryEnd.getTime() - 1); // 23:59:59.999
 
         // AUTH CHECK
         const { cookies } = await import('next/headers');

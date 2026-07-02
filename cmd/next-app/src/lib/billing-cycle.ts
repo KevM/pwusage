@@ -1,8 +1,5 @@
 import { Temporal } from '@js-temporal/polyfill';
-import { getSiteLocalDate, addMonthsInSiteTimezone } from './date-utils';
-
-// Re-export timezone-safe helpers for backwards compatibility
-export { getSiteLocalDate, addMonthsInSiteTimezone };
+import { getSiteLocalDate } from './date-utils';
 
 /**
  * Returns the start of the current billing cycle for a site, given the
