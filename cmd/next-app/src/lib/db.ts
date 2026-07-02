@@ -13,9 +13,14 @@ let pool: Pool;
 if (globalForDb.pool) {
   pool = globalForDb.pool;
 } else {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    throw new Error('[DB] DATABASE_URL is required to initialize the database pool.');
+  }
+
   // Hack to strip sslmode=require from connection string if present, 
   // relying on the object config below instead.
-  let connStr = process.env.DATABASE_URL || '';
+  let connStr = databaseUrl;
   if (connStr.includes('sslmode=require')) {
     connStr = connStr.replace('sslmode=require', '');
   }
