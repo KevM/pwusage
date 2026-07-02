@@ -1,29 +1,6 @@
-import { Pool } from 'pg';
-import dotenv from 'dotenv';
-import path from 'path';
+import './bootstrap-env';
+import { pool } from '../src/lib/db';
 import { writeFile, readFile } from 'fs/promises';
-import fs from 'fs';
-
-// Load environment variables
-const envLocalPath = path.resolve(process.cwd(), '.env.local');
-const envPath = path.resolve(process.cwd(), '.env');
-
-if (fs.existsSync(envLocalPath)) {
-    dotenv.config({ path: envLocalPath });
-} else if (fs.existsSync(envPath)) {
-    dotenv.config({ path: envPath });
-}
-
-if (!process.env.DATABASE_URL) {
-    console.error('Error: DATABASE_URL not found in .env or .env.local');
-    process.exit(1);
-}
-
-// Setup DB connection
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
 
 const SITE_NAME = 'Harrison';
 const BACKUP_FILE = 'trmnl-harrison-backup.json';

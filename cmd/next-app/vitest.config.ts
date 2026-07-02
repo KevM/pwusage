@@ -1,5 +1,5 @@
 
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import path from 'path';
 
 export default defineConfig({
@@ -7,7 +7,7 @@ export default defineConfig({
     test: {
         environment: 'node',
         setupFiles: ['./vitest.setup.ts'],
-        exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/.vercel/**'],
+        exclude: [...configDefaults.exclude, '**/.next/**', '**/.vercel/**'],
         alias: {
             '@': path.resolve(__dirname, './src')
         }

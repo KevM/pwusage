@@ -1,22 +1,5 @@
-
-import { Pool } from 'pg';
-import { loadEnvConfig } from '@next/env';
-import path from 'path';
-
-// Load env from project root
-loadEnvConfig(path.resolve(__dirname, '../'));
-
-let connStr = process.env.DATABASE_URL || '';
-if (connStr.includes('sslmode=require')) {
-    connStr = connStr.replace('sslmode=require', '');
-}
-
-const pool = new Pool({
-    connectionString: connStr,
-    ssl: {
-        rejectUnauthorized: false
-    }
-});
+import './bootstrap-env';
+import { pool } from '../src/lib/db';
 
 async function migrate() {
     console.log('Starting migration: LoadTag Table...');
