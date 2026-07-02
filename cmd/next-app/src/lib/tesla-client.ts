@@ -158,8 +158,6 @@ export function isTeslaAuthError(error: unknown): error is TeslaAuthError {
         return (
             msg.includes('Tesla API Error: 401') ||
             msg.includes('Tesla API Error: 403') ||
-            msg.includes('Tesla: 401') ||
-            msg.includes('Tesla: 403') ||
             msg.includes('login_required') ||
             msg.includes('invalid_grant') ||
             msg.includes('invalid authentication')

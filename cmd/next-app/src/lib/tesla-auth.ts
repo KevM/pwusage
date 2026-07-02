@@ -22,9 +22,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{ access
         const body = await response.text();
         if (
             response.status === 401 ||
-            response.status === 400 ||
-            body.includes('invalid_grant') ||
-            body.includes('login_required')
+            (response.status === 400 && (body.includes('invalid_grant') || body.includes('login_required')))
         ) {
             throw new TeslaAuthError(`Failed to refresh token: ${response.status} ${body}`, response.status);
         }
