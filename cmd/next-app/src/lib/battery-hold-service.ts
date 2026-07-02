@@ -1,4 +1,4 @@
-import { TeslaClient } from './tesla-client';
+import { TeslaClient, isTeslaAuthError } from './tesla-client';
 import { BatteryHoldRepo } from './battery-hold-repo';
 import { SiteRepo } from './site-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
@@ -9,11 +9,6 @@ export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
 
 import { computeTargetReserve, planReserve } from './battery-hold-rules';
 export { computeTargetReserve };
-
-function isAuthError(e: unknown): boolean {
-  const m = e instanceof Error ? e.message : String(e);
-  return /\b(401|403)\b/.test(m) || /token|login_required|unauthor/i.test(m);
-}
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -50,7 +45,7 @@ export async function parkBattery(
   try {
     [live, info] = await Promise.all([client.getLiveStatus(siteId), client.getEnergySiteInfo(siteId)]);
   } catch (e) {
-    return isAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+    return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
   }
 
   const soc = live?.percentage_charged;
@@ -80,7 +75,7 @@ export async function parkBattery(
       console.warn(`[BatteryHold] unexpected clamp for ${siteId}: sent ${target}, got "${resp.Message}"`);
     }
   } catch (e) {
-    return isAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+    return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
   }
   let hold: BatteryHold;
   try {
@@ -133,7 +128,7 @@ export async function restoreBattery({ client, repo, siteId, reason }: RestoreDe
       const info = await client.getEnergySiteInfo(siteId);
       current = info.backup_reserve_percent;
     } catch (e) {
-      return isAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+      return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
     }
     if (current !== hold.target_reserve && current !== hold.original_reserve) {
       await repo.markCancelled(hold.id, 'reserve_changed', current);
@@ -144,7 +139,7 @@ export async function restoreBattery({ client, repo, siteId, reason }: RestoreDe
   try {
     await client.setBackupReserve(siteId, hold.original_reserve);
   } catch (e) {
-    return isAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+    return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
   }
   await repo.markRestored(hold.id, reason);
   return { status: 'ok' };

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TeslaClient } from './tesla-client';
+import { TeslaClient, TeslaAuthError, isTeslaAuthError } from './tesla-client';
 
 function makeJsonResponse<T>(payload: T): Response {
     return {
@@ -238,5 +238,65 @@ describe('TeslaClient.setBackupReserve', () => {
         await expect(client.setBackupReserve('site', -5)).rejects.toThrow(/between 0 and 100/);
         await expect(client.setBackupReserve('site', 42.5)).rejects.toThrow(/integer/);
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+});
+
+function make403Response(): Response {
+    return {
+        ok: false,
+        status: 403,
+        headers: new Headers(),
+        json: async () => ({}),
+        text: async () => 'forbidden',
+    } as unknown as Response;
+}
+
+describe('TeslaClient authentication errors', () => {
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('throws TeslaAuthError on HTTP 401 response', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(make401Response());
+        const client = new TeslaClient({ accessToken: 'tok' });
+
+        let thrownError: unknown;
+        try {
+            await client.getProducts();
+        } catch (err) {
+            thrownError = err;
+        }
+
+        expect(thrownError).toBeInstanceOf(TeslaAuthError);
+        expect((thrownError as TeslaAuthError).status).toBe(401);
+        expect(isTeslaAuthError(thrownError)).toBe(true);
+    });
+
+    it('throws TeslaAuthError on HTTP 403 response', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(make403Response());
+        const client = new TeslaClient({ accessToken: 'tok' });
+
+        let thrownError: unknown;
+        try {
+            await client.getProducts();
+        } catch (err) {
+            thrownError = err;
+        }
+
+        expect(thrownError).toBeInstanceOf(TeslaAuthError);
+        expect((thrownError as TeslaAuthError).status).toBe(403);
+        expect(isTeslaAuthError(thrownError)).toBe(true);
+    });
+
+    it('identifies standard strings with 401 or login_required as isTeslaAuthError', () => {
+        expect(isTeslaAuthError(new Error('Tesla API Error: 401 Unauthorized'))).toBe(true);
+        expect(isTeslaAuthError(new Error('login_required'))).toBe(true);
+        expect(isTeslaAuthError(new Error('some random error'))).toBe(false);
     });
 });

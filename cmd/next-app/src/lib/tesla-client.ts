@@ -137,6 +137,40 @@ function parseRetryAfter(header: string | null): number {
     return RATE_LIMIT_DEFAULT_DELAY_MS;
 }
 
+export class TeslaAuthError extends Error {
+    readonly status: number;
+
+    constructor(message: string, status: number = 401) {
+        super(message);
+        this.name = 'TeslaAuthError';
+        this.status = status;
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, TeslaAuthError);
+        }
+    }
+}
+
+export function isTeslaAuthError(error: unknown): error is TeslaAuthError {
+    if (error instanceof TeslaAuthError || (error instanceof Error && error.name === 'TeslaAuthError')) {
+        return true;
+    }
+    if (error instanceof Error) {
+        const msg = error.message;
+        return (
+            msg.includes('401') ||
+            msg.includes('403') ||
+            msg.includes('invalid authentication') ||
+            msg.includes('Tesla API Error: 401') ||
+            msg.includes('Tesla API Error: 403') ||
+            msg.includes('login_required') ||
+            msg.includes('invalid_grant') ||
+            /unauthor/i.test(msg) ||
+            /token/i.test(msg)
+        );
+    }
+    return false;
+}
+
 export class TeslaClient {
     private baseUrl = "https://fleet-api.prd.na.vn.cloud.tesla.com";
     private config: TeslaClientConfig;
@@ -215,6 +249,9 @@ export class TeslaClient {
         if (!response.ok) {
             const body = await response.text();
             const shortBody = body.length > 200 ? body.substring(0, 200) + '...' : body;
+            if (response.status === 401 || response.status === 403) {
+                throw new TeslaAuthError(`Tesla API Error: ${response.status} ${shortBody}`, response.status);
+            }
             throw new Error(`Tesla API Error: ${response.status} ${shortBody}`);
         }
 

@@ -1,6 +1,7 @@
 import { pool } from './db';
 import { SiteRepo } from './site-repo';
 import { UserRepo } from './user-repo';
+import { isTeslaAuthError } from './tesla-client';
 
 export class TeslaTokenRepo {
     constructor(private siteRepo: SiteRepo, private userRepo: UserRepo = new UserRepo()) {}
@@ -64,7 +65,11 @@ export class TeslaTokenRepo {
     }
 
     // Utility
-    private isTerminalAuthError(msg: string): boolean {
+    private isTerminalAuthError(error: unknown): boolean {
+        if (isTeslaAuthError(error)) {
+            return true;
+        }
+        const msg = error instanceof Error ? error.message : String(error);
         return msg.includes('401') || msg.includes('login_required') || msg.includes('invalid_grant');
     }
 
@@ -82,8 +87,7 @@ export class TeslaTokenRepo {
                         await this.updateSiteTokens(siteId, newTokens.access_token, newTokens.refresh_token);
                         return newTokens;
                     } catch (err) {
-                        const msg = err instanceof Error ? err.message : String(err);
-                        if (this.isTerminalAuthError(msg)) {
+                        if (this.isTerminalAuthError(err)) {
                             terminalFailure = true;
                         }
                         throw err;
@@ -115,7 +119,7 @@ export class TeslaTokenRepo {
                 // Secondary guard: fires after refreshHandler has already released the lock.
                 // For terminal failures the revoke was already written atomically above, so
                 // this is a no-op in that path. Still useful for non-locked callers.
-                if (this.isTerminalAuthError(error.message)) {
+                if (this.isTerminalAuthError(error)) {
                     const site = await this.siteRepo.getSite(siteId);
                     if (site && site.user_id) {
                         console.warn(`[TokenLock] Secondary revoke guard for site ${siteId} (User ${site.user_id}).`);
