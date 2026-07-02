@@ -25,13 +25,13 @@ function makeTestTariff(): Tariff[] {
                             buy_rate: 0.15, sell_rate: 0.08,
                             from_day_of_week: 0, to_day_of_week: 6,
                             from_hour: 20, from_minute: 0,
-                            to_hour: 8, to_minute: 0,
+                            to_hour: 7, to_minute: 0,
                         },
                         {
                             id: 20, season_id: 1, name: 'On-Peak',
                             buy_rate: 0.30, sell_rate: 0.15,
                             from_day_of_week: 0, to_day_of_week: 6,
-                            from_hour: 8, from_minute: 0,
+                            from_hour: 7, from_minute: 0,
                             to_hour: 20, to_minute: 0,
                         }
                     ]
@@ -61,8 +61,8 @@ describe('TOU Aggregation Utility', () => {
 
         // Pass 1: Prior day aggregates
         // Row 1: has schedule id 10 (Off-Peak) -> buy_rate = 0.15, sell_rate = 0.08
-        // Row 2: has null schedule id -> fallback to midpoint of the day (e.g. 12:00 NY local)
-        // Midpoint of Jan 15 in New York: 12:00 in NY is On-Peak (buy=0.30, sell=0.15)
+        // Row 2: has null schedule id -> fallback to midpoint of the day (e.g. 12:00 UTC -> 07:00 local NY)
+        // Midpoint of Jan 15 in New York: 12:00 in UTC is 07:00 local in NY, which is On-Peak (buy=0.30, sell=0.15)
         const priorAggregates: CycleAggregateRow[] = [
             {
                 day: new Date('2026-01-15T00:00:00Z'), // Day itself
@@ -74,7 +74,7 @@ describe('TOU Aggregation Utility', () => {
                 battery_power: 0
             },
             {
-                day: new Date('2026-01-15T17:00:00Z'), // 17:00 UTC = 12:00 local NY (Midpoint). On-Peak.
+                day: new Date('2026-01-15T00:00:00Z'), // UTC Midnight. Midpoint is +12h = 12:00 UTC = 07:00 local. On-Peak.
                 tariff_id: 1,
                 tariff_schedule_id: null, // trigger midpoint fallback
                 load_power: 2000, // 2 kWh

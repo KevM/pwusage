@@ -76,16 +76,23 @@ export class SiteService {
                 if (decoded.roles.includes('admin')) {
                     return true;
                 }
-                if (decoded.sites.includes(siteId)) {
-                    return true;
-                }
+                return decoded.sites.includes(siteId);
             }
         }
 
-        // 2. Fallback to API (source of truth)
-        console.log(`[SiteService] Validating access for ${siteId} against API...`);
-        const authorizedIds = await this.fetchSitesFromApi();
-        return authorizedIds.has(siteId);
+        // 2. Fallback to API (source of truth) only if we have a client and no valid JWT was verified
+        if (this.deps.teslaClient) {
+            console.log(`[SiteService] Validating access for ${siteId} against API...`);
+            try {
+                const authorizedIds = await this.fetchSitesFromApi();
+                return authorizedIds.has(siteId);
+            } catch (err) {
+                console.error(`[SiteService] Failed to validate site access via API:`, err);
+                return false;
+            }
+        }
+
+        return false;
     }
 
     private async isUserStillActive(userId: string): Promise<boolean> {

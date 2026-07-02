@@ -36,6 +36,12 @@ export interface ParkDeps {
 export async function parkBattery(
   { client, repo, siteId, now = new Date(), mode = 'auto', durationHours, reserveChoice }: ParkDeps,
 ): Promise<ParkResult> {
+  if (mode === 'timer') {
+    if (durationHours === undefined || durationHours === null || typeof durationHours !== 'number' || Number.isNaN(durationHours) || durationHours <= 0) {
+      return { status: 'error', message: 'Valid duration in hours is required for timer mode.' };
+    }
+  }
+
   const existing = await repo.getActiveHold(siteId);
   if (existing) return { status: 'already_active', hold: existing };
 

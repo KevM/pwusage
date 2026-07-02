@@ -81,6 +81,21 @@ describe('parkBattery', () => {
     expect(created.safetyExpiresAt).toEqual(new Date('2026-05-25T04:00:00Z'));
   });
 
+  it('returns error if timer mode is requested with invalid or missing durationHours', async () => {
+    const repo = fakeRepo(null);
+    const client = fakeClient({ getLiveStatus: vi.fn() });
+    
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res1 = await parkBattery({ client: client as any, repo: repo as any, siteId: 's', mode: 'timer', durationHours: undefined });
+    expect(res1.status).toBe('error');
+    expect(res1.status === 'error' ? res1.message : '').toContain('Valid duration');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res2 = await parkBattery({ client: client as any, repo: repo as any, siteId: 's', mode: 'timer', durationHours: -1 });
+    expect(res2.status).toBe('error');
+    expect(res2.status === 'error' ? res2.message : '').toContain('Valid duration');
+  });
+
   it('refuses when a hold is already active', async () => {
     const repo = fakeRepo({ id: 9 } as BatteryHold);
     const client = fakeClient();

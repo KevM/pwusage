@@ -162,4 +162,127 @@ describe('Schedule – Harrison / We energies smoke tests', () => {
             expect(names).toContain('On-Peak');
         }
     });
+
+    it('handles single-month seasons correctly', () => {
+        const singleMonthTariff: Tariff[] = [
+            {
+                id: 2,
+                site_id: 'site1',
+                updated: new Date(),
+                name: 'Single Month Test',
+                seasons: [
+                    {
+                        id: 201,
+                        tariff_id: 2,
+                        name: 'June Mid',
+                        from_month: 6,
+                        from_day: 1,
+                        to_month: 6,
+                        to_day: 15,
+                        buy_rate: 0.1,
+                        sell_rate: 0.05,
+                        schedules: [
+                            {
+                                id: 2011,
+                                season_id: 201,
+                                name: 'All Day',
+                                buy_rate: 0.1,
+                                sell_rate: 0.05,
+                                from_day_of_week: 0,
+                                to_day_of_week: 6,
+                                from_hour: null,
+                                to_hour: null,
+                                from_minute: null,
+                                to_minute: null,
+                            }
+                        ]
+                    }
+                ]
+            }
+        ];
+
+        const schedule = new Schedule(singleMonthTariff, 'UTC');
+        
+        // June 10 is inside the June 1-15 season
+        expect(schedule.getTariffPeriod(new Date('2026-06-10T12:00:00Z'))).not.toBeNull();
+        
+        // June 20 is outside the June 1-15 season
+        expect(schedule.getTariffPeriod(new Date('2026-06-20T12:00:00Z'))).toBeNull();
+    });
+
+    it('correctly distinguishes hours in half-hour offset timezone memoization', () => {
+        const adelaideTariff: Tariff[] = [
+            {
+                id: 3,
+                site_id: 'site_adelaide',
+                updated: new Date(),
+                name: 'Adelaide Test',
+                seasons: [
+                    {
+                        id: 301,
+                        tariff_id: 3,
+                        name: 'All Year',
+                        from_month: 1,
+                        from_day: 1,
+                        to_month: 12,
+                        to_day: 31,
+                        buy_rate: 0.2,
+                        sell_rate: 0.1,
+                        schedules: [
+                            {
+                                id: 3011,
+                                season_id: 301,
+                                name: 'On-Peak',
+                                buy_rate: 0.4,
+                                sell_rate: 0.1,
+                                from_day_of_week: 0,
+                                to_day_of_week: 6,
+                                from_hour: 17,
+                                to_hour: 24,
+                                from_minute: null,
+                                to_minute: null,
+                            },
+                            {
+                                id: 3012,
+                                season_id: 301,
+                                name: 'Off-Peak',
+                                buy_rate: 0.2,
+                                sell_rate: 0.1,
+                                from_day_of_week: 0,
+                                to_day_of_week: 6,
+                                from_hour: 0,
+                                to_hour: 17,
+                                from_minute: null,
+                                to_minute: null,
+                            }
+                        ]
+                    }
+                ]
+            }
+        ];
+
+        const tz = 'Australia/Adelaide'; // UTC+9:30
+        const schedule = new Schedule(adelaideTariff, tz);
+
+        // 16:55 local time = 07:25 UTC. This should be Off-Peak.
+        const tOffPeak = new Date('2026-07-01T07:25:00Z');
+        
+        // 17:05 local time = 07:35 UTC. This should be On-Peak.
+        const tOnPeak = new Date('2026-07-01T07:35:00Z');
+
+        // Querying in order Off-Peak first
+        const tp1 = schedule.getTariffPeriod(tOffPeak);
+        const tp2 = schedule.getTariffPeriod(tOnPeak);
+
+        expect(tp1?.schedule.name).toBe('Off-Peak');
+        expect(tp2?.schedule.name).toBe('On-Peak');
+
+        // Querying with a new instance in order On-Peak first to check cache pollution
+        const schedule2 = new Schedule(adelaideTariff, tz);
+        const tp2_1 = schedule2.getTariffPeriod(tOnPeak);
+        const tp2_2 = schedule2.getTariffPeriod(tOffPeak);
+
+        expect(tp2_1?.schedule.name).toBe('On-Peak');
+        expect(tp2_2?.schedule.name).toBe('Off-Peak');
+    });
 });
