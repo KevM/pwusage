@@ -1,5 +1,4 @@
-
-import 'dotenv/config';
+import './bootstrap-env';
 import { pool } from '../src/lib/db';
 
 async function migrate() {
