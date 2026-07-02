@@ -52,8 +52,10 @@ if (globalForDb.pool) {
     const defaultPaths = [
       path.join(process.cwd(), 'certs/supabase-ca.crt'),
       path.join(process.cwd(), 'certs/prod-ca-2021.crt'),
+      path.join(process.cwd(), 'certs/supa-ca-2021.crt'),
       path.join(process.cwd(), 'cmd/next-app/certs/supabase-ca.crt'),
       path.join(process.cwd(), 'cmd/next-app/certs/prod-ca-2021.crt'),
+      path.join(process.cwd(), 'cmd/next-app/certs/supa-ca-2021.crt'),
     ];
 
     for (const certPath of defaultPaths) {
