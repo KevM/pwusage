@@ -1,6 +1,6 @@
 import { SiteWithTariffs, TariffSeason, TariffSchedule } from '../db';
 import { Schedule } from '../schedule';
-import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry } from '../tesla-client';
+import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry, isTeslaAuthError } from '../tesla-client';
 import { EnergyRepo } from '../energy-repo';
 import { SiteRepo } from '../site-repo';
 import { UserRepo } from '../user-repo';
@@ -291,8 +291,7 @@ export class Importer {
 
             return this.siteRepo.getSite(siteId);
         } catch (e: unknown) {
-            const errorMsg = e instanceof Error ? e.message : String(e);
-            if (errorMsg.includes('401') || errorMsg.includes('login_required')) {
+            if (isTeslaAuthError(e)) {
                 const siteForUser = await this.siteRepo.getSite(siteId);
                 if (siteForUser?.user_id) {
                     console.warn(`[Import] Auth error in ensureSite for user ${siteForUser.user_id}, marking revoked`);
@@ -329,8 +328,7 @@ export class Importer {
             history = historyRes;
             soeHistory = soeRes;
         } catch (err: unknown) {
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            if (errorMsg.includes('401') || errorMsg.includes('login_required')) {
+            if (isTeslaAuthError(err)) {
                 console.warn(`[Import] Auth error for user ${site.user_id}, marking as revoked`);
                 if (site.user_id) {
                     await this.userRepo.updateUserStatus(site.user_id, 'revoked', false);

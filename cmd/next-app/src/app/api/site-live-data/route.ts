@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { TeslaClient } from '@/lib/tesla-client';
+import { TeslaClient, isTeslaAuthError } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
@@ -97,9 +97,7 @@ export async function GET(request: Request) {
         });
     } catch (error) {
         console.error('Site live data error:', error);
-        const msg = error instanceof Error ? error.message : String(error);
-
-        if (msg.includes('401') || msg.includes('login_required') || msg.includes('Tesla API Error: 401')) {
+        if (isTeslaAuthError(error)) {
             return NextResponse.json({ error: 'Authentication failed' }, { status: 401 });
         }
 

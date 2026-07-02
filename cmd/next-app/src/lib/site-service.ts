@@ -1,5 +1,5 @@
 import { Site, SiteWithTariffs, TrmnlInstallation } from './db';
-import { TeslaClient, TeslaClientConfig } from './tesla-client';
+import { TeslaClient, TeslaClientConfig, isTeslaAuthError } from './tesla-client';
 import { SiteRepo } from './site-repo';
 import { verifySiteToken } from './auth-jwt';
 import { isUserActive as defaultIsUserActive } from './user-repo';
@@ -16,17 +16,6 @@ import {
     getSiteLocalComponents,
     formatSiteDate
 } from './date-utils';
-
-function isTeslaAuthError(error: unknown): boolean {
-    if (error instanceof Error) {
-        return (
-            error.message.includes('401') ||
-            error.message.includes('invalid authentication') ||
-            error.message.includes('Tesla API Error: 401')
-        );
-    }
-    return false;
-}
 
 export interface SiteServiceDeps {
     teslaClient?: Pick<TeslaClient, 'getProducts'>;

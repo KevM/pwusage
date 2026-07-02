@@ -108,7 +108,7 @@ describe('getLockedRefreshHandler', () => {
         // atomic revoke+release UPDATE
         queryMock.mockResolvedValueOnce({ rowCount: 1 });
 
-        refreshAccessTokenMock.mockRejectedValueOnce(new Error('Tesla: 401 Unauthorized invalid_grant'));
+        refreshAccessTokenMock.mockRejectedValueOnce(new Error('Tesla API Error: 401 Unauthorized invalid_grant'));
 
         const handlers = tokenRepo.getLockedRefreshHandler('site-1');
         await expect(handlers.refreshHandler('old-refresh')).rejects.toThrow();
@@ -193,7 +193,7 @@ describe('TeslaTokenRepo delegates User writes to UserRepo', () => {
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
 
         const handlers = tokenRepo.getLockedRefreshHandler('site-1');
-        await handlers.errorHandler(new Error('Tesla: 401 Unauthorized'));
+        await handlers.errorHandler(new Error('Tesla API Error: 401 Unauthorized'));
 
         expect(userRepoUpdateUserStatusMock).toHaveBeenCalledWith('user-1', 'revoked', false);
     });

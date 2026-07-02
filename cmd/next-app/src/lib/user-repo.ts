@@ -1,6 +1,6 @@
 import { cache } from 'react';
 import { pool, User, Site } from './db';
-import { TeslaClient } from './tesla-client';
+import { TeslaClient, isTeslaAuthError } from './tesla-client';
 
 export interface UserWithSites extends User {
     sites: Site[];
@@ -181,7 +181,7 @@ export class UserRepo {
             const errorMsg = err instanceof Error ? err.message : String(err);
 
             // If it's an auth error, mark inactive.
-            if (errorMsg.includes('401') || errorMsg.includes('login_required')) {
+            if (isTeslaAuthError(err)) {
                 status = 'revoked';
             }
 
