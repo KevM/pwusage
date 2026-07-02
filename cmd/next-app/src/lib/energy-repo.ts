@@ -247,11 +247,14 @@ export class EnergyRepo {
                 sellRate = tp.schedule.sell_rate || 0;
                 currentTariff = tp.tariff;
             } else {
-                const t = tariffMap.get(row.tariff_id);
-                if (t) {
-                    tariffName = t.name || 'Unknown';
-                    currentTariff = t;
-                }
+                const t = tariffMap.get(row.tariff_id) || {
+                    id: row.tariff_id,
+                    site_id: siteId,
+                    name: 'Unknown',
+                    updated: new Date()
+                };
+                tariffName = t.name || 'Unknown';
+                currentTariff = t;
             }
 
             const key = `${tariffName}|${touName}|${buyRate}|${sellRate}`;
@@ -264,7 +267,7 @@ export class EnergyRepo {
                     gridUsage: 0,
                     solarProduction: 0,
                     batteryChange: 0,
-                    tariff: currentTariff!,
+                    tariff: currentTariff,
                     touName: touName,
                     cost: 0,
                     buyRate: buyRate,
