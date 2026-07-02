@@ -1,28 +1,6 @@
 
-import { Pool } from 'pg';
-import dotenv from 'dotenv';
-import path from 'path';
-
-// Load environment variables from .env.local
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
-
-if (!process.env.DATABASE_URL) {
-    console.error('DATABASE_URL is not set');
-    process.exit(1);
-}
-
-// Strip sslmode=require if present to avoid conflicts with explicit ssl config
-let connStr = process.env.DATABASE_URL || '';
-if (connStr.includes('sslmode=require')) {
-    connStr = connStr.replace('sslmode=require', '');
-}
-
-const pool = new Pool({
-    connectionString: connStr,
-    ssl: {
-        rejectUnauthorized: false,
-    }
-});
+import 'dotenv/config';
+import { pool } from '../src/lib/db';
 
 async function migrate() {
     try {

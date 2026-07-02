@@ -1,8 +1,7 @@
-import { Pool } from 'pg';
-import dotenv from 'dotenv';
-import path from 'path';
-import { writeFile, readFile } from 'fs/promises';
 import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
+import { writeFile, readFile } from 'fs/promises';
 
 // Load environment variables
 const envLocalPath = path.resolve(process.cwd(), '.env.local');
@@ -14,16 +13,7 @@ if (fs.existsSync(envLocalPath)) {
     dotenv.config({ path: envPath });
 }
 
-if (!process.env.DATABASE_URL) {
-    console.error('Error: DATABASE_URL not found in .env or .env.local');
-    process.exit(1);
-}
-
-// Setup DB connection
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
+import { pool } from '../src/lib/db';
 
 const SITE_NAME = 'Harrison';
 const BACKUP_FILE = 'trmnl-harrison-backup.json';

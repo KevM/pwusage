@@ -11,6 +11,8 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
     - **Important**: Use the **Transaction Pooler (IPv4)** connection string on port `6543` to avoid connection limits and ensure IPv4 compatibility in Docker.
     - Format: `postgres://[user]:[password]@aws-0-[region].pooler.supabase.com:6543/[dbname]?sslmode=require`
     - Make sure to explicitly provide the password (do not use the placeholder).
+- `DATABASE_SSL_CA` (Optional): Raw SSL CA certificate content (PEM format) to enable secure CA cert pinning.
+- `DATABASE_SSL_CA_FILE` (Optional): Path to the SSL CA certificate file to use for verification. Alternatively, you can place your CA certificate at `certs/supabase-ca.crt` (or `certs/prod-ca-2021.crt`) in the application root directory.
 - `NEXT_PUBLIC_APP_URL`: The base URL of your application. Used for API calls and OAuth redirects. Example: `http://localhost:3000`
 - `PUBLIC_TESLA_OAUTH_CLIENT_ID`: Your Tesla Fleet API Client ID.
 - `TESLA_OAUTH_SECRET`: Your Tesla Fleet API Client Secret.

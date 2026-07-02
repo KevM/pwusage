@@ -1,7 +1,6 @@
-import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
-import { Pool } from 'pg';
+import dotenv from 'dotenv';
 
 const envLocalPath = path.resolve(process.cwd(), '.env.local');
 const envPath = path.resolve(process.cwd(), '.env');
@@ -12,20 +11,7 @@ if (fs.existsSync(envLocalPath)) {
     dotenv.config({ path: envPath });
 }
 
-if (!process.env.DATABASE_URL) {
-    console.error('DATABASE_URL is not set in .env.local or .env');
-    process.exit(1);
-}
-
-let connStr = process.env.DATABASE_URL;
-if (connStr.includes('sslmode=require')) {
-    connStr = connStr.replace('sslmode=require', '');
-}
-
-const pool = new Pool({
-    connectionString: connStr,
-    ssl: { rejectUnauthorized: false }
-});
+import { pool } from '../src/lib/db';
 
 interface MissingPluginIdRow {
     id: number;
