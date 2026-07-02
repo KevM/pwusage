@@ -41,7 +41,14 @@
       "Bash(npm --prefix /Users/kevm/github/pwusage/cmd/next-app run build)",
       "Bash(xargs -I{} basename {})",
       "Skill(code-review)",
-      "Skill(code-review:*)"
+      "Skill(code-review:*)",
+      "Bash(npx tsx *)",
+      "Bash(node -e ' *)",
+      "Bash(ls -la ~/.claude/CLAUDE.md 2>/dev/null; echo \"---\"; find /Users/kevm/github/pwusage -maxdepth 3 -iname \"CLAUDE*.md\" 2>/dev/null; echo \"---\"; find /Users/kevm/github/pwusage -iname \"Agents.md\" 2>/dev/null)",
+      "Bash(find /Users/kevm/github/pwusage/cmd -maxdepth 3 -iname \"CLAUDE*.md\" -not -path \"*/node_modules/*\" 2>/dev/null; echo \"---home---\"; ls -la ~/.claude/CLAUDE.md 2>&1)",
+      "Bash(npx eslint *)",
+      "Bash(TZ=America/New_York node -e ' *)",
+      "Bash(ls node_modules/@js-temporal)"
     ]
   }
 }

@@ -1,55 +1,5 @@
 import { Temporal } from '@js-temporal/polyfill';
-
-/**
- * Converts a site-local date (year, month, day) to a UTC instant at
- * site-local midnight. Used to parse query parameters that represent
- * site-local dates (e.g. "2024-05-01") into UTC timestamps for database queries.
- *
- * For a site in Sydney (UTC+11), passing (2024, 5, 1) returns the UTC instant
- * for April 30, 2024 at 13:00 UTC (which is May 1, 2024 at 00:00 in Sydney).
- */
-export function getSiteLocalDate(
-    year: number,
-    month: number,
-    day: number,
-    timeZone: string
-): Date {
-    const date = Temporal.PlainDate.from({
-        year,
-        month,
-        day
-    });
-
-    const midnight = date.toZonedDateTime({
-        timeZone,
-        plainTime: Temporal.PlainTime.from('00:00:00')
-    });
-
-    return new Date(midnight.toInstant().toString());
-}
-
-/**
- * Given a UTC instant, add or subtract months in the site's timezone and return
- * the new UTC instant. Used to calculate previous/next month navigation links.
- *
- * For a site in Sydney, if date is April 30 UTC 13:00 (May 1 Sydney local),
- * addMonths(date, 1, tz) returns May 30 UTC 13:00 (June 1 Sydney local).
- */
-export function addMonthsInSiteTimezone(
-    date: Date,
-    months: number,
-    timeZone: string
-): Date {
-    // Convert UTC instant to site-local date components
-    const instant = Temporal.Instant.from(date.toISOString());
-    const zoned = instant.toZonedDateTimeISO(timeZone);
-
-    // Add months and get new date
-    const newZoned = zoned.add({ months });
-
-    // Convert back to UTC instant
-    return new Date(newZoned.toInstant().toString());
-}
+import { getSiteLocalDate } from './date-utils';
 
 /**
  * Returns the start of the current billing cycle for a site, given the
@@ -86,20 +36,6 @@ export function getCurrentCycleStart(
         }
     }
 
-    // Construct the billing day as a plain date, then convert to site-local midnight.
-    // Temporal handles all timezones correctly, including UTC+12+.
-    const billingDate = Temporal.PlainDate.from({
-        year: cycleYear,
-        month: cycleMonth,
-        day
-    });
-
-    // Convert to zoned datetime at midnight in the site timezone.
-    const midnight = billingDate.toZonedDateTime({
-        timeZone,
-        plainTime: Temporal.PlainTime.from('00:00:00')
-    });
-
-    // Convert the zoned instant back to a JavaScript Date.
-    return new Date(midnight.toInstant().toString());
+    // Construct the billing day and convert to site-local midnight via the centralized getSiteLocalDate.
+    return getSiteLocalDate(cycleYear, cycleMonth, day, timeZone);
 }

@@ -14,6 +14,7 @@ import { Schedule } from '@/lib/schedule';
 import { TeslaClient } from '@/lib/tesla-client';
 import { Importer } from '@/lib/importer';
 import { withRequestContext } from '@/lib/request-context';
+import { getSiteTodayMidnight, safeParseSiteLocalDateToMidnight, addDaysInSiteTimezone } from '@/lib/date-utils';
 
 const repo = new EnergyRepo();
 const siteRepo = new SiteRepo();
@@ -37,30 +38,20 @@ export async function GET(
         }
 
         const tz = tzParam || site.timezone;
-        let refDate = new Date();
+        let start: Date;
 
         if (dateParam) {
-            const [y, m, d] = dateParam.split('-').map(Number);
-            // Use mid-day to avoid edge cases when calculating midnight
-            refDate = new Date(y, m - 1, d, 12, 0, 0);
+            start = safeParseSiteLocalDateToMidnight(dateParam, tz) || new Date(NaN);
         } else {
-            // "Today" in the target timezone
-            try {
-                const parts = new Intl.DateTimeFormat('en-CA', {
-                    timeZone: tz,
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit'
-                }).format(new Date()).split('-').map(Number);
-                refDate = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0);
-            } catch (e) {
-                console.error('[Analysis] Invalid timezone:', tz, e);
-            }
+            start = getSiteTodayMidnight(tz);
         }
 
-        const start = EnergyRepo.getSiteMidnight(refDate, tz);
-        const queryEnd = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-        const end = new Date(queryEnd.getTime() - 1); // 23:59:59.999
+        const queryEnd = isNaN(start.getTime())
+            ? new Date(NaN)
+            : addDaysInSiteTimezone(start, 1, tz);
+        const end = isNaN(queryEnd.getTime())
+            ? new Date(NaN)
+            : new Date(queryEnd.getTime() - 1); // 23:59:59.999
 
         // AUTH CHECK
         const { cookies } = await import('next/headers');

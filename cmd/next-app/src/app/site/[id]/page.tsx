@@ -28,6 +28,14 @@ import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionCard } from '@/components/ui/SectionCard';
+import { getCurrentCycleStart } from '@/lib/billing-cycle';
+import {
+    getSiteTodayMidnight,
+    safeParseSiteLocalDateToMidnight,
+    addMonthsInSiteTimezone,
+    getSiteLocalComponents,
+    formatSiteDate
+} from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -159,55 +167,25 @@ export default async function SitePage({ params, searchParams }: {
     // Get hourly data for the requested date (from query param) or today (in site timezone)
     // We must use the Site's Time to determine "Today", otherwise
     // Server UTC might be "Tomorrow" while Site is still "Today".
-    const getSiteNow = (tz: string) => {
-        const fmt = new Intl.DateTimeFormat('en-CA', {
-            timeZone: tz,
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-        });
-        const parts = fmt.format(new Date()); // YYYY-MM-DD
-        const [y, m, d] = parts.split('-').map(Number);
-        return new Date(y, m - 1, d); // Local Midnight Construction
-    };
+    const siteNow = getSiteTodayMidnight(finalSite.timezone);
 
-    const siteNow = getSiteNow(finalSite.timezone);
-
-    let dateStr: string;
+    let refDate = siteNow;
+    let dateStr = formatSiteDate(siteNow, finalSite.timezone);
 
     if (queryDate) {
-        dateStr = queryDate;
-    } else {
-        const year = siteNow.getFullYear();
-        const month = String(siteNow.getMonth() + 1).padStart(2, '0');
-        const day = String(siteNow.getDate()).padStart(2, '0');
-        dateStr = `${year}-${month}-${day}`;
+        const parsed = safeParseSiteLocalDateToMidnight(queryDate, finalSite.timezone);
+        if (parsed) {
+            refDate = parsed;
+            dateStr = queryDate;
+        }
     }
 
     // Calculate period based on billing start day
     const billingDay = finalSite.billing_start_day || 1;
 
-    // Determine reference date: queryDate or siteNow
-    // We treat queryDate as a Site-local date for the site.
-    let refDate = siteNow;
-    if (queryDate) {
-        const [y, m, d] = queryDate.split('-').map(Number);
-        if (!Number.isNaN(y) && !Number.isNaN(m) && !Number.isNaN(d)) {
-            refDate = new Date(y, m - 1, d);
-        }
-    }
-
-    let startMonth = refDate.getMonth();
-    const startYear = refDate.getFullYear();
-
-    // If reference date is before the billing day, we are in the previous month's billing cycle
-    if (refDate.getDate() < billingDay) {
-        startMonth--;
-    }
-
-    const start = new Date(startYear, startMonth, billingDay);
+    const start = getCurrentCycleStart(billingDay, refDate, finalSite.timezone);
     // End date is start date + 1 month
-    const end = new Date(start.getFullYear(), start.getMonth() + 1, billingDay);
+    const end = addMonthsInSiteTimezone(start, 1, finalSite.timezone);
 
     const usage = await repo.getUsageByTOU(id, start, end);
 
@@ -224,14 +202,8 @@ export default async function SitePage({ params, searchParams }: {
     }
 
     // Navigation dates
-    const prevDate = new Date(start.getFullYear(), start.getMonth() - 1, billingDay);
-    const nextDate = new Date(start.getFullYear(), start.getMonth() + 1, billingDay);
-    const fmtDate = (d: Date) => {
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${y}-${m}-${day}`;
-    };
+    const prevDate = addMonthsInSiteTimezone(start, -1, finalSite.timezone);
+    const nextDate = end;
 
     // Format for display (Server Side to avoid browser timezone shift)
 
@@ -254,18 +226,19 @@ export default async function SitePage({ params, searchParams }: {
     // Since we know 'start' year/month/billingDay match the intended Site Time.
     // We can just construct the string manually.
 
-    const getDisplayLabel = (d: Date, includeYear: boolean) => {
+    const startComponents = getSiteLocalComponents(start, finalSite.timezone);
+    const endComponents = getSiteLocalComponents(end, finalSite.timezone);
+
+    const getDisplayLabel = (comps: { year: number; month: number; day: number }, includeYear: boolean) => {
         const mNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        const month = mNames[d.getMonth()];
-        const day = d.getDate();
-        if (includeYear) return `${month} ${day}, ${d.getFullYear()}`;
-        return `${month} ${day}`;
+        if (includeYear) return `${mNames[comps.month - 1]} ${comps.day}, ${comps.year}`;
+        return `${mNames[comps.month - 1]} ${comps.day}`;
     };
 
-    const dateRangeLabel = `${getDisplayLabel(start, false)} - ${getDisplayLabel(end, true)}`;
+    const dateRangeLabel = `${getDisplayLabel(startComponents, false)} - ${getDisplayLabel(endComponents, true)}`;
 
-    const currentMonthVal = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
-    const fullBillDateStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(billingDay).padStart(2, '0')}`;
+    const currentMonthVal = `${startComponents.year}-${String(startComponents.month).padStart(2, '0')}`;
+    const fullBillDateStr = `${startComponents.year}-${String(startComponents.month).padStart(2, '0')}-${String(billingDay).padStart(2, '0')}`;
 
     // Check if next month would be in the future
     const isCurrentPeriod = siteNow >= start && siteNow < end;
@@ -305,8 +278,8 @@ export default async function SitePage({ params, searchParams }: {
                             <BillDateNav
                                 siteId={id}
                                 billingDay={billingDay}
-                                prevDateStr={fmtDate(prevDate)}
-                                nextDateStr={fmtDate(nextDate)}
+                                prevDateStr={formatSiteDate(prevDate, finalSite.timezone)}
+                                nextDateStr={formatSiteDate(nextDate, finalSite.timezone)}
                                 isCurrentPeriod={isCurrentPeriod}
                                 dateRangeLabel={dateRangeLabel}
                                 currentMonthVal={currentMonthVal}
