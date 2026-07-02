@@ -89,24 +89,17 @@ if (globalForDb.pool) {
 
   pool = new Pool(poolConfig);
 
-  if (needsSetup()) {
-    // Add error handler to prevent crashing on idle client errors
-    pool.on('error', (err) => {
-      console.error('Unexpected error on idle client', err);
-      // Don't process.exit() here; just log it. 
-      // The pool will discard the client and create a new one when needed.
-    });
+  // Add error handler to prevent crashing on idle client errors
+  pool.on('error', (err) => {
+    console.error('Unexpected error on idle client', err);
+    // Don't process.exit() here; just log it. 
+    // The pool will discard the client and create a new one when needed.
+  });
 
-    // Increase max listeners for parallel query operations
-    pool.setMaxListeners(30); // Increased a bit more for safety
-  }
+  // Increase max listeners for parallel query operations
+  pool.setMaxListeners(30); // Increased a bit more for safety
 
   if (process.env.NODE_ENV !== 'production') globalForDb.pool = pool;
-}
-
-// Helper to check setup inside else branch
-function needsSetup() {
-  return true;
 }
 
 export { pool };

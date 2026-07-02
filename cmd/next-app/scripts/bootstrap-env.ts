@@ -9,6 +9,7 @@ const envPath = path.join(projectRoot, '.env');
 
 if (fs.existsSync(envLocalPath)) {
   dotenv.config({ path: envLocalPath });
-} else if (fs.existsSync(envPath)) {
+}
+if (fs.existsSync(envPath)) {
   dotenv.config({ path: envPath });
 }
