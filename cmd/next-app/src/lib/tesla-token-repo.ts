@@ -66,11 +66,7 @@ export class TeslaTokenRepo {
 
     // Utility
     private isTerminalAuthError(error: unknown): boolean {
-        if (isTeslaAuthError(error)) {
-            return true;
-        }
-        const msg = error instanceof Error ? error.message : String(error);
-        return msg.includes('401') || msg.includes('login_required') || msg.includes('invalid_grant');
+        return isTeslaAuthError(error);
     }
 
     getLockedRefreshHandler(siteId: string) {

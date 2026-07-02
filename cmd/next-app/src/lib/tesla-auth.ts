@@ -1,3 +1,4 @@
+import { TeslaAuthError } from './tesla-client';
 
 export async function refreshAccessToken(refreshToken: string): Promise<{ access_token: string; refresh_token: string }> {
     const url = 'https://auth.tesla.com/oauth2/v3/token';
@@ -19,6 +20,14 @@ export async function refreshAccessToken(refreshToken: string): Promise<{ access
 
     if (!response.ok) {
         const body = await response.text();
+        if (
+            response.status === 401 ||
+            response.status === 400 ||
+            body.includes('invalid_grant') ||
+            body.includes('login_required')
+        ) {
+            throw new TeslaAuthError(`Failed to refresh token: ${response.status} ${body}`, response.status);
+        }
         throw new Error(`Failed to refresh token: ${response.status} ${body}`);
     }
 

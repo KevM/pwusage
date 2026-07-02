@@ -149,7 +149,6 @@ export class TeslaAuthError extends Error {
         }
     }
 }
-
 export function isTeslaAuthError(error: unknown): error is TeslaAuthError {
     if (error instanceof TeslaAuthError || (error instanceof Error && error.name === 'TeslaAuthError')) {
         return true;
@@ -157,15 +156,13 @@ export function isTeslaAuthError(error: unknown): error is TeslaAuthError {
     if (error instanceof Error) {
         const msg = error.message;
         return (
-            msg.includes('401') ||
-            msg.includes('403') ||
-            msg.includes('invalid authentication') ||
             msg.includes('Tesla API Error: 401') ||
             msg.includes('Tesla API Error: 403') ||
+            msg.includes('Tesla: 401') ||
+            msg.includes('Tesla: 403') ||
             msg.includes('login_required') ||
             msg.includes('invalid_grant') ||
-            /unauthor/i.test(msg) ||
-            /token/i.test(msg)
+            msg.includes('invalid authentication')
         );
     }
     return false;
