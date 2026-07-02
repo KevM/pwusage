@@ -1,10 +1,11 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
 import { BatteryHoldRepo } from '@/lib/battery-hold-repo';
 import { SiteRepo } from '@/lib/site-repo';
+import { SiteService } from '@/lib/site-service';
 import { Schedule } from '@/lib/schedule';
-import { TeslaClient } from '@/lib/tesla-client';
 import { verifySiteAccess, getCurrentUser } from '@/lib/auth-checks';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { LiveDetailView } from '@/components/site/live/LiveDetailView';
@@ -13,8 +14,6 @@ import { buildSnapshotModel, buildCumulativeModel } from '@/lib/sankey/build-flo
 import { getRenderer } from '@/lib/sankey/renderers/registry';
 import { computeLoadTiming } from '@/lib/load-timing';
 import { refreshTodayData } from '@/lib/today-refresh';
-import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
-import { UserRepo } from '@/lib/user-repo';
 import { energyToAveragePower } from '@/lib/energy-utils';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -25,24 +24,6 @@ import { Button } from '@/components/ui/Button';
 
 export const dynamic = 'force-dynamic';
 
-async function getLiveStatus(siteId: string) {
-    const tokens = await new UserRepo().getTokensForSite(siteId);
-    if (!tokens?.access_token || !tokens?.refresh_token) return null;
-
-    const siteRepo = new SiteRepo();
-    const tokenRepo = new TeslaTokenRepo(siteRepo);
-    const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-
-    const client = new TeslaClient({
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token,
-        tokenRefreshHandler: handlers.refreshHandler,
-        onTokenError: handlers.errorHandler,
-        onTokenUpdate: () => {}
-    });
-
-    return client.getLiveStatus(siteId);
-}
 
 export default async function SiteLivePage({
     params,
@@ -80,6 +61,10 @@ export default async function SiteLivePage({
     const siteRepo = new SiteRepo();
     const repo = new EnergyRepo();
     const holdRepo = new BatteryHoldRepo();
+    const cookieStore = await cookies();
+    const siteAuthToken = cookieStore.get('site_auth')?.value;
+    const siteService = new SiteService({ siteRepo, siteAuthToken });
+
     const site = await siteRepo.getSite(id);
 
     if (!site) {
@@ -125,7 +110,7 @@ export default async function SiteLivePage({
         repo.getBucketedEnergyData(id, todayStart, now),
         repo.getRawEnergyData(id, todayStart, now),
         repo.getLatestEnergyData(id),
-        getLiveStatus(id).catch(() => null),
+        siteService.getLiveStatus(id),
         holdRepo.getActiveHold(id),
         holdRepo.getLatestCancelledUnacked(id),
     ]);

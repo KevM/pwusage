@@ -59,14 +59,13 @@ export async function GET(
 
         const cookieStore = await cookies();
         const siteAuthToken = cookieStore.get('site_auth')?.value;
-        if (siteAuthToken) {
-            // Validate access to THIS specific site
-            const siteService = new SiteService({ siteRepo, siteAuthToken });
-            if (!await siteService.validateSiteAccess(siteId)) {
-                return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
-            }
-        } else {
+        if (!siteAuthToken) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const siteService = new SiteService({ siteRepo, siteAuthToken });
+        if (!await siteService.validateSiteAccess(siteId)) {
+            return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
         }
 
         if (isNaN(start.getTime())) {
@@ -74,19 +73,10 @@ export async function GET(
         }
 
         // 0. Auto-Heal / Sync Check
-        const tokens = await new UserRepo().getTokensForSite(siteId);
+        const teslaClient = await siteService.getTeslaClientForSite(siteId);
         let importer: Importer | null = null;
 
-        if (tokens) {
-            // We need to initialize TeslaClient with token refresh logic
-            const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-            const teslaClient = new TeslaClient({
-                accessToken: tokens.access_token,
-                refreshToken: tokens.refresh_token,
-                tokenRefreshHandler: handlers.refreshHandler,
-                onTokenError: handlers.errorHandler
-            });
-
+        if (teslaClient) {
             const force = searchParams.get('force') === 'true';
             importer = new Importer(teslaClient);
             console.error(`[Analysis] Calling ensureDataForRange for ${siteId}, force=${force}`);
@@ -101,6 +91,7 @@ export async function GET(
             // Fallback for audit if no tokens (though TeslaClient might throw later)
             importer = new Importer(null as unknown as TeslaClient);
         }
+
 
         // 1. Fetch Raw Data (Potential re-fetch if sync happened inside ensureDataForRange)
         const rawData = await repo.getRawEnergyData(siteId, start, queryEnd);

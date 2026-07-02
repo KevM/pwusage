@@ -1,9 +1,9 @@
 import { Importer } from './importer';
-import { TeslaClient } from './tesla-client';
-import { TeslaTokenRepo } from './tesla-token-repo';
 import { SiteRepo } from './site-repo';
 import { EnergyRepo } from './energy-repo';
 import { UserRepo } from './user-repo';
+import { SiteService } from './site-service';
+
 
 /**
  * Per-site throttle state. Both the live page (server render + poll) and the
@@ -91,16 +91,12 @@ export async function refreshTodayData(siteId: string): Promise<RefreshTodayResu
 
     try {
         const energyRepo = new EnergyRepo();
-        const tokenRepo = new TeslaTokenRepo(siteRepo);
-        const handlers = tokenRepo.getLockedRefreshHandler(siteId);
+        const siteService = new SiteService({ siteRepo });
+        const client = await siteService.getTeslaClientForSite(siteId);
 
-        const client = new TeslaClient({
-            accessToken: tokens.access_token,
-            refreshToken: tokens.refresh_token,
-            tokenRefreshHandler: handlers.refreshHandler,
-            onTokenError: handlers.errorHandler,
-            onTokenUpdate: () => {}
-        });
+        if (!client) {
+            return { status: 'error', errorMessage: 'Tesla credentials not found' };
+        }
 
         const importer = new Importer(client);
 

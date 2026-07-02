@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySiteAccess } from '@/lib/auth-checks';
-import { TeslaClient } from '@/lib/tesla-client';
 import { Importer } from '@/lib/importer';
-import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { UserRepo } from '@/lib/user-repo';
+import { SiteService } from '@/lib/site-service';
 import { withRequestContext } from '@/lib/request-context';
 
 export async function POST(
@@ -21,28 +19,12 @@ export async function POST(
             return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
         }
 
-        // Get site-specific Tesla credentials (from the site owner)
-        const credentials = await new UserRepo().getTokensForSite(siteId);
-        if (!credentials) {
-            return NextResponse.json({ error: 'Site has no Tesla credentials' }, { status: 401 });
-        }
-
-        // Verify site exists
         const siteRepo = new SiteRepo();
-        const tokenRepo = new TeslaTokenRepo(siteRepo);
-        const site = await siteRepo.getSite(siteId);
-        if (!site) {
-            return NextResponse.json({ error: 'Site not found' }, { status: 404 });
+        const siteService = new SiteService({ siteRepo });
+        const client = await siteService.getTeslaClientForSite(siteId);
+        if (!client) {
+            return NextResponse.json({ error: 'Site has no Tesla credentials or not found' }, { status: 401 });
         }
-
-        // Create Tesla client and importer
-        const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-        const client = new TeslaClient({
-            accessToken: credentials.access_token,
-            refreshToken: credentials.refresh_token || undefined,
-            tokenRefreshHandler: handlers.refreshHandler,
-            onTokenError: handlers.errorHandler,
-        });
 
         const importer = new Importer(client);
 

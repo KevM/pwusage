@@ -363,4 +363,127 @@ describe('SiteService Security', () => {
             }
         });
     });
+
+    describe('getTeslaClientForSite', () => {
+        it('returns null if site has no access token', async () => {
+            const mockSiteRepo = {
+                getSite: vi.fn().mockResolvedValue({ id: '123' })
+            };
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo
+            });
+            const client = await service.getTeslaClientForSite('123');
+            expect(client).toBeNull();
+        });
+
+        it('instantiates and returns a TeslaClient if site has access token', async () => {
+            const mockSiteRepo = {
+                getSite: vi.fn().mockResolvedValue({ id: '123', access_token: 'abc', refresh_token: 'ref' })
+            };
+            const mockTeslaClient = {};
+            const teslaClientCreator = vi.fn().mockReturnValue(mockTeslaClient);
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                teslaClientCreator
+            });
+
+            const client = await service.getTeslaClientForSite('123');
+            expect(client).toBe(mockTeslaClient);
+            expect(teslaClientCreator).toHaveBeenCalled();
+        });
+    });
+
+    describe('getLiveStatus', () => {
+        it('returns cached live status if not expired', async () => {
+            const cachedStatus = { percentage_charged: 80 };
+            const mockSiteRepo = {
+                getSite: vi.fn().mockResolvedValue({
+                    id: '123',
+                    live_status_cache: cachedStatus,
+                    last_live_refresh_at: Date.now() - 5 * 60 * 1000 // 5 mins ago (TTL is 16 mins)
+                })
+            };
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo
+            });
+
+            const status = await service.getLiveStatus('123');
+            expect(status).toEqual(cachedStatus);
+        });
+
+        it('fetches status from client and updates cache on cache miss', async () => {
+            const newStatus = { percentage_charged: 90 };
+            const mockSiteRepo = {
+                getSite: vi.fn().mockResolvedValue({
+                    id: '123',
+                    live_status_cache: null,
+                    access_token: 'abc'
+                }),
+                updateLiveStatusCache: vi.fn()
+            };
+
+            const mockTeslaClient = {
+                getLiveStatus: vi.fn().mockResolvedValue(newStatus)
+            };
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                teslaClientCreator: () => mockTeslaClient as unknown as TeslaClient
+            });
+
+            const status = await service.getLiveStatus('123');
+            expect(status).toEqual(newStatus);
+            expect(mockSiteRepo.updateLiveStatusCache).toHaveBeenCalledWith('123', newStatus, expect.any(Number));
+        });
+
+        it('returns stale cache if client fetch fails', async () => {
+            const staleStatus = { percentage_charged: 75 };
+            const mockSiteRepo = {
+                getSite: vi.fn().mockResolvedValue({
+                    id: '123',
+                    live_status_cache: staleStatus,
+                    last_live_refresh_at: Date.now() - 30 * 60 * 1000, // 30 mins ago (expired)
+                    access_token: 'abc'
+                })
+            };
+
+            const mockTeslaClient = {
+                getLiveStatus: vi.fn().mockRejectedValue(new Error('Tesla API Offline'))
+            };
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                teslaClientCreator: () => mockTeslaClient as unknown as TeslaClient
+            });
+
+            const status = await service.getLiveStatus('123');
+            expect(status).toEqual(staleStatus);
+        });
+    });
+
+    describe('refreshLiveStatus', () => {
+        it('forces a foreground live status fetch and updates cache', async () => {
+            const newStatus = { percentage_charged: 95 };
+            const mockSiteRepo = {
+                getSite: vi.fn().mockResolvedValue({ id: '123', access_token: 'abc' }),
+                updateLiveStatusCache: vi.fn()
+            };
+
+            const mockTeslaClient = {
+                getLiveStatus: vi.fn().mockResolvedValue(newStatus)
+            };
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                teslaClientCreator: () => mockTeslaClient as unknown as TeslaClient
+            });
+
+            const status = await service.refreshLiveStatus('123');
+            expect(status).toEqual(newStatus);
+            expect(mockSiteRepo.updateLiveStatusCache).toHaveBeenCalledWith('123', newStatus, expect.any(Number));
+        });
+    });
 });
+

@@ -1,10 +1,8 @@
-
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { Importer } from '@/lib/importer';
-import { TeslaClient } from '@/lib/tesla-client';
-import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { getTeslaCredentials, getAuthorizedSiteIds } from '@/lib/auth-checks';
+import { SiteService } from '@/lib/site-service';
 
 export async function GET(request: Request) {
     try {
@@ -17,27 +15,24 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
         }
 
-        const authorizedSites = await getAuthorizedSiteIds();
-        if (!authorizedSites.includes(siteId)) {
+        const cookieStore = await cookies();
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
+
+        const siteRepo = new SiteRepo();
+        const siteService = new SiteService({
+            siteRepo,
+            siteAuthToken
+        });
+
+        if (!await siteService.validateSiteAccess(siteId)) {
             return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
         }
 
-        const credentials = await getTeslaCredentials();
-        if (!credentials) {
-            return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+        const client = await siteService.getTeslaClientForSite(siteId);
+        if (!client) {
+            return NextResponse.json({ error: 'Not authenticated or site not found' }, { status: 401 });
         }
 
-        const tokenRepo = new TeslaTokenRepo(new SiteRepo());
-        const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-        const client = new TeslaClient({
-            accessToken: credentials.access_token,
-            refreshToken: credentials.refresh_token || undefined,
-            tokenRefreshHandler: handlers.refreshHandler,
-            onTokenError: handlers.errorHandler,
-            onTokenUpdate: () => {
-                console.log('Refreshing tokens via Sync API');
-            }
-        });
         const importer = new Importer(client);
 
         const startDate = new Date(startParam);

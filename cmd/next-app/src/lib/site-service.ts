@@ -1,5 +1,5 @@
 import { Site, SiteWithTariffs, TrmnlInstallation } from './db';
-import { TeslaClient, TeslaClientConfig, isTeslaAuthError } from './tesla-client';
+import { TeslaClient, TeslaClientConfig, isTeslaAuthError, EnergySiteLiveStatus } from './tesla-client';
 import { SiteRepo } from './site-repo';
 import { verifySiteToken } from './auth-jwt';
 import { isUserActive as defaultIsUserActive } from './user-repo';
@@ -16,6 +16,49 @@ import {
     getSiteLocalComponents,
     formatSiteDate
 } from './date-utils';
+
+export interface TeslaRefreshState {
+    todayInFlight: boolean;
+    liveInFlight: boolean;
+    lastTodayRefreshAt: number;
+    lastLiveRefreshAt: number;
+}
+
+export const LIVE_STATUS_CACHE_TTL_MS = 16 * 60 * 1000;
+export const TESLA_LIVE_INLINE_TIMEOUT_MS = 900;
+export const TESLA_LIVE_TIMEOUT_MS = 3000;
+
+export function getTeslaRefreshState(siteId: string): TeslaRefreshState {
+    const globalState = global as unknown as { trmnlTeslaRefreshState?: Map<string, TeslaRefreshState> };
+    if (!globalState.trmnlTeslaRefreshState) {
+        globalState.trmnlTeslaRefreshState = new Map<string, TeslaRefreshState>();
+    }
+    const existing = globalState.trmnlTeslaRefreshState.get(siteId);
+    if (existing) {
+        return existing;
+    }
+    const initial: TeslaRefreshState = {
+        todayInFlight: false,
+        liveInFlight: false,
+        lastTodayRefreshAt: 0,
+        lastLiveRefreshAt: 0
+    };
+    globalState.trmnlTeslaRefreshState.set(siteId, initial);
+    return initial;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let timeoutId: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label}_timeout`)), timeoutMs);
+    });
+
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
+}
 
 export interface SiteServiceDeps {
     teslaClient?: Pick<TeslaClient, 'getProducts'>;
@@ -316,4 +359,91 @@ export class SiteService {
                 .filter(id => id !== '')
         );
     }
+
+    async getTeslaClientForSite(siteId: string): Promise<TeslaClient | null> {
+        const siteRepo = this.deps.siteRepo;
+        const teslaTokenRepo = this.deps.teslaTokenRepo || new TeslaTokenRepo(siteRepo);
+        const site = await siteRepo.getSite(siteId, { includeTokens: true });
+        if (!site || !site.access_token) return null;
+
+        const handlers = teslaTokenRepo.getLockedRefreshHandler(siteId);
+        const config: TeslaClientConfig = {
+            accessToken: site.access_token,
+            refreshToken: site.refresh_token || undefined,
+            tokenRefreshHandler: handlers.refreshHandler,
+            onTokenError: handlers.errorHandler,
+            onTokenUpdate: async () => {
+                console.log(`[SiteService] Token update callback triggered for site ${siteId}`);
+            }
+        };
+
+        return this.deps.teslaClientCreator
+            ? this.deps.teslaClientCreator(config)
+            : new TeslaClient(config);
+    }
+
+    async getLiveStatus(siteId: string): Promise<EnergySiteLiveStatus | null> {
+        const siteRepo = this.deps.siteRepo;
+        const site = await siteRepo.getSite(siteId);
+        if (!site) return null;
+
+        const nowMs = Date.now();
+        if (site.live_status_cache) {
+            const cachedAgeMs = nowMs - Number(site.last_live_refresh_at || 0);
+            if (cachedAgeMs < LIVE_STATUS_CACHE_TTL_MS) {
+                return site.live_status_cache as EnergySiteLiveStatus;
+            }
+        }
+
+        // Cache miss: fetch from Tesla client
+        const client = await this.getTeslaClientForSite(siteId);
+        if (!client) {
+            return (site.live_status_cache as EnergySiteLiveStatus) || null;
+        }
+
+        const refreshState = getTeslaRefreshState(siteId);
+        if (refreshState.liveInFlight) {
+            return (site.live_status_cache as EnergySiteLiveStatus) || null;
+        }
+
+        refreshState.liveInFlight = true;
+        try {
+            const inlineLive = await withTimeout(
+                client.getLiveStatus(siteId),
+                TESLA_LIVE_INLINE_TIMEOUT_MS,
+                'tesla_live_inline'
+            );
+            await siteRepo.updateLiveStatusCache(siteId, inlineLive, Date.now());
+            // Update local memory representations in case caller reuses it
+            site.live_status_cache = inlineLive;
+            site.last_live_refresh_at = Date.now();
+            return inlineLive;
+        } catch (error) {
+            console.warn(`[SiteService] Live status inline fetch failed/timed out for site ${siteId}:`, error);
+            return (site.live_status_cache as EnergySiteLiveStatus) || null;
+        } finally {
+            refreshState.liveInFlight = false;
+        }
+    }
+
+    async refreshLiveStatus(siteId: string): Promise<EnergySiteLiveStatus | null> {
+        const siteRepo = this.deps.siteRepo;
+        const client = await this.getTeslaClientForSite(siteId);
+        if (!client) return null;
+
+        const refreshState = getTeslaRefreshState(siteId);
+        refreshState.liveInFlight = true;
+        try {
+            const status = await withTimeout(
+                client.getLiveStatus(siteId),
+                TESLA_LIVE_TIMEOUT_MS,
+                'tesla_live'
+            );
+            await siteRepo.updateLiveStatusCache(siteId, status, Date.now());
+            return status;
+        } finally {
+            refreshState.liveInFlight = false;
+        }
+    }
 }
+
