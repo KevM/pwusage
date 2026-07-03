@@ -21,6 +21,13 @@ export type { EnergyDataRow } from './energy-transformer';
 
 
 
+export interface EnsureDataResult {
+    complete: boolean;
+    rows: EnergyDataRow[];
+    processedWindows: number;
+    totalWindows: number;
+}
+
 export class Importer {
     private client: TeslaClient;
     private repo: EnergyRepo;
@@ -94,11 +101,19 @@ export class Importer {
         return filteredRows.length;
     }
 
-    async ensureDataForRange(siteId: string, start: Date, end: Date, onProgress?: (msg: string) => void, options?: { force?: boolean }): Promise<EnergyDataRow[]> {
+    async ensureDataForRange(
+        siteId: string,
+        start: Date,
+        end: Date,
+        onProgress?: (msg: string) => void,
+        options?: { force?: boolean; maxTimeMs?: number }
+    ): Promise<EnsureDataResult> {
         const force = options?.force ?? false;
+        const maxTimeMs = options?.maxTimeMs;
+
         if (Importer.pendingSyncs.has(siteId) && !force) {
             logSync(`Skip: Data for range already being synced for site ${siteId}`);
-            return [];
+            return { complete: false, rows: [], processedWindows: 0, totalWindows: 0 };
         }
 
         let inMemoryAdded = false;
@@ -116,7 +131,7 @@ export class Importer {
                 this.siteRepo,
                 {
                     siteId,
-                    lockDurationMs: 300000, // 5 minutes for full range sync
+                    lockDurationMs: 90000, // 90 seconds (resumable chunked requests)
                     force,
                     logLabel: 'Importer',
                 },
@@ -141,8 +156,17 @@ export class Importer {
                     const allRows: EnergyDataRow[] = [];
                     let successCount = 0;
                     let lastError: Error | null = null;
+                    let timeBudgetExceeded = false;
+                    const startTime = Date.now();
 
-                    for (const window of windows) {
+                    for (let i = 0; i < windows.length; i++) {
+                        if (maxTimeMs !== undefined && Date.now() - startTime >= maxTimeMs) {
+                            logSync(`Time budget reached (${maxTimeMs}ms) after processing ${successCount}/${windows.length} windows`);
+                            timeBudgetExceeded = true;
+                            break;
+                        }
+
+                        const window = windows[i];
                         const dateStr = window.start.toISOString().split('T')[0];
                         if (onProgress) onProgress(`Importing ${dateStr}...`);
                         logSync(`Importing window: ${window.start.toISOString()} - ${window.end.toISOString()}`);
@@ -157,17 +181,24 @@ export class Importer {
                         }
                     }
 
-                    if (windows.length > 0 && successCount === 0) {
+                    if (windows.length > 0 && successCount === 0 && !timeBudgetExceeded) {
                         throw lastError || new Error(`All ${windows.length} import windows failed`);
                     }
 
-                    return allRows;
+                    const isComplete = windows.length === 0 || (!timeBudgetExceeded && (successCount === windows.length || successCount > 0));
+
+                    return {
+                        complete: isComplete,
+                        rows: allRows,
+                        processedWindows: successCount,
+                        totalWindows: windows.length
+                    };
                 }
             );
 
             if (lockResult.status === 'not-acquired') {
                 logSync(`Skip: DB lock busy for site ${siteId}`);
-                return [];
+                return { complete: false, rows: [], processedWindows: 0, totalWindows: 0 };
             }
 
             return lockResult.value;

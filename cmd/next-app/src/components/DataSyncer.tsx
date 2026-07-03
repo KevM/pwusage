@@ -72,7 +72,35 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
                 const s = hotStart < cappedStart ? cappedStart : hotStart;
                 const e = cappedHotEnd;
                 if (s < e) {
-                    await runSyncStep(s, e, signal, true);
+                    let hotAttempts = 0;
+                    let lastTotalWindows: number | undefined;
+                    let consecutiveZeroProcessed = 0;
+
+                    while (hotAttempts < 15 && !signal.aborted) {
+                        const res = await runSyncStep(s, e, signal, true);
+                        if (res.complete || !res.partial) break;
+
+                        if (res.processedWindows === 0) {
+                            consecutiveZeroProcessed++;
+                            if (consecutiveZeroProcessed >= 2) break;
+                            await new Promise(r => setTimeout(r, 1000));
+                            hotAttempts++;
+                            continue;
+                        } else {
+                            consecutiveZeroProcessed = 0;
+                        }
+
+                        if (res.totalWindows !== undefined && lastTotalWindows !== undefined && res.totalWindows >= lastTotalWindows) {
+                            console.warn(`[DataSyncer] Coverage stopped advancing in hot zone (windows: ${res.totalWindows}), stopping retry loop`);
+                            break;
+                        }
+                        if (res.totalWindows !== undefined) {
+                            lastTotalWindows = res.totalWindows;
+                        }
+
+                        await new Promise(r => setTimeout(r, 500));
+                        hotAttempts++;
+                    }
                     if (signal.aborted) return;
                 }
             }
@@ -80,17 +108,68 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
             // 2. STAGE 2: FULL PERIOD SYNC
             // Ensure the entire billing period is covered for the Bill Summary
             // Only run if effective end > effective start
+            let fullCompleted = false;
             if (cappedStart < cappedEnd) {
-                await runSyncStep(cappedStart, cappedEnd, signal, false);
+                let fullAttempts = 0;
+                let lastTotalWindows: number | undefined;
+                let consecutiveZeroProcessed = 0;
+
+                while (fullAttempts < 15 && !signal.aborted) {
+                    const res = await runSyncStep(cappedStart, cappedEnd, signal, false);
+                    if (res.complete) {
+                        fullCompleted = true;
+                        break;
+                    }
+                    if (!res.partial) {
+                        break;
+                    }
+
+                    if (res.processedWindows === 0) {
+                        consecutiveZeroProcessed++;
+                        if (consecutiveZeroProcessed >= 2) break;
+                        await new Promise(r => setTimeout(r, 1000));
+                        fullAttempts++;
+                        continue;
+                    } else {
+                        consecutiveZeroProcessed = 0;
+                    }
+
+                    if (res.totalWindows !== undefined && lastTotalWindows !== undefined && res.totalWindows >= lastTotalWindows) {
+                        console.warn(`[DataSyncer] Coverage stopped advancing in full period (windows: ${res.totalWindows}), stopping retry loop`);
+                        break;
+                    }
+                    if (res.totalWindows !== undefined) {
+                        lastTotalWindows = res.totalWindows;
+                    }
+
+                    await new Promise(r => setTimeout(r, 500));
+                    fullAttempts++;
+                }
+            } else {
+                fullCompleted = true;
             }
 
-            if (!signal.aborted) {
+            if (!signal.aborted && fullCompleted) {
                 setLastSyncKey(fullKey);
             }
         };
 
-        const runSyncStep = async (s: Date, e: Date, sig: AbortSignal, refreshAfter: boolean) => {
+        interface SyncStepResult {
+            complete: boolean;
+            partial: boolean;
+            error: boolean;
+            processedWindows?: number;
+            totalWindows?: number;
+        }
+
+        const runSyncStep = async (s: Date, e: Date, sig: AbortSignal, refreshAfter: boolean): Promise<SyncStepResult> => {
             setStatus('checking');
+            let receivedComplete = false;
+            let receivedPartial = false;
+            let hasError = false;
+            let processedWindows: number | undefined;
+            let totalWindows: number | undefined;
+
             try {
                 const params = new URLSearchParams({
                     siteId,
@@ -99,10 +178,10 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
                 });
 
                 const res = await fetch(`/api/sync?${params.toString()}`, { signal: sig });
-                if (!res.ok) return;
+                if (!res.ok) return { complete: false, partial: false, error: true };
 
                 const reader = res.body?.getReader();
-                if (!reader) return;
+                if (!reader) return { complete: false, partial: false, error: true };
 
                 const decoder = new TextDecoder();
 
@@ -123,7 +202,19 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
                                 } else if (data.status === 'progress') {
                                     setStatus('active');
                                     setMessage(data.message);
+                                } else if (data.status === 'partial') {
+                                    receivedPartial = true;
+                                    processedWindows = typeof data.processedWindows === 'number' ? data.processedWindows : undefined;
+                                    totalWindows = typeof data.totalWindows === 'number' ? data.totalWindows : undefined;
+                                    setStatus('active');
+                                    setMessage(data.message || 'Importing historical data...');
+                                    import('react').then(({ startTransition }) => {
+                                        startTransition(() => {
+                                            router.refresh();
+                                        });
+                                    });
                                 } else if (data.status === 'complete') {
+                                    receivedComplete = true;
                                     if (refreshAfter) {
                                         // Refresh purely for the chart update
                                         import('react').then(({ startTransition }) => {
@@ -132,6 +223,8 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
                                             });
                                         });
                                     }
+                                } else if (data.status === 'error') {
+                                    hasError = true;
                                 }
                             } catch {
                                 // ignore
@@ -143,6 +236,7 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
                 if ((err as Error).name !== 'AbortError') {
                     console.error('Info sync error:', err);
                 }
+                hasError = true;
             } finally {
                 if (!sig.aborted) {
                     setStatus('idle');
@@ -156,6 +250,8 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
                     }
                 }
             }
+
+            return { complete: receivedComplete, partial: receivedPartial, error: hasError, processedWindows, totalWindows };
         }
 
         runSyncSequence();

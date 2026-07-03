@@ -158,7 +158,12 @@ describe('Importer Sync Logic', () => {
         const start = new Date('2026-01-10T00:00:00Z');
         const end = new Date('2026-01-10T23:59:59Z');
 
-        await expect(importer.ensureDataForRange('site-123', start, end)).resolves.toEqual([]);
+        await expect(importer.ensureDataForRange('site-123', start, end)).resolves.toEqual({
+            complete: false,
+            rows: [],
+            processedWindows: 0,
+            totalWindows: 0,
+        });
         expect(importSpy).not.toHaveBeenCalled();
     });
 
@@ -178,7 +183,7 @@ describe('Importer Sync Logic', () => {
         expect(mockRepo.releaseImportLock).toHaveBeenCalledWith('site-123', expect.any(String));
     });
 
-    it('uses the shared import lock helper and releases after successful window import', async () => {
+    it('uses the shared import lock helper with 90s duration and releases after successful window import', async () => {
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
@@ -190,13 +195,14 @@ describe('Importer Sync Logic', () => {
         const start = new Date('2026-01-10T00:00:00Z');
         const end = new Date('2026-01-10T23:59:59Z');
 
-        await importer.ensureDataForRange('site-123', start, end);
+        const result = await importer.ensureDataForRange('site-123', start, end);
 
+        expect(result.complete).toBe(true);
         expect(importLockMock.withImportLock).toHaveBeenCalledWith(
             mockRepo,
             expect.objectContaining({
                 siteId: 'site-123',
-                lockDurationMs: 300000,
+                lockDurationMs: 90000,
                 force: false,
                 logLabel: 'Importer',
             }),
@@ -335,5 +341,33 @@ describe('Importer Sync Logic', () => {
 
         // Verify we don't import when full-day coverage exists
         expect(importSpy).not.toHaveBeenCalled();
+    });
+
+    it('stops importing and returns complete: false when maxTimeMs time budget is reached', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+
+        const start = new Date('2026-01-10T00:00:00Z');
+        const end = new Date('2026-01-15T00:00:00Z');
+
+        let currentTime = 10000;
+        vi.spyOn(Date, 'now').mockImplementation(() => currentTime);
+
+        const importSpy = vi.spyOn(importer, 'importRange').mockImplementation(async () => {
+            currentTime += 50000; // Advance time by 50s on each imported window
+            return [];
+        });
+
+        const result = await importer.ensureDataForRange('site-123', start, end, undefined, { maxTimeMs: 10000 });
+
+        expect(result.complete).toBe(false);
+        expect(result.processedWindows).toBe(1);
+        expect(importSpy).toHaveBeenCalledTimes(1);
+
+        vi.spyOn(Date, 'now').mockRestore();
     });
 });

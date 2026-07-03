@@ -6,6 +6,8 @@ import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { getTeslaCredentials, getAuthorizedSiteIds } from '@/lib/auth-checks';
 
+export const maxDuration = 60;
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -49,15 +51,33 @@ export async function GET(request: Request) {
                 try {
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: "checking" })}\n\n`));
 
-                    await importer.ensureDataForRange(siteId, startDate, endDate, (msg) => {
-                        const progressJson = JSON.stringify({
-                            status: "progress",
-                            message: msg
-                        });
-                        controller.enqueue(encoder.encode(`data: ${progressJson}\n\n`));
-                    });
+                    const result = await importer.ensureDataForRange(
+                        siteId,
+                        startDate,
+                        endDate,
+                        (msg) => {
+                            const progressJson = JSON.stringify({
+                                status: "progress",
+                                message: msg
+                            });
+                            controller.enqueue(encoder.encode(`data: ${progressJson}\n\n`));
+                        },
+                        { maxTimeMs: 40000 }
+                    );
 
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: "complete" })}\n\n`));
+                    if (result.complete) {
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: "complete" })}\n\n`));
+                    } else {
+                        const message = result.processedWindows > 0
+                            ? `Synced ${result.processedWindows} days, continuing...`
+                            : 'Import busy, waiting for lock...';
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                            status: "partial",
+                            message,
+                            processedWindows: result.processedWindows,
+                            totalWindows: result.totalWindows
+                        })}\n\n`));
+                    }
                     controller.close();
                 } catch (err) {
                     const message = (err instanceof Error) ? err.message : String(err);
