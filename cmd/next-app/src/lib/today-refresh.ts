@@ -1,10 +1,9 @@
 import { Importer } from './importer';
-import { TeslaClient, type EnergySiteLiveStatus } from './tesla-client';
-import { TeslaTokenRepo } from './tesla-token-repo';
+import { type EnergySiteLiveStatus } from './tesla-client';
 import { SiteRepo } from './site-repo';
 import { EnergyRepo } from './energy-repo';
-import { UserRepo } from './user-repo';
 import { withImportLock } from './import-lock';
+import { createTeslaClientForSite } from './tesla-client-factory';
 
 /**
  * Per-site throttle state. Demand-driven refresh triggers go through this
@@ -92,31 +91,6 @@ function readFetchedAt(value: unknown): number | undefined {
         return Number.isFinite(parsed) ? parsed : undefined;
     }
     return undefined;
-}
-
-/**
- * Shared factory to construct a TeslaClient wired to locked token refresh handlers.
- */
-/**
- * Shared factory to construct a TeslaClient wired to locked token refresh handlers.
- * Allows creation if refresh_token exists (using 'expired' fallback if access_token is missing/null)
- * so that callers can trigger token refresh on 401 and self-recover.
- */
-export async function createTeslaClientForSite(siteId: string): Promise<TeslaClient | null> {
-    const tokens = await new UserRepo().getTokensForSite(siteId);
-    if (!tokens?.refresh_token) {
-        return null;
-    }
-    const siteRepo = new SiteRepo();
-    const tokenRepo = new TeslaTokenRepo(siteRepo);
-    const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-    return new TeslaClient({
-        accessToken: tokens.access_token || 'expired',
-        refreshToken: tokens.refresh_token,
-        tokenRefreshHandler: handlers.refreshHandler,
-        onTokenError: handlers.errorHandler,
-        onTokenUpdate: () => {}
-    });
 }
 
 /**

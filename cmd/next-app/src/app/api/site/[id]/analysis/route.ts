@@ -5,12 +5,11 @@ export const dynamic = 'force-dynamic';
 
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { LoadTagRepo } from '@/lib/load-tag-repo';
-import { UserRepo } from '@/lib/user-repo';
 import { adaptTeslaData } from '@/lib/nilm/tesla-adapter';
 import { detectLoads } from '@/lib/nilm/load-detection';
 import { Schedule } from '@/lib/schedule';
+import { createTeslaClientForSite } from '@/lib/tesla-client-factory';
 import { TeslaClient } from '@/lib/tesla-client';
 import { Importer } from '@/lib/importer';
 import { withRequestContext } from '@/lib/request-context';
@@ -18,7 +17,6 @@ import { getSiteTodayMidnight, safeParseSiteLocalDateToMidnight, addDaysInSiteTi
 
 const repo = new EnergyRepo();
 const siteRepo = new SiteRepo();
-const tokenRepo = new TeslaTokenRepo(siteRepo);
 const tagRepo = new LoadTagRepo();
 
 export async function GET(
@@ -74,19 +72,10 @@ export async function GET(
         }
 
         // 0. Auto-Heal / Sync Check
-        const tokens = await new UserRepo().getTokensForSite(siteId);
         let importer: Importer | null = null;
+        const teslaClient = await createTeslaClientForSite(siteId);
 
-        if (tokens) {
-            // We need to initialize TeslaClient with token refresh logic
-            const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-            const teslaClient = new TeslaClient({
-                accessToken: tokens.access_token,
-                refreshToken: tokens.refresh_token,
-                tokenRefreshHandler: handlers.refreshHandler,
-                onTokenError: handlers.errorHandler
-            });
-
+        if (teslaClient) {
             const force = searchParams.get('force') === 'true';
             importer = new Importer(teslaClient);
             console.error(`[Analysis] Calling ensureDataForRange for ${siteId}, force=${force}`);

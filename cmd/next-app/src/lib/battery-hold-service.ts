@@ -1,6 +1,6 @@
 import { TeslaClient, isTeslaAuthError } from './tesla-client';
 import { BatteryHoldRepo } from './battery-hold-repo';
-import { createTeslaClientForSite } from './today-refresh';
+import { createTeslaClientForSite } from './tesla-client-factory';
 import type { BatteryHold } from './db';
 
 export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
@@ -143,7 +143,7 @@ export async function restoreBattery({ client, repo, siteId, reason }: RestoreDe
   return { status: 'ok' };
 }
 
-/** Build a TeslaClient for a site (null if no usable tokens). Delegate to shared factory in today-refresh. */
+/** Build a TeslaClient for a site (null if no usable tokens). Delegate to shared factory in tesla-client-factory. */
 export function createSiteTeslaClient(siteId: string): Promise<TeslaClient | null> {
   return createTeslaClientForSite(siteId);
 }

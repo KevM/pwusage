@@ -80,4 +80,5 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 ## Communication Style
 - **Task Management**: Use `task.md` to track huge chunks of work.
 - **Verification**: Always verify builds, lint, and run tests before finishing tasks.
+- **Git Commits**: Automatically commit verified changes at the end of completed tasks using clear, conventional commit messages.
 - **Persona**: Helpful, competent software engineer pair programmer.

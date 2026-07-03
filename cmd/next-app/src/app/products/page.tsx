@@ -3,9 +3,8 @@ import { redirect } from 'next/navigation';
 import { getAuthorizedSiteIds } from '@/lib/auth-checks';
 import { verifySiteToken } from '@/lib/auth-jwt';
 import { SiteRepo } from '@/lib/site-repo';
-import { UserRepo } from '@/lib/user-repo';
 import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards';
-import { TeslaClient } from '@/lib/tesla-client';
+import { createTeslaClientForUser } from '@/lib/tesla-client-factory';
 import { NoSupportedProducts } from '@/components/NoSupportedProducts';
 import { NoPowerwallYet } from '@/components/no-powerwall-yet';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -64,12 +63,8 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
 
     if (decoded.sub) {
         try {
-            const userTokens = await new UserRepo().getTokens(decoded.sub);
-            if (userTokens?.access_token) {
-                const client = new TeslaClient({
-                    accessToken: userTokens.access_token,
-                    refreshToken: userTokens.refresh_token || undefined
-                });
+            const client = await createTeslaClientForUser(decoded.sub);
+            if (client) {
                 const fleetProducts = await client.getProducts();
                 vehicleProducts = fleetProducts
                     .filter((product) => product.resource_type === 'vehicle' || !!product.vehicle_id || !!product.vin)

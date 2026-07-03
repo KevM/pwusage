@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { getDefaultSiteId, isUserAdmin } from '@/lib/auth-checks';
 import { UserRepo } from '@/lib/user-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { TeslaClient } from '@/lib/tesla-client';
+import { createTeslaClientForUser } from '@/lib/tesla-client-factory';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { H3, P } from '@/components/ui/Typography';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
@@ -69,14 +69,14 @@ export default async function ProfilePage() {
     // Fetch info from Tesla
     let teslaUser = null;
     let error = null;
-    if (user.access_token) {
-        try {
-            const client = new TeslaClient({ accessToken: user.access_token, refreshToken: user.refresh_token || undefined });
+    try {
+        const client = await createTeslaClientForUser(user.id);
+        if (client) {
             teslaUser = await client.getUserInfo();
-        } catch (e) {
-            console.error('Failed to fetch Tesla User Info', e);
-            error = 'Failed to load valid profile data from Tesla.';
         }
+    } catch (e) {
+        console.error('Failed to fetch Tesla User Info', e);
+        error = 'Failed to load valid profile data from Tesla.';
     }
 
     return (

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { SiteRepo } from '@/lib/site-repo';
-import { Schedule } from '@/lib/schedule';
+import { getCurrentTariffLabel } from '@/lib/schedule';
 import { getAuthorizedSiteIds } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
 import { refreshLiveStatus } from '@/lib/today-refresh';
@@ -26,7 +26,7 @@ export async function GET() {
             const productsWithTariff = await Promise.all(batterySites.map(async (basicSite) => {
                 const site = await siteRepo.getSite(basicSite.id);
 
-                let currentTariff = 'Unknown';
+                const currentTariff = getCurrentTariffLabel(site);
                 let liveBatteryPower = 0;
                 let liveSolarPower = 0;
                 let liveLoadPower = 0;
@@ -45,16 +45,6 @@ export async function GET() {
                     }
                 } catch (error) {
                     console.warn(`Failed to fetch live status for site ${basicSite.id}:`, error);
-                }
-
-                if (site && site.tariffs.length > 0) {
-                    const schedule = new Schedule(site.tariffs, site.timezone);
-                    const tariffPeriod = schedule.getTariffPeriod(new Date());
-                    if (tariffPeriod) {
-                        const season = tariffPeriod.season.name || 'Season';
-                        const tariffName = tariffPeriod.tariff.name || 'Unknown';
-                        currentTariff = `${season} - ${tariffName}`;
-                    }
                 }
 
                 return {

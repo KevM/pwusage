@@ -1,10 +1,8 @@
 
 import { NextResponse } from 'next/server';
 import { Importer } from '@/lib/importer';
-import { TeslaClient } from '@/lib/tesla-client';
-import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
-import { SiteRepo } from '@/lib/site-repo';
-import { getTeslaCredentials, getAuthorizedSiteIds } from '@/lib/auth-checks';
+import { createTeslaClientForSite } from '@/lib/tesla-client-factory';
+import { getAuthorizedSiteIds } from '@/lib/auth-checks';
 
 export const maxDuration = 60;
 
@@ -24,22 +22,15 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
         }
 
-        const credentials = await getTeslaCredentials();
-        if (!credentials) {
-            return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-        }
-
-        const tokenRepo = new TeslaTokenRepo(new SiteRepo());
-        const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-        const client = new TeslaClient({
-            accessToken: credentials.access_token,
-            refreshToken: credentials.refresh_token || undefined,
-            tokenRefreshHandler: handlers.refreshHandler,
-            onTokenError: handlers.errorHandler,
+        const client = await createTeslaClientForSite(siteId, {
             onTokenUpdate: () => {
                 console.log('Refreshing tokens via Sync API');
             }
         });
+        if (!client) {
+            return NextResponse.json({ error: 'Not authenticated or no credentials found' }, { status: 401 });
+        }
+
         const importer = new Importer(client);
 
         const startDate = new Date(startParam);

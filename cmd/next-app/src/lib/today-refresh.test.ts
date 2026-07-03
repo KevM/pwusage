@@ -323,7 +323,7 @@ describe('refreshLiveStatus', () => {
 
     it('createTeslaClientForSite allows creation when access_token is empty if refresh_token exists', async () => {
         userRepoMock.getTokensForSite.mockResolvedValue({ access_token: '', refresh_token: 'valid-refresh-token' });
-        const { createTeslaClientForSite } = await importRefreshLiveStatus();
+        const { createTeslaClientForSite } = await import('./tesla-client-factory');
 
         const client = await createTeslaClientForSite('site-1');
         expect(client).not.toBeNull();

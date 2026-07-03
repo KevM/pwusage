@@ -157,8 +157,8 @@ export async function POST(request: Request) {
 
         let teslaClient;
         if (accessToken) {
-            const { TeslaClient } = await import('@/lib/tesla-client');
-            teslaClient = new TeslaClient({ accessToken });
+            const { createTeslaClientForAccessToken } = await import('@/lib/tesla-client-factory');
+            teslaClient = createTeslaClientForAccessToken(accessToken);
         }
 
         const siteService = new SiteService({

@@ -276,3 +276,18 @@ export class Schedule {
         return false;
     }
 }
+
+export function getCurrentTariffLabel(site: { tariffs?: Tariff[]; timezone?: string } | null | undefined, atDate: Date = new Date()): string {
+    if (!site || !site.tariffs || site.tariffs.length === 0 || !site.timezone) {
+        return 'Unknown';
+    }
+    const schedule = new Schedule(site.tariffs, site.timezone);
+    const tariffPeriod = schedule.getTariffPeriod(atDate);
+    if (!tariffPeriod) {
+        return 'Unknown';
+    }
+    const season = tariffPeriod.season.name || 'Season';
+    const tariffName = tariffPeriod.tariff.name || 'Unknown';
+    return `${season} - ${tariffName}`;
+}
+
