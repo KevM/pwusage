@@ -44,6 +44,10 @@ export class UserRepo {
     }
 
     async getByEmail(email: string): Promise<User | null> {
+        // idx_user_email_lower guarantees at most one row per email; the
+        // ORDER BY id LIMIT 1 is retained only as defense-in-depth from the
+        // pre-index era (duplicate rows were possible before the dedupe
+        // migration).
         const res = await pool.query('SELECT * FROM "User" WHERE LOWER(email) = LOWER($1) ORDER BY id LIMIT 1', [email]);
         if (res.rows.length === 0) return null;
         return res.rows[0] as User;

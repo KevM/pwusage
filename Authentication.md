@@ -89,6 +89,17 @@ Session issuance:
 Important implementation note:
 - `auth-checks.ts` now uses `site_auth` claims only for `verifySiteAccess`/`getAuthorizedSiteIds`; legacy `access_token` cookie fallback was removed.
 
+### Email uniqueness
+
+`User.email` is unique case-insensitively (partial index `idx_user_email_lower`
+on `LOWER(email) WHERE email IS NOT NULL`; rows with NULL email are exempt).
+Both OAuth paths (verified and degraded) reconcile logins to an existing
+account by email before upserting, and the upsert retries once on a unique
+violation to handle concurrent first logins. This prevents the account
+splitting that previously occurred when the degraded path keyed a User row by
+email and a later verified login keyed a second row by Tesla `sub`.
+
+
 ### 3. Runtime authorization checks
 
 Common checks:

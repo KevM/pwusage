@@ -35,3 +35,20 @@ describe('database configuration', () => {
     expect(() => pool.query('SELECT 1')).toThrow('DATABASE_URL is required');
   });
 });
+
+describe('isUniqueViolation', () => {
+    it('returns true for a pg unique-violation error (code 23505)', async () => {
+        const { isUniqueViolation } = await import('./db');
+        const err = Object.assign(new Error('duplicate key value violates unique constraint "idx_user_email_lower"'), { code: '23505' });
+        expect(isUniqueViolation(err)).toBe(true);
+    });
+
+    it('returns false for other pg errors, plain errors, and non-errors', async () => {
+        const { isUniqueViolation } = await import('./db');
+        expect(isUniqueViolation(Object.assign(new Error('fk violation'), { code: '23503' }))).toBe(false);
+        expect(isUniqueViolation(new Error('boom'))).toBe(false);
+        expect(isUniqueViolation(null)).toBe(false);
+        expect(isUniqueViolation('23505')).toBe(false);
+    });
+});
+

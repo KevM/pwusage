@@ -130,5 +130,15 @@ export function getDb() {
   return getPool();
 }
 
+/**
+ * True when `error` is a Postgres unique-constraint violation (SQLSTATE 23505),
+ * e.g. from idx_user_email_lower on "User"(LOWER(email)).
+ */
+export function isUniqueViolation(error: unknown): boolean {
+    return typeof error === 'object' && error !== null
+        && (error as { code?: unknown }).code === '23505';
+}
+
 // Re-export all database row types
 export * from './db-types';
+

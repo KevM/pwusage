@@ -797,7 +797,114 @@ describe('TeslaAuthService', () => {
         const result = await service.handleTeslaCallback(params);
         expect(result.status).toBe('invalid-id-token');
     });
+
+    it('reconciles a verified sub to the existing account that owns the same email', async () => {
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'valid_id_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+        const verifyIdToken = vi.fn().mockResolvedValue({
+            nonce: 'good-nonce',
+            sub: 'brand-new-sub',
+            email: 'user@example.com'
+        });
+
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com' });
+        mockTeslaClient.getProducts.mockResolvedValue([
+            { energy_site_id: 98765, resource_type: 'battery', site_name: 'Home Powerwall' }
+        ]);
+        // A legacy account keyed by the email already owns this address.
+        mockUserRepo.getByEmail.mockResolvedValue({ id: 'user@example.com' });
+        mockUserRepo.getById.mockResolvedValue({ id: 'user@example.com', roles: [] });
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const result = await service.handleTeslaCallback({
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        });
+
+        expect(result.status).toBe('success');
+        if (result.status === 'success') {
+            expect(result.userId).toBe('user@example.com');
+        }
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: 'user@example.com' })
+        );
+        expect(mockSiteRepo.assignSiteToUser).toHaveBeenCalledWith('98765', 'user@example.com');
+    });
+
+    it('retries the user upsert with the existing account id when the email unique index rejects the insert', async () => {
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'valid_id_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+        const verifyIdToken = vi.fn().mockResolvedValue({
+            nonce: 'good-nonce',
+            sub: 'racing-sub',
+            email: 'race@example.com'
+        });
+
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'race@example.com' });
+        mockTeslaClient.getProducts.mockResolvedValue([
+            { energy_site_id: 98765, resource_type: 'battery', site_name: 'Home Powerwall' }
+        ]);
+        // Pre-upsert lookup sees nothing (the race window)...
+        mockUserRepo.getByEmail
+            .mockResolvedValueOnce(null)
+            // ...but by the time the insert fails, the winner's row exists.
+            .mockResolvedValueOnce({ id: 'winner-sub' });
+        mockUserRepo.upsertOnTeslaAuth
+            .mockRejectedValueOnce(Object.assign(new Error('duplicate key value violates unique constraint "idx_user_email_lower"'), { code: '23505' }))
+            .mockResolvedValueOnce(undefined);
+        mockUserRepo.getById.mockResolvedValue({ id: 'winner-sub', roles: [] });
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const result = await service.handleTeslaCallback({
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        });
+
+        expect(result.status).toBe('success');
+        if (result.status === 'success') {
+            expect(result.userId).toBe('winner-sub');
+        }
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(2);
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenLastCalledWith(
+            expect.objectContaining({ userId: 'winner-sub' })
+        );
+        expect(mockSiteRepo.assignSiteToUser).toHaveBeenCalledWith('98765', 'winner-sub');
+    });
 });
+
+
 
 describe('getDiscoveryEndpointFromIssuer', () => {
     it('correctly maps Tesla issuer variants including /nts to OIDC discovery URL', async () => {

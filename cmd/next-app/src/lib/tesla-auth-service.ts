@@ -5,6 +5,8 @@ import { SiteRepo } from './site-repo';
 import { UserRepo } from './user-repo';
 import { TeslaClient, TeslaClientConfig } from './tesla-client';
 import { Importer } from './importer';
+import { isUniqueViolation } from './db';
+
 
 // Whitelist of allowed Tesla OAuth issuers.
 // Typed as a non-empty tuple so it satisfies jsonwebtoken's VerifyOptions.issuer
@@ -413,6 +415,21 @@ export class TeslaAuthService {
             } else if (userEmail) {
                 userId = userEmail;
             }
+            // Reconcile to an existing account that owns this email (e.g. a
+            // legacy row keyed by the email from the pre-fix degraded path).
+            // The DB enforces one User row per email (idx_user_email_lower),
+            // so adopting the existing id prevents both account splitting and
+            // a unique violation on the upsert below.
+            if (userEmail && userId) {
+                const existingUser = await userRepo.getByEmail(userEmail);
+                if (existingUser && existingUser.id !== userId) {
+                    console.log('[TeslaAuthService] Reconciled verified sub to existing user account by email:', {
+                        email: userEmail,
+                        existingUserId: existingUser.id
+                    });
+                    userId = existingUser.id;
+                }
+            }
         } else {
             // Degraded path (unpublished kid): getUserInfo() is MANDATORY!
             if (!userInfo || !userEmail) {
@@ -483,13 +500,34 @@ export class TeslaAuthService {
             console.log('[TeslaAuthService] Fetching products to ensure sites exist in DB...');
             const products = await client.getProducts();
 
-            await userRepo.upsertOnTeslaAuth({
-                userId,
-                email: userEmail ?? null,
-                accessToken: authData.access_token,
-                refreshToken: authData.refresh_token,
-                tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
-            });
+            try {
+                await userRepo.upsertOnTeslaAuth({
+                    userId,
+                    email: userEmail ?? null,
+                    accessToken: authData.access_token,
+                    refreshToken: authData.refresh_token,
+                    tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
+                });
+            } catch (err) {
+                // idx_user_email_lower rejected the insert: a concurrent login
+                // created a row with this email after our getByEmail lookup.
+                // Adopt that row's id and retry once.
+                if (!isUniqueViolation(err) || !userEmail) throw err;
+                const existingUser = await userRepo.getByEmail(userEmail);
+                if (!existingUser) throw err;
+                console.warn('[TeslaAuthService] Upsert hit email unique violation; adopting existing account:', {
+                    email: userEmail,
+                    existingUserId: existingUser.id
+                });
+                userId = existingUser.id;
+                await userRepo.upsertOnTeslaAuth({
+                    userId,
+                    email: userEmail ?? null,
+                    accessToken: authData.access_token,
+                    refreshToken: authData.refresh_token,
+                    tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
+                });
+            }
 
             const userRow = await userRepo.getById(userId);
             roles = (userRow as { roles?: string[] } | null)?.roles ?? [];
