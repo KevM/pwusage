@@ -286,3 +286,34 @@ describe('Schedule – Harrison / We energies smoke tests', () => {
         expect(tp2_2?.schedule.name).toBe('Off-Peak');
     });
 });
+
+describe('Schedule observed holidays', () => {
+    it('bills observed Independence Day (Fri 2026-07-03, Jul 4 is a Saturday) as weekend Off-Peak', () => {
+        const schedule = new Schedule(makeHarrisonTariff(), HARRISON_TIMEZONE);
+        // 14:00 Central on Friday Jul 3 2026 — normally On-Peak (08:00-20:00 weekday).
+        const period = schedule.getTariffPeriod(new Date('2026-07-03T19:00:00Z'));
+
+        expect(period).not.toBeNull();
+        expect(period!.schedule.name).toBe('Off-Peak');
+        // Must be the all-day weekend schedule, not the overnight window.
+        expect(period!.schedule.from_hour).toBeNull();
+    });
+
+    it('bills an ordinary summer Friday afternoon as On-Peak', () => {
+        const schedule = new Schedule(makeHarrisonTariff(), HARRISON_TIMEZONE);
+        // 14:00 Central on Friday Jul 10 2026.
+        const period = schedule.getTariffPeriod(new Date('2026-07-10T19:00:00Z'));
+
+        expect(period).not.toBeNull();
+        expect(period!.schedule.name).toBe('On-Peak');
+    });
+
+    it('bills a Monday observing a Sunday holiday as weekend Off-Peak (Jul 5 2027)', () => {
+        const schedule = new Schedule(makeHarrisonTariff(), HARRISON_TIMEZONE);
+        const period = schedule.getTariffPeriod(new Date('2027-07-05T19:00:00Z'));
+
+        expect(period).not.toBeNull();
+        expect(period!.schedule.name).toBe('Off-Peak');
+    });
+});
+
