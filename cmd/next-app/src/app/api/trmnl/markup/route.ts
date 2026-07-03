@@ -1,10 +1,9 @@
 import { after, NextResponse } from 'next/server';
 import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
 import { Schedule } from '@/lib/schedule';
-import { Importer } from '@/lib/importer';
-import { TeslaClient, EnergySiteLiveStatus } from '@/lib/tesla-client';
+import { EnergySiteLiveStatus } from '@/lib/tesla-client';
+import { refreshTodayData, refreshLiveStatus } from '@/lib/today-refresh';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
 import QRCode from 'qrcode';
@@ -25,57 +24,10 @@ import { aggregateUsage } from '@/lib/tou-aggregation';
 
 export const dynamic = 'force-dynamic';
 
-
-
-
-interface TeslaRefreshState {
-    todayInFlight: boolean;
-    liveInFlight: boolean;
-    lastTodayRefreshAt: number;
-    lastLiveRefreshAt: number;
-}
-
 const TRMNL_POLL_INTERVAL_MS = 15 * 60 * 1000;
 const TESLA_REFRESH_MIN_INTERVAL_MS = 14 * 60 * 1000;
 const LIVE_STATUS_CACHE_TTL_MS = 16 * 60 * 1000;
 const SOC_STALE_AFTER_MS = 20 * 60 * 1000;
-const TESLA_TODAY_TIMEOUT_MS = 8000;
-const TESLA_LIVE_TIMEOUT_MS = 3000;
-const TESLA_LIVE_INLINE_TIMEOUT_MS = 900;
-
-
-
-function getTeslaRefreshState(siteId: string): TeslaRefreshState {
-    const globalState = global as unknown as { trmnlTeslaRefreshState?: Map<string, TeslaRefreshState> };
-    if (!globalState.trmnlTeslaRefreshState) {
-        globalState.trmnlTeslaRefreshState = new Map<string, TeslaRefreshState>();
-    }
-    const existing = globalState.trmnlTeslaRefreshState.get(siteId);
-    if (existing) {
-        return existing;
-    }
-    const initial: TeslaRefreshState = {
-        todayInFlight: false,
-        liveInFlight: false,
-        lastTodayRefreshAt: 0,
-        lastLiveRefreshAt: 0
-    };
-    globalState.trmnlTeslaRefreshState.set(siteId, initial);
-    return initial;
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-    let timeoutId: NodeJS.Timeout | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(`${label}_timeout`)), timeoutMs);
-    });
-
-    try {
-        return await Promise.race([promise, timeoutPromise]);
-    } finally {
-        if (timeoutId) clearTimeout(timeoutId);
-    }
-}
 
 export async function GET(request: Request) {
     return withRequestContext(async () => {
@@ -90,7 +42,6 @@ export async function GET(request: Request) {
         let site: import('@/lib/db').SiteWithTariffs | null = null;
         const siteRepo = new SiteRepo();
         const repo = new EnergyRepo();
-        const tokenRepo = new TeslaTokenRepo(siteRepo);
         let componentConfig = { ...DEFAULT_TRMNL_COMPONENT_CONFIG };
 
         if (componentConfigParam) {
@@ -171,27 +122,7 @@ export async function GET(request: Request) {
         const start = getCurrentCycleStart(site.billing_start_day || 1, now, site.timezone);
         const cycleEnd = addMonthsInSiteTimezone(start, 1, site.timezone);
 
-
-        // --- AUTH & CLIENT INIT ---
-        let trmnlClient: TeslaClient | null = null;
-
-        if (site.refresh_token) {
-            console.log(`[Trmnl] Found refresh token for site ${site.id}, initializing client...`);
-            const useToken = site.access_token || 'expired';
-
-            const handlers = tokenRepo.getLockedRefreshHandler(site.id);
-            trmnlClient = new TeslaClient({
-                accessToken: useToken,
-                refreshToken: site.refresh_token,
-                tokenRefreshHandler: handlers.refreshHandler,
-                onTokenError: handlers.errorHandler,
-                onTokenUpdate: async () => {
-                    console.log(`[Trmnl] Token update callback triggered for site ${site.id}`);
-                }
-            });
-        } else {
-            console.log(`[Trmnl] No refresh token found for site ${site.id}`);
-        }
+        const hasTeslaTokens = !!site.refresh_token;
 
         // --- BLOCKING DATA FETCHES (DB only) ---
         let dbLatestMs = 0;
@@ -251,123 +182,56 @@ export async function GET(request: Request) {
             lastLiveRefreshAt = Number(site.last_live_refresh_at || 0);
         }
 
-        let fetchStatus = trmnlClient ? 'background-throttled' : 'skipped';
-        let backgroundStatus = trmnlClient ? 'throttled' : 'skipped';
+        let fetchStatus = hasTeslaTokens ? 'background-throttled' : 'skipped';
+        let backgroundStatus = hasTeslaTokens ? 'throttled' : 'skipped';
         let liveInlineMs = 0;
         let liveInlineStatus = 'skipped';
 
-        const refreshState = getTeslaRefreshState(site.id);
-
         // On cache miss, do a short inline live-status fetch to avoid blank SoC on this response.
-        if (trmnlClient && !liveStatus) {
-            refreshState.liveInFlight = true;
+        if (hasTeslaTokens && !liveStatus) {
             try {
                 const liveInlineStart = Date.now();
-                const inlineLive = await withTimeout(trmnlClient.getLiveStatus(site.id), TESLA_LIVE_INLINE_TIMEOUT_MS, 'tesla_live_inline');
+                const inlineResult = await refreshLiveStatus(site.id, {
+                    timeoutMs: 900,
+                    useCached: false,
+                });
                 liveInlineMs = Date.now() - liveInlineStart;
-                liveInlineStatus = 'success';
-                
-                // Write to DB cache
-                await siteRepo.updateLiveStatusCache(site.id, inlineLive, Date.now());
-                
-                liveStatus = inlineLive;
-                hasCachedLiveStatus = true;
-                fetchStatus = 'live-inline';
-                lastLiveRefreshAt = Date.now();
-            } catch (error) {
-                if (error instanceof Error && error.message === 'tesla_live_inline_timeout') {
+                if (inlineResult.status === 'refreshed' && inlineResult.liveStatus) {
+                    liveInlineStatus = 'success';
+                    liveStatus = inlineResult.liveStatus;
+                    hasCachedLiveStatus = true;
+                    fetchStatus = 'live-inline';
+                    lastLiveRefreshAt = inlineResult.fetchedAt ?? Date.now();
+                } else if (inlineResult.errorMessage?.includes('timeout')) {
                     liveInlineStatus = 'timeout';
                     fetchStatus = 'inline-timeout';
                     console.info('[TrmnlMarkup] Inline live status fetch timed out; continuing with stale-while-refresh.');
                 } else {
                     liveInlineStatus = 'error';
-                    console.warn('[TrmnlMarkup] Inline live status fetch failed:', error);
+                    console.warn('[TrmnlMarkup] Inline live status fetch failed:', inlineResult.errorMessage);
                 }
-            } finally {
-                refreshState.liveInFlight = false;
+            } catch (error) {
+                liveInlineStatus = 'error';
+                console.warn('[TrmnlMarkup] Inline live status fetch failed:', error);
             }
         }
 
-        const shouldRefreshToday = trmnlClient
-            ? !refreshState.todayInFlight && (nowMs - refreshState.lastTodayRefreshAt >= TESLA_REFRESH_MIN_INTERVAL_MS)
-            : false;
-        const shouldRefreshLive = trmnlClient
-            ? !refreshState.liveInFlight && (nowMs - lastLiveRefreshAt >= TESLA_REFRESH_MIN_INTERVAL_MS)
-            : false;
-
         // --- TESLA REFRESH (lifecycle-bound background) ---
-        if (trmnlClient && (shouldRefreshToday || shouldRefreshLive)) {
-            const importer = new Importer(trmnlClient);
+        if (hasTeslaTokens) {
             const siteId = site.id;
             backgroundStatus = 'started';
             fetchStatus = hasCachedLiveStatus ? 'cached+refreshing' : 'refreshing';
 
-            if (shouldRefreshToday) {
-                refreshState.todayInFlight = true;
-                refreshState.lastTodayRefreshAt = Date.now();
-            }
-            if (shouldRefreshLive) {
-                refreshState.liveInFlight = true;
-                refreshState.lastLiveRefreshAt = Date.now();
-            }
-
-            const backgroundRefresh = async () => {
+            after(async () => {
                 try {
-                    const tasks: Promise<void>[] = [];
-
-                    if (shouldRefreshToday) {
-                        tasks.push((async () => {
-                            const lockId = crypto.randomUUID();
-                            const acquired = await siteRepo.acquireImportLock({
-                                siteId,
-                                lockId,
-                                lockDurationMs: 60000,
-                                minIntervalMs: TESLA_REFRESH_MIN_INTERVAL_MS
-                            });
-                            if (!acquired) {
-                                refreshState.todayInFlight = false;
-                                return;
-                            }
-                            try {
-                                const startMs = Date.now();
-                                const rows = await withTimeout(importer.getTodayData(siteId), TESLA_TODAY_TIMEOUT_MS, 'tesla_today');
-                                console.log(`[TrmnlMarkup] Tesla Today Usage Fetch (background): ${Date.now() - startMs}ms`);
-                                // Drop strict pre-filter, let persistHistory do the job.
-                                await importer.persistHistory(siteId, rows, latestTimestamp);
-                            } catch (error) {
-                                console.warn(`[TrmnlMarkup] Tesla today fetch failed (background):`, error);
-                            } finally {
-                                refreshState.todayInFlight = false;
-                                try {
-                                    await siteRepo.releaseImportLock(siteId, lockId);
-                                } catch (err) {
-                                    console.error(`[TrmnlMarkup] Failed to release DB import lock for site ${siteId}:`, err);
-                                }
-                            }
-                        })());
-                    }
-
-                    if (shouldRefreshLive) {
-                        tasks.push((async () => {
-                            try {
-                                const startMs = Date.now();
-                                const status = await withTimeout(trmnlClient!.getLiveStatus(siteId), TESLA_LIVE_TIMEOUT_MS, 'tesla_live');
-                                console.log(`[TrmnlMarkup] Tesla Live Status Fetch (background): ${Date.now() - startMs}ms`);
-                                await siteRepo.updateLiveStatusCache(siteId, status, Date.now());
-                            } catch (error) {
-                                console.warn(`[TrmnlMarkup] Tesla live status fetch failed (background):`, error);
-                            } finally {
-                                refreshState.liveInFlight = false;
-                            }
-                        })());
-                    }
-
-                    await Promise.all(tasks);
+                    await Promise.all([
+                        refreshTodayData(siteId, { minIntervalMs: TESLA_REFRESH_MIN_INTERVAL_MS, timeoutMs: 8000 }),
+                        refreshLiveStatus(siteId, { cacheTtlMs: TESLA_REFRESH_MIN_INTERVAL_MS, timeoutMs: 3000 }),
+                    ]);
                 } catch (error) {
                     console.error(`[TrmnlMarkup] Background Tesla refresh failed:`, error);
                 }
-            };
-            after(backgroundRefresh);
+            });
         } else if (hasCachedLiveStatus) {
             fetchStatus = 'cached';
         }

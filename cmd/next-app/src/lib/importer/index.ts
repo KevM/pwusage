@@ -9,6 +9,7 @@ import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
 import { planImport, splitAtSiteMidnight, auditDays } from './import-planner';
 import { getSiteMidnight } from '../date-utils';
+import { withImportLock } from '../import-lock';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -106,78 +107,73 @@ export class Importer {
             inMemoryAdded = true;
         }
 
-        const lockId = crypto.randomUUID();
-        let dbLockAcquired = false;
-
         try {
             if (onProgress) onProgress(`Checking data coverage...`);
             const site = await this.siteRepo.getSite(siteId);
             if (!site) throw new Error(`Site ${siteId} not found in database`);
 
-            const acquired = await this.siteRepo.acquireImportLock({
-                siteId,
-                lockId,
-                lockDurationMs: 300000, // 5 minutes for full range sync
-                force
-            });
+            const lockResult = await withImportLock(
+                this.siteRepo,
+                {
+                    siteId,
+                    lockDurationMs: 300000, // 5 minutes for full range sync
+                    force,
+                    logLabel: 'Importer',
+                },
+                async () => {
+                    logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
 
-            if (!acquired) {
+                    const auditStartTime = getSiteMidnight(start, site.timezone);
+                    const existingTimestamps = await this.repo.getExistingTimestamps(
+                        siteId,
+                        auditStartTime,
+                        end
+                    );
+
+                    const windows = planImport({
+                        requestedRange: { start: auditStartTime, end },
+                        existingTimestamps,
+                        timezone: site.timezone,
+                        installationDate: new Date(site.installed),
+                        forceRefetch: force,
+                    });
+
+                    const allRows: EnergyDataRow[] = [];
+                    let successCount = 0;
+                    let lastError: Error | null = null;
+
+                    for (const window of windows) {
+                        const dateStr = window.start.toISOString().split('T')[0];
+                        if (onProgress) onProgress(`Importing ${dateStr}...`);
+                        logSync(`Importing window: ${window.start.toISOString()} - ${window.end.toISOString()}`);
+                        try {
+                            const rows = await this.importRange(siteId, window.start, window.end, 'day');
+                            allRows.push(...rows);
+                            successCount++;
+                        } catch (error) {
+                            console.error(`[Importer] Failed to import window ${window.start.toISOString()} - ${window.end.toISOString()}:`, error);
+                            if (onProgress) onProgress(`Error importing ${dateStr}: ${error instanceof Error ? error.message : String(error)}`);
+                            lastError = error instanceof Error ? error : new Error(String(error));
+                        }
+                    }
+
+                    if (windows.length > 0 && successCount === 0) {
+                        throw lastError || new Error(`All ${windows.length} import windows failed`);
+                    }
+
+                    return allRows;
+                }
+            );
+
+            if (lockResult.status === 'not-acquired') {
                 logSync(`Skip: DB lock busy for site ${siteId}`);
                 return [];
             }
-            dbLockAcquired = true;
 
-            logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
-
-            const auditStartTime = getSiteMidnight(start, site.timezone);
-            const existingTimestamps = await this.repo.getExistingTimestamps(
-                siteId,
-                auditStartTime,
-                end
-            );
-
-            const windows = planImport({
-                requestedRange: { start: auditStartTime, end },
-                existingTimestamps,
-                timezone: site.timezone,
-                installationDate: new Date(site.installed),
-                forceRefetch: force,
-            });
-
-            const allRows: EnergyDataRow[] = [];
-            let successCount = 0;
-            let lastError: Error | null = null;
-
-            for (const window of windows) {
-                const dateStr = window.start.toISOString().split('T')[0];
-                if (onProgress) onProgress(`Importing ${dateStr}...`);
-                logSync(`Importing window: ${window.start.toISOString()} - ${window.end.toISOString()}`);
-                try {
-                    const rows = await this.importRange(siteId, window.start, window.end, 'day');
-                    allRows.push(...rows);
-                    successCount++;
-                } catch (error) {
-                    console.error(`[Importer] Failed to import window ${window.start.toISOString()} - ${window.end.toISOString()}:`, error);
-                    if (onProgress) onProgress(`Error importing ${dateStr}: ${error instanceof Error ? error.message : String(error)}`);
-                    lastError = error instanceof Error ? error : new Error(String(error));
-                }
-            }
-
-            if (windows.length > 0 && successCount === 0) {
-                throw lastError || new Error(`All ${windows.length} import windows failed`);
-            }
-
-            return allRows;
+            return lockResult.value;
         } finally {
             if (inMemoryAdded) {
                 Importer.pendingSyncs.delete(siteId);
-            }
-            if (dbLockAcquired) {
-                try {
-                    await this.siteRepo.releaseImportLock(siteId, lockId);
-                } catch (err) {
-                    console.error(`[Importer] Failed to release DB import lock for site ${siteId}:`, err);
-                }
             }
         }
     }

@@ -4,7 +4,6 @@ import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
 import { BatteryHoldRepo } from '@/lib/battery-hold-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { Schedule } from '@/lib/schedule';
-import { TeslaClient } from '@/lib/tesla-client';
 import { verifySiteAccess, getCurrentUser } from '@/lib/auth-checks';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { LiveDetailView } from '@/components/site/live/LiveDetailView';
@@ -12,9 +11,7 @@ import type { ActivePeriod } from '@/components/site/live/PeriodCardRow';
 import { buildSnapshotModel, buildCumulativeModel } from '@/lib/sankey/build-flow-model';
 import { getRenderer } from '@/lib/sankey/renderers/registry';
 import { computeLoadTiming } from '@/lib/load-timing';
-import { refreshTodayData } from '@/lib/today-refresh';
-import { TeslaTokenRepo } from '@/lib/tesla-token-repo';
-import { UserRepo } from '@/lib/user-repo';
+import { refreshTodayData, refreshLiveStatus } from '@/lib/today-refresh';
 import { energyToAveragePower } from '@/lib/energy-utils';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -24,25 +21,6 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 
 export const dynamic = 'force-dynamic';
-
-async function getLiveStatus(siteId: string) {
-    const tokens = await new UserRepo().getTokensForSite(siteId);
-    if (!tokens?.access_token || !tokens?.refresh_token) return null;
-
-    const siteRepo = new SiteRepo();
-    const tokenRepo = new TeslaTokenRepo(siteRepo);
-    const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-
-    const client = new TeslaClient({
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token,
-        tokenRefreshHandler: handlers.refreshHandler,
-        onTokenError: handlers.errorHandler,
-        onTokenUpdate: () => {}
-    });
-
-    return client.getLiveStatus(siteId);
-}
 
 export default async function SiteLivePage({
     params,
@@ -125,7 +103,7 @@ export default async function SiteLivePage({
         repo.getBucketedEnergyData(id, todayStart, now),
         repo.getRawEnergyData(id, todayStart, now),
         repo.getLatestEnergyData(id),
-        getLiveStatus(id).catch(() => null),
+        refreshLiveStatus(id, { cacheTtlMs: 60 * 1000 }).then(res => res.liveStatus ?? null).catch(() => null),
         holdRepo.getActiveHold(id),
         holdRepo.getLatestCancelledUnacked(id),
     ]);

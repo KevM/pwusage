@@ -3,6 +3,52 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Importer } from './importer';
 import { EnergyHistoryEntry, TeslaClient } from './tesla-client';
 import { EnergyRepo } from './energy-repo';
+import type { ImportLockOptions, ImportLockResult } from './import-lock';
+
+interface ImportLockTestRepo {
+    acquireImportLock(params: {
+        siteId: string;
+        lockId: string;
+        lockDurationMs?: number;
+        force?: boolean;
+        minIntervalMs?: number;
+    }): Promise<boolean>;
+    releaseImportLock(siteId: string, lockId: string): Promise<boolean>;
+}
+
+interface MockSiteRepo {
+    getSite: ReturnType<typeof vi.fn>;
+    acquireImportLock: ReturnType<typeof vi.fn>;
+    releaseImportLock: ReturnType<typeof vi.fn>;
+    getImportStatus: ReturnType<typeof vi.fn>;
+}
+
+const importLockMock = vi.hoisted(() => ({
+    withImportLock: vi.fn(async <T>(
+        siteRepo: ImportLockTestRepo,
+        options: ImportLockOptions,
+        callback: () => Promise<T>
+    ): Promise<ImportLockResult<T>> => {
+        const lockId = 'test-lock-id';
+        const acquired = await siteRepo.acquireImportLock({
+            siteId: options.siteId,
+            lockId,
+            lockDurationMs: options.lockDurationMs,
+            force: options.force,
+            minIntervalMs: options.minIntervalMs,
+        });
+
+        if (!acquired) {
+            return { status: 'not-acquired' };
+        }
+
+        try {
+            return { status: 'acquired', value: await callback() };
+        } finally {
+            await siteRepo.releaseImportLock(options.siteId, lockId);
+        }
+    }),
+}));
 
 // Mock dependencies
 vi.mock('./db');
@@ -46,11 +92,14 @@ vi.mock('./user-repo', () => {
     return { UserRepo };
 });
 vi.mock('./tesla-client');
+vi.mock('./import-lock', () => ({
+    withImportLock: importLockMock.withImportLock,
+}));
 
 describe('Importer Sync Logic', () => {
     let importer: Importer;
     let mockClient: TeslaClient;
-    let mockRepo: unknown;
+    let mockRepo: MockSiteRepo;
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -100,6 +149,60 @@ describe('Importer Sync Logic', () => {
 
         expect(importSpy).toHaveBeenCalled();
         expect(importSpy).toHaveBeenCalledWith('site-123', expect.anything(), expect.anything(), 'day');
+    });
+
+    it('returns an empty result when the DB import lock is not acquired', async () => {
+        mockRepo.acquireImportLock.mockResolvedValue(false);
+        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+
+        const start = new Date('2026-01-10T00:00:00Z');
+        const end = new Date('2026-01-10T23:59:59Z');
+
+        await expect(importer.ensureDataForRange('site-123', start, end)).resolves.toEqual([]);
+        expect(importSpy).not.toHaveBeenCalled();
+    });
+
+    it('releases the DB import lock when a planned window import throws', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+        vi.spyOn(importer, 'importRange').mockRejectedValue(new Error('Tesla API Offline'));
+
+        const start = new Date('2026-01-10T00:00:00Z');
+        const end = new Date('2026-01-10T23:59:59Z');
+
+        await expect(importer.ensureDataForRange('site-123', start, end)).rejects.toThrow('Tesla API Offline');
+        expect(mockRepo.releaseImportLock).toHaveBeenCalledWith('site-123', expect.any(String));
+    });
+
+    it('uses the shared import lock helper and releases after successful window import', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+        vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+
+        const start = new Date('2026-01-10T00:00:00Z');
+        const end = new Date('2026-01-10T23:59:59Z');
+
+        await importer.ensureDataForRange('site-123', start, end);
+
+        expect(importLockMock.withImportLock).toHaveBeenCalledWith(
+            mockRepo,
+            expect.objectContaining({
+                siteId: 'site-123',
+                lockDurationMs: 300000,
+                force: false,
+                logLabel: 'Importer',
+            }),
+            expect.any(Function)
+        );
+        expect(mockRepo.releaseImportLock).toHaveBeenCalledWith('site-123', expect.any(String));
     });
 
     it('should throw an error when all planned windows fail to import', async () => {

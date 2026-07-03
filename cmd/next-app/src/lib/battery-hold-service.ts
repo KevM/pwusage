@@ -1,8 +1,6 @@
 import { TeslaClient, isTeslaAuthError } from './tesla-client';
 import { BatteryHoldRepo } from './battery-hold-repo';
-import { SiteRepo } from './site-repo';
-import { TeslaTokenRepo } from './tesla-token-repo';
-import { UserRepo } from './user-repo';
+import { createTeslaClientForSite } from './today-refresh';
 import type { BatteryHold } from './db';
 
 export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
@@ -145,17 +143,7 @@ export async function restoreBattery({ client, repo, siteId, reason }: RestoreDe
   return { status: 'ok' };
 }
 
-/** Build a TeslaClient for a site (null if no usable tokens). Mirrors today-refresh.ts. */
-export async function createSiteTeslaClient(siteId: string): Promise<TeslaClient | null> {
-  const tokens = await new UserRepo().getTokensForSite(siteId);
-  if (!tokens?.access_token || !tokens?.refresh_token) return null;
-  const tokenRepo = new TeslaTokenRepo(new SiteRepo());
-  const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-  return new TeslaClient({
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    tokenRefreshHandler: handlers.refreshHandler,
-    onTokenError: handlers.errorHandler,
-    onTokenUpdate: () => {},
-  });
+/** Build a TeslaClient for a site (null if no usable tokens). Delegate to shared factory in today-refresh. */
+export function createSiteTeslaClient(siteId: string): Promise<TeslaClient | null> {
+  return createTeslaClientForSite(siteId);
 }
