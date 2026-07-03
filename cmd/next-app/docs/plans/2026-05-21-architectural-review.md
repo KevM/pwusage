@@ -1,5 +1,13 @@
 # Architectural Review: Technical Debt & Anti-Patterns
 
+> **⚠️ Superseded (2026-07-03):** Much of this document was generic boilerplate and
+> several claims did not match the codebase. The substantive items (Tesla 429
+> backoff, TRMNL auth consolidation, FK indexes, typed auth errors, import
+> locking) landed in PRs #80–#92. A fresh, verified review on 2026-07-03
+> produced a shorter list; see the fix/user-email-unique, importer
+> partial-complete, and live-status-claim worksets. Verify any remaining claim
+> here against the code before acting on it.
+
 **Date:** 2026-05-21  
 **Scope:** Full codebase review focused on identifying technical debt, anti-patterns, and architectural gaps  
 **Projects:** cmd/next-app (Primary), cmd/web-app (Legacy)

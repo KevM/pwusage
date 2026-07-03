@@ -92,7 +92,6 @@ Tables (PascalCase quoted identifiers):
 - `TariffSeason`: Seasonal date ranges within a tariff (`from_month`/`from_day` → `to_month`/`to_day`) with buy/sell rates
 - `TariffSchedule`: TOU period definitions within a season (day-of-week + hour/minute windows) with buy/sell rates
 - `EnergyData`: 5-minute energy samples (`load_power, solar_power, grid_power, battery_power, battery_soc`) keyed by `(timestamp, site_id, tariff_id)`
-- `EnergyUsage`: Aggregate usage per tariff and start time
 - `TrmnlInstallation`: Trmnl device configs (UUID, linked `site_id`, access token)
 - `AppSettings`: Key/value app config
 
@@ -225,7 +224,6 @@ See `.env.example` for full list.
 - [`Agents.md`](./Agents.md): Architecture, conventions, development practices, agent environment
 - [`Authentication.md`](./Authentication.md): Auth flows, JWT, Trmnl integration details
 - [`GOALS.md`](./GOALS.md): Energy optimization strategy and success metrics
-- [`Track.md`](./Track.md): Ongoing work and priorities
 - [`TODO.md`](./TODO.md): Cross-session deferred work
 - [Tesla Fleet API Docs](https://developer.tesla.com/docs/fleet-api)
 - [TRMNL Framework v2 Docs](https://trmnl.com/framework/docs/)

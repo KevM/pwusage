@@ -11,6 +11,10 @@ When starting fresh work in this repo, check this file. If a session begins some
 - **Note (2026-07-01):** The loose-pending fallback flow (installation row with NULL `uuid` and NULL `plugin_setting_id`, claimed by the next webhook within 15 minutes) has been retained. Database inspection confirmed that loose installations still occur (most recent on June 23, 2026). This fallback remains necessary to handle cases where `plugin_setting_id` is missing from the callback URL during manual setups or when the TRMNL API `fetchMe` fails. Revisit and remove this flow if loose installs stop appearing after the manual-install path is fixed.
 
 
+## Remove vestigial Go code (low priority)
+
+The Go tree (`cmd/pwrtool`, `internal/`, `go.mod`/`go.sum`) and the legacy Svelte app (`cmd/web-app`) predate the Next.js app and are kept only as reference for how things used to work. Delete them when convenient — nothing depends on them.
+
 ## Remove Temporal polyfill after Node.js 26 LTS
 
 `src/lib/billing-cycle.ts` now uses `@js-temporal/polyfill` for timezone-aware date arithmetic. Once Node.js 26 reaches LTS (~mid-2026), remove the polyfill dependency and use native `Temporal` from the runtime instead.
@@ -23,23 +27,5 @@ When starting fresh work in this repo, check this file. If a session begins some
 (node:62351) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
 (Use `node --trace-deprecation ...` to show where the warning was created)
 ```
-
-## Investigate Tesla JWKS signature verification failures
-
-**Status:** Implemented lazy refresh strategy with fallback to nonce-only validation (2026-05-12, fix-security branch).
-
-Currently, Tesla ID tokens are signed with keys that don't appear in the public JWKS endpoint, even after lazy refresh with cache-busting headers. This appears to be a Tesla infrastructure issue (globally distributed CDN with eventual consistency, aggressive key rotation).
-
-**Current behavior:** Authentication works via nonce validation (CSRF-secure), but signature verification fails.
-
-**Next steps (when prioritized):**
-1. Check if this affects production or is staging-only
-2. Contact Tesla to understand key rotation grace period
-3. Consider implementing key caching (keep recently-used keys for N hours)
-4. Monitor error rates in production to assess urgency
-
-**Related files:**
-- `cmd/next-app/src/app/auth/tesla-callback/route.ts` - JWT verification with lazy refresh
-- `Security.md` section 8 - Tesla `id_token` signature verification requirements
 
 

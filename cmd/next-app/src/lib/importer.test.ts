@@ -370,4 +370,29 @@ describe('Importer Sync Logic', () => {
 
         vi.spyOn(Date, 'now').mockRestore();
     });
+
+    it('returns complete: false when some planned windows fail and others succeed', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+        // First window imports, every later window fails.
+        const importSpy = vi.spyOn(importer, 'importRange')
+            .mockResolvedValueOnce([])
+            .mockRejectedValue(new Error('Tesla flaked on this day'));
+
+        // Two-day range with no existing data -> multiple planned windows.
+        const start = new Date('2026-01-10T00:00:00Z');
+        const end = new Date('2026-01-11T23:59:59Z');
+
+        const result = await importer.ensureDataForRange('site-123', start, end);
+
+        expect(importSpy.mock.calls.length).toBeGreaterThan(1);
+        expect(result.totalWindows).toBe(importSpy.mock.calls.length);
+        expect(result.processedWindows).toBe(1);
+        expect(result.complete).toBe(false);
+    });
 });
+

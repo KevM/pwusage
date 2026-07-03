@@ -185,7 +185,12 @@ export class Importer {
                         throw lastError || new Error(`All ${windows.length} import windows failed`);
                     }
 
-                    const isComplete = windows.length === 0 || (!timeBudgetExceeded && (successCount === windows.length || successCount > 0));
+                    // Complete only when every planned window imported. Failed
+                    // windows stay missing in the DB, so the next audit re-plans
+                    // them; reporting complete on partial success made the sync
+                    // client stop early and silently leave gaps. (windows.length
+                    // === 0 is complete: 0 === 0 with no time budget spent.)
+                    const isComplete = !timeBudgetExceeded && successCount === windows.length;
 
                     return {
                         complete: isComplete,
