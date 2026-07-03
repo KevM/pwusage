@@ -6,21 +6,28 @@ import { UserRepo } from './user-repo';
 import { TeslaClient, TeslaClientConfig } from './tesla-client';
 import { Importer } from './importer';
 
-// Whitelist of allowed Tesla OAuth issuers
-const ALLOWED_TESLA_ISSUERS = [
+// Whitelist of allowed Tesla OAuth issuers.
+// Typed as a non-empty tuple so it satisfies jsonwebtoken's VerifyOptions.issuer
+// (string | [string, ...string[]]) while still supporting .includes().
+const ALLOWED_TESLA_ISSUERS: [string, ...string[]] = [
     'https://auth.tesla.com/oauth2/v3/nts',
     'https://auth.tesla.com/oauth2/v3',
 ];
 
 // Map issuer to its OIDC discovery endpoint
-function getDiscoveryEndpointFromIssuer(issuer: string): string | null {
+export function getDiscoveryEndpointFromIssuer(issuer: string): string | null {
     if (!issuer.includes('tesla.com')) {
         console.warn('[TeslaAuthService] Issuer not from Tesla domain:', issuer);
         return null;
     }
+    if (issuer.startsWith('https://auth.tesla.com/oauth2/v3')) {
+        return 'https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration';
+    }
     const parts = issuer.split('/');
-    const baseUrl = parts.slice(0, -1).join('/'); // Remove /nts or other suffix
-    return `${baseUrl}/.well-known/openid-configuration`;
+    if (parts[parts.length - 1] === 'nts') {
+        parts.pop();
+    }
+    return `${parts.join('/')}/.well-known/openid-configuration`;
 }
 
 // Discover the correct JWKS endpoint from OpenID Connect discovery
@@ -102,6 +109,16 @@ async function logAvailableKeys(jwksUri: string, label: string = '') {
     }
 }
 
+export class KidNotFoundError extends Error {
+    constructor(public readonly kid?: string) {
+        super(`Signing key ${kid ?? ''} not found in JWKS`);
+        this.name = 'KidNotFoundError';
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, KidNotFoundError);
+        }
+    }
+}
+
 function getTeslaSigningKeyWithIssuer(header: jwt.JwtHeader, issuer: string | undefined, callback: jwt.SigningKeyCallback) {
     getOrCreateJwksClient(issuer).then(client => {
         console.log('[TeslaAuthService] Looking for signing key with kid:', header.kid);
@@ -131,7 +148,7 @@ function getTeslaSigningKeyWithIssuer(header: jwt.JwtHeader, issuer: string | un
                     console.log('[TeslaAuthService] Found key in fresh JWKS after lazy refresh');
                     client.getSigningKey(header.kid, (retryErr, retryKey) => {
                         if (retryErr) {
-                            console.error('[TeslaAuthService] Key still not found after lazy refresh:', {
+                            console.error('[TeslaAuthService] Error retrieving key after lazy refresh:', {
                                 kid: header.kid,
                                 error: retryErr.message
                             });
@@ -142,23 +159,25 @@ function getTeslaSigningKeyWithIssuer(header: jwt.JwtHeader, issuer: string | un
                         } else if (retryKey) {
                             const signingKey = retryKey.getPublicKey();
                             callback(null, signingKey);
+                        } else {
+                            callback(new KidNotFoundError(header.kid));
                         }
                     });
                 } else {
-                    console.error('[TeslaAuthService] Key not found even after lazy refresh:', header.kid);
+                    console.error('[TeslaAuthService] Key confirmed not present in JWKS after lazy refresh:', header.kid);
                     if (teslaJwksUri) {
-                        logAvailableKeys(teslaJwksUri, 'FINAL');
+                        void logAvailableKeys(teslaJwksUri, 'FINAL');
                     }
-                    callback(err || new Error(`Signing key ${header.kid} not found after refresh`));
+                    callback(new KidNotFoundError(header.kid));
                 }
             } catch (refreshErr) {
-                console.error('[TeslaAuthService] Failed to refresh JWKS:', refreshErr);
+                console.error('[TeslaAuthService] Failed to refresh JWKS (network error):', refreshErr);
                 callback(refreshErr instanceof Error ? refreshErr : new Error(String(refreshErr)));
             }
         });
     }).catch(err => {
         console.error('[TeslaAuthService] Failed to get JWKS client:', err);
-        callback(err);
+        callback(err instanceof Error ? err : new Error(String(err)));
     });
 }
 
@@ -192,7 +211,8 @@ export async function verifyTeslaIdToken(token: string): Promise<jwt.JwtPayload>
             {
                 algorithms: ['RS256'],
                 audience: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID,
-                clockTolerance: 10
+                clockTolerance: 10,
+                issuer: ALLOWED_TESLA_ISSUERS
             },
             (err, decoded) => {
                 if (err) {
@@ -298,14 +318,49 @@ export class TeslaAuthService {
                 }
             }
         } catch (err) {
-            console.error('[TeslaAuthService] ID Token signature verification failed:', err);
-            // Fallback decoding
-            const decoded_unsafe = jwt.decode(authData.id_token) as jwt.JwtPayload | null;
-            if (!decoded_unsafe) {
-                console.error('[TeslaAuthService] Could not decode ID token');
+            const isKidNotFound = err instanceof KidNotFoundError || (err instanceof Error && err.name === 'KidNotFoundError');
+            if (!isKidNotFound) {
+                console.error('[TeslaAuthService] ID Token verification failed with critical error (not KidNotFoundError):', err);
                 return { status: 'invalid-id-token' };
             }
-            decoded = decoded_unsafe;
+
+            console.warn('[TeslaAuthService] ID Token signature check bypassed due to unpublished Tesla kid (KidNotFoundError). Falling back to claims verification & authenticated TLS getUserInfo API call.');
+            
+            const decodedUnsafe = jwt.decode(authData.id_token) as jwt.JwtPayload | null;
+            if (!decodedUnsafe) {
+                console.error('[TeslaAuthService] Could not decode ID token in fallback path');
+                return { status: 'invalid-id-token' };
+            }
+
+            // Manually enforce claims in fallback path: iss, aud, exp
+            const nowSeconds = Math.floor(Date.now() / 1000);
+
+            // Check issuer
+            const tokenIss = decodedUnsafe.iss as string | undefined;
+            if (!tokenIss || !ALLOWED_TESLA_ISSUERS.includes(tokenIss)) {
+                console.error('[TeslaAuthService] Fallback claims check failed: invalid issuer', tokenIss);
+                return { status: 'invalid-id-token' };
+            }
+
+            // Check audience if configured
+            const expectedAud = process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID;
+            if (expectedAud) {
+                const tokenAud = decodedUnsafe.aud;
+                const audMatch = Array.isArray(tokenAud) ? tokenAud.includes(expectedAud) : tokenAud === expectedAud;
+                if (!audMatch) {
+                    console.error('[TeslaAuthService] Fallback claims check failed: audience mismatch', { tokenAud, expectedAud });
+                    return { status: 'invalid-id-token' };
+                }
+            }
+
+            // Check expiration (with 10s clock tolerance)
+            const tokenExp = decodedUnsafe.exp as number | undefined;
+            if (!tokenExp || (tokenExp + 10) < nowSeconds) {
+                console.error('[TeslaAuthService] Fallback claims check failed: token expired', { tokenExp, nowSeconds });
+                return { status: 'invalid-id-token' };
+            }
+
+            decoded = decodedUnsafe;
         }
 
         if (decoded.nonce !== savedNonce) {
@@ -315,7 +370,7 @@ export class TeslaAuthService {
         if (signatureVerified) {
             console.log('[TeslaAuthService] Authentication: signature verified + nonce validated');
         } else {
-            console.warn('[TeslaAuthService] Authentication: nonce validated only (signature verification failed)');
+            console.warn('[TeslaAuthService] Authentication: degraded path (unpublished kid); nonce & claims validated, enforcing getUserInfo TLS API check');
         }
 
         // Setup Repos / services
@@ -334,10 +389,11 @@ export class TeslaAuthService {
             : new TeslaClient(teslaClientConfig);
 
         let userEmail: string | undefined;
-        let userId: string = 'unknown_user';
+        let userId: string | undefined;
 
+        let userInfo: { email?: string; id?: string; sub?: string; vault_uuid?: string } | null = null;
         try {
-            const userInfo = await client.getUserInfo();
+            userInfo = await client.getUserInfo();
             if (userInfo) {
                 userEmail = userInfo.email;
                 if (userInfo.email) {
@@ -348,14 +404,76 @@ export class TeslaAuthService {
             console.error('[TeslaAuthService] Failed to fetch user info:', e);
         }
 
-        if (!userEmail && decoded.email) {
-            userEmail = decoded.email as string;
+        if (signatureVerified) {
+            if (!userEmail && decoded.email) {
+                userEmail = decoded.email as string;
+            }
+            if (decoded.sub) {
+                userId = decoded.sub;
+            } else if (userEmail) {
+                userId = userEmail;
+            }
+        } else {
+            // Degraded path (unpublished kid): getUserInfo() is MANDATORY!
+            if (!userInfo || !userEmail) {
+                console.error('[TeslaAuthService] Fallback auth failed: getUserInfo() call failed or returned no user email');
+                return { status: 'invalid-id-token' };
+            }
+
+            // Consistency check 1: If unverified id_token has an email claim, require case-insensitive match with userInfo.email
+            if (decoded.email && decoded.email.toLowerCase() !== userEmail.toLowerCase()) {
+                console.error('[TeslaAuthService] Fallback auth failed: decoded.email mismatch with userInfo.email', {
+                    decodedEmail: decoded.email,
+                    userInfoEmail: userEmail
+                });
+                return { status: 'invalid-id-token' };
+            }
+
+            // Consistency check 2: If userInfo exposes explicit sub/id (standard OIDC fields), require match with decoded.sub
+            const userInfoExplicitSub = userInfo.sub ?? userInfo.id;
+            if (decoded.sub && userInfoExplicitSub && decoded.sub !== userInfoExplicitSub) {
+                console.error('[TeslaAuthService] Fallback auth failed: decoded.sub mismatch with userInfo.sub/id', {
+                    decodedSub: decoded.sub,
+                    userInfoExplicitSub
+                });
+                return { status: 'invalid-id-token' };
+            }
+
+            // Log-only check for vault_uuid to avoid false-positive lockouts if vault_uuid is in a different namespace
+            if (decoded.sub && userInfo.vault_uuid && decoded.sub !== userInfo.vault_uuid) {
+                console.warn('[TeslaAuthService] Note: decoded.sub does not match userInfo.vault_uuid (different ID namespaces)', {
+                    decodedSub: decoded.sub,
+                    vaultUuid: userInfo.vault_uuid
+                });
+            }
+
+            // P2 FIX: Do NOT use an unverified decoded.sub without userInfo confirmation!
+            // Only use decoded.sub if it was confirmed by userInfo (userInfoExplicitSub or vault_uuid).
+            // Otherwise, reconcile via userRepo.getByEmail() to reuse the existing account ID and prevent account splitting.
+            const isSubConfirmed = decoded.sub && (
+                (userInfoExplicitSub && decoded.sub === userInfoExplicitSub) ||
+                (userInfo.vault_uuid && decoded.sub === userInfo.vault_uuid)
+            );
+
+            if (isSubConfirmed && decoded.sub) {
+                userId = decoded.sub;
+            } else {
+                const existingUser = await userRepo.getByEmail(userEmail);
+                if (existingUser) {
+                    console.log('[TeslaAuthService] Reconciled unconfirmed sub to existing user account by email:', {
+                        email: userEmail,
+                        existingUserId: existingUser.id
+                    });
+                    userId = existingUser.id;
+                } else {
+                    userId = userEmail;
+                }
+            }
         }
 
-        if (decoded.sub) {
-            userId = decoded.sub;
-        } else if (userEmail) {
-            userId = userEmail;
+        if (!userId) {
+            console.error('[TeslaAuthService] Could not establish user identity');
+            return { status: 'invalid-id-token' };
         }
 
         const siteIds: string[] = [];

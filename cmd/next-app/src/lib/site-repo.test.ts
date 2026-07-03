@@ -377,9 +377,32 @@ describe('SiteRepo new commands and queries', () => {
         expect(sql).toContain('INSERT INTO "Site"');
         expect(sql).toContain('ON CONFLICT(id) DO UPDATE');
         expect(args).toEqual([
-            'site-1', 'Home', 'PG&E', installed, 'America/Chicago', JSON.stringify({ foo: 'bar' })
+            'site-1', 'Home', 'PG&E', installed, 'America/Chicago', JSON.stringify({ foo: 'bar' }), true
         ]);
     });
+
+    it('upsertSite defaults missing/null name, timezone, and installed date to prevent NOT NULL DB errors', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new SiteRepo();
+        await repo.upsertSite({
+            id: 'site-2',
+            name: null,
+            utility: null,
+            installed: null,
+            timezone: undefined,
+            json: null,
+        });
+        const [sql, args] = queryMock.mock.calls[0];
+        expect(sql).toContain('INSERT INTO "Site"');
+        expect(args[0]).toBe('site-2');
+        expect(args[1]).toBe('Unnamed Site'); // Default name
+        expect(args[2]).toBeNull();
+        expect(args[3]).toBeDefined(); // Default ISO timestamp string
+        expect(args[4]).toBe('UTC'); // Default timezone
+        expect(args[5]).toBe(JSON.stringify({}));
+        expect(args[6]).toBe(false); // hasInstalled is false
+    });
+
 
     it('updateLiveStatusCache updates the live status columns and invalidates the cache', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });

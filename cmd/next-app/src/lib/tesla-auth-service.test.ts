@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { JwtPayload } from 'jsonwebtoken';
 import { TeslaAuthService, TeslaCallbackParams } from './tesla-auth-service';
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
@@ -7,7 +8,8 @@ import { TeslaTokenRepo } from './tesla-token-repo';
 describe('TeslaAuthService', () => {
     const mockUserRepo = {
         upsertOnTeslaAuth: vi.fn(),
-        getById: vi.fn()
+        getById: vi.fn(),
+        getByEmail: vi.fn()
     };
 
     const mockSiteRepo = {
@@ -30,6 +32,7 @@ describe('TeslaAuthService', () => {
 
     beforeEach(() => {
         vi.resetAllMocks();
+        process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID = 'client-id-123';
     });
 
     it('returns state-mismatch status when state does not match savedState', async () => {
@@ -281,4 +284,530 @@ describe('TeslaAuthService', () => {
             expect(result.siteIds).toEqual([]);
         }
     });
+
+    it('(a) unknown-kid -> userInfo ok (realistic TeslaUserInfo shape) -> authenticated (success)', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'id_token_unpublished_kid',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+
+        // Realistic TeslaUserInfo returned by Tesla /api/1/users/me endpoint
+        mockTeslaClient.getUserInfo.mockResolvedValue({
+            email: 'user@example.com',
+            full_name: 'John Doe',
+            profile_image_url: 'https://example.com/photo.jpg',
+            vault_uuid: 'user-sub-123'
+        });
+        mockTeslaClient.getProducts.mockResolvedValue([]);
+        mockUserRepo.getById.mockResolvedValue({ id: 'user-sub-123', roles: ['user'] });
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            nonce: 'good-nonce',
+            sub: 'user-sub-123',
+            email: 'user@example.com'
+        } as unknown as JwtPayload);
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('success');
+        if (result.status === 'success') {
+            expect(result.userId).toBe('user-sub-123');
+        }
+    });
+
+    it('(a2) unknown-kid -> userInfo without sub/vault_uuid -> uses authenticated email identity (P2 guard)', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'id_token_unconfirmed_sub',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+
+        // userInfo returns email only (no sub or vault_uuid)
+        mockTeslaClient.getUserInfo.mockResolvedValue({
+            email: 'user@example.com'
+        });
+        mockTeslaClient.getProducts.mockResolvedValue([]);
+        mockUserRepo.getById.mockResolvedValue({ id: 'user@example.com', roles: ['user'] });
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            nonce: 'good-nonce',
+            sub: 'unconfirmed-attacker-sub',
+            email: 'user@example.com'
+        } as unknown as JwtPayload);
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('success');
+        if (result.status === 'success') {
+            // Must use authenticated email, NEVER unconfirmed decoded.sub
+            expect(result.userId).toBe('user@example.com');
+        }
+    });
+
+    it('(a3) unknown-kid -> unconfirmed sub -> reconciles to existing user account ID by email (prevents account split)', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'id_token_unconfirmed_sub',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+
+        mockTeslaClient.getUserInfo.mockResolvedValue({
+            email: 'user@example.com'
+        });
+        mockTeslaClient.getProducts.mockResolvedValue([]);
+        // Mock existing user account with original UUID sub id
+        mockUserRepo.getByEmail = vi.fn().mockResolvedValue({ id: 'original-sub-uuid-123', email: 'user@example.com', roles: ['user'] });
+        mockUserRepo.getById.mockResolvedValue({ id: 'original-sub-uuid-123', roles: ['user'] });
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            nonce: 'good-nonce',
+            sub: 'unconfirmed-sub',
+            email: 'user@example.com'
+        } as unknown as JwtPayload);
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('success');
+        if (result.status === 'success') {
+            // Reconciles to original user account ID instead of creating a duplicate email-keyed row
+            expect(result.userId).toBe('original-sub-uuid-123');
+        }
+    });
+
+    it('(b) unknown-kid -> userInfo fails -> rejected (invalid-id-token)', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'invalid_id_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+        mockTeslaClient.getUserInfo.mockRejectedValue(new Error('401 Unauthorized'));
+
+        const service = new TeslaAuthService({
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            nonce: 'good-nonce',
+            sub: 'user-sub-123'
+        } as unknown as JwtPayload);
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('invalid-id-token');
+    });
+
+    it('(c) known kid + bad signature -> rejected (invalid-id-token regression guard)', async () => {
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'forged_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const jwt = await import('jsonwebtoken');
+        const verifyIdToken = vi.fn().mockRejectedValue(new jwt.default.JsonWebTokenError('invalid signature'));
+
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'attacker@example.com', sub: 'attacker-sub' });
+
+        const service = new TeslaAuthService({
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('invalid-id-token');
+    });
+
+    it('(d) expired token in fallback -> rejected (invalid-id-token)', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'expired_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com', sub: 'user-sub-123' });
+
+        const service = new TeslaAuthService({
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
+            exp: Math.floor(Date.now() / 1000) - 3600,
+            nonce: 'good-nonce',
+            sub: 'user-sub-123'
+        } as unknown as JwtPayload);
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('invalid-id-token');
+    });
+
+    it('(e) wrong aud in fallback -> rejected (invalid-id-token)', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'wrong_aud_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com', sub: 'user-sub-123' });
+
+        const service = new TeslaAuthService({
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: 'wrong-client-id',
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            nonce: 'good-nonce',
+            sub: 'user-sub-123'
+        } as unknown as JwtPayload);
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('invalid-id-token');
+    });
+
+    it('(f) nonce mismatch -> rejected (nonce-mismatch)', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'token_bad_nonce',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+
+        const service = new TeslaAuthService({
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            nonce: 'wrong-nonce',
+            sub: 'user-sub-123'
+        } as unknown as JwtPayload);
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('nonce-mismatch');
+    });
+
+    it('(g1) email mismatch between token and userInfo -> rejected (invalid-id-token)', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'token_email_mismatch',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'realuser@example.com', vault_uuid: 'sub-123' });
+
+        const service = new TeslaAuthService({
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            nonce: 'good-nonce',
+            email: 'attacker@example.com', // Mismatch!
+            sub: 'sub-123'
+        } as unknown as JwtPayload);
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('invalid-id-token');
+    });
+
+    it('(g2) vault_uuid difference logs warning without false-positive lockout when email matches', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'token_sub_mismatch',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+        // Tesla /users/me endpoint returns vault_uuid which may differ from OIDC sub
+        mockTeslaClient.getUserInfo.mockResolvedValue({
+            email: 'user@example.com',
+            vault_uuid: 'vault-uuid-different-namespace'
+        });
+        mockTeslaClient.getProducts.mockResolvedValue([]);
+        mockUserRepo.getById.mockResolvedValue({ id: 'token-sub-123', roles: ['user'] });
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            nonce: 'good-nonce',
+            email: 'user@example.com',
+            sub: 'token-sub-123'
+        } as unknown as JwtPayload);
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('success');
+        if (result.status === 'success') {
+            // Unconfirmed decoded.sub falls back to authenticated email identity
+            expect(result.userId).toBe('user@example.com');
+        }
+    });
+
+    it('(g3) explicit sub/id mismatch between token and userInfo -> rejected (invalid-id-token)', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'token_explicit_sub_mismatch',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com', sub: 'actual-sub-456' });
+
+        const service = new TeslaAuthService({
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            nonce: 'good-nonce',
+            email: 'user@example.com',
+            sub: 'different-token-sub-789'
+        } as unknown as JwtPayload);
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('invalid-id-token');
+    });
+
+    it('JWKS network fetch errors fail closed (invalid-id-token) without triggering degraded path', async () => {
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'some_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        // Network error (NOT KidNotFoundError)
+        const verifyIdToken = vi.fn().mockRejectedValue(new Error('Fetch failed: 503 Service Unavailable'));
+
+        const service = new TeslaAuthService({
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const params: TeslaCallbackParams = {
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        };
+
+        const result = await service.handleTeslaCallback(params);
+        expect(result.status).toBe('invalid-id-token');
+    });
 });
+
+describe('getDiscoveryEndpointFromIssuer', () => {
+    it('correctly maps Tesla issuer variants including /nts to OIDC discovery URL', async () => {
+        const { getDiscoveryEndpointFromIssuer } = await import('./tesla-auth-service');
+        expect(getDiscoveryEndpointFromIssuer('https://auth.tesla.com/oauth2/v3/nts'))
+            .toBe('https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration');
+        expect(getDiscoveryEndpointFromIssuer('https://auth.tesla.com/oauth2/v3'))
+            .toBe('https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration');
+        expect(getDiscoveryEndpointFromIssuer('https://untrusted.com/oauth2/v3'))
+            .toBeNull();
+    });
+});
+

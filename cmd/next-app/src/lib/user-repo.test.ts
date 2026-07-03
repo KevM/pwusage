@@ -57,6 +57,17 @@ describe('UserRepo email synchronization', () => {
             ['new@trmnl.com', 'user-123']
         );
     });
+
+    it('getByEmail queries user by lowercased email column', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 'user-123', email: 'test@trmnl.com' }] });
+        const repo = new UserRepo();
+        const user = await repo.getByEmail('TEST@trmnl.com');
+        expect(user).toEqual({ id: 'user-123', email: 'test@trmnl.com' });
+        expect(queryMock).toHaveBeenCalledWith(
+            'SELECT * FROM "User" WHERE LOWER(email) = LOWER($1) ORDER BY id LIMIT 1',
+            ['TEST@trmnl.com']
+        );
+    });
 });
 
 describe('UserRepo class methods (folded from module functions)', () => {

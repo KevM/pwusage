@@ -33,7 +33,9 @@ export interface FleetProduct {
 
 export interface EnergySiteInfo {
     id: string;
-    site_name: string;
+    // Tesla can omit these for products still being commissioned or non-Powerwall
+    // products lacking full metadata; upsertSite defaults them (see site-repo.ts).
+    site_name?: string;
     backup_reserve_percent: number;
     default_real_mode: string;
     installation_date: string;
@@ -59,7 +61,7 @@ export interface EnergySiteInfo {
     battery_count: number;
     nameplate_power: number;
     nameplate_energy: number;
-    installation_time_zone: string;
+    installation_time_zone?: string;
     tariff_content_v2: TariffV2;
 }
 
@@ -379,9 +381,11 @@ export interface EnergyCommandResponse {
 
 export interface TeslaUserInfo {
     email: string;
-    full_name: string;
-    profile_image_url: string;
+    full_name?: string;
+    profile_image_url?: string;
     vault_uuid?: string;
+    sub?: string;
+    id?: string;
 }
 
 export interface EnergySiteLiveStatus {

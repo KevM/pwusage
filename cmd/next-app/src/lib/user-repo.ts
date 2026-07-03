@@ -43,6 +43,12 @@ export class UserRepo {
         return res.rows[0] as User;
     }
 
+    async getByEmail(email: string): Promise<User | null> {
+        const res = await pool.query('SELECT * FROM "User" WHERE LOWER(email) = LOWER($1) ORDER BY id LIMIT 1', [email]);
+        if (res.rows.length === 0) return null;
+        return res.rows[0] as User;
+    }
+
     async getAllUsers(options: { includeTokens?: boolean } = {}): Promise<UserWithSites[]> {
         const tokenCols = options.includeTokens ? ', u.access_token, u.refresh_token' : '';
         // Fetch users and check for Trmnl integration in a single query using subquery (efficiently handles the join logic)

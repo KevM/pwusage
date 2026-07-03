@@ -130,7 +130,7 @@ export async function POST(request: Request) {
                 tokenPluginSettingId = coercePositiveInt(tokenPayload.plugin_setting_id)
                     ?? coercePositiveInt(tokenPayload.user?.plugin_setting_id);
             } catch (err) {
-                console.warn(`[TrmnlManage] JWT Verification Failed for ${uuid}:`, err);
+                console.info(`[TrmnlManage] JWT Verification Failed for ${uuid}, trying Site Auth fallback:`, err);
                 // Don't return error yet, try method 2
             }
         }
