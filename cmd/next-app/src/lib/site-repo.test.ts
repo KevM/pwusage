@@ -431,3 +431,52 @@ describe('SiteRepo current-version tariff filter', () => {
         expect(sql).toContain('t.is_current');
     });
 });
+
+describe('SiteRepo live refresh claim', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+    });
+
+    it('claimLiveRefresh returns true when the conditional update wins the row', async () => {
+        queryMock.mockResolvedValueOnce({ rowCount: 1 });
+        const repo = new SiteRepo();
+
+        const claimed = await repo.claimLiveRefresh('site-1', 1_000_000, 60_000);
+
+        expect(claimed).toBe(true);
+        expect(queryMock).toHaveBeenCalledWith(
+            expect.stringContaining('SET last_live_claim_at = $1'),
+            [1_000_000, 'site-1', 940_000]
+        );
+        expect(queryMock.mock.calls[0][0]).toContain('last_live_claim_at IS NULL OR last_live_claim_at <= $3');
+    });
+
+    it('claimLiveRefresh returns false when another instance holds a fresh claim', async () => {
+        queryMock.mockResolvedValueOnce({ rowCount: 0 });
+        const repo = new SiteRepo();
+
+        await expect(repo.claimLiveRefresh('site-1', 1_000_000, 60_000)).resolves.toBe(false);
+    });
+
+    it('releaseLiveRefreshClaim restores the previous value only while our claim is still on the row', async () => {
+        queryMock.mockResolvedValueOnce({ rowCount: 1 });
+        const repo = new SiteRepo();
+
+        await repo.releaseLiveRefreshClaim('site-1', 1_000_000, 900_000);
+
+        expect(queryMock).toHaveBeenCalledWith(
+            expect.stringContaining('WHERE id = $2 AND last_live_claim_at = $3'),
+            [900_000, 'site-1', 1_000_000]
+        );
+    });
+
+    it('releaseLiveRefreshClaim restores NULL when there was no previous refresh', async () => {
+        queryMock.mockResolvedValueOnce({ rowCount: 1 });
+        const repo = new SiteRepo();
+
+        await repo.releaseLiveRefreshClaim('site-1', 1_000_000, null);
+
+        expect(queryMock).toHaveBeenCalledWith(expect.any(String), [null, 'site-1', 1_000_000]);
+    });
+});
+

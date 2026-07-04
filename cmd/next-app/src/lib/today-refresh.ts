@@ -223,14 +223,38 @@ export async function refreshLiveStatus(
                 return { status: 'no-tokens' };
             }
 
-            const timeoutMs = options.timeoutMs ?? TESLA_LIVE_TIMEOUT_MS;
-            const liveStatus = await withTimeout(client.getLiveStatus(siteId), timeoutMs, 'tesla_live');
-            const refreshedAt = Date.now();
-            state.lastLiveRefreshAt = refreshedAt;
+            // Cross-instance guard: in-process state above doesn't span
+            // serverless instances, so claim the refresh via an atomic
+            // conditional UPDATE before making the billable Tesla call.
+            // force callers skip it — they explicitly want a fresh fetch.
+            const claimMs = Date.now();
+            if (options.force !== true) {
+                const claimed = await siteRepo.claimLiveRefresh(siteId, claimMs, minIntervalMs);
+                if (!claimed) {
+                    if (cachedStatus && useCached) {
+                        return { status: 'cached', liveStatus: cachedStatus, fetchedAt };
+                    }
+                    return { status: 'throttled' };
+                }
+            }
 
-            await siteRepo.updateLiveStatusCache(siteId, liveStatus, refreshedAt);
+            try {
+                const timeoutMs = options.timeoutMs ?? TESLA_LIVE_TIMEOUT_MS;
+                const liveStatus = await withTimeout(client.getLiveStatus(siteId), timeoutMs, 'tesla_live');
+                const refreshedAt = Date.now();
+                state.lastLiveRefreshAt = refreshedAt;
 
-            return { status: 'refreshed', liveStatus, fetchedAt: refreshedAt };
+                await siteRepo.updateLiveStatusCache(siteId, liveStatus, refreshedAt);
+
+                return { status: 'refreshed', liveStatus, fetchedAt: refreshedAt };
+            } catch (fetchError) {
+                // Give the claim back so the next caller can retry immediately
+                // instead of waiting out minIntervalMs on a failure.
+                if (options.force !== true) {
+                    await siteRepo.releaseLiveRefreshClaim(siteId, claimMs, fetchedAt ?? null);
+                }
+                throw fetchError;
+            }
         } finally {
             state.liveInFlight = false;
         }

@@ -362,5 +362,34 @@ describe('SiteService Security', () => {
                 expect(result.installation).toEqual({ id: 'inst-123' });
             }
         });
+
+        it('builds the Tesla client with explicit empty credentials when the site row is missing', async () => {
+            const mockSiteRepo = {
+                getSites: vi.fn(),
+                getSite: vi.fn().mockResolvedValue(null)
+            };
+            mockImporter.ensureSite.mockResolvedValue(null);
+            const teslaClientCreator = vi.fn().mockReturnValue({});
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                isUserActive: vi.fn().mockResolvedValue(true),
+                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+                teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+                trmnlService: mockTrmnlService as unknown as TrmnlService,
+                teslaClientCreator,
+                importerCreator: vi.fn().mockReturnValue(mockImporter)
+            });
+
+            await service.loadSitePageData('12345');
+
+            expect(teslaClientCreator).toHaveBeenCalledWith(
+                expect.objectContaining({ accessToken: '', refreshToken: undefined })
+            );
+            // The missing-site recovery path must still be attempted.
+            expect(mockImporter.ensureSite).toHaveBeenCalledWith('12345');
+        });
     });
 });
+

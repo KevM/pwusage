@@ -56,6 +56,8 @@ const siteRepoMock = {
     getImportStatus: vi.fn(),
     getSite: vi.fn(),
     updateLiveStatusCache: vi.fn(),
+    claimLiveRefresh: vi.fn(),
+    releaseLiveRefreshClaim: vi.fn(),
 };
 
 const energyRepoMock = {
@@ -136,6 +138,8 @@ describe('refreshTodayData', () => {
             last_live_refresh_at: null,
         });
         siteRepoMock.updateLiveStatusCache.mockResolvedValue(undefined);
+        siteRepoMock.claimLiveRefresh.mockResolvedValue(true);
+        siteRepoMock.releaseLiveRefreshClaim.mockResolvedValue(undefined);
         energyRepoMock.getLatestEnergyData.mockResolvedValue(null);
         teslaTokenRepoMock.getLockedRefreshHandler.mockReturnValue(tokenRefreshHandlers);
         teslaClientMock.getLiveStatus.mockResolvedValue({ percentage_charged: 72 });
@@ -211,6 +215,8 @@ describe('refreshLiveStatus', () => {
             last_live_refresh_at: null,
         });
         siteRepoMock.updateLiveStatusCache.mockResolvedValue(undefined);
+        siteRepoMock.claimLiveRefresh.mockResolvedValue(true);
+        siteRepoMock.releaseLiveRefreshClaim.mockResolvedValue(undefined);
         teslaTokenRepoMock.getLockedRefreshHandler.mockReturnValue(tokenRefreshHandlers);
         teslaClientMock.getLiveStatus.mockResolvedValue({ percentage_charged: 72 });
     });
@@ -349,5 +355,52 @@ describe('refreshLiveStatus', () => {
         resolveTokens!(tokens);
         await expect(firstPromise).resolves.toMatchObject({ status: 'refreshed' });
     });
+
+    it('returns throttled without calling Tesla when another instance holds the claim', async () => {
+        siteRepoMock.claimLiveRefresh.mockResolvedValue(false);
+        const { refreshLiveStatus } = await importRefreshLiveStatus();
+
+        await expect(refreshLiveStatus('site-1')).resolves.toEqual({ status: 'throttled' });
+        expect(teslaClientMock.getLiveStatus).not.toHaveBeenCalled();
+    });
+
+    it('returns the stale cache when the claim is lost but a cache exists', async () => {
+        siteRepoMock.getSite.mockResolvedValue({
+            id: 'site-1',
+            live_status_cache: { percentage_charged: 55 },
+            last_live_refresh_at: Date.now() - 17 * 60 * 1000, // expired vs 16-min TTL
+        });
+        siteRepoMock.claimLiveRefresh.mockResolvedValue(false);
+        const { refreshLiveStatus } = await importRefreshLiveStatus();
+
+        await expect(refreshLiveStatus('site-1')).resolves.toMatchObject({
+            status: 'cached',
+            liveStatus: { percentage_charged: 55 },
+        });
+        expect(teslaClientMock.getLiveStatus).not.toHaveBeenCalled();
+    });
+
+    it('releases the claim when the Tesla fetch fails', async () => {
+        const previous = Date.now() - 20 * 60 * 1000;
+        siteRepoMock.getSite.mockResolvedValue({
+            id: 'site-1',
+            live_status_cache: null,
+            last_live_refresh_at: previous,
+        });
+        teslaClientMock.getLiveStatus.mockRejectedValue(new Error('live down'));
+        const { refreshLiveStatus } = await importRefreshLiveStatus();
+
+        await expect(refreshLiveStatus('site-1')).resolves.toMatchObject({ status: 'error' });
+        expect(siteRepoMock.releaseLiveRefreshClaim).toHaveBeenCalledWith('site-1', expect.any(Number), previous);
+    });
+
+    it('bypasses the claim when force is set', async () => {
+        siteRepoMock.claimLiveRefresh.mockResolvedValue(false);
+        const { refreshLiveStatus } = await importRefreshLiveStatus();
+
+        await expect(refreshLiveStatus('site-1', { force: true })).resolves.toMatchObject({ status: 'refreshed' });
+        expect(siteRepoMock.claimLiveRefresh).not.toHaveBeenCalled();
+    });
 });
+
 

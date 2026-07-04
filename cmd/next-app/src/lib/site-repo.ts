@@ -16,7 +16,7 @@ export interface SiteQueryOptions {
     includeTokens?: boolean;
 }
 
-const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode, sankey_renderer, last_live_refresh_at, live_status_cache';
+const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode, sankey_renderer, last_live_refresh_at, last_live_claim_at, live_status_cache';
 const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
 
 export class SiteRepo {
@@ -89,7 +89,7 @@ export class SiteRepo {
             SELECT
                 s.id, s.user_id, s.name, s.utility, s.updated, s.installed,
                 s.timezone, s.billing_start_day, s.timezone_display_mode, s.sankey_renderer,
-                s.last_live_refresh_at, s.live_status_cache${jsonCol}${tokenCols},
+                s.last_live_refresh_at, s.last_live_claim_at, s.live_status_cache${jsonCol}${tokenCols},
                 t.id          AS tariff_id,
                 t.name        AS tariff_name,
                 t.updated     AS tariff_updated,
@@ -140,6 +140,7 @@ export class SiteRepo {
                     timezone_display_mode: (row.timezone_display_mode as 'SITE' | 'BROWSER') ?? undefined,
                     sankey_renderer: (row.sankey_renderer as string) ?? undefined,
                     last_live_refresh_at: row.last_live_refresh_at != null ? Number(row.last_live_refresh_at) : undefined,
+                    last_live_claim_at: row.last_live_claim_at != null ? Number(row.last_live_claim_at) : undefined,
                     live_status_cache: row.live_status_cache ?? undefined,
                     json: options?.includeJson ? row.json : undefined,
                     access_token: options?.includeTokens ? (row.access_token as string | null) ?? null : undefined,
@@ -308,6 +309,39 @@ export class SiteRepo {
         `, [siteId, lockId]);
         return (result.rowCount ?? 0) > 0;
     }
+
+    /**
+     * Atomically claim the right to refresh a site's live status across
+     * serverless instances, using last_live_claim_at as a dedicated claim
+     * marker so last_live_refresh_at is kept separate and only updated when
+     * live_status_cache is actually written. Returns false when another
+     * instance refreshed or claimed within minIntervalMs.
+     */
+    async claimLiveRefresh(siteId: string, nowMs: number, minIntervalMs: number): Promise<boolean> {
+        const result = await pool.query(`
+            UPDATE "Site"
+            SET last_live_claim_at = $1
+            WHERE id = $2
+              AND (last_live_claim_at IS NULL OR last_live_claim_at <= $3)
+        `, [nowMs, siteId, nowMs - minIntervalMs]);
+        this.invalidateCache(siteId);
+        return (result.rowCount ?? 0) > 0;
+    }
+
+    /**
+     * Undo a claimLiveRefresh after a failed fetch. Compare-and-set on the
+     * claim value so a fresher write (e.g. a concurrent force refresh that
+     * already called updateLiveStatusCache) is never clobbered.
+     */
+    async releaseLiveRefreshClaim(siteId: string, claimMs: number, previousMs: number | null): Promise<void> {
+        await pool.query(`
+            UPDATE "Site"
+            SET last_live_claim_at = $1
+            WHERE id = $2 AND last_live_claim_at = $3
+        `, [previousMs, siteId, claimMs]);
+        this.invalidateCache(siteId);
+    }
+
 
     async getImportStatus(siteId: string): Promise<{ isImporting: boolean; lastImportAt: number }> {
         const res = await pool.query('SELECT import_lock_id, import_lock_expires, last_import_at FROM "Site" WHERE id = $1', [siteId]);

@@ -123,9 +123,15 @@ export class SiteService {
         const refreshToken = site?.refresh_token;
 
         const handlers = teslaTokenRepo.getLockedRefreshHandler(siteId);
+        // Tokens are absent when the site row is missing or the user has no
+        // stored credentials. We still build the client and attempt ensureSite:
+        // the empty token earns a 401 -> TeslaAuthError -> the 'auth-failure'
+        // status below, which is the page's re-auth prompt. Intentional, not
+        // accidental — do not "fix" by short-circuiting before ensureSite
+        // (tests pin that the recovery attempt happens).
         const config: TeslaClientConfig = {
-            accessToken: accessToken!,
-            refreshToken: refreshToken!,
+            accessToken: accessToken ?? '',
+            refreshToken: refreshToken ?? undefined,
             tokenRefreshHandler: handlers.refreshHandler,
             onTokenError: handlers.errorHandler,
             onTokenUpdate: async () => {
