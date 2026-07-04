@@ -1,5 +1,5 @@
 import { Tariff, TariffSeason, TariffSchedule } from './db';
-import { isObservedHoliday, HolidayRule } from './holidays';
+import { isObservedHoliday, type HolidayRule } from './holidays';
 
 export interface TariffPeriod {
     start: Date;

@@ -47,6 +47,14 @@ describe('isObservedHoliday', () => {
     });
 
     it('exposes the default US rule set for callers that need to customize', () => {
-        expect(US_TOU_HOLIDAYS.length).toBe(6);
+        expect(US_TOU_HOLIDAYS.length).toBeGreaterThanOrEqual(6);
+        expect(US_TOU_HOLIDAYS).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ kind: 'fixed', month: 1, day: 1 }),
+                expect.objectContaining({ kind: 'fixed', month: 7, day: 4 }),
+                expect.objectContaining({ kind: 'fixed', month: 12, day: 25 }),
+            ])
+        );
     });
 });
+
