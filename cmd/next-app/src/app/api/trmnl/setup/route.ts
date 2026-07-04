@@ -5,6 +5,7 @@ import { SiteRepo } from '@/lib/site-repo';
 import { withRequestContext } from '@/lib/request-context';
 import {
     buildDefaultTrmnlComponentScreens,
+    coercePositiveInt,
     mergeTrmnlComponentScreensIntoInstallationJson
 } from '@/lib/trmnl-component-config';
 
@@ -13,6 +14,7 @@ export async function POST(request: Request) {
         try {
         const body = await request.json();
         const { code, site_id, uuid } = body;
+        const pluginSettingId = coercePositiveInt(body.plugin_setting_id);
 
         if (!code || !site_id) {
             return NextResponse.json({ error: 'Missing code or site_id' }, { status: 400 });
@@ -85,12 +87,12 @@ export async function POST(request: Request) {
                 console.error('[TrmnlSetup] Failed to fetch UUID from API:', err);
 
                 // If we have a plugin_setting_id (from frontend), we use it.
-                if (body.plugin_setting_id) {
-                    console.log(`[TrmnlSetup] Saving 'Pending' installation linked to Plugin ID: ${body.plugin_setting_id}`);
+                if (pluginSettingId !== null) {
+                    console.log(`[TrmnlSetup] Saving 'Pending' installation linked to Plugin ID: ${pluginSettingId}`);
                     await service.createInstallation(
                         site_id,
                         null,
-                        parseInt(body.plugin_setting_id),
+                        pluginSettingId,
                         defaultInstallationJson,
                         accessToken
                     );
@@ -119,7 +121,7 @@ export async function POST(request: Request) {
         await service.createInstallation(
             site_id,
             deviceUuid,
-            body.plugin_setting_id ? parseInt(body.plugin_setting_id) : null,
+            pluginSettingId,
             defaultInstallationJson,
             accessToken
         );

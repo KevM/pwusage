@@ -18,10 +18,11 @@ import { useToast } from '@/components/ui/Toast';
 
 
 import { SiteWithTariffs, TrmnlInstallation } from '@/lib/db';
+import { coercePositiveInt } from '@/lib/trmnl-component-config';
 
 interface SettingsViewProps {
     site: SiteWithTariffs;
-    installation: TrmnlInstallation | undefined;
+    installation: TrmnlInstallation | null | undefined;
 }
 
 function parseInstallationJson(value: unknown): Record<string, unknown> | null {
@@ -45,20 +46,7 @@ function parseInstallationJson(value: unknown): Record<string, unknown> | null {
     return null;
 }
 
-function coercePositiveInt(value: unknown): number | null {
-    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
-        return value;
-    }
-    if (typeof value === 'string') {
-        const parsed = Number.parseInt(value, 10);
-        if (Number.isInteger(parsed) && parsed > 0) {
-            return parsed;
-        }
-    }
-    return null;
-}
-
-function extractPluginSettingId(installation: TrmnlInstallation | undefined): number | null {
+function extractPluginSettingId(installation: TrmnlInstallation | null | undefined): number | null {
     if (!installation) return null;
     if (installation.plugin_setting_id) return installation.plugin_setting_id;
 

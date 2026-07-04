@@ -19,6 +19,19 @@ export interface TrmnlComponentScreen {
 
 export const MAX_TRMNL_COMPONENT_SCREENS = 3;
 
+export function coercePositiveInt(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+        return value;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+        const parsed = Number.parseInt(value.trim(), 10);
+        if (Number.isInteger(parsed) && parsed > 0) {
+            return parsed;
+        }
+    }
+    return null;
+}
+
 export const DEFAULT_TRMNL_COMPONENT_CONFIG: TrmnlComponentConfig = {
     showLiveGrid: true,
     showLiveSolar: true,

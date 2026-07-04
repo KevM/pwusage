@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
     DEFAULT_TRMNL_COMPONENT_CONFIG,
     normalizeTrmnlComponentConfig,
-    buildDefaultTrmnlComponentScreens
+    buildDefaultTrmnlComponentScreens,
+    coercePositiveInt
 } from './trmnl-component-config';
 
 describe('TRMNL component config defaults', () => {
@@ -71,5 +72,32 @@ describe('TRMNL component config defaults', () => {
     it('preserves an explicit showLoadTiming=true that the user opted into', () => {
         const optedIn = { ...DEFAULT_TRMNL_COMPONENT_CONFIG, showLoadTiming: true };
         expect(normalizeTrmnlComponentConfig(optedIn).showLoadTiming).toBe(true);
+    });
+});
+
+describe('coercePositiveInt', () => {
+    it('accepts positive integers as numbers or clean digit-only strings', () => {
+        expect(coercePositiveInt(42)).toBe(42);
+        expect(coercePositiveInt('42')).toBe(42);
+        expect(coercePositiveInt('  100  ')).toBe(100);
+    });
+
+    it('rejects partially numeric strings like "42abc" or "abc42"', () => {
+        expect(coercePositiveInt('42abc')).toBeNull();
+        expect(coercePositiveInt('abc42')).toBeNull();
+        expect(coercePositiveInt('42.5')).toBeNull();
+        expect(coercePositiveInt('12 34')).toBeNull();
+    });
+
+    it('rejects non-positive integers, floats, and invalid types', () => {
+        expect(coercePositiveInt(0)).toBeNull();
+        expect(coercePositiveInt('0')).toBeNull();
+        expect(coercePositiveInt(-5)).toBeNull();
+        expect(coercePositiveInt('-5')).toBeNull();
+        expect(coercePositiveInt(42.5)).toBeNull();
+        expect(coercePositiveInt(null)).toBeNull();
+        expect(coercePositiveInt(undefined)).toBeNull();
+        expect(coercePositiveInt({})).toBeNull();
+        expect(coercePositiveInt([])).toBeNull();
     });
 });

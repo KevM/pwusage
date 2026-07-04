@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
 import {
+    coercePositiveInt,
     extractTrmnlComponentScreens,
     extractTrmnlCarouselIndex,
     mergeTrmnlComponentScreensIntoInstallationJson
@@ -8,19 +9,6 @@ import {
 import { verifyTrmnlToken, VerifiedTrmnlTokenPayload, safeTimingSafeEqual } from '@/lib/trmnl-auth';
 import { SiteRepo } from '@/lib/site-repo';
 import { UserRepo } from '@/lib/user-repo';
-
-function coercePositiveInt(value: unknown): number | null {
-    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
-        return value;
-    }
-    if (typeof value === 'string') {
-        const parsed = Number.parseInt(value, 10);
-        if (Number.isInteger(parsed) && parsed > 0) {
-            return parsed;
-        }
-    }
-    return null;
-}
 
 async function syncUserEmail(siteId: string, email: string) {
     const siteRepo = new SiteRepo();
@@ -125,8 +113,8 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Forbidden: Token missing plugin_setting_id' }, { status: 403 });
         }
 
-        if (bodyPluginId !== null && tokenPluginId !== bodyPluginId) {
-            console.warn(`[TrmnlWebhook] Plugin ID mismatch for ${user.uuid}. Token: ${tokenPluginId}, Body: ${bodyPluginId}`);
+        if (user.plugin_setting_id !== undefined && tokenPluginId !== bodyPluginId) {
+            console.warn(`[TrmnlWebhook] Plugin ID mismatch for ${user.uuid}. Token: ${tokenPluginId}, Body: ${user.plugin_setting_id}`);
             return NextResponse.json({ error: 'Forbidden: Plugin ID mismatch' }, { status: 403 });
         }
 

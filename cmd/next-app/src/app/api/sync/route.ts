@@ -36,6 +36,10 @@ export async function GET(request: Request) {
         const startDate = new Date(startParam);
         const endDate = new Date(endParam);
 
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+            return NextResponse.json({ error: 'Invalid date parameters' }, { status: 400 });
+        }
+
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
             async start(controller) {

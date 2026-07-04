@@ -17,6 +17,10 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Filename and body are required' }, { status: 400 });
         }
 
+        if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+            return NextResponse.json({ error: 'Invalid filename' }, { status: 400 });
+        }
+
         const blob = await put(`system-announcements/${filename}`, request.body, {
             access: 'public',
         });

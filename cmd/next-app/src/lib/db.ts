@@ -34,7 +34,7 @@ function createPool() {
     // 2. Path to CA cert from env var
     if (process.env.DATABASE_SSL_CA_FILE) {
       try {
-        const fileContent = fs.readFileSync(path.resolve(process.env.DATABASE_SSL_CA_FILE), 'utf8');
+        const fileContent = fs.readFileSync(path.resolve(/*turbopackIgnore: true*/ process.env.DATABASE_SSL_CA_FILE), 'utf8');
         return {
           rejectUnauthorized: true,
           ca: fileContent,
@@ -46,16 +46,16 @@ function createPool() {
 
     // 3. Check default locations relative to the workspace / process root
     const defaultPaths = [
-      path.join(process.cwd(), 'certs/supabase-ca.crt'),
-      path.join(process.cwd(), 'certs/prod-ca-2021.crt'),
-      path.join(process.cwd(), 'cmd/next-app/certs/supabase-ca.crt'),
-      path.join(process.cwd(), 'cmd/next-app/certs/prod-ca-2021.crt'),
+      path.join(/*turbopackIgnore: true*/ process.cwd(), 'certs/supabase-ca.crt'),
+      path.join(/*turbopackIgnore: true*/ process.cwd(), 'certs/prod-ca-2021.crt'),
+      path.join(/*turbopackIgnore: true*/ process.cwd(), 'cmd/next-app/certs/supabase-ca.crt'),
+      path.join(/*turbopackIgnore: true*/ process.cwd(), 'cmd/next-app/certs/prod-ca-2021.crt'),
     ];
 
     for (const certPath of defaultPaths) {
-      if (fs.existsSync(certPath)) {
+      if (fs.existsSync(/*turbopackIgnore: true*/ certPath)) {
         try {
-          const fileContent = fs.readFileSync(certPath, 'utf8');
+          const fileContent = fs.readFileSync(/*turbopackIgnore: true*/ certPath, 'utf8');
           return {
             rejectUnauthorized: true,
             ca: fileContent,
