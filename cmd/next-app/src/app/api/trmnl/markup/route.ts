@@ -23,6 +23,7 @@ import { addMonthsInSiteTimezone } from '@/lib/date-utils';
 import { aggregateUsage } from '@/lib/tou-aggregation';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 const TRMNL_POLL_INTERVAL_MS = 15 * 60 * 1000;
 const TESLA_REFRESH_MIN_INTERVAL_MS = 14 * 60 * 1000;
