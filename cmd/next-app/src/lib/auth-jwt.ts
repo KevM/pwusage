@@ -78,23 +78,41 @@ export async function checkRefreshNeeded(token: string): Promise<string | null> 
         }
 
         if (timeRemaining < REFRESH_THRESHOLD_SECONDS) {
-            // Don't extend a session for a revoked/deactivated user. Some
-            // authorization paths (e.g. SiteService.validateSiteAccess) trust the
-            // JWT claims directly without re-checking isUserActive, so refusing to
-            // refresh is what eventually locks a revoked user out of those JWT-only
-            // endpoints -- at the next normal expiry rather than the 30-day cap.
+            let refreshedSites = decoded.sites;
+            let refreshedRoles = decoded.roles || [];
+
+            // Don't extend a session for a revoked/deactivated user and re-derive fresh
+            // roles/sites from DB. Authorization paths (e.g. SiteService.validateSiteAccess)
+            // trust JWT claims directly, so re-deriving roles and sites on refresh ensures
+            // role demotions and site unassignments take effect on the next refresh window
+            // rather than persisting until the 30-day absolute session cap.
             // (Safe here: Next 16 proxy runs on the Node.js runtime, so the
-            // user-repo / pg import works.)
+            // user-repo / site-repo / pg import works.)
             if (decoded.sub) {
-                const { isUserActive } = await import('./user-repo');
-                if (!(await isUserActive(decoded.sub))) {
+                const { UserRepo } = await import('./user-repo');
+                const { SiteRepo } = await import('./site-repo');
+
+                const userRepo = new UserRepo();
+                const user = await userRepo.getById(decoded.sub);
+
+                // Match UserRepo.isActive() semantics (is_active === true): the
+                // column is a nullable BOOLEAN, so treat NULL/undefined as
+                // inactive too. Refusing here must be at least as strict as the
+                // JWT-only authz paths, never more permissive.
+                if (!user || user.is_active !== true) {
                     console.warn(`[AuthJWT] Refusing to refresh token for revoked/inactive user ${decoded.sub}`);
                     return null;
                 }
+
+                refreshedRoles = user.roles || [];
+
+                const siteRepo = new SiteRepo();
+                const userSites = await siteRepo.getSitesForUser(decoded.sub);
+                refreshedSites = userSites.map(s => s.id);
             }
 
-            // Token is valid but expiring soon -> Refresh
-            return signSiteToken(decoded.sites, decoded.roles || [], decoded.sub, decoded.orig_iat);
+            // Token is valid but expiring soon -> Refresh with updated claims
+            return signSiteToken(refreshedSites, refreshedRoles, decoded.sub, decoded.orig_iat);
         }
 
         return null;

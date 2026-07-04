@@ -89,6 +89,80 @@ function makeHarrisonTariff(): Tariff[] {
 
 const TZ = HARRISON_TIMEZONE;
 
+function makeMinuteBoundaryTariff(): Tariff[] {
+    return [
+        {
+            id: 101,
+            site_id: 'minute-site',
+            name: 'Minute Boundary',
+            updated: new Date('2026-01-01'),
+            seasons: [
+                {
+                    id: 1010,
+                    tariff_id: 101,
+                    name: 'All Year',
+                    from_month: 1, from_day: 1,
+                    to_month: 12, to_day: 31,
+                    buy_rate: 0.10, sell_rate: 0.03,
+                    schedules: [
+                        {
+                            id: 1011, season_id: 1010, name: 'Peak',
+                            buy_rate: 0.50, sell_rate: 0.10,
+                            from_day_of_week: 0, to_day_of_week: 6,
+                            from_hour: 16, from_minute: 30,
+                            to_hour: 21, to_minute: 30,
+                        },
+                        {
+                            id: 1012, season_id: 1010, name: 'Off-Peak',
+                            buy_rate: 0.10, sell_rate: 0.03,
+                            from_day_of_week: 0, to_day_of_week: 6,
+                            from_hour: null, from_minute: null,
+                            to_hour: null, to_minute: null,
+                        },
+                    ],
+                },
+            ],
+        },
+    ];
+}
+
+function makeDstBoundaryTariff(): Tariff[] {
+    return [
+        {
+            id: 102,
+            site_id: 'dst-site',
+            name: 'DST Boundary',
+            updated: new Date('2026-01-01'),
+            seasons: [
+                {
+                    id: 1020,
+                    tariff_id: 102,
+                    name: 'All Year',
+                    from_month: 1, from_day: 1,
+                    to_month: 12, to_day: 31,
+                    buy_rate: 0.10, sell_rate: 0.03,
+                    schedules: [
+                        {
+                            id: 1021, season_id: 1020, name: 'Peak',
+                            buy_rate: 0.50, sell_rate: 0.10,
+                            from_day_of_week: 0, to_day_of_week: 6,
+                            from_hour: 1, from_minute: 30,
+                            to_hour: 3, to_minute: 30,
+                        },
+                        {
+                            id: 1022, season_id: 1020, name: 'Off-Peak',
+                            buy_rate: 0.10, sell_rate: 0.03,
+                            from_day_of_week: 0, to_day_of_week: 6,
+                            from_hour: null, from_minute: null,
+                            to_hour: null, to_minute: null,
+                        },
+                    ],
+                },
+            ],
+        },
+    ];
+}
+
 describe('Schedule – Harrison / We energies smoke tests', () => {
     it('Winter weekday midday → On-Peak', () => {
         // Tue Jan 27 2026, 10:00 CST = 16:00 UTC
@@ -317,3 +391,49 @@ describe('Schedule observed holidays', () => {
     });
 });
 
+describe('Schedule minute-level TOU boundaries', () => {
+    it('does not enter a half-hour peak period before from_minute', () => {
+        const schedule = new Schedule(makeMinuteBoundaryTariff(), 'America/Chicago');
+        // Tue Jul 7 2026, 16:15 CDT = 21:15 UTC. Peak starts at 16:30 local.
+        const period = schedule.getTariffPeriod(new Date('2026-07-07T21:15:00Z'));
+
+        expect(period).not.toBeNull();
+        expect(period!.schedule.name).toBe('Off-Peak');
+    });
+
+    it('stays in a half-hour peak period until to_minute', () => {
+        const schedule = new Schedule(makeMinuteBoundaryTariff(), 'America/Chicago');
+        // Tue Jul 7 2026, 21:15 CDT = Wed 02:15 UTC. Peak ends at 21:30 local.
+        const period = schedule.getTariffPeriod(new Date('2026-07-08T02:15:00Z'));
+
+        expect(period).not.toBeNull();
+        expect(period!.schedule.name).toBe('Peak');
+    });
+
+    it('leaves a half-hour peak period at to_minute', () => {
+        const schedule = new Schedule(makeMinuteBoundaryTariff(), 'America/Chicago');
+        // Tue Jul 7 2026, 21:30 CDT = Wed 02:30 UTC. End is exclusive.
+        const period = schedule.getTariffPeriod(new Date('2026-07-08T02:30:00Z'));
+
+        expect(period).not.toBeNull();
+        expect(period!.schedule.name).toBe('Off-Peak');
+    });
+});
+
+describe('Schedule DST transitions', () => {
+    it('keeps a spring-forward period active across the nonexistent local hour', () => {
+        const schedule = new Schedule(makeDstBoundaryTariff(), 'America/Chicago');
+
+        expect(schedule.getTariffPeriod(new Date('2026-03-08T07:45:00Z'))?.schedule.name).toBe('Peak');
+        expect(schedule.getTariffPeriod(new Date('2026-03-08T08:15:00Z'))?.schedule.name).toBe('Peak');
+        expect(schedule.getTariffPeriod(new Date('2026-03-08T08:30:00Z'))?.schedule.name).toBe('Off-Peak');
+    });
+
+    it('bills both repeated fall-back local times by local clock time', () => {
+        const schedule = new Schedule(makeDstBoundaryTariff(), 'America/Chicago');
+
+        expect(schedule.getTariffPeriod(new Date('2026-11-01T06:45:00Z'))?.schedule.name).toBe('Peak');
+        expect(schedule.getTariffPeriod(new Date('2026-11-01T07:45:00Z'))?.schedule.name).toBe('Peak');
+        expect(schedule.getTariffPeriod(new Date('2026-11-01T09:30:00Z'))?.schedule.name).toBe('Off-Peak');
+    });
+});

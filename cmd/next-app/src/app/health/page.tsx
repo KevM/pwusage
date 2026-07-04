@@ -11,6 +11,8 @@ import { StatusPill } from '@/components/ui/StatusPill';
 
 import type { HealthChecks } from '../api/health/route';
 
+type HealthResponse = HealthChecks | { status: 'ok' | 'error' };
+
 type SchemaSummaryDetails = {
     sites: number;
     energyDataRows: number;
@@ -26,7 +28,7 @@ function isSchemaSummaryDetails(details: unknown): details is SchemaSummaryDetai
 }
 
 export default function HealthPage() {
-    const [data, setData] = useState<HealthChecks | null>(null);
+    const [data, setData] = useState<HealthResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
@@ -80,7 +82,9 @@ export default function HealthPage() {
         );
     }
 
-    const schemaDetails = isSchemaSummaryDetails(data?.schema?.details) ? data.schema.details : null;
+    const detailedData = (data && 'database' in data) ? (data as HealthChecks) : null;
+    const publicStatus = (data && 'status' in data && typeof data.status === 'string') ? data.status : 'ok';
+    const schemaDetails = isSchemaSummaryDetails(detailedData?.schema?.details) ? detailedData.schema.details : null;
 
     return (
         <PageShell maxWidth="lg" className="space-y-6">
@@ -93,64 +97,75 @@ export default function HealthPage() {
                 )}
             />
 
-            <div className="grid gap-6">
+            {!detailedData ? (
                 <SectionCard
-                    title="Database"
-                    action={data?.database ? <StatusPill status={data.database.status} /> : null}
+                    title="Overall Status"
+                    action={<StatusPill status={publicStatus} />}
                 >
-                    <p className="font-mono text-sm text-gray-600 dark:text-gray-400">
-                        {data?.database?.message}
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                        System status is currently <span className="font-semibold">{publicStatus}</span>. Detailed system diagnostics require administrator authentication.
                     </p>
                 </SectionCard>
+            ) : (
+                <div className="grid gap-6">
+                    <SectionCard
+                        title="Database"
+                        action={detailedData.database ? <StatusPill status={detailedData.database.status} /> : null}
+                    >
+                        <p className="font-mono text-sm text-gray-600 dark:text-gray-400">
+                            {detailedData.database?.message}
+                        </p>
+                    </SectionCard>
 
-                <SectionCard
-                    title="Data Storage"
-                    action={data?.schema ? <StatusPill status={data.schema.status} /> : null}
-                >
-                    <div className="space-y-3">
-                        {schemaDetails ? (
-                            <div className="grid grid-cols-1 gap-4 text-center sm:grid-cols-2">
-                                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-zinc-700 dark:bg-zinc-700">
-                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{schemaDetails.sites}</div>
-                                    <div className="text-xs text-gray-500 dark:text-gray-400">Sites</div>
+                    <SectionCard
+                        title="Data Storage"
+                        action={detailedData.schema ? <StatusPill status={detailedData.schema.status} /> : null}
+                    >
+                        <div className="space-y-3">
+                            {schemaDetails ? (
+                                <div className="grid grid-cols-1 gap-4 text-center sm:grid-cols-2">
+                                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-zinc-700 dark:bg-zinc-700">
+                                        <div className="text-2xl font-bold text-gray-900 dark:text-white">{schemaDetails.sites}</div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-400">Sites</div>
+                                    </div>
+                                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-zinc-700 dark:bg-zinc-700">
+                                        <div className="text-2xl font-bold text-gray-900 dark:text-white">{schemaDetails.energyDataRows}</div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-400">Data Rows</div>
+                                    </div>
                                 </div>
-                                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-zinc-700 dark:bg-zinc-700">
-                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{schemaDetails.energyDataRows}</div>
-                                    <div className="text-xs text-gray-500 dark:text-gray-400">Data Rows</div>
-                                </div>
-                            </div>
-                        ) : null}
-                        {data?.schema?.message ? (
-                            <p className="text-sm text-red-500">{data.schema.message}</p>
-                        ) : null}
-                    </div>
-                </SectionCard>
+                            ) : null}
+                            {detailedData.schema?.message ? (
+                                <p className="text-sm text-red-500">{detailedData.schema.message}</p>
+                            ) : null}
+                        </div>
+                    </SectionCard>
 
-                <SectionCard
-                    title="Tesla API"
-                    action={data?.tesla ? <StatusPill status={data.tesla.status} /> : null}
-                >
-                    <p className="mb-2 font-mono text-sm text-gray-600 dark:text-gray-400">
-                        {data?.tesla?.message}
-                    </p>
-                    {data?.tesla?.products ? (
-                        <ul className="list-inside list-disc text-sm text-gray-500 dark:text-gray-400">
-                            {data.tesla.products.map((p) => (
-                                <li key={p.id}>{p.site_name} (ID: {p.id})</li>
-                            ))}
-                        </ul>
-                    ) : null}
-                </SectionCard>
+                    <SectionCard
+                        title="Tesla API"
+                        action={detailedData.tesla ? <StatusPill status={detailedData.tesla.status} /> : null}
+                    >
+                        <p className="mb-2 font-mono text-sm text-gray-600 dark:text-gray-400">
+                            {detailedData.tesla?.message}
+                        </p>
+                        {detailedData.tesla?.products ? (
+                            <ul className="list-inside list-disc text-sm text-gray-500 dark:text-gray-400">
+                                {detailedData.tesla.products.map((p) => (
+                                    <li key={p.id}>{p.site_name} (ID: {p.id})</li>
+                                ))}
+                            </ul>
+                        ) : null}
+                    </SectionCard>
 
-                <SectionCard
-                    title="Environment"
-                    action={data?.env ? <StatusPill status={data.env.status} /> : null}
-                >
-                    <pre className="overflow-auto rounded-lg bg-gray-100 p-4 text-xs dark:bg-zinc-900">
-                        {JSON.stringify(data?.env?.details, null, 2)}
-                    </pre>
-                </SectionCard>
-            </div>
+                    <SectionCard
+                        title="Environment"
+                        action={detailedData.env ? <StatusPill status={detailedData.env.status} /> : null}
+                    >
+                        <pre className="overflow-auto rounded-lg bg-gray-100 p-4 text-xs dark:bg-zinc-900">
+                            {JSON.stringify(detailedData.env?.details, null, 2)}
+                        </pre>
+                    </SectionCard>
+                </div>
+            )}
         </PageShell>
     );
 }

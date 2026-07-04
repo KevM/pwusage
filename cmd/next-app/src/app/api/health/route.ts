@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { isUserAdmin } from '@/lib/auth-checks';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,13 @@ export interface HealthChecks {
 }
 
 export async function GET() {
+    let isAdmin = false;
+    try {
+        isAdmin = await isUserAdmin();
+    } catch (err) {
+        console.warn('[HealthCheck] Auth check failed (e.g. DB outage), falling back to non-admin status:', err);
+    }
+
     const checks: HealthChecks = {
         database: { status: 'unknown', message: '' },
         schema: { status: 'unknown', details: {} },
@@ -33,7 +41,8 @@ export async function GET() {
             message: `Connected. Server time: ${res.rows[0].time}`
         };
     } catch (error) {
-        checks.database = { status: 'error', message: (error as Error).message };
+        console.error('[HealthCheck] Database connection error:', error);
+        checks.database = { status: 'error', message: 'Database connection failed' };
     }
 
     // 2. Schema/Data Check
@@ -41,7 +50,6 @@ export async function GET() {
         try {
             const siteCount = await pool.query('SELECT COUNT(*) FROM "Site"');
             const dataCount = await pool.query('SELECT COUNT(*) FROM "EnergyData"');
-
 
             checks.schema = {
                 status: 'ok',
@@ -51,13 +59,12 @@ export async function GET() {
                 }
             };
         } catch (error) {
-            checks.schema = { status: 'error', message: (error as Error).message };
+            console.error('[HealthCheck] Schema check error:', error);
+            checks.schema = { status: 'error', message: 'Schema check failed' };
         }
     }
 
     // 3. Tesla API Check
-    // With User-centric Auth, we cannot check Tesla API purely from system health endpoint 
-    // without a specific user context (which this public/admin endpoint might not have).
     checks.tesla = { status: 'ok', message: 'API Check Skipped (Requires User Context)' };
 
     // 4. Env Check
@@ -69,9 +76,14 @@ export async function GET() {
         }
     };
 
-
-    // Allow 200 even if some fail, so frontend can display partial results? 
-    // Actually, usually 200 is fine if we return JSON structure describing errors.
+    // For public / non-admin callers, return a minimal status object without leaking internal details
+    if (!isAdmin) {
+        const isHealthy = checks.database.status === 'ok' && checks.schema.status === 'ok' && checks.env.status === 'ok';
+        return NextResponse.json(
+            { status: isHealthy ? 'ok' : 'error' },
+            { status: isHealthy ? 200 : 503 }
+        );
+    }
 
     return NextResponse.json(checks, { status: 200 });
 }

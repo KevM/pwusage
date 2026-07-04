@@ -1,14 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import jwt from 'jsonwebtoken';
 import { checkRefreshNeeded, signSiteToken, verifySiteToken } from './auth-jwt';
-import { isUserActive } from './user-repo';
 
-// Mock user-repo so the refresh path's revocation check is controllable and never
-// touches the real pg pool / database.
-vi.mock('./user-repo', () => ({
-    isUserActive: vi.fn().mockResolvedValue(true),
-}));
-const isUserActiveMock = vi.mocked(isUserActive);
+const mockGetById = vi.fn();
+const mockGetSitesForUser = vi.fn();
+
+// Mock user-repo and site-repo so the refresh path's claim re-derivation and revocation checks
+// are controllable and never touch the real pg pool / database.
+vi.mock('./user-repo', () => {
+    return {
+        UserRepo: class {
+            getById(id: string) {
+                return mockGetById(id);
+            }
+        },
+        isUserActive: vi.fn(),
+    };
+});
+
+vi.mock('./site-repo', () => {
+    return {
+        SiteRepo: class {
+            getSitesForUser(id: string) {
+                return mockGetSitesForUser(id);
+            }
+        },
+    };
+});
 
 // In tests NODE_ENV !== 'production', so auth-jwt falls back to this default
 // secret (see getAuthSecret in auth-jwt.ts). We sign fixtures with the same
@@ -22,7 +40,9 @@ function nowSeconds() {
 
 describe('checkRefreshNeeded', () => {
     beforeEach(() => {
-        isUserActiveMock.mockResolvedValue(true);
+        vi.clearAllMocks();
+        mockGetById.mockResolvedValue({ id: 'u1', is_active: true, roles: ['user'] });
+        mockGetSitesForUser.mockResolvedValue([{ id: 's1' }]);
     });
 
     afterEach(() => {
@@ -43,6 +63,28 @@ describe('checkRefreshNeeded', () => {
         const claims = verifySiteToken(refreshed!);
         expect(claims?.sub).toBe('u1');
         expect(claims?.sites).toEqual(['s1']);
+        expect(claims?.roles).toEqual(['user']);
+    });
+
+    it('re-derives roles and sites from DB when refreshing token (fixes stale claims vulnerability)', async () => {
+        // Token claims indicate admin role and access to s1 and s2
+        const expiringSoon = jwt.sign(
+            { sites: ['s1', 's2'], roles: ['admin'], sub: 'u1', orig_iat: nowSeconds() },
+            TEST_SECRET,
+            { expiresIn: 60 }
+        );
+
+        // DB state shows user was demoted to 'user' role and s2 was unassigned
+        mockGetById.mockResolvedValue({ id: 'u1', is_active: true, roles: ['user'] });
+        mockGetSitesForUser.mockResolvedValue([{ id: 's1' }]);
+
+        const refreshed = await checkRefreshNeeded(expiringSoon);
+
+        expect(refreshed).toBeTruthy();
+        const claims = verifySiteToken(refreshed!);
+        expect(claims?.sub).toBe('u1');
+        expect(claims?.roles).toEqual(['user']); // Admin role demoted
+        expect(claims?.sites).toEqual(['s1']);   // Stale site s2 removed
     });
 
     it('does not refresh a freshly issued token (outside the window)', async () => {
@@ -61,10 +103,9 @@ describe('checkRefreshNeeded', () => {
 
     // Security regression guard (Codex P1): a revoked/inactive user must not have
     // their session extended, otherwise JWT-only authz paths that don't recheck
-    // isUserActive (e.g. SiteService.validateSiteAccess) keep honoring the cookie
-    // until the 30-day absolute cap instead of the next normal expiry.
-    it('refuses to refresh and warns when the user has been revoked', async () => {
-        isUserActiveMock.mockResolvedValue(false);
+    // user status keep honoring the cookie until the 30-day absolute cap.
+    it('refuses to refresh and warns when the user has been revoked/deactivated', async () => {
+        mockGetById.mockResolvedValue({ id: 'revoked-user', is_active: false, roles: ['user'] });
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
         const expiringSoon = jwt.sign(
@@ -74,7 +115,40 @@ describe('checkRefreshNeeded', () => {
         );
 
         expect(await checkRefreshNeeded(expiringSoon)).toBeNull();
-        expect(isUserActiveMock).toHaveBeenCalledWith('revoked-user');
+        expect(mockGetById).toHaveBeenCalledWith('revoked-user');
+        expect(warn).toHaveBeenCalled();
+    });
+
+    // Parity with UserRepo.isActive(), which requires is_active === true: a NULL
+    // is_active (column is nullable BOOLEAN DEFAULT TRUE) must be treated as
+    // inactive here too, not silently promoted to active.
+    it('refuses to refresh when is_active is NULL', async () => {
+        mockGetById.mockResolvedValue({ id: 'null-active-user', is_active: null, roles: ['user'] });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const expiringSoon = jwt.sign(
+            { sites: ['s1'], roles: ['user'], sub: 'null-active-user', orig_iat: nowSeconds() },
+            TEST_SECRET,
+            { expiresIn: 60 }
+        );
+
+        expect(await checkRefreshNeeded(expiringSoon)).toBeNull();
+        expect(mockGetById).toHaveBeenCalledWith('null-active-user');
+        expect(warn).toHaveBeenCalled();
+    });
+
+    it('refuses to refresh and warns when the user is not found in DB', async () => {
+        mockGetById.mockResolvedValue(null);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const expiringSoon = jwt.sign(
+            { sites: ['s1'], roles: ['user'], sub: 'deleted-user', orig_iat: nowSeconds() },
+            TEST_SECRET,
+            { expiresIn: 60 }
+        );
+
+        expect(await checkRefreshNeeded(expiringSoon)).toBeNull();
+        expect(mockGetById).toHaveBeenCalledWith('deleted-user');
         expect(warn).toHaveBeenCalled();
     });
 

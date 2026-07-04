@@ -14,7 +14,7 @@ export class Schedule {
     private timeZone: string;
     private holidayRules?: HolidayRule[];
     private formatter: Intl.DateTimeFormat;
-    private memo: Map<string, { month: number, day: number, hour: number, weekday: number, year: number }> = new Map();
+    private memo: Map<string, { month: number, day: number, hour: number, minute: number, weekday: number, year: number }> = new Map();
 
     constructor(tariffs: Tariff[], timeZone: string, holidayRules?: HolidayRule[]) {
         this.tariffs = tariffs;
@@ -26,15 +26,15 @@ export class Schedule {
             month: 'numeric',
             day: 'numeric',
             hour: 'numeric',
+            minute: 'numeric',
             weekday: 'short',
             hour12: false
         });
     }
 
-    private getLocalParts(d: Date): { month: number, day: number, hour: number, weekday: number, year: number } {
-        // Memoize based on 15-minute intervals to handle timezone offsets of 30 or 45 mins.
-        // Within any 15-minute window, the local hour/day/month/year/weekday will be constant.
-        const intervalMs = 15 * 60 * 1000;
+    private getLocalParts(d: Date): { month: number, day: number, hour: number, minute: number, weekday: number, year: number } {
+        // Memoize by minute because some tariffs use minute-level TOU boundaries.
+        const intervalMs = 60 * 1000;
         const memoKey = Math.floor(d.getTime() / intervalMs).toString();
 
         const cached = this.memo.get(memoKey);
@@ -54,23 +54,24 @@ export class Schedule {
 
         let hour = parseInt(p.hour, 10);
         if (hour === 24) hour = 0;
+        const minute = parseInt(p.minute, 10);
 
         const wdMap: Record<string, number> = {
             'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6
         };
         const weekday = wdMap[p.weekday] ?? 0;
 
-        const result = { month, day, hour, weekday, year };
+        const result = { month, day, hour, minute, weekday, year };
         this.memo.set(memoKey, result);
         return result;
     }
 
     getTariffPeriod(t: Date): TariffPeriod | null {
         const local = this.getLocalParts(t);
-        return this.getTariffPeriodByComponents(local.month, local.day, local.hour, local.weekday, t, local.year);
+        return this.getTariffPeriodByComponents(local.month, local.day, local.hour, local.weekday, t, local.year, local.minute);
     }
 
-    getTariffPeriodByComponents(month: number, day: number, hour: number, weekday: number, originalDate?: Date, year?: number): TariffPeriod | null {
+    getTariffPeriodByComponents(month: number, day: number, hour: number, weekday: number, originalDate?: Date, year?: number, minute: number = 0): TariffPeriod | null {
         // Check for holidays
         // If year is provided, we can calculate dynamic holidays (Thanksgiving, Memorial Day, Labor Day)
         // If not, we might miss them, but getTariffPeriod passes it.
@@ -111,7 +112,7 @@ export class Schedule {
                 });
 
                 for (const schedule of sortedSchedules) {
-                    if (!this.matchSchedule(effectiveWeekday, hour, schedule)) {
+                    if (!this.matchSchedule(effectiveWeekday, hour, minute, schedule)) {
                         continue;
                     }
 
@@ -129,9 +130,9 @@ export class Schedule {
     }
 
 
-    private matchSchedule(weekday: number, hour: number, schedule: TariffSchedule): boolean {
+    private matchSchedule(weekday: number, hour: number, minute: number, schedule: TariffSchedule): boolean {
         if (this.matchDayOfWeek(weekday, schedule)) {
-            if (this.matchHourOfDay(hour, schedule)) {
+            if (this.matchTimeOfDay(hour, minute, schedule)) {
                 return true;
             }
         }
@@ -163,29 +164,33 @@ export class Schedule {
         return false;
     }
 
-    private matchHourOfDay(hour: number, schedule: TariffSchedule): boolean {
-        const th = hour;
+    private matchTimeOfDay(hour: number, minute: number, schedule: TariffSchedule): boolean {
+        const time = hour * 60 + minute;
 
         if (schedule.from_hour === null && schedule.to_hour === null) {
             return true;
         }
 
         if (schedule.from_hour !== null && schedule.to_hour !== null) {
-            if (schedule.from_hour <= schedule.to_hour) {
+            const from = schedule.from_hour * 60 + (schedule.from_minute ?? 0);
+            const to = schedule.to_hour * 60 + (schedule.to_minute ?? 0);
+            if (from <= to) {
                 // Normal range: e.g., 08:00 - 20:00
-                return th >= schedule.from_hour && th < schedule.to_hour;
+                return time >= from && time < to;
             } else {
                 // Midnight-crossing range: e.g., 20:00 - 08:00
-                return th >= schedule.from_hour || th < schedule.to_hour;
+                return time >= from || time < to;
             }
         }
 
         if (schedule.to_hour !== null) {
-            return th < schedule.to_hour;
+            const to = schedule.to_hour * 60 + (schedule.to_minute ?? 0);
+            return time < to;
         }
 
         if (schedule.from_hour !== null) {
-            return th >= schedule.from_hour;
+            const from = schedule.from_hour * 60 + (schedule.from_minute ?? 0);
+            return time >= from;
         }
 
         return false;
@@ -240,4 +245,3 @@ export function getCurrentTariffLabel(site: { tariffs?: Tariff[]; timezone?: str
     const tariffName = tariffPeriod.tariff.name || 'Unknown';
     return `${season} - ${tariffName}`;
 }
-

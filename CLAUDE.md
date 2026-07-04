@@ -88,10 +88,10 @@ cmd/next-app/
 Tables (PascalCase quoted identifiers):
 - `User`: User accounts with Tesla refresh tokens, auth status
 - `Site`: Energy sites (Powerwalls) owned by users; references `User`
-- `Tariff`: Billing rate plans per site
+- `Tariff`: Billing rate plans per site. Append-only versioned: each save inserts a new row (`version` + `is_current`, deduped by `content_hash`) rather than replacing; only one row per `(site_id, name)` has `is_current = true`. See [`DesignDecisions.md`](./DesignDecisions.md).
 - `TariffSeason`: Seasonal date ranges within a tariff (`from_month`/`from_day` → `to_month`/`to_day`) with buy/sell rates
 - `TariffSchedule`: TOU period definitions within a season (day-of-week + hour/minute windows) with buy/sell rates
-- `EnergyData`: 5-minute energy samples (`load_power, solar_power, grid_power, battery_power, battery_soc`) keyed by `(timestamp, site_id, tariff_id)`
+- `EnergyData`: 5-minute energy samples (`load_power, solar_power, grid_power, battery_power, battery_soc`) keyed by `(timestamp, site_id)` (the `tariff_id` column is retained for billing aggregation but is not part of the uniqueness key)
 - `TrmnlInstallation`: Trmnl device configs (UUID, linked `site_id`, access token)
 - `AppSettings`: Key/value app config
 
@@ -219,8 +219,18 @@ See `.env.example` for full list.
 
 [`TODO.md`](./TODO.md) tracks deferred optimization work and other items that span multiple sessions. Check it when starting new work, and update it (or remove items) as work lands.
 
+## Design Rationale (read before "simplifying")
+
+[`DesignDecisions.md`](./DesignDecisions.md) records *why* several non-obvious,
+load-bearing decisions were made — the cross-instance Tesla claim pattern,
+append-only tariff versioning, the loose-pending TRMNL flow, and the
+relative-flow battery provenance model (no SOC / no genesis seed). Read the
+relevant section before refactoring any of those areas so a well-meaning cleanup
+doesn't reintroduce a bug that was already paid for.
+
 ## Useful References
 
+- [`DesignDecisions.md`](./DesignDecisions.md): Why load-bearing design decisions were made (read before refactoring those areas)
 - [`Agents.md`](./Agents.md): Architecture, conventions, development practices, agent environment
 - [`Authentication.md`](./Authentication.md): Auth flows, JWT, Trmnl integration details
 - [`GOALS.md`](./GOALS.md): Energy optimization strategy and success metrics

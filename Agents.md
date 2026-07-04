@@ -12,6 +12,7 @@
 - **Repository Pattern**: Data access logic resides in `src/lib/*-repo.ts` (e.g., `EnergyRepo`, `SettingsRepo` - *deleted*).
 - **Service Pattern**: Business logic resides in `src/lib/*-service.ts` (e.g., `SiteService`).
 - **Authorization**: See [`Authentication.md`](./Authentication.md) for route-level authz rules and checks.
+- **Load-bearing design decisions**: See [`DesignDecisions.md`](./DesignDecisions.md) for *why* the cross-instance Tesla claim pattern, append-only tariff versioning, the loose-pending TRMNL flow, and the no-SOC/no-genesis battery provenance model exist. Read the relevant section before "simplifying" any of those — each looks reducible but is load-bearing.
 
 ## Authentication & Security
 

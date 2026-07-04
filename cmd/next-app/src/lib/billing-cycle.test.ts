@@ -40,6 +40,18 @@ describe('getCurrentCycleStart — UTC site', () => {
         const start = getCurrentCycleStart(31, now, 'UTC');
         expect(start).toEqual(new Date(Date.UTC(2026, 0, 31, 0, 0, 0)));
     });
+
+    it('starts a 31st-anchored cycle on the last day of a short month', () => {
+        const now = new Date(Date.UTC(2026, 1, 28, 12, 0, 0));
+        const start = getCurrentCycleStart(31, now, 'UTC');
+        expect(start).toEqual(new Date(Date.UTC(2026, 1, 28, 0, 0, 0)));
+    });
+
+    it('starts a 31st-anchored leap-year cycle on February 29', () => {
+        const now = new Date(Date.UTC(2028, 1, 29, 12, 0, 0));
+        const start = getCurrentCycleStart(31, now, 'UTC');
+        expect(start).toEqual(new Date(Date.UTC(2028, 1, 29, 0, 0, 0)));
+    });
 });
 
 describe('getCurrentCycleStart — America/Los_Angeles site', () => {
