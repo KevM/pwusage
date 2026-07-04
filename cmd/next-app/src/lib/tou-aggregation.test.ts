@@ -174,4 +174,80 @@ describe('TOU Aggregation Utility', () => {
         const result = aggregateUsage(site, priorAggregates, [], schedule);
         expect(result.totalBillCost).toBeCloseTo(-0.16);
     });
+
+    it('resolves prior-cycle rows tagged with an older tariff version via historical maps', () => {
+        const tariffs = makeTestTariff(); // current version: tariff id 1, schedules 10/20
+        const site: SiteWithTariffs = {
+            id: 'test_site',
+            name: 'Test Site',
+            timezone: TZ,
+            billing_start_day: 1,
+            updated: new Date(),
+            installed: new Date(),
+            json: {},
+            tariffs
+        };
+        const schedule = new Schedule(tariffs, TZ);
+
+        // A row imported under a PREVIOUS tariff version (tariff 99 / schedule 990),
+        // which is no longer in site.tariffs because is_current = false.
+        const priorAggregates: CycleAggregateRow[] = [
+            {
+                day: new Date('2026-01-10T00:00:00Z'),
+                tariff_id: 99,
+                tariff_schedule_id: 990,
+                load_power: 1000,
+                solar_power: 0,
+                grid_power: 2000, // 2 kWh import
+                battery_power: 0
+            }
+        ];
+
+        const historicalTariffs: Tariff[] = [
+            { id: 99, site_id: 'test_site', name: 'Old Tariff', updated: new Date('2025-06-01') }
+        ];
+        const historicalSchedules = [
+            {
+                id: 990, season_id: 900, name: 'Old-Peak',
+                buy_rate: 0.25, sell_rate: 0.12,
+                from_day_of_week: 0, to_day_of_week: 6,
+                from_hour: 0, from_minute: 0,
+                to_hour: 24, to_minute: 0,
+            }
+        ];
+
+        const result = aggregateUsage(
+            site, priorAggregates, [], schedule,
+            historicalTariffs, historicalSchedules
+        );
+
+        const oldGroup = result.tariffGroups.find(g => g.tariffName === 'Old Tariff');
+        expect(oldGroup).toBeDefined();
+        const period = oldGroup!.periods.find(p => p.touName === 'Old-Peak');
+        expect(period).toBeDefined();
+        // 2 kWh import at the historical 0.25 buy rate
+        expect(period!.cost).toBeCloseTo(0.5, 5);
+        expect(result.totalBillCost).toBeCloseTo(0.5, 5);
+    });
+
+    it('still reports Unknown/$0 without historical maps (documents the pre-fix fallback)', () => {
+        const tariffs = makeTestTariff();
+        const site: SiteWithTariffs = {
+            id: 'test_site', name: 'Test Site', timezone: TZ, billing_start_day: 1,
+            updated: new Date(), installed: new Date(), json: {}, tariffs
+        };
+        const schedule = new Schedule(tariffs, TZ);
+        const priorAggregates: CycleAggregateRow[] = [
+            {
+                day: new Date('2026-01-10T00:00:00Z'),
+                tariff_id: 99,
+                tariff_schedule_id: 990,
+                load_power: 1000, solar_power: 0, grid_power: 2000, battery_power: 0
+            }
+        ];
+
+        const result = aggregateUsage(site, priorAggregates, [], schedule);
+        // Without version history the row can't be priced — cost stays 0.
+        expect(result.totalBillCost).toBe(0);
+    });
 });

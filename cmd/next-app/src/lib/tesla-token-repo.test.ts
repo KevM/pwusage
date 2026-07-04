@@ -86,6 +86,16 @@ describe('TeslaTokenRepo.waitForTokenRefresh', () => {
         expect(tokens.access_token).toBe('new-token');
         expect(tokens.refresh_token).toBe('new-refresh');
     });
+
+    it('throws a clean error when the user row no longer exists', async () => {
+        // getSite JOIN query succeeds
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        // User polling query returns no rows (user deleted mid-wait)
+        queryMock.mockResolvedValueOnce({ rows: [] });
+
+        await expect(tokenRepo.waitForTokenRefresh('site-1'))
+            .rejects.toThrow('Token refresh wait failed: user not found');
+    });
 });
 
 describe('getLockedRefreshHandler', () => {

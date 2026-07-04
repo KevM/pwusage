@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
+import { todayDateStrInTimeZone } from '@/lib/format-utils';
 
 import TagModal from '@/components/TagModal';
 
@@ -28,7 +29,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
     const pathname = usePathname();
     const searchParams = useSearchParams();
 
-    const initialDate = searchParams.get('date') || defaultDate || new Date().toISOString().split('T')[0];
+    const initialDate = searchParams.get('date') || defaultDate || todayDateStrInTimeZone(siteTimezone);
 
     // Initialize date from URL or Today
     const [date, setDate] = useState<string>(initialDate);
@@ -298,7 +299,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                                         // Stop propagation so label onClick handles it if needed
                                         e.stopPropagation();
                                     }}
-                                    max={new Date().toISOString().split('T')[0]}
+                                    max={todayDateStrInTimeZone(siteTimezone)}
                                 />
                             </DateNavigatorContent>
 

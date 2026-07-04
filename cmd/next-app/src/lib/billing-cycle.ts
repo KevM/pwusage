@@ -11,8 +11,10 @@ import { getSiteLocalDate } from './date-utils';
  * zones, where server-local Date math (UTC on Vercel) would otherwise place
  * the cycle window hours away from where the user perceives it.
  *
- * Short-month behavior (e.g. billingStartDay=31 in February) is preserved
- * via Temporal Date overflow — no clamping.
+ * Short-month behavior (e.g. billingStartDay=31 in February) relies on
+ * Temporal.PlainDate.from's default overflow: 'constrain', which clamps the
+ * day to the month's last day (Feb 31 → Feb 28/29) — the desired billing
+ * semantics for cycles anchored past a month's end.
  */
 export function getCurrentCycleStart(
     billingStartDay: number,

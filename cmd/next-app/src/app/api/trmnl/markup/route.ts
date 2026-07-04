@@ -21,6 +21,7 @@ import { continueUrl } from '@/app/continue/continue-logic';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { addMonthsInSiteTimezone } from '@/lib/date-utils';
 import { aggregateUsage } from '@/lib/tou-aggregation';
+import { TariffRepo } from '@/lib/tariff-repo';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -159,7 +160,14 @@ export async function GET(request: Request) {
             return res;
         })();
 
-        const [latestData, priorAggregates, todayRaw] = await Promise.all([dbLatestPromise, dbCyclePromise, dbTodayPromise]);
+        const tariffRepo = new TariffRepo();
+        const [latestData, priorAggregates, todayRaw, allTariffVersions, allScheduleVersions] = await Promise.all([
+            dbLatestPromise,
+            dbCyclePromise,
+            dbTodayPromise,
+            tariffRepo.getTariffsForSite(site!.id),
+            tariffRepo.getSchedulesForSite(site!.id),
+        ]);
         const latestTimestamp = latestData?.timestamp ?? null;
 
         // Load timing needs the per-TOU cycle UsageData. Only fetch it when the
@@ -244,7 +252,9 @@ export async function GET(request: Request) {
             site,
             priorAggregates,
             todayRaw,
-            schedule
+            schedule,
+            allTariffVersions,
+            allScheduleVersions
         );
         aggregationMs = Date.now() - aggregationStart;
 

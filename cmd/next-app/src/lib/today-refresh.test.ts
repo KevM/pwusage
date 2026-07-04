@@ -356,6 +356,37 @@ describe('refreshLiveStatus', () => {
         await expect(firstPromise).resolves.toMatchObject({ status: 'refreshed' });
     });
 
+    it('falls back to the stale cache when another request is already in flight', async () => {
+        const staleAt = Date.now() - 17 * 60 * 1000; // older than the 16-min TTL
+        siteRepoMock.getSite.mockResolvedValue({
+            id: 'site-1',
+            live_status_cache: { percentage_charged: 55 },
+            last_live_refresh_at: staleAt,
+        });
+
+        let resolveTokens: (val: typeof tokens) => void;
+        userRepoMock.getTokensForSite.mockReturnValue(new Promise((resolve) => {
+            resolveTokens = resolve;
+        }));
+
+        const { refreshLiveStatus } = await importRefreshLiveStatus();
+
+        // First call: cache is stale, so it proceeds to refresh and blocks on token lookup
+        const firstPromise = refreshLiveStatus('site-1');
+
+        // Second call arrives while the first is in flight: must serve the stale
+        // cache instead of returning a liveStatus-less 'in-flight' result
+        const secondResult = await refreshLiveStatus('site-1');
+        expect(secondResult).toMatchObject({
+            status: 'cached',
+            liveStatus: { percentage_charged: 55 },
+            fetchedAt: staleAt,
+        });
+
+        resolveTokens!(tokens);
+        await expect(firstPromise).resolves.toMatchObject({ status: 'refreshed' });
+    });
+
     it('returns throttled without calling Tesla when another instance holds the claim', async () => {
         siteRepoMock.claimLiveRefresh.mockResolvedValue(false);
         const { refreshLiveStatus } = await importRefreshLiveStatus();

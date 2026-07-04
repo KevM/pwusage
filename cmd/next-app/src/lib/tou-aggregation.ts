@@ -35,10 +35,20 @@ export function aggregateUsage(
     site: SiteWithTariffs,
     priorAggregates: CycleAggregateRow[],
     todayRaw: EnergyData[],
-    schedule: Schedule
+    schedule: Schedule,
+    // Tariff/schedule rows from ALL versions (including is_current = false).
+    // EnergyData rows keep the ids they were imported under, so without these
+    // a mid-cycle tariff version bump makes pre-change days resolve to
+    // 'Unknown' at $0. Mirrors EnergyRepo.getUsageByTOU.
+    historicalTariffs: Tariff[] = [],
+    historicalSchedules: TariffSchedule[] = []
 ): TouAggregationResult {
     const tariffMap = new Map<number, Tariff>();
     const scheduleMap = new Map<number, TariffSchedule>();
+
+    // Seed historical versions first so current versions win on id collisions.
+    historicalTariffs.forEach(t => tariffMap.set(t.id, t));
+    historicalSchedules.forEach(s => scheduleMap.set(s.id, s));
 
     site.tariffs.forEach(t => {
         tariffMap.set(t.id, t);

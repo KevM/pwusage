@@ -15,6 +15,9 @@ export class TeslaTokenRepo {
         while (Date.now() - start < timeoutMs) {
             const res = await pool.query(`SELECT access_token, refresh_token, is_refreshing, auth_status FROM "User" WHERE id = $1`, [site.user_id]);
             const row = res.rows[0];
+            if (!row) {
+                throw new Error('Token refresh wait failed: user not found');
+            }
             if (!row.is_refreshing) {
                 if (row.auth_status === 'revoked') {
                     throw new Error('Token refresh failed: auth revoked');

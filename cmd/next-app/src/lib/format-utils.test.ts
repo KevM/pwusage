@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { formatTouName, formatTimeRange, formatCentsPerKwh, formatCentsPerKwhShort } from './format-utils';
+import { describe, expect, it, vi } from 'vitest';
+import { formatTouName, formatTimeRange, formatCentsPerKwh, formatCentsPerKwhShort, todayDateStrInTimeZone } from './format-utils';
 
 describe('format-utils', () => {
     describe('formatTouName', () => {
@@ -49,6 +49,26 @@ describe('format-utils', () => {
             expect(formatCentsPerKwhShort(0.10)).toBe('10¢/kWh');
             expect(formatCentsPerKwhShort(0.04)).toBe('4¢/kWh');
             expect(formatCentsPerKwhShort(0.125)).toBe('12.5¢/kWh');
+        });
+    });
+
+    describe('todayDateStrInTimeZone', () => {
+        it('returns the date for the given timezone, not UTC', () => {
+            // 2026-07-04T03:00:00Z is still 2026-07-03 in Los Angeles (UTC-7)
+            // and already 2026-07-04 in UTC.
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date('2026-07-04T03:00:00Z'));
+
+            expect(todayDateStrInTimeZone('America/Los_Angeles')).toBe('2026-07-03');
+            expect(todayDateStrInTimeZone('UTC')).toBe('2026-07-04');
+            // East of UTC: Sydney (UTC+10) is already on the 4th
+            expect(todayDateStrInTimeZone('Australia/Sydney')).toBe('2026-07-04');
+
+            vi.useRealTimers();
+        });
+
+        it('formats as YYYY-MM-DD', () => {
+            expect(todayDateStrInTimeZone('UTC')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
         });
     });
 });

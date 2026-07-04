@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => {
         getCycleAggregates: vi.fn(),
         getRawEnergyData: vi.fn(),
         getUsageByTOU: vi.fn(),
+        getTariffsForSite: vi.fn(),
+        getSchedulesForSite: vi.fn(),
         after: vi.fn(),
     };
 });
@@ -27,6 +29,13 @@ vi.mock('@/lib/auth-checks', () => ({
 vi.mock('@/lib/site-repo', () => ({
     SiteRepo: class {
         getSite = mocks.getSite;
+    }
+}));
+
+vi.mock('@/lib/tariff-repo', () => ({
+    TariffRepo: class {
+        getTariffsForSite = mocks.getTariffsForSite;
+        getSchedulesForSite = mocks.getSchedulesForSite;
     }
 }));
 
@@ -69,6 +78,8 @@ describe('/api/trmnl/markup', () => {
         mocks.getLatestEnergyData.mockResolvedValue(null);
         mocks.getCycleAggregates.mockResolvedValue([]);
         mocks.getRawEnergyData.mockResolvedValue([]);
+        mocks.getTariffsForSite.mockResolvedValue([]);
+        mocks.getSchedulesForSite.mockResolvedValue([]);
     });
 
     it('augments the site name with the generation timestamp in the site timezone', async () => {

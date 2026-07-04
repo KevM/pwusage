@@ -57,3 +57,16 @@ export function formatCentsPerKwhShort(dollars: number): string {
     }).format(cents);
     return `${formatted}¢/kWh`;
 }
+
+/**
+ * Today's date as "YYYY-MM-DD" in the given IANA timezone. Client-safe
+ * (pure Intl — no Temporal polyfill); falls back to UTC on a bad timezone.
+ */
+export function todayDateStrInTimeZone(timeZone: string): string {
+    try {
+        // en-CA formats as YYYY-MM-DD
+        return new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
+    } catch {
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(new Date());
+    }
+}

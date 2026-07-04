@@ -125,4 +125,16 @@ describe('transformEnergyPoints', () => {
         expect(row.site_id).toBe('my-site');
         expect(row.tariff_id).toBe(42);
     });
+
+    it('nets grid_power when an interval has both import and export', () => {
+        const history = [makeEntry({ grid_energy_imported: 50, total_grid_energy_exported: 300 })];
+        const [row] = transformEnergyPoints(history, [], 'day', 1, CONTEXT);
+        expect(row.grid_power).toBe(-250); // 50 imported - 300 exported
+    });
+
+    it('nets battery_power when an interval has both charge and discharge', () => {
+        const history = [makeEntry({ total_battery_charge: 20, total_battery_discharge: 120 })];
+        const [row] = transformEnergyPoints(history, [], 'day', 1, CONTEXT);
+        expect(row.battery_power).toBe(-100); // 20 charged - 120 discharged
+    });
 });

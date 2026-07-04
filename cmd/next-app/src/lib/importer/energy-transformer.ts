@@ -56,13 +56,15 @@ export function transformEnergyPoints(
 
         const tariffScheduleId = context.getTariffScheduleId(ts);
 
+        // Net rather than either-or: a single interval can have both import and
+        // export (or charge and discharge), and the schema stores one signed value.
         const gridImported = h.grid_energy_imported ?? 0;
         const gridExported = h.total_grid_energy_exported ?? 0;
-        const grid = gridImported !== 0 ? gridImported : -gridExported;
+        const grid = gridImported - gridExported;
 
         const batteryCharge = h.total_battery_charge ?? 0;
         const batteryDischarge = h.total_battery_discharge ?? 0;
-        const battery = batteryCharge !== 0 ? batteryCharge : -batteryDischarge;
+        const battery = batteryCharge - batteryDischarge;
 
         results.push({
             site_id: context.siteId,

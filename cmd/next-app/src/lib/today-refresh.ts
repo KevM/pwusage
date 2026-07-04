@@ -201,6 +201,12 @@ export async function refreshLiveStatus(
 
         const state = getState(siteId);
         if (state.liveInFlight) {
+            // Serve the stale cache rather than a liveStatus-less result: multiple
+            // components poll the same site concurrently and callers treat a
+            // missing liveStatus as a hard failure (HTTP 500).
+            if (cachedStatus && useCached) {
+                return { status: 'cached', liveStatus: cachedStatus, fetchedAt };
+            }
             return { status: 'in-flight' };
         }
 
