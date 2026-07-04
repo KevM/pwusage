@@ -1,4 +1,5 @@
 import { Tariff, TariffSeason, TariffSchedule } from './db';
+import { isObservedHoliday, type HolidayRule } from './holidays';
 
 export interface TariffPeriod {
     start: Date;
@@ -11,12 +12,14 @@ export interface TariffPeriod {
 export class Schedule {
     private tariffs: Tariff[];
     private timeZone: string;
+    private holidayRules?: HolidayRule[];
     private formatter: Intl.DateTimeFormat;
     private memo: Map<string, { month: number, day: number, hour: number, weekday: number, year: number }> = new Map();
 
-    constructor(tariffs: Tariff[], timeZone: string) {
+    constructor(tariffs: Tariff[], timeZone: string, holidayRules?: HolidayRule[]) {
         this.tariffs = tariffs;
         this.timeZone = timeZone;
+        this.holidayRules = holidayRules;
         this.formatter = new Intl.DateTimeFormat('en-US', {
             timeZone: this.timeZone,
             year: 'numeric',
@@ -75,7 +78,7 @@ export class Schedule {
         let effectiveWeekday = weekday;
 
         if (year) {
-            if (this.isHoliday(month, day, year)) {
+            if (isObservedHoliday(year, month, day, this.holidayRules)) {
                 effectiveWeekday = 6; // Treat as Saturday (Weekend)
             }
         }
@@ -125,59 +128,6 @@ export class Schedule {
         return null;
     }
 
-    private isHoliday(month: number, day: number, year: number): boolean {
-        // Fixed holidays
-        // New Year's Day
-        if (month === 1 && day === 1) return true;
-        // Independence Day
-        if (month === 7 && day === 4) return true;
-        // Christmas Day
-        if (month === 12 && day === 25) return true;
-
-        // Observed Holidays (Sunday -> Monday)
-        // If Jan 1 is Sunday (Weekday 0), Jan 2 (Monday) is observed.
-        // If Jul 4 is Sunday, Jul 5 is observed.
-        // If Dec 25 is Sunday, Dec 26 is observed.
-
-        // We need to check if TODAY is an observed holiday.
-        // Meaning: if Today is Jan 2, and Jan 1 was Sunday.
-        if (month === 1 && day === 2) {
-            const jan1 = new Date(year, 0, 1); // Month is 0-indexed in JS Date
-            if (jan1.getDay() === 0) return true;
-        }
-        if (month === 7 && day === 5) {
-            const jul4 = new Date(year, 6, 4);
-            if (jul4.getDay() === 0) return true;
-        }
-        if (month === 12 && day === 26) {
-            const dec25 = new Date(year, 11, 25);
-            if (dec25.getDay() === 0) return true;
-        }
-
-        // Floating holidays
-        // Memorial Day: Last Monday in May
-
-        // Using JS Date for strictly checking day of week of this specific date
-        const thisDate = new Date(year, month - 1, day);
-        const wd = thisDate.getDay(); // 0=Sun, 1=Mon
-
-        if (month === 5 && wd === 1 && day >= 25) return true;
-
-        // Labor Day: First Monday in September
-        if (month === 9 && wd === 1 && day <= 7) return true;
-
-        // Thanksgiving: Fourth Thursday in November
-        if (month === 11 && wd === 4) {
-            // Check occurrence
-            // 1st Thu: 1-7
-            // 2nd Thu: 8-14
-            // 3rd Thu: 15-21
-            // 4th Thu: 22-28
-            if (day >= 22 && day <= 28) return true;
-        }
-
-        return false;
-    }
 
     private matchSchedule(weekday: number, hour: number, schedule: TariffSchedule): boolean {
         if (this.matchDayOfWeek(weekday, schedule)) {
