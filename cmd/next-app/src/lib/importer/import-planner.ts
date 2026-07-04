@@ -63,8 +63,15 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
         );
         const windowEnd = nextDay.getTime();
         const isToday = cursor.getTime() === todayStart.getTime();
+        const effectiveWindowStart =
+            installationDate
+                && installationDate.getTime() > windowStart
+                && installationDate.getTime() < windowEnd
+                ? installationDate
+                : cursor;
+        const effectiveWindowStartMs = effectiveWindowStart.getTime();
 
-        while (tsIndex < sortedTimestamps.length && sortedTimestamps[tsIndex] < windowStart) {
+        while (tsIndex < sortedTimestamps.length && sortedTimestamps[tsIndex] < effectiveWindowStartMs) {
             tsIndex++;
         }
 
@@ -90,14 +97,14 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
         const effectiveWindowEnd = isToday && nextDay.getTime() > now.getTime() ? now : nextDay;
 
         results.push({
-            windowStart: cursor,
+            windowStart: effectiveWindowStart,
             windowEnd: nextDay,
             effectiveWindowEnd,
             isToday,
             count,
             firstInWindow,
             lastInWindow,
-            missingStart: firstInWindow !== null && (firstInWindow - windowStart > gapThresholdMs),
+            missingStart: firstInWindow !== null && (firstInWindow - effectiveWindowStartMs > gapThresholdMs),
             missingEnd: lastInWindow !== null && (effectiveWindowEnd.getTime() - lastInWindow > gapThresholdMs),
             hasInteriorGap,
         });

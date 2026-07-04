@@ -109,6 +109,19 @@ describe('planImport', () => {
         });
         expect(result).toHaveLength(2);
     });
+
+    it('does not plan a pre-install partial day when installation occurs midday', () => {
+        const installedAt = new Date('2026-01-10T18:00:00.000Z'); // noon Chicago
+        const result = planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingTimestamps: [],
+            timezone: TZ,
+            installationDate: installedAt,
+            now: FUTURE,
+        });
+
+        expect(result).toEqual([{ start: installedAt, end: DAY1_END }]);
+    });
 });
 
 describe('splitAtSiteMidnight', () => {
