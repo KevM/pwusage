@@ -38,6 +38,8 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
         now = new Date(),
     } = options;
 
+    const sortedTimestamps = Array.from(new Set(existingTimestamps))
+        .sort((a, b) => a - b);
     const results: DayAuditResult[] = [];
     let cursor = getSiteMidnight(requestedRange.start, timezone);
 
@@ -62,7 +64,7 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
         const windowEnd = nextDay.getTime();
         const isToday = cursor.getTime() === todayStart.getTime();
 
-        while (tsIndex < existingTimestamps.length && existingTimestamps[tsIndex] < windowStart) {
+        while (tsIndex < sortedTimestamps.length && sortedTimestamps[tsIndex] < windowStart) {
             tsIndex++;
         }
 
@@ -73,8 +75,8 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
         let hasInteriorGap = false;
         let lastTs: number | null = null;
 
-        while (tempIdx < existingTimestamps.length && existingTimestamps[tempIdx] < windowEnd) {
-            const currentTs = existingTimestamps[tempIdx];
+        while (tempIdx < sortedTimestamps.length && sortedTimestamps[tempIdx] < windowEnd) {
+            const currentTs = sortedTimestamps[tempIdx];
             if (firstInWindow === null) firstInWindow = currentTs;
             if (lastTs !== null && (currentTs - lastTs > gapThresholdMs)) {
                 hasInteriorGap = true;

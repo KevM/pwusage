@@ -222,4 +222,26 @@ describe('auditDays', () => {
         });
         expect(results).toHaveLength(0);
     });
+
+    it('normalizes duplicate and unsorted timestamps before auditing coverage', () => {
+        const ticks = fiveMinTicks(DAY1_START, DAY1_END);
+        const scrambled = [
+            ticks[10],
+            ticks[0],
+            ticks[10],
+            ticks[ticks.length - 1],
+            ...ticks.slice(1, ticks.length - 1).reverse(),
+        ];
+
+        const results = auditDays({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingTimestamps: scrambled,
+            timezone: TZ,
+            now: FUTURE,
+        });
+
+        expect(results[0].missingStart).toBe(false);
+        expect(results[0].missingEnd).toBe(false);
+        expect(results[0].hasInteriorGap).toBe(false);
+    });
 });
