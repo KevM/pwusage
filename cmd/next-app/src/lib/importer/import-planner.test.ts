@@ -223,3 +223,45 @@ describe('auditDays', () => {
         expect(results).toHaveLength(0);
     });
 });
+
+describe('auditDays / planImport — DST transition days (America/Chicago)', () => {
+    const TZ = 'America/Chicago';
+    const FIVE_MIN = 5 * 60 * 1000;
+
+    function timestampsEvery5Min(startMs: number, endMs: number): number[] {
+        const out: number[] = [];
+        for (let t = startMs; t < endMs; t += FIVE_MIN) out.push(t);
+        return out;
+    }
+
+    it('spring-forward day is a single 23-hour window between true local midnights', () => {
+        // Mar 8 2026: CST midnight = 06:00Z; Mar 9 CDT midnight = 05:00Z.
+        const start = new Date('2026-03-08T06:00:00Z');
+        const end = new Date('2026-03-09T05:00:00Z');
+        const results = auditDays({
+            requestedRange: { start, end },
+            existingTimestamps: [],
+            timezone: TZ,
+            now: new Date('2026-03-15T12:00:00Z'),
+        });
+        expect(results).toHaveLength(1);
+        expect(results[0].windowStart).toEqual(start);
+        expect(results[0].windowEnd).toEqual(end);
+    });
+
+    it('fall-back day is a single 25-hour window; full 5-min coverage plans no re-import', () => {
+        // Nov 1 2026: CDT midnight = 05:00Z; Nov 2 CST midnight = 06:00Z (25 hours).
+        const start = new Date('2026-11-01T05:00:00Z');
+        const end = new Date('2026-11-02T06:00:00Z');
+        const existing = timestampsEvery5Min(start.getTime(), end.getTime());
+        expect(existing).toHaveLength(25 * 12);
+        const windows = planImport({
+            requestedRange: { start, end },
+            existingTimestamps: existing,
+            timezone: TZ,
+            now: new Date('2026-11-15T12:00:00Z'),
+        });
+        expect(windows).toEqual([]);
+    });
+});
+
