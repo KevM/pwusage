@@ -437,3 +437,43 @@ describe('Schedule DST transitions', () => {
         expect(schedule.getTariffPeriod(new Date('2026-11-01T09:30:00Z'))?.schedule.name).toBe('Off-Peak');
     });
 });
+
+describe('Schedule – wrapped day-of-week ranges', () => {
+    // Tesla day-of-week encoding: 0=Mon … 6=Sun. "Sunday through Thursday" can
+    // only be expressed as from 6 wrapping to 3 — the same way hour windows
+    // wrap midnight (20:00 → 08:00).
+    function makeWrappedTariff(): Tariff[] {
+        return [{
+            id: 9,
+            site_id: 'wrap_site',
+            name: 'Wrap Test',
+            updated: new Date('2026-01-01'),
+            seasons: [{
+                id: 901, tariff_id: 9, name: 'All Year',
+                from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+                buy_rate: 0.2, sell_rate: 0.1,
+                schedules: [{
+                    id: 9011, season_id: 901, name: 'Sun-Thu',
+                    buy_rate: 0.2, sell_rate: 0.1,
+                    from_day_of_week: 6, to_day_of_week: 3, // Sun → Thu (wraps)
+                    from_hour: null, from_minute: null,
+                    to_hour: null, to_minute: null,
+                }],
+            }],
+        }];
+    }
+
+    it('matches days inside a wrapped range (Sunday and Wednesday)', () => {
+        const schedule = new Schedule(makeWrappedTariff(), 'UTC');
+        // Sun Jul 12 2026 and Wed Jul 15 2026 (neither is a holiday)
+        expect(schedule.getTariffPeriod(new Date('2026-07-12T12:00:00Z'))?.schedule.name).toBe('Sun-Thu');
+        expect(schedule.getTariffPeriod(new Date('2026-07-15T12:00:00Z'))?.schedule.name).toBe('Sun-Thu');
+    });
+
+    it('does not match days outside a wrapped range (Friday)', () => {
+        const schedule = new Schedule(makeWrappedTariff(), 'UTC');
+        // Fri Jul 17 2026
+        expect(schedule.getTariffPeriod(new Date('2026-07-17T12:00:00Z'))).toBeNull();
+    });
+});
+

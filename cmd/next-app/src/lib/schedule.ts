@@ -97,10 +97,10 @@ export class Schedule {
                 // then time-specific windows before all-day within the same day range.
                 const sortedSchedules = [...season.schedules].sort((a, b) => {
                     const aDayRange = (a.from_day_of_week !== null && a.to_day_of_week !== null)
-                        ? a.to_day_of_week - a.from_day_of_week
+                        ? (a.to_day_of_week - a.from_day_of_week + 7) % 7
                         : 6;
                     const bDayRange = (b.from_day_of_week !== null && b.to_day_of_week !== null)
-                        ? b.to_day_of_week - b.from_day_of_week
+                        ? (b.to_day_of_week - b.from_day_of_week + 7) % 7
                         : 6;
                     if (aDayRange !== bDayRange) return aDayRange - bDayRange;
 
@@ -150,7 +150,13 @@ export class Schedule {
         const twd = this.toTeslaWeekday(weekday);
 
         if (schedule.from_day_of_week !== null && schedule.to_day_of_week !== null) {
-            return twd >= schedule.from_day_of_week && twd <= schedule.to_day_of_week;
+            if (schedule.from_day_of_week <= schedule.to_day_of_week) {
+                // Normal range: e.g., Mon–Fri (0–4)
+                return twd >= schedule.from_day_of_week && twd <= schedule.to_day_of_week;
+            }
+            // Week-wrapping range: e.g., Sun–Thu (6→3), mirroring
+            // midnight-crossing hour windows.
+            return twd >= schedule.from_day_of_week || twd <= schedule.to_day_of_week;
         }
 
         if (schedule.to_day_of_week !== null) {
