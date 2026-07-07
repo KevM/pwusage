@@ -95,12 +95,12 @@ describe('findNextCheaperPeriod', () => {
             makeUsage('Off-Peak', 0.10, 0.03, -50_000)     // net exporter → sell → 0.03
         ];
 
-        const result = findNextCheaperPeriod(schedule, t0, cycle, 'UTC', 48);
+        const result = findNextCheaperPeriod(schedule, t0, cycle, 48);
         expect(result).not.toBeNull();
         expect(result!.name).toBe('Off-Peak');
         expect(result!.marginalCost).toBeCloseTo(0.03);
         expect(result!.basis).toBe('sell');
-        // Walker detects transition at the hour boundary when schedule.id changes.
+        // Walker detects the schedule.id change and refines to the boundary minute.
         expect(result!.startsAt).toEqual(new Date(Date.UTC(2026, 2, 16, 0, 0, 0)));
     });
 
@@ -119,7 +119,7 @@ describe('findNextCheaperPeriod', () => {
             makeUsage('On-Peak', 0.30, 0.03, 100_000)     // net importer → 0.30
         ];
 
-        const result = findNextCheaperPeriod(schedule, t0, cycle, 'UTC', 48);
+        const result = findNextCheaperPeriod(schedule, t0, cycle, 48);
         expect(result).toBeNull();
     });
 
@@ -133,14 +133,14 @@ describe('findNextCheaperPeriod', () => {
             makeUsage('On-Peak', 0.30, 0.03, 100)  // |0.1 kWh| < 0.5 → neutral
         ];
 
-        const result = findNextCheaperPeriod(schedule, t0, cycle, 'UTC', 48);
+        const result = findNextCheaperPeriod(schedule, t0, cycle, 48);
         expect(result).toBeNull();
     });
 
     it('returns null when no current period at now (gap)', () => {
         const schedule = makeStubSchedule([]);
         const t0 = new Date();
-        expect(findNextCheaperPeriod(schedule, t0, [], 'UTC', 48)).toBeNull();
+        expect(findNextCheaperPeriod(schedule, t0, [], 48)).toBeNull();
     });
 });
 
@@ -164,7 +164,7 @@ describe('findNextStartsByKey', () => {
             makeUsage('On-Peak', 0.30, 0.03, 100_000)
         ];
 
-        const result = findNextStartsByKey(schedule, t0, cycle, 'UTC');
+        const result = findNextStartsByKey(schedule, t0, cycle);
         // On-Peak first occurs at 20:00 UTC the same day.
         expect(result.get(periodKey('On-Peak')))
             .toEqual(new Date(Date.UTC(2026, 2, 15, 20, 0, 0)));
@@ -194,14 +194,14 @@ describe('findNextStartsByKey', () => {
             makeUsage('On-Peak', 0.30, 0.03, 100_000)
         ];
 
-        const result = findNextStartsByKey(schedule, t0, cycle, 'UTC');
+        const result = findNextStartsByKey(schedule, t0, cycle);
         expect(result.get(periodKey('On-Peak')))
             .toEqual(new Date(Date.UTC(2026, 2, 15, 20, 0, 0)));
     });
 
     it('returns empty map when no active period at now', () => {
         const schedule = makeStubSchedule([]);
-        const result = findNextStartsByKey(schedule, new Date(), [], 'UTC');
+        const result = findNextStartsByKey(schedule, new Date(), []);
         expect(result.size).toBe(0);
     });
 });
@@ -256,7 +256,7 @@ describe('walker against real Schedule (regression)', () => {
             makeUsage('Off-Peak', 0.10, 0.04, 500_000)
         ];
 
-        const result = findNextCheaperPeriod(schedule, now, cycle, 'America/Los_Angeles', 48);
+        const result = findNextCheaperPeriod(schedule, now, cycle, 48);
         expect(result).not.toBeNull();
         expect(result!.name).toBe('Off-Peak');
         expect(result!.marginalCost).toBeCloseTo(0.10);
@@ -276,9 +276,85 @@ describe('walker against real Schedule (regression)', () => {
             makeUsage('Off-Peak', 0.10, 0.04, -200_000) // net exporter, marginal $0.04
         ];
 
-        const result = findNextStartsByKey(schedule, now, cycle, 'America/Los_Angeles');
+        const result = findNextStartsByKey(schedule, now, cycle);
         // Next On-Peak starts at 4 PM LA same day = 23:00 UTC Mar 16.
         expect(result.get(periodKey('On-Peak')))
             .toEqual(new Date(Date.UTC(2026, 2, 16, 23, 0, 0)));
+    });
+});
+
+describe('walker with minute-granularity boundaries (real Schedule)', () => {
+    // On-Peak starts on the half hour — 16:30–21:00 daily. The old hourly
+    // walker snapped the reported start to the enclosing hour of whichever
+    // cursor detected the change, so the same boundary was reported as 16:00
+    // or 17:00 depending on the current wall-clock minute.
+    function buildHalfHourTariff(): Tariff {
+        return {
+            id: 2, site_id: 'site-2', updated: new Date(), name: 'Half-Hour',
+            seasons: [{
+                id: 21, tariff_id: 2, name: 'All Year',
+                from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+                buy_rate: 0, sell_rate: 0,
+                schedules: [
+                    { id: 210, season_id: 21, name: 'On-Peak', buy_rate: 0.45, sell_rate: 0.04,
+                        from_day_of_week: 0, to_day_of_week: 6,
+                        from_hour: 16, from_minute: 30, to_hour: 21, to_minute: 0 },
+                    { id: 220, season_id: 21, name: 'Off-Peak', buy_rate: 0.10, sell_rate: 0.04,
+                        from_day_of_week: 0, to_day_of_week: 6,
+                        from_hour: null, from_minute: null, to_hour: null, to_minute: null }
+                ]
+            }]
+        };
+    }
+
+    const halfHourCycle: UsageData[] = [
+        makeUsage('On-Peak', 0.45, 0.04, 200_000),
+        makeUsage('Off-Peak', 0.10, 0.04, 500_000)
+    ];
+
+    it('reports a 16:30 boundary exactly when the old walker snapped early', () => {
+        const schedule = new Schedule([buildHalfHourTariff()], 'America/Los_Angeles');
+        // now = 14:45 PDT Mar 16 2026 (21:45 UTC): hourly cursors landed at
+        // 16:45 and snapped to 16:00 — half an hour before On-Peak begins.
+        const now = new Date(Date.UTC(2026, 2, 16, 21, 45, 0));
+        const starts = findNextStartsByKey(schedule, now, halfHourCycle, 24);
+        // True boundary: 16:30 PDT = 23:30 UTC.
+        expect(starts.get(periodKey('On-Peak'))).toEqual(new Date(Date.UTC(2026, 2, 16, 23, 30, 0)));
+    });
+
+    it('reports a 16:30 boundary exactly when the old walker snapped late', () => {
+        const schedule = new Schedule([buildHalfHourTariff()], 'America/Los_Angeles');
+        // now = 14:15 PDT: hourly cursors landed at 17:15 and snapped to 17:00.
+        const now = new Date(Date.UTC(2026, 2, 16, 21, 15, 0));
+        const starts = findNextStartsByKey(schedule, now, halfHourCycle, 24);
+        expect(starts.get(periodKey('On-Peak'))).toEqual(new Date(Date.UTC(2026, 2, 16, 23, 30, 0)));
+    });
+
+    it('detects a 30-minute period the hourly walker skipped entirely', () => {
+        const superPeakTariff: Tariff = {
+            id: 4, site_id: 'site-4', updated: new Date(), name: 'Super',
+            seasons: [{
+                id: 41, tariff_id: 4, name: 'All Year',
+                from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+                buy_rate: 0, sell_rate: 0,
+                schedules: [
+                    { id: 410, season_id: 41, name: 'Super-Peak', buy_rate: 0.60, sell_rate: 0.04,
+                        from_day_of_week: 0, to_day_of_week: 6,
+                        from_hour: 17, from_minute: 0, to_hour: 17, to_minute: 30 },
+                    { id: 420, season_id: 41, name: 'Off-Peak', buy_rate: 0.10, sell_rate: 0.04,
+                        from_day_of_week: 0, to_day_of_week: 6,
+                        from_hour: null, from_minute: null, to_hour: null, to_minute: null }
+                ]
+            }]
+        };
+        const schedule = new Schedule([superPeakTariff], 'America/Los_Angeles');
+        const now = new Date(Date.UTC(2026, 2, 16, 21, 45, 0)); // 14:45 PDT
+        const cycle: UsageData[] = [
+            makeUsage('Super-Peak', 0.60, 0.04, 100_000),
+            makeUsage('Off-Peak', 0.10, 0.04, 500_000)
+        ];
+        const starts = findNextStartsByKey(schedule, now, cycle, 24);
+        // 17:00 PDT Mar 16 = 00:00 UTC Mar 17.
+        expect(starts.get(periodKey('Super-Peak'))).toEqual(new Date(Date.UTC(2026, 2, 17, 0, 0, 0)));
     });
 });

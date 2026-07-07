@@ -112,14 +112,14 @@ export function computeLoadTiming(
     let activeIsCheapest = false;
 
     if (activePeriod && hasCycleData) {
-        const cheaper = findNextCheaperPeriod(schedule, now, groupedCycle, timezone);
+        const cheaper = findNextCheaperPeriod(schedule, now, groupedCycle);
         if (cheaper) {
             const phrase = formatRelativeStart(cheaper.startsAt, now, timezone);
             nextCheaper = { name: cheaper.name, marginalCost: cheaper.marginalCost, phrase };
             nextCheaperPhrase = phrase;
         }
 
-        const nextStarts = findNextStartsByKey(schedule, now, groupedCycle, timezone);
+        const nextStarts = findNextStartsByKey(schedule, now, groupedCycle);
         nextStartPhraseByKey = Object.fromEntries(
             Array.from(nextStarts.entries()).map(([key, start]) => [
                 key,

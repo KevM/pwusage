@@ -26,60 +26,79 @@ function buildMarginalByKey(cycle: UsageData[]): Map<string, MarginalCostResult>
 }
 
 const HOUR_MS = 60 * 60 * 1000;
-
-/**
- * Snap a UTC instant back to the start of its enclosing wall-clock hour in
- * `timeZone`. The Schedule matcher resolves periods at hour granularity, so
- * transitions always fall on local-hour boundaries — and that's what we want
- * to show the user as the "starts at" time.
- */
-function snapToLocalHourStart(cursor: Date, timeZone: string): Date {
-    const parts: Record<string, string> = {};
-    new Intl.DateTimeFormat('en-US', {
-        timeZone, minute: '2-digit', second: '2-digit', hour12: false
-    }).formatToParts(cursor).forEach((p) => { parts[p.type] = p.value; });
-    const minute = parseInt(parts.minute, 10) || 0;
-    const second = parseInt(parts.second, 10) || 0;
-    const msIntoHour = minute * 60_000 + second * 1000 + cursor.getMilliseconds();
-    return new Date(cursor.getTime() - msIntoHour);
-}
+const MINUTE_MS = 60 * 1000;
+// Tesla TOU boundaries land on 15-minute marks (from_minute/to_minute in the
+// tariff JSON), so a 15-minute walk step samples every representable window
+// at least once and never skips a sub-hour period.
+const WALK_STEP_MS = 15 * 60 * 1000;
 
 export interface ScheduleTransition {
-    /** Local-hour-aligned start of the new period in the site timezone. */
+    /** Exact instant the new period starts matching (minute precision). */
     start: Date;
     schedule: TariffSchedule;
     period: TariffPeriod;
 }
 
 /**
- * Yield each schedule transition occurring strictly after `now`, walking
- * wall-clock hours up to the horizon. We don't trust `tp.start` / `tp.end`
+ * Binary-search the exact minute a transition happened. Invariants: the
+ * schedule matching at `beforeMs` is not `newScheduleId`, the one at
+ * `afterMs` is. Schedule matching has minute granularity, so the flip lands
+ * exactly on a minute boundary.
+ */
+function refineTransitionStart(
+    schedule: Schedule,
+    beforeMs: number,
+    afterMs: number,
+    newScheduleId: number
+): Date {
+    let lo = Math.floor(beforeMs / MINUTE_MS);
+    let hi = Math.floor(afterMs / MINUTE_MS);
+    while (hi - lo > 1) {
+        const mid = lo + Math.floor((hi - lo) / 2);
+        const tp = schedule.getTariffPeriod(new Date(mid * MINUTE_MS));
+        if (tp?.schedule.id === newScheduleId) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    return new Date(hi * MINUTE_MS);
+}
+
+/**
+ * Yield each schedule transition occurring strictly after `now`, walking in
+ * 15-minute steps up to the horizon. We don't trust `tp.start` / `tp.end`
  * from Schedule.getTariffPeriod — it stamps both with the query time rather
  * than the period boundaries — so transitions are detected by comparing
- * `schedule.id` against the previous hour's match.
+ * `schedule.id` against the previous sample, then refined to the exact
+ * boundary minute.
  */
 export function* walkScheduleTransitions(
     schedule: Schedule,
     now: Date,
-    timeZone: string,
     maxHorizonHours: number
 ): Generator<ScheduleTransition> {
     const active = schedule.getTariffPeriod(now);
     if (!active) return;
 
     let prevScheduleId = active.schedule.id;
+    let prevMatchedMs = now.getTime();
     const horizonMs = maxHorizonHours * HOUR_MS;
-    for (let elapsed = HOUR_MS; elapsed <= horizonMs; elapsed += HOUR_MS) {
+    for (let elapsed = WALK_STEP_MS; elapsed <= horizonMs; elapsed += WALK_STEP_MS) {
         const cursor = new Date(now.getTime() + elapsed);
         const tp = schedule.getTariffPeriod(cursor);
         if (!tp) continue;
-        if (tp.schedule.id === prevScheduleId) continue;
+        if (tp.schedule.id === prevScheduleId) {
+            prevMatchedMs = cursor.getTime();
+            continue;
+        }
         yield {
-            start: snapToLocalHourStart(cursor, timeZone),
+            start: refineTransitionStart(schedule, prevMatchedMs, cursor.getTime(), tp.schedule.id),
             schedule: tp.schedule,
             period: tp
         };
         prevScheduleId = tp.schedule.id;
+        prevMatchedMs = cursor.getTime();
     }
 }
 
@@ -97,7 +116,6 @@ export function findNextCheaperPeriod(
     schedule: Schedule,
     now: Date,
     cycle: UsageData[],
-    timeZone: string,
     maxHorizonHours: number = 48
 ): CheaperPeriod | null {
     const active = schedule.getTariffPeriod(now);
@@ -109,7 +127,7 @@ export function findNextCheaperPeriod(
     if (!activeMarginal || activeMarginal.marginalCost === null) return null;
     const activeCost = activeMarginal.marginalCost;
 
-    for (const t of walkScheduleTransitions(schedule, now, timeZone, maxHorizonHours)) {
+    for (const t of walkScheduleTransitions(schedule, now, maxHorizonHours)) {
         const key = periodKey(t.schedule.name ?? 'Unknown');
         const marginal = marginalByKey.get(key);
         if (marginal && marginal.marginalCost !== null) {
@@ -141,7 +159,6 @@ export function findNextStartsByKey(
     schedule: Schedule,
     now: Date,
     cycle: UsageData[],
-    timeZone: string,
     maxHorizonHours: number = 24 * 7
 ): Map<string, Date> {
     const result = new Map<string, Date>();
@@ -151,7 +168,7 @@ export function findNextStartsByKey(
         targetKeys.add(periodKey(name));
     }
 
-    for (const t of walkScheduleTransitions(schedule, now, timeZone, maxHorizonHours)) {
+    for (const t of walkScheduleTransitions(schedule, now, maxHorizonHours)) {
         const key = periodKey(t.schedule.name ?? 'Unknown');
         if (targetKeys.has(key) && !result.has(key)) {
             result.set(key, t.start);

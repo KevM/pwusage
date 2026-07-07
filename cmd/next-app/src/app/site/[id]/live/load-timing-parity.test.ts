@@ -37,9 +37,9 @@ describe('live page parity: computeLoadTiming vs former inline logic', () => {
         const now = new Date('2026-05-19T20:00:00Z');
 
         // Former inline computation, reproduced verbatim:
-        const inlineNextCheaper = findNextCheaperPeriod(schedule, now, cycle, TZ);
+        const inlineNextCheaper = findNextCheaperPeriod(schedule, now, cycle);
         const inlineNextCheaperPhrase = inlineNextCheaper ? formatRelativeStart(inlineNextCheaper.startsAt, now, TZ) : null;
-        const inlineStarts = findNextStartsByKey(schedule, now, cycle, TZ);
+        const inlineStarts = findNextStartsByKey(schedule, now, cycle);
         const inlineByKey = Object.fromEntries(
             Array.from(inlineStarts.entries()).map(([k, s]) => [k, formatRelativeStart(s, now, TZ)])
         );
