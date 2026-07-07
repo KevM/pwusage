@@ -358,3 +358,42 @@ describe('walker with minute-granularity boundaries (real Schedule)', () => {
         expect(starts.get(periodKey('Super-Peak'))).toEqual(new Date(Date.UTC(2026, 2, 17, 0, 0, 0)));
     });
 });
+
+describe('findNextCheaperPeriod – season-level rates (null schedule rates)', () => {
+    // The ScheduleEditor can store rates on the season with null schedule
+    // rates. load-timing patches cycle rates with the season fallback, but the
+    // transition cost used `t.schedule.buy_rate ?? 0` — pricing every future
+    // period at $0 and reporting a bogus "cheaper period" on a flat tariff.
+    function buildSeasonRateTariff(): Tariff {
+        return {
+            id: 3, site_id: 'site-3', updated: new Date(), name: 'Flat',
+            seasons: [{
+                id: 31, tariff_id: 3, name: 'All Year',
+                from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+                buy_rate: 0.25, sell_rate: 0.04,
+                schedules: [
+                    { id: 310, season_id: 31, name: 'On-Peak', buy_rate: null, sell_rate: null,
+                        from_day_of_week: 0, to_day_of_week: 6,
+                        from_hour: 16, from_minute: 0, to_hour: 21, to_minute: 0 },
+                    { id: 320, season_id: 31, name: 'Off-Peak', buy_rate: null, sell_rate: null,
+                        from_day_of_week: 0, to_day_of_week: 6,
+                        from_hour: null, from_minute: null, to_hour: null, to_minute: null }
+                ]
+            }]
+        };
+    }
+
+    it('falls back to season rates instead of pricing transitions at $0', () => {
+        const schedule = new Schedule([buildSeasonRateTariff()], 'America/Los_Angeles');
+        const now = new Date(Date.UTC(2026, 2, 16, 17, 0, 0)); // 10:00 PDT, Off-Peak
+        expect(schedule.getTariffPeriod(now)?.schedule.name).toBe('Off-Peak');
+        // Cycle entries arrive with season-patched rates (computeLoadTiming
+        // applies `s.buy_rate ?? season.buy_rate` before calling us).
+        const cycle: UsageData[] = [
+            makeUsage('Off-Peak', 0.25, 0.04, 500_000),
+            makeUsage('On-Peak', 0.25, 0.04, 500_000)
+        ];
+        // Effectively a flat tariff: nothing is cheaper than the active 0.25.
+        expect(findNextCheaperPeriod(schedule, now, cycle, 48)).toBeNull();
+    });
+});

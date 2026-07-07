@@ -131,9 +131,11 @@ export function findNextCheaperPeriod(
         const key = periodKey(t.schedule.name ?? 'Unknown');
         const marginal = marginalByKey.get(key);
         if (marginal && marginal.marginalCost !== null) {
-            // Future marginal cost based on the transition's own rates
-            const buyRate = t.schedule.buy_rate ?? 0;
-            const sellRate = t.schedule.sell_rate ?? 0;
+            // Future marginal cost from the transition's own rates. Schedules
+            // saved via the editor may carry rates at the season level only —
+            // mirror computeLoadTiming's season fallback.
+            const buyRate = t.schedule.buy_rate ?? t.period.season.buy_rate ?? 0;
+            const sellRate = t.schedule.sell_rate ?? t.period.season.sell_rate ?? 0;
             const transitionCost = marginal.basis === 'sell' ? sellRate : buyRate;
 
             if (transitionCost < activeCost) {
