@@ -250,4 +250,47 @@ describe('TOU Aggregation Utility', () => {
         // Without version history the row can't be priced — cost stays 0.
         expect(result.totalBillCost).toBe(0);
     });
+
+    it('returns an empty aggregation instead of crashing for a site with no tariffs', () => {
+        const site: SiteWithTariffs = {
+            id: 'test_site',
+            name: 'Test Site',
+            timezone: TZ,
+            billing_start_day: 1,
+            updated: new Date(),
+            installed: new Date(),
+            json: {},
+            tariffs: []
+        };
+        const schedule = new Schedule([], TZ);
+        const priorAggregates: CycleAggregateRow[] = [{
+            day: new Date('2026-06-01T00:00:00Z'),
+            tariff_id: 1,
+            tariff_schedule_id: null,
+            load_power: 1000,
+            solar_power: 500,
+            grid_power: 500,
+            battery_power: 0
+        }];
+        const todayRaw: EnergyData[] = [{
+            timestamp: new Date('2026-06-01T15:00:00Z'),
+            site_id: 'test_site',
+            tariff_id: 1,
+            tariff_schedule_id: null,
+            load_power: 2000,
+            solar_power: 1000,
+            grid_power: 1000,
+            battery_power: 0,
+            battery_soc: 85
+        }];
+
+        const result = aggregateUsage(site, priorAggregates, todayRaw, schedule);
+
+        expect(result.tariffGroups).toEqual([]);
+        expect(result.totalBillCost).toBe(0);
+        // Series data must still flow through for charting.
+        expect(result.seriesData).toHaveLength(1);
+        expect(result.latestSeriesSoc?.value).toBe(85);
+    });
 });
+
