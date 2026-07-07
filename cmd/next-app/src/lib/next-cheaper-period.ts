@@ -30,7 +30,7 @@ const MINUTE_MS = 60 * 1000;
 // Tesla TOU boundaries land on 15-minute marks (from_minute/to_minute in the
 // tariff JSON), so a 15-minute walk step samples every representable window
 // at least once and never skips a sub-hour period.
-const WALK_STEP_MS = 15 * 60 * 1000;
+const WALK_STEP_MS = 15 * MINUTE_MS;
 
 export interface ScheduleTransition {
     /** Exact instant the new period starts matching (minute precision). */
