@@ -437,3 +437,107 @@ describe('Schedule DST transitions', () => {
         expect(schedule.getTariffPeriod(new Date('2026-11-01T09:30:00Z'))?.schedule.name).toBe('Off-Peak');
     });
 });
+
+describe('Schedule – wrapped day-of-week ranges', () => {
+    // Tesla day-of-week encoding: 0=Mon … 6=Sun. "Sunday through Thursday" can
+    // only be expressed as from 6 wrapping to 3 — the same way hour windows
+    // wrap midnight (20:00 → 08:00).
+    function makeWrappedTariff(): Tariff[] {
+        return [{
+            id: 9,
+            site_id: 'wrap_site',
+            name: 'Wrap Test',
+            updated: new Date('2026-01-01'),
+            seasons: [{
+                id: 901, tariff_id: 9, name: 'All Year',
+                from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+                buy_rate: 0.2, sell_rate: 0.1,
+                schedules: [{
+                    id: 9011, season_id: 901, name: 'Sun-Thu',
+                    buy_rate: 0.2, sell_rate: 0.1,
+                    from_day_of_week: 6, to_day_of_week: 3, // Sun → Thu (wraps)
+                    from_hour: null, from_minute: null,
+                    to_hour: null, to_minute: null,
+                }],
+            }],
+        }];
+    }
+
+    it('matches days inside a wrapped range (Sunday and Wednesday)', () => {
+        const schedule = new Schedule(makeWrappedTariff(), 'UTC');
+        // Sun Jul 12 2026 and Wed Jul 15 2026 (neither is a holiday)
+        expect(schedule.getTariffPeriod(new Date('2026-07-12T12:00:00Z'))?.schedule.name).toBe('Sun-Thu');
+        expect(schedule.getTariffPeriod(new Date('2026-07-15T12:00:00Z'))?.schedule.name).toBe('Sun-Thu');
+    });
+
+    it('does not match days outside a wrapped range (Friday)', () => {
+        const schedule = new Schedule(makeWrappedTariff(), 'UTC');
+        // Fri Jul 17 2026
+        expect(schedule.getTariffPeriod(new Date('2026-07-17T12:00:00Z'))).toBeNull();
+    });
+});
+
+describe('Schedule – DST transitions (America/Chicago 2026)', () => {
+    // Probe tariff with a boundary at the repeated/skipped hour:
+    // "Late-Night" covers local hour 01:00–02:00 every day, all year.
+    function makeHourProbeTariff(): Tariff[] {
+        return [{
+            id: 7,
+            site_id: 'dst_site',
+            name: 'DST Probe',
+            updated: new Date('2026-01-01'),
+            seasons: [{
+                id: 701, tariff_id: 7, name: 'All Year',
+                from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+                buy_rate: 0.2, sell_rate: 0.1,
+                schedules: [
+                    {
+                        id: 7011, season_id: 701, name: 'Late-Night',
+                        buy_rate: 0.1, sell_rate: 0.05,
+                        from_day_of_week: 0, to_day_of_week: 6,
+                        from_hour: 1, from_minute: 0,
+                        to_hour: 2, to_minute: 0,
+                    },
+                    {
+                        id: 7012, season_id: 701, name: 'Rest',
+                        buy_rate: 0.3, sell_rate: 0.1,
+                        from_day_of_week: 0, to_day_of_week: 6,
+                        from_hour: null, from_minute: null,
+                        to_hour: null, to_minute: null,
+                    },
+                ],
+            }],
+        }];
+    }
+
+    it('fall-back: both occurrences of the repeated 01:30 resolve to local hour 1', () => {
+        const schedule = new Schedule(makeHourProbeTariff(), 'America/Chicago');
+        // Nov 1 2026: clocks fall back 02:00 CDT → 01:00 CST; 01:00–02:00 happens twice.
+        const firstOneThirty = new Date('2026-11-01T06:30:00Z');  // 01:30 CDT (UTC-5)
+        const secondOneThirty = new Date('2026-11-01T07:30:00Z'); // 01:30 CST (UTC-6)
+        expect(schedule.getTariffPeriod(firstOneThirty)?.schedule.name).toBe('Late-Night');
+        expect(schedule.getTariffPeriod(secondOneThirty)?.schedule.name).toBe('Late-Night');
+        // 02:30 CST is past the window.
+        expect(schedule.getTariffPeriod(new Date('2026-11-01T08:30:00Z'))?.schedule.name).toBe('Rest');
+    });
+
+    it('spring-forward: instants adjacent to the skipped 02:xx hour resolve correctly', () => {
+        const schedule = new Schedule(makeHourProbeTariff(), 'America/Chicago');
+        // Mar 8 2026: clocks jump 02:00 CST → 03:00 CDT; local hour 2 never occurs.
+        expect(schedule.getTariffPeriod(new Date('2026-03-08T07:30:00Z'))?.schedule.name).toBe('Late-Night'); // 01:30 CST
+        expect(schedule.getTariffPeriod(new Date('2026-03-08T08:30:00Z'))?.schedule.name).toBe('Rest');       // 03:30 CDT
+    });
+
+    it('season boundary flips at site-local midnight, not UTC midnight', () => {
+        const schedule = new Schedule(makeHarrisonTariff(), HARRISON_TIMEZONE);
+        // Sun May 31 2026 23:00 CDT = Jun 1 04:00 UTC — locally still May 31 → Winter.
+        const lateMay = schedule.getTariffPeriod(new Date('2026-06-01T04:00:00Z'));
+        expect(lateMay?.season.name).toBe('Winter');
+        // Mon Jun 1 2026 00:30 CDT = Jun 1 05:30 UTC — Summer, overnight Off-Peak.
+        const earlyJune = schedule.getTariffPeriod(new Date('2026-06-01T05:30:00Z'));
+        expect(earlyJune?.season.name).toBe('Summer');
+        expect(earlyJune?.schedule.name).toBe('Off-Peak');
+    });
+});
+
+

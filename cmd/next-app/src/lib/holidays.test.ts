@@ -46,6 +46,19 @@ describe('isObservedHoliday', () => {
         expect(isObservedHoliday(2026, 8, 14)).toBe(false);
     });
 
+    it('observes a Saturday Christmas on the preceding Friday (2027)', () => {
+        // Dec 25 2027 is a Saturday → Friday Dec 24 is the observed holiday.
+        expect(isObservedHoliday(2027, 12, 24)).toBe(true);
+        expect(isObservedHoliday(2027, 12, 25)).toBe(true);
+        expect(isObservedHoliday(2027, 12, 23)).toBe(false);
+    });
+
+    it('observes a Sunday New Year on the following Monday (2034)', () => {
+        // Jan 1 2034 is a Sunday → Monday Jan 2 is the observed holiday.
+        expect(isObservedHoliday(2034, 1, 2)).toBe(true);
+        expect(isObservedHoliday(2034, 1, 3)).toBe(false);
+    });
+
     it('exposes the default US rule set for callers that need to customize', () => {
         expect(US_TOU_HOLIDAYS.length).toBeGreaterThanOrEqual(6);
         expect(US_TOU_HOLIDAYS).toEqual(

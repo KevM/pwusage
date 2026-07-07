@@ -43,6 +43,20 @@ export function aggregateUsage(
     historicalTariffs: Tariff[] = [],
     historicalSchedules: TariffSchedule[] = []
 ): TouAggregationResult {
+    // A site with no tariffs (e.g. tariff parse failed at onboarding) cannot
+    // be priced, but its raw series must still reach the charts.
+    if (site.tariffs.length === 0) {
+        const seriesData: EnergyData[] = [];
+        let latestSeriesSoc: { value: number; timestamp: Date } | null = null;
+        for (const row of todayRaw) {
+            seriesData.push(row);
+            if (typeof row.battery_soc === 'number') {
+                latestSeriesSoc = { value: row.battery_soc, timestamp: row.timestamp };
+            }
+        }
+        return { tariffGroups: [], totalBillCost: 0, seriesData, latestSeriesSoc };
+    }
+
     const tariffMap = new Map<number, Tariff>();
     const scheduleMap = new Map<number, TariffSchedule>();
 

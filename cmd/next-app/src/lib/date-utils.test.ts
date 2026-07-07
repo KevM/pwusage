@@ -93,3 +93,14 @@ describe('new centralized date-utils', () => {
         expect(nextDay.toISOString()).toBe('2026-03-08T08:00:00.000Z'); // LA spring forward, midnight is 08:00 UTC
     });
 });
+
+describe('parseSiteLocalDateToMidnight — nonexistent local midnight', () => {
+    it('resolves a DST-skipped midnight to the first existing local time (America/Santiago)', () => {
+        // Chile springs forward at 24:00 on the first Saturday of September:
+        // Sep 6 2026 00:00 does not exist; the day starts at 01:00 CLST (UTC-3).
+        // 01:00 UTC-3 = 04:00 UTC.
+        const result = parseSiteLocalDateToMidnight('2026-09-06', 'America/Santiago');
+        expect(result).toEqual(new Date(Date.UTC(2026, 8, 6, 4, 0, 0)));
+    });
+});
+
