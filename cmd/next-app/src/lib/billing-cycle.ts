@@ -1,10 +1,6 @@
 import { Temporal } from '@js-temporal/polyfill';
 import { getSiteLocalDate } from './date-utils';
 
-function constrainedDayForMonth(year: number, month: number, day: number): number {
-    return Temporal.PlainDate.from({ year, month, day }).day;
-}
-
 /**
  * Returns the start of the current billing cycle for a site, given the
  * configured day-of-month the cycle resets, the current time, and the site's
@@ -31,11 +27,14 @@ export function getCurrentCycleStart(
     const instant = Temporal.Instant.from(now.toISOString());
     const zonedNow = instant.toZonedDateTimeISO(timeZone);
 
-    // Determine which month contains the billing cycle start.
+// Determine which month contains the billing cycle start. Compare against
+    // the anchor clamped to this month's length: in a 30-day month a day-31
+    // anchor starts the cycle on the 30th, so the 30th belongs to the new
+    // cycle, not the previous month's.
+    const clampedDay = Math.min(day, zonedNow.daysInMonth);
     let cycleMonth = zonedNow.month;
     let cycleYear = zonedNow.year;
-    const currentMonthCycleDay = constrainedDayForMonth(cycleYear, cycleMonth, day);
-    if (zonedNow.day < currentMonthCycleDay) {
+    if (zonedNow.day < clampedDay) {
         cycleMonth -= 1;
         if (cycleMonth < 1) {
             cycleMonth = 12;

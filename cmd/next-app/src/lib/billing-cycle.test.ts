@@ -189,3 +189,29 @@ describe('addMonthsInSiteTimezone — add months in site-local terms', () => {
         expect(result).toEqual(new Date(Date.UTC(2026, 4, 31, 12, 0, 0)));
     });
 });
+
+describe('getCurrentCycleStart — clamped anchor day in short months', () => {
+    it('starts a new cycle on the clamped anchor day (day 31 on Apr 30)', () => {
+        // April has 30 days: a day-31 anchor starts the April cycle on Apr 30
+        // (documented constrain semantics). On Apr 30 itself the current cycle
+        // is the one beginning that day — not the March 31 cycle.
+        const now = new Date(Date.UTC(2026, 3, 30, 12, 0, 0)); // Apr 30 noon UTC
+        const start = getCurrentCycleStart(31, now, 'UTC');
+        expect(start).toEqual(new Date(Date.UTC(2026, 3, 30, 0, 0, 0)));
+    });
+
+    it('starts a new cycle on the clamped anchor day (day 30 on Feb 28, non-leap)', () => {
+        const now = new Date(Date.UTC(2026, 1, 28, 12, 0, 0)); // Feb 28 2026 noon UTC
+        const start = getCurrentCycleStart(30, now, 'UTC');
+        expect(start).toEqual(new Date(Date.UTC(2026, 1, 28, 0, 0, 0)));
+    });
+
+    it('the day after a clamped cycle start still belongs to that cycle (Mar 1, anchor 31)', () => {
+        // Mar 1 < clamped anchor 31 → previous month; Feb 31 constrains to Feb 28.
+        // This pins the behavior the fix must NOT break.
+        const now = new Date(Date.UTC(2026, 2, 1, 12, 0, 0)); // Mar 1 2026 noon UTC
+        const start = getCurrentCycleStart(31, now, 'UTC');
+        expect(start).toEqual(new Date(Date.UTC(2026, 1, 28, 0, 0, 0)));
+    });
+});
+
