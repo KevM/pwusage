@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JwtPayload } from 'jsonwebtoken';
 import { TeslaAuthService, TeslaCallbackParams } from './tesla-auth-service';
+
+// Mocked so verifyTeslaIdToken tests can simulate a kid missing from the JWKS
+// without network access; implementation is set inside each test.
+vi.mock('jwks-rsa');
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
@@ -907,14 +911,75 @@ describe('TeslaAuthService', () => {
 
 
 describe('getDiscoveryEndpointFromIssuer', () => {
-    it('correctly maps Tesla issuer variants including /nts to OIDC discovery URL', async () => {
+    it('maps each Tesla issuer to its own OIDC discovery URL (the /nts issuer publishes a separate JWKS)', async () => {
         const { getDiscoveryEndpointFromIssuer } = await import('./tesla-auth-service');
         expect(getDiscoveryEndpointFromIssuer('https://auth.tesla.com/oauth2/v3/nts'))
-            .toBe('https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration');
+            .toBe('https://auth.tesla.com/oauth2/v3/nts/.well-known/openid-configuration');
         expect(getDiscoveryEndpointFromIssuer('https://auth.tesla.com/oauth2/v3'))
             .toBe('https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration');
         expect(getDiscoveryEndpointFromIssuer('https://untrusted.com/oauth2/v3'))
             .toBeNull();
+    });
+});
+
+describe('verifyTeslaIdToken', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('rejects with KidNotFoundError (not a wrapped JsonWebTokenError) when the kid is absent from the JWKS', async () => {
+        process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID = 'client-id-123';
+
+        const jwksClient = (await import('jwks-rsa')).default;
+        vi.mocked(jwksClient).mockReturnValue({
+            getSigningKey: (kid: string | null | undefined, cb: (err: Error | null, key?: unknown) => void) =>
+                cb(new Error(`Unable to find a signing key that matches '${kid}'`))
+        } as unknown as ReturnType<typeof jwksClient>);
+
+        const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+            if (String(url).includes('openid-configuration')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        issuer: 'https://auth.tesla.com/oauth2/v3/nts',
+                        jwks_uri: 'https://auth.tesla.com/oauth2/v3/discovery/thirdparty/keys'
+                    })
+                };
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ keys: [{ kid: 'someOtherKid', kty: 'RSA' }] })
+            };
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { verifyTeslaIdToken } = await import('./tesla-auth-service');
+
+        const b64url = (obj: object) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+        const token = [
+            b64url({ alg: 'RS256', kid: 'HgAhP6puiUWpjHH7YQ_Fcu7YoSI', typ: 'JWT' }),
+            b64url({
+                iss: 'https://auth.tesla.com/oauth2/v3/nts',
+                aud: 'client-id-123',
+                sub: 'sub-123',
+                nonce: 'nonce-123',
+                exp: Math.floor(Date.now() / 1000) + 3600
+            }),
+            Buffer.from('not-a-real-signature').toString('base64url')
+        ].join('.');
+
+        await expect(verifyTeslaIdToken(token)).rejects.toSatisfy(
+            (err: unknown) => err instanceof Error && err.name === 'KidNotFoundError'
+        );
+
+        // The /nts issuer must resolve to its own discovery document, whose
+        // JWKS (discovery/thirdparty/keys) actually publishes the nts kids.
+        expect(fetchMock).toHaveBeenCalledWith(
+            'https://auth.tesla.com/oauth2/v3/nts/.well-known/openid-configuration',
+            expect.anything()
+        );
     });
 });
 

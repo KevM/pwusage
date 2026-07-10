@@ -16,20 +16,16 @@ const ALLOWED_TESLA_ISSUERS: [string, ...string[]] = [
     'https://auth.tesla.com/oauth2/v3',
 ];
 
-// Map issuer to its OIDC discovery endpoint
+// Map issuer to its OIDC discovery endpoint. Each issuer publishes its own
+// discovery document: the /nts issuer's jwks_uri (discovery/thirdparty/keys)
+// holds different signing keys than the base /v3 JWKS, so the /nts suffix
+// must be preserved or nts ID tokens fail kid lookup.
 export function getDiscoveryEndpointFromIssuer(issuer: string): string | null {
     if (!issuer.includes('tesla.com')) {
         console.warn('[TeslaAuthService] Issuer not from Tesla domain:', issuer);
         return null;
     }
-    if (issuer.startsWith('https://auth.tesla.com/oauth2/v3')) {
-        return 'https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration';
-    }
-    const parts = issuer.split('/');
-    if (parts[parts.length - 1] === 'nts') {
-        parts.pop();
-    }
-    return `${parts.join('/')}/.well-known/openid-configuration`;
+    return `${issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`;
 }
 
 // Discover the correct JWKS endpoint from OpenID Connect discovery
@@ -207,9 +203,19 @@ export async function verifyTeslaIdToken(token: string): Promise<jwt.JwtPayload>
 
         const tokenIssuer = (decoded?.payload as Record<string, unknown>)?.iss as string | undefined;
 
+        // jsonwebtoken re-wraps key-callback errors in a plain JsonWebTokenError,
+        // keeping only the message. Capture the original error so a
+        // KidNotFoundError survives to handleTeslaCallback's degraded path.
+        let keyLookupError: Error | undefined;
+
         jwt.verify(
             token,
-            (header, callback) => getTeslaSigningKeyWithIssuer(header, tokenIssuer, callback),
+            (header, callback) => getTeslaSigningKeyWithIssuer(header, tokenIssuer, (err, key) => {
+                if (err) {
+                    keyLookupError = err;
+                }
+                callback(err, key);
+            }),
             {
                 algorithms: ['RS256'],
                 audience: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID,
@@ -218,11 +224,12 @@ export async function verifyTeslaIdToken(token: string): Promise<jwt.JwtPayload>
             },
             (err, decoded) => {
                 if (err) {
+                    const rejection = keyLookupError instanceof KidNotFoundError ? keyLookupError : err;
                     console.error('[TeslaAuthService] JWT verification error:', {
-                        name: err.name,
-                        message: err.message
+                        name: rejection.name,
+                        message: rejection.message
                     });
-                    return reject(err);
+                    return reject(rejection);
                 }
                 resolve(decoded as jwt.JwtPayload);
             }
