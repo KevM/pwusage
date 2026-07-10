@@ -83,7 +83,12 @@ function createPool() {
   const poolConfig: PoolConfig = {
     connectionString: connStr,
     ssl: sslConfig,
-    max: 20,
+    // We connect through Supabase's Supavisor transaction pooler (port 6543),
+    // whose max_client_connections cap (default 200) counts every client
+    // connection this pool holds open. Keep max small so many concurrent warm
+    // serverless instances (instances * max) stay well under that cap; the
+    // pooler multiplexes these onto its own Postgres-side pool.
+    max: 5,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
   };
@@ -100,7 +105,11 @@ function createPool() {
   // Increase max listeners for parallel query operations
   dbPool.setMaxListeners(30); // Increased a bit more for safety
 
-  if (process.env.NODE_ENV !== 'production') globalForDb.pool = dbPool;
+  // Cache the pool in every environment. In dev this survives HMR; in
+  // production it makes the Proxy's per-access getPool() reuse one pool per
+  // warm instance instead of constructing (and leaking) a new Pool on every
+  // query, which was exhausting Postgres connections (EMAXCONN, limit 200).
+  globalForDb.pool = dbPool;
 
   return dbPool;
 }
