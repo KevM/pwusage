@@ -18,8 +18,7 @@ import {
 import { TrmnlInstallationRepo } from '@/lib/trmnl-installation-repo';
 import { verifyTrmnlRequestAuth } from '@/lib/trmnl-auth';
 import { continueUrl } from '@/app/continue/continue-logic';
-import { getCurrentCycleStart } from '@/lib/billing-cycle';
-import { addMonthsInSiteTimezone } from '@/lib/date-utils';
+import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
 import { aggregateUsage } from '@/lib/tou-aggregation';
 import { TariffRepo } from '@/lib/tariff-repo';
 
@@ -122,7 +121,7 @@ export async function GET(request: Request) {
         // Calculate bill for current period using site-local time components
         const now = new Date();
         const start = getCurrentCycleStart(site.billing_start_day || 1, now, site.timezone);
-        const cycleEnd = addMonthsInSiteTimezone(start, 1, site.timezone);
+        const cycleEnd = getNextCycleStart(site.billing_start_day || 1, start, site.timezone);
 
         const hasTeslaTokens = !!site.refresh_token;
 

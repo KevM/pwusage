@@ -45,3 +45,34 @@ export function getCurrentCycleStart(
     // Construct the billing day and convert to site-local midnight via the centralized getSiteLocalDate.
     return getSiteLocalDate(cycleYear, cycleMonth, day, timeZone);
 }
+
+/**
+ * Returns the start of the billing cycle FOLLOWING the one that starts at
+ * `cycleStart`, re-anchored to the configured billing day.
+ *
+ * Billing cycles re-anchor every month: a day-31 anchor runs Jan 31 → Feb 28
+ * → Mar 31. Deriving the end as `cycleStart + 1 month` propagates a short
+ * month's constraint forward (Feb 28 + 1 month = Mar 28, not Mar 31), leaving
+ * days that belong to no cycle. Instead, advance the month and re-apply the
+ * original anchor day; getSiteLocalDate's overflow:'constrain' handles short
+ * target months (Jan 31 → Feb 28).
+ *
+ * `cycleStart` must be an actual cycle start (e.g. from getCurrentCycleStart),
+ * so its site-local month is the cycle's anchor month.
+ */
+export function getNextCycleStart(
+    billingStartDay: number,
+    cycleStart: Date,
+    timeZone: string
+): Date {
+    const day = billingStartDay || 1;
+    const instant = Temporal.Instant.from(cycleStart.toISOString());
+    const zoned = instant.toZonedDateTimeISO(timeZone);
+    let year = zoned.year;
+    let month = zoned.month + 1;
+    if (month > 12) {
+        month = 1;
+        year += 1;
+    }
+    return getSiteLocalDate(year, month, day, timeZone);
+}

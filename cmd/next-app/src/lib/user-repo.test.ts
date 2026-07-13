@@ -11,6 +11,7 @@ vi.mock('./db', () => ({
 }));
 
 import { UserRepo } from './user-repo';
+import { TeslaAuthError } from './tesla-client';
 
 describe('UserRepo admin ordering', () => {
     beforeEach(() => {
@@ -179,6 +180,68 @@ describe('UserRepo new commands', () => {
             'UPDATE "User" SET access_token = $1, refresh_token = $2 WHERE id = $3',
             ['newA', 'newR', 'u1']
         );
+    });
+});
+
+describe('UserRepo.verifyUserStatus', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+    });
+
+    const UPDATE_STATUS_SQL = 'UPDATE "User" SET auth_status = $1, is_active = $2, last_checked_at = NOW() WHERE id = $3';
+
+    it('keeps the user active when Tesla fails transiently', async () => {
+        queryMock
+            .mockResolvedValueOnce({ rows: [{ id: 'site-1' }] }) // site lookup
+            .mockResolvedValueOnce({ rows: [] });                 // updateUserStatus
+        const repo = new UserRepo();
+        const client = { getLiveStatus: vi.fn().mockRejectedValue(new Error('Tesla API Error: 503 upstream unavailable')) };
+        const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => client as never });
+        expect(result.status).toBe('error');
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['error', true, 'u1']);
+    });
+
+    it('marks the user revoked and inactive on a terminal auth error', async () => {
+        queryMock
+            .mockResolvedValueOnce({ rows: [{ id: 'site-1' }] })
+            .mockResolvedValueOnce({ rows: [] });
+        const repo = new UserRepo();
+        const client = { getLiveStatus: vi.fn().mockRejectedValue(new TeslaAuthError('Tesla API Error: 401 invalid token', 401)) };
+        const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => client as never });
+        expect(result.status).toBe('revoked');
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['revoked', false, 'u1']);
+    });
+
+    it('marks the user active on success', async () => {
+        queryMock
+            .mockResolvedValueOnce({ rows: [{ id: 'site-1' }] })
+            .mockResolvedValueOnce({ rows: [] });
+        const repo = new UserRepo();
+        const client = { getLiveStatus: vi.fn().mockResolvedValue({ percentage_charged: 50 }) };
+        const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => client as never });
+        expect(result.status).toBe('active');
+        expect(client.getLiveStatus).toHaveBeenCalledWith('site-1');
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['active', true, 'u1']);
+    });
+
+    it('marks no_token when the client factory finds no credentials', async () => {
+        queryMock
+            .mockResolvedValueOnce({ rows: [{ id: 'site-1' }] })
+            .mockResolvedValueOnce({ rows: [] });
+        const repo = new UserRepo();
+        const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => null });
+        expect(result.status).toBe('no_token');
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['no_token', false, 'u1']);
+    });
+
+    it('marks no_sites when the user has no sites', async () => {
+        queryMock
+            .mockResolvedValueOnce({ rows: [] })  // site lookup: none
+            .mockResolvedValueOnce({ rows: [] });
+        const repo = new UserRepo();
+        const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => null });
+        expect(result.status).toBe('no_sites');
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['no_sites', false, 'u1']);
     });
 });
 

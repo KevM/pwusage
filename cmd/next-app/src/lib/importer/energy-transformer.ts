@@ -24,8 +24,6 @@ export interface TransformContext {
 export function transformEnergyPoints(
     history: EnergyHistoryEntry[],
     soeHistory: SoeHistoryEntry[],
-    period: string,
-    requestedDurationHours: number,
     context: TransformContext
 ): EnergyDataRow[] {
     const socSamples = buildSocSamples(soeHistory);
@@ -34,19 +32,6 @@ export function transformEnergyPoints(
     for (let i = 0; i < history.length; i++) {
         const h = history[i];
         const ts = new Date(h.timestamp);
-
-        let durationHours = 24;
-        if (i < history.length - 1) {
-            const nextTs = new Date(history[i + 1].timestamp).getTime();
-            durationHours = (nextTs - ts.getTime()) / (3600 * 1000);
-        } else if (i > 0) {
-            const prevTs = new Date(history[i - 1].timestamp).getTime();
-            durationHours = (ts.getTime() - prevTs) / (3600 * 1000);
-        }
-
-        const shouldScaleDailyAggregate =
-            period === 'day' && requestedDurationHours > 20 && durationHours > 20;
-        const scale = shouldScaleDailyAggregate ? 1000 : 1;
 
         const hSolar = (h.total_solar_generation ?? h.solar_energy_exported) ?? 0;
         const hHome = h.total_home_usage ?? 0;
@@ -71,10 +56,10 @@ export function transformEnergyPoints(
             tariff_id: tariffId,
             tariff_schedule_id: tariffScheduleId,
             timestamp: ts,
-            load_power: hHome * scale,
-            solar_power: hSolar * scale,
-            grid_power: grid * scale,
-            battery_power: battery * scale,
+            load_power: hHome,
+            solar_power: hSolar,
+            grid_power: grid,
+            battery_power: battery,
             battery_soc: findNearestSoc(socSamples, ts.getTime()),
         });
     }

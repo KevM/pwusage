@@ -144,64 +144,60 @@ export class UserRepo {
         );
     }
 
-    async verifyUserStatus(user: User): Promise<{ status: string; error?: string }> {
-        // Skip if no tokens
-        if (!user.access_token || !user.refresh_token) {
-            await this.updateUserStatus(user.id, 'no_token', false);
-            return { status: 'no_token' };
-        }
-
+    async verifyUserStatus(
+        user: Pick<User, 'id'>,
+        deps?: { createClient?: (siteId: string) => Promise<Pick<TeslaClient, 'getLiveStatus'> | null> }
+    ): Promise<{ status: string; error?: string }> {
         // Get user's sites to test with
         const sitesRes = await pool.query('SELECT id FROM "Site" WHERE user_id = $1 LIMIT 1', [user.id]);
-
         if (sitesRes.rows.length === 0) {
             // No sites - can't verify credentials
             await this.updateUserStatus(user.id, 'no_sites', false);
             return { status: 'no_sites' };
         }
-
         const siteId = sitesRes.rows[0].id;
 
+        // Build the client through the site factory: it re-reads tokens fresh
+        // from the DB at call time and wires the cross-instance locked refresh
+        // handler. Verifying with tokens bulk-read minutes earlier and a raw
+        // unlocked refresh can burn a rotated refresh token (invalid_grant)
+        // and falsely revoke a healthy user.
+        let createClient = deps?.createClient;
+        if (!createClient) {
+            const { createTeslaClientForSite } = await import('./tesla-client-factory');
+            createClient = createTeslaClientForSite;
+        }
+        const client = await createClient(siteId);
+        if (!client) {
+            await this.updateUserStatus(user.id, 'no_token', false);
+            return { status: 'no_token' };
+        }
+
         try {
-            // Attempt to use the token
-            const client = new TeslaClient({
-                accessToken: user.access_token,
-                refreshToken: user.refresh_token,
-                tokenRefreshHandler: async (refreshToken) => {
-                    const { refreshAccessToken } = await import('./tesla-auth');
-                    return refreshAccessToken(refreshToken);
-                },
-                onTokenUpdate: async (newAccess, newRefresh) => {
-                    await pool.query('UPDATE "User" SET access_token = $1, refresh_token = $2 WHERE id = $3', [newAccess, newRefresh, user.id]);
-                    console.log(`[UserRepo] Refreshed tokens for user ${user.id}`);
-                }
-            });
-
-            // Use site-specific API call instead of getUserInfo
             await client.getLiveStatus(siteId);
-
-            // If we get here, it's active
             await this.updateUserStatus(user.id, 'active', true);
             return { status: 'active' };
-
         } catch (err: unknown) {
             console.error(`[UserRepo] Error checking user ${user.id}:`, err);
-
-            let status = 'error';
             const errorMsg = err instanceof Error ? err.message : String(err);
 
-            // If it's an auth error, mark inactive.
             if (isTeslaAuthError(err)) {
-                status = 'revoked';
+                await this.updateUserStatus(user.id, 'revoked', false);
+                return { status: 'revoked', error: errorMsg };
             }
 
-            await this.updateUserStatus(user.id, status, false);
-            return { status: status, error: errorMsg };
+            // Transient failure (Tesla 5xx, network, exhausted 429 retries):
+            // record it but do NOT deactivate — is_active=false blocks every
+            // authenticated route and JWT refresh, locking the user out over
+            // a blip. auth_status='error' keeps the user in the cron's
+            // "troubled" bucket so it re-verifies next run.
+            await this.updateUserStatus(user.id, 'error', true);
+            return { status: 'error', error: errorMsg };
         }
     }
 
     async verifyAllUserStatuses() {
-        const users = await this.getAllUsers({ includeTokens: true });
+        const users = await this.getAllUsers();
         let activeCount = 0;
         let inactiveCount = 0;
         let errorCount = 0;
@@ -225,8 +221,8 @@ export class UserRepo {
             if (result.status === 'active') {
                 activeCount++;
             } else if (result.status === 'error') {
+                // Transient failure: user stays active; re-verified next run.
                 errorCount++;
-                inactiveCount++;
             } else {
                 inactiveCount++;
             }

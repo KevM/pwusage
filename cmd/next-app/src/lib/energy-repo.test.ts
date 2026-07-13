@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 const { queryMock } = vi.hoisted(() => ({
     queryMock: vi.fn()
@@ -442,5 +442,33 @@ describe('EnergyRepo.getUsageByTOU historical name resolution', () => {
         expect(row!.touName).toBe('OFF_PEAK');
         expect(row!.buyRate).toBe(0.25);
         expect(row!.sellRate).toBe(0.05);
+    });
+});
+
+describe('EnergyRepo.getUsageByTOU range clamping', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('does not fetch raw rows from before a future cycle start', async () => {
+        const repo = new EnergyRepo();
+        vi.spyOn(SiteRepo.prototype, 'getSite').mockResolvedValue({
+            id: 'site-1', user_id: 'u1', name: 'Home', utility: 'PG&E',
+            updated: new Date(), installed: new Date('2026-01-01T00:00:00Z'),
+            timezone: 'UTC', billing_start_day: 1, tariffs: [],
+        } as never);
+        vi.spyOn(TariffRepo.prototype, 'getTariffsForSite').mockResolvedValue([] as never);
+        vi.spyOn(TariffRepo.prototype, 'getSchedulesForSite').mockResolvedValue([] as never);
+        const aggSpy = vi.spyOn(repo, 'getCycleAggregates').mockResolvedValue([] as never);
+        const rawSpy = vi.spyOn(repo, 'getRawEnergyData').mockResolvedValue([] as never);
+
+        // A cycle entirely in the future: splitPoint must not drop below start,
+        // or the raw pass fetches [todayMidnight, end) — rows preceding the cycle.
+        const start = new Date(Date.now() + 30 * 24 * 3600 * 1000);
+        const end = new Date(Date.now() + 60 * 24 * 3600 * 1000);
+        await repo.getUsageByTOU('site-1', start, end);
+
+        expect(aggSpy).toHaveBeenCalledWith('site-1', start, start);
+        expect(rawSpy).toHaveBeenCalledWith('site-1', start, end);
     });
 });

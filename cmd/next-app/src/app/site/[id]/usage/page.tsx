@@ -1,8 +1,10 @@
 import { Temporal } from '@js-temporal/polyfill';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { getCurrentCycleStart } from '@/lib/billing-cycle';
+import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
 import { getSiteLocalDate, addMonthsInSiteTimezone } from '@/lib/date-utils';
+import { redirect } from 'next/navigation';
+import { verifySiteAccess, getCurrentUser } from '@/lib/auth-checks';
 
 import { BillSummary } from '@/components/BillSummary';
 import { BillDateNav } from '@/components/BillDateNav';
@@ -21,6 +23,23 @@ export default async function UsagePage({ params, searchParams }: {
 }) {
     const { id } = await params;
     const { date: queryDate, start: queryStart, end: queryEnd } = await searchParams;
+
+    const hasAccess = await verifySiteAccess(id);
+    if (!hasAccess) {
+        const user = await getCurrentUser();
+        if (!user) {
+            redirect(`/login?callback=${encodeURIComponent(`/site/${id}/usage`)}`);
+        }
+        return (
+            <PageShell maxWidth="2xl" className="space-y-6">
+                <PageHeader title="Estimated Monthly Bill" density="compact" />
+                <SectionCard density="compact">
+                    <p className="text-sm text-gray-600 dark:text-gray-300">Your account is not authorized for this site.</p>
+                </SectionCard>
+            </PageShell>
+        );
+    }
+
     const siteRepo = new SiteRepo();
     const repo = new EnergyRepo();
 
@@ -58,25 +77,23 @@ export default async function UsagePage({ params, searchParams }: {
 
         isCustomRange = true;
     } else if (queryDate) {
-        // Specific Billing Cycle Mode
+        // Specific Billing Cycle Mode: snap the requested date to the cycle
+        // containing it, then end at the next cycle start. The billing day
+        // re-anchors each month (Jan 31 → Feb 28 → Mar 31); deriving the end
+        // from the query date's own day via a 35-day pivot overshot short
+        // months (Jan 31 + 35d lands in March → a "one-month" bill spanning
+        // Jan 31 – Mar 31).
         const [y, m, d] = queryDate.split('-').map(Number);
-        start = getSiteLocalDate(y, m, d, site.timezone);
-
-        // Calculate end as one month later (same day, next month).
-        // Use 35-day pivot to ensure we land in the next month, then getSiteLocalDate
-        // to get the correct midnight in the site's timezone.
-        const nextMonthPivot = new Date(start.getTime() + 35 * 24 * 60 * 60 * 1000);
-        const instant = Temporal.Instant.from(nextMonthPivot.toISOString());
-        const zonedDate = instant.toZonedDateTimeISO(site.timezone);
-        end = getSiteLocalDate(zonedDate.year, zonedDate.month, d, site.timezone);
+        const refDate = [y, m, d].every(Number.isFinite)
+            ? getSiteLocalDate(y, m, d, site.timezone) // overflow constrains (2026-02-31 → Feb 28)
+            : new Date();
+        start = getCurrentCycleStart(site.billing_start_day, refDate, site.timezone);
+        end = getNextCycleStart(site.billing_start_day, start, site.timezone);
     } else {
         // Default to Current Billing Cycle (computed in the site's timezone).
         const now = new Date();
         start = getCurrentCycleStart(site.billing_start_day, now, site.timezone);
-        // End = next cycle start. Pivot 35 days forward (always lands in the next month)
-        // so the +1-month math goes through the same tz-aware helper.
-        const nextMonthPivot = new Date(start.getTime() + 35 * 24 * 60 * 60 * 1000);
-        end = getCurrentCycleStart(site.billing_start_day, nextMonthPivot, site.timezone);
+        end = getNextCycleStart(site.billing_start_day, start, site.timezone);
     }
 
     const siteJson = site.json as import('@/lib/tesla-client').EnergySiteInfo | null;
@@ -115,7 +132,7 @@ export default async function UsagePage({ params, searchParams }: {
     // Previous and Next month links (only relevant for non-custom)
     // Use timezone-aware month arithmetic to handle sites east of UTC correctly
     const prevDate = addMonthsInSiteTimezone(start, -1, site.timezone);
-    const nextDate = addMonthsInSiteTimezone(start, 1, site.timezone);
+    const nextDate = getNextCycleStart(site.billing_start_day, start, site.timezone);
 
 
     // Check if next month would be in the future

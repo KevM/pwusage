@@ -161,10 +161,15 @@ export class EnergyRepo {
 
         const schedule = new Schedule(site.tariffs, site.timezone);
 
-        // Calculate site-local "today" boundary and split point
+        // Calculate site-local "today" boundary and split point, clamped to
+        // [start, end]. Without the lower clamp, a request for a cycle that
+        // starts in the future fetches raw rows from today's midnight up to
+        // `end` — rows that precede the requested range.
         const now = new Date();
         const todayStart = EnergyRepo.getSiteMidnight(now, site.timezone);
-        const splitPoint = todayStart < end ? todayStart : end;
+        const splitPoint = new Date(
+            Math.max(start.getTime(), Math.min(todayStart.getTime(), end.getTime()))
+        );
 
         // Fetch prior aggregates and today's raw data in parallel
         const [priorAggregates, todayRaw] = await Promise.all([

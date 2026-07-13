@@ -253,7 +253,7 @@ describe('Importer Sync Logic', () => {
     });
 
 
-    it('does not multiply partial-day singleton history rows by 1000', async () => {
+    it('does not multiply singleton history rows by 1000', async () => {
         const singletonHistory: EnergyHistoryEntry[] = [
             {
                 timestamp: '2026-04-27T05:05:00.000Z',
@@ -300,11 +300,9 @@ describe('Importer Sync Logic', () => {
             processHistory: (
                 siteArg: typeof site,
                 history: EnergyHistoryEntry[],
-                soeHistory: [],
-                period: string,
-                requestedDurationHours: number
+                soeHistory: []
             ) => Promise<Array<{ load_power: number; grid_power: number }>>;
-        }).processHistory(site, singletonHistory, [], 'day', 7);
+        }).processHistory(site, singletonHistory, []);
 
         expect(rows).toHaveLength(1);
         expect(rows[0].load_power).toBe(64);

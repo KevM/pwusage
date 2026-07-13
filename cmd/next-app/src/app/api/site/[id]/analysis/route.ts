@@ -30,6 +30,22 @@ export async function GET(
         const dateParam = searchParams.get('date');
         const tzParam = searchParams.get('tz');
 
+        // AUTH CHECK
+        const { cookies } = await import('next/headers');
+        const { SiteService } = await import('@/lib/site-service');
+
+        const cookieStore = await cookies();
+        const siteAuthToken = cookieStore.get('site_auth')?.value;
+        if (siteAuthToken) {
+            // Validate access to THIS specific site
+            const siteService = new SiteService({ siteRepo, siteAuthToken });
+            if (!await siteService.validateSiteAccess(siteId)) {
+                return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
+            }
+        } else {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
         const site = await siteRepo.getSite(siteId);
         if (!site) {
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });
@@ -50,22 +66,6 @@ export async function GET(
         const end = isNaN(queryEnd.getTime())
             ? new Date(NaN)
             : new Date(queryEnd.getTime() - 1); // 23:59:59.999
-
-        // AUTH CHECK
-        const { cookies } = await import('next/headers');
-        const { SiteService } = await import('@/lib/site-service');
-
-        const cookieStore = await cookies();
-        const siteAuthToken = cookieStore.get('site_auth')?.value;
-        if (siteAuthToken) {
-            // Validate access to THIS specific site
-            const siteService = new SiteService({ siteRepo, siteAuthToken });
-            if (!await siteService.validateSiteAccess(siteId)) {
-                return NextResponse.json({ error: 'Unauthorized site access' }, { status: 403 });
-            }
-        } else {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
 
         if (isNaN(start.getTime())) {
             return NextResponse.json({ error: 'Invalid date' }, { status: 400 });

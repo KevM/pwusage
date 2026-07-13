@@ -248,13 +248,7 @@ export class Importer {
             ]);
 
             if (history && history.length > 0) {
-                const rows = await this.processHistory(
-                    site,
-                    history,
-                    soeHistory,
-                    period,
-                    (next.getTime() - cursor.getTime()) / (3600 * 1000)
-                );
+                const rows = await this.processHistory(site, history, soeHistory);
                 allRows.push(...rows);
             }
             cursor = next;
@@ -385,13 +379,7 @@ export class Importer {
             return [];
         }
         else {
-            const energyDatas = await this.processHistory(
-                site,
-                history,
-                soeHistory,
-                period,
-                (actualEnd.getTime() - start.getTime()) / (3600 * 1000)
-            );
+            const energyDatas = await this.processHistory(site, history, soeHistory);
 
             // Surgical Filter: Tesla often returns more data than requested (e.g., the whole day).
             // We only want to write the rows that fall within our requested window.
@@ -421,12 +409,10 @@ export class Importer {
     private async processHistory(
         site: SiteWithTariffs,
         history: EnergyHistoryEntry[],
-        soeHistory: SoeHistoryEntry[],
-        period: string = 'day',
-        requestedDurationHours: number = 24
+        soeHistory: SoeHistoryEntry[]
     ): Promise<EnergyDataRow[]> {
         const schedule = new Schedule(site.tariffs, site.timezone);
-        return transformEnergyPoints(history, soeHistory, period, requestedDurationHours, {
+        return transformEnergyPoints(history, soeHistory, {
             siteId: site.id,
             getTariffId: (ts: Date) => {
                 const tp = this.getTariffPeriodOrFallback(site, schedule, ts);

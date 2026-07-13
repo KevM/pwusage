@@ -8,7 +8,7 @@ import { TeslaTokenRepo } from './tesla-token-repo';
 import { TrmnlService } from './trmnl-service';
 import { Importer } from './importer';
 import { Schedule } from './schedule';
-import { getCurrentCycleStart } from './billing-cycle';
+import { getCurrentCycleStart, getNextCycleStart } from './billing-cycle';
 import {
     getSiteTodayMidnight,
     safeParseSiteLocalDateToMidnight,
@@ -215,7 +215,7 @@ export class SiteService {
 
         const billingDay = finalSite.billing_start_day || 1;
         const start = getCurrentCycleStart(billingDay, refDate, finalSite.timezone);
-        const end = addMonthsInSiteTimezone(start, 1, finalSite.timezone);
+        const end = getNextCycleStart(billingDay, start, finalSite.timezone);
 
         const usage = await energyRepo.getUsageByTOU(siteId, start, end);
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getCurrentCycleStart } from './billing-cycle';
+import { getCurrentCycleStart, getNextCycleStart } from './billing-cycle';
 import { getSiteLocalDate, addMonthsInSiteTimezone } from './date-utils';
 
 describe('getCurrentCycleStart — UTC site', () => {
@@ -212,6 +212,43 @@ describe('getCurrentCycleStart — clamped anchor day in short months', () => {
         const now = new Date(Date.UTC(2026, 2, 1, 12, 0, 0)); // Mar 1 2026 noon UTC
         const start = getCurrentCycleStart(31, now, 'UTC');
         expect(start).toEqual(new Date(Date.UTC(2026, 1, 28, 0, 0, 0)));
+    });
+});
+
+describe('getNextCycleStart', () => {
+    it('constrains into a short month (Jan 31 → Feb 28)', () => {
+        const start = getSiteLocalDate(2026, 1, 31, 'UTC');
+        expect(getNextCycleStart(31, start, 'UTC')).toEqual(new Date(Date.UTC(2026, 1, 28)));
+    });
+
+    it('re-anchors to the full billing day after a constrained start (Feb 28 → Mar 31)', () => {
+        // The Feb cycle for a day-31 anchor starts Feb 28 (constrained). The
+        // next cycle must start Mar 31 — deriving it as "start + 1 month"
+        // gave Mar 28 and left Mar 28-30 in no cycle at all.
+        const start = getSiteLocalDate(2026, 2, 28, 'UTC');
+        expect(getNextCycleStart(31, start, 'UTC')).toEqual(new Date(Date.UTC(2026, 2, 31)));
+    });
+
+    it('constrains into 30-day months (Mar 31 → Apr 30)', () => {
+        const start = getSiteLocalDate(2026, 3, 31, 'UTC');
+        expect(getNextCycleStart(31, start, 'UTC')).toEqual(new Date(Date.UTC(2026, 3, 30)));
+    });
+
+    it('rolls the year over (Dec 15 → Jan 15)', () => {
+        const start = getSiteLocalDate(2026, 12, 15, 'UTC');
+        expect(getNextCycleStart(15, start, 'UTC')).toEqual(new Date(Date.UTC(2027, 0, 15)));
+    });
+
+    it('treats falsy billingStartDay as 1', () => {
+        const start = getSiteLocalDate(2026, 3, 1, 'UTC');
+        expect(getNextCycleStart(0, start, 'UTC')).toEqual(new Date(Date.UTC(2026, 3, 1)));
+    });
+
+    it('returns site-local midnight for non-UTC sites', () => {
+        // Feb 28 2026 00:00 PST = 08:00Z; next cycle start Mar 31 00:00 PDT = 07:00Z.
+        const start = getSiteLocalDate(2026, 2, 28, 'America/Los_Angeles');
+        expect(getNextCycleStart(31, start, 'America/Los_Angeles'))
+            .toEqual(new Date(Date.UTC(2026, 2, 31, 7, 0, 0)));
     });
 });
 
