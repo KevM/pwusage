@@ -19,64 +19,59 @@ async function main() {
         JOIN "Tariff" t ON t.site_id = s.id AND t.is_current = true
         JOIN "EnergyData" ed ON ed.site_id = s.id
         WHERE s.name = 'Harrison'
+        LIMIT 1
     `);
 
     if (candidateSitesQuery.rows.length === 0) {
-        console.log('No sites with current tariffs and energy data found.');
+        console.log('No site named "Harrison" with current tariffs and energy data found.');
         process.exit(0);
     }
 
-    // Let's analyze all candidate sites that have data
-    for (const targetSiteRow of candidateSitesQuery.rows) {
+    const targetSiteRow = candidateSitesQuery.rows[0];
+    const siteRepo = new SiteRepo();
+    const site = await siteRepo.getSite(targetSiteRow.id);
+    if (!site) {
+        console.error(`Could not load site details for ${targetSiteRow.id}.`);
+        process.exit(1);
+    }
+
+    const tariffRepo = new TariffRepo();
+    const allSchedules = await tariffRepo.getSchedulesForSite(site.id);
+
+    const scheduleMap = new Map<number, any>();
+    site.tariffs.forEach(t => {
+        if (t.seasons) {
+            t.seasons.forEach(season => {
+                if (season.schedules) {
+                    season.schedules.forEach(s => scheduleMap.set(s.id, s));
+                }
+            });
+        }
+    });
+    allSchedules.forEach(s => scheduleMap.set(s.id, s));
+
+    const schedule = new Schedule(site.tariffs, site.timezone);
+    const energyRepo = new EnergyRepo();
+
+    const latestTs = await energyRepo.getLatestTimestamp(site.id);
+    if (!latestTs) {
+        console.log('No energy data found for this site.');
+        process.exit(0);
+    }
+    console.log(`Latest energy data timestamp: ${latestTs.toString()}`);
+
+    const runCalculation = async (label: string, start: Date, end: Date) => {
         console.log('\n======================================================');
-        console.log(`ANALYZING SITE: ${targetSiteRow.name} (ID: ${targetSiteRow.id})`);
+        console.log(`SITE: ${site.name} | PERIOD: ${label}`);
+        console.log(`Range: ${start.toISOString()} to ${end.toISOString()}`);
         console.log('======================================================');
 
-        const siteRepo = new SiteRepo();
-        const site = await siteRepo.getSite(targetSiteRow.id);
-        if (!site) {
-            console.error(`Could not load site details for ${targetSiteRow.id}.`);
-            continue;
-        }
-
-        const tariffRepo = new TariffRepo();
-        const allSchedules = await tariffRepo.getSchedulesForSite(site.id);
-
-        const scheduleMap = new Map<number, any>();
-        site.tariffs.forEach(t => {
-            if (t.seasons) {
-                t.seasons.forEach(season => {
-                    if (season.schedules) {
-                        season.schedules.forEach(s => scheduleMap.set(s.id, s));
-                    }
-                });
-            }
-        });
-        allSchedules.forEach(s => scheduleMap.set(s.id, s));
-
-        const schedule = new Schedule(site.tariffs, site.timezone);
-        const energyRepo = new EnergyRepo();
-
-        const latestTs = await energyRepo.getLatestTimestamp(site.id);
-        if (!latestTs) {
-            console.log('No energy data found for this site.');
-            continue;
-        }
-        console.log(`Latest energy data timestamp: ${latestTs.toString()}`);
-
-        // Get current billing cycle start
-        const cycleStart = getCurrentCycleStart(site.billing_start_day, latestTs, site.timezone);
-        const cycleEnd = getNextCycleStart(site.billing_start_day, cycleStart, site.timezone);
-
-        console.log(`Billing cycle: ${cycleStart.toISOString()} to ${cycleEnd.toISOString()}`);
-
-        // Fetch raw energy data for the cycle
-        const rows = await energyRepo.getRawEnergyData(site.id, cycleStart, latestTs < cycleEnd ? latestTs : cycleEnd);
+        const rows = await energyRepo.getRawEnergyData(site.id, start, end);
         console.log(`Fetched ${rows.length} rows of raw energy data.`);
 
         if (rows.length === 0) {
-            console.log('No energy data in the current billing cycle range.');
-            continue;
+            console.log('No energy data in this range.');
+            return;
         }
 
         // METHOD A: Interval-level Resolution (no netting)
@@ -207,8 +202,23 @@ async function main() {
         console.log(`\n[Difference Analysis]`);
         const billDiff = (totalImportCost - totalExportCredit) - totalNettedCost;
         console.log(`  Bill Difference (Interval - Netted): $${billDiff.toFixed(2)}`);
-        console.log(`  (A negative difference means interval-level billing is cheaper than TOU netting)`);
-    }
+    };
+
+    // 1. Current Billing Cycle
+    const cycleStart = getCurrentCycleStart(site.billing_start_day, latestTs, site.timezone);
+    const cycleEnd = getNextCycleStart(site.billing_start_day, cycleStart, site.timezone);
+    await runCalculation('Current Billing Cycle', cycleStart, latestTs < cycleEnd ? latestTs : cycleEnd);
+
+    // 2. Last 1 Year (or available historical period)
+    const oneYearAgo = new Date(latestTs.getTime() - 365 * 24 * 60 * 60 * 1000);
+    const earliestRes = await pool.query(
+        'SELECT MIN(timestamp) as min_ts FROM "EnergyData" WHERE site_id = $1',
+        [site.id]
+    );
+    const earliestTs = earliestRes.rows[0]?.min_ts ? new Date(earliestRes.rows[0].min_ts) : latestTs;
+    const yearStart = earliestTs > oneYearAgo ? earliestTs : oneYearAgo;
+    const days = Math.round((latestTs.getTime() - yearStart.getTime()) / (24 * 60 * 60 * 1000));
+    await runCalculation(`Last 1 Year (Available: ${days} days)`, yearStart, latestTs);
 }
 
 main().catch(console.error).finally(() => process.exit(0));
