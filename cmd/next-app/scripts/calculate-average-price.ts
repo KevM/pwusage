@@ -12,13 +12,13 @@ async function main() {
     const { getCurrentCycleStart, getNextCycleStart } = await import('../src/lib/billing-cycle');
     const { EnergyRepo } = await import('../src/lib/energy-repo');
 
-    console.log('Finding candidate sites with tariffs and energy data...');
+    console.log('Finding Harrison site with tariffs and energy data...');
     const candidateSitesQuery = await pool.query(`
         SELECT DISTINCT s.id, s.name, s.timezone, s.billing_start_day
         FROM "Site" s
         JOIN "Tariff" t ON t.site_id = s.id AND t.is_current = true
         JOIN "EnergyData" ed ON ed.site_id = s.id
-        LIMIT 5
+        WHERE s.name = 'Harrison'
     `);
 
     if (candidateSitesQuery.rows.length === 0) {
