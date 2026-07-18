@@ -149,23 +149,17 @@ describe('TrmnlInstallationRepo.findByUuidWithSite', () => {
         queryMock.mockResolvedValueOnce({
             rows: [{ id: 1, uuid: 'u-1', site_id: 'site-1', plugin_setting_id: null, created_at: new Date(), json: {}, access_token: null, refresh_token: null }]
         });
-        // Second query: SiteRepo.getSite -> loadSitesFromDB (full JOIN)
+        // Second/third queries: SiteRepo.getSite -> loadSitesFromDB
+        // (site scalars query, then the tariff tree query)
         queryMock.mockResolvedValueOnce({
             rows: [{
                 id: 'site-1', user_id: 'u', name: 'Home', utility: null,
                 updated: new Date(), installed: new Date(), timezone: 'America/Chicago',
                 billing_start_day: 1, timezone_display_mode: null,
                 access_token: 'a', refresh_token: 'r', auth_status: 'active',
-                tariff_id: null, tariff_name: null, tariff_updated: null, tariff_site_id: null,
-                season_id: null, season_name: null,
-                from_month: null, from_day: null, to_month: null, to_day: null,
-                season_buy_rate: null, season_sell_rate: null,
-                schedule_id: null, schedule_name: null,
-                schedule_buy_rate: null, schedule_sell_rate: null,
-                from_day_of_week: null, from_hour: null, from_minute: null,
-                to_day_of_week: null, to_hour: null, to_minute: null,
             }]
         });
+        queryMock.mockResolvedValueOnce({ rows: [] });
 
         const repo = new TrmnlInstallationRepo();
         const result = await repo.findByUuidWithSite('u-1', { includeTokens: true });
@@ -184,6 +178,7 @@ describe('TrmnlInstallationRepo.findByUuidWithSite', () => {
     it('returns undefined when site disappears', async () => {
         queryMock
             .mockResolvedValueOnce({ rows: [{ id: 1, uuid: 'u-1', site_id: 'orphan' }] })
+            .mockResolvedValueOnce({ rows: [] })
             .mockResolvedValueOnce({ rows: [] });
         const repo = new TrmnlInstallationRepo();
         const result = await repo.findByUuidWithSite('u-1');

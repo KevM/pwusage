@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => {
     return {
         verifySiteAccess: vi.fn(),
         getSite: vi.fn(),
+        getSiteCurrencyCode: vi.fn(),
         getLatestEnergyData: vi.fn(),
         getCycleAggregates: vi.fn(),
         getRawEnergyData: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('@/lib/auth-checks', () => ({
 vi.mock('@/lib/site-repo', () => ({
     SiteRepo: class {
         getSite = mocks.getSite;
+        getSiteCurrencyCode = mocks.getSiteCurrencyCode;
     }
 }));
 
@@ -46,6 +48,8 @@ vi.mock('@/lib/energy-repo', () => ({
         getRawEnergyData = mocks.getRawEnergyData;
         getUsageByTOU = mocks.getUsageByTOU;
         static getSiteMidnight = (d: Date) => d;
+        static buildTariffLookupMaps = () => ({ tariffMap: new Map(), scheduleMap: new Map() });
+        static aggregateUsageByTOU = () => [];
     },
     sumTodayRows: () => ({ homeKwh: 0, gridNetKwh: 0, solarKwh: 0 })
 }));

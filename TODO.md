@@ -6,6 +6,29 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## DB egress: remaining reduction candidates
+
+The July 2026 Supabase egress spike was traced to site queries duplicating wide
+columns (Site.json, Tesla tokens, live_status_cache) across the tariff join
+fan-out on the TRMNL markup hot path; that and the markup route's duplicate
+usage-by-TOU fetch were fixed (2026-07-18, branch `claude/db-egress-spike-eie52j`).
+Candidates that remain, in rough value order:
+
+- **`getExistingTimestamps` returns every 5-min timestamp** in the audited
+  range (~8.5k rows per billing cycle) on each `/api/sync` step, and
+  `DataSyncer` retries up to 15× per stage, 2 stages, re-running hourly.
+  Aggregating per-day stats (count, first, last, max interior gap via `lag()`)
+  in SQL would cut it ~300×, but must reproduce `auditDays`' site-timezone day
+  windows (DST days are pinned by `import-planner.test.ts`) — do it carefully.
+- **Live-status cache churn:** `claimLiveRefresh`/`updateLiveStatusCache`
+  invalidate the in-memory site cache roughly every 14–16 min per site, so the
+  15-min site cache rarely survives. Consider a narrow update that doesn't
+  nuke the whole cached site, or a short-TTL request-scoped reread.
+- **All tariff versions fetched per markup poll** (`getTariffsForSite` /
+  `getSchedulesForSite`, intentionally unfiltered for historical name
+  resolution). Version count grows monotonically (append-only); if it gets
+  large, resolve names via a slimmer projection or cache the version list.
+
 ## TRMNL: Loose Pending Installation Flow Note
 
 - **Note (2026-07-01):** The loose-pending fallback flow (installation row with NULL `uuid` and NULL `plugin_setting_id`, claimed by the next webhook within 15 minutes) has been retained. Database inspection confirmed that loose installations still occur (most recent on June 23, 2026). This fallback remains necessary to handle cases where `plugin_setting_id` is missing from the callback URL during manual setups or when the TRMNL API `fetchMe` fails. Revisit and remove this flow if loose installs stop appearing after the manual-install path is fixed.

@@ -85,11 +85,23 @@ export class SiteRepo {
     private async loadSitesFromDB(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
         const jsonCol = options?.includeJson ? ', s.json' : '';
         const tokenCols = options?.includeTokens ? ', u.access_token, u.refresh_token, u.auth_status' : '';
-        const sql = `
+        const userJoin = options?.includeTokens ? 'LEFT JOIN "User" u ON u.id = s.user_id' : '';
+        // Site-level columns are fetched one row per site, separately from the
+        // tariff tree. Selecting them through the Site × Tariff × Season ×
+        // Schedule join repeats the wide values (json blob, Tesla tokens,
+        // live_status_cache) on every join row, multiplying DB egress by the
+        // schedule count on hot paths like the TRMNL markup poll.
+        const siteSql = `
             SELECT
                 s.id, s.user_id, s.name, s.utility, s.updated, s.installed,
                 s.timezone, s.billing_start_day, s.timezone_display_mode, s.sankey_renderer,
-                s.last_live_refresh_at, s.last_live_claim_at, s.live_status_cache${jsonCol}${tokenCols},
+                s.last_live_refresh_at, s.last_live_claim_at, s.live_status_cache${jsonCol}${tokenCols}
+            FROM "Site" s
+            ${userJoin}
+            WHERE s.id = ANY($1::text[])
+        `;
+        const tariffSql = `
+            SELECT
                 t.id          AS tariff_id,
                 t.name        AS tariff_name,
                 t.updated     AS tariff_updated,
@@ -105,19 +117,21 @@ export class SiteRepo {
                 sch.sell_rate AS schedule_sell_rate,
                 sch.from_day_of_week, sch.from_hour, sch.from_minute,
                 sch.to_day_of_week,   sch.to_hour,  sch.to_minute
-            FROM "Site" s
-            LEFT JOIN "User"           u   ON u.id          = s.user_id
-            LEFT JOIN "Tariff"         t   ON t.site_id     = s.id AND t.is_current
+            FROM "Tariff" t
             LEFT JOIN "TariffSeason"   ts  ON ts.tariff_id  = t.id
             LEFT JOIN "TariffSchedule" sch ON sch.season_id = ts.id
-            WHERE s.id = ANY($1::text[])
+            WHERE t.site_id = ANY($1::text[]) AND t.is_current
         `;
-        const res = await pool.query(sql, [siteIds]);
-        return this.assembleFromRows(res.rows, options);
+        const [siteRes, tariffRes] = await Promise.all([
+            pool.query(siteSql, [siteIds]),
+            pool.query(tariffSql, [siteIds]),
+        ]);
+        return this.assembleFromRows(siteRes.rows, tariffRes.rows, options);
     }
 
     private assembleFromRows(
-        rows: Record<string, unknown>[],
+        siteRows: Record<string, unknown>[],
+        tariffRows: Record<string, unknown>[],
         options?: SiteQueryOptions
     ): SiteWithTariffs[] {
         // Tariff/season IDs are global serial PKs — safe to use as cross-site map keys.
@@ -125,33 +139,34 @@ export class SiteRepo {
         const tariffMap = new Map<number, Tariff>();
         const seasonMap = new Map<number, TariffSeason>();
 
-        for (const row of rows) {
+        for (const row of siteRows) {
             const siteId = row.id as string;
-            if (!siteMap.has(siteId)) {
-                siteMap.set(siteId, {
-                    id: siteId,
-                    user_id: (row.user_id as string | null) ?? null,
-                    name: row.name as string,
-                    utility: (row.utility as string | null) ?? null,
-                    updated: new Date(row.updated as string | Date),
-                    installed: new Date(row.installed as string | Date),
-                    timezone: row.timezone as string,
-                    billing_start_day: row.billing_start_day as number,
-                    timezone_display_mode: (row.timezone_display_mode as 'SITE' | 'BROWSER') ?? undefined,
-                    sankey_renderer: (row.sankey_renderer as string) ?? undefined,
-                    last_live_refresh_at: row.last_live_refresh_at != null ? Number(row.last_live_refresh_at) : undefined,
-                    last_live_claim_at: row.last_live_claim_at != null ? Number(row.last_live_claim_at) : undefined,
-                    live_status_cache: row.live_status_cache ?? undefined,
-                    json: options?.includeJson ? row.json : undefined,
-                    access_token: options?.includeTokens ? (row.access_token as string | null) ?? null : undefined,
-                    refresh_token: options?.includeTokens ? (row.refresh_token as string | null) ?? null : undefined,
-                    auth_status: options?.includeTokens ? (row.auth_status as string | null) ?? null : undefined,
-                    tariffs: [],
-                });
-            }
-            const site = siteMap.get(siteId)!;
+            if (siteMap.has(siteId)) continue;
+            siteMap.set(siteId, {
+                id: siteId,
+                user_id: (row.user_id as string | null) ?? null,
+                name: row.name as string,
+                utility: (row.utility as string | null) ?? null,
+                updated: new Date(row.updated as string | Date),
+                installed: new Date(row.installed as string | Date),
+                timezone: row.timezone as string,
+                billing_start_day: row.billing_start_day as number,
+                timezone_display_mode: (row.timezone_display_mode as 'SITE' | 'BROWSER') ?? undefined,
+                sankey_renderer: (row.sankey_renderer as string) ?? undefined,
+                last_live_refresh_at: row.last_live_refresh_at != null ? Number(row.last_live_refresh_at) : undefined,
+                last_live_claim_at: row.last_live_claim_at != null ? Number(row.last_live_claim_at) : undefined,
+                live_status_cache: row.live_status_cache ?? undefined,
+                json: options?.includeJson ? row.json : undefined,
+                access_token: options?.includeTokens ? (row.access_token as string | null) ?? null : undefined,
+                refresh_token: options?.includeTokens ? (row.refresh_token as string | null) ?? null : undefined,
+                auth_status: options?.includeTokens ? (row.auth_status as string | null) ?? null : undefined,
+                tariffs: [],
+            });
+        }
 
-            if (row.tariff_id == null) continue;
+        for (const row of tariffRows) {
+            const site = siteMap.get(row.tariff_site_id as string);
+            if (!site || row.tariff_id == null) continue;
             const tariffId = Number(row.tariff_id);
             if (!tariffMap.has(tariffId)) {
                 const tariff: Tariff = {
@@ -214,6 +229,19 @@ export class SiteRepo {
         const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
         const { rows } = await pool.query(`SELECT ${columns} FROM "Site"`);
         return rows as Site[];
+    }
+
+    /**
+     * Currency code for a site, extracted from Site.json in SQL so hot paths
+     * (TRMNL markup polls) don't transfer the whole EnergySiteInfo blob just
+     * to read one field.
+     */
+    async getSiteCurrencyCode(siteId: string): Promise<string | null> {
+        const res = await pool.query(
+            `SELECT json -> 'tariff_content_v2' ->> 'currency' AS currency FROM "Site" WHERE id = $1`,
+            [siteId]
+        );
+        return res.rows[0]?.currency ?? null;
     }
 
     // === Queries ===

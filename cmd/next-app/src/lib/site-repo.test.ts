@@ -13,7 +13,7 @@ vi.mock('./db', () => ({
 import { SiteRepo } from './site-repo';
 import { withRequestContext } from './request-context';
 
-function makeSiteJoinRow(overrides: Record<string, unknown> = {}) {
+function makeSiteRow(overrides: Record<string, unknown> = {}) {
     return {
         id: 'site-1',
         user_id: 'user-1',
@@ -27,10 +27,16 @@ function makeSiteJoinRow(overrides: Record<string, unknown> = {}) {
         access_token: 'a',
         refresh_token: 'r',
         auth_status: 'active',
-        tariff_id: null,
-        tariff_name: null,
-        tariff_updated: null,
-        tariff_site_id: null,
+        ...overrides,
+    };
+}
+
+function makeTariffJoinRow(overrides: Record<string, unknown> = {}) {
+    return {
+        tariff_id: 1,
+        tariff_name: 'E-TOU-C',
+        tariff_updated: new Date('2026-01-01'),
+        tariff_site_id: 'site-1',
         season_id: null,
         season_name: null,
         from_month: null, from_day: null,
@@ -45,6 +51,13 @@ function makeSiteJoinRow(overrides: Record<string, unknown> = {}) {
     };
 }
 
+// loadSitesFromDB now issues two queries per DB load (site scalars, then the
+// tariff tree) so the wide site columns aren't repeated per join row.
+function mockSiteLoad(siteRows: unknown[], tariffRows: unknown[] = []) {
+    queryMock.mockResolvedValueOnce({ rows: siteRows });
+    queryMock.mockResolvedValueOnce({ rows: tariffRows });
+}
+
 describe('SiteRepo site payload selection', () => {
     beforeEach(() => {
         queryMock.mockReset();
@@ -53,27 +66,44 @@ describe('SiteRepo site payload selection', () => {
     });
 
     it('fetches slim site columns by default', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        mockSiteLoad([makeSiteRow()]);
 
         const repo = new SiteRepo();
         await repo.getSite('site-1');
 
-        expect(queryMock).toHaveBeenCalledTimes(1);
+        expect(queryMock).toHaveBeenCalledTimes(2);
         const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
         expect(sql).toContain('ANY($1');
         expect(sql).not.toContain('s.json');
         expect(params).toEqual([['site-1']]);
     });
 
+    it('does not repeat wide site columns on tariff join rows', async () => {
+        mockSiteLoad([makeSiteRow()]);
+
+        const repo = new SiteRepo();
+        await repo.getSite('site-1', { includeJson: true, includeTokens: true });
+
+        const [siteSql] = queryMock.mock.calls[0] as [string, unknown[]];
+        const [tariffSql] = queryMock.mock.calls[1] as [string, unknown[]];
+        // Wide values live only in the single-row site query…
+        expect(siteSql).toContain('s.json');
+        expect(siteSql).toContain('live_status_cache');
+        expect(siteSql).toContain('refresh_token');
+        expect(siteSql).not.toContain('"Tariff"');
+        // …and the tariff tree query carries none of them.
+        expect(tariffSql).not.toContain('json');
+        expect(tariffSql).not.toContain('live_status_cache');
+        expect(tariffSql).not.toContain('token');
+    });
+
     it('includes site json only when explicitly requested', async () => {
-        queryMock.mockResolvedValueOnce({
-            rows: [makeSiteJoinRow({ json: { components: { battery: true } } })]
-        });
+        mockSiteLoad([makeSiteRow({ json: { components: { battery: true } } })]);
 
         const repo = new SiteRepo();
         const site = await repo.getSite('site-1', { includeJson: true });
 
-        expect(queryMock).toHaveBeenCalledTimes(1);
+        expect(queryMock).toHaveBeenCalledTimes(2);
         const [sql] = queryMock.mock.calls[0] as [string, unknown[]];
         expect(sql).toContain('s.json');
         expect(site?.json).toEqual({ components: { battery: true } });
@@ -117,12 +147,12 @@ describe('SiteRepo getSite request-scoped cache', () => {
         await withRequestContext(async () => {
             const repo = new SiteRepo();
             repo.invalidateCache('site-1');
-            queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+            mockSiteLoad([makeSiteRow()]);
 
             const first = await repo.getSite('site-1');
             const callCountAfterFirst = queryMock.mock.calls.length;
             expect(first?.id).toBe('site-1');
-            expect(callCountAfterFirst).toBe(1);
+            expect(callCountAfterFirst).toBe(2);
 
             // Invalidate persistent cache to prove request cache is what saves us
             repo.invalidateCache('site-1');
@@ -138,7 +168,7 @@ describe('SiteRepo getSite request-scoped cache', () => {
         await withRequestContext(async () => {
             const repo = new SiteRepo();
             repo.invalidateCache('site-1');
-            queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+            mockSiteLoad([makeSiteRow()]);
             await repo.getSite('site-1');
         });
 
@@ -147,10 +177,10 @@ describe('SiteRepo getSite request-scoped cache', () => {
             const repo = new SiteRepo();
             repo.invalidateCache('site-1');
             queryMock.mockReset();
-            queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+            mockSiteLoad([makeSiteRow()]);
 
             await repo.getSite('site-1');
-            expect(queryMock.mock.calls.length).toBe(1); // hit DB, not request cache
+            expect(queryMock.mock.calls.length).toBe(2); // hit DB, not request cache
         });
     });
 });
@@ -170,8 +200,8 @@ describe('SiteRepo.getSitesWithTariffs', () => {
         expect(queryMock).not.toHaveBeenCalled();
     });
 
-    it('assembles a site with no tariffs (all tariff columns null)', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+    it('assembles a site with no tariffs (empty tariff query)', async () => {
+        mockSiteLoad([makeSiteRow()]);
 
         const repo = new SiteRepo();
         const [site] = await repo.getSitesWithTariffs(['site-1'], { includeTokens: true });
@@ -182,29 +212,23 @@ describe('SiteRepo.getSitesWithTariffs', () => {
         expect(site.timezone).toBe('America/Chicago');
         expect(site.access_token).toBe('a');
         expect(site.auth_status).toBe('active');
-        expect(queryMock).toHaveBeenCalledTimes(1);
+        expect(queryMock).toHaveBeenCalledTimes(2);
     });
 
     it('assembles a site with one tariff, one season, two schedules', async () => {
-        const base = makeSiteJoinRow({
-            tariff_id: 1,
-            tariff_name: 'E-TOU-C',
-            tariff_updated: new Date('2026-01-01'),
-            tariff_site_id: 'site-1',
+        const base = makeTariffJoinRow({
             season_id: 10,
             season_name: 'Summer',
             from_month: 6, from_day: 1,
             to_month: 9, to_day: 30,
             season_buy_rate: 0.40, season_sell_rate: 0.10,
         });
-        queryMock.mockResolvedValueOnce({
-            rows: [
-                { ...base, schedule_id: 100, schedule_name: 'Peak',     schedule_buy_rate: 0.45, schedule_sell_rate: 0.08,
-                  from_day_of_week: 0, from_hour: 16, from_minute: 0, to_day_of_week: 6, to_hour: 21, to_minute: 0 },
-                { ...base, schedule_id: 101, schedule_name: 'Off-Peak', schedule_buy_rate: 0.25, schedule_sell_rate: 0.10,
-                  from_day_of_week: 0, from_hour: 21, from_minute: 0, to_day_of_week: 6, to_hour: 16, to_minute: 0 },
-            ]
-        });
+        mockSiteLoad([makeSiteRow()], [
+            { ...base, schedule_id: 100, schedule_name: 'Peak',     schedule_buy_rate: 0.45, schedule_sell_rate: 0.08,
+              from_day_of_week: 0, from_hour: 16, from_minute: 0, to_day_of_week: 6, to_hour: 21, to_minute: 0 },
+            { ...base, schedule_id: 101, schedule_name: 'Off-Peak', schedule_buy_rate: 0.25, schedule_sell_rate: 0.10,
+              from_day_of_week: 0, from_hour: 21, from_minute: 0, to_day_of_week: 6, to_hour: 16, to_minute: 0 },
+        ]);
 
         const repo = new SiteRepo();
         const [site] = await repo.getSitesWithTariffs(['site-1']);
@@ -217,51 +241,47 @@ describe('SiteRepo.getSitesWithTariffs', () => {
         expect(site.tariffs[0].seasons![0].schedules![1].name).toBe('Off-Peak');
         expect(site.tariffs[0].seasons![0].schedules![0].buy_rate).toBe(0.45);
         expect(site.tariffs[0].seasons![0].schedules![0].from_hour).toBe(16);
-        expect(queryMock).toHaveBeenCalledTimes(1);
+        expect(queryMock).toHaveBeenCalledTimes(2);
     });
 
-    it('fetches two sites in one query', async () => {
-        queryMock.mockResolvedValueOnce({
-            rows: [
-                makeSiteJoinRow({ id: 'site-1', name: 'Home'  }),
-                makeSiteJoinRow({ id: 'site-2', name: 'Cabin', user_id: 'user-2' }),
-            ]
-        });
+    it('fetches two sites in one load', async () => {
+        mockSiteLoad([
+            makeSiteRow({ id: 'site-1', name: 'Home'  }),
+            makeSiteRow({ id: 'site-2', name: 'Cabin', user_id: 'user-2' }),
+        ]);
 
         const repo = new SiteRepo();
         const sites = await repo.getSitesWithTariffs(['site-1', 'site-2']);
 
         expect(sites).toHaveLength(2);
-        expect(queryMock).toHaveBeenCalledTimes(1);
+        expect(queryMock).toHaveBeenCalledTimes(2);
         const [, params] = queryMock.mock.calls[0] as [string, unknown[]];
         expect(params).toEqual([['site-1', 'site-2']]);
     });
 
     it('only fetches uncached ids when some are already in module cache', async () => {
         // Pre-populate module cache for site-1
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow({ id: 'site-1' })] });
+        mockSiteLoad([makeSiteRow({ id: 'site-1' })]);
         const repo = new SiteRepo();
         await repo.getSitesWithTariffs(['site-1']);
         queryMock.mockReset();
 
         // Now request site-1 (cached) and site-2 (cold)
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow({ id: 'site-2', name: 'Cabin' })] });
+        mockSiteLoad([makeSiteRow({ id: 'site-2', name: 'Cabin' })]);
         const sites = await repo.getSitesWithTariffs(['site-1', 'site-2']);
 
         expect(sites).toHaveLength(2);
-        expect(queryMock).toHaveBeenCalledTimes(1);
+        expect(queryMock).toHaveBeenCalledTimes(2);
         const [, params] = queryMock.mock.calls[0] as [string, unknown[]];
         expect(params).toEqual([['site-2']]); // only the cold id
     });
 
     it('returns all from cache without querying when all ids are warm', async () => {
         // Warm both sites
-        queryMock.mockResolvedValueOnce({
-            rows: [
-                makeSiteJoinRow({ id: 'site-1' }),
-                makeSiteJoinRow({ id: 'site-2', name: 'Cabin' }),
-            ]
-        });
+        mockSiteLoad([
+            makeSiteRow({ id: 'site-1' }),
+            makeSiteRow({ id: 'site-2', name: 'Cabin' }),
+        ]);
         const repo = new SiteRepo();
         await repo.getSitesWithTariffs(['site-1', 'site-2']);
         queryMock.mockReset();
@@ -273,59 +293,57 @@ describe('SiteRepo.getSitesWithTariffs', () => {
 
     it('re-fetches when cached entry lacks json and includeJson is requested', async () => {
         // Warm cache without json
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        mockSiteLoad([makeSiteRow()]);
         const repo = new SiteRepo();
         await repo.getSitesWithTariffs(['site-1']);
         queryMock.mockReset();
 
         // Request with includeJson — must hit DB because cached entry has no json
-        queryMock.mockResolvedValueOnce({
-            rows: [makeSiteJoinRow({ json: { components: { battery: true } } })]
-        });
+        mockSiteLoad([makeSiteRow({ json: { components: { battery: true } } })]);
         const [site] = await repo.getSitesWithTariffs(['site-1'], { includeJson: true });
 
-        expect(queryMock).toHaveBeenCalledTimes(1);
+        expect(queryMock).toHaveBeenCalledTimes(2);
         expect(site.json).toEqual({ components: { battery: true } });
     });
 
     it('always hits DB when includeTokens is requested, bypassing the cache', async () => {
-        let queryCalls = 0;
-        queryMock.mockImplementation(async () => {
-            queryCalls++;
-            return { rows: [makeSiteJoinRow()] };
+        let loadCalls = 0;
+        queryMock.mockImplementation(async (sql: string) => {
+            if (String(sql).includes('FROM "Site"')) loadCalls++;
+            return { rows: String(sql).includes('FROM "Site"') ? [makeSiteRow()] : [] };
         });
 
         const repo = new SiteRepo();
 
         // First call with includeTokens — hits DB
         await repo.getSitesWithTariffs(['site-1'], { includeTokens: true });
-        expect(queryCalls).toBe(1);
+        expect(loadCalls).toBe(1);
 
         // Second call with includeTokens — must hit DB again, not use cache,
         // because auth_status can change externally (e.g., via recovery scripts)
         const [site] = await repo.getSitesWithTariffs(['site-1'], { includeTokens: true });
-        expect(queryCalls).toBe(2);
+        expect(loadCalls).toBe(2);
         expect(site.access_token).toBe('a');
         expect(site.auth_status).toBe('active');
     });
 
     it('does not pollute global cache with includeTokens results', async () => {
-        let queryCalls = 0;
-        queryMock.mockImplementation(async () => {
-            queryCalls++;
-            return { rows: [makeSiteJoinRow()] };
+        let loadCalls = 0;
+        queryMock.mockImplementation(async (sql: string) => {
+            if (String(sql).includes('FROM "Site"')) loadCalls++;
+            return { rows: String(sql).includes('FROM "Site"') ? [makeSiteRow()] : [] };
         });
 
         const repo = new SiteRepo();
 
         // Request with includeTokens
         await repo.getSitesWithTariffs(['site-1'], { includeTokens: true });
-        expect(queryCalls).toBe(1);
+        expect(loadCalls).toBe(1);
 
         // Subsequent request without includeTokens should still hit DB —
         // the previous includeTokens fetch should not have populated the cache
         await repo.getSitesWithTariffs(['site-1']);
-        expect(queryCalls).toBe(2);
+        expect(loadCalls).toBe(2);
     });
 });
 
@@ -424,10 +442,10 @@ describe('SiteRepo current-version tariff filter', () => {
     });
 
     it('joins only the current tariff version', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [] });
+        mockSiteLoad([]);
         await new SiteRepo().getSite('site-1');
         const sql = String(queryMock.mock.calls.at(-1)?.[0] ?? '');
-        expect(sql).toContain('LEFT JOIN "Tariff"');
+        expect(sql).toContain('FROM "Tariff"');
         expect(sql).toContain('t.is_current');
     });
 });

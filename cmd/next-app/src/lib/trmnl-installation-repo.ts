@@ -15,10 +15,10 @@ export class TrmnlInstallationRepo {
         const installation = await this.findByUuid(uuid);
         if (!installation) return undefined;
 
-        const site = await new SiteRepo().getSite(installation.site_id, {
-            ...options,
-            includeJson: true
-        });
+        // Deliberately no includeJson: the markup poll is the hot caller and
+        // only needs the currency code, which SiteRepo.getSiteCurrencyCode
+        // extracts in SQL without transferring the EnergySiteInfo blob.
+        const site = await new SiteRepo().getSite(installation.site_id, options);
         if (!site) return undefined;
 
         if (!options.includeTokens) {

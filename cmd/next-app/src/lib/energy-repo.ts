@@ -29,6 +29,16 @@ export interface CycleAggregateRow {
     battery_power: number;
 }
 
+export interface UsageByTOUAggregationInputs {
+    siteId: string;
+    start: Date;
+    priorAggregates: CycleAggregateRow[];
+    todayRaw: EnergyData[];
+    schedule: Schedule;
+    tariffMap: Map<number, Tariff>;
+    scheduleMap: Map<number, TariffSchedule>;
+}
+
 /**
  * Canonical "today so far" scalar totals. Single source of truth — both the
  * live page and the Trmnl markup endpoint compute these from the same
@@ -141,24 +151,12 @@ export class EnergyRepo {
         // Name-resolution map must cover ALL tariff versions: historical EnergyData
         // rows keep an older version's tariff_id and would otherwise show 'Unknown'.
         // (Pricing still uses site.tariffs — current only — via the Schedule below.)
-        const tariffMap = new Map<number, Tariff>();
-        const allVersions = await new TariffRepo().getTariffsForSite(siteId);
-        allVersions.forEach(t => tariffMap.set(t.id, t));
-        site.tariffs.forEach(t => tariffMap.set(t.id, t));
-
-        const scheduleMap = new Map<number, TariffSchedule>();
-        site.tariffs.forEach(t => {
-            if (t.seasons) {
-                t.seasons.forEach(season => {
-                    if (season.schedules) {
-                        season.schedules.forEach(s => scheduleMap.set(s.id, s));
-                    }
-                });
-            }
-        });
-        const allSchedules = await new TariffRepo().getSchedulesForSite(siteId);
-        allSchedules.forEach(s => scheduleMap.set(s.id, s));
-
+        const tariffRepo = new TariffRepo();
+        const [allVersions, allSchedules] = await Promise.all([
+            tariffRepo.getTariffsForSite(siteId),
+            tariffRepo.getSchedulesForSite(siteId),
+        ]);
+        const { tariffMap, scheduleMap } = EnergyRepo.buildTariffLookupMaps(site.tariffs, allVersions, allSchedules);
         const schedule = new Schedule(site.tariffs, site.timezone);
 
         // Calculate site-local "today" boundary and split point, clamped to
@@ -177,6 +175,44 @@ export class EnergyRepo {
             this.getRawEnergyData(siteId, splitPoint, end)
         ]);
 
+        return EnergyRepo.aggregateUsageByTOU({
+            siteId, start, priorAggregates, todayRaw, schedule, tariffMap, scheduleMap
+        });
+    }
+
+    /**
+     * Build the tariff/schedule name-resolution maps from already-fetched
+     * version lists. All versions matter: historical EnergyData rows keep an
+     * older version's tariff_id and would otherwise resolve to 'Unknown'.
+     */
+    static buildTariffLookupMaps(
+        siteTariffs: Tariff[],
+        allVersions: Tariff[],
+        allSchedules: TariffSchedule[]
+    ): { tariffMap: Map<number, Tariff>; scheduleMap: Map<number, TariffSchedule> } {
+        const tariffMap = new Map<number, Tariff>();
+        allVersions.forEach(t => tariffMap.set(t.id, t));
+        siteTariffs.forEach(t => tariffMap.set(t.id, t));
+
+        const scheduleMap = new Map<number, TariffSchedule>();
+        siteTariffs.forEach(t => {
+            t.seasons?.forEach(season => {
+                season.schedules?.forEach(s => scheduleMap.set(s.id, s));
+            });
+        });
+        allSchedules.forEach(s => scheduleMap.set(s.id, s));
+
+        return { tariffMap, scheduleMap };
+    }
+
+    /**
+     * Pure aggregation core of getUsageByTOU: groups cycle aggregates and
+     * today's raw rows by (tariff, TOU period, rates) and prices the result.
+     * Exposed so callers that already fetched the inputs (the TRMNL markup
+     * route) can aggregate without re-running the same queries.
+     */
+    static aggregateUsageByTOU(inputs: UsageByTOUAggregationInputs): UsageData[] {
+        const { siteId, start, priorAggregates, todayRaw, schedule, tariffMap, scheduleMap } = inputs;
         const aggregation = new Map<string, UsageData>();
 
         // Pass 1: Prior day aggregates (use tariff_schedule_id for TOU lookup)

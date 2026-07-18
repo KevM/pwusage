@@ -160,19 +160,30 @@ export async function GET(request: Request) {
         })();
 
         const tariffRepo = new TariffRepo();
-        const [latestData, priorAggregates, todayRaw, allTariffVersions, allScheduleVersions] = await Promise.all([
+        const [latestData, priorAggregates, todayRaw, allTariffVersions, allScheduleVersions, currencyCode] = await Promise.all([
             dbLatestPromise,
             dbCyclePromise,
             dbTodayPromise,
             tariffRepo.getTariffsForSite(site!.id),
             tariffRepo.getSchedulesForSite(site!.id),
+            siteRepo.getSiteCurrencyCode(site!.id),
         ]);
         const latestTimestamp = latestData?.timestamp ?? null;
 
-        // Load timing needs the per-TOU cycle UsageData. Only fetch it when the
-        // section is enabled — zero added DB cost when the feature is off.
+        const schedule = new Schedule(site.tariffs, tz);
+
+        // Load timing needs the per-TOU cycle UsageData. The rows and tariff
+        // versions are already fetched above, so this aggregates in memory
+        // instead of re-running the same queries via getUsageByTOU.
         const loadTimingCycle = componentConfig.showLoadTiming
-            ? await repo.getUsageByTOU(site!.id, start, now)
+            ? EnergyRepo.aggregateUsageByTOU({
+                siteId: site.id,
+                start,
+                priorAggregates,
+                todayRaw,
+                schedule,
+                ...EnergyRepo.buildTariffLookupMaps(site.tariffs, allTariffVersions, allScheduleVersions),
+            })
             : [];
 
         // Load live status cache from the Site record
@@ -246,7 +257,6 @@ export async function GET(request: Request) {
 
         // --- IN-MEMORY AGGREGATION (TOU Stats & Chart Extraction) ---
         const aggregationStart = Date.now();
-        const schedule = new Schedule(site.tariffs, tz);
         const { tariffGroups, totalBillCost, seriesData, latestSeriesSoc } = aggregateUsage(
             site,
             priorAggregates,
@@ -263,8 +273,6 @@ export async function GET(request: Request) {
         const todaySolar = todayTotals.solarKwh;
 
 
-        const siteInfo = site.json as import('@/lib/tesla-client').EnergySiteInfo | null;
-        const currencyCode = siteInfo?.tariff_content_v2?.currency || 'USD';
         let currency = '$';
         if (currencyCode === 'GBP') {
             currency = '£';

@@ -64,8 +64,9 @@ describe('TeslaTokenRepo.waitForTokenRefresh', () => {
     });
 
     it('throws when a concurrent refresh failed and left auth_status revoked', async () => {
-        // getSite JOIN query — only user_id matters here
+        // getSite — site scalars query, then tariff tree query
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        queryMock.mockResolvedValueOnce({ rows: [] });
         // User polling: lock released, but the refresh that held it failed → revoked
         queryMock.mockResolvedValueOnce({
             rows: [{ access_token: 'old-token', refresh_token: 'old-refresh', is_refreshing: 0, auth_status: 'revoked' }]
@@ -75,8 +76,9 @@ describe('TeslaTokenRepo.waitForTokenRefresh', () => {
     });
 
     it('returns new tokens when a concurrent refresh succeeded', async () => {
-        // getSite JOIN query
+        // getSite — site scalars query, then tariff tree query
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        queryMock.mockResolvedValueOnce({ rows: [] });
         // User polling: lock released, refresh succeeded
         queryMock.mockResolvedValueOnce({
             rows: [{ access_token: 'new-token', refresh_token: 'new-refresh', is_refreshing: 0, auth_status: 'active' }]
@@ -88,8 +90,9 @@ describe('TeslaTokenRepo.waitForTokenRefresh', () => {
     });
 
     it('throws a clean error when the user row no longer exists', async () => {
-        // getSite JOIN query succeeds
+        // getSite succeeds — site scalars query, then tariff tree query
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        queryMock.mockResolvedValueOnce({ rows: [] });
         // User polling query returns no rows (user deleted mid-wait)
         queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -111,8 +114,9 @@ describe('getLockedRefreshHandler', () => {
     });
 
     it('atomically revokes and releases lock on terminal failure so waiters cannot observe the unlocked-without-revoked state', async () => {
-        // getSite JOIN (for acquireRefreshLock; result is cached, so only one DB call for getSite)
+        // getSite (for acquireRefreshLock; result is cached, so only one DB load for getSite)
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 });
+        queryMock.mockResolvedValueOnce({ rows: [] }); // tariff tree query
         // acquireRefreshLock UPDATE → lock acquired
         queryMock.mockResolvedValueOnce({ rowCount: 1 });
         // atomic revoke+release UPDATE
@@ -138,7 +142,8 @@ describe('getLockedRefreshHandler', () => {
 
     it('releases lock normally on non-terminal (transient) failure', async () => {
         // getSite cached after acquireRefreshLock's first call, so releaseRefreshLock hits cache
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 }); // getSite
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 }); // getSite site scalars
+        queryMock.mockResolvedValueOnce({ rows: [] }); // getSite tariff tree
         queryMock.mockResolvedValueOnce({ rowCount: 1 }); // acquireRefreshLock UPDATE
         queryMock.mockResolvedValueOnce({ rowCount: 1 }); // releaseRefreshLock UPDATE
 
@@ -176,6 +181,7 @@ describe('TeslaTokenRepo delegates User writes to UserRepo', () => {
 
     it('updateSiteTokens delegates to UserRepo.updateTokens', async () => {
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        queryMock.mockResolvedValueOnce({ rows: [] }); // tariff tree query
 
         await tokenRepo.updateSiteTokens('site-1', 'new-access', 'new-refresh');
 
@@ -183,12 +189,14 @@ describe('TeslaTokenRepo delegates User writes to UserRepo', () => {
     });
 
     it('refreshAccessToken calls updateTokens with new tokens', async () => {
-        // getSite for acquireRefreshLock
+        // getSite for acquireRefreshLock — site scalars, then tariff tree
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 });
+        queryMock.mockResolvedValueOnce({ rows: [] });
         // acquireRefreshLock UPDATE
         queryMock.mockResolvedValueOnce({ rowCount: 1 });
-        // getSite for refreshAccessToken path
+        // getSite for refreshAccessToken path — site scalars, then tariff tree
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        queryMock.mockResolvedValueOnce({ rows: [] });
 
         refreshAccessTokenMock.mockResolvedValueOnce({ access_token: 'new-access', refresh_token: 'new-refresh' });
 
@@ -199,8 +207,9 @@ describe('TeslaTokenRepo delegates User writes to UserRepo', () => {
     });
 
     it('errorHandler delegates to UserRepo.updateUserStatus for terminal errors', async () => {
-        // getSite for errorHandler
+        // getSite for errorHandler — site scalars, then tariff tree
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
+        queryMock.mockResolvedValueOnce({ rows: [] });
 
         const handlers = tokenRepo.getLockedRefreshHandler('site-1');
         await handlers.errorHandler(new Error('Tesla API Error: 401 Unauthorized'));
