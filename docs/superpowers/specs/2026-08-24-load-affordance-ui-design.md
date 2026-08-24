@@ -295,6 +295,7 @@ acceptable for a four-state indicator.
 | No cycle data yet | No glyph; existing "no cycle data" message stands |
 | No active TOU period (schedule gap) | No glyph; widget still prices the upcoming periods |
 | Surplus below the smallest threshold (incl. deficit) | Avoid-large-loads glyph; in deficit every kWh is priced at the buy rate |
+| `sellRate` missing/zero | Falls out of `costToRun` naturally — covered portion costs 0 |
 | `buyRate` / `sellRate` unresolvable (0/0 rates) | Widget renders neutral dash (`—`) cost label and grey `unknown` status |
 | Malformed `load-profiles.json` | Throws at module load; build fails |
 
@@ -313,9 +314,9 @@ Unit tests (Vitest, co-located):
   `headroomKwh`; fixtures violating each rule throw (missing field, non-positive `kwh`,
   `headroomKwh < kwh`, duplicate `id`, unknown `glyph`); a fixture with two profiles
   sharing a glyph is accepted.
-- Header-headroom derivation — bin attribution and the `avg × 3` conversion against a
-  fixture of bucketed rows, including a partial trailing bin and a gap, asserting the
-  approximation lands in the same tier as the exact computation.
+- Header-headroom derivation — bin attribution and the sample count conversion against a
+  fixture of bucketed rows, including partial bins, boundary bins, and a gap, asserting the
+  derived headroom lands in the expected tier.
 - `load-timing.test.ts` — extended to assert `buyRate` / `sellRate` are exposed and that
   existing assertions still hold.
 
