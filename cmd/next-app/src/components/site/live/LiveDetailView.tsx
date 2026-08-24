@@ -50,14 +50,6 @@ export function LiveDetailView({
 
     return (
         <div className="space-y-6">
-            <SectionCard title="Load timing this cycle" density="compact" bodyClassName="space-y-3">
-                <PeriodCardRow
-                    siteId={siteId}
-                    hasTariff={hasTariff}
-                    loadTiming={loadTiming}
-                />
-            </SectionCard>
-
             <SectionCard title={`${siteName} — Today`} density="compact">
                 <TodayEnergyChart
                     rows={todayChartRows}
@@ -81,6 +73,14 @@ export function LiveDetailView({
                 />
                 <DailyByPeriodTable today={today} />
                 <HalfHourRefresh />
+            </SectionCard>
+
+            <SectionCard title="Load timing this cycle" density="compact" bodyClassName="space-y-3">
+                <PeriodCardRow
+                    siteId={siteId}
+                    hasTariff={hasTariff}
+                    loadTiming={loadTiming}
+                />
             </SectionCard>
 
             {sankeySnapshotSvg && sankeyCumulativeSvg && (
