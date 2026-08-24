@@ -3,10 +3,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchSiteLiveData, isValidSiteId, SiteLiveDataFetchError } from '@/lib/site-live-data-client';
-import type { SiteLiveData, SiteLiveSparklinePoint, SiteLiveSparklineScale } from '@/lib/site-live-data-client';
+import type { SiteLiveData, SiteLiveSparklinePoint, SiteLiveSparklineScale, SiteLiveDataHeadroom } from '@/lib/site-live-data-client';
 import { Spinner } from '@/components/ui/Spinner';
 import { MiniSparkline } from '@/components/ui/MiniSparkline';
 import { BatteryStatusGlyph } from '@/components/ui/BatteryStatusGlyph';
+import { LoadHeadroomGlyph } from '@/components/ui/LoadHeadroomGlyph';
 import { useVisiblePolling } from '@/lib/use-visible-polling';
 import { buildHeaderMetricsModel } from '@/lib/header-metrics';
 import type { HeaderMetricsModel } from '@/lib/header-metrics';
@@ -186,6 +187,7 @@ export interface HeaderMetricsStripProps {
     solarScale?: SiteLiveSparklineScale;
     gridScale?: SiteLiveSparklineScale;
     loadScale?: SiteLiveSparklineScale;
+    loadHeadroom?: SiteLiveDataHeadroom | null;
     isExpanded?: boolean;
 }
 
@@ -197,6 +199,7 @@ export function HeaderMetricsStrip({
     solarScale,
     gridScale,
     loadScale,
+    loadHeadroom,
     isExpanded = false
 }: HeaderMetricsStripProps) {
     const batteryValueClassName =
@@ -308,6 +311,8 @@ export function HeaderMetricsStrip({
             <span className="text-[11px] font-medium text-gray-500 dark:text-gray-400 shrink-0 select-none">
                 kW
             </span>
+
+            <LoadHeadroomGlyph headroom={loadHeadroom} />
 
             {/* View detail link affordance */}
             <span className={`inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 rounded-full border hover:bg-blue-100 dark:hover:bg-blue-900/70 hover:text-blue-700 dark:hover:text-blue-300 shrink-0 min-w-0 whitespace-nowrap transition-all duration-300 ease-in-out view-details-pill ${
@@ -421,6 +426,7 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                 solarScale={solarScale}
                 gridScale={gridScale}
                 loadScale={loadScale}
+                loadHeadroom={stats.loadHeadroom}
                 isExpanded={isExpanded}
             />
         </LiveStatsShell>
