@@ -94,7 +94,7 @@ export function PeriodCardRow({ siteId, hasTariff, loadTiming }: PeriodCardRowPr
                     );
                 })}
             </div>
-            <RunLoadNowWidget periods={loadTiming.periods} />
+            <RunLoadNowWidget periods={loadTiming.pricingPeriods} />
         </>
     );
 }

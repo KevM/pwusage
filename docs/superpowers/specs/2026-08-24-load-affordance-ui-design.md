@@ -265,11 +265,16 @@ egress** — roughly 6 MB/day for a tab left open. Rejected.
 Instead:
 
 - **Today's contribution costs nothing.** The sparkline query already spans a rolling
-  24 hours, and site-local midnight is never more than 24 hours ago, so today's rows are
-  *already in memory*. The active period's today-so-far energy is derived by filtering
-  those bins to `timestamp >= siteMidnight`, attributing each to a TOU period, and
-  summing `avg_grid_power × sample_count` (using each 15-minute bin's `sample_count`). No query
-  changes at all.
+  24 hours, and on an ordinary day site-local midnight is never more than 24 hours ago,
+  so today's rows are *already in memory*. The active period's today-so-far energy is
+  derived by filtering those bins to `timestamp >= siteMidnight`, attributing each to a
+  TOU period, and summing `avg_grid_power × sample_count` (using each 15-minute bin's
+  `sample_count`). No query changes at all.
+  - *Exception — DST fallback.* On the one 25-hour local day per year, site-local
+    midnight is more than 24 hours back from late evening, so the rolling window has
+    already dropped the head of the day. `missingTodayInterval()` detects exactly that
+    shortfall and fetches only the uncovered sliver, in parallel with the rollup. It
+    returns `null` — and therefore adds no query — on every other day of the year.
 - **Prior days are cached to the day boundary.** Cycle aggregates for completed days
   change only at site-local midnight, so an in-process memo keyed on
   `(siteId, siteMidnight)` — the same per-instance caching pattern as the pooled `pg`
@@ -292,8 +297,9 @@ acceptable for a four-state indicator.
 | Case | Behavior |
 | --- | --- |
 | No tariff configured | No glyph; widget shows the existing "configure a tariff" prompt |
-| No cycle data yet | No glyph; existing "no cycle data" message stands |
+| No cycle data yet | No glyph; existing "no cycle data" message stands. `activePeriodSurplusKwh()` returns `null` when neither the rollup nor today holds a row, so an absence of measurements is never rendered as a confirmed zero surplus |
 | No active TOU period (schedule gap) | No glyph; widget still prices the upcoming periods |
+| Current-season period the cycle has not reached yet | Priced from `pricingPeriods` at zero banked surplus and its configured rates, so the comparison is complete from the first hour of a cycle. `periods` (cards, TRMNL) stays limited to observed usage |
 | Surplus below the smallest threshold (incl. deficit) | Avoid-large-loads glyph; in deficit every kWh is priced at the buy rate |
 | `sellRate` missing/zero | Falls out of `costToRun` naturally — covered portion costs 0 |
 | `buyRate` / `sellRate` unresolvable (0/0 rates) | Widget renders neutral dash (`—`) cost label and grey `unknown` status |

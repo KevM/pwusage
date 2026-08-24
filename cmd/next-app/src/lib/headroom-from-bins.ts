@@ -37,14 +37,38 @@ export function todayNetExportByPeriod(
 }
 
 /**
+ * The slice of today the caller's already-fetched window misses.
+ *
+ * The live route reuses the rolling 24-hour sparkline rows for today's
+ * contribution, which normally covers site-local midnight. On a DST fallback
+ * day the local day runs 25 hours, so late in the evening midnight is more
+ * than 24 hours back and the head of the day falls outside that window.
+ * Returns null on every ordinary day, so the extra query is paid at most a
+ * few hours a year.
+ */
+export function missingTodayInterval(
+    siteMidnight: Date,
+    fetchedStart: Date
+): { start: Date; end: Date } | null {
+    if (siteMidnight >= fetchedStart) return null;
+    return { start: siteMidnight, end: fetchedStart };
+}
+
+/**
  * Cycle-to-date surplus for one TOU period: the cached rollup of completed
  * days plus today's contribution. Negative means the period is in deficit.
+ *
+ * Returns null when neither source holds a single row — an absence of
+ * measurements is not a confirmed zero surplus, and callers must render it as
+ * unknown rather than as "avoid large loads".
  */
 export function activePeriodSurplusKwh(
     priorCycle: UsageData[],
     todayByPeriod: Map<string, number>,
     activePeriodName: string
-): number {
+): number | null {
+    if (priorCycle.length === 0 && todayByPeriod.size === 0) return null;
+
     const prior = priorCycle
         .filter(u => (u.touName || 'Standard') === activePeriodName)
         .reduce((sum, u) => sum + -(u.gridUsage) / 1000, 0);

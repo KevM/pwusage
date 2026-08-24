@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activePeriodSurplusKwh, todayNetExportByPeriod } from './headroom-from-bins';
+import { activePeriodSurplusKwh, missingTodayInterval, todayNetExportByPeriod } from './headroom-from-bins';
 import type { EnergyData } from './db-types';
 import type { UsageData } from './energy-repo';
 
@@ -104,5 +104,47 @@ describe('activePeriodSurplusKwh', () => {
 
     it('returns zero for a period in neither source', () => {
         expect(activePeriodSurplusKwh(prior, new Map(), 'MYSTERY')).toBe(0);
+    });
+});
+
+describe('activePeriodSurplusKwh with no measurements', () => {
+    it('returns null when the cycle has no rollup rows and no bins today', () => {
+        // A tariff-configured site that has never stored EnergyData must not
+        // be reported as a confirmed zero surplus.
+        expect(activePeriodSurplusKwh([], new Map(), 'OFF_PEAK')).toBeNull();
+    });
+
+    it('still returns a number when only today has data', () => {
+        expect(activePeriodSurplusKwh([], new Map([['OFF_PEAK', 3]]), 'OFF_PEAK')).toBeCloseTo(3, 6);
+    });
+
+    it('still returns a number when only the prior rollup has data', () => {
+        const prior: UsageData[] = [{
+            start: MIDNIGHT, homeUsage: 0, gridUsage: -1_000, solarProduction: 0,
+            batteryChange: 0, tariff: { id: 1 } as never, touName: 'OFF_PEAK',
+        }];
+        expect(activePeriodSurplusKwh(prior, new Map(), 'OFF_PEAK')).toBeCloseTo(1, 6);
+    });
+});
+
+describe('missingTodayInterval', () => {
+    const FETCHED_START = new Date('2026-08-24T07:00:00Z');
+
+    it('returns null when the fetched window already reaches site midnight', () => {
+        const siteMidnight = new Date('2026-08-24T07:00:00Z');
+        expect(missingTodayInterval(siteMidnight, FETCHED_START)).toBeNull();
+
+        const later = new Date('2026-08-24T08:00:00Z');
+        expect(missingTodayInterval(later, FETCHED_START)).toBeNull();
+    });
+
+    it('returns the uncovered head of the local day on a DST fallback evening', () => {
+        // 25-hour local day: at 23:30 local, midnight is 24.5h back, so the
+        // rolling 24h sparkline window has already dropped the first 30 min.
+        const siteMidnight = new Date('2026-08-24T06:30:00Z');
+        expect(missingTodayInterval(siteMidnight, FETCHED_START)).toEqual({
+            start: siteMidnight,
+            end: FETCHED_START,
+        });
     });
 });

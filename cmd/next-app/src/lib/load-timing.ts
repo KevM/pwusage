@@ -30,6 +30,14 @@ export interface LoadTimingView {
     hasCycleData: boolean;
     activeIsCheapest: boolean;
     periods: LoadTimingPeriod[];
+    /**
+     * Every TOU period of the current season, including ones this cycle has
+     * not reached yet (zero banked surplus, configured rates). `periods` stays
+     * limited to what the cycle actually recorded, so the cards and the TRMNL
+     * screen are unaffected; only the "can I run this now?" comparison needs
+     * the full set.
+     */
+    pricingPeriods: LoadTimingPeriod[];
     nextCheaper: { name: string; marginalCost: number; phrase: string } | null;
     nextCheaperPhrase: string | null;
     nextStartPhraseByKey: Record<string, string>;
@@ -108,6 +116,29 @@ export function computeLoadTiming(
         groupedCycle = groupedCycle.filter(u => activeNames.has(u.touName || 'Standard'));
     }
 
+    // Periods the affordance widget prices against: the observed ones plus any
+    // current-season period the cycle has yet to reach. Without this, a widget
+    // opened before the first on-peak window of a cycle cannot show what the
+    // load would cost on-peak — which is the comparison it exists to make.
+    const pricingCycle: UsageData[] = [...groupedCycle];
+    if (active && active.season && active.season.schedules) {
+        const seen = new Set(groupedCycle.map(u => u.touName || 'Standard'));
+        for (const [name, rates] of currentRates.entries()) {
+            if (seen.has(name)) continue;
+            pricingCycle.push({
+                start: now,
+                homeUsage: 0,
+                gridUsage: 0,
+                solarProduction: 0,
+                batteryChange: 0,
+                tariff: active.tariff,
+                touName: name,
+                buyRate: rates.buyRate,
+                sellRate: rates.sellRate
+            });
+        }
+    }
+
     let nextCheaper: LoadTimingView['nextCheaper'] = null;
     let nextCheaperPhrase: string | null = null;
     let nextStartPhraseByKey: Record<string, string> = {};
@@ -121,7 +152,7 @@ export function computeLoadTiming(
             nextCheaperPhrase = phrase;
         }
 
-        const nextStarts = findNextStartsByKey(schedule, now, groupedCycle, timezone);
+        const nextStarts = findNextStartsByKey(schedule, now, pricingCycle, timezone);
         nextStartPhraseByKey = Object.fromEntries(
             Array.from(nextStarts.entries()).map(([key, start]) => [
                 key,
@@ -142,7 +173,7 @@ export function computeLoadTiming(
         }
     }
 
-    const periods: LoadTimingPeriod[] = groupedCycle.map((u) => {
+    const toPeriod = (u: UsageData): LoadTimingPeriod => {
         const name = u.touName ?? 'Unknown';
         const { cycleNetExportKwh, marginalCost, basis } = computeMarginalCost(u);
         const isActive = activePeriod !== null
@@ -154,13 +185,17 @@ export function computeLoadTiming(
             buyRate: u.buyRate ?? 0,
             sellRate: u.sellRate ?? 0
         };
-    });
+    };
+
+    const periods: LoadTimingPeriod[] = groupedCycle.map(toPeriod);
+    const pricingPeriods: LoadTimingPeriod[] = pricingCycle.map(toPeriod);
 
     return {
         hasTariff,
         hasCycleData,
         activeIsCheapest,
         periods,
+        pricingPeriods,
         nextCheaper,
         nextCheaperPhrase,
         nextStartPhraseByKey
