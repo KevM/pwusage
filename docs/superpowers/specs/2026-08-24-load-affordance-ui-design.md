@@ -55,7 +55,8 @@ so the header glyph and the widget can never disagree.
 | Framing | **Per-load affordance** ("can I run this?"), not per-period marginal cost |
 | Live view widget | **Preset buttons + slider**, cost shown per period |
 | Header treatment | **Bare tinted glyph pill** — no number; the number is on the Live page |
-| Glyph tiers | Read from the profile table: car ≥ 100 kWh, appliance ≥ 20, small ≥ 5; below that, avoid-large-loads |
+| Glyph tiers | Read from the profile table; several profiles may share a glyph |
+| Load size vs. headroom | `kwh` sets the price, `headroomKwh` sets the verdict and the glyph tier |
 | Load config storage | **JSON file in repo**, typed loader. No DB table, no migration |
 | Header headroom accuracy | **Approximate**, derived from rows already in memory |
 | Section placement | Load timing card moves to **top** of the Live view |
@@ -72,12 +73,17 @@ worth calling "safe".
 ```json
 {
   "profiles": [
-    { "id": "car",        "label": "Car charge", "kwh": 60, "headroomKwh": 100, "glyph": "car" },
-    { "id": "laundry",    "label": "Laundry",    "kwh": 8,  "headroomKwh": 20,  "glyph": "appliance" },
-    { "id": "dishwasher", "label": "Dishwasher", "kwh": 5,  "headroomKwh": 5,   "glyph": "small" }
+    { "id": "car-large",  "label": "Big car",    "kwh": 100, "headroomKwh": 160, "glyph": "car" },
+    { "id": "car-small",  "label": "Little car", "kwh": 60,  "headroomKwh": 100, "glyph": "car" },
+    { "id": "laundry",    "label": "Laundry",    "kwh": 8,   "headroomKwh": 20,  "glyph": "appliance" },
+    { "id": "dishwasher", "label": "Dishwasher", "kwh": 5,   "headroomKwh": 5,   "glyph": "small" }
   ]
 }
 ```
+
+**Several profiles may share a glyph.** A household with a 100 kWh car and a 60 kWh car
+gets two entries that both render the car glyph at different thresholds; the list is
+expected to grow this way, so nothing keys off glyph uniqueness.
 
 `src/lib/load-profiles.ts` imports the JSON, validates it at module load, and exports a
 typed, sorted view:
@@ -97,10 +103,21 @@ export const LOAD_PROFILES: LoadProfile[];       // sorted by headroomKwh, desce
 export const MAX_PROFILE_KWH: number;            // drives the slider's upper bound
 ```
 
-Validation throws on a malformed file (missing field, non-positive `kwh`, unknown
-`glyph`) so a bad edit fails the build rather than rendering a broken UI. Because the
-list is sorted at load time and both surfaces iterate it, adding a profile is a one-row
-edit that shows up in the widget's preset buttons and the glyph tiers simultaneously.
+Validation throws at module load — a bad edit fails the build rather than rendering a
+broken UI. Rules:
+
+- every field present; `kwh` and `headroomKwh` positive
+- `headroomKwh >= kwh` — a profile with less headroom than the load it describes would
+  make the glyph contradict the widget (see "Verdicts and headroom")
+- `id` unique; `glyph` one of the registered icons
+- **no uniqueness requirement on `glyph`** — many profiles per glyph is the expected case
+
+Because the list is sorted at load time and both surfaces iterate it, adding a profile is
+a one-row edit that appears in the widget's presets and the glyph tiers simultaneously.
+
+Adding a *new icon* is necessarily code — an SVG has to exist — but it is confined to one
+place: `LoadHeadroomGlyph` holds a `Record<LoadGlyph, ComponentType>` registry, so a new
+icon means one SVG plus one entry plus one member on the `LoadGlyph` union.
 
 ## Core Module: `src/lib/load-affordance.ts`
 
@@ -117,11 +134,12 @@ export interface LoadCost {
     total: number;
     coveredKwh: number;   // priced at the sell rate
     boughtKwh: number;    // priced at the buy rate
-    verdict: 'covered' | 'partial' | 'bought';
+    verdict: 'covered' | 'tight' | 'partial' | 'bought';
 }
 
-export function costToRun(loadKwh: number, pricing: PeriodPricing): LoadCost;
+export function costToRun(loadKwh: number, pricing: PeriodPricing, headroomKwh?: number): LoadCost;
 export function glyphForHeadroom(surplusKwh: number): LoadGlyph | null;
+export function profileForHeadroom(surplusKwh: number): LoadProfile | null;
 ```
 
 `costToRun` implements the whole idea:
@@ -134,12 +152,35 @@ total   = covered * sellRate + bought * buyRate
 
 A 60 kWh car charge against a 10 kWh Peak surplus at 12¢ sell / 48¢ buy is
 10 × 0.12 + 50 × 0.48 = **$25.20**; the same charge in an Off-peak period holding a
-120 kWh surplus at 3¢ is **$1.80**. The verdict is `covered` when `bought` is zero,
-`bought` when `covered` is zero, `partial` otherwise — and drives the color in both
-surfaces.
+120 kWh surplus at 3¢ is **$1.80**.
 
-`glyphForHeadroom` returns the first profile's glyph whose `headroomKwh` the surplus
-clears (the list is pre-sorted descending), or `null` for "avoid large loads".
+`profileForHeadroom` returns the first profile whose `headroomKwh` the surplus clears
+(the list is pre-sorted descending), or `null` for "avoid large loads";
+`glyphForHeadroom` is that profile's glyph. With several profiles sharing a glyph, the
+selected profile is what the tooltip names, so "Little car" and "Big car" are
+distinguishable even though the icon is the same.
+
+### Verdicts and headroom
+
+The dollar figure depends only on `kwh` — how much of the load clears at the sell rate
+before crossing into buy-rate territory. The **verdict** additionally consults
+`headroomKwh`, because a load can be fully affordable and still empty the buffer that has
+to last the rest of the cycle:
+
+| Condition | Verdict |
+| --- | --- |
+| `surplus >= headroomKwh` | `covered` |
+| `surplus >= loadKwh` but `< headroomKwh` | `tight` |
+| `0 < surplus < loadKwh` | `partial` |
+| `surplus <= 0` | `bought` |
+
+`covered` and `tight` cost identical dollars — that is the point. For a 60 kWh car charge
+with `headroomKwh: 100`, a 120 kWh surplus is `covered` and a 70 kWh surplus is `tight`,
+both priced entirely at the sell rate. Without the distinction the header glyph (which
+withholds the car below 100) would contradict a green widget tile at 70 kWh.
+
+When `headroomKwh` is omitted — a custom slider amount with no matching profile —
+`covered` and `tight` collapse into `covered`.
 
 ## Surface 1 — Live View
 
@@ -152,11 +193,15 @@ chart → Today so far → Sankey → Battery hold.**
 
 A client component inside the Load timing card, below the existing period grid:
 
-- Preset buttons rendered from `LOAD_PROFILES`, plus a slider (1 → `MAX_PROFILE_KWH`,
-  step 1) for custom amounts.
+- Preset buttons rendered from `LOAD_PROFILES` in a **wrapping** chip row — the list is
+  expected to grow past the three or four seeded entries, so it must not assume a single
+  line — plus a slider (1 → `MAX_PROFILE_KWH`, step 1) for custom amounts. Selecting a
+  preset carries its `headroomKwh` into the verdict; dragging the slider does not.
 - A cost tile per TOU period, active period first, each showing `costToRun` for the
   selected size, colored by verdict, and labelled with the period's `nextStartPhrase`
-  ("in 2h 10m") so "wait" is an obvious option.
+  ("in 2h 10m") so "wait" is an obvious option. The tile's mini bar always shows the
+  exact sell/buy split, so `covered` and `tight` differ in label colour while the bar
+  keeps reporting the same underlying arithmetic.
 - All arithmetic is client-side off data already sent to the page. No new fetch, no
   server round-trip on slider movement.
 
@@ -171,9 +216,16 @@ additive — existing consumers and the TRMNL renderer are unaffected.
 
 `HeaderLiveStats` gains a glyph pill at the end of the metrics strip: a Tabler-style
 outline glyph on a tinted background, no number. Green for car/appliance, amber for
-small, red for avoid-large-loads. The `title` attribute carries the full sentence
-("Peak · 4 kWh surplus — small loads only") and the strip already links to
-`/site/[id]/live`, which is where the exact numbers live.
+small, red for avoid-large-loads. The `title` attribute names the selected profile and
+the surplus ("Peak · 70 kWh surplus — Little car"), which is what disambiguates two
+profiles sharing one icon. The strip already links to `/site/[id]/live`, where the exact
+numbers live.
+
+Note the limit honestly: `title` is a hover affordance, so on touch devices the glyph
+conveys only its category and the specific profile is revealed by tapping through to the
+Live view. That is the intended division — glyph for the glance, page for the detail —
+but it does mean the icon alone cannot distinguish a big car from a little one on a
+phone.
 
 The four glyphs are hand-authored 24×24 outline SVGs matching the existing `SolarIcon` /
 `GridIcon` style in that file — heroicons has neither a car nor a washing machine. The
@@ -184,7 +236,12 @@ pill is omitted entirely when the site has no tariff or headroom is unavailable.
 `/api/site-live-data` gains one field:
 
 ```ts
-loadHeadroom: { surplusKwh: number; periodName: string; glyph: LoadGlyph | null } | null;
+loadHeadroom: {
+    surplusKwh: number;
+    periodName: string;
+    glyph: LoadGlyph | null;
+    profileLabel: string | null;   // names the tier the surplus cleared, for the tooltip
+} | null;
 ```
 
 ### Egress and precision
@@ -244,12 +301,17 @@ page by one bin. That is acceptable for a four-state indicator.
 
 Unit tests (Vitest, co-located):
 
-- `load-affordance.test.ts` — `costToRun` across covered / partial / bought, including
-  the worked car-charge example above; zero and negative surplus; zero rates.
+- `load-affordance.test.ts` — `costToRun` across covered / tight / partial / bought,
+  including the worked car-charge example above; the `covered` vs `tight` pair asserting
+  identical totals with differing verdicts; omitted `headroomKwh` collapsing to
+  `covered`; zero and negative surplus; zero rates. `profileForHeadroom` and
   `glyphForHeadroom` at and either side of every threshold, including the empty-profile
-  and deficit cases.
-- `load-profiles.test.ts` — the shipped JSON validates, sorts descending by
-  `headroomKwh`, and a malformed fixture throws.
+  and deficit cases, and a two-profiles-one-glyph fixture asserting the *profile*
+  resolves distinctly where the glyph does not.
+- `load-profiles.test.ts` — the shipped JSON validates and sorts descending by
+  `headroomKwh`; fixtures violating each rule throw (missing field, non-positive `kwh`,
+  `headroomKwh < kwh`, duplicate `id`, unknown `glyph`); a fixture with two profiles
+  sharing a glyph is accepted.
 - Header-headroom derivation — bin attribution and the `avg × 3` conversion against a
   fixture of bucketed rows, including a partial trailing bin and a gap, asserting the
   approximation lands in the same tier as the exact computation.
