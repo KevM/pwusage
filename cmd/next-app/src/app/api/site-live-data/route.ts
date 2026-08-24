@@ -2,10 +2,15 @@ import { NextResponse } from 'next/server';
 import { isTeslaAuthError } from '@/lib/tesla-client';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
-import { getCurrentTariffLabel } from '@/lib/schedule';
+import { Schedule, getCurrentTariffLabel } from '@/lib/schedule';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
 import { refreshLiveStatus } from '@/lib/today-refresh';
+import { getCurrentCycleStart } from '@/lib/billing-cycle';
+import { getCachedCycleRollup } from '@/lib/cycle-rollup-cache';
+import { activePeriodSurplusKwh, todayNetExportByPeriod } from '@/lib/headroom-from-bins';
+import { glyphForHeadroom, profileForHeadroom } from '@/lib/load-affordance';
+import type { SiteLiveDataHeadroom } from '@/lib/site-live-data-client';
 import {
     parseScaleWindowHours,
     SPARKLINE_DISPLAY_WINDOW_HOURS,
@@ -54,6 +59,45 @@ export async function GET(request: Request) {
 
             const currentTariff = getCurrentTariffLabel(site);
 
+            // Headroom for the active TOU period. Today's contribution comes
+            // from `historyRows`, already fetched above for the sparklines —
+            // the rolling 24h window always covers site-local midnight — so
+            // the only added query is the completed-days rollup, cached to the
+            // day boundary.
+            let loadHeadroom: SiteLiveDataHeadroom | null = null;
+            try {
+                if ((site?.tariffs?.length ?? 0) > 0) {
+                    const schedule = new Schedule(site!.tariffs, site!.timezone);
+                    const activeName = schedule.getTariffPeriod(now)?.schedule.name ?? null;
+
+                    if (activeName) {
+                        const siteMidnight = EnergyRepo.getSiteMidnight(now, site!.timezone);
+                        const cycleStart = getCurrentCycleStart(site!.billing_start_day, now, site!.timezone);
+
+                        const priorCycle = await getCachedCycleRollup(
+                            siteId, cycleStart, siteMidnight,
+                            () => repo.getUsageByTOU(siteId, cycleStart, siteMidnight)
+                        );
+
+                        const surplusKwh = activePeriodSurplusKwh(
+                            priorCycle,
+                            todayNetExportByPeriod(historyRows, siteMidnight, schedule),
+                            activeName
+                        );
+
+                        loadHeadroom = {
+                            surplusKwh,
+                            periodName: activeName,
+                            glyph: glyphForHeadroom(surplusKwh),
+                            profileLabel: profileForHeadroom(surplusKwh)?.label ?? null,
+                        };
+                    }
+                }
+            } catch (headroomError) {
+                // Never fail the live strip over the glyph.
+                console.warn('[site-live-data] headroom unavailable:', headroomError);
+            }
+
             const { series: sparklines, scales: sparklineScales } = toSparklinePayload(historyRows, now, {
                 solar: liveStatus.solar_power,
                 grid: liveStatus.grid_power,
@@ -67,6 +111,7 @@ export async function GET(request: Request) {
                 gridPower: liveStatus.grid_power,
                 percentageCharged: liveStatus.percentage_charged,
                 currentTariff,
+                loadHeadroom,
                 sparklines,
                 sparklineScales
             });
