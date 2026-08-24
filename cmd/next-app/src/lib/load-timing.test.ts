@@ -155,4 +155,27 @@ describe('computeLoadTiming', () => {
         expect(on.basis).toBe('sell');
         expect(on.isActive).toBe(false);
     });
+
+    it('exposes both sides of the price cliff on every period', () => {
+        const schedule = new Schedule([tariff()], TZ);
+        const now = new Date('2026-05-19T19:00:00Z');
+        const cycle: UsageData[] = [
+            usage('OFF_PEAK', 0.20, 0.05, 5000),
+            usage('ON_PEAK', 0.50, 0.08, -9000),
+            usage('OFF_PEAK_LATE', 0.20, 0.05, 0)
+        ];
+        const active = { name: 'OFF_PEAK', buyRate: 0.20, sellRate: 0.05 };
+        const view = computeLoadTiming(schedule, cycle, now, TZ, active);
+
+        for (const p of view.periods) {
+            expect(typeof p.buyRate).toBe('number');
+            expect(typeof p.sellRate).toBe('number');
+        }
+
+        for (const p of view.periods) {
+            if (p.marginalCost === null) continue;
+            expect([p.buyRate, p.sellRate]).toContain(p.marginalCost);
+        }
+    });
 });
+

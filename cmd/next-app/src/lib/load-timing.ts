@@ -21,6 +21,8 @@ export interface LoadTimingPeriod {
     cycleNetExportKwh: number;
     isActive: boolean;
     nextStartPhrase: string | null;
+    buyRate: number;
+    sellRate: number;
 }
 
 export interface LoadTimingView {
@@ -147,7 +149,11 @@ export function computeLoadTiming(
             && name === activePeriod.name;
         const key = periodKey(name);
         const nextStartPhrase = isActive ? null : (nextStartPhraseByKey[key] ?? null);
-        return { name, marginalCost, basis, cycleNetExportKwh, isActive, nextStartPhrase };
+        return {
+            name, marginalCost, basis, cycleNetExportKwh, isActive, nextStartPhrase,
+            buyRate: u.buyRate ?? 0,
+            sellRate: u.sellRate ?? 0
+        };
     });
 
     return {
