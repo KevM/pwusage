@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { LoadTimingView } from '@/lib/load-timing';
 import { formatTouName, formatCentsPerKwh } from '@/lib/format-utils';
 import { PeriodCard } from './PeriodCard';
+import { RunLoadNowWidget } from './RunLoadNowWidget';
 
 export interface ActivePeriod {
     name: string;
@@ -93,6 +94,7 @@ export function PeriodCardRow({ siteId, hasTariff, loadTiming }: PeriodCardRowPr
                     );
                 })}
             </div>
+            <RunLoadNowWidget periods={loadTiming.periods} />
         </>
     );
 }

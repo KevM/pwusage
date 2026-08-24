@@ -70,3 +70,7 @@ export function todayDateStrInTimeZone(timeZone: string): string {
         return new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(new Date());
     }
 }
+
+export function formatDollars(amount: number): string {
+    return `$${amount.toFixed(2)}`;
+}
