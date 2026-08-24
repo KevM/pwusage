@@ -73,10 +73,12 @@ export async function GET(request: Request) {
                     if (activeName) {
                         const siteMidnight = EnergyRepo.getSiteMidnight(now, site!.timezone);
                         const cycleStart = getCurrentCycleStart(site!.billing_start_day, now, site!.timezone);
+                        const tariffVersionKey = site!.tariffs.map(t => `${t.id}:${new Date(t.updated).getTime()}`).join(',');
 
                         const priorCycle = await getCachedCycleRollup(
                             siteId, cycleStart, siteMidnight,
-                            () => repo.getUsageByTOU(siteId, cycleStart, siteMidnight)
+                            () => repo.getUsageByTOU(siteId, cycleStart, siteMidnight),
+                            tariffVersionKey
                         );
 
                         const surplusKwh = activePeriodSurplusKwh(

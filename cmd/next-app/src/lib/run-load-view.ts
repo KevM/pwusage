@@ -35,6 +35,21 @@ export function buildRunLoadTiles(
     const ordered = [...periods].sort((a, b) => Number(b.isActive) - Number(a.isActive));
 
     return ordered.map((p) => {
+        const isUnresolvable = (p.buyRate === 0 && p.sellRate === 0) || p.marginalCost === null;
+
+        if (isUnresolvable) {
+            return {
+                name: formatTouName(p.name),
+                costLabel: '—',
+                verdict: 'bought' as const,
+                coveredKwh: 0,
+                boughtKwh: loadKwh,
+                whenLabel: p.isActive ? 'now' : (p.nextStartPhrase ?? ''),
+                toneClass: 'text-gray-500 dark:text-gray-400',
+                barCoveredPct: 0,
+            };
+        }
+
         const cost = costToRun(loadKwh, {
             surplusKwh: p.cycleNetExportKwh,
             buyRate: p.buyRate,

@@ -79,6 +79,7 @@ export interface EnergyData {
   grid_power: number;
   battery_power: number;
   battery_soc: number | null;
+  sample_count?: number;
 }
 
 export interface TrmnlInstallation {

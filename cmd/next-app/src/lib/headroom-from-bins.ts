@@ -27,9 +27,10 @@ export function todayNetExportByPeriod(
         const tp = schedule.getTariffPeriod(b.timestamp);
         if (!tp) continue;
 
-        const name = tp.schedule.name ?? 'Unknown';
+        const name = tp.schedule.name || 'Standard';
         // grid_power is positive on import; negate for export-positive kWh.
-        const kwh = -(b.grid_power * SAMPLES_PER_BIN) / 1000;
+        const samples = b.sample_count ?? SAMPLES_PER_BIN;
+        const kwh = -(b.grid_power * samples) / 1000;
         byPeriod.set(name, (byPeriod.get(name) ?? 0) + kwh);
     }
 
@@ -46,7 +47,7 @@ export function activePeriodSurplusKwh(
     activePeriodName: string
 ): number {
     const prior = priorCycle
-        .filter(u => (u.touName ?? 'Unknown') === activePeriodName)
+        .filter(u => (u.touName || 'Standard') === activePeriodName)
         .reduce((sum, u) => sum + -(u.gridUsage) / 1000, 0);
 
     return prior + (todayByPeriod.get(activePeriodName) ?? 0);

@@ -16,9 +16,10 @@ export async function getCachedCycleRollup(
     siteId: string,
     cycleStart: Date,
     siteMidnight: Date,
-    load: () => Promise<UsageData[]>
+    load: () => Promise<UsageData[]>,
+    versionKey?: string
 ): Promise<UsageData[]> {
-    const key = `${cycleStart.toISOString()}|${siteMidnight.toISOString()}`;
+    const key = `${cycleStart.toISOString()}|${siteMidnight.toISOString()}|${versionKey ?? ''}`;
     const hit = cache.get(siteId);
     if (hit && hit.key === key) return hit.rows;
 

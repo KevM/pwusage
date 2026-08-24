@@ -61,6 +61,16 @@ describe('todayNetExportByPeriod', () => {
         expect(todayNetExportByPeriod([bin(0, -1000)], MIDNIGHT, noPeriod).size).toBe(0);
     });
 
+    it('uses row sample_count when present for boundary bins', () => {
+        // Partial/boundary bins: 2 samples in schedule A, 1 sample in schedule B
+        const binA = { ...bin(0, -1000), sample_count: 2 };
+        const binB = { ...bin(0, -2000), sample_count: 1 };
+
+        const map = todayNetExportByPeriod([binA, binB], MIDNIGHT, fakeSchedule('OFF_PEAK'));
+        // binA: 1000 * 2 / 1000 = 2 kWh, binB: 2000 * 1 / 1000 = 2 kWh => total 4 kWh (not 6 + 6 = 12)
+        expect(map.get('OFF_PEAK')).toBeCloseTo(4, 6);
+    });
+
     it('returns an empty map for no bins', () => {
         expect(todayNetExportByPeriod([], MIDNIGHT, fakeSchedule('OFF_PEAK')).size).toBe(0);
     });

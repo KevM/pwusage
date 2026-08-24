@@ -56,4 +56,14 @@ describe('buildRunLoadTiles', () => {
         const orphan: LoadTimingPeriod[] = [{ ...periods[1], nextStartPhrase: null }];
         expect(buildRunLoadTiles(orphan, 5)[0].whenLabel).toBe('');
     });
+
+    it('renders unresolvable periods with a dash cost label and grey tone class', () => {
+        const unresolvable: LoadTimingPeriod[] = [{
+            name: 'UNKNOWN_PERIOD', marginalCost: null, basis: 'buy', cycleNetExportKwh: 0,
+            isActive: false, nextStartPhrase: null, buyRate: 0, sellRate: 0,
+        }];
+        const tile = buildRunLoadTiles(unresolvable, 10)[0];
+        expect(tile.costLabel).toBe('—');
+        expect(tile.toneClass).toContain('gray');
+    });
 });

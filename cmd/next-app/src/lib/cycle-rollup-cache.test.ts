@@ -39,4 +39,11 @@ describe('getCachedCycleRollup', () => {
         await getCachedCycleRollup('s1', CYCLE_START, MIDNIGHT, ok);
         expect(ok).toHaveBeenCalledTimes(1);
     });
+
+    it('reloads when the version key changes mid-day', async () => {
+        const load = vi.fn().mockResolvedValue(rows);
+        await getCachedCycleRollup('s1', CYCLE_START, MIDNIGHT, load, 'v1');
+        await getCachedCycleRollup('s1', CYCLE_START, MIDNIGHT, load, 'v2');
+        expect(load).toHaveBeenCalledTimes(2);
+    });
 });

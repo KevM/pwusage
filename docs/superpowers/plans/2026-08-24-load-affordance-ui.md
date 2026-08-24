@@ -35,7 +35,7 @@
 - Consumes: nothing.
 - Produces: `type LoadGlyph = 'car' | 'appliance' | 'small'`; `interface LoadProfile { id: string; label: string; kwh: number; headroomKwh: number; glyph: LoadGlyph }`; `const LOAD_PROFILES: LoadProfile[]` (sorted by `headroomKwh` descending); `const MAX_PROFILE_KWH: number`; `function parseLoadProfiles(raw: unknown): LoadProfile[]`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/lib/load-profiles.test.ts`:
 
@@ -114,12 +114,12 @@ describe('shipped profiles', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- src/lib/load-profiles.test.ts`
 Expected: FAIL — cannot resolve `./load-profiles`.
 
-- [ ] **Step 3: Write the JSON data file**
+- [x] **Step 3: Write the JSON data file**
 
 Create `src/lib/load-profiles.json`:
 
@@ -134,7 +134,7 @@ Create `src/lib/load-profiles.json`:
 }
 ```
 
-- [ ] **Step 4: Write the loader**
+- [x] **Step 4: Write the loader**
 
 Create `src/lib/load-profiles.ts`:
 
@@ -206,14 +206,14 @@ export const LOAD_PROFILES: LoadProfile[] = parseLoadProfiles(raw);
 export const MAX_PROFILE_KWH: number = Math.max(...LOAD_PROFILES.map(p => p.kwh));
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `npm test -- src/lib/load-profiles.test.ts`
 Expected: PASS, all 9 tests.
 
 If TypeScript complains about importing JSON, confirm `resolveJsonModule` is enabled in `tsconfig.json`; Next.js enables it by default. If it is missing, add `"resolveJsonModule": true` to `compilerOptions`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/lib/load-profiles.json src/lib/load-profiles.ts src/lib/load-profiles.test.ts
@@ -232,7 +232,7 @@ git commit -m "feat(loads): add data-driven load profile table and validating lo
 - Consumes: `LoadProfile`, `LoadGlyph`, `LOAD_PROFILES` from Task 1.
 - Produces: `interface PeriodPricing { surplusKwh: number; buyRate: number; sellRate: number }`; `type LoadVerdict = 'covered' | 'tight' | 'partial' | 'bought'`; `interface LoadCost { total: number; coveredKwh: number; boughtKwh: number; verdict: LoadVerdict }`; `function costToRun(loadKwh: number, pricing: PeriodPricing, headroomKwh?: number): LoadCost`; `function profileForHeadroom(surplusKwh: number, profiles?: LoadProfile[]): LoadProfile | null`; `function glyphForHeadroom(surplusKwh: number, profiles?: LoadProfile[]): LoadGlyph | null`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/lib/load-affordance.test.ts`:
 
@@ -330,12 +330,12 @@ describe('profileForHeadroom', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- src/lib/load-affordance.test.ts`
 Expected: FAIL — cannot resolve `./load-affordance`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `src/lib/load-affordance.ts`:
 
@@ -408,12 +408,12 @@ export function glyphForHeadroom(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- src/lib/load-affordance.test.ts`
 Expected: PASS, all 13 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/load-affordance.ts src/lib/load-affordance.test.ts
@@ -434,13 +434,13 @@ git commit -m "feat(loads): add load affordance pricing core"
 
 The widget cannot price a load without both sides of the cliff, and `LoadTimingPeriod` currently exposes only `marginalCost` (whichever rate is in force). The values already exist on the grouped rows inside `computeLoadTiming` — this only surfaces them.
 
-- [ ] **Step 1: Read the existing test file**
+- [x] **Step 1: Read the existing test file**
 
 Run: `cat src/lib/load-timing.test.ts`
 
 Note the existing fixture-building helpers and reuse them rather than inventing new ones. If the file does not exist, create it and build a `Schedule` fixture modelled on `src/lib/next-cheaper-period.test.ts`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Add to `src/lib/load-timing.test.ts`, inside the existing top-level `describe`:
 
@@ -466,12 +466,12 @@ it('exposes both sides of the price cliff on every period', () => {
 
 Replace `buildViewFixture()` with the actual fixture construction used by the neighbouring tests in that file.
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `npm test -- src/lib/load-timing.test.ts`
 Expected: FAIL — `expect(typeof p.buyRate).toBe('number')` receives `"undefined"`.
 
-- [ ] **Step 4: Add the fields to the interface**
+- [x] **Step 4: Add the fields to the interface**
 
 In `src/lib/load-timing.ts`, extend `LoadTimingPeriod`:
 
@@ -488,7 +488,7 @@ export interface LoadTimingPeriod {
 }
 ```
 
-- [ ] **Step 5: Populate them in the periods map**
+- [x] **Step 5: Populate them in the periods map**
 
 In `computeLoadTiming`, the `periods` map currently reads:
 
@@ -508,12 +508,12 @@ Change it to:
 
 `u` is the grouped `UsageData` already in scope in that callback; its `buyRate` / `sellRate` were resolved to the current season's rates earlier in the function.
 
-- [ ] **Step 6: Run the full test suite to verify nothing regressed**
+- [x] **Step 6: Run the full test suite to verify nothing regressed**
 
 Run: `npm test`
 Expected: PASS. In particular the TRMNL tests must pass **unchanged** — that is the check that this addition really is additive and the e-ink output did not move.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/lib/load-timing.ts src/lib/load-timing.test.ts
@@ -532,7 +532,7 @@ git commit -m "feat(load-timing): expose buy and sell rates on each period"
 - Consumes: nothing new.
 - Produces: nothing new. Pure reordering.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/components/site/live/LiveDetailView.test.tsx`:
 
@@ -586,23 +586,23 @@ describe('LiveDetailView', () => {
 
 If `todayTotals` fails to typecheck, run `grep -n "export interface TodayTotals" -A 12 src/lib/energy-repo.ts` and match the real field names exactly.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- src/components/site/live/LiveDetailView.test.tsx`
 Expected: FAIL — `loadTimingAt` is greater than `chartAt`, because Load timing currently renders fourth.
 
-- [ ] **Step 3: Reorder the sections**
+- [x] **Step 3: Reorder the sections**
 
 In `src/components/site/live/LiveDetailView.tsx`, move the entire `<SectionCard title="Load timing this cycle" …>` block so it is the first child of the wrapping `<div className="space-y-6">`, immediately before the `<SectionCard title={`${siteName} — Today`} …>` block. Move the block verbatim; do not change its props or children.
 
 Resulting order: Load timing → Today chart → Today so far → Sankey → Battery hold.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- src/components/site/live/LiveDetailView.test.tsx`
 Expected: PASS, both tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/site/live/LiveDetailView.tsx src/components/site/live/LiveDetailView.test.tsx
@@ -628,7 +628,7 @@ git commit -m "feat(live): move Load timing to the top of the Live view"
 
 The pure view-model lives in `run-load-view.ts` so it is testable in the node environment; the component is a thin renderer over it.
 
-- [ ] **Step 1: Write the failing test for the currency formatter**
+- [x] **Step 1: Write the failing test for the currency formatter**
 
 Add to `src/lib/format-utils.test.ts` (create the file with `import { describe, expect, it } from 'vitest';` and the relevant import if it does not exist):
 
@@ -648,12 +648,12 @@ describe('formatDollars', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- src/lib/format-utils.test.ts`
 Expected: FAIL — `formatDollars` is not exported.
 
-- [ ] **Step 3: Implement the formatter**
+- [x] **Step 3: Implement the formatter**
 
 Append to `src/lib/format-utils.ts`:
 
@@ -663,12 +663,12 @@ export function formatDollars(amount: number): string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- src/lib/format-utils.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Write the failing test for the view-model**
+- [x] **Step 5: Write the failing test for the view-model**
 
 Create `src/lib/run-load-view.test.ts`:
 
@@ -734,12 +734,12 @@ describe('buildRunLoadTiles', () => {
 });
 ```
 
-- [ ] **Step 6: Run test to verify it fails**
+- [x] **Step 6: Run test to verify it fails**
 
 Run: `npm test -- src/lib/run-load-view.test.ts`
 Expected: FAIL — cannot resolve `./run-load-view`.
 
-- [ ] **Step 7: Implement the view-model**
+- [x] **Step 7: Implement the view-model**
 
 Create `src/lib/run-load-view.ts`:
 
@@ -801,12 +801,12 @@ export function buildRunLoadTiles(
 }
 ```
 
-- [ ] **Step 8: Run test to verify it passes**
+- [x] **Step 8: Run test to verify it passes**
 
 Run: `npm test -- src/lib/run-load-view.test.ts`
 Expected: PASS, all 7 tests.
 
-- [ ] **Step 9: Write the failing test for the component**
+- [x] **Step 9: Write the failing test for the component**
 
 Create `src/components/site/live/RunLoadNowWidget.test.tsx`:
 
@@ -849,12 +849,12 @@ describe('RunLoadNowWidget', () => {
 });
 ```
 
-- [ ] **Step 10: Run test to verify it fails**
+- [x] **Step 10: Run test to verify it fails**
 
 Run: `npm test -- src/components/site/live/RunLoadNowWidget.test.tsx`
 Expected: FAIL — cannot resolve `./RunLoadNowWidget`.
 
-- [ ] **Step 11: Implement the component**
+- [x] **Step 11: Implement the component**
 
 Create `src/components/site/live/RunLoadNowWidget.tsx`:
 
@@ -936,12 +936,12 @@ export function RunLoadNowWidget({ periods }: RunLoadNowWidgetProps) {
 }
 ```
 
-- [ ] **Step 12: Run test to verify it passes**
+- [x] **Step 12: Run test to verify it passes**
 
 Run: `npm test -- src/components/site/live/RunLoadNowWidget.test.tsx`
 Expected: PASS, all 3 tests.
 
-- [ ] **Step 13: Mount the widget in the Load timing card**
+- [x] **Step 13: Mount the widget in the Load timing card**
 
 In `src/components/site/live/PeriodCardRow.tsx`, add the import:
 
@@ -957,12 +957,12 @@ and render it immediately after the closing `</div>` of the period-card grid, st
 
 Leave both early-return branches (no tariff, no cycle data) untouched — the widget has nothing to price in either case.
 
-- [ ] **Step 14: Run the full suite**
+- [x] **Step 14: Run the full suite**
 
 Run: `npm test`
 Expected: PASS.
 
-- [ ] **Step 15: Commit**
+- [x] **Step 15: Commit**
 
 ```bash
 git add src/lib/run-load-view.ts src/lib/run-load-view.test.ts src/lib/format-utils.ts src/lib/format-utils.test.ts src/components/site/live/RunLoadNowWidget.tsx src/components/site/live/RunLoadNowWidget.test.tsx src/components/site/live/PeriodCardRow.tsx
@@ -985,7 +985,7 @@ This is the piece that keeps the header free. The sparkline query already spans 
 
 Each 15-minute bin holds `AVG(grid_power)` where each underlying sample is Wh per 5 minutes, so a full bin's energy is `avg * 3` Wh. Positive means importing, so net export is negated. This over-counts a partial bin (the in-progress one, or one with missing samples); that is the documented, accepted approximation, because the value only ever selects a glyph.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/lib/headroom-from-bins.test.ts`:
 
@@ -1090,12 +1090,12 @@ describe('activePeriodSurplusKwh', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- src/lib/headroom-from-bins.test.ts`
 Expected: FAIL — cannot resolve `./headroom-from-bins`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `src/lib/headroom-from-bins.ts`:
 
@@ -1155,12 +1155,12 @@ export function activePeriodSurplusKwh(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- src/lib/headroom-from-bins.test.ts`
 Expected: PASS, all 10 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/headroom-from-bins.ts src/lib/headroom-from-bins.test.ts
@@ -1183,7 +1183,7 @@ git commit -m "feat(loads): derive today's period headroom from bucketed rows"
 
 The rollup of completed days changes only at site-local midnight, so it is memoised per `(siteId, siteMidnight)`. This is the same per-instance caching pattern as the pooled `pg` client — a cold instance pays it once, a warm one once per site per day.
 
-- [ ] **Step 1: Write the failing test for the cache**
+- [x] **Step 1: Write the failing test for the cache**
 
 Create `src/lib/cycle-rollup-cache.test.ts`:
 
@@ -1232,12 +1232,12 @@ describe('getCachedCycleRollup', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- src/lib/cycle-rollup-cache.test.ts`
 Expected: FAIL — cannot resolve `./cycle-rollup-cache`.
 
-- [ ] **Step 3: Implement the cache**
+- [x] **Step 3: Implement the cache**
 
 Create `src/lib/cycle-rollup-cache.ts`:
 
@@ -1277,12 +1277,12 @@ export function clearCycleRollupCache(): void {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- src/lib/cycle-rollup-cache.test.ts`
 Expected: PASS, all 4 tests.
 
-- [ ] **Step 5: Extend the client type**
+- [x] **Step 5: Extend the client type**
 
 In `src/lib/site-live-data-client.ts`, add the import and the field:
 
@@ -1303,7 +1303,7 @@ and inside `SiteLiveData`, after `currentTariff?: string;`:
     loadHeadroom?: SiteLiveDataHeadroom | null;
 ```
 
-- [ ] **Step 6: Wire the route**
+- [x] **Step 6: Wire the route**
 
 In `src/app/api/site-live-data/route.ts`, add imports:
 
@@ -1361,7 +1361,7 @@ After `const currentTariff = getCurrentTariffLabel(site);`, insert:
 
 Then add `loadHeadroom,` to the `NextResponse.json({ … })` object, after `currentTariff,`.
 
-- [ ] **Step 7: Verify the whole suite and the build**
+- [x] **Step 7: Verify the whole suite and the build**
 
 Run: `npm test`
 Expected: PASS.
@@ -1369,7 +1369,7 @@ Expected: PASS.
 Run: `npm run build`
 Expected: build succeeds. This is the step that catches a bad `EnergyRepo.getSiteMidnight` import or a `site` possibly-undefined type error — `site` is `SiteWithTariffs | undefined`, so guard it rather than reaching for `!` if the compiler objects.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/lib/cycle-rollup-cache.ts src/lib/cycle-rollup-cache.test.ts src/lib/site-live-data-client.ts src/app/api/site-live-data/route.ts
@@ -1391,7 +1391,7 @@ git commit -m "feat(api): serve active-period load headroom from site-live-data"
 
 Treatment 2 from the design: a tinted pill holding the glyph alone, no number. The `title` names the profile and surplus; the exact figures live one tap away on the Live page.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/components/ui/LoadHeadroomGlyph.test.tsx`:
 
@@ -1454,12 +1454,12 @@ describe('LoadHeadroomGlyph', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- src/components/ui/LoadHeadroomGlyph.test.tsx`
 Expected: FAIL — cannot resolve `./LoadHeadroomGlyph`.
 
-- [ ] **Step 3: Implement the glyph component**
+- [x] **Step 3: Implement the glyph component**
 
 Create `src/components/ui/LoadHeadroomGlyph.tsx`. The four icons are hand-authored 24×24 outline SVGs matching the `SolarIcon` / `GridIcon` style already in `HeaderLiveStats.tsx` — heroicons ships neither a car nor a washing machine. Adding a fifth icon later means one SVG, one `ICONS` entry, and one member on `LoadGlyph`.
 
@@ -1557,12 +1557,12 @@ export function LoadHeadroomGlyph({ headroom }: LoadHeadroomGlyphProps) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- src/components/ui/LoadHeadroomGlyph.test.tsx`
 Expected: PASS, all 5 tests.
 
-- [ ] **Step 5: Mount the glyph in the header**
+- [x] **Step 5: Mount the glyph in the header**
 
 In `src/components/HeaderLiveStats.tsx`:
 
@@ -1572,7 +1572,7 @@ In `src/components/HeaderLiveStats.tsx`:
 
 Do not route this through `buildHeaderMetricsModel` — that function derives formatted numbers from raw live values, and the headroom arrives already shaped from the API.
 
-- [ ] **Step 6: Run the full suite, lint, and build**
+- [x] **Step 6: Run the full suite, lint, and build**
 
 Run: `npm test`
 Expected: PASS.
@@ -1583,7 +1583,7 @@ Expected: no errors.
 Run: `npm run build`
 Expected: build succeeds.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/components/ui/LoadHeadroomGlyph.tsx src/components/ui/LoadHeadroomGlyph.test.tsx src/components/HeaderLiveStats.tsx
@@ -1601,7 +1601,7 @@ git commit -m "feat(header): add load headroom glyph to the live status strip"
 - Consumes: everything above.
 - Produces: nothing.
 
-- [ ] **Step 1: Confirm the whole suite, lint, and build are green**
+- [x] **Step 1: Confirm the whole suite, lint, and build are green**
 
 ```bash
 npm test && npm run lint && npm run build
@@ -1609,13 +1609,13 @@ npm test && npm run lint && npm run build
 
 Expected: all three pass. Do not proceed past a failure — fix it.
 
-- [ ] **Step 2: Start the agent dev server**
+- [x] **Step 2: Start the agent dev server**
 
 Run: `npm run dev:agent`
 
 Uses port 5174; the user's own server occupies 5173. If the port is busy, `npm run build && npx next start -p 5174`.
 
-- [ ] **Step 3: Check the Live view**
+- [x] **Step 3: Check the Live view**
 
 Open `http://localhost:5174/site/<id>/live` for a site with a configured tariff. Confirm:
 - "Load timing this cycle" is the first card on the page.
@@ -1623,15 +1623,15 @@ Open `http://localhost:5174/site/<id>/live` for a site with a configured tariff.
 - Clicking a preset changes every period tile's dollar figure.
 - Dragging the slider updates the figures without a page reload or network request.
 
-- [ ] **Step 4: Check the header glyph**
+- [x] **Step 4: Check the header glyph**
 
 On any site page, confirm the glyph pill renders at the end of the live strip, and that hovering shows the period, surplus, and profile name. A site with no tariff must render no pill and no layout gap.
 
-- [ ] **Step 5: Confirm no added per-poll egress**
+- [x] **Step 5: Confirm no added per-poll egress**
 
 Watch the dev server console across at least two `/api/site-live-data` polls (five minutes apart, or force a refresh). The `[EnergyRepo]` log lines for the second poll must show **no** `getCycleAggregates` or `getRawEnergyData` call attributable to headroom — only the `getBucketedEnergyData` call that was already there. Seeing the rollup query on every poll means the cache key is wrong; fix it before finishing.
 
-- [ ] **Step 6: Commit any fixes**
+- [x] **Step 6: Commit any fixes**
 
 ```bash
 git add -A
