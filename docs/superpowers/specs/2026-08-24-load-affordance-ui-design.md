@@ -268,23 +268,24 @@ Instead:
   24 hours, and site-local midnight is never more than 24 hours ago, so today's rows are
   *already in memory*. The active period's today-so-far energy is derived by filtering
   those bins to `timestamp >= siteMidnight`, attributing each to a TOU period, and
-  summing `avg_grid_power × 3` (three 5-minute samples per 15-minute bin). No query
+  summing `avg_grid_power × sample_count` (using each 15-minute bin's `sample_count`). No query
   changes at all.
 - **Prior days are cached to the day boundary.** Cycle aggregates for completed days
   change only at site-local midnight, so an in-process memo keyed on
   `(siteId, siteMidnight)` — the same per-instance caching pattern as the pooled `pg`
-  client from PR #105 — pays 5.4 KB once per site per day on a warm instance.
+  client from PR #105 — pays 5.4 KB once per site per day on a warm instance. Mid-day
+  tariff edits include the site/tariff version key to invalidate immediately.
 
 **Steady-state addition: ~0 KB per poll**, plus ~6.5 KB per site per day on cold starts.
 
-The tradeoff, stated plainly: the header number is approximate. `avg × 3` over-counts
-any partial bin (the in-progress one) and any bin with missing samples, and 15-minute
-bins are coarser than the 5-minute samples the Live page uses. The error is small
-relative to tier boundaries at 100 / 20 / 0 kWh, and this value only ever selects a
-glyph — it is never displayed as a number. The Live page continues to run the exact
-`computeLoadTiming` computation it runs today. Where the two could visibly disagree is a
-site sitting within a kilowatt-hour or two of a threshold; the glyph may lag the Live
-page by one bin. That is acceptable for a four-state indicator.
+The precision tradeoff: each 15-minute bin uses its actual sample count (`sample_count`),
+accounting for partial and TOU-boundary bins. The residual difference vs the Live page is
+15-minute bin resolution vs 5-minute raw samples. The error is small relative to tier
+boundaries at 160 / 100 / 20 / 5 kWh, and this value only ever selects a glyph — it is
+never displayed as a number. The Live page continues to run the exact `computeLoadTiming`
+computation it runs today. Where the two could visibly disagree is a site sitting within a
+kilowatt-hour or two of a threshold; the glyph may lag the Live page by one bin. That is
+acceptable for a four-state indicator.
 
 ## Error Handling and Edge Cases
 
@@ -294,7 +295,7 @@ page by one bin. That is acceptable for a four-state indicator.
 | No cycle data yet | No glyph; existing "no cycle data" message stands |
 | No active TOU period (schedule gap) | No glyph; widget still prices the upcoming periods |
 | Surplus below the smallest threshold (incl. deficit) | Avoid-large-loads glyph; in deficit every kWh is priced at the buy rate |
-| `sellRate` missing/zero | Falls out of `costToRun` naturally — covered portion costs 0 |
+| `buyRate` / `sellRate` unresolvable (0/0 rates) | Widget renders neutral dash (`—`) cost label and grey `unknown` status |
 | Malformed `load-profiles.json` | Throws at module load; build fails |
 
 ## Testing

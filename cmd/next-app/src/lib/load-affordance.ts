@@ -6,7 +6,7 @@ export interface PeriodPricing {
     sellRate: number;
 }
 
-export type LoadVerdict = 'covered' | 'tight' | 'partial' | 'bought';
+export type LoadVerdict = 'covered' | 'tight' | 'partial' | 'bought' | 'unknown';
 
 export interface LoadCost {
     total: number;

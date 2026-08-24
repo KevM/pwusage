@@ -62,11 +62,13 @@ export function RunLoadNowWidget({ periods }: RunLoadNowWidgetProps) {
                             {t.name} · {t.whenLabel}
                         </p>
                         <p className={`text-xl font-semibold ${t.toneClass}`}>{t.costLabel}</p>
-                        {/* The bar always reports the exact sell/buy split, even
-                            when the verdict is softened to "tight". */}
-                        <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-red-500">
-                            <div className="bg-green-500" style={{ width: `${t.barCoveredPct}%` }} />
-                        </div>
+                        {t.verdict === 'unknown' ? (
+                            <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700" />
+                        ) : (
+                            <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-red-500">
+                                <div className="bg-green-500" style={{ width: `${t.barCoveredPct}%` }} />
+                            </div>
+                        )}
                     </div>
                 ))}
             </div>

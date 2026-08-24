@@ -9,10 +9,9 @@ const SAMPLES_PER_BIN = 3;
  * Today's net export per TOU period, in kWh, derived from the 15-minute bins
  * the live-data route already fetches for the sparklines.
  *
- * Deliberately approximate: a partial bin (the in-progress one, or one missing
- * samples) is scaled as if it were full, so the result can run slightly high.
- * This value only ever selects a header glyph — the Live page runs the exact
- * computation. See the design doc's "Egress and precision".
+ * Each bin row supplies its actual sample count (b.sample_count), accurately
+ * accounting for partial or TOU-boundary bins. The residual difference vs the
+ * Live page is 15-minute bin resolution vs 5-minute raw samples.
  */
 export function todayNetExportByPeriod(
     bins: EnergyData[],

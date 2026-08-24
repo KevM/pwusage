@@ -18,6 +18,7 @@ const TONE: Record<LoadVerdict, string> = {
     tight: 'text-amber-700 dark:text-amber-400',
     partial: 'text-amber-700 dark:text-amber-400',
     bought: 'text-red-700 dark:text-red-400',
+    unknown: 'text-gray-500 dark:text-gray-400',
 };
 
 /**
@@ -35,17 +36,17 @@ export function buildRunLoadTiles(
     const ordered = [...periods].sort((a, b) => Number(b.isActive) - Number(a.isActive));
 
     return ordered.map((p) => {
-        const isUnresolvable = (p.buyRate === 0 && p.sellRate === 0) || p.marginalCost === null;
+        const isUnresolvable = p.buyRate === 0 && p.sellRate === 0;
 
         if (isUnresolvable) {
             return {
                 name: formatTouName(p.name),
                 costLabel: '—',
-                verdict: 'bought' as const,
+                verdict: 'unknown' as const,
                 coveredKwh: 0,
-                boughtKwh: loadKwh,
+                boughtKwh: 0,
                 whenLabel: p.isActive ? 'now' : (p.nextStartPhrase ?? ''),
-                toneClass: 'text-gray-500 dark:text-gray-400',
+                toneClass: TONE.unknown,
                 barCoveredPct: 0,
             };
         }

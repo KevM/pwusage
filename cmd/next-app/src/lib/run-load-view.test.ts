@@ -64,6 +64,7 @@ describe('buildRunLoadTiles', () => {
         }];
         const tile = buildRunLoadTiles(unresolvable, 10)[0];
         expect(tile.costLabel).toBe('—');
+        expect(tile.verdict).toBe('unknown');
         expect(tile.toneClass).toContain('gray');
     });
 });
