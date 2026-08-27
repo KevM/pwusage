@@ -1,0 +1,8 @@
+{
+  "profiles": [
+    { "id": "car-large", "label": "Big car", "kwh": 100, "headroomKwh": 160, "glyph": "car" },
+    { "id": "car-small", "label": "Little car", "kwh": 60, "headroomKwh": 100, "glyph": "car" },
+    { "id": "laundry", "label": "Laundry", "kwh": 8, "headroomKwh": 20, "glyph": "appliance" },
+    { "id": "dishwasher", "label": "Dishwasher", "kwh": 5, "headroomKwh": 5, "glyph": "small" }
+  ]
+}

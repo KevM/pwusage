@@ -1,3 +1,5 @@
+import type { LoadGlyph } from './load-profiles';
+
 export interface SiteLiveSparklinePoint {
     timestamp: string;
     watts: number;
@@ -20,6 +22,13 @@ export interface SiteLiveSparklineScales {
     load: SiteLiveSparklineScale;
 }
 
+export interface SiteLiveDataHeadroom {
+    surplusKwh: number;
+    periodName: string;
+    glyph: LoadGlyph | null;
+    profileLabel: string | null;
+}
+
 export interface SiteLiveData {
     solarPower: number;
     loadPower: number;
@@ -27,6 +36,7 @@ export interface SiteLiveData {
     gridPower: number;
     percentageCharged: number;
     currentTariff?: string;
+    loadHeadroom?: SiteLiveDataHeadroom | null;
     sparklines?: SiteLiveSparklines;
     sparklineScales?: SiteLiveSparklineScales;
 }

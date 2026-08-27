@@ -436,6 +436,7 @@ export class EnergyRepo {
     }
 
     async getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
+        if (start.getTime() >= end.getTime()) return [];
         const queryStart = Date.now();
         const res = await pool.query(`
             SELECT site_id, timestamp, tariff_id, tariff_schedule_id, load_power, solar_power, grid_power, battery_power, battery_soc
@@ -469,6 +470,7 @@ export class EnergyRepo {
                 site_id,
                 tariff_id,
                 tariff_schedule_id,
+                COUNT(*)::int as sample_count,
                 AVG(load_power) as load_power,
                 AVG(solar_power) as solar_power,
                 AVG(grid_power) as grid_power,
@@ -496,6 +498,7 @@ export class EnergyRepo {
             grid_power: Number(row.grid_power),
             battery_power: Number(row.battery_power),
             battery_soc: null,
+            sample_count: Number(row.sample_count ?? 3),
         })) as EnergyData[];
     }
 

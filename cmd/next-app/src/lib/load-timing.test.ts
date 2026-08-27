@@ -155,4 +155,78 @@ describe('computeLoadTiming', () => {
         expect(on.basis).toBe('sell');
         expect(on.isActive).toBe(false);
     });
+
+    it('exposes both sides of the price cliff on every period', () => {
+        const schedule = new Schedule([tariff()], TZ);
+        const now = new Date('2026-05-19T19:00:00Z');
+        const cycle: UsageData[] = [
+            usage('OFF_PEAK', 0.20, 0.05, 5000),
+            usage('ON_PEAK', 0.50, 0.08, -9000),
+            usage('OFF_PEAK_LATE', 0.20, 0.05, 0)
+        ];
+        const active = { name: 'OFF_PEAK', buyRate: 0.20, sellRate: 0.05 };
+        const view = computeLoadTiming(schedule, cycle, now, TZ, active);
+
+        for (const p of view.periods) {
+            expect(typeof p.buyRate).toBe('number');
+            expect(typeof p.sellRate).toBe('number');
+        }
+
+        for (const p of view.periods) {
+            if (p.marginalCost === null) continue;
+            expect([p.buyRate, p.sellRate]).toContain(p.marginalCost);
+        }
+    });
+});
+
+
+describe('computeLoadTiming pricingPeriods', () => {
+    it('includes current-season periods the cycle has not reached yet', () => {
+        const schedule = new Schedule([tariff()], TZ);
+        // 12:00 local on a day where ON_PEAK (16:00) has not happened yet.
+        const now = new Date('2026-05-19T19:00:00Z');
+        const cycle: UsageData[] = [usage('OFF_PEAK', 0.20, 0.05, -9000)];
+        const active = { name: 'OFF_PEAK', buyRate: 0.20, sellRate: 0.05 };
+
+        const view = computeLoadTiming(schedule, cycle, now, TZ, active);
+
+        // The observed list stays exactly as the cards and TRMNL expect it.
+        expect(view.periods.map((p) => p.name)).toEqual(['OFF_PEAK']);
+
+        // The pricing list covers every period in the season so the widget can
+        // compare against a period that hasn't occurred yet this cycle.
+        const names = view.pricingPeriods.map((p) => p.name).sort();
+        expect(names).toEqual(['OFF_PEAK', 'OFF_PEAK_LATE', 'ON_PEAK']);
+
+        const onPeak = view.pricingPeriods.find((p) => p.name === 'ON_PEAK')!;
+        expect(onPeak.cycleNetExportKwh).toBeCloseTo(0);
+        expect(onPeak.buyRate).toBeCloseTo(0.50);
+        expect(onPeak.sellRate).toBeCloseTo(0.08);
+        expect(onPeak.isActive).toBe(false);
+        expect(onPeak.nextStartPhrase).toBeTruthy();
+    });
+
+    it('keeps the observed usage and rates for periods already seen', () => {
+        const schedule = new Schedule([tariff()], TZ);
+        const now = new Date('2026-05-19T19:00:00Z');
+        const cycle: UsageData[] = [
+            usage('OFF_PEAK', 0.20, 0.05, -9000),
+            usage('ON_PEAK', 0.50, 0.08, -4000)
+        ];
+        const active = { name: 'OFF_PEAK', buyRate: 0.20, sellRate: 0.05 };
+
+        const view = computeLoadTiming(schedule, cycle, now, TZ, active);
+        const onPeak = view.pricingPeriods.find((p) => p.name === 'ON_PEAK')!;
+        expect(onPeak.cycleNetExportKwh).toBeCloseTo(4);
+
+        const off = view.pricingPeriods.find((p) => p.name === 'OFF_PEAK')!;
+        expect(off.isActive).toBe(true);
+    });
+
+    it('falls back to the observed periods when no season resolves', () => {
+        const schedule = new Schedule([], TZ);
+        const now = new Date('2026-05-19T19:00:00Z');
+        const view = computeLoadTiming(schedule, [], now, TZ, null);
+        expect(view.pricingPeriods).toEqual([]);
+    });
 });

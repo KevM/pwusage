@@ -1,7 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import { formatTouName, formatTimeRange, formatCentsPerKwh, formatCentsPerKwhShort, todayDateStrInTimeZone } from './format-utils';
+import { formatTouName, formatTimeRange, formatCentsPerKwh, formatCentsPerKwhShort, todayDateStrInTimeZone, formatDollars } from './format-utils';
 
 describe('format-utils', () => {
+    describe('formatDollars', () => {
+        it('renders whole and fractional dollars to two places', () => {
+            expect(formatDollars(25.2)).toBe('$25.20');
+            expect(formatDollars(1.8)).toBe('$1.80');
+            expect(formatDollars(0)).toBe('$0.00');
+        });
+
+        it('rounds rather than truncating', () => {
+            expect(formatDollars(0.005)).toBe('$0.01');
+        });
+    });
+
     describe('formatTouName', () => {
         it('formats ALL_CAPS_WITH_UNDERSCORES to title case with hyphens', () => {
             expect(formatTouName('OFF_PEAK')).toBe('Off-Peak');

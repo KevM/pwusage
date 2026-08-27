@@ -10,6 +10,7 @@ import { TodayEnergyChart } from './TodayEnergyChart';
 import { HalfHourRefresh } from './HalfHourRefresh';
 import { BatteryHoldCard } from './BatteryHoldCard';
 import { SankeyCard } from './SankeyCard';
+import { buildLoadAffordanceNow } from '@/lib/load-affordance-now';
 
 export interface LiveDetailViewProps {
     siteId: string;
@@ -47,9 +48,21 @@ export function LiveDetailView({
     sankeyCumulativeSvg
 }: LiveDetailViewProps) {
 
+    const affordance = buildLoadAffordanceNow(loadTiming);
 
     return (
         <div className="space-y-6">
+            <SectionCard title="Today so far" density="compact" bodyClassName="space-y-4">
+                <DailyTotalsRow
+                    totals={todayTotals}
+                    soc={batterySoC}
+                    batteryPower={batteryPower}
+                    affordance={affordance}
+                />
+                <DailyByPeriodTable today={today} />
+                <HalfHourRefresh />
+            </SectionCard>
+
             <SectionCard title={`${siteName} — Today`} density="compact">
                 <TodayEnergyChart
                     rows={todayChartRows}
@@ -65,20 +78,6 @@ export function LiveDetailView({
                 />
             </SectionCard>
 
-            <SectionCard title="Today so far" density="compact" bodyClassName="space-y-4">
-                <DailyTotalsRow
-                    totals={todayTotals}
-                    soc={batterySoC}
-                    batteryPower={batteryPower}
-                />
-                <DailyByPeriodTable today={today} />
-                <HalfHourRefresh />
-            </SectionCard>
-
-            {sankeySnapshotSvg && sankeyCumulativeSvg && (
-                <SankeyCard snapshotSvg={sankeySnapshotSvg} cumulativeSvg={sankeyCumulativeSvg} />
-            )}
-
             <SectionCard title="Load timing this cycle" density="compact" bodyClassName="space-y-3">
                 <PeriodCardRow
                     siteId={siteId}
@@ -86,6 +85,10 @@ export function LiveDetailView({
                     loadTiming={loadTiming}
                 />
             </SectionCard>
+
+            {sankeySnapshotSvg && sankeyCumulativeSvg && (
+                <SankeyCard snapshotSvg={sankeySnapshotSvg} cumulativeSvg={sankeyCumulativeSvg} />
+            )}
 
             <Suspense fallback={
                 <SectionCard title="Hold battery for charging" density="compact">
