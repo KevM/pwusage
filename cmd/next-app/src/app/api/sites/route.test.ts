@@ -63,4 +63,20 @@ describe('/api/sites', () => {
             { id: 'site-1', name: 'Home', utility: 'Portland General Electric' }
         ]);
     });
+
+    it('returns 401 when site authorization rejects a revoked user', async () => {
+        mocks.getAuthorizedSites.mockRejectedValue(new Error('Unauthorized: Revoked or inactive user'));
+
+        const response = await GET(new Request('http://localhost/api/sites'));
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: 'Unauthorized' });
+    });
+
+    it('keeps an authorized user with no sites as a valid empty response', async () => {
+        mocks.getAuthorizedSites.mockResolvedValue([]);
+
+        const response = await GET(new Request('http://localhost/api/sites'));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual([]);
+    });
 });

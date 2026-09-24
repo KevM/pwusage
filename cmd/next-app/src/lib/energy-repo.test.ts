@@ -95,6 +95,21 @@ describe('sumTodayRows', () => {
     });
 });
 
+describe('EnergyRepo.getLatestEnergyData snapshot bounds', () => {
+    it('limits the latest-row read to the requested snapshot instant', async () => {
+        queryMock.mockReset();
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const asOf = new Date('2026-08-27T22:25:00.000Z');
+
+        await new EnergyRepo().getLatestEnergyData('site-1', asOf);
+
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toMatch(/timestamp\s*<=\s*\$2/);
+        expect(sql).toMatch(/ORDER BY timestamp DESC/);
+        expect(params).toEqual(['site-1', asOf]);
+    });
+});
+
 describe('EnergyRepo.getCycleAggregates', () => {
     const start = new Date('2026-04-01T00:00:00Z');
     const end   = new Date('2026-04-28T00:00:00Z');

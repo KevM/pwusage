@@ -374,7 +374,7 @@ export class EnergyRepo {
         return rows.length > 0;
     }
 
-    async getLatestEnergyData(siteId: string): Promise<{
+    async getLatestEnergyData(siteId: string, asOf?: Date): Promise<{
         timestamp: Date;
         batterySoc: number | null;
         batteryPower: number;
@@ -382,13 +382,16 @@ export class EnergyRepo {
         gridPower: number;
         loadPower: number;
     } | null> {
+        const timestampLimit = asOf ? 'AND timestamp <= $2' : '';
+        const params = asOf ? [siteId, asOf] : [siteId];
         const { rows } = await pool.query(`
             SELECT timestamp, battery_soc, battery_power, solar_power, grid_power, load_power
             FROM "EnergyData"
             WHERE site_id = $1
+            ${timestampLimit}
             ORDER BY timestamp DESC
             LIMIT 1
-        `, [siteId]);
+        `, params);
 
         if (rows.length === 0) return null;
         return {
@@ -401,6 +404,19 @@ export class EnergyRepo {
             gridPower: Number(rows[0].grid_power),
             loadPower: Number(rows[0].load_power),
         };
+    }
+
+    /** One indexed row, only used when live status has no usable charge value. */
+    async getLatestBatterySoc(siteId: string, since: Date): Promise<{ value: number; timestamp: Date } | null> {
+        const { rows } = await pool.query(`
+            SELECT timestamp, battery_soc
+            FROM "EnergyData"
+            WHERE site_id = $1 AND timestamp >= $2 AND battery_soc IS NOT NULL
+            ORDER BY timestamp DESC
+            LIMIT 1
+        `, [siteId, since]);
+        if (rows.length === 0) return null;
+        return { value: Number(rows[0].battery_soc), timestamp: new Date(rows[0].timestamp) };
     }
 
     async getCycleAggregates(
@@ -467,6 +483,7 @@ export class EnergyRepo {
         const res = await pool.query(`
             SELECT
                 date_bin('15 minutes', timestamp, TIMESTAMPTZ '2000-01-01') as timestamp,
+                MAX(timestamp) as sample_timestamp,
                 site_id,
                 tariff_id,
                 tariff_schedule_id,
@@ -490,6 +507,7 @@ export class EnergyRepo {
         return res.rows.map(row => ({
             id: row.id,
             timestamp: new Date(row.timestamp),
+            sample_timestamp: new Date(row.sample_timestamp),
             site_id: row.site_id.toString(),
             tariff_id: row.tariff_id,
             tariff_schedule_id: row.tariff_schedule_id,

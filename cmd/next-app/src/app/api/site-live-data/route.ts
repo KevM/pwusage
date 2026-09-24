@@ -5,11 +5,13 @@ import { SiteRepo } from '@/lib/site-repo';
 import { Schedule, getCurrentTariffLabel } from '@/lib/schedule';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
-import { refreshLiveStatus } from '@/lib/today-refresh';
+import { formatSiteDate } from '@/lib/date-utils';
+import { refreshLiveStatus, refreshTodayData } from '@/lib/today-refresh';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { getCachedCycleRollup } from '@/lib/cycle-rollup-cache';
 import { activePeriodSurplusKwh, missingTodayInterval, todayNetExportByPeriod } from '@/lib/headroom-from-bins';
 import { glyphForHeadroom, profileForHeadroom } from '@/lib/load-affordance';
+import { buildMobileDashboardContract, maxBucketSampleTimestamp, MOBILE_SOC_MAX_AGE_MS, MOBILE_SOC_STALE_AFTER_MS, sumBucketedTodayRows } from '@/lib/mobile-dashboard-contract';
 import type { SiteLiveDataHeadroom } from '@/lib/site-live-data-client';
 import {
     parseScaleWindowHours,
@@ -18,6 +20,7 @@ import {
 } from './sparkline-utils';
 
 export const dynamic = 'force-dynamic';
+const MOBILE_ENERGY_STALE_AFTER_MS = 30 * 60 * 1000;
 
 export async function GET(request: Request) {
     return withRequestContext(async () => {
@@ -41,7 +44,7 @@ export async function GET(request: Request) {
             const sparklineWindowStart = new Date(now.getTime() - (SPARKLINE_DISPLAY_WINDOW_HOURS * 60 * 60 * 1000));
             const sparklineScaleStart = new Date(now.getTime() - (scaleWindowHours * 60 * 60 * 1000));
 
-            const [liveResult, site, historyRows] = await Promise.all([
+            const [liveResult, site, initialHistoryRows] = await Promise.all([
                 refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000 }),
                 siteRepo.getSite(siteId),
                 repo.getBucketedEnergyData(siteId, sparklineScaleStart, now)
@@ -56,8 +59,34 @@ export async function GET(request: Request) {
             }
 
             const liveStatus = liveResult.liveStatus;
+            const mobileView = searchParams.get('view') === 'mobile';
+            let historyRows = initialHistoryRows;
+
+            // The website refreshes today's Tesla history before reading its
+            // totals. Do the same for mobile only when the stored sample is old.
+            // The site import lock caps attempts across instances; a successful
+            // import alone warrants a second bucket read.
+            const latestEnergySample = maxBucketSampleTimestamp(historyRows);
+            if (mobileView && (!latestEnergySample
+                || now.getTime() - latestEnergySample.getTime() > MOBILE_ENERGY_STALE_AFTER_MS)) {
+                try {
+                    const refreshed = await refreshTodayData(siteId, { minIntervalMs: MOBILE_ENERGY_STALE_AFTER_MS });
+                    if (refreshed.status === 'persisted') {
+                        historyRows = await repo.getBucketedEnergyData(siteId, sparklineScaleStart, now);
+                    } else if (refreshed.status === 'error') {
+                        console.warn('[site-live-data] mobile today refresh failed:', refreshed.errorMessage);
+                    }
+                } catch (refreshError) {
+                    console.warn('[site-live-data] mobile today refresh unavailable:', refreshError);
+                }
+            }
 
             const currentTariff = getCurrentTariffLabel(site);
+            const siteTimezone = site?.timezone ?? 'UTC';
+            const siteMidnight = EnergyRepo.getSiteMidnight(now, siteTimezone);
+            let todayRows = historyRows;
+            let todayComplete = true;
+            let todayGapFetched = false;
 
             // Headroom for the active TOU period. Today's contribution comes
             // from `historyRows`, already fetched above for the sparklines —
@@ -92,6 +121,9 @@ export async function GET(request: Request) {
                                 : Promise.resolve([])
                         ]);
 
+                        if (gap) todayGapFetched = true;
+                        if (gapRows.length > 0) todayRows = [...gapRows, ...historyRows];
+
                         const todayByPeriod = todayNetExportByPeriod(
                             gapRows.length > 0 ? [...gapRows, ...historyRows] : historyRows,
                             siteMidnight,
@@ -117,11 +149,61 @@ export async function GET(request: Request) {
                 console.warn('[site-live-data] headroom unavailable:', headroomError);
             }
 
+            // On a long local day, fetch only the small interval missing from the
+            // existing rolling bucket query. This is the same exceptional gap
+            // needed by headroom and never becomes a full raw-today query.
+            const todayGap = missingTodayInterval(siteMidnight, sparklineScaleStart);
+            if (todayGap && !todayGapFetched) {
+                try {
+                    const gapRows = await repo.getBucketedEnergyData(siteId, todayGap.start, todayGap.end);
+                    todayRows = [...gapRows, ...historyRows];
+                    todayGapFetched = true;
+                    todayComplete = true;
+                } catch (gapError) {
+                    todayComplete = false;
+                    console.warn('[site-live-data] today totals are incomplete:', gapError);
+                }
+            }
+
             const { series: sparklines, scales: sparklineScales } = toSparklinePayload(historyRows, now, {
                 solar: liveStatus.solar_power,
                 grid: liveStatus.grid_power,
                 load: liveStatus.load_power
             }, sparklineWindowStart);
+
+            const liveSourceMs = new Date(liveStatus.timestamp).getTime();
+            const stateOfCharge = Number.isFinite(liveSourceMs)
+                && now.getTime() - liveSourceMs >= 0
+                && now.getTime() - liveSourceMs <= MOBILE_SOC_STALE_AFTER_MS
+                ? liveStatus.percentage_charged
+                : null;
+            const liveSocUsable = typeof liveStatus.percentage_charged === 'number'
+                && Number.isFinite(liveStatus.percentage_charged)
+                && liveStatus.percentage_charged >= 0 && liveStatus.percentage_charged <= 100
+                && Number.isFinite(liveSourceMs)
+                && now.getTime() - liveSourceMs >= 0
+                && now.getTime() - liveSourceMs <= MOBILE_SOC_MAX_AGE_MS;
+            // Most responses use the already-fetched live cache. Only a missing
+            // value incurs one small, indexed DB read; never fetch Tesla again.
+            const fallbackSoc = mobileView && !liveSocUsable
+                ? await repo.getLatestBatterySoc(siteId, new Date(now.getTime() - MOBILE_SOC_MAX_AGE_MS))
+                : null;
+            const mobileContract = buildMobileDashboardContract({
+                site: { id: siteId, name: site?.name ?? '', timezone: siteTimezone },
+                live: liveStatus,
+                fallbackSoc,
+                energyTimestamp: maxBucketSampleTimestamp(historyRows),
+                now,
+                activeTariff: currentTariff,
+                today: sumBucketedTodayRows(todayRows, siteMidnight),
+                todayComplete,
+                bill: null,
+                todayDate: formatSiteDate(now, siteTimezone),
+            });
+
+            if (mobileView) {
+                return NextResponse.json(mobileContract);
+            }
 
             return NextResponse.json({
                 solarPower: liveStatus.solar_power,
@@ -129,6 +211,8 @@ export async function GET(request: Request) {
                 batteryPower: liveStatus.battery_power,
                 gridPower: liveStatus.grid_power,
                 percentageCharged: liveStatus.percentage_charged,
+                stateOfCharge,
+                sourceTimestamps: mobileContract.sources,
                 currentTariff,
                 loadHeadroom,
                 sparklines,
@@ -144,4 +228,3 @@ export async function GET(request: Request) {
         }
     });
 }
-

@@ -74,7 +74,7 @@ export class SiteService {
                 // would otherwise keep access until the token expires. Re-check.
                 if (decoded.sub && !(await this.isUserStillActive(decoded.sub))) {
                     console.warn(`[SiteService] getAuthorizedSites blocked for revoked/inactive user: ${decoded.sub}`);
-                    return [];
+                    throw new Error('Unauthorized: Revoked or inactive user');
                 }
                 // console.log('[SiteService] Using JWT for authorization');
                 authorizedSiteIds = new Set(decoded.sites);

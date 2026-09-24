@@ -1,4 +1,5 @@
 import type { LoadGlyph } from './load-profiles';
+import type { MobileBillSummary, MobileDashboardContract } from './mobile-dashboard-contract';
 
 export interface SiteLiveSparklinePoint {
     timestamp: string;
@@ -65,4 +66,23 @@ export async function fetchSiteLiveData(siteId: string, signal?: AbortSignal): P
     }
 
     return response.json() as Promise<SiteLiveData>;
+}
+
+export async function fetchMobileDashboardContract(
+    siteId: string,
+    signal?: AbortSignal
+): Promise<MobileDashboardContract> {
+    const response = await fetch(`/api/site-live-data?siteId=${encodeURIComponent(siteId)}&view=mobile`, { signal });
+    if (!response.ok) {
+        throw new SiteLiveDataFetchError(response.status, `Failed to fetch mobile dashboard (${response.status})`);
+    }
+    return response.json() as Promise<MobileDashboardContract>;
+}
+
+export async function fetchMobileBillSummary(siteId: string, signal?: AbortSignal): Promise<MobileBillSummary> {
+    const response = await fetch(`/api/mobile/bill-summary?siteId=${encodeURIComponent(siteId)}`, { signal });
+    if (!response.ok) {
+        throw new SiteLiveDataFetchError(response.status, `Failed to fetch mobile bill summary (${response.status})`);
+    }
+    return response.json() as Promise<MobileBillSummary>;
 }

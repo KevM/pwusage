@@ -179,7 +179,7 @@ describe('SiteService Security', () => {
             expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
         });
 
-        it('getAuthorizedSites returns no sites for a revoked user', async () => {
+        it('getAuthorizedSites rejects a revoked user as unauthorized', async () => {
             mockTeslaClient.getProducts.mockClear();
             mockEnergyRepo.getSites.mockResolvedValue([mockSite, mockUnauthorizedSite]);
             vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1' });
@@ -191,7 +191,7 @@ describe('SiteService Security', () => {
                 isUserActive: vi.fn().mockResolvedValue(false),
             });
 
-            expect(await service.getAuthorizedSites()).toEqual([]);
+            await expect(service.getAuthorizedSites()).rejects.toThrow('Unauthorized');
             expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
         });
     });
@@ -392,4 +392,3 @@ describe('SiteService Security', () => {
         });
     });
 });
-

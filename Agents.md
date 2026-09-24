@@ -54,6 +54,7 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - Do not assume a top-level `src/`.
 - If a task says “Next.js code”, start in `cmd/next-app` unless explicitly told otherwise.
 - Secondary legacy web project exists at `cmd/web-app` (only use when task references it).
+- Native iOS app and its tests are in `cmd/ios-app`.
 
 ## TRMNL + Tesla API Constraints
 - **TRMNL Poll Cadence**: Assume devices poll at most once every 15 minutes.
@@ -77,6 +78,11 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - **Workaround**: To test UI or API changes without stopping the user's server:
     1. Stop the user's server temporarily OR
     2. Use `npm run build && next start -p 5174`.
+
+## iOS Test Runs
+- For every native iOS test run, use `cmd/ios-app/run-tests.sh` (or `./run-tests.sh` from that directory). Do not invoke `xcodebuild test` directly. The script generates the Xcode project, selects an available iPhone simulator, disables parallel test execution, and stops a run after 10 minutes.
+- Set `PWUSAGE_SIMULATOR_ID` to target a specific simulator, or `PWUSAGE_TEST_TIMEOUT_SECONDS` to change the deadline. A failed or timed-out run prints the retained test-artifact path.
+- If a run times out, inspect the retained artifacts and simulator state before changing app code. Avoid overlapping test runs.
 
 ## Communication Style
 - **Task Management**: Use `task.md` to track huge chunks of work.

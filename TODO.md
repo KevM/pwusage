@@ -6,6 +6,18 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## Future iOS widgets
+
+**Note (2026-09-24, PR #110 / `codex/ios-foundation`):** Architecture only; no widget work is in progress. Keep the `MobileLoginHandoff` table as a one-time PKCE sign-in exchange. Widgets should use the resulting `site_auth` session, not redeem handoff codes or hold Tesla credentials. See [the authorization design](docs/plans/2026-09-24-ios-widget-authorization-design.md) for rationale and edge cases.
+
+- [ ] **Prepare shared authorization:** Add one App Group entitlement to the app and widget extension and configure their `URLSession`s with the same App Group cookie store. Decide whether existing app sessions will migrate from `HTTPCookieStorage.shared` or require a fresh sign-in. Verify cookie issuance, renewal, expiry, logout, and provisioning on a signed device build. Never put the JWT in shared `UserDefaults` or widget snapshots.
+- [ ] **Tighten server authorization:** For every private widget read and battery-hold write, check a valid session, active user, and *current* site assignment or admin role. `verifySiteAccess` currently reads site/role claims from the JWT, so removal may not take effect until renewal. Treat invalid or revoked sessions as signed out and clear per-site cached widget data. Address the existing PR #110 bootstrap issue where an inactive user can receive `200 []` from `/api/sites`.
+- [ ] **Ship read-only widgets first:** Battery SoC with its measurement time, monthly bill estimate, and car-charge advice based primarily on bill impact and tariff. The advice recommends whether to charge; it does not control charging. Fetch on WidgetKit refresh, use the existing mobile live/bill APIs where suitable, and add a compact server-side charge-advice contract so tariff and billing rules stay consistent with the site. Show stale readings with their original timestamps; avoid presenting an offline cache as authorized after access can no longer be checked.
+- [ ] **Add the interactive hold only after write safeguards:** The `Hold battery` App Intent starts the existing automatic load-ended hold with its eight-hour backstop. Require local device authentication on tap and fresh server authorization before the Tesla command. Use server-fetched SoC/reserve; at 85–95% SoC, open the app for an explicit 80% or 100% choice. Make repeated/concurrent taps idempotent or serialized *before* the first Tesla write. Reject cross-origin browser writes without rejecting native requests that have no `Origin` header. Show the confirmed hold state and clear errors rather than optimistic success.
+- [ ] **Validate the end-to-end lifecycle:** Test separate app/extension processes, locked-device tap, expired/revoked sessions, changed site access, cookie renewal, failed refresh, duplicate taps, and restore after the car load ends. Use the peer SleepDaddy iOS test-runner approach if `xcodebuild test` crashes; inspect that script before adapting it here.
+
+Separately, fix the PR #110 mobile OAuth error paths that still return JSON into `ASWebAuthenticationSession` instead of redirecting an error to the app. That is a current sign-in issue, not a widget feature.
+
 ## DB egress: remaining reduction candidates
 
 The July 2026 Supabase egress spike was traced to site queries duplicating wide

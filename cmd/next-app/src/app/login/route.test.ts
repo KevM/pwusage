@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     redirect: vi.fn(),
     getAppBaseUrl: vi.fn(() => 'http://localhost:5173'),
     cookieSet: vi.fn(),
+    cookieDelete: vi.fn(),
 }));
 
 vi.mock('next/headers', () => ({
@@ -27,7 +28,8 @@ describe('GET /login', () => {
         vi.clearAllMocks();
         process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID = 'tesla-client-id';
         mocks.cookies.mockResolvedValue({
-            set: mocks.cookieSet
+            set: mocks.cookieSet,
+            delete: mocks.cookieDelete,
         });
     });
 
@@ -62,5 +64,25 @@ describe('GET /login', () => {
 
             expect(mocks.cookieSet).not.toHaveBeenCalledWith('auth_callback', expect.any(String), expect.any(Object));
         }
+    });
+
+    it('binds valid native login state and challenge to a short lived server attempt', async () => {
+        const challenge = 'A'.repeat(43);
+        const state = 'B'.repeat(32);
+        const req = new NextRequest(`http://localhost:5173/login?mobile_challenge=${challenge}&mobile_state=${state}`);
+        await GET(req);
+
+        expect(mocks.cookieSet).toHaveBeenCalledWith('auth_mobile_attempt', expect.any(String), expect.objectContaining({
+            httpOnly: true, path: '/', maxAge: 600,
+        }));
+        expect(mocks.cookieSet).toHaveBeenCalledWith('auth_mobile_challenge', challenge, expect.any(Object));
+        expect(mocks.cookieSet).toHaveBeenCalledWith('auth_mobile_state', state, expect.any(Object));
+    });
+
+    it('rejects malformed mobile callbacks instead of starting a web login', async () => {
+        const req = new NextRequest('http://localhost:5173/login?mobile_challenge=bad&mobile_state=also-bad');
+        const response = await GET(req);
+        expect(response.status).toBe(400);
+        expect(mocks.redirect).not.toHaveBeenCalled();
     });
 });

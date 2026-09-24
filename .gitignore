@@ -6,5 +6,11 @@
 **/*.gz
 **/trmnl-*-backup.json
 .worktrees/
+# XcodeGen output and generated property lists
+cmd/ios-app/PWUsage.xcodeproj/
+cmd/ios-app/**/Info.plist
+# Xcode build products
+cmd/ios-app/build/
+cmd/ios-app/DerivedData/
 # Brainstorming visual companion scratch dir
 .superpowers/

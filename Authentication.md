@@ -190,6 +190,59 @@ Route: `POST /api/trmnl/uninstall`
 - Requires bearer token matching stored Trmnl installation token.
 - Deletes installation (idempotent success if already missing).
 
+## Workflow 3: Native iOS login handoff
+
+The native iOS client uses the same `site_auth` JWT and the same site authorization
+checks as the website. It does not receive Tesla tokens and does not depend on
+cookies being shared between `ASWebAuthenticationSession` and the app's
+`URLSession`.
+
+1. The app creates a PKCE verifier, its SHA-256 challenge, and a random app state,
+   then opens `/login?mobile_challenge=...&mobile_state=...` in
+   `ASWebAuthenticationSession`.
+2. `/login` validates the challenge/state formats and stores them with a random
+   server-side attempt UUID in short-lived, HTTP-only cookies. It then uses the
+   existing Tesla OAuth state and nonce flow.
+3. The normal Tesla callback validates OAuth state and nonce and provisions the
+   user/sites as it does for web login. For the mobile path only, it stores a
+   five-minute handoff row containing the user/site/role claims, PKCE challenge,
+   app state, attempt UUID, expiry, and a SHA-256 hash of a random opaque code.
+   The browser is redirected only to the fixed `pwusage://auth/callback` scheme,
+   host, and path. That URL contains the opaque code, attempt UUID, and app state;
+   it never contains the site JWT or Tesla tokens. No `site_auth` cookie is issued
+   to the browser for this mobile flow.
+4. The app POSTs the code, attempt UUID, app state, and PKCE verifier to
+   `/api/mobile/session` using its own `URLSession`. One conditional SQL UPDATE
+   atomically consumes only a matching, unexpired, unconsumed handoff. The
+   verifier is hashed and compared to the stored challenge. Replays, wrong state,
+   wrong attempt, expired code, and wrong verifier fail closed. The route accepts
+   only `application/json`; a supplied `Origin` must match the pwusage origin,
+   and `Sec-Fetch-Site: cross-site` is rejected. It does not require `Origin`,
+   since URLSession requests may omit it.
+5. Before issuing a session, the exchange reloads the user and current site
+   assignments. Inactive/missing accounts and sites no longer assigned to the
+   account are rejected. The response sets the existing `site_auth` cookie with
+   `HttpOnly`, `SameSite=Lax`, path `/`, and `Secure` in production. URLSession
+   stores the cookie and sends it to existing APIs such as `/api/site-live-data`
+   and `/api/mobile/bill-summary`; those routes continue to call
+   `verifySiteAccess`.
+
+Handoff rows are used only during login. Creating a handoff deletes at most 100
+expired rows, keeping cleanup bounded and preventing indefinite table growth
+during normal login activity. Dashboard polls
+do not query the handoff table. The migration enables RLS, revokes access from
+`PUBLIC`, `anon`, and `authenticated`, and grants access to `service_role`.
+
+The existing proxy still performs sliding JWT renewal. Renewal reloads active
+user status, roles, and site assignments near token expiry. `/logout` clears the
+same cookie and works from the app's URLSession. A connected server test passes
+the exchange-issued cookie through `verifySiteAccess`, confirms site isolation,
+then exercises proxy renewal after a site assignment changes, revoked-user
+denial, and logout clearing. The test uses controlled handoff/repository
+fixtures; it does not apply or connect the migration. Cookie persistence across
+app launches, renewal, expiry, logout, and the custom URL callback still require
+simulator and device verification in the native app implementation.
+
 ## Authorization Decision Summary
 
 - Human user auth: `site_auth` JWT in cookie.

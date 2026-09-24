@@ -1,0 +1,74 @@
+name: PWUsage
+options:
+  bundleIdPrefix: fm.rodeo
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "27.0"
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "6.0"
+    GENERATE_INFOPLIST_FILE: YES
+targets:
+  PWUsage:
+    type: application
+    platform: iOS
+    sources:
+      - path: PWUsage
+    info:
+      path: PWUsage/Info.plist
+      properties:
+        CFBundleDisplayName: pwusage
+        PWUSAGE_API_ORIGIN: "$(PWUSAGE_API_ORIGIN)"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleURLTypes:
+          - CFBundleURLName: fm.rodeo.pwusage
+            CFBundleURLSchemes:
+              - pwusage
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 6HQGHHRK87
+      configs:
+        Debug:
+          PWUSAGE_API_ORIGIN: https://pwusagebeta.fm.rodeo
+        Release:
+          PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
+    scheme:
+      testTargets:
+        - PWUsageTests
+  PWUsageTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: PWUsageTests
+    info:
+      path: PWUsageTests/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage.tests
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "6.0"
+    dependencies:
+      - target: PWUsage
+schemes:
+  PWUsage:
+    build:
+      targets:
+        PWUsage: all
+    run:
+      debugEnabled: false
+    test:
+      targets:
+        - PWUsageTests

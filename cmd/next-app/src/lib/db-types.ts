@@ -80,6 +80,7 @@ export interface EnergyData {
   battery_power: number;
   battery_soc: number | null;
   sample_count?: number;
+  sample_timestamp?: Date;
 }
 
 export interface TrmnlInstallation {

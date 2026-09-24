@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     cookieDelete: vi.fn(),
     cookieSet: vi.fn(),
     getCookie: vi.fn(),
+    createMobileLoginHandoff: vi.fn(async () => ({ code: 'opaque-handoff-code', attemptId: '9b47b05a-3f0b-498e-b604-9e43fa7df015' })),
 }));
 
 vi.mock('next/headers', () => ({
@@ -28,6 +29,10 @@ vi.mock('@/lib/tesla-auth-service', () => ({
 vi.mock('@/lib/auth-jwt', () => ({
     signSiteToken: mocks.signSiteToken,
     COOKIE_MAX_AGE_SECONDS: 86400
+}));
+vi.mock('@/lib/mobile-login-handoff', () => ({
+    createMobileLoginHandoff: mocks.createMobileLoginHandoff,
+    isValidMobileLoginParameters: (challenge: string, state: string) => challenge.length === 43 && state.length >= 22,
 }));
 
 import { GET } from './route';
@@ -141,5 +146,129 @@ describe('GET /auth/tesla-callback', () => {
         const req2 = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
         await GET(req2);
         expect(mocks.redirect).toHaveBeenCalledWith('/');
+    });
+
+    it('redirects native login to the fixed callback using only an opaque code and state', async () => {
+        mocks.handleTeslaCallback.mockResolvedValue({
+            status: 'success', siteIds: ['site-1'], roles: ['user'], userId: 'user-123',
+        });
+        const mobileCookies: Record<string, string> = {
+            auth_mobile_attempt: '9b47b05a-3f0b-498e-b604-9e43fa7df015',
+            auth_mobile_challenge: 'A'.repeat(43),
+            auth_mobile_state: 'B'.repeat(32),
+        };
+        mocks.getCookie.mockImplementation((name: string) => mobileCookies[name]
+            ? { value: mobileCookies[name] }
+            : undefined);
+
+        const response = await GET(new NextRequest('https://pwusage.test/auth/tesla-callback?code=tesla-code&state=xyz'));
+        const location = response.headers.get('location') || '';
+        expect(location).toMatch(/^pwusage:\/\/auth\/callback\?/);
+        expect(location).toContain('code=opaque-handoff-code');
+        expect(location).toContain('attempt=9b47b05a-3f0b-498e-b604-9e43fa7df015');
+        expect(location).toContain('state=' + 'B'.repeat(32));
+        expect(location).not.toContain('site_auth');
+        expect(location).not.toContain('tesla-code');
+        expect(mocks.cookieSet).not.toHaveBeenCalledWith('site_auth', expect.any(String), expect.any(Object));
+        expect(mocks.createMobileLoginHandoff).toHaveBeenCalledWith(expect.objectContaining({
+            userId: 'user-123', siteIds: ['site-1'], codeChallenge: 'A'.repeat(43),
+        }));
+        expect(response.headers.get('cache-control')).toContain('no-store');
+    });
+
+    it('clears transient login cookies on native no-site outcomes', async () => {
+        mocks.handleTeslaCallback.mockResolvedValue({
+            status: 'success', siteIds: [], roles: [], userId: 'user-123',
+        });
+        const mobileCookies: Record<string, string> = {
+            auth_mobile_attempt: '9b47b05a-3f0b-498e-b604-9e43fa7df015',
+            auth_mobile_challenge: 'A'.repeat(43),
+            auth_mobile_state: 'B'.repeat(32),
+        };
+        mocks.getCookie.mockImplementation((name: string) => mobileCookies[name]
+            ? { value: mobileCookies[name] }
+            : undefined);
+
+        const response = await GET(new NextRequest('https://pwusage.test/auth/tesla-callback?code=tesla-code&state=xyz'));
+        expect(response.headers.get('location')).toContain('error=no_sites');
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_mobile_attempt');
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_state');
+        expect(mocks.cookieSet).not.toHaveBeenCalledWith('site_auth', expect.any(String), expect.any(Object));
+    });
+
+    it('clears transient login cookies when OAuth state validation fails', async () => {
+        mocks.handleTeslaCallback.mockResolvedValue({ status: 'state-mismatch' });
+        const mobileCookies: Record<string, string> = {
+            auth_mobile_attempt: '9b47b05a-3f0b-498e-b604-9e43fa7df015',
+            auth_mobile_challenge: 'A'.repeat(43),
+            auth_mobile_state: 'B'.repeat(32),
+        };
+        mocks.getCookie.mockImplementation((name: string) => mobileCookies[name]
+            ? { value: mobileCookies[name] }
+            : undefined);
+
+        const response = await GET(new NextRequest('https://pwusage.test/auth/tesla-callback?code=tesla-code&state=wrong'));
+        expect(response.headers.get('location')).toContain('error=state_mismatch');
+        expect(response.headers.get('location')).toContain('state=' + 'B'.repeat(32));
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_mobile_attempt');
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_state');
+    });
+
+    it.each([
+        ['Tesla denial', '?error=access_denied&state=xyz', 'access_denied'],
+        ['missing code', '?state=xyz', 'missing_code_or_state'],
+    ])('returns mobile login to the app after %s', async (_case, query, expectedError) => {
+        mocks.getCookie.mockImplementation((name: string) => name === 'auth_mobile_state'
+            ? { value: 'B'.repeat(32) }
+            : undefined);
+
+        const response = await GET(new NextRequest(`https://pwusage.test/auth/tesla-callback${query}`));
+        const location = response.headers.get('location') || '';
+        expect(location).toMatch(/^pwusage:\/\/auth\/callback\?/);
+        expect(location).toContain(`error=${expectedError}`);
+        expect(location).toContain('state=' + 'B'.repeat(32));
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_mobile_state');
+        expect(mocks.handleTeslaCallback).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['token-exchange-failed', 'token_exchange_failed'],
+        ['invalid-id-token', 'invalid_id_token'],
+        ['nonce-mismatch', 'nonce_mismatch'],
+    ])('returns mobile login to the app after %s', async (status, expectedError) => {
+        mocks.handleTeslaCallback.mockResolvedValue({ status, statusCode: 502 });
+        const mobileCookies: Record<string, string> = {
+            auth_mobile_attempt: '9b47b05a-3f0b-498e-b604-9e43fa7df015',
+            auth_mobile_challenge: 'A'.repeat(43),
+            auth_mobile_state: 'B'.repeat(32),
+        };
+        mocks.getCookie.mockImplementation((name: string) => mobileCookies[name]
+            ? { value: mobileCookies[name] }
+            : undefined);
+
+        const response = await GET(new NextRequest('https://pwusage.test/auth/tesla-callback?code=tesla-code&state=xyz'));
+        expect(response.headers.get('location')).toContain(`error=${expectedError}`);
+        expect(response.headers.get('location')).toContain('state=' + 'B'.repeat(32));
+    });
+
+    it('returns to the fixed app callback without a code if handoff persistence fails', async () => {
+        mocks.handleTeslaCallback.mockResolvedValue({
+            status: 'success', siteIds: ['site-1'], roles: ['user'], userId: 'user-123',
+        });
+        mocks.createMobileLoginHandoff.mockRejectedValueOnce(new Error('database unavailable'));
+        const mobileCookies: Record<string, string> = {
+            auth_mobile_attempt: '9b47b05a-3f0b-498e-b604-9e43fa7df015',
+            auth_mobile_challenge: 'A'.repeat(43),
+            auth_mobile_state: 'B'.repeat(32),
+        };
+        mocks.getCookie.mockImplementation((name: string) => mobileCookies[name]
+            ? { value: mobileCookies[name] }
+            : undefined);
+
+        const response = await GET(new NextRequest('https://pwusage.test/auth/tesla-callback?code=tesla-code&state=xyz'));
+        const location = response.headers.get('location') || '';
+        expect(location).toContain('error=login_unavailable');
+        expect(location).not.toContain('code=');
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_mobile_attempt');
     });
 });
