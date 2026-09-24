@@ -5,7 +5,13 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'cmd/ios-app/**'
+      - '.github/workflows/ios.yml'
   pull_request:
+    paths-ignore:
+      - 'cmd/ios-app/**'
+      - '.github/workflows/ios.yml'
   workflow_dispatch:
 
 permissions:
