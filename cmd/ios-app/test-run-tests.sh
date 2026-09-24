@@ -35,6 +35,22 @@ rg -q '^-parallel-testing-enabled$' "$PWUSAGE_TEST_ARGS"
 rg -q '^-collect-test-diagnostics$' "$PWUSAGE_TEST_ARGS"
 rg -q '^never$' "$PWUSAGE_TEST_ARGS"
 
+# Test suite filter normalization
+"$script_dir/run-tests.sh" AppConfigurationTests
+rg -q '^-only-testing:PWUsageTests/AppConfigurationTests$' "$PWUSAGE_TEST_ARGS"
+
+# Test method filter normalization (appends ())
+"$script_dir/run-tests.sh" AppConfigurationTests/defaultsToProductionAPIOrigin
+rg -q '^-only-testing:PWUsageTests/AppConfigurationTests/defaultsToProductionAPIOrigin\(\)$' "$PWUSAGE_TEST_ARGS"
+
+# Test full method filter preservation
+"$script_dir/run-tests.sh" "PWUsageTests/AppConfigurationTests/defaultsToProductionAPIOrigin()"
+rg -q '^-only-testing:PWUsageTests/AppConfigurationTests/defaultsToProductionAPIOrigin\(\)$' "$PWUSAGE_TEST_ARGS"
+
+# Test explicit flag passthrough
+"$script_dir/run-tests.sh" -skip-testing:PWUsageTests/MobileContractsTests
+rg -q '^-skip-testing:PWUsageTests/MobileContractsTests$' "$PWUSAGE_TEST_ARGS"
+
 export PWUSAGE_TEST_HANG=1
 export PWUSAGE_TEST_TIMEOUT_SECONDS=1
 started=$SECONDS

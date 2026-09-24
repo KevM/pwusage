@@ -1,10 +1,12 @@
 import Foundation
-import XCTest
+import Testing
 @testable import PWUsage
 
 @MainActor
-final class PWUsageAppModelTests: XCTestCase {
-    func testBootstrapRestoresCookieSessionAndFetchesSitesOnlyOnce() async throws {
+@Suite("PWUsage App Model Tests", .serialized)
+struct PWUsageAppModelTests {
+    @Test("Bootstrap restores cookie session and fetches sites only once")
+    func bootstrapRestoresCookieSessionAndFetchesSitesOnlyOnce() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
         let defaults = makeDefaults()
         let model = PWUsageAppModel(configuration: Self.configuration, api: api, userDefaults: defaults)
@@ -14,16 +16,17 @@ final class PWUsageAppModelTests: XCTestCase {
         try await waitForDashboardRequests(api)
         await model.bootstrap()
 
-        XCTAssertEqual(api.siteFetchCount, 1)
-        XCTAssertTrue(model.authService.isAuthenticated)
-        XCTAssertEqual(model.screenState, .signedIn)
-        XCTAssertEqual(model.selectedSiteID, "site-1")
-        XCTAssertEqual(model.coordinator?.selectedSiteID, "site-1")
-        XCTAssertEqual(api.liveSiteIDs, ["site-1"])
-        XCTAssertEqual(api.billSiteIDs, ["site-1"])
+        #expect(api.siteFetchCount == 1)
+        #expect(model.authService.isAuthenticated)
+        #expect(model.screenState == .signedIn)
+        #expect(model.selectedSiteID == "site-1")
+        #expect(model.coordinator?.selectedSiteID == "site-1")
+        #expect(api.liveSiteIDs == ["site-1"])
+        #expect(api.billSiteIDs == ["site-1"])
     }
 
-    func testSiteSelectionPersistsAndDoesNotRefetchSiteList() async throws {
+    @Test("Site selection persists and does not refetch site list")
+    func siteSelectionPersistsAndDoesNotRefetchSiteList() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
         let defaults = makeDefaults()
         let model = PWUsageAppModel(configuration: Self.configuration, api: api, userDefaults: defaults)
@@ -34,49 +37,52 @@ final class PWUsageAppModelTests: XCTestCase {
         model.selectSite(Self.site("site-2"))
         try await waitUntil { api.liveSiteIDs.last == "site-2" && api.billSiteIDs.last == "site-2" }
 
-        XCTAssertEqual(api.siteFetchCount, 1, "Changing dashboard selection must not bootstrap the API again.")
-        XCTAssertEqual(model.selectedSiteID, "site-2")
-        XCTAssertEqual(defaults.string(forKey: PWUsageAppModel.selectedSiteDefaultsKey), "site-2")
-        XCTAssertEqual(model.coordinator?.selectedSiteID, "site-2")
+        #expect(api.siteFetchCount == 1, "Changing dashboard selection must not bootstrap the API again.")
+        #expect(model.selectedSiteID == "site-2")
+        #expect(defaults.string(forKey: PWUsageAppModel.selectedSiteDefaultsKey) == "site-2")
+        #expect(model.coordinator?.selectedSiteID == "site-2")
     }
 
-    func testUnauthorizedCookieBootstrapClearsLocalSessionAndShowsSignIn() async {
+    @Test("Unauthorized cookie bootstrap clears local session and shows sign-in")
+    func unauthorizedCookieBootstrapClearsLocalSessionAndShowsSignIn() async {
         let api = ApplicationAPISpy(sites: [], sitesError: PWUsageAPIError.signInRequired)
         let model = PWUsageAppModel(configuration: Self.configuration, api: api, userDefaults: makeDefaults())
 
         await model.bootstrap()
 
-        XCTAssertEqual(model.screenState, .signedOut)
-        XCTAssertFalse(model.authService.isAuthenticated)
-        XCTAssertEqual(api.cookieClearCount, 1)
-        XCTAssertNil(model.coordinator)
+        #expect(model.screenState == .signedOut)
+        #expect(!model.authService.isAuthenticated)
+        #expect(api.cookieClearCount == 1)
+        #expect(model.coordinator == nil)
     }
 
-    func testAuthorizedAccountWithoutSitesGetsDistinctEmptyState() async {
+    @Test("Authorized account without sites gets distinct empty state")
+    func authorizedAccountWithoutSitesGetsDistinctEmptyState() async {
         let api = ApplicationAPISpy(sites: [])
         let model = PWUsageAppModel(configuration: Self.configuration, api: api, userDefaults: makeDefaults())
 
         await model.bootstrap()
 
-        XCTAssertEqual(model.screenState, .noSites)
-        XCTAssertTrue(model.authService.isAuthenticated)
-        XCTAssertNil(model.coordinator)
+        #expect(model.screenState == .noSites)
+        #expect(model.authService.isAuthenticated)
+        #expect(model.coordinator == nil)
     }
 
-    func testSuccessfulSiteRetryAfterBootstrapFailureRestoresAuthenticatedState() async {
+    @Test("Successful site retry after bootstrap failure restores authenticated state")
+    func successfulSiteRetryAfterBootstrapFailureRestoresAuthenticatedState() async {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")], sitesError: PWUsageAPIError.recoverableServerError(statusCode: 503))
         let model = PWUsageAppModel(configuration: Self.configuration, api: api, userDefaults: makeDefaults())
 
         await model.bootstrap()
-        XCTAssertEqual(model.screenState, .unavailable)
-        XCTAssertFalse(model.authService.isAuthenticated)
+        #expect(model.screenState == .unavailable)
+        #expect(!model.authService.isAuthenticated)
 
         api.sitesError = nil
         await model.reloadSitesAfterSignIn()
 
-        XCTAssertEqual(model.screenState, .signedIn)
-        XCTAssertTrue(model.authService.isAuthenticated)
-        XCTAssertEqual(api.siteFetchCount, 2)
+        #expect(model.screenState == .signedIn)
+        #expect(model.authService.isAuthenticated)
+        #expect(api.siteFetchCount == 2)
     }
 
     private static let configuration = try! AppConfiguration(apiOriginString: "https://pwusage.test")
@@ -97,7 +103,7 @@ final class PWUsageAppModelTests: XCTestCase {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTFail("Timed out waiting for app coordinator requests")
+        Issue.record("Timed out waiting for app coordinator requests")
     }
 
     private static func site(_ id: String) -> MobileSite {

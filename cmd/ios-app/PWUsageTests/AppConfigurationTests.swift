@@ -1,34 +1,48 @@
-import XCTest
+import Foundation
+import Testing
 @testable import PWUsage
 
-final class AppConfigurationTests: XCTestCase {
-    func testDefaultsToProductionAPIOrigin() throws {
+@Suite("App Configuration Tests")
+struct AppConfigurationTests {
+    @Test("Defaults to production API origin")
+    func defaultsToProductionAPIOrigin() throws {
         let configuration = try AppConfiguration()
 
-        XCTAssertEqual(configuration.apiOrigin.absoluteString, "https://pwusage.fm.rodeo")
+        #expect(configuration.apiOrigin.absoluteString == "https://pwusage.fm.rodeo")
     }
 
-    func testAcceptsInjectedHTTPSOrigin() throws {
-        let configuration = try AppConfiguration(apiOrigin: URL(string: "https://example.test")!)
+    @Test("Accepts injected HTTPS origin")
+    func acceptsInjectedHTTPSOrigin() throws {
+        let configuration = try AppConfiguration(apiOrigin: try #require(URL(string: "https://example.test")))
 
-        XCTAssertEqual(configuration.apiOrigin.absoluteString, "https://example.test")
+        #expect(configuration.apiOrigin.absoluteString == "https://example.test")
     }
 
-    func testReleaseRejectsNonHTTPSOrigin() {
-        XCTAssertThrowsError(try AppConfiguration(apiOriginString: "http://localhost:3000"))
+    @Test("Release rejects non-HTTPS origin")
+    func releaseRejectsNonHTTPSOrigin() {
+        #expect(throws: AppConfiguration.ValidationError.invalidOrigin) {
+            try AppConfiguration(apiOriginString: "http://localhost:3000")
+        }
     }
 
-    func testRejectsOriginWithPath() {
-        XCTAssertThrowsError(try AppConfiguration(apiOriginString: "https://example.test/api"))
+    @Test("Rejects origin with path")
+    func rejectsOriginWithPath() {
+        #expect(throws: AppConfiguration.ValidationError.invalidOrigin) {
+            try AppConfiguration(apiOriginString: "https://example.test/api")
+        }
     }
 
-    func testRejectsMalformedOrigin() {
-        XCTAssertThrowsError(try AppConfiguration(apiOriginString: "not a url"))
+    @Test("Rejects malformed origin")
+    func rejectsMalformedOrigin() {
+        #expect(throws: AppConfiguration.ValidationError.invalidOrigin) {
+            try AppConfiguration(apiOriginString: "not a url")
+        }
     }
 
-    func testDebugAllowsLocalHTTPOrigin() throws {
+    @Test("Debug allows local HTTP origin")
+    func debugAllowsLocalHTTPOrigin() throws {
         let configuration = try AppConfiguration(apiOriginString: "http://localhost:3000", isRelease: false)
 
-        XCTAssertEqual(configuration.apiOrigin.host, "localhost")
+        #expect(configuration.apiOrigin.host == "localhost")
     }
 }

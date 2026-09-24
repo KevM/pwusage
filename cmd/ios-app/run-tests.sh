@@ -31,8 +31,26 @@ if [[ -z "$simulator_id" ]]; then
   exit 2
 fi
 
+test_filter_args=()
+for target in "$@"; do
+  if [[ "$target" == -only-testing* || "$target" == -skip-testing* ]]; then
+    test_filter_args+=("$target")
+  else
+    if [[ "$target" != PWUsageTests/* && "$target" != PWUsage/* ]]; then
+      target="PWUsageTests/$target"
+    fi
+    if [[ "$target" =~ /[^/]+/[^/()]+$ ]]; then
+      target="${target}()"
+    fi
+    test_filter_args+=("-only-testing:$target")
+  fi
+done
+
 artifacts_dir="$(mktemp -d "${TMPDIR:-/tmp}/pwusage-ios-tests.XXXXXX")"
 echo "Testing PWUsage on simulator $simulator_id (limit: ${timeout_seconds}s)"
+if [[ "${#test_filter_args[@]}" -gt 0 ]]; then
+  echo "Filters: ${test_filter_args[*]}"
+fi
 echo "Test artifacts: $artifacts_dir"
 
 set +e
@@ -45,6 +63,7 @@ python3 - "$timeout_seconds" xcodebuild \
   -derivedDataPath "$artifacts_dir/DerivedData" \
   -resultBundlePath "$artifacts_dir/TestResults.xcresult" \
   CODE_SIGNING_ALLOWED=NO \
+  ${test_filter_args[@]+"${test_filter_args[@]}"} \
   test <<'PY'
 import os
 import signal

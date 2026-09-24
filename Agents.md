@@ -83,6 +83,8 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - For every native iOS test run, use `cmd/ios-app/run-tests.sh` (or `./run-tests.sh` from that directory). Do not invoke `xcodebuild test` directly. The script generates the Xcode project, selects an available iPhone simulator, disables parallel test execution, and stops a run after 10 minutes.
 - Set `PWUSAGE_SIMULATOR_ID` to target a specific simulator, or `PWUSAGE_TEST_TIMEOUT_SECONDS` to change the deadline. A failed or timed-out run prints the retained test-artifact path.
 - If a run times out, inspect the retained artifacts and simulator state before changing app code. Avoid overlapping test runs.
+- **Framework**: All iOS tests must use Swift Testing (`SwiftTest` via `import Testing`, `@Suite`, `@Test`, `#expect`, `#require`). Do not use legacy `XCTest`.
+- **Targeting Specific Tests**: Target individual suites/fixtures (e.g., `./run-tests.sh AppConfigurationTests`) or specific test methods (e.g., `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin`). The script automatically normalizes the target prefix and method parentheses.
 
 ## Communication Style
 - **Task Management**: Use `task.md` to track huge chunks of work.

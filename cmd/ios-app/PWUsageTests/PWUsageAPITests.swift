@@ -1,104 +1,118 @@
 import Foundation
-import XCTest
+import Testing
 @testable import PWUsage
 
-final class PWUsageAPITests: XCTestCase {
-    private var cookieStorage: HTTPCookieStorage!
-    private var session: URLSession!
-    private var api: PWUsageAPI!
+@MainActor
+@Suite("PWUsage API Tests", .serialized)
+final class PWUsageAPITests {
+    private var cookieStorage: HTTPCookieStorage
+    private var session: URLSession
+    private var api: PWUsageAPI
 
-    override func setUp() {
-        super.setUp()
-        cookieStorage = .shared
+    init() throws {
         let configuration = URLSessionConfiguration.ephemeral
+        let storage = configuration.httpCookieStorage ?? HTTPCookieStorage.shared
+        self.cookieStorage = storage
         configuration.protocolClasses = [StubURLProtocol.self]
-        configuration.httpCookieStorage = cookieStorage
+        configuration.httpCookieStorage = storage
         configuration.httpShouldSetCookies = true
         configuration.httpCookieAcceptPolicy = .always
-        session = URLSession(configuration: configuration)
-        StubURLProtocol.cookieStorage = cookieStorage
-        api = PWUsageAPI(configuration: try! AppConfiguration(apiOriginString: "https://pwusage.test"), session: session)
+        self.session = URLSession(configuration: configuration)
+        StubURLProtocol.cookieStorage = storage
+        self.api = PWUsageAPI(configuration: try AppConfiguration(apiOriginString: "https://pwusage.test"), session: session)
     }
 
-    override func tearDown() {
+    deinit {
         session.invalidateAndCancel()
         cookieStorage.cookies?.filter { $0.domain.contains("pwusage.test") }.forEach(cookieStorage.deleteCookie)
         StubURLProtocol.requestHandler = nil
         StubURLProtocol.cookieStorage = nil
-        api = nil
-        session = nil
-        cookieStorage = nil
-        super.tearDown()
     }
 
-    func testExchangeCookieIsSentOnLaterAPIRequest() async throws {
-        let requestExpectation = expectation(description: "exchange then sites request")
-        requestExpectation.expectedFulfillmentCount = 2
+    @Test("Exchange cookie is sent on later API request")
+    func exchangeCookieIsSentOnLaterAPIRequest() async throws {
+        var recordedRequests: [(URLRequest, Data)] = []
         StubURLProtocol.requestHandler = { request in
-            requestExpectation.fulfill()
-            if request.url?.path == "/api/mobile/session" {
-                XCTAssertEqual(request.httpMethod, "POST")
-                XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
-                let body = try Self.bodyData(from: request)
-                let exchange = try JSONDecoder().decode(MobileSessionExchange.self, from: body)
-                XCTAssertEqual(exchange.attemptId, "attempt")
-                let response = try XCTUnwrap(HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: ["Set-Cookie": "site_auth=session-value; Path=/"]))
+            let body = (try? Self.bodyData(from: request)) ?? Data()
+            recordedRequests.append((request, body))
+            guard let url = request.url else { throw URLError(.badURL) }
+            if url.path == "/api/mobile/session" {
+                guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Set-Cookie": "site_auth=session-value; Path=/"]) else {
+                    throw URLError(.badServerResponse)
+                }
                 return (response, Data(#"{"ok":true}"#.utf8))
             }
-            XCTAssertEqual(request.url?.path, "/api/sites")
-            XCTAssertEqual(self.cookieStorage.cookies(for: try XCTUnwrap(request.url))?.first(where: { $0.name == "site_auth" })?.value, "session-value")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "site_auth=session-value")
-            let response = try XCTUnwrap(HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"]))
+            guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else {
+                throw URLError(.badServerResponse)
+            }
             return (response, Data(#"[{"id":"site-1","name":"Home","utility":"Utility Co"}]"#.utf8))
         }
 
         try await api.exchangeSession(MobileSessionExchange(attemptId: "attempt", code: "opaque-code", verifier: String(repeating: "v", count: 43), state: "app-state"))
         let sites = try await api.fetchSites()
-        XCTAssertEqual(sites.map(\.id), ["site-1"])
-        await fulfillment(of: [requestExpectation], timeout: 2)
+        #expect(sites.map(\.id) == ["site-1"])
+        #expect(recordedRequests.count == 2)
+
+        let first = try #require(recordedRequests.first)
+        #expect(first.0.httpMethod == "POST")
+        #expect(first.0.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        let exchange = try JSONDecoder().decode(MobileSessionExchange.self, from: first.1)
+        #expect(exchange.attemptId == "attempt")
+
+        let second = recordedRequests[1]
+        let secondURL = try #require(second.0.url)
+        #expect(secondURL.path == "/api/sites")
+        #expect(self.cookieStorage.cookies(for: secondURL)?.first(where: { $0.name == "site_auth" })?.value == "session-value")
+        #expect(second.0.value(forHTTPHeaderField: "Cookie") == "site_auth=session-value")
     }
 
-    func testSiteIDIsEncodedAsQueryItemAndBillResponseIsDecoded() async throws {
+    @Test("Site ID is encoded as query item and bill response is decoded")
+    func siteIDIsEncodedAsQueryItemAndBillResponseIsDecoded() async throws {
+        var recordedRequest: URLRequest?
         StubURLProtocol.requestHandler = { request in
-            XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "siteId" })?.value, "site/one & two")
+            recordedRequest = request
             let fixture = #"{"version":1,"site":{"id":"site/one & two","name":"Home","timezone":"UTC"},"currentBill":{"estimatedCost":12.5,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"sources":{"calculatedAt":"2026-09-23T12:34:56.123Z","energyDataThrough":null}}"#
             return (try Self.response(request, status: 200), Data(fixture.utf8))
         }
         let bill = try await api.fetchBill(siteID: "site/one & two")
-        XCTAssertEqual(bill.site.id, "site/one & two")
+        #expect(bill.site.id == "site/one & two")
+        let request = try #require(recordedRequest)
+        let url = try #require(request.url)
+        #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "siteId" })?.value == "site/one & two")
     }
 
-    func testUnauthorizedMapsToSignInRequired() async {
+    @Test("Unauthorized maps to sign-in required")
+    func unauthorizedMapsToSignInRequired() async {
         StubURLProtocol.requestHandler = { request in (try Self.response(request, status: 401), Data(#"{"error":"Unauthorized"}"#.utf8)) }
-        do {
+        await #expect(throws: PWUsageAPIError.signInRequired) {
             _ = try await api.fetchSites()
-            XCTFail("Expected sign-in required")
-        } catch {
-            XCTAssertEqual(error as? PWUsageAPIError, .signInRequired)
         }
     }
 
-    func testProductionCookieSessionUsesInjectedStorageAndAutomaticCookieHandling() {
+    @Test("Production cookie session uses injected storage and automatic cookie handling")
+    func productionCookieSessionUsesInjectedStorageAndAutomaticCookieHandling() {
         let configuredSession = PWUsageAPI.makeCookieSession(cookieStorage: cookieStorage)
         defer { configuredSession.invalidateAndCancel() }
 
-        XCTAssertTrue(configuredSession.configuration.httpCookieStorage === cookieStorage)
-        XCTAssertTrue(configuredSession.configuration.httpShouldSetCookies)
-        XCTAssertEqual(configuredSession.configuration.httpCookieAcceptPolicy, .always)
+        #expect(configuredSession.configuration.httpCookieStorage === cookieStorage)
+        #expect(configuredSession.configuration.httpShouldSetCookies)
+        #expect(configuredSession.configuration.httpCookieAcceptPolicy == .always)
     }
 
-    func testServerErrorMapsToRecoverableDataError() async {
+    @Test("Server error maps to recoverable data error")
+    func serverErrorMapsToRecoverableDataError() async {
         StubURLProtocol.requestHandler = { request in (try Self.response(request, status: 503), Data(#"{"error":"Unavailable"}"#.utf8)) }
-        do {
+        await #expect(throws: PWUsageAPIError.recoverableServerError(statusCode: 503)) {
             _ = try await api.fetchSites()
-            XCTFail("Expected recoverable error")
-        } catch {
-            XCTAssertEqual(error as? PWUsageAPIError, .recoverableServerError(statusCode: 503))
         }
     }
 
     private static func response(_ request: URLRequest, status: Int) throws -> HTTPURLResponse {
-        try XCTUnwrap(HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"]))
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else {
+            throw URLError(.badServerResponse)
+        }
+        return response
     }
 
     private static func bodyData(from request: URLRequest) throws -> Data {
@@ -119,8 +133,35 @@ final class PWUsageAPITests: XCTestCase {
 }
 
 private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
-    nonisolated(unsafe) static var cookieStorage: HTTPCookieStorage?
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var _requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    nonisolated(unsafe) private static var _cookieStorage: HTTPCookieStorage?
+
+    static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _requestHandler
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _requestHandler = newValue
+        }
+    }
+
+    static var cookieStorage: HTTPCookieStorage? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _cookieStorage
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _cookieStorage = newValue
+        }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }

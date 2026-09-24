@@ -11,7 +11,7 @@ Install XcodeGen 2.46 and Xcode 27, then run:
 xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
 
-Run the native tests with `./run-tests.sh`. It selects an available iPhone simulator and stops the run after 10 minutes if Xcode hangs. Use `PWUSAGE_SIMULATOR_ID=<simulator-udid> ./run-tests.sh` to choose a device or `PWUSAGE_TEST_TIMEOUT_SECONDS=<seconds> ./run-tests.sh` to adjust the deadline. Failed runs retain the result bundle and build files at the printed path.
+Run the native tests with `./run-tests.sh`. Tests use Swift Testing (`import Testing`). It selects an available iPhone simulator and stops the run after 10 minutes if Xcode hangs. Run all tests with `./run-tests.sh`, or target specific suites/tests (e.g. `./run-tests.sh AppConfigurationTests` or `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin`). Use `PWUSAGE_SIMULATOR_ID=<simulator-udid> ./run-tests.sh` to choose a device or `PWUSAGE_TEST_TIMEOUT_SECONDS=<seconds> ./run-tests.sh` to adjust the deadline. Failed runs retain the result bundle and build files at the printed path.
 
 The app targets iOS 18 and uses `fm.rodeo.pwusage` as a provisional bundle identifier. The project has no signing team configured. For a device build, set `DEVELOPMENT_TEAM` in your local shell (do not commit it) and pass it explicitly as an Xcode build setting:
 

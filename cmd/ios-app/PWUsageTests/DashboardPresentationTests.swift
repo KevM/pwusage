@@ -1,66 +1,77 @@
-import XCTest
+import Foundation
+import Testing
 @testable import PWUsage
 
-final class DashboardPresentationTests: XCTestCase {
-    func testBatteryDirectionMatchesWebsitePowerThresholdAndSigns() {
-        XCTAssertEqual(DashboardPresentation.batteryDirection(powerWatts: -51), .charging)
-        XCTAssertEqual(DashboardPresentation.batteryDirection(powerWatts: -50), .idle)
-        XCTAssertEqual(DashboardPresentation.batteryDirection(powerWatts: 50), .idle)
-        XCTAssertEqual(DashboardPresentation.batteryDirection(powerWatts: 51), .discharging)
+@Suite("Dashboard Presentation Tests")
+struct DashboardPresentationTests {
+    @Test("Battery direction matches website power threshold and signs")
+    func batteryDirectionMatchesWebsitePowerThresholdAndSigns() {
+        #expect(DashboardPresentation.batteryDirection(powerWatts: -51) == .charging)
+        #expect(DashboardPresentation.batteryDirection(powerWatts: -50) == .idle)
+        #expect(DashboardPresentation.batteryDirection(powerWatts: 50) == .idle)
+        #expect(DashboardPresentation.batteryDirection(powerWatts: 51) == .discharging)
     }
 
-    func testBatteryHeaderDescribesChargeAndDirectionWithoutRepeatingPower() {
-        XCTAssertEqual(DashboardPresentation.batteryDescription(stateOfCharge: nil, powerWatts: -250), "Battery --, Charging")
-        XCTAssertEqual(DashboardPresentation.batteryDescription(stateOfCharge: 0, powerWatts: 0), "Battery 0%, Idle")
+    @Test("Battery header describes charge and direction without repeating power")
+    func batteryHeaderDescribesChargeAndDirectionWithoutRepeatingPower() {
+        #expect(DashboardPresentation.batteryDescription(stateOfCharge: nil, powerWatts: -250) == "Battery --, Charging")
+        #expect(DashboardPresentation.batteryDescription(stateOfCharge: 0, powerWatts: 0) == "Battery 0%, Idle")
     }
 
-    func testGridAndBatteryDailySignsDescribeImportExportAndChargeDirection() {
-        XCTAssertEqual(DashboardPresentation.signedGridEnergy(4.2), "↓ 4.2 kWh")
-        XCTAssertEqual(DashboardPresentation.signedGridEnergy(-1.1), "↑ 1.1 kWh")
-        XCTAssertEqual(DashboardPresentation.signedBatteryEnergy(3), "↓ 3.0 kWh")
-        XCTAssertEqual(DashboardPresentation.signedBatteryEnergy(-2), "↑ 2.0 kWh")
+    @Test("Grid and battery daily signs describe import export and charge direction")
+    func gridAndBatteryDailySignsDescribeImportExportAndChargeDirection() {
+        #expect(DashboardPresentation.signedGridEnergy(4.2) == "↓ 4.2 kWh")
+        #expect(DashboardPresentation.signedGridEnergy(-1.1) == "↑ 1.1 kWh")
+        #expect(DashboardPresentation.signedBatteryEnergy(3) == "↓ 3.0 kWh")
+        #expect(DashboardPresentation.signedBatteryEnergy(-2) == "↑ 2.0 kWh")
     }
 
-    func testTariffBalanceNamesSurplusAndDeficitFromNetGridEnergy() {
-        XCTAssertEqual(DashboardPresentation.tariffBalance(-42.34), "Surplus 42.3 kWh")
-        XCTAssertEqual(DashboardPresentation.tariffBalance(17.06), "Deficit 17.1 kWh")
-        XCTAssertEqual(DashboardPresentation.tariffBalance(0), "Balanced 0.0 kWh")
+    @Test("Tariff balance names surplus and deficit from net grid energy")
+    func tariffBalanceNamesSurplusAndDeficitFromNetGridEnergy() {
+        #expect(DashboardPresentation.tariffBalance(-42.34) == "Surplus 42.3 kWh")
+        #expect(DashboardPresentation.tariffBalance(17.06) == "Deficit 17.1 kWh")
+        #expect(DashboardPresentation.tariffBalance(0) == "Balanced 0.0 kWh")
     }
 
-    func testFreshnessUsesTheSuppliedSourceTimeAndShowsMissingAndStaleStates() {
+    @Test("Freshness uses the supplied source time and shows missing and stale states")
+    func freshnessUsesTheSuppliedSourceTimeAndShowsMissingAndStaleStates() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        XCTAssertEqual(DashboardPresentation.freshness(now.addingTimeInterval(-60), now: now), "Updated 1 min ago")
-        XCTAssertEqual(DashboardPresentation.freshness(now.addingTimeInterval(-16 * 60), now: now), "Stale · updated 16 min ago")
-        XCTAssertEqual(DashboardPresentation.freshness(nil, now: now), "Source time unavailable")
-        XCTAssertEqual(DashboardPresentation.freshness(now.addingTimeInterval(60), now: now), "Source time is in the future")
+        #expect(DashboardPresentation.freshness(now.addingTimeInterval(-60), now: now) == "Updated 1 min ago")
+        #expect(DashboardPresentation.freshness(now.addingTimeInterval(-16 * 60), now: now) == "Stale · updated 16 min ago")
+        #expect(DashboardPresentation.freshness(nil, now: now) == "Source time unavailable")
+        #expect(DashboardPresentation.freshness(now.addingTimeInterval(60), now: now) == "Source time is in the future")
     }
 
-    func testCurrencyUsesCurrencyCodeAndNullableCostRemainsUnavailable() {
-        XCTAssertEqual(DashboardPresentation.currency(1234.5, code: "USD", locale: Locale(identifier: "en_US")), "$1,234.50")
-        XCTAssertEqual(DashboardPresentation.currency(nil, code: "USD", locale: Locale(identifier: "en_US")), "Unavailable")
+    @Test("Currency uses currency code and nullable cost remains unavailable")
+    func currencyUsesCurrencyCodeAndNullableCostRemainsUnavailable() {
+        #expect(DashboardPresentation.currency(1234.5, code: "USD", locale: Locale(identifier: "en_US")) == "$1,234.50")
+        #expect(DashboardPresentation.currency(nil, code: "USD", locale: Locale(identifier: "en_US")) == "Unavailable")
     }
 
-    func testTariffPeriodTitlesMatchWebsiteNormalization() {
-        XCTAssertEqual(DashboardPresentation.tariffPeriodTitle("OFF_PEAK"), "Off-Peak")
-        XCTAssertEqual(DashboardPresentation.tariffPeriodTitle("SUPER_OFF_PEAK"), "Super-Off-Peak")
-        XCTAssertEqual(DashboardPresentation.tariffPeriodTitle("Off-Peak"), "Off-Peak")
-        XCTAssertEqual(DashboardPresentation.tariffPeriodTitle("Regular String"), "Regular String")
-        XCTAssertEqual(DashboardPresentation.tariffPeriodTitle(""), "")
+    @Test("Tariff period titles match website normalization")
+    func tariffPeriodTitlesMatchWebsiteNormalization() {
+        #expect(DashboardPresentation.tariffPeriodTitle("OFF_PEAK") == "Off-Peak")
+        #expect(DashboardPresentation.tariffPeriodTitle("SUPER_OFF_PEAK") == "Super-Off-Peak")
+        #expect(DashboardPresentation.tariffPeriodTitle("Off-Peak") == "Off-Peak")
+        #expect(DashboardPresentation.tariffPeriodTitle("Regular String") == "Regular String")
+        #expect(DashboardPresentation.tariffPeriodTitle("") == "")
     }
 
-    func testLiveFreshnessNoticeOnlyAppearsWhenSourceNeedsAttention() {
+    @Test("Live freshness notice only appears when source needs attention")
+    func liveFreshnessNoticeOnlyAppearsWhenSourceNeedsAttention() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        XCTAssertNil(DashboardPresentation.liveFreshnessNotice(now.addingTimeInterval(-60), now: now))
-        XCTAssertEqual(
-            DashboardPresentation.liveFreshnessNotice(now.addingTimeInterval(-16 * 60), now: now),
-            "Stale · updated 16 min ago"
+        #expect(DashboardPresentation.liveFreshnessNotice(now.addingTimeInterval(-60), now: now) == nil)
+        #expect(
+            DashboardPresentation.liveFreshnessNotice(now.addingTimeInterval(-16 * 60), now: now)
+                == "Stale · updated 16 min ago"
         )
-        XCTAssertEqual(DashboardPresentation.liveFreshnessNotice(nil, now: now), "Source time unavailable")
+        #expect(DashboardPresentation.liveFreshnessNotice(nil, now: now) == "Source time unavailable")
     }
 
-    func testOlderChargeIsClearlyDated() {
+    @Test("Older charge is clearly dated")
+    func olderChargeIsClearlyDated() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        XCTAssertNil(DashboardPresentation.chargeAgeLabel(now.addingTimeInterval(-5 * 60), now: now))
-        XCTAssertEqual(DashboardPresentation.chargeAgeLabel(now.addingTimeInterval(-30 * 60), now: now), "Charge as of 30 min ago")
+        #expect(DashboardPresentation.chargeAgeLabel(now.addingTimeInterval(-5 * 60), now: now) == nil)
+        #expect(DashboardPresentation.chargeAgeLabel(now.addingTimeInterval(-30 * 60), now: now) == "Charge as of 30 min ago")
     }
 }

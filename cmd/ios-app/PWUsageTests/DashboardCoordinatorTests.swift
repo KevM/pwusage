@@ -1,51 +1,55 @@
 import Foundation
-import XCTest
+import Testing
 @testable import PWUsage
 
 @MainActor
-final class DashboardCoordinatorTests: XCTestCase {
-    func testInitialForegroundLoadAndExactSixtyMinuteRequestCounts() async throws {
+@Suite("Dashboard Coordinator Tests", .serialized)
+struct DashboardCoordinatorTests {
+    @Test("Initial foreground load and exact sixty minute request counts")
+    func initialForegroundLoadAndExactSixtyMinuteRequestCounts() async throws {
         let clock = TestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
 
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
-        XCTAssertEqual(api.liveSiteIDs, ["site-1"])
-        XCTAssertEqual(api.billSiteIDs, ["site-1"])
+        #expect(api.liveSiteIDs == ["site-1"])
+        #expect(api.billSiteIDs == ["site-1"])
 
         for _ in 1..<60 {
             clock.advance(minutes: 1)
             await coordinator.refreshDue()
         }
 
-        XCTAssertEqual(api.liveSiteIDs.count, 12, "Live is fetched at t=0,5,...,55 in [0,60m).")
-        XCTAssertEqual(api.billSiteIDs.count, 2, "Bill is fetched at t=0,30 in [0,60m).")
+        #expect(api.liveSiteIDs.count == 12, "Live is fetched at t=0,5,...,55 in [0,60m).")
+        #expect(api.billSiteIDs.count == 2, "Bill is fetched at t=0,30 in [0,60m).")
     }
 
-    func testBackgroundSuspendsPollingAndForegroundReturnMakesOneDueRequest() async {
+    @Test("Background suspends polling and foreground return makes one due request")
+    func backgroundSuspendsPollingAndForegroundReturnMakesOneDueRequest() async {
         let clock = TestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: .seconds(3_600))
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
-        XCTAssertTrue(coordinator.pollingTimerIsActive)
+        #expect(coordinator.pollingTimerIsActive)
         coordinator.scenePhaseChanged(isActive: false)
-        XCTAssertFalse(coordinator.pollingTimerIsActive)
+        #expect(!coordinator.pollingTimerIsActive)
 
         clock.advance(minutes: 60)
         await coordinator.refreshDue()
-        XCTAssertEqual(api.liveSiteIDs.count, 1)
-        XCTAssertEqual(api.billSiteIDs.count, 1)
+        #expect(api.liveSiteIDs.count == 1)
+        #expect(api.billSiteIDs.count == 1)
 
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
-        XCTAssertTrue(coordinator.pollingTimerIsActive)
-        XCTAssertEqual(api.liveSiteIDs.count, 2, "Returning after missed intervals performs one refresh, not catch-up calls.")
-        XCTAssertEqual(api.billSiteIDs.count, 2)
+        #expect(coordinator.pollingTimerIsActive)
+        #expect(api.liveSiteIDs.count == 2, "Returning after missed intervals performs one refresh, not catch-up calls.")
+        #expect(api.billSiteIDs.count == 2)
     }
 
-    func testDuplicateSceneAndTimerEventsDoNotFetchBeforeEndpointIsDue() async {
+    @Test("Duplicate scene and timer events do not fetch before endpoint is due")
+    func duplicateSceneAndTimerEventsDoNotFetchBeforeEndpointIsDue() async {
         let clock = TestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
@@ -55,11 +59,12 @@ final class DashboardCoordinatorTests: XCTestCase {
         await coordinator.refreshDue()
         await coordinator.refreshDue()
 
-        XCTAssertEqual(api.liveSiteIDs.count, 1)
-        XCTAssertEqual(api.billSiteIDs.count, 1)
+        #expect(api.liveSiteIDs.count == 1)
+        #expect(api.billSiteIDs.count == 1)
     }
 
-    func testInFlightRefreshesAreDeduplicated() async {
+    @Test("In-flight refreshes are deduplicated")
+    func inFlightRefreshesAreDeduplicated() async {
         let api = DashboardAPISpy()
         api.holdLive = true
         api.holdBill = true
@@ -70,16 +75,17 @@ final class DashboardCoordinatorTests: XCTestCase {
         await api.waitUntilLiveRequestStarts()
         let second = Task { await coordinator.refreshDue() }
         await Task.yield()
-        XCTAssertEqual(api.liveSiteIDs.count, 1)
-        XCTAssertEqual(api.billSiteIDs.count, 0)
+        #expect(api.liveSiteIDs.count == 1)
+        #expect(api.billSiteIDs.count == 0)
 
         api.resumeRequests()
         await first.value
         await second.value
-        XCTAssertEqual(api.billSiteIDs.count, 1)
+        #expect(api.billSiteIDs.count == 1)
     }
 
-    func testBillWaitsForLiveRequestSoItCanSeeRefreshedEnergyHistory() async {
+    @Test("Bill waits for live request so it can see refreshed energy history")
+    func billWaitsForLiveRequestSoItCanSeeRefreshedEnergyHistory() async {
         let api = DashboardAPISpy()
         api.holdLive = true
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: Date.init, timerInterval: nil)
@@ -88,15 +94,16 @@ final class DashboardCoordinatorTests: XCTestCase {
         let first = Task { await coordinator.refreshDue() }
         await api.waitUntilLiveRequestStarts()
 
-        XCTAssertEqual(api.liveSiteIDs.count, 1)
-        XCTAssertEqual(api.billSiteIDs.count, 0)
+        #expect(api.liveSiteIDs.count == 1)
+        #expect(api.billSiteIDs.count == 0)
 
         api.resumeRequests()
         await first.value
-        XCTAssertEqual(api.billSiteIDs.count, 1)
+        #expect(api.billSiteIDs.count == 1)
     }
 
-    func testSiteSwitchResetsCadenceAndIgnoresOldSiteResponse() async {
+    @Test("Site switch resets cadence and ignores old site response")
+    func siteSwitchResetsCadenceAndIgnoresOldSiteResponse() async {
         let clock = TestClock()
         let api = DashboardAPISpy()
         api.holdLive = true
@@ -112,38 +119,40 @@ final class DashboardCoordinatorTests: XCTestCase {
         await first.value
         await coordinator.refreshDue()
 
-        XCTAssertEqual(api.liveSiteIDs, ["site-1", "site-2"])
-        XCTAssertEqual(api.billSiteIDs, ["site-2"])
-        XCTAssertEqual(coordinator.live.response?.site.id, "site-2")
-        XCTAssertEqual(coordinator.bill.response?.site.id, "site-2")
+        #expect(api.liveSiteIDs == ["site-1", "site-2"])
+        #expect(api.billSiteIDs == ["site-2"])
+        #expect(coordinator.live.response?.site.id == "site-2")
+        #expect(coordinator.bill.response?.site.id == "site-2")
     }
 
-    func testUnauthorizedStopsPollingAndSignalsSignIn() async {
+    @Test("Unauthorized stops polling and signals sign-in")
+    func unauthorizedStopsPollingAndSignalsSignIn() async {
         let api = DashboardAPISpy()
         api.liveError = PWUsageAPIError.signInRequired
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { Date(timeIntervalSince1970: 0) }, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
 
-        XCTAssertTrue(coordinator.requiresSignIn)
-        XCTAssertFalse(coordinator.isForeground)
-        XCTAssertEqual(coordinator.live.lastAttempt, Date(timeIntervalSince1970: 0))
-        XCTAssertNil(coordinator.live.lastSuccess)
+        #expect(coordinator.requiresSignIn)
+        #expect(!coordinator.isForeground)
+        #expect(coordinator.live.lastAttempt == Date(timeIntervalSince1970: 0))
+        #expect(coordinator.live.lastSuccess == nil)
         let liveRequestsAfterUnauthorized = api.liveSiteIDs.count
         let billRequestsAfterUnauthorized = api.billSiteIDs.count
 
         await coordinator.refreshDue()
-        XCTAssertEqual(api.liveSiteIDs.count, liveRequestsAfterUnauthorized)
-        XCTAssertEqual(api.billSiteIDs.count, billRequestsAfterUnauthorized)
+        #expect(api.liveSiteIDs.count == liveRequestsAfterUnauthorized)
+        #expect(api.billSiteIDs.count == billRequestsAfterUnauthorized)
 
         api.liveError = nil
         coordinator.authenticationRestored()
         await coordinator.refreshDue()
-        XCTAssertFalse(coordinator.requiresSignIn)
-        XCTAssertEqual(api.liveSiteIDs.count, liveRequestsAfterUnauthorized + 1)
+        #expect(!coordinator.requiresSignIn)
+        #expect(api.liveSiteIDs.count == liveRequestsAfterUnauthorized + 1)
     }
 
-    func testServerFailureKeepsStaleResponseAndSeparatesAttemptFromSuccess() async {
+    @Test("Server failure keeps stale response and separates attempt from success")
+    func serverFailureKeepsStaleResponseAndSeparatesAttemptFromSuccess() async {
         let clock = TestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
@@ -151,31 +160,31 @@ final class DashboardCoordinatorTests: XCTestCase {
         await coordinator.refreshDue()
         let priorLive = coordinator.live.response
         let priorSuccess = coordinator.live.lastSuccess
-        XCTAssertNotNil(priorLive)
-        XCTAssertNotNil(priorSuccess)
+        #expect(priorLive != nil)
+        #expect(priorSuccess != nil)
 
         api.liveError = PWUsageAPIError.recoverableServerError(statusCode: 503)
         clock.advance(minutes: 5)
         await coordinator.refreshDue()
 
-        XCTAssertEqual(coordinator.live.response, priorLive)
-        XCTAssertEqual(coordinator.live.lastSuccess, priorSuccess)
-        XCTAssertEqual(coordinator.live.lastAttempt, clock.now)
-        XCTAssertTrue(coordinator.live.isUnavailable)
-        XCTAssertEqual(coordinator.live.unavailableStatusCode, 503)
-        XCTAssertEqual(api.liveSiteIDs.count, 2)
+        #expect(coordinator.live.response == priorLive)
+        #expect(coordinator.live.lastSuccess == priorSuccess)
+        #expect(coordinator.live.lastAttempt == clock.now)
+        #expect(coordinator.live.isUnavailable)
+        #expect(coordinator.live.unavailableStatusCode == 503)
+        #expect(api.liveSiteIDs.count == 2)
 
         api.liveError = URLError(.notConnectedToInternet)
         clock.advance(minutes: 5)
         await coordinator.refreshDue()
-        XCTAssertEqual(api.liveSiteIDs.count, 3)
-        XCTAssertEqual(coordinator.live.response, priorLive)
-        XCTAssertEqual(coordinator.live.lastSuccess, priorSuccess)
-        XCTAssertTrue(coordinator.live.isUnavailable)
-        XCTAssertNil(coordinator.live.unavailableStatusCode)
+        #expect(api.liveSiteIDs.count == 3)
+        #expect(coordinator.live.response == priorLive)
+        #expect(coordinator.live.lastSuccess == priorSuccess)
+        #expect(coordinator.live.isUnavailable)
+        #expect(coordinator.live.unavailableStatusCode == nil)
 
         await coordinator.refreshDue()
-        XCTAssertEqual(api.liveSiteIDs.count, 3, "A failed attempt still anchors cadence to prevent rapid retries.")
+        #expect(api.liveSiteIDs.count == 3, "A failed attempt still anchors cadence to prevent rapid retries.")
     }
 }
 
