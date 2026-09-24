@@ -1,0 +1,52 @@
+name: iOS CI
+
+run-name: ${{ github.event_name == 'pull_request' && format('👀 {0}', github.event.pull_request.title) || github.event_name == 'push' && format('⛵ {0}', github.event.head_commit.message) || github.ref_name }}
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cmd/ios-app/**'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    paths:
+      - 'cmd/ios-app/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run iOS Tests
+    runs-on: macos-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: ./cmd/ios-app
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen &> /dev/null; then
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install xcodegen
+          fi
+
+      - name: Run iOS Tests
+        env:
+          TMPDIR: /tmp
+        run: ./run-tests.sh
+
+      - name: Upload Test Artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-artifacts
+          path: /tmp/pwusage-ios-tests.*
+          if-no-files-found: ignore
