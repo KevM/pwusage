@@ -12,7 +12,7 @@ struct LoadTimingViewTests {
             currencyCode: "USD"
         )
         #expect(surplus.title == "Off peak")
-        #expect(surplus.rate == "$0.12/kWh")
+        #expect(surplus.rate == "12¢/kWh")
         #expect(surplus.balance == "Surplus 10.0 kWh")
 
         let deficit = DashboardPresentation.loadTimingSummary(
@@ -32,7 +32,7 @@ struct LoadTimingViewTests {
             isStale: false,
             currencyCode: "USD"
         )
-        #expect(summary.rate == "$0.48/kWh")
+        #expect(summary.rate == "48¢/kWh")
         #expect(summary.balance == "No balance yet")
     }
 

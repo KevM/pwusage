@@ -169,19 +169,23 @@ struct LoadTimingView: View {
 
     @ViewBuilder
     private func recommendation(_ timing: LoadTiming) -> some View {
-        LoadTimingCard(title: "When to run a load", symbol: "clock.arrow.circlepath") {
+        Group {
             switch LoadTimingPresentation.recommendationCue(timing) {
             case .noCycleData:
-                Text("Recommendations need energy recorded during this billing cycle.")
+                Label("Recommendations need energy recorded during this billing cycle.", systemImage: "clock.arrow.circlepath")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             case .nextCheaper(let next):
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Wait for \(DashboardPresentation.tariffPeriodTitle(next.name))")
-                        .font(.headline)
-                    Text("\(DashboardPresentation.loadRate(next.marginalCost, code: currencyCode)) · \(next.phrase)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                Label {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Wait for \(DashboardPresentation.tariffPeriodTitle(next.name))")
+                            .font(.headline)
+                        Text("\(DashboardPresentation.loadRate(next.marginalCost, code: currencyCode)) · \(next.phrase)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "clock.arrow.circlepath")
                 }
                 .accessibilityElement(children: .combine)
             case .cheapestNow:
@@ -195,10 +199,14 @@ struct LoadTimingView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .padding(.horizontal, 2)
     }
 
     private func observedPeriods(_ timing: LoadTiming) -> some View {
-        LoadTimingCard(title: "Observed this cycle", symbol: "chart.bar.fill") {
+        LoadTimingCard(title: "Your energy balance", symbol: "chart.bar.fill") {
+            Text("By rate period this billing cycle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
             if timing.periods.isEmpty {
                 Text("No tariff periods have cycle observations yet.")
                     .font(.subheadline)

@@ -91,6 +91,9 @@ enum DashboardPresentation {
 
     static func loadRate(_ amountPerKwh: Double?, code: String, locale: Locale = .current) -> String {
         guard let amountPerKwh else { return "Unavailable" }
+        if code == "USD" {
+            return "\(loadRateInCents(amountPerKwh, locale: locale))"
+        }
         return "\(currency(amountPerKwh, code: code, locale: locale))/kWh"
     }
 
@@ -159,13 +162,13 @@ enum DashboardPresentation {
         return !normalized.isEmpty && normalized.caseInsensitiveCompare("Unknown") != .orderedSame
     }
 
-    static func loadRateInCents(_ amountPerKwh: Double?) -> String {
+    static func loadRateInCents(_ amountPerKwh: Double?, locale: Locale = .current) -> String {
         guard let amountPerKwh else { return "Cost unavailable/kWh" }
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = amountPerKwh * 100 == (amountPerKwh * 100).rounded() ? 0 : 1
         formatter.maximumFractionDigits = 2
-        formatter.locale = .current
+        formatter.locale = locale
         return "\(formatter.string(from: NSNumber(value: amountPerKwh * 100)) ?? String(format: "%.1f", amountPerKwh * 100))¢/kWh"
     }
 
