@@ -13,6 +13,29 @@ vi.mock('@/lib/energy-repo', () => ({
 import { GET } from './route';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
 
+function tariff(name = 'Seasonal utility') {
+    return {
+        id: 1, site_id: 'site-a', name, updated: new Date('2026-01-01'),
+        seasons: [
+            {
+                id: 2, tariff_id: 1, name: 'Summer', from_month: 6, from_day: 1, to_month: 9, to_day: 30,
+                buy_rate: 0.4, sell_rate: 0.05,
+                schedules: [
+                    { id: 3, season_id: 2, name: 'Peak', buy_rate: 0.4, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 6, from_minute: 0, to_hour: 20, to_minute: 0 },
+                    { id: 4, season_id: 2, name: 'Off peak', buy_rate: 0.1, sell_rate: 0.03, from_day_of_week: 0, to_day_of_week: 6, from_hour: 20, from_minute: 0, to_hour: 6, to_minute: 0 },
+                ],
+            },
+            {
+                id: 5, tariff_id: 1, name: 'Winter', from_month: 10, from_day: 1, to_month: 5, to_day: 31,
+                buy_rate: 0.8, sell_rate: 0.02,
+                schedules: [
+                    { id: 6, season_id: 5, name: 'Winter peak', buy_rate: 0.8, sell_rate: 0.02, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 },
+                ],
+            },
+        ],
+    };
+}
+
 describe('mobile bill summary route', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -74,5 +97,84 @@ describe('mobile bill summary route', () => {
 
         expect(body.currentBill.estimatedCost).toBeNull();
         expect(body.currentBill.periods).toEqual([]);
+    });
+
+    it('returns canonical current-season load timing detail using the existing cycle usage query', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
+            tariffs: [tariff()],
+        });
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 2.4, gridUsage: 6000, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: tariff(), touName: 'Peak', buyRate: 0.4, sellRate: 0.05 },
+        ]);
+
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+        const body = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(usageMock).toHaveBeenCalledTimes(1);
+        expect(body.loadTiming).toMatchObject({
+            hasTariff: true,
+            hasCycleData: true,
+            activeIsCheapest: true,
+            periods: [{ name: 'Peak', marginalCost: 0.4, basis: 'buy', cycleNetExportKwh: -6, isActive: true, buyRate: 0.4, sellRate: 0.05 }],
+            pricingPeriods: expect.arrayContaining([
+                expect.objectContaining({ name: 'Peak', isActive: true }),
+                expect.objectContaining({ name: 'Off peak', marginalCost: 0.1, basis: 'neutral', cycleNetExportKwh: 0, buyRate: 0.1, sellRate: 0.03 }),
+            ]),
+            nextCheaper: null,
+        });
+        expect(body.loadTiming.periods[0].nextStartPhrase).toBeNull();
+        expect(body.loadTiming.pricingPeriods.find((period: { name: string }) => period.name === 'Off peak').nextStartPhrase).toEqual(expect.any(String));
+        expect(body.loadTiming.pricingPeriods).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Winter peak' })]));
+        expect(body.sources).toEqual({ calculatedAt: '2026-09-19T02:00:00.000Z', energyDataThrough: '2026-09-19T01:55:00.000Z' });
+        expect(JSON.stringify(body)).not.toContain('tariff_content_v2');
+        expect(JSON.stringify(body)).not.toContain('gridUsage');
+        vi.useRealTimers();
+    });
+
+    it('provides explicit unavailable pricing when no tariff or cycle data exists', async () => {
+        usageMock.mockResolvedValue([]);
+
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+        const body = await response.json();
+
+        expect(body.loadTiming).toEqual({
+            hasTariff: false, hasCycleData: false, activeIsCheapest: false,
+            periods: [], pricingPeriods: [], nextCheaper: null, nextCheaperPhrase: null, nextStartPhraseByKey: {},
+        });
+        expect(usageMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('includes configured pricing periods when the cycle has no observations', async () => {
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
+            tariffs: [tariff()],
+        });
+        usageMock.mockResolvedValue([]);
+
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+        const body = await response.json();
+
+        expect(body.loadTiming.hasCycleData).toBe(false);
+        expect(body.loadTiming.periods).toEqual([]);
+        expect(body.loadTiming.pricingPeriods).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'Peak', marginalCost: 0.4, basis: 'neutral' }),
+            expect.objectContaining({ name: 'Off peak', marginalCost: 0.1, basis: 'neutral' }),
+        ]));
+        expect(body.loadTiming.nextCheaper).toBeNull();
+        expect(usageMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not include detail data for an unauthorized site', async () => {
+        verifyAccessMock.mockResolvedValue(false);
+
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+        const body = await response.json();
+
+        expect(response.status).toBe(401);
+        expect(body).not.toHaveProperty('loadTiming');
+        expect(usageMock).not.toHaveBeenCalled();
     });
 });

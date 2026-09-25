@@ -6,6 +6,8 @@ import { withRequestContext } from '@/lib/request-context';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
 import { MOBILE_DASHBOARD_CONTRACT_VERSION, type MobileBillPeriod } from '@/lib/mobile-dashboard-contract';
 import { wattsToKilowatts } from '@/lib/energy-utils';
+import { Schedule } from '@/lib/schedule';
+import { computeLoadTiming } from '@/lib/load-timing';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +43,14 @@ export async function GET(request: Request) {
                 netGridKwh: wattsToKilowatts(item.gridUsage),
                 cost: item.cost ?? 0,
             }));
+            const schedule = new Schedule(site.tariffs, site.timezone);
+            const active = schedule.getTariffPeriod(now);
+            const activePeriod = active ? {
+                name: active.schedule.name || 'Standard',
+                buyRate: active.schedule.buy_rate ?? active.season.buy_rate ?? 0,
+                sellRate: active.schedule.sell_rate ?? active.season.sell_rate ?? 0,
+            } : null;
+            const loadTiming = computeLoadTiming(schedule, usage, now, site.timezone, activePeriod);
 
             return NextResponse.json({
                 version: MOBILE_DASHBOARD_CONTRACT_VERSION,
@@ -52,6 +62,7 @@ export async function GET(request: Request) {
                     cycleEnd: cycleEnd.toISOString(),
                     periods,
                 },
+                loadTiming,
                 sources: {
                     calculatedAt: now.toISOString(),
                     energyDataThrough: energyDataThrough?.toISOString() ?? null,

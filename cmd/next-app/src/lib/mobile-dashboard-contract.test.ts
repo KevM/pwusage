@@ -89,6 +89,11 @@ describe('buildMobileDashboardContract', () => {
                 cycleStart: '2026-09-01T05:00:00.000Z', cycleEnd: '2026-10-01T05:00:00.000Z',
                 periods: [{ tariffName: 'Old tariff', periodName: 'Peak', netGridKwh: -2, cost: 12.34 }],
             },
+            loadTiming: {
+                hasTariff: true, hasCycleData: true, activeIsCheapest: false,
+                periods: [{ name: 'Peak', marginalCost: 0.4, basis: 'buy' as const, cycleNetExportKwh: -2, isActive: true, nextStartPhrase: null, buyRate: 0.4, sellRate: 0.05 }],
+                pricingPeriods: [], nextCheaper: null, nextCheaperPhrase: null, nextStartPhraseByKey: {},
+            },
             sources: { calculatedAt: '2026-09-23T12:01:00.000Z', energyDataThrough: '2026-09-23T12:00:00.000Z' },
         };
 
@@ -97,6 +102,10 @@ describe('buildMobileDashboardContract', () => {
         const combined = withMobileBillSummary(dashboard, summary);
         expect(combined.sources.energyDataThrough).toBe('2026-09-23T11:55:00.000Z');
         expect(combined.billSources.energyDataThrough).toBe('2026-09-23T12:00:00.000Z');
+        expect(combined.loadTiming).toEqual(summary.loadTiming);
+        const legacySummary = { ...summary };
+        delete (legacySummary as Partial<typeof legacySummary>).loadTiming;
+        expect(withMobileBillSummary(dashboard, legacySummary)).not.toHaveProperty('loadTiming');
         expect(() => withMobileBillSummary(dashboard, { ...summary, site: { ...summary.site, id: 'site-b' } })).toThrow(/different sites/);
     });
 
