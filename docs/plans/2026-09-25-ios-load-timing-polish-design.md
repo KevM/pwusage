@@ -14,10 +14,11 @@ Make the native Load timing screen easier to scan and make the car estimate refl
 
 - Keep **Load timing** as the screen title. Present the cheaper-period or cheapest-now recommendation as a concise inline message near the top, without a separate **When to run a load** card or heading.
 - Show Car, Laundry, Dishwasher, and Custom chips in a single horizontal row. The row may scroll horizontally at narrow widths and larger text sizes.
-- Remove Big car and Little car. Selecting Car exposes compact battery capacity and current-charge controls, plus one slider labeled **Charge to**. Defaults are 60 kWh, 20%, and 80%. The estimated load is `capacityKwh * max(targetPercent - currentPercent, 0) / 100`; this excludes charging losses and should be labeled as an approximate energy-to-add estimate.
+- Remove Big car and Little car. Selecting Car exposes compact numeric entry for battery capacity and current charge, plus one slider labeled **Charge to**. Defaults are 60 kWh, 20%, and 80%. The estimated load is `capacityKwh * max(targetPercent - currentPercent, 0) / 100`; this excludes charging losses and should be labeled as an approximate energy-to-add estimate. Keep the former car presets' limited-headroom cue with a threshold of 1.6 times the planned charge.
 - Keep Laundry and Dishwasher at their existing kWh amounts. Custom uses a compact numeric amount control instead of a slider.
 - Remove the graphical covered/bought bars beneath estimate rows. Keep the coverage quantities and verdict in text so no estimator information is lost and the target slider remains visually distinct.
 - Tighten spacing in the estimator while retaining the current period ordering, rate, next-start cue, total estimate, verdict, and accessibility descriptions.
+- If the Car target is at or below its current charge, show **No charging needed at this target** in place of price estimates. The period balance tiles above remain available; an estimate for a zero-kWh charge would be misleading.
 
 ## States and verification
 
