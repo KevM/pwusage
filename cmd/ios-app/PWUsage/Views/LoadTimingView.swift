@@ -109,15 +109,24 @@ struct LoadTimingView: View {
     let site: MobileSite
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var selectedProfileID: String? = LoadTimingEstimator.profiles.first?.id
+    @State private var selectedProfileID: String? = "car"
     @State private var customAmount = 20.0
+    @State private var batteryCapacityKwh = 60.0
+    @State private var currentChargePercent = 20.0
+    @State private var targetChargePercent = 80.0
 
     private var response: MobileBillResponse? { coordinator.bill.response }
     private var timing: LoadTiming? { response?.loadTiming }
     private var selectedProfile: LoadTimingEstimator.Profile? {
         LoadTimingEstimator.profiles.first { $0.id == selectedProfileID }
     }
-    private var selectedAmount: Double { selectedProfile?.kwh ?? LoadTimingEstimator.customAmount(customAmount) }
+    private var selectedAmount: Double {
+        if selectedProfileID == "car" {
+            return LoadTimingEstimator.carChargeKwh(capacityKwh: batteryCapacityKwh, currentPercent: currentChargePercent, targetPercent: targetChargePercent)
+        }
+        return selectedProfile?.kwh ?? LoadTimingEstimator.customAmount(customAmount)
+    }
+    private var isCustomSelected: Bool { selectedProfileID == nil }
     private var currencyCode: String { response?.currentBill.currency ?? "USD" }
     private var timeZone: String { response?.site.timezone ?? "UTC" }
 
@@ -222,30 +231,60 @@ struct LoadTimingView: View {
     }
 
     private func estimator(_ timing: LoadTiming) -> some View {
-        LoadTimingCard(title: "Can I run this now?", symbol: "bolt.fill") {
-            VStack(alignment: .leading, spacing: 15) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { presetButtons; customButton }
-                    VStack(alignment: .leading, spacing: 8) { presetButtons; customButton }
+        LoadTimingCard {
+            VStack(alignment: .leading, spacing: 11) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        carButton
+                        presetButtons
+                        customButton
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                if selectedProfile == nil {
-                    VStack(alignment: .leading, spacing: 5) {
+                if selectedProfileID == "car" {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 12) {
+                                compactStepper("Battery", value: $batteryCapacityKwh, range: 1...200, suffix: "kWh")
+                                compactStepper("Current", value: $currentChargePercent, range: 0...100, suffix: "%")
+                            }
+                            VStack(alignment: .leading, spacing: 4) {
+                                compactStepper("Battery", value: $batteryCapacityKwh, range: 1...200, suffix: "kWh")
+                                compactStepper("Current", value: $currentChargePercent, range: 0...100, suffix: "%")
+                            }
+                        }
+                        HStack {
+                            Text("Charge to")
+                            Spacer()
+                            Text("\(Int(targetChargePercent))%")
+                                .monospacedDigit()
+                        }
+                        .font(.subheadline)
+                        Slider(value: $targetChargePercent, in: currentChargePercent...100, step: 1) {
+                            Text("Charge to")
+                        }
+                        .accessibilityLabel("Charge to")
+                        .accessibilityValue("\(Int(targetChargePercent)) percent")
+                        Text("\(selectedAmount, specifier: "%.1f") kWh energy to add, approximate; charging losses excluded")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Approximately \(selectedAmount.formatted(.number.precision(.fractionLength(1)))) kilowatt-hours to add; charging losses excluded")
+                    }
+                    .onChange(of: currentChargePercent) { _, current in
+                        targetChargePercent = max(targetChargePercent, current)
+                    }
+                } else if isCustomSelected {
+                    Stepper(value: $customAmount, in: 1...100, step: 1) {
                         HStack {
                             Text("Custom load")
                             Spacer()
-                            Text("\(selectedAmount, specifier: "%.0f") kWh")
+                            Text("\(LoadTimingEstimator.customAmount(customAmount), specifier: "%.0f") kWh")
                                 .monospacedDigit()
                         }
-                        Slider(value: $customAmount, in: 1...100, step: 1) {
-                            Text("Custom load size")
-                        } minimumValueLabel: {
-                            Text("1")
-                        } maximumValueLabel: {
-                            Text("100")
-                        }
-                        .accessibilityLabel("Custom load size")
-                        .accessibilityValue("\(Int(selectedAmount)) kilowatt-hours")
+                        .font(.subheadline)
                     }
+                    .accessibilityLabel("Custom load size")
+                    .accessibilityValue("\(Int(LoadTimingEstimator.customAmount(customAmount))) kilowatt-hours")
                 }
                 Divider()
                 if timing.pricingPeriods.isEmpty {
@@ -282,6 +321,31 @@ struct LoadTimingView: View {
             .accessibilityLabel("\(profile.label), \(Int(profile.kwh)) kilowatt-hours")
             .accessibilityAddTraits(selectedProfileID == profile.id ? .isSelected : [])
         }
+    }
+
+    private var carButton: some View {
+        Button { selectedProfileID = "car" } label: {
+            Text("Car")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .foregroundStyle(selectedProfileID == "car" ? Color.white : Color.primary)
+                .background(selectedProfileID == "car" ? Color.indigo : Color(uiColor: .tertiarySystemGroupedBackground), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Car charge estimate")
+        .accessibilityAddTraits(selectedProfileID == "car" ? .isSelected : [])
+    }
+
+    private func compactStepper(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String) -> some View {
+        Stepper(value: value, in: range, step: 1) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.caption).foregroundStyle(.secondary)
+                Text("\(Int(value.wrappedValue))\(suffix)").font(.subheadline.weight(.medium)).monospacedDigit()
+            }
+        }
+        .accessibilityLabel(title == "Battery" ? "Battery capacity" : "Current charge")
+        .accessibilityValue("\(Int(value.wrappedValue)) \(suffix == "kWh" ? "kilowatt-hours" : "percent")")
     }
 
     private var customButton: some View {
@@ -336,10 +400,15 @@ struct LoadTimingView: View {
                     .monospacedDigit()
                     .multilineTextAlignment(.trailing)
             }
-            Text(verdictText(estimate.verdict))
-                .font(.caption.weight(.medium))
-                .foregroundStyle(verdictColor(estimate.verdict))
-            coveredBar(estimate, amount: selectedAmount)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(LoadTimingPresentation.coverageSummary(estimate))
+                    .foregroundStyle(.secondary)
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                Text(verdictText(estimate.verdict))
+                    .foregroundStyle(verdictColor(estimate.verdict))
+            }
+            .font(.caption)
         }
         .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
@@ -350,29 +419,6 @@ struct LoadTimingView: View {
             verdict: verdictText(estimate.verdict),
             currencyCode: currencyCode
         ))
-    }
-
-    private func coveredBar(_ estimate: LoadTimingEstimator.Cost, amount: Double) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            GeometryReader { geometry in
-                let coveredFraction = amount > 0 ? min(max(estimate.coveredKwh / amount, 0), 1) : 0
-                HStack(spacing: 0) {
-                    if estimate.verdict == .unknown {
-                        Rectangle().fill(Color.secondary.opacity(0.18))
-                    } else {
-                        Rectangle().fill(.green).frame(width: geometry.size.width * coveredFraction)
-                        Rectangle().fill(.orange.opacity(0.75))
-                    }
-                }
-            }
-            .frame(height: 8)
-            .clipShape(Capsule())
-            Text(LoadTimingPresentation.coverageSummary(estimate))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(estimate.verdict == .unknown ? "Coverage unavailable" : "\(estimate.coveredKwh.formatted(.number.precision(.fractionLength(1)))) kilowatt-hours covered, \(estimate.boughtKwh.formatted(.number.precision(.fractionLength(1)))) kilowatt-hours bought")
     }
 
     private func metadata(_ response: MobileBillResponse) -> some View {
@@ -460,15 +506,23 @@ private struct LoadTimingPeriodTile: View {
 }
 
 private struct LoadTimingCard<Content: View>: View {
-    let title: String
-    let symbol: String
+    var title: String? = nil
+    var symbol: String? = nil
     @ViewBuilder let content: Content
+
+    init(title: String? = nil, symbol: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.symbol = symbol
+        self.content = content()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            Label(title, systemImage: symbol)
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
+            if let title, let symbol {
+                Label(title, systemImage: symbol)
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+            }
             content
         }
         .padding(17)

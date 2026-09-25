@@ -31,8 +31,6 @@ struct LoadTimingEstimatorTests {
     @Test("Provides web preset sizes and headroom thresholds")
     func profilesMatchWeb() {
         #expect(LoadTimingEstimator.profiles == [
-            .init(id: "car-large", label: "Big car", kwh: 100, headroomKwh: 160),
-            .init(id: "car-small", label: "Little car", kwh: 60, headroomKwh: 100),
             .init(id: "laundry", label: "Laundry", kwh: 8, headroomKwh: 20),
             .init(id: "dishwasher", label: "Dishwasher", kwh: 5, headroomKwh: 5),
         ])
@@ -41,5 +39,28 @@ struct LoadTimingEstimatorTests {
         #expect(LoadTimingEstimator.customAmount(100) == 100)
         #expect(LoadTimingEstimator.customAmount(0) == 1)
         #expect(LoadTimingEstimator.customAmount(120) == 100)
+    }
+
+    @Test("Calculates energy needed to charge a car to its target")
+    func carChargeEnergyUsesCapacityAndChargeDifference() {
+        #expect(LoadTimingEstimator.carChargeKwh(capacityKwh: 60, currentPercent: 20, targetPercent: 80) == 36)
+        #expect(LoadTimingEstimator.carChargeKwh(capacityKwh: 60, currentPercent: 80, targetPercent: 20) == 0)
+        #expect(LoadTimingEstimator.carChargeKwh(capacityKwh: 60, currentPercent: 80, targetPercent: 80) == 0)
+    }
+
+    @Test("Invalid car charge inputs never return negative or non-finite energy")
+    func carChargeEnergyRejectsInvalidInputs() {
+        for result in [
+            LoadTimingEstimator.carChargeKwh(capacityKwh: .nan, currentPercent: 20, targetPercent: 80),
+            LoadTimingEstimator.carChargeKwh(capacityKwh: .infinity, currentPercent: 20, targetPercent: 80),
+            LoadTimingEstimator.carChargeKwh(capacityKwh: -60, currentPercent: 20, targetPercent: 80),
+            LoadTimingEstimator.carChargeKwh(capacityKwh: .greatestFiniteMagnitude, currentPercent: 0, targetPercent: 100),
+            LoadTimingEstimator.carChargeKwh(capacityKwh: 60, currentPercent: .infinity, targetPercent: 80),
+            LoadTimingEstimator.carChargeKwh(capacityKwh: 60, currentPercent: 20, targetPercent: .nan),
+        ] {
+            #expect(result.isFinite)
+            #expect(result >= 0)
+        }
+        #expect(LoadTimingEstimator.carChargeKwh(capacityKwh: 60, currentPercent: -10, targetPercent: 110) == 60)
     }
 }

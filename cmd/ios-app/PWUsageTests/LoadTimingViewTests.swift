@@ -57,8 +57,8 @@ struct LoadTimingViewTests {
         #expect(LoadTimingPresentation.sourceStatus(isUnavailable: true, energyDataThrough: nil) == "Refresh unavailable · source time unavailable")
     }
 
-    @Test("Custom load slider values clamp to one through one hundred kWh")
-    func customSliderValuesStayWithinSupportedRange() {
+    @Test("Custom load stepper values clamp to one through one hundred kWh")
+    func customAmountValuesStayWithinSupportedRange() {
         #expect(LoadTimingEstimator.customAmount(0) == 1)
         #expect(LoadTimingEstimator.customAmount(42.5) == 42.5)
         #expect(LoadTimingEstimator.customAmount(120) == 100)
@@ -94,21 +94,33 @@ struct LoadTimingViewTests {
 
     @Test("Selected preset supplies its own tightness threshold and unknown coverage stays unknown")
     func estimateUsesSelectedProfileHeadroomAndDoesNotInventCoverage() {
-        let period = LoadTimingPeriod(name: "Peak", marginalCost: 0.48, basis: "buy", cycleNetExportKwh: 120, isActive: true, nextStartPhrase: nil, buyRate: 0.48, sellRate: 0.12)
-        let bigCar = LoadTimingEstimator.profiles[0]
-        let estimate = LoadTimingPresentation.estimate(amount: 100, period: period, selectedProfile: bigCar)
+        let period = LoadTimingPeriod(name: "Peak", marginalCost: 0.48, basis: "buy", cycleNetExportKwh: 15, isActive: true, nextStartPhrase: nil, buyRate: 0.48, sellRate: 0.12)
+        let laundry = LoadTimingEstimator.profiles[0]
+        let estimate = LoadTimingPresentation.estimate(amount: laundry.kwh, period: period, selectedProfile: laundry)
         #expect(estimate.verdict == .tight)
-        #expect(LoadTimingPresentation.coverageSummary(estimate) == "100.0 kWh covered · 0.0 kWh bought")
+        #expect(LoadTimingPresentation.coverageSummary(estimate) == "8.0 kWh covered · 0.0 kWh bought")
 
         let configuredButUnobserved = LoadTimingPeriod(name: "Unobserved", marginalCost: nil, basis: "unobserved", cycleNetExportKwh: 0, isActive: false, nextStartPhrase: nil, buyRate: 0.48, sellRate: 0.12)
-        let unobservedEstimate = LoadTimingPresentation.estimate(amount: 100, period: configuredButUnobserved, selectedProfile: bigCar)
+        let unobservedEstimate = LoadTimingPresentation.estimate(amount: 100, period: configuredButUnobserved, selectedProfile: laundry)
         #expect(unobservedEstimate.verdict == .bought)
         #expect(unobservedEstimate.total == 48)
 
         let unpriced = LoadTimingPeriod(name: "Unknown", marginalCost: nil, basis: "unknown", cycleNetExportKwh: 0, isActive: false, nextStartPhrase: nil, buyRate: 0, sellRate: 0)
-        let unknown = LoadTimingPresentation.estimate(amount: 100, period: unpriced, selectedProfile: bigCar)
+        let unknown = LoadTimingPresentation.estimate(amount: 100, period: unpriced, selectedProfile: laundry)
         #expect(unknown.verdict == .unknown)
         #expect(LoadTimingPresentation.coverageSummary(unknown) == "Coverage unavailable")
+    }
+
+    @Test("Car charge calculation flows into the period cost estimate")
+    func carChargeCalculationFeedsPeriodEstimate() {
+        let amount = LoadTimingEstimator.carChargeKwh(capacityKwh: 60, currentPercent: 20, targetPercent: 80)
+        let period = LoadTimingPeriod(name: "Peak", marginalCost: 0.48, basis: "buy", cycleNetExportKwh: 10, isActive: true, nextStartPhrase: nil, buyRate: 0.48, sellRate: 0.12)
+        let estimate = LoadTimingPresentation.estimate(amount: amount, period: period, selectedProfile: nil)
+        #expect(amount == 36)
+        #expect(estimate.coveredKwh == 10)
+        #expect(estimate.boughtKwh == 26)
+        #expect(estimate.total == 13.68)
+        #expect(LoadTimingPresentation.coverageSummary(estimate) == "10.0 kWh covered · 26.0 kWh bought")
     }
 
     @Test("Next cheaper recommendation takes precedence over cheapest-now cue")

@@ -30,11 +30,17 @@ struct LoadTimingEstimator {
     }
 
     static let profiles: [Profile] = [
-        .init(id: "car-large", label: "Big car", kwh: 100, headroomKwh: 160),
-        .init(id: "car-small", label: "Little car", kwh: 60, headroomKwh: 100),
         .init(id: "laundry", label: "Laundry", kwh: 8, headroomKwh: 20),
         .init(id: "dishwasher", label: "Dishwasher", kwh: 5, headroomKwh: 5),
     ]
+
+    static func carChargeKwh(capacityKwh: Double, currentPercent: Double, targetPercent: Double) -> Double {
+        guard capacityKwh.isFinite, capacityKwh > 0,
+              currentPercent.isFinite, targetPercent.isFinite else { return 0 }
+        let current = min(max(currentPercent, 0), 100)
+        let target = min(max(targetPercent, 0), 100)
+        return capacityKwh * (max(target - current, 0) / 100)
+    }
 
     static func costToRun(_ loadKwh: Double, pricing: Pricing?, headroomKwh: Double? = nil) -> Cost {
         guard let pricing,
