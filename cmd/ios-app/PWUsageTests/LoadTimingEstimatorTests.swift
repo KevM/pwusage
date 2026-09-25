@@ -12,6 +12,9 @@ struct LoadTimingEstimatorTests {
         #expect(LoadTimingEstimator.costToRun(60, pricing: .init(surplusKwh: 10, buyRate: 0.48, sellRate: 0.12)).verdict == .partial)
         #expect(LoadTimingEstimator.costToRun(5, pricing: .init(surplusKwh: -20, buyRate: 0.48, sellRate: 0.12)).verdict == .bought)
         #expect(LoadTimingEstimator.costToRun(8, pricing: nil).verdict == .unknown)
+        let unresolvedRates = LoadTimingEstimator.costToRun(8, pricing: .init(surplusKwh: 0, buyRate: 0, sellRate: 0))
+        #expect(unresolvedRates.total == nil)
+        #expect(unresolvedRates.verdict == .unknown)
     }
 
     @Test("Prices covered and bought energy at sell and buy rates")

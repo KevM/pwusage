@@ -44,6 +44,9 @@ struct LoadTimingEstimator {
               pricing.sellRate.isFinite else {
             return Cost(total: nil, coveredKwh: 0, boughtKwh: 0, verdict: .unknown)
         }
+        guard pricing.buyRate != 0 || pricing.sellRate != 0 else {
+            return Cost(total: nil, coveredKwh: 0, boughtKwh: 0, verdict: .unknown)
+        }
 
         let covered = min(loadKwh, max(pricing.surplusKwh, 0))
         let bought = loadKwh - covered
