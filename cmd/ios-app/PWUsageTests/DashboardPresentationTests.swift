@@ -76,6 +76,17 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.currency(nil, code: "USD", locale: Locale(identifier: "en_US")) == "Unavailable")
     }
 
+    @Test("Formats load timing rates and balance with accessible labels")
+    func loadTimingFormattingAndAccessibility() {
+        #expect(DashboardPresentation.loadRate(0.12345, code: "USD", locale: Locale(identifier: "en_US")) == "$0.12/kWh")
+        #expect(DashboardPresentation.loadBalance(-3.25) == "Surplus 3.3 kWh")
+        #expect(DashboardPresentation.loadBalance(4) == "Deficit 4.0 kWh")
+        #expect(DashboardPresentation.loadBalance(0) == "Balanced 0.0 kWh")
+        #expect(DashboardPresentation.loadBalance(nil) == "No balance yet")
+        #expect(DashboardPresentation.loadBalanceAccessibilityLabel(-3.25) == "Surplus 3.3 kilowatt-hours")
+        #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12, code: "USD", locale: Locale(identifier: "en_US")) == "12 cents per kilowatt-hour")
+    }
+
     @Test("Tariff period titles match website normalization")
     func tariffPeriodTitlesMatchWebsiteNormalization() {
         #expect(DashboardPresentation.tariffPeriodTitle("OFF_PEAK") == "Off-Peak")

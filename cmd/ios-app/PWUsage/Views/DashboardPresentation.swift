@@ -80,6 +80,41 @@ enum DashboardPresentation {
         return formatter.string(from: NSNumber(value: amount)) ?? "\(amount) \(code)"
     }
 
+    static func loadRate(_ amountPerKwh: Double?, code: String, locale: Locale = .current) -> String {
+        guard let amountPerKwh else { return "Unavailable" }
+        return "\(currency(amountPerKwh, code: code, locale: locale))/kWh"
+    }
+
+    static func loadBalance(_ balanceKwh: Double?) -> String {
+        guard let balanceKwh else { return "No balance yet" }
+        let status = balanceKwh < 0 ? "Surplus" : (balanceKwh > 0 ? "Deficit" : "Balanced")
+        return "\(status) \(loadEnergyNumber(abs(balanceKwh))) kWh"
+    }
+
+    static func loadBalanceAccessibilityLabel(_ balanceKwh: Double?) -> String {
+        guard let balanceKwh else { return "No balance yet" }
+        let status = balanceKwh < 0 ? "Surplus" : (balanceKwh > 0 ? "Deficit" : "Balanced")
+        return "\(status) \(loadEnergyNumber(abs(balanceKwh))) kilowatt-hours"
+    }
+
+    static func loadRateAccessibilityLabel(_ amountPerKwh: Double?, code: String, locale: Locale = .current) -> String {
+        guard let amountPerKwh else { return "Cost per kilowatt-hour unavailable" }
+        if code == "USD" {
+            let cents = Int((amountPerKwh * 100).rounded())
+            return "\(cents) \(cents == 1 ? "cent" : "cents") per kilowatt-hour"
+        }
+        return "\(currency(amountPerKwh, code: code, locale: locale)) per kilowatt-hour"
+    }
+
+    private static func loadEnergyNumber(_ kWh: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        formatter.roundingMode = .halfUp
+        return formatter.string(from: NSNumber(value: kWh)) ?? String(format: "%.1f", kWh)
+    }
+
     static func freshness(_ date: Date?, now: Date = .now, staleAfter: TimeInterval = 15 * 60) -> String {
         guard let date else { return "Source time unavailable" }
         let age = now.timeIntervalSince(date)
