@@ -100,10 +100,22 @@ enum DashboardPresentation {
         return "\(status) \(loadEnergyNumber(abs(balanceKwh))) kWh"
     }
 
+    static func liveLoadBalance(_ cycleNetExportKwh: Double?) -> String {
+        guard let cycleNetExportKwh else { return "No balance yet" }
+        let status = cycleNetExportKwh > 0 ? "Surplus" : (cycleNetExportKwh < 0 ? "Deficit" : "Balanced")
+        return "\(status) \(loadEnergyNumber(abs(cycleNetExportKwh))) kWh"
+    }
+
     static func loadBalanceAccessibilityLabel(_ balanceKwh: Double?) -> String {
         guard let balanceKwh else { return "No balance yet" }
         let status = balanceKwh < 0 ? "Surplus" : (balanceKwh > 0 ? "Deficit" : "Balanced")
         return "\(status) \(loadEnergyNumber(abs(balanceKwh))) kilowatt-hours"
+    }
+
+    static func liveLoadBalanceAccessibilityLabel(_ cycleNetExportKwh: Double?) -> String {
+        guard let cycleNetExportKwh else { return "No balance yet" }
+        let status = cycleNetExportKwh > 0 ? "Surplus" : (cycleNetExportKwh < 0 ? "Deficit" : "Balanced")
+        return "\(status) \(loadEnergyNumber(abs(cycleNetExportKwh))) kilowatt-hours"
     }
 
     static func loadRateAccessibilityLabel(_ amountPerKwh: Double?, code: String, locale: Locale = .current) -> String {
@@ -132,10 +144,10 @@ enum DashboardPresentation {
         let isUnobserved = timing.basis == "unobserved"
         let rateValue = isUnobserved ? timing.buyRate : timing.marginalCost
         let rate = currencyCode.map { loadRate(rateValue, code: $0) } ?? loadRateInCents(rateValue)
-        let balance = isUnobserved ? "No balance yet" : (timing.balanceKwh.map(loadBalance) ?? "Balance unavailable")
+        let balance = isUnobserved ? "No balance yet" : (timing.balanceKwh.map(liveLoadBalance) ?? "Balance unavailable")
         let freshness = isStale ? "Showing the last successful live summary" : nil
         let spokenRate = currencyCode.map { loadRateAccessibilityLabel(rateValue, code: $0) } ?? loadRateInCentsAccessibilityLabel(rateValue)
-        let label = [title, spokenRate, isUnobserved ? "No balance yet" : loadBalanceAccessibilityLabel(timing.balanceKwh), freshness]
+        let label = [title, spokenRate, isUnobserved ? "No balance yet" : liveLoadBalanceAccessibilityLabel(timing.balanceKwh), freshness]
             .compactMap { $0 }
             .joined(separator: ", ")
         return LoadTimingSummary(title: title, rate: rate, balance: balance, message: nil, freshness: freshness, accessibilityLabel: label)

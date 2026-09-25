@@ -6,22 +6,22 @@ struct LoadTimingViewTests {
     @Test("Dashboard summary shows active rate and measured surplus or deficit")
     func dashboardSummaryShowsActivePeriodAndMeasuredBalance() {
         let surplus = DashboardPresentation.loadTimingSummary(
-            .init(periodName: "Off peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.12, basis: "sell", balanceKwh: -3.25, energyDataThrough: nil),
+            .init(periodName: "Off peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.12, basis: "sell", balanceKwh: 10, energyDataThrough: nil),
             hasTariff: true,
             isStale: false,
             currencyCode: "USD"
         )
         #expect(surplus.title == "Off peak")
         #expect(surplus.rate == "$0.12/kWh")
-        #expect(surplus.balance == "Surplus 3.3 kWh")
+        #expect(surplus.balance == "Surplus 10.0 kWh")
 
         let deficit = DashboardPresentation.loadTimingSummary(
-            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.48, basis: "buy", balanceKwh: 4, energyDataThrough: nil),
+            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.48, basis: "buy", balanceKwh: -5, energyDataThrough: nil),
             hasTariff: true,
             isStale: false,
             currencyCode: "USD"
         )
-        #expect(deficit.balance == "Deficit 4.0 kWh")
+        #expect(deficit.balance == "Deficit 5.0 kWh")
     }
 
     @Test("Unobserved active period shows configured buy rate and no balance yet")
@@ -41,7 +41,7 @@ struct LoadTimingViewTests {
         #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: false, isStale: false).message == "No active tariff is configured")
         #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: true, isStale: false).message == "Load timing is unavailable")
         let stale = DashboardPresentation.loadTimingSummary(
-            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.48, basis: "buy", balanceKwh: 4, energyDataThrough: nil),
+            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.48, basis: "buy", balanceKwh: -4, energyDataThrough: nil),
             hasTariff: true,
             isStale: true,
             currencyCode: "USD"
@@ -120,8 +120,26 @@ struct LoadTimingViewTests {
 
     @Test("Successful bill response without load timing shows unavailable, not loading")
     func missingLoadTimingResponseIsUnavailable() {
-        #expect(LoadTimingPresentation.detailState(hasBillResponse: true, hasLoadTiming: false, isUnavailable: false) == .unavailable("No tariff details are available for load timing."))
+        #expect(LoadTimingPresentation.detailState(hasBillResponse: true, hasLoadTiming: false, isUnavailable: false) == .unavailable("Configure a tariff or check its rates on the website to make load timing available."))
         #expect(LoadTimingPresentation.detailState(hasBillResponse: false, hasLoadTiming: false, isUnavailable: false) == .loading)
+    }
+
+    @Test("Estimator accessibility summary includes rate, start, cost, and coverage split")
+    func estimateAccessibilitySummaryIncludesVisibleDetails() {
+        let period = LoadTimingPeriod(name: "Off peak", marginalCost: 0.12, basis: "sell", cycleNetExportKwh: 4, isActive: false, nextStartPhrase: "in 2 hours", buyRate: 0.48, sellRate: 0.12)
+        let estimate = LoadTimingEstimator.costToRun(10, pricing: .init(surplusKwh: 4, buyRate: 0.48, sellRate: 0.12))
+        let label = LoadTimingPresentation.estimateAccessibilityLabel(
+            period: period,
+            estimate: estimate,
+            startPhrase: "in 2 hours",
+            verdict: "Partly covered by cycle surplus",
+            currencyCode: "USD"
+        )
+        #expect(label.contains("12 cents per kilowatt-hour"))
+        #expect(label.contains("Starts in 2 hours"))
+        #expect(label.contains("estimated cost $3.36"))
+        #expect(label.contains("4.0 kilowatt-hours covered"))
+        #expect(label.contains("6.0 kilowatt-hours bought"))
     }
 
     @Test("Estimator periods put the active period first")

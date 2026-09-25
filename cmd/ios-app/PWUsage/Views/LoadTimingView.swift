@@ -22,7 +22,7 @@ enum LoadTimingPresentation {
 
     static func detailState(hasBillResponse: Bool, hasLoadTiming: Bool, isUnavailable: Bool) -> DetailState {
         if hasBillResponse {
-            return hasLoadTiming ? .ready : .unavailable("No tariff details are available for load timing.")
+            return hasLoadTiming ? .ready : .unavailable("Configure a tariff or check its rates on the website to make load timing available.")
         }
         if isUnavailable {
             return .unavailable("The server could not provide tariff period details. Try again when your connection is available.")
@@ -71,6 +71,29 @@ enum LoadTimingPresentation {
     static func coverageSummary(_ cost: LoadTimingEstimator.Cost) -> String {
         guard cost.verdict != .unknown else { return "Coverage unavailable" }
         return "\(cost.coveredKwh.formatted(.number.precision(.fractionLength(1)))) kWh covered · \(cost.boughtKwh.formatted(.number.precision(.fractionLength(1)))) kWh bought"
+    }
+
+    static func estimateAccessibilityLabel(
+        period: LoadTimingPeriod,
+        estimate: LoadTimingEstimator.Cost,
+        startPhrase: String?,
+        verdict: String,
+        currencyCode: String,
+        locale: Locale = .current
+    ) -> String {
+        let title = DashboardPresentation.tariffPeriodTitle(period.name)
+        let unitRate = period.marginalCost ?? (period.basis == "unobserved" ? period.buyRate : nil)
+        let rate = DashboardPresentation.loadRateAccessibilityLabel(unitRate, code: currencyCode, locale: locale)
+        let spokenRate = period.basis == "unobserved" ? "Buy rate, \(rate)" : rate
+        let start = period.isActive ? "Currently active" : startPhrase.map { "Starts \($0)" } ?? "Start time unavailable"
+        let total = estimate.total.map { DashboardPresentation.currency($0, code: currencyCode, locale: locale) } ?? "unavailable"
+        let coverage: String
+        if estimate.verdict == .unknown {
+            coverage = "Coverage unavailable"
+        } else {
+            coverage = "\(estimate.coveredKwh.formatted(.number.precision(.fractionLength(1)))) kilowatt-hours covered, \(estimate.boughtKwh.formatted(.number.precision(.fractionLength(1)))) kilowatt-hours bought"
+        }
+        return "\(title), \(spokenRate), \(start), \(verdict), estimated cost \(total), \(coverage)"
     }
 
     static func recommendationCue(_ timing: LoadTiming) -> RecommendationCue {
@@ -310,7 +333,13 @@ struct LoadTimingView: View {
         }
         .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(DashboardPresentation.tariffPeriodTitle(period.name)), \(verdictText(estimate.verdict)), estimated cost \(estimate.total.map { DashboardPresentation.currency($0, code: currencyCode) } ?? "unavailable")")
+        .accessibilityLabel(LoadTimingPresentation.estimateAccessibilityLabel(
+            period: period,
+            estimate: estimate,
+            startPhrase: timing?.nextStartPhraseByKey[period.name] ?? period.nextStartPhrase,
+            verdict: verdictText(estimate.verdict),
+            currencyCode: currencyCode
+        ))
     }
 
     private func coveredBar(_ estimate: LoadTimingEstimator.Cost, amount: Double) -> some View {
