@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { EnergyData } from './db-types';
 import type { UsageData } from './energy-repo';
 import { activeLoadTimingForMobile } from './mobile-load-timing';
 import type { Schedule } from './schedule';
@@ -24,58 +23,56 @@ function usage(name: string, gridUsage: number): UsageData {
     };
 }
 
-function bin(gridPower: number, sampleCount = 3): EnergyData {
-    return {
-        timestamp: new Date('2026-09-24T11:45:00.000Z'), sample_timestamp: SAMPLE,
-        site_id: 'site-a', tariff_id: 1, tariff_schedule_id: 1,
-        load_power: 0, solar_power: 0, grid_power: gridPower, battery_power: 0, battery_soc: null,
-        sample_count: sampleCount,
-    };
-}
-
 describe('activeLoadTimingForMobile', () => {
     it('uses sell pricing for observed surplus', () => {
-        const result = activeLoadTimingForMobile(schedule(), NOW, [usage('Off peak', -2_000)], [], MIDNIGHT, SAMPLE);
+        const result = activeLoadTimingForMobile(schedule(), NOW, [usage('Off peak', -2_000)], new Map(), SAMPLE);
         expect(result).toEqual({ periodName: 'Off peak', buyRate: 0.2, sellRate: 0.05, marginalCost: 0.05, basis: 'sell', balanceKwh: 2, energyDataThrough: SAMPLE.toISOString() });
     });
 
     it('uses buy pricing for observed deficit', () => {
-        const result = activeLoadTimingForMobile(schedule(), NOW, [usage('Off peak', 2_000)], [], MIDNIGHT, SAMPLE);
+        const result = activeLoadTimingForMobile(schedule(), NOW, [usage('Off peak', 2_000)], new Map(), SAMPLE);
         expect(result?.marginalCost).toBe(0.2);
         expect(result?.basis).toBe('buy');
         expect(result?.balanceKwh).toBe(-2);
     });
 
     it('uses buy rate as marginal cost at the web neutral threshold', () => {
-        const result = activeLoadTimingForMobile(schedule(), NOW, [usage('Off peak', -50)], [], MIDNIGHT, SAMPLE);
+        const result = activeLoadTimingForMobile(schedule(), NOW, [usage('Off peak', -50)], new Map(), SAMPLE);
         expect(result?.balanceKwh).toBeCloseTo(0.05);
         expect(result?.marginalCost).toBe(0.2);
         expect(result?.basis).toBe('neutral');
     });
 
     it('shows the configured buy rate while keeping an unobserved active period balance unknown', () => {
-        const result = activeLoadTimingForMobile(schedule(), NOW, [usage('Peak', -5_000)], [], MIDNIGHT, SAMPLE);
+        const result = activeLoadTimingForMobile(schedule(), NOW, [usage('Peak', -5_000)], new Map(), SAMPLE);
         expect(result?.balanceKwh).toBeNull();
         expect(result?.marginalCost).toBe(0.2);
         expect(result?.basis).toBe('unobserved');
     });
 
-    it('derives today balance from the existing bins and preserves the real sample time', () => {
-        const result = activeLoadTimingForMobile(schedule(), NOW, [], [bin(-1000)], MIDNIGHT, SAMPLE);
+    it('uses today balance from the existing per-period map and preserves the real sample time', () => {
+        const result = activeLoadTimingForMobile(schedule(), NOW, [], new Map([['Off peak', 3]]), SAMPLE);
         expect(result?.balanceKwh).toBe(3);
         expect(result?.energyDataThrough).toBe(SAMPLE.toISOString());
     });
 
     it('uses schedule rates when the rate belongs to the season', () => {
-        const result = activeLoadTimingForMobile(schedule('Off peak', null, null), NOW, [], [bin(1000)], MIDNIGHT, null);
+        const result = activeLoadTimingForMobile(schedule('Off peak', null, null), NOW, [], new Map(), null);
         expect(result?.buyRate).toBe(0.3);
         expect(result?.sellRate).toBe(0.1);
     });
 
-    it('returns null when no tariff period or usable rates are available', () => {
+    it('returns null when no tariff period or rates are configured', () => {
         const noPeriod = { getTariffPeriod: () => null } as unknown as Schedule;
-        expect(activeLoadTimingForMobile(noPeriod, NOW, [], [], MIDNIGHT, null)).toBeNull();
-        expect(activeLoadTimingForMobile(schedule('Off peak', null, null, null, null), NOW, [], [], MIDNIGHT, null)).toBeNull();
-        expect(activeLoadTimingForMobile(schedule('Off peak', 0, 0, 0, 0), NOW, [], [], MIDNIGHT, null)).toBeNull();
+        expect(activeLoadTimingForMobile(noPeriod, NOW, [], new Map(), null)).toBeNull();
+        expect(activeLoadTimingForMobile(schedule('Off peak', null, null, null, null), NOW, [], new Map(), null)).toBeNull();
+    });
+
+    it('keeps a configured zero rate as zero for an unobserved active period', () => {
+        const result = activeLoadTimingForMobile(schedule('Off peak', 0, 0, 0, 0), NOW, [], new Map(), null);
+        expect(result).toEqual({
+            periodName: 'Off peak', buyRate: 0, sellRate: 0,
+            marginalCost: 0, basis: 'unobserved', balanceKwh: null, energyDataThrough: null,
+        });
     });
 });

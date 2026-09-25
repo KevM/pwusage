@@ -1,7 +1,5 @@
-import type { EnergyData } from './db-types';
 import type { UsageData } from './energy-repo';
 import type { MarginalCostBasis } from './marginal-cost';
-import { todayNetExportByPeriod } from './headroom-from-bins';
 import type { Schedule } from './schedule';
 
 export interface MobileActiveLoadTiming {
@@ -18,15 +16,14 @@ const NEUTRAL_BALANCE_KWH = 0.1;
 
 /**
  * Builds the active-period slice from the live route's existing rollup and
- * bucket rows. A period with no rows is unknown even when other periods have
- * data in this cycle.
+ * per-period balance map. A period with no rows is unknown even when other
+ * periods have data in this cycle.
  */
 export function activeLoadTimingForMobile(
     schedule: Schedule,
     now: Date,
     priorCycle: UsageData[],
-    todayRows: EnergyData[],
-    siteMidnight: Date,
+    todayByPeriod: Map<string, number>,
     energyDataThrough: Date | null
 ): MobileActiveLoadTiming | null {
     const active = schedule.getTariffPeriod(now);
@@ -35,9 +32,8 @@ export function activeLoadTimingForMobile(
     const periodName = active.schedule.name || 'Standard';
     const buyRate = finiteRate(active.schedule.buy_rate) ?? finiteRate(active.season.buy_rate);
     const sellRate = finiteRate(active.schedule.sell_rate) ?? finiteRate(active.season.sell_rate);
-    if (buyRate === null || sellRate === null || (buyRate === 0 && sellRate === 0)) return null;
+    if (buyRate === null || sellRate === null) return null;
 
-    const todayByPeriod = todayNetExportByPeriod(todayRows, siteMidnight, schedule);
     const priorForActive = priorCycle.filter((row) => (row.touName || 'Standard') === periodName);
     const hasObservation = priorForActive.length > 0 || todayByPeriod.has(periodName);
 

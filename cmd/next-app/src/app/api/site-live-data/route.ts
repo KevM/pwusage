@@ -138,8 +138,7 @@ export async function GET(request: Request) {
                             schedule,
                             now,
                             priorCycle,
-                            gapRows.length > 0 ? [...gapRows, ...historyRows] : historyRows,
-                            siteMidnight,
+                            todayByPeriod,
                             maxBucketSampleTimestamp(historyRows)
                         );
 
