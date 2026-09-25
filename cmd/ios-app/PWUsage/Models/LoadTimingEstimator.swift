@@ -42,6 +42,22 @@ struct LoadTimingEstimator {
         return capacityKwh * (max(target - current, 0) / 100)
     }
 
+    /// Keeps the limited-headroom cue proportional to a planned car charge (about 1.6× its energy).
+    static func carHeadroomKwh(plannedKwh: Double) -> Double {
+        guard plannedKwh.isFinite, plannedKwh > 0 else { return 0 }
+        let threshold = plannedKwh * 1.6
+        return threshold.isFinite ? threshold : .greatestFiniteMagnitude
+    }
+
+    static func boundedInput(_ value: Double, fallback: Double, range: ClosedRange<Double>) -> Double {
+        guard value.isFinite else { return fallback }
+        return min(max(value, range.lowerBound), range.upperBound)
+    }
+
+    static func shouldEstimateCarCharge(_ plannedKwh: Double) -> Bool {
+        plannedKwh.isFinite && plannedKwh > 0
+    }
+
     static func costToRun(_ loadKwh: Double, pricing: Pricing?, headroomKwh: Double? = nil) -> Cost {
         guard let pricing,
               loadKwh.isFinite, loadKwh >= 0,

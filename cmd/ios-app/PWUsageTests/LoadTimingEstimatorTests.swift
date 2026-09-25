@@ -63,4 +63,28 @@ struct LoadTimingEstimatorTests {
         }
         #expect(LoadTimingEstimator.carChargeKwh(capacityKwh: 60, currentPercent: -10, targetPercent: 110) == 60)
     }
+
+    @Test("Car headroom stays proportional to the planned charge")
+    func carHeadroomTracksPlannedCharge() {
+        #expect(LoadTimingEstimator.carHeadroomKwh(plannedKwh: 36) == 57.6)
+        #expect(LoadTimingEstimator.carHeadroomKwh(plannedKwh: 0) == 0)
+        #expect(LoadTimingEstimator.carHeadroomKwh(plannedKwh: .nan) == 0)
+    }
+
+    @Test("Numeric inputs clamp to their range and replace non-finite values")
+    func boundedNumericInputsStayValid() {
+        #expect(LoadTimingEstimator.boundedInput(0, fallback: 60, range: 1...200) == 1)
+        #expect(LoadTimingEstimator.boundedInput(250, fallback: 60, range: 1...200) == 200)
+        #expect(LoadTimingEstimator.boundedInput(42, fallback: 60, range: 1...200) == 42)
+        #expect(LoadTimingEstimator.boundedInput(.nan, fallback: 60, range: 1...200) == 60)
+        #expect(LoadTimingEstimator.boundedInput(.infinity, fallback: 20, range: 0...100) == 20)
+    }
+
+    @Test("Zero or invalid car energy does not need a cost estimate")
+    func chargeEstimateVisibilityRequiresPositiveFiniteEnergy() {
+        #expect(LoadTimingEstimator.shouldEstimateCarCharge(36))
+        #expect(!LoadTimingEstimator.shouldEstimateCarCharge(0))
+        #expect(!LoadTimingEstimator.shouldEstimateCarCharge(-1))
+        #expect(!LoadTimingEstimator.shouldEstimateCarCharge(.infinity))
+    }
 }

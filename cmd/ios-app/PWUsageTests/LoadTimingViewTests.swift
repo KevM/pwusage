@@ -57,7 +57,7 @@ struct LoadTimingViewTests {
         #expect(LoadTimingPresentation.sourceStatus(isUnavailable: true, energyDataThrough: nil) == "Refresh unavailable · source time unavailable")
     }
 
-    @Test("Custom load stepper values clamp to one through one hundred kWh")
+    @Test("Custom load amount stays within one through one hundred kWh")
     func customAmountValuesStayWithinSupportedRange() {
         #expect(LoadTimingEstimator.customAmount(0) == 1)
         #expect(LoadTimingEstimator.customAmount(42.5) == 42.5)
@@ -121,6 +121,16 @@ struct LoadTimingViewTests {
         #expect(estimate.boughtKwh == 26)
         #expect(estimate.total == 13.68)
         #expect(LoadTimingPresentation.coverageSummary(estimate) == "10.0 kWh covered · 26.0 kWh bought")
+    }
+
+    @Test("Car limited-headroom verdict uses a threshold based on the planned charge")
+    func carEstimateUsesDynamicHeadroomThreshold() {
+        let plannedKwh = LoadTimingEstimator.carChargeKwh(capacityKwh: 60, currentPercent: 20, targetPercent: 80)
+        let car = LoadTimingEstimator.Profile(id: "car", label: "Car", kwh: plannedKwh, headroomKwh: LoadTimingEstimator.carHeadroomKwh(plannedKwh: plannedKwh))
+        let period = LoadTimingPeriod(name: "Off peak", marginalCost: 0.12, basis: "sell", cycleNetExportKwh: 40, isActive: false, nextStartPhrase: nil, buyRate: 0.48, sellRate: 0.12)
+        let estimate = LoadTimingPresentation.estimate(amount: plannedKwh, period: period, selectedProfile: car)
+        #expect(car.headroomKwh == 57.6)
+        #expect(estimate.verdict == .tight)
     }
 
     @Test("Next cheaper recommendation takes precedence over cheapest-now cue")

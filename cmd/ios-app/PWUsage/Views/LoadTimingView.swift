@@ -109,6 +109,7 @@ struct LoadTimingView: View {
     let site: MobileSite
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @FocusState private var isNumericInputFocused: Bool
     @State private var selectedProfileID: String? = "car"
     @State private var customAmount = 20.0
     @State private var batteryCapacityKwh = 60.0
@@ -118,7 +119,11 @@ struct LoadTimingView: View {
     private var response: MobileBillResponse? { coordinator.bill.response }
     private var timing: LoadTiming? { response?.loadTiming }
     private var selectedProfile: LoadTimingEstimator.Profile? {
-        LoadTimingEstimator.profiles.first { $0.id == selectedProfileID }
+        if selectedProfileID == "car" {
+            let plannedKwh = selectedAmount
+            return .init(id: "car", label: "Car", kwh: plannedKwh, headroomKwh: LoadTimingEstimator.carHeadroomKwh(plannedKwh: plannedKwh))
+        }
+        return LoadTimingEstimator.profiles.first { $0.id == selectedProfileID }
     }
     private var selectedAmount: Double {
         if selectedProfileID == "car" {
@@ -174,6 +179,12 @@ struct LoadTimingView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Load timing")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { isNumericInputFocused = false }
+            }
+        }
     }
 
     @ViewBuilder
@@ -245,26 +256,32 @@ struct LoadTimingView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: 12) {
-                                compactStepper("Battery", value: $batteryCapacityKwh, range: 1...200, suffix: "kWh")
-                                compactStepper("Current", value: $currentChargePercent, range: 0...100, suffix: "%")
+                                compactNumberField("Battery", value: $batteryCapacityKwh, range: 1...200, fallback: 60, unit: "kWh")
+                                compactNumberField("Current", value: $currentChargePercent, range: 0...100, fallback: 20, unit: "%")
                             }
                             VStack(alignment: .leading, spacing: 4) {
-                                compactStepper("Battery", value: $batteryCapacityKwh, range: 1...200, suffix: "kWh")
-                                compactStepper("Current", value: $currentChargePercent, range: 0...100, suffix: "%")
+                                compactNumberField("Battery", value: $batteryCapacityKwh, range: 1...200, fallback: 60, unit: "kWh")
+                                compactNumberField("Current", value: $currentChargePercent, range: 0...100, fallback: 20, unit: "%")
                             }
                         }
-                        HStack {
-                            Text("Charge to")
-                            Spacer()
-                            Text("\(Int(targetChargePercent))%")
-                                .monospacedDigit()
+                        if currentChargePercent < 100 {
+                            HStack {
+                                Text("Charge to")
+                                Spacer()
+                                Text("\(Int(targetChargePercent))%")
+                                    .monospacedDigit()
+                            }
+                            .font(.subheadline)
+                            Slider(value: $targetChargePercent, in: currentChargePercent...100, step: 1) {
+                                Text("Charge to")
+                            }
+                            .accessibilityLabel("Charge to")
+                            .accessibilityValue("\(Int(targetChargePercent)) percent")
+                        } else {
+                            Text("At 100% charge")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
-                        .font(.subheadline)
-                        Slider(value: $targetChargePercent, in: currentChargePercent...100, step: 1) {
-                            Text("Charge to")
-                        }
-                        .accessibilityLabel("Charge to")
-                        .accessibilityValue("\(Int(targetChargePercent)) percent")
                         Text("\(selectedAmount, specifier: "%.1f") kWh energy to add, approximate; charging losses excluded")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -274,24 +291,20 @@ struct LoadTimingView: View {
                         targetChargePercent = max(targetChargePercent, current)
                     }
                 } else if isCustomSelected {
-                    Stepper(value: $customAmount, in: 1...100, step: 1) {
-                        HStack {
-                            Text("Custom load")
-                            Spacer()
-                            Text("\(LoadTimingEstimator.customAmount(customAmount), specifier: "%.0f") kWh")
-                                .monospacedDigit()
-                        }
-                        .font(.subheadline)
-                    }
-                    .accessibilityLabel("Custom load size")
-                    .accessibilityValue("\(Int(LoadTimingEstimator.customAmount(customAmount))) kilowatt-hours")
+                    compactNumberField("Custom load", value: $customAmount, range: 1...100, fallback: 20, unit: "kWh")
                 }
-                Divider()
-                if timing.pricingPeriods.isEmpty {
+                if selectedProfileID == "car" && !LoadTimingEstimator.shouldEstimateCarCharge(selectedAmount) {
+                    Label("No charging needed at this target", systemImage: "checkmark.circle.fill")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.green)
+                        .accessibilityElement(children: .combine)
+                } else if timing.pricingPeriods.isEmpty {
+                    Divider()
                     Text("Period pricing is unavailable for the current schedule.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {
+                    Divider()
                     VStack(spacing: 0) {
                         let orderedPeriods = LoadTimingPresentation.orderedPricingPeriods(timing.pricingPeriods)
                         ForEach(Array(orderedPeriods.enumerated()), id: \.offset) { index, period in
@@ -337,15 +350,29 @@ struct LoadTimingView: View {
         .accessibilityAddTraits(selectedProfileID == "car" ? .isSelected : [])
     }
 
-    private func compactStepper(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String) -> some View {
-        Stepper(value: value, in: range, step: 1) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.caption).foregroundStyle(.secondary)
-                Text("\(Int(value.wrappedValue))\(suffix)").font(.subheadline.weight(.medium)).monospacedDigit()
-            }
+    private func compactNumberField(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, fallback: Double, unit: String) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField(title, value: value, format: .number.precision(.fractionLength(0)))
+                .keyboardType(.numberPad)
+                .focused($isNumericInputFocused)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                .frame(minWidth: 38, maxWidth: 64)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 6)
+                .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 7))
+                .accessibilityLabel(title == "Battery" ? "Battery capacity in kilowatt-hours" : title == "Current" ? "Current charge percent" : "Custom load size in kilowatt-hours")
+            Text(unit)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .accessibilityLabel(title == "Battery" ? "Battery capacity" : "Current charge")
-        .accessibilityValue("\(Int(value.wrappedValue)) \(suffix == "kWh" ? "kilowatt-hours" : "percent")")
+        .onChange(of: value.wrappedValue) { _, newValue in
+            value.wrappedValue = LoadTimingEstimator.boundedInput(newValue, fallback: fallback, range: range)
+        }
+        .accessibilityValue("\(Int(LoadTimingEstimator.boundedInput(value.wrappedValue, fallback: fallback, range: range))) \(unit == "kWh" ? "kilowatt-hours" : "percent")")
     }
 
     private var customButton: some View {
