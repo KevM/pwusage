@@ -175,12 +175,21 @@ struct LoadTimingView: View {
     }
     private var selectedAmount: Double {
         if selectedProfileID == "car" {
-            return LoadTimingEstimator.carChargeKwh(capacityKwh: batteryCapacityKwh, currentPercent: currentChargePercent, targetPercent: targetChargePercent)
+            return LoadTimingEstimator.carChargeKwh(capacityKwh: batteryCapacityKwh, currentPercent: currentChargePercent, targetPercent: wholePercentTargetCharge)
         }
         return selectedProfile?.kwh ?? LoadTimingEstimator.customAmount(customAmount)
     }
     private var plannedCarKwh: Double {
-        LoadTimingEstimator.carChargeKwh(capacityKwh: batteryCapacityKwh, currentPercent: currentChargePercent, targetPercent: targetChargePercent)
+        LoadTimingEstimator.carChargeKwh(capacityKwh: batteryCapacityKwh, currentPercent: currentChargePercent, targetPercent: wholePercentTargetCharge)
+    }
+    private var wholePercentTargetCharge: Double {
+        LoadTimingEstimator.chargeTargetPercent(targetPercent: targetChargePercent, currentPercent: currentChargePercent)
+    }
+    private var targetChargeSliderValue: Binding<Double> {
+        Binding(
+            get: { wholePercentTargetCharge },
+            set: { targetChargePercent = LoadTimingEstimator.chargeTargetPercent(targetPercent: $0, currentPercent: currentChargePercent) }
+        )
     }
     private var isCustomSelected: Bool { selectedProfileID == nil }
     private var currencyCode: String { response?.currentBill.currency ?? "USD" }
@@ -329,15 +338,15 @@ struct LoadTimingView: View {
                             HStack {
                                 Text("Charge to")
                                 Spacer()
-                                Text("\(Int(targetChargePercent))%")
+                                Text("\(Int(wholePercentTargetCharge))%")
                                     .monospacedDigit()
                             }
                             .font(.subheadline)
-                            Slider(value: $targetChargePercent, in: currentChargePercent...100, step: 1) {
+                            Slider(value: targetChargeSliderValue, in: ((currentChargePercent / 10).rounded(.up) * 10)...100) {
                                 Text("Charge to")
                             }
                             .accessibilityLabel("Charge to")
-                            .accessibilityValue("\(Int(targetChargePercent)) percent")
+                            .accessibilityValue("\(Int(wholePercentTargetCharge)) percent")
                         } else {
                             Text("At 100% charge")
                                 .font(.subheadline)

@@ -123,6 +123,13 @@ struct LoadTimingViewTests {
         #expect(LoadTimingPresentation.coverageSummary(estimate) == "10.0 kWh covered · 26.0 kWh bought")
     }
 
+    @Test("Car charge slider rounds to ten percent targets above current charge")
+    func carChargeTargetStaysAtTenPercentStepsAboveCurrentCharge() {
+        #expect(LoadTimingEstimator.chargeTargetPercent(targetPercent: 86, currentPercent: 20) == 90)
+        #expect(LoadTimingEstimator.chargeTargetPercent(targetPercent: 20, currentPercent: 23) == 30)
+        #expect(LoadTimingEstimator.chargeTargetPercent(targetPercent: 100, currentPercent: 23) == 100)
+    }
+
     @Test("Car limited-headroom verdict uses a threshold based on the planned charge")
     func carEstimateUsesDynamicHeadroomThreshold() {
         let plannedKwh = LoadTimingEstimator.carChargeKwh(capacityKwh: 60, currentPercent: 20, targetPercent: 80)

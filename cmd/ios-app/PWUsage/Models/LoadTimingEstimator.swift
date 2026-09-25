@@ -42,6 +42,12 @@ struct LoadTimingEstimator {
         return capacityKwh * (max(target - current, 0) / 100)
     }
 
+    static func chargeTargetPercent(targetPercent: Double, currentPercent: Double) -> Double {
+        let target = (targetPercent / 10).rounded() * 10
+        let minimum = (currentPercent / 10).rounded(.up) * 10
+        return min(max(target, minimum), 100)
+    }
+
     /// Keeps the limited-headroom cue proportional to a planned car charge (about 1.6× its energy).
     static func carHeadroomKwh(plannedKwh: Double) -> Double {
         guard plannedKwh.isFinite, plannedKwh > 0 else { return 0 }
