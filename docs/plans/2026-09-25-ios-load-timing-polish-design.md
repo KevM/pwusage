@@ -12,6 +12,7 @@ Make the native Load timing screen easier to scan and make the car estimate refl
 
 ## Compact load estimator
 
+- Keep **Load timing** as the screen title. Present the cheaper-period or cheapest-now recommendation as a concise inline message near the top, without a separate **When to run a load** card or heading.
 - Show Car, Laundry, Dishwasher, and Custom chips in a single horizontal row. The row may scroll horizontally at narrow widths and larger text sizes.
 - Remove Big car and Little car. Selecting Car exposes compact battery capacity and current-charge controls, plus one slider labeled **Charge to**. Defaults are 60 kWh, 20%, and 80%. The estimated load is `capacityKwh * max(targetPercent - currentPercent, 0) / 100`; this excludes charging losses and should be labeled as an approximate energy-to-add estimate.
 - Keep Laundry and Dishwasher at their existing kWh amounts. Custom uses a compact numeric amount control instead of a slider.
