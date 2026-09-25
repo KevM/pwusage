@@ -47,7 +47,7 @@ export interface MobileBillSummary {
     version: number;
     site: { id: string; name: string; timezone: string };
     currentBill: MobileCurrentBill;
-    loadTiming?: LoadTimingView;
+    loadTiming?: LoadTimingView | null;
     sources: { calculatedAt: string; energyDataThrough: string | null };
 }
 
@@ -56,7 +56,7 @@ export type MobileTodayTotals = Pick<TodayTotals,
 
 export interface MobileDashboardWithBillSummary extends MobileDashboardContract {
     billSources: MobileBillSummary['sources'];
-    loadTiming?: LoadTimingView;
+    loadTiming?: LoadTimingView | null;
 }
 
 export function withMobileBillSummary(

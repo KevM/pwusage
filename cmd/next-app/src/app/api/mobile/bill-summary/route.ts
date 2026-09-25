@@ -45,12 +45,16 @@ export async function GET(request: Request) {
             }));
             const schedule = new Schedule(site.tariffs, site.timezone);
             const active = schedule.getTariffPeriod(now);
-            const activePeriod = active ? {
-                name: active.schedule.name || 'Standard',
-                buyRate: active.schedule.buy_rate ?? active.season.buy_rate ?? 0,
-                sellRate: active.schedule.sell_rate ?? active.season.sell_rate ?? 0,
+            const buyRate = active ? active.schedule.buy_rate ?? active.season.buy_rate : null;
+            const sellRate = active ? active.schedule.sell_rate ?? active.season.sell_rate : null;
+            const hasResolvableActiveRates = typeof buyRate === 'number' && Number.isFinite(buyRate)
+                && typeof sellRate === 'number' && Number.isFinite(sellRate);
+            const activePeriod = active && hasResolvableActiveRates ? {
+                name: active.schedule.name || 'Standard', buyRate, sellRate,
             } : null;
-            const loadTiming = computeLoadTiming(schedule, usage, now, site.timezone, activePeriod);
+            const loadTiming = site.tariffs.length > 0 && activePeriod
+                ? computeLoadTiming(schedule, usage, now, site.timezone, activePeriod)
+                : null;
 
             return NextResponse.json({
                 version: MOBILE_DASHBOARD_CONTRACT_VERSION,

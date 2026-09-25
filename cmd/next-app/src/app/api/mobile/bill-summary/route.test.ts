@@ -140,10 +140,20 @@ describe('mobile bill summary route', () => {
         const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
         const body = await response.json();
 
-        expect(body.loadTiming).toEqual({
-            hasTariff: false, hasCycleData: false, activeIsCheapest: false,
-            periods: [], pricingPeriods: [], nextCheaper: null, nextCheaperPhrase: null, nextStartPhraseByKey: {},
-        });
+        expect(body.loadTiming).toBeNull();
+        expect(usageMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not infer a configured tariff from historical usage alone', async () => {
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 1, gridUsage: 1000, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: tariff(), touName: 'Peak', buyRate: 0.4, sellRate: 0.05 },
+        ]);
+
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+        const body = await response.json();
+
+        expect(body.loadTiming).toBeNull();
+        expect(body.currentBill.periods).toHaveLength(1);
         expect(usageMock).toHaveBeenCalledTimes(1);
     });
 
@@ -165,6 +175,54 @@ describe('mobile bill summary route', () => {
         ]));
         expect(body.loadTiming.nextCheaper).toBeNull();
         expect(usageMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses required season rates when active schedule overrides are absent', async () => {
+        const configured = tariff();
+        configured.seasons[0].schedules[0].buy_rate = null;
+        configured.seasons[0].schedules[0].sell_rate = null;
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
+            tariffs: [configured],
+        });
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 2.4, gridUsage: -6000, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: configured, touName: 'Peak', buyRate: 0.4, sellRate: 0.05 },
+        ]);
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+        const body = await response.json();
+
+        expect(body.loadTiming.periods).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'Peak', marginalCost: 0.05, basis: 'sell', buyRate: 0.4, sellRate: 0.05 }),
+        ]));
+        expect(body.loadTiming.pricingPeriods).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'Off peak', marginalCost: 0.1, buyRate: 0.1, sellRate: 0.03 }),
+        ]));
+        expect(body.loadTiming.periods[0].buyRate).not.toBe(0);
+        vi.useRealTimers();
+    });
+
+    it('returns unknown detail when malformed tariff data has no resolvable season rates', async () => {
+        const configured = tariff();
+        configured.seasons[0].buy_rate = null as unknown as number;
+        configured.seasons[0].sell_rate = null as unknown as number;
+        configured.seasons[0].schedules[0].buy_rate = null;
+        configured.seasons[0].schedules[0].sell_rate = null;
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
+            tariffs: [configured],
+        });
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 2.4, gridUsage: 6000, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: configured, touName: 'Peak', buyRate: undefined, sellRate: undefined },
+        ]);
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+        const body = await response.json();
+
+        expect(body.loadTiming).toBeNull();
+        vi.useRealTimers();
     });
 
     it('does not include detail data for an unauthorized site', async () => {
