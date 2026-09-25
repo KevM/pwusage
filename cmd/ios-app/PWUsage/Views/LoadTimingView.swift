@@ -231,7 +231,7 @@ struct LoadTimingView: View {
     }
 
     private func estimator(_ timing: LoadTiming) -> some View {
-        LoadTimingCard {
+        LoadTimingCard(title: "Can I run this now?", symbol: "bolt.fill") {
             VStack(alignment: .leading, spacing: 11) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
