@@ -31,14 +31,19 @@ vi.mock('@/lib/energy-repo', () => ({
 import { GET } from './route';
 import { clearCycleRollupCache } from '@/lib/cycle-rollup-cache';
 
-function makeCurrentTariffs() {
+function makeCurrentTariffs(
+    scheduleName: string | null = 'All day',
+    seasonFromMonth = 1,
+    seasonToMonth = 12
+) {
     return [{
         id: 1, site_id: 'site-a', name: 'Current', updated: new Date('2026-01-01'),
         seasons: [{
-            id: 2, tariff_id: 1, name: 'All year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+            id: 2, tariff_id: 1, name: 'All year', from_month: seasonFromMonth, from_day: 1,
+            to_month: seasonToMonth, to_day: 31,
             buy_rate: 0.2, sell_rate: 0.05,
             schedules: [{
-                id: 3, season_id: 2, name: 'All day', buy_rate: 0.2, sell_rate: 0.05,
+                id: 3, season_id: 2, name: scheduleName, buy_rate: 0.2, sell_rate: 0.05,
                 from_day_of_week: 0, to_day_of_week: 6, from_hour: null, from_minute: null,
                 to_hour: null, to_minute: null,
             }],
@@ -89,6 +94,45 @@ describe('site-live-data mobile response', () => {
         expect(rollupEnd.getTime()).toBeLessThan(Date.now());
         expect(rawMock).not.toHaveBeenCalled();
         expect(latestSocMock).not.toHaveBeenCalled();
+    });
+
+    it('normalizes a valid unnamed active period to Standard for the mobile summary and web headroom', async () => {
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'UTC', billing_start_day: 1,
+            tariffs: makeCurrentTariffs(null),
+        });
+        const sampleTimestamp = new Date(Date.now() - 2 * 60 * 1000);
+        bucketedMock.mockResolvedValue([{
+            timestamp: new Date(Math.floor(sampleTimestamp.getTime() / (15 * 60 * 1000)) * (15 * 60 * 1000)),
+            sample_timestamp: sampleTimestamp, site_id: 'site-a', tariff_id: 1, tariff_schedule_id: 3,
+            load_power: 0, solar_power: 0, grid_power: -1000, battery_power: 0, battery_soc: null,
+            sample_count: 1,
+        }]);
+
+        const mobileResponse = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        const mobileBody = await mobileResponse.json();
+        expect(mobileBody.activeLoadTiming.periodName).toBe('Standard');
+        expect(mobileBody.activeLoadTiming.balanceKwh).toBe(1);
+
+        clearCycleRollupCache();
+        const webResponse = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a'));
+        const webBody = await webResponse.json();
+        expect(webBody.loadHeadroom.periodName).toBe('Standard');
+        expect(webBody.loadHeadroom.surplusKwh).toBe(1);
+    });
+
+    it('does not invent a Standard period when no active tariff period exists', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-24T12:00:00.000Z'));
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'UTC', billing_start_day: 1,
+            tariffs: makeCurrentTariffs('Winter', 1, 1),
+        });
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        const body = await response.json();
+
+        expect(body.activeLoadTiming).toBeNull();
+        expect(usageMock).not.toHaveBeenCalled();
     });
 
     it('uses one narrow stored SoC lookup when Tesla omits the charge value', async () => {

@@ -100,7 +100,8 @@ export async function GET(request: Request) {
             try {
                 if ((site?.tariffs?.length ?? 0) > 0) {
                     const schedule = new Schedule(site!.tariffs, site!.timezone);
-                    const activeName = schedule.getTariffPeriod(now)?.schedule.name ?? null;
+                    const activePeriod = schedule.getTariffPeriod(now);
+                    const activeName = activePeriod ? (activePeriod.schedule.name || 'Standard') : null;
 
                     if (activeName) {
                         const siteMidnight = EnergyRepo.getSiteMidnight(now, site!.timezone);
