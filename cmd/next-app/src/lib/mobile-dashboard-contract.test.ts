@@ -28,6 +28,18 @@ describe('buildMobileDashboardContract', () => {
         expect(JSON.stringify(result)).not.toContain('tariff_content_v2');
     });
 
+    it('includes an additive active load timing summary with its balance state and source time', () => {
+        const activeLoadTiming = {
+            periodName: 'Peak', buyRate: 0.4, sellRate: 0.05,
+            marginalCost: null, basis: null, balanceKwh: null,
+            energyDataThrough: '2026-09-23T11:55:00.000Z',
+        } as const;
+        const result = buildMobileDashboardContract({ ...base, activeLoadTiming });
+
+        expect(result.activeLoadTiming).toEqual(activeLoadTiming);
+        expect(buildMobileDashboardContract(base)).not.toHaveProperty('activeLoadTiming');
+    });
+
     it('retains a recent last-known SoC with its source time', () => {
         const result = buildMobileDashboardContract({
             ...base,

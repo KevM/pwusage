@@ -1,6 +1,7 @@
 import type { EnergySiteLiveStatus } from './tesla-client';
 import { sumTodayRows, type TodayTotals } from './energy-repo';
 import type { EnergyData } from './db-types';
+import type { MobileActiveLoadTiming } from './mobile-load-timing';
 
 export const MOBILE_DASHBOARD_CONTRACT_VERSION = 1;
 export const MOBILE_SOC_STALE_AFTER_MS = 20 * 60 * 1000;
@@ -13,6 +14,7 @@ export interface MobileDashboardContractInput {
     energyTimestamp: Date | null;
     now: Date;
     activeTariff: string;
+    activeLoadTiming?: MobileActiveLoadTiming | null;
     today: MobileTodayTotals;
     todayComplete: boolean;
     bill: {
@@ -74,6 +76,7 @@ export interface MobileDashboardContract {
     live: { solarPower: number; loadPower: number; batteryPower: number; gridPower: number };
     stateOfCharge: number | null;
     activeTariff: string | null;
+    activeLoadTiming?: MobileActiveLoadTiming | null;
     today: MobileTodayTotals;
     todayComplete: boolean;
     currentBill: MobileCurrentBill | null;
@@ -112,6 +115,7 @@ export function buildMobileDashboardContract(input: MobileDashboardContractInput
         },
         stateOfCharge,
         activeTariff: input.activeTariff || null,
+        ...(input.activeLoadTiming !== undefined ? { activeLoadTiming: input.activeLoadTiming } : {}),
         today: input.today,
         todayComplete: input.todayComplete,
         currentBill: input.bill ? {

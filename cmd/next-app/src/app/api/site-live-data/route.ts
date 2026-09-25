@@ -10,6 +10,7 @@ import { refreshLiveStatus, refreshTodayData } from '@/lib/today-refresh';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { getCachedCycleRollup } from '@/lib/cycle-rollup-cache';
 import { activePeriodSurplusKwh, missingTodayInterval, todayNetExportByPeriod } from '@/lib/headroom-from-bins';
+import { activeLoadTimingForMobile } from '@/lib/mobile-load-timing';
 import { glyphForHeadroom, profileForHeadroom } from '@/lib/load-affordance';
 import { buildMobileDashboardContract, maxBucketSampleTimestamp, MOBILE_SOC_MAX_AGE_MS, MOBILE_SOC_STALE_AFTER_MS, sumBucketedTodayRows } from '@/lib/mobile-dashboard-contract';
 import type { SiteLiveDataHeadroom } from '@/lib/site-live-data-client';
@@ -95,6 +96,7 @@ export async function GET(request: Request) {
             // rollup, cached to the day boundary. The one exception is a DST
             // fallback evening; see `missingTodayInterval` below.
             let loadHeadroom: SiteLiveDataHeadroom | null = null;
+            let activeLoadTiming: ReturnType<typeof activeLoadTimingForMobile> = null;
             try {
                 if ((site?.tariffs?.length ?? 0) > 0) {
                     const schedule = new Schedule(site!.tariffs, site!.timezone);
@@ -131,6 +133,15 @@ export async function GET(request: Request) {
                         );
 
                         const surplusKwh = activePeriodSurplusKwh(priorCycle, todayByPeriod, activeName);
+
+                        activeLoadTiming = activeLoadTimingForMobile(
+                            schedule,
+                            now,
+                            priorCycle,
+                            gapRows.length > 0 ? [...gapRows, ...historyRows] : historyRows,
+                            siteMidnight,
+                            maxBucketSampleTimestamp(historyRows)
+                        );
 
                         // A site with no stored samples this cycle has an unknown
                         // surplus, not a zero one — leave the glyph off entirely.
@@ -195,6 +206,7 @@ export async function GET(request: Request) {
                 energyTimestamp: maxBucketSampleTimestamp(historyRows),
                 now,
                 activeTariff: currentTariff,
+                activeLoadTiming,
                 today: sumBucketedTodayRows(todayRows, siteMidnight),
                 todayComplete,
                 bill: null,
