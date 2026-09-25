@@ -175,8 +175,8 @@ struct LoadTimingViewTests {
     func actionPanelShowsRunnableLoadAndNextShortfall() {
         let affordance = LoadTimingAffordance.evaluate(timing: actionTiming(balance: 17), plannedCarKwh: 30)
         #expect(LoadTimingPresentation.actionTitle(for: affordance) == "Dishwasher")
-        #expect(LoadTimingPresentation.actionContext(for: affordance) == "Peak · Surplus 17.0 kWh")
-        #expect(LoadTimingPresentation.actionNextStep(for: affordance) == "Next: Laundry needs 3.0 kWh more")
+        #expect(LoadTimingPresentation.actionContext(for: affordance) == "Peak · Surplus 17 kWh")
+        #expect(LoadTimingPresentation.actionNextStep(for: affordance) == "Laundry needs 3 kWh more")
         #expect(LoadTimingPresentation.actionAccessibilityLabel(for: affordance).contains("Can run now. Dishwasher."))
     }
 
@@ -187,10 +187,12 @@ struct LoadTimingViewTests {
             nextCheaper: .init(name: "Off peak", marginalCost: 0.12, phrase: "in 2 hours")
         ), plannedCarKwh: 30)
         #expect(LoadTimingPresentation.actionTitle(for: affordance) == "Avoid large loads")
-        #expect(LoadTimingPresentation.actionContext(for: affordance) == "Peak · Deficit 4.0 kWh")
-        #expect(LoadTimingPresentation.actionNextStep(for: affordance) == "Next: Dishwasher needs 9.0 kWh more")
-        #expect(LoadTimingPresentation.actionCheaperAdvice(affordance.nextCheaper) == "Cheaper in Off peak · 12¢/kWh · in 2 hours")
+        #expect(LoadTimingPresentation.actionContext(for: affordance) == "Peak · Deficit 4 kWh")
+        #expect(LoadTimingPresentation.actionNextStep(for: affordance) == "Dishwasher needs 9 kWh more")
+        #expect(LoadTimingPresentation.actionCheaperAdvice(affordance.nextCheaper, currencyCode: "USD") == "Cheaper: Off peak · 12¢/kWh · in 2 hours")
+        #expect(LoadTimingPresentation.actionCheaperAdvice(affordance.nextCheaper, currencyCode: "EUR") == "Cheaper: Off peak · €0.12/kWh · in 2 hours")
         #expect(LoadTimingPresentation.actionAccessibilityLabel(for: affordance).contains("12 cents per kilowatt-hour"))
+        #expect(LoadTimingPresentation.actionAccessibilityLabel(for: affordance).contains("Deficit 4.0 kilowatt-hours"))
     }
 
     @Test("Action panel explains when the active period balance is unobserved")

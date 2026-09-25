@@ -26,7 +26,9 @@ enum LoadTimingPresentation {
         guard let periodName = affordance.periodName, let balance = affordance.balanceKwh else {
             return "This period's balance is not recorded yet."
         }
-        return "\(DashboardPresentation.tariffPeriodTitle(periodName)) · \(DashboardPresentation.liveLoadBalance(balance))"
+        let direction = balance > 0 ? "Surplus" : (balance < 0 ? "Deficit" : "Balanced")
+        let amount = abs(balance).formatted(.number.precision(.fractionLength(0...1)))
+        return "\(DashboardPresentation.tariffPeriodTitle(periodName)) · \(direction) \(amount) kWh"
     }
 
     static func actionNextStep(for affordance: LoadTimingAffordance) -> String? {
@@ -37,18 +39,24 @@ enum LoadTimingPresentation {
         case .laundry: name = "Laundry"
         case .car: name = "Car charge"
         }
-        return "Next: \(name) needs \(next.shortfallKwh.formatted(.number.precision(.fractionLength(1)))) kWh more"
+        let shortfall = next.shortfallKwh.formatted(.number.precision(.fractionLength(0...1)))
+        return "\(name) needs \(shortfall) kWh more"
     }
 
-    static func actionCheaperAdvice(_ next: NextCheaperPeriod?) -> String? {
+    static func actionCheaperAdvice(_ next: NextCheaperPeriod?, currencyCode: String) -> String? {
         guard let next else { return nil }
-        let rate = (next.marginalCost * 100).formatted(.number.precision(.fractionLength(0...1)))
-        return "Cheaper in \(DashboardPresentation.tariffPeriodTitle(next.name)) · \(rate)¢/kWh · \(next.phrase)"
+        let rate = DashboardPresentation.loadRate(next.marginalCost, code: currencyCode)
+        return "Cheaper: \(DashboardPresentation.tariffPeriodTitle(next.name)) · \(rate) · \(next.phrase)"
     }
 
     static func actionAccessibilityLabel(for affordance: LoadTimingAffordance, currencyCode: String = "USD") -> String {
         let title = actionTitle(for: affordance)
-        let context = actionContext(for: affordance)
+        let context: String
+        if let periodName = affordance.periodName, let balance = affordance.balanceKwh {
+            context = "\(DashboardPresentation.tariffPeriodTitle(periodName)), \(DashboardPresentation.liveLoadBalanceAccessibilityLabel(balance))"
+        } else {
+            context = actionContext(for: affordance)
+        }
         let nextStep = actionNextStep(for: affordance).map { ", \($0)" } ?? ""
         let cheaper: String
         if let next = affordance.nextCheaper {
@@ -263,7 +271,7 @@ struct LoadTimingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let advice = LoadTimingPresentation.actionCheaperAdvice(affordance.nextCheaper) {
+            if let advice = LoadTimingPresentation.actionCheaperAdvice(affordance.nextCheaper, currencyCode: currencyCode) {
                 Label(advice, systemImage: "clock.arrow.circlepath")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
