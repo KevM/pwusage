@@ -167,10 +167,12 @@ enum DashboardPresentation {
         guard let amountPerKwh else { return "Cost unavailable/kWh" }
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
-        formatter.minimumFractionDigits = amountPerKwh * 100 == (amountPerKwh * 100).rounded() ? 0 : 1
+        let cents = amountPerKwh * 100
+        let roundedCents = cents.rounded()
+        formatter.minimumFractionDigits = abs(cents - roundedCents) < 0.00000001 ? 0 : 1
         formatter.maximumFractionDigits = 2
         formatter.locale = locale
-        return "\(formatter.string(from: NSNumber(value: amountPerKwh * 100)) ?? String(format: "%.1f", amountPerKwh * 100))¢/kWh"
+        return "\(formatter.string(from: NSNumber(value: cents)) ?? String(format: "%.1f", cents))¢/kWh"
     }
 
     private static func loadEnergyNumber(_ kWh: Double) -> String {

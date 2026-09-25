@@ -79,6 +79,9 @@ struct DashboardPresentationTests {
     @Test("Formats load timing rates and balance with accessible labels")
     func loadTimingFormattingAndAccessibility() {
         #expect(DashboardPresentation.loadRate(0.04, code: "USD", locale: Locale(identifier: "en_US")) == "4¢/kWh")
+        #expect(DashboardPresentation.loadRate(0.29, code: "USD", locale: Locale(identifier: "en_US")) == "29¢/kWh")
+        #expect(DashboardPresentation.loadRate(0.57, code: "USD", locale: Locale(identifier: "en_US")) == "57¢/kWh")
+        #expect(DashboardPresentation.loadRate(0.14, code: "USD", locale: Locale(identifier: "en_US")) == "14¢/kWh")
         #expect(DashboardPresentation.loadRate(0.12345, code: "USD", locale: Locale(identifier: "en_US")) == "12.34¢/kWh")
         #expect(DashboardPresentation.loadRate(0.04, code: "GBP", locale: Locale(identifier: "en_GB")) == "£0.04/kWh")
         #expect(DashboardPresentation.loadBalance(-3.25) == "Surplus 3.3 kWh")
