@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SitePickerView: View {
+    @Environment(\.dismiss) private var dismiss
     let sites: [MobileSite]
     let selectedSiteID: String
     let onSelect: (MobileSite) -> Void
@@ -28,11 +29,20 @@ struct SitePickerView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .hoverEffect()
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(site.id == selectedSiteID ? .isSelected : [])
             }
             .navigationTitle("Choose a site")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                }
+            }
         }
     }
 }

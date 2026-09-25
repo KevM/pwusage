@@ -186,6 +186,116 @@ struct DashboardCoordinatorTests {
         await coordinator.refreshDue()
         #expect(api.liveSiteIDs.count == 3, "A failed attempt still anchors cadence to prevent rapid retries.")
     }
+
+    @Test("Force refreshAll bypasses interval checks and fetches both live and bill")
+    func forceRefreshAllBypassesIntervalChecksAndFetchesBoth() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        #expect(api.liveSiteIDs == ["site-1"])
+        #expect(api.billSiteIDs == ["site-1"])
+
+        // Advance by only 1 minute (neither live 5m nor bill 30m is due)
+        clock.advance(minutes: 1)
+        await coordinator.refreshAll(force: true)
+
+        #expect(api.liveSiteIDs == ["site-1", "site-1"])
+        #expect(api.billSiteIDs == ["site-1", "site-1"])
+    }
+
+    @Test("Force refreshBill bypasses interval checks and fetches only bill")
+    func forceRefreshBillBypassesIntervalChecksAndFetchesOnlyBill() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        #expect(api.liveSiteIDs == ["site-1"])
+        #expect(api.billSiteIDs == ["site-1"])
+
+        // Advance by only 1 minute
+        clock.advance(minutes: 1)
+        await coordinator.refreshBill(force: true)
+
+        #expect(api.liveSiteIDs == ["site-1"])
+        #expect(api.billSiteIDs == ["site-1", "site-1"])
+    }
+
+    @Test("refreshBill does not wait for in-flight live task")
+    func refreshBillDoesNotWaitForInFlightLiveTask() async {
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: Date.init, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+
+        let liveCall = Task { await coordinator.refreshDue() }
+        await api.waitUntilLiveRequestStarts()
+
+        #expect(api.liveSiteIDs.count == 1)
+        #expect(api.billSiteIDs.count == 0)
+
+        // refreshBill should execute immediately without waiting for live task to finish
+        await coordinator.refreshBill(force: true)
+        #expect(api.billSiteIDs.count == 1)
+
+        api.resumeRequests()
+        await liveCall.value
+    }
+
+    @Test("Concurrent refreshAll and refreshBill coalesce in-flight requests")
+    func concurrentRefreshesCoalesceInFlightRequests() async {
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        api.holdBill = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { Date(timeIntervalSince1970: 0) }, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+
+        let first = Task { await coordinator.refreshAll(force: true) }
+        await api.waitUntilLiveRequestStarts()
+        let second = Task { await coordinator.refreshAll(force: true) }
+
+        #expect(api.liveSiteIDs.count == 1)
+        #expect(api.billSiteIDs.count == 0)
+
+        api.resumeRequests()
+        await first.value
+        await second.value
+
+        #expect(api.liveSiteIDs.count == 1)
+        #expect(api.billSiteIDs.count == 1)
+
+        api.holdBill = true
+        let bill1 = Task { await coordinator.refreshBill(force: true) }
+        await api.waitUntilBillRequestStarts(targetCount: 2)
+        let bill2 = Task { await coordinator.refreshBill(force: true) }
+
+        api.resumeRequests()
+        await bill1.value
+        await bill2.value
+
+        #expect(api.billSiteIDs.count == 2)
+    }
+
+    @Test("refreshAll and refreshBill early return when requiresSignIn is true")
+    func refreshesEarlyReturnWhenRequiresSignIn() async {
+        let api = DashboardAPISpy()
+        api.liveError = PWUsageAPIError.signInRequired
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { Date(timeIntervalSince1970: 0) }, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        #expect(coordinator.requiresSignIn)
+
+        let liveCount = api.liveSiteIDs.count
+        let billCount = api.billSiteIDs.count
+
+        await coordinator.refreshAll(force: true)
+        await coordinator.refreshBill(force: true)
+
+        #expect(api.liveSiteIDs.count == liveCount)
+        #expect(api.billSiteIDs.count == billCount)
+    }
 }
 
 @MainActor
@@ -208,6 +318,7 @@ private final class DashboardAPISpy: MobileDashboardDataAPI {
     private var liveContinuations: [(String, CheckedContinuation<MobileLiveResponse, Error>)] = []
     private var billContinuations: [(String, CheckedContinuation<MobileBillResponse, Error>)] = []
     private var liveStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var billStartWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
     func fetchLive(siteID: String) async throws -> MobileLiveResponse {
         liveSiteIDs.append(siteID)
@@ -223,6 +334,14 @@ private final class DashboardAPISpy: MobileDashboardDataAPI {
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
         billSiteIDs.append(siteID)
+        let currentCount = billSiteIDs.count
+        billStartWaiters.removeAll { targetCount, continuation in
+            if currentCount >= targetCount {
+                continuation.resume()
+                return true
+            }
+            return false
+        }
         if holdBill {
             return try await withCheckedThrowingContinuation { billContinuations.append((siteID, $0)) }
         }
@@ -233,6 +352,11 @@ private final class DashboardAPISpy: MobileDashboardDataAPI {
     func waitUntilLiveRequestStarts() async {
         if !liveSiteIDs.isEmpty { return }
         await withCheckedContinuation { liveStartWaiters.append($0) }
+    }
+
+    func waitUntilBillRequestStarts(targetCount: Int = 1) async {
+        if billSiteIDs.count >= targetCount { return }
+        await withCheckedContinuation { billStartWaiters.append((targetCount, $0)) }
     }
 
     func resumeRequests() {

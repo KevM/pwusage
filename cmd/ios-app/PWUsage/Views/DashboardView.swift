@@ -31,16 +31,13 @@ struct DashboardView: View {
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
             }
+            .refreshable {
+                await coordinator.refreshAll()
+            }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle(site.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: onChooseSite) {
-                        Label("Sites", systemImage: "house.2")
-                    }
-                    .accessibilityHint("Choose a site to view")
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("Switch site", systemImage: "arrow.left.arrow.right", action: onChooseSite)
@@ -65,28 +62,32 @@ struct DashboardView: View {
             if let live {
                 StatusCard {
                     VStack(alignment: .leading, spacing: 18) {
-                        HStack(alignment: .center, spacing: 14) {
-                            Image(systemName: batterySymbol(live.live.batteryPower))
-                                .font(.system(size: 32, weight: .semibold))
-                                .foregroundStyle(.green)
-                                .frame(width: 52, height: 52)
-                                .background(.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .center, spacing: 12) {
                                 Text(live.stateOfCharge.map { "\(Int($0.rounded()))%" } ?? "--")
                                     .font(.system(.largeTitle, design: .rounded, weight: .bold))
                                     .monospacedDigit()
                                     .contentTransition(.numericText())
                                     .accessibilityLabel(live.stateOfCharge.map { "Battery charge \(Int($0.rounded())) percent" } ?? "Battery charge unknown")
-                                Text(batteryDirectionLabel(live.live.batteryPower))
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                if live.stateOfCharge != nil,
-                                   let ageLabel = DashboardPresentation.chargeAgeLabel(live.sources.stateOfChargeAt) {
-                                    Text(ageLabel)
-                                        .font(.caption)
-                                        .foregroundStyle(.orange)
+                                HStack(alignment: .center, spacing: 4) {
+                                    Image(systemName: batterySymbol(live.live.batteryPower, stateOfCharge: live.stateOfCharge))
+                                        .font(.system(size: 44, weight: .bold))
+                                        .foregroundStyle(.green)
+                                        .accessibilityHidden(true)
+                                    if DashboardPresentation.batteryDirection(powerWatts: live.live.batteryPower) == .discharging {
+                                        DischargeSymbol()
+                                            .stroke(Color.secondary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                                            .frame(width: 16, height: 16)
+                                            .accessibilityHidden(true)
+                                            .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                                    }
                                 }
+                            }
+                            if live.stateOfCharge != nil,
+                               let ageLabel = DashboardPresentation.chargeAgeLabel(live.sources.stateOfChargeAt) {
+                                Text(ageLabel)
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
                             }
                         }
                         .accessibilityElement(children: .ignore)
@@ -96,10 +97,10 @@ struct DashboardView: View {
                         )
                         Divider()
                         adaptiveGrid([
-                            MetricTile(title: "Solar", value: DashboardPresentation.power(live.live.solarPower), detail: "Producing", symbol: "sun.max.fill", tint: .orange),
                             MetricTile(title: "Home", value: DashboardPresentation.power(live.live.loadPower), detail: "Using", symbol: "house.fill", tint: .blue),
+                            MetricTile(title: "Solar", value: DashboardPresentation.power(live.live.solarPower), detail: "Producing", symbol: "sun.max.fill", tint: .orange),
                             MetricTile(title: "Grid", value: DashboardPresentation.power(live.live.gridPower), detail: gridDirection(live.live.gridPower), symbol: live.live.gridPower >= 0 ? "arrow.down.to.line" : "arrow.up.to.line", tint: .gray),
-                            MetricTile(title: "Battery", value: DashboardPresentation.power(live.live.batteryPower), symbol: batterySymbol(live.live.batteryPower), tint: .green)
+                            MetricTile(title: "Battery", value: DashboardPresentation.batteryPower(live.live.batteryPower), detail: DashboardPresentation.batteryPowerDetail(live.live.batteryPower), symbol: batterySymbol(live.live.batteryPower, stateOfCharge: live.stateOfCharge), tint: .green)
                         ])
                     }
                 }
@@ -192,6 +193,7 @@ struct DashboardView: View {
                     .accessibilityHint("View bill cycle dates and tariff period details")
                 }
                 .buttonStyle(.plain)
+                .hoverEffect()
             } else {
                 StatusCard {
                     HStack(spacing: 12) {
@@ -232,20 +234,21 @@ struct DashboardView: View {
         }
     }
 
-    private func batteryDirectionLabel(_ watts: Double) -> String {
-        switch DashboardPresentation.batteryDirection(powerWatts: watts) {
-        case .charging: "Charging"
-        case .discharging: "Discharging"
-        case .idle: "Idle"
+    private func batterySymbol(_ watts: Double, stateOfCharge: Double? = nil) -> String {
+        let isCharging = DashboardPresentation.batteryDirection(powerWatts: watts) == .charging
+        let level: String
+        if let stateOfCharge {
+            switch Int(stateOfCharge.rounded()) {
+            case ..<13: level = "0percent"
+            case 13..<38: level = "25percent"
+            case 38..<63: level = "50percent"
+            case 63..<88: level = "75percent"
+            default: level = "100percent"
+            }
+        } else {
+            level = "100percent"
         }
-    }
-
-    private func batterySymbol(_ watts: Double) -> String {
-        switch DashboardPresentation.batteryDirection(powerWatts: watts) {
-        case .charging: "battery.100percent.bolt"
-        case .discharging: "battery.75percent"
-        case .idle: "battery.100percent"
-        }
+        return isCharging ? "battery.\(level).bolt" : "battery.\(level)"
     }
 
     private func gridDirection(_ watts: Double) -> String {
@@ -342,3 +345,34 @@ private struct LoadingCard: View {
         .accessibilityElement(children: .combine)
     }
 }
+
+struct DischargeSymbol: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let midY = rect.midY
+        let h = rect.height
+        let w = rect.width
+
+        // Horizontal stem from leading edge to bar 1
+        let bar1X = rect.minX + w * (10.0 / 18.0)
+        path.move(to: CGPoint(x: rect.minX, y: midY))
+        path.addLine(to: CGPoint(x: bar1X, y: midY))
+
+        // Bar 1 (tallest: full height)
+        path.move(to: CGPoint(x: bar1X, y: midY - h * 0.5))
+        path.addLine(to: CGPoint(x: bar1X, y: midY + h * 0.5))
+
+        // Bar 2 (medium: 10/18 height)
+        let bar2X = rect.minX + w * (14.0 / 18.0)
+        path.move(to: CGPoint(x: bar2X, y: midY - h * (5.0 / 18.0)))
+        path.addLine(to: CGPoint(x: bar2X, y: midY + h * (5.0 / 18.0)))
+
+        // Bar 3 (shortest: 4/18 height)
+        let bar3X = rect.minX + w * (18.0 / 18.0)
+        path.move(to: CGPoint(x: bar3X, y: midY - h * (2.0 / 18.0)))
+        path.addLine(to: CGPoint(x: bar3X, y: midY + h * (2.0 / 18.0)))
+
+        return path
+    }
+}
+

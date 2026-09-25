@@ -35,6 +35,9 @@ struct BillView: View {
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
+        .refreshable {
+            await coordinator.refreshBill()
+        }
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Current bill")
         .navigationBarTitleDisplayMode(.inline)

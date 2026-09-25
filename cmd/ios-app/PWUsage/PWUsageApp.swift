@@ -23,6 +23,42 @@ struct PWUsageApp: App {
             PWUsageRootView()
                 .environmentObject(model)
         }
+        .commands {
+            PWUsageCommands(model: model)
+        }
+    }
+}
+
+private struct PWUsageCommands: Commands {
+    @ObservedObject var model: PWUsageAppModel
+
+    var body: some Commands {
+        CommandMenu("View") {
+            Button("Refresh") {
+                Task {
+                    await model.coordinator?.refreshDue()
+                }
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(model.screenState != .signedIn)
+        }
+
+        CommandGroup(after: .newItem) {
+            Button("Switch Site…") {
+                model.openSitePicker()
+            }
+            .keyboardShortcut("k", modifiers: .command)
+            .disabled(model.screenState != .signedIn || model.sites.isEmpty)
+        }
+
+        CommandGroup(after: .appInfo) {
+            Button("Sign Out") {
+                Task {
+                    await model.signOut()
+                }
+            }
+            .disabled(model.screenState != .signedIn)
+        }
     }
 }
 
@@ -42,6 +78,7 @@ final class PWUsageAppModel: ObservableObject {
     @Published private(set) var coordinator: DashboardCoordinator?
     @Published private(set) var isSigningIn = false
     @Published private(set) var signInMessage: String?
+    @Published var isSitePickerPresented = false
 
     let authService: MobileAuthService
     private let api: any PWUsageApplicationAPI
@@ -128,6 +165,11 @@ final class PWUsageAppModel: ObservableObject {
         coordinator?.selectSite(site.id)
     }
 
+    func openSitePicker() {
+        guard screenState == .signedIn, !sites.isEmpty else { return }
+        isSitePickerPresented = true
+    }
+
     func signOut() async {
         do { try await authService.logout() }
         catch { /* The local cookie and sign-in state are cleared by MobileAuthService even on network failure. */ }
@@ -135,6 +177,7 @@ final class PWUsageAppModel: ObservableObject {
         coordinatorAuthSubscription = nil
         sites = []
         selectedSiteID = nil
+        isSitePickerPresented = false
         userDefaults.removeObject(forKey: Self.selectedSiteDefaultsKey)
         screenState = .signedOut
         signInMessage = nil
@@ -142,6 +185,7 @@ final class PWUsageAppModel: ObservableObject {
 
     func sessionExpired() async {
         await authService.invalidateAuthenticatedSession()
+        isSitePickerPresented = false
         screenState = .signedOut
         signInMessage = "Your session expired. Sign in to continue."
     }
@@ -184,7 +228,6 @@ final class PWUsageAppModel: ObservableObject {
 private struct PWUsageRootView: View {
     @EnvironmentObject private var model: PWUsageAppModel
     @Environment(\.scenePhase) private var scenePhase
-    @State private var isSitePickerPresented = false
 
     var body: some View {
         Group {
@@ -208,13 +251,13 @@ private struct PWUsageRootView: View {
                             Task { await model.signIn() }
                         }
                     } else {
-                        DashboardView(coordinator: coordinator, site: site, onChooseSite: { isSitePickerPresented = true }) {
+                        DashboardView(coordinator: coordinator, site: site, onChooseSite: { model.openSitePicker() }) {
                             Task { await model.signOut() }
                         }
-                        .sheet(isPresented: $isSitePickerPresented) {
+                        .sheet(isPresented: $model.isSitePickerPresented) {
                             SitePickerView(sites: model.sites, selectedSiteID: site.id) { selected in
                                 model.selectSite(selected)
-                                isSitePickerPresented = false
+                                model.isSitePickerPresented = false
                             }
                             .presentationDetents(model.sites.count > 4 ? [.medium, .large] : [.medium])
                         }
@@ -235,6 +278,7 @@ private struct PWUsageRootView: View {
             }
         }
         .task {
+            configureWindowSizeRestrictions()
             model.scenePhaseChanged(isActive: scenePhase == .active)
             await model.bootstrap()
         }
@@ -242,8 +286,19 @@ private struct PWUsageRootView: View {
             model.scenePhaseChanged(isActive: phase == .active)
         }
         .onAppear {
+            configureWindowSizeRestrictions()
             model.scenePhaseChanged(isActive: scenePhase == .active)
         }
+    }
+
+    private func configureWindowSizeRestrictions() {
+        #if canImport(UIKit)
+        for scene in UIApplication.shared.connectedScenes {
+            if let windowScene = scene as? UIWindowScene {
+                windowScene.sizeRestrictions?.minimumSize = CGSize(width: 380, height: 520)
+            }
+        }
+        #endif
     }
 
     private var errorState: some View {

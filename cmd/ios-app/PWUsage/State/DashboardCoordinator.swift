@@ -102,27 +102,61 @@ final class DashboardCoordinator: ObservableObject {
 
     /// Called by the foreground timer and lifecycle events. Missed intervals collapse to one request.
     func refreshDue() async {
-        guard isForeground, !requiresSignIn else { return }
+        await refreshAll(force: false)
+    }
+
+    /// Refreshes live power readings followed by bill estimates.
+    /// When `force` is true, bypasses elapsed cadence checks.
+    func refreshAll(force: Bool = true) async {
+        guard !requiresSignIn else { return }
+        if !force {
+            guard isForeground else { return }
+        }
         let requestTime = now()
         let generation = siteGeneration
 
-        if liveTask == nil, isDue(lastAttempt: live.lastAttempt, interval: Self.liveInterval, at: requestTime) {
-            live.lastAttempt = requestTime
-            let siteID = selectedSiteID
-            liveTask = Task { await performLive(siteID: siteID, generation: generation) }
+        if liveTask == nil {
+            if force || isDue(lastAttempt: live.lastAttempt, interval: Self.liveInterval, at: requestTime) {
+                live.lastAttempt = requestTime
+                let siteID = selectedSiteID
+                liveTask = Task { await performLive(siteID: siteID, generation: generation) }
+            }
         }
         // The live endpoint may first import stale energy history. Wait for it
         // before asking the bill endpoint to calculate from that history.
         await liveTask?.value
-        guard isForeground, !requiresSignIn, generation == siteGeneration else { return }
+        guard !requiresSignIn, generation == siteGeneration else { return }
+        if !force {
+            guard isForeground else { return }
+        }
 
-        if billTask == nil, isDue(lastAttempt: bill.lastAttempt, interval: Self.billInterval, at: requestTime) {
+        launchBillTaskIfNeeded(force: force, requestTime: requestTime, generation: generation)
+
+        await billTask?.value
+    }
+
+    /// Refreshes the bill estimate.
+    /// When `force` is true, bypasses elapsed cadence checks.
+    func refreshBill(force: Bool = true) async {
+        guard !requiresSignIn else { return }
+        if !force {
+            guard isForeground else { return }
+        }
+        let requestTime = now()
+        let generation = siteGeneration
+
+        launchBillTaskIfNeeded(force: force, requestTime: requestTime, generation: generation)
+
+        await billTask?.value
+    }
+
+    private func launchBillTaskIfNeeded(force: Bool, requestTime: Date, generation: Int) {
+        guard billTask == nil else { return }
+        if force || isDue(lastAttempt: bill.lastAttempt, interval: Self.billInterval, at: requestTime) {
             bill.lastAttempt = requestTime
             let siteID = selectedSiteID
             billTask = Task { await performBill(siteID: siteID, generation: generation) }
         }
-
-        await billTask?.value
     }
 
     private func isDue(lastAttempt: Date?, interval: TimeInterval, at date: Date) -> Bool {

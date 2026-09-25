@@ -46,6 +46,7 @@ struct SignInView: View {
                 .background(Color.green.gradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .disabled(isWorking)
+            .hoverEffect()
             .accessibilityHint("Opens the pwusage secure sign-in page")
             Spacer()
             Text("Your password stays with pwusage. This app uses a secure sign-in session.")

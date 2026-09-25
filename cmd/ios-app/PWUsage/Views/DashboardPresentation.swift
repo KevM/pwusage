@@ -37,9 +37,19 @@ enum DashboardPresentation {
 
     static func power(_ watts: Double) -> String {
         let magnitude = abs(watts)
-        let value = magnitude >= 1_000 ? watts / 1_000 : watts
-        let unit = magnitude >= 1_000 ? "kW" : "W"
-        return String(format: "%.1f %@", value, unit)
+        if magnitude >= 1_000 {
+            return String(format: "%.1f kW", watts / 1_000)
+        }
+        return "\(Int(watts.rounded())) W"
+    }
+
+    static func batteryPower(_ watts: Double) -> String {
+        abs(watts) < 10 ? "Idle" : power(watts)
+    }
+
+    static func batteryPowerDetail(_ watts: Double) -> String? {
+        if abs(watts) < 10 { return nil }
+        return watts < 0 ? "Charging" : "Discharging"
     }
 
     static func energy(_ kWh: Double) -> String {

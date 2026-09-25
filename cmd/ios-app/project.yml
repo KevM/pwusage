@@ -31,6 +31,12 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportsTrueScreenSizeOnMac: true
         CFBundleURLTypes:
           - CFBundleURLName: fm.rodeo.pwusage
             CFBundleURLSchemes:
@@ -45,9 +51,6 @@ targets:
           PWUSAGE_API_ORIGIN: https://pwusagebeta.fm.rodeo
         Release:
           PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
-    scheme:
-      testTargets:
-        - PWUsageTests
   PWUsageTests:
     type: bundle.unit-test
     platform: iOS

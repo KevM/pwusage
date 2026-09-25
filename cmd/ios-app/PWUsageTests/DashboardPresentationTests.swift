@@ -18,6 +18,34 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.batteryDescription(stateOfCharge: 0, powerWatts: 0) == "Battery 0%, Idle")
     }
 
+    @Test("Battery power reports idle when under 10W")
+    func batteryPowerReportsIdleWhenUnder10W() {
+        #expect(DashboardPresentation.batteryPower(0) == "Idle")
+        #expect(DashboardPresentation.batteryPower(5) == "Idle")
+        #expect(DashboardPresentation.batteryPower(-9.9) == "Idle")
+        #expect(DashboardPresentation.batteryPower(10) == "10 W")
+        #expect(DashboardPresentation.batteryPower(-10) == "-10 W")
+        #expect(DashboardPresentation.batteryPower(-2400) == "-2.4 kW")
+        #expect(DashboardPresentation.batteryPower(1800) == "1.8 kW")
+
+        #expect(DashboardPresentation.batteryPowerDetail(0) == nil)
+        #expect(DashboardPresentation.batteryPowerDetail(9.9) == nil)
+        #expect(DashboardPresentation.batteryPowerDetail(-9.9) == nil)
+        #expect(DashboardPresentation.batteryPowerDetail(-10) == "Charging")
+        #expect(DashboardPresentation.batteryPowerDetail(10) == "Discharging")
+    }
+
+    @Test("Power formatting formats watts as integers and kilowatts with one decimal place")
+    func powerFormattingFormatsWattsAsIntegersAndKilowattsWithOneDecimalPlace() {
+        #expect(DashboardPresentation.power(0) == "0 W")
+        #expect(DashboardPresentation.power(444) == "444 W")
+        #expect(DashboardPresentation.power(974.2) == "974 W")
+        #expect(DashboardPresentation.power(-530) == "-530 W")
+        #expect(DashboardPresentation.power(1000) == "1.0 kW")
+        #expect(DashboardPresentation.power(-2400) == "-2.4 kW")
+        #expect(DashboardPresentation.power(1800) == "1.8 kW")
+    }
+
     @Test("Grid and battery daily signs describe import export and charge direction")
     func gridAndBatteryDailySignsDescribeImportExportAndChargeDirection() {
         #expect(DashboardPresentation.signedGridEnergy(4.2) == "↓ 4.2 kWh")
