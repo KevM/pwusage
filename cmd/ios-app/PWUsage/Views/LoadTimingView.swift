@@ -7,11 +7,57 @@ enum LoadTimingPresentation {
         case unavailable(String)
     }
 
-    enum RecommendationCue: Equatable {
-        case noCycleData
-        case nextCheaper(NextCheaperPeriod)
-        case cheapestNow
-        case message(String)
+    static func actionTitle(for affordance: LoadTimingAffordance) -> String {
+        switch affordance.state {
+        case .allowed(let choice):
+            switch choice {
+            case .dishwasher: return "Dishwasher"
+            case .laundry: return "Laundry"
+            case .car: return "Car charge"
+            }
+        case .caution:
+            return "Avoid large loads"
+        case .awaitingActiveBalance:
+            return "Balance not recorded yet"
+        }
+    }
+
+    static func actionContext(for affordance: LoadTimingAffordance) -> String {
+        guard let periodName = affordance.periodName, let balance = affordance.balanceKwh else {
+            return "This period's balance is not recorded yet."
+        }
+        return "\(DashboardPresentation.tariffPeriodTitle(periodName)) · \(DashboardPresentation.liveLoadBalance(balance))"
+    }
+
+    static func actionNextStep(for affordance: LoadTimingAffordance) -> String? {
+        guard let next = affordance.nextUnmet else { return nil }
+        let name: String
+        switch next.choice {
+        case .dishwasher: name = "Dishwasher"
+        case .laundry: name = "Laundry"
+        case .car: name = "Car charge"
+        }
+        return "Next: \(name) needs \(next.shortfallKwh.formatted(.number.precision(.fractionLength(1)))) kWh more"
+    }
+
+    static func actionCheaperAdvice(_ next: NextCheaperPeriod?) -> String? {
+        guard let next else { return nil }
+        let rate = (next.marginalCost * 100).formatted(.number.precision(.fractionLength(0...1)))
+        return "Cheaper in \(DashboardPresentation.tariffPeriodTitle(next.name)) · \(rate)¢/kWh · \(next.phrase)"
+    }
+
+    static func actionAccessibilityLabel(for affordance: LoadTimingAffordance, currencyCode: String = "USD") -> String {
+        let title = actionTitle(for: affordance)
+        let context = actionContext(for: affordance)
+        let nextStep = actionNextStep(for: affordance).map { ", \($0)" } ?? ""
+        let cheaper: String
+        if let next = affordance.nextCheaper {
+            let rate = DashboardPresentation.loadRateAccessibilityLabel(next.marginalCost, code: currencyCode)
+            cheaper = ", Cheaper in \(DashboardPresentation.tariffPeriodTitle(next.name)), \(rate), \(next.phrase)"
+        } else {
+            cheaper = ""
+        }
+        return "Can run now. \(title). \(context)\(nextStep)\(cheaper)"
     }
 
     static func emptyMessage(hasTariff: Bool, hasCycleData: Bool) -> String? {
@@ -96,12 +142,6 @@ enum LoadTimingPresentation {
         return "\(title), \(spokenRate), \(start), \(verdict), estimated cost \(total), \(coverage)"
     }
 
-    static func recommendationCue(_ timing: LoadTiming) -> RecommendationCue {
-        guard timing.hasCycleData else { return .noCycleData }
-        if let nextCheaper = timing.nextCheaper { return .nextCheaper(nextCheaper) }
-        if timing.activeIsCheapest { return .cheapestNow }
-        return .message(timing.nextCheaperPhrase ?? "No cheaper period is available in the current schedule.")
-    }
 }
 
 struct LoadTimingView: View {
@@ -131,6 +171,9 @@ struct LoadTimingView: View {
         }
         return selectedProfile?.kwh ?? LoadTimingEstimator.customAmount(customAmount)
     }
+    private var plannedCarKwh: Double {
+        LoadTimingEstimator.carChargeKwh(capacityKwh: batteryCapacityKwh, currentPercent: currentChargePercent, targetPercent: targetChargePercent)
+    }
     private var isCustomSelected: Bool { selectedProfileID == nil }
     private var currencyCode: String { response?.currentBill.currency ?? "USD" }
     private var timeZone: String { response?.site.timezone ?? "UTC" }
@@ -146,7 +189,7 @@ struct LoadTimingView: View {
                         if !timing.hasTariff {
                             EmptyCard(symbol: "tag.slash", title: "Load timing unavailable", message: LoadTimingPresentation.emptyMessage(hasTariff: false, hasCycleData: false) ?? "")
                         } else {
-                            recommendation(timing)
+                            actionPanel(timing)
                             observedPeriods(timing)
                             if LoadTimingPresentation.shouldShowEstimator(hasCycleData: timing.hasCycleData) {
                                 estimator(timing)
@@ -187,41 +230,51 @@ struct LoadTimingView: View {
         }
     }
 
-    @ViewBuilder
-    private func recommendation(_ timing: LoadTiming) -> some View {
-        Group {
-            switch LoadTimingPresentation.recommendationCue(timing) {
-            case .noCycleData:
-                Label("Recommendations need energy recorded during this billing cycle.", systemImage: "clock.arrow.circlepath")
+    private func actionPanel(_ timing: LoadTiming) -> some View {
+        let affordance = LoadTimingAffordance.evaluate(timing: timing, plannedCarKwh: plannedCarKwh)
+        let tint: Color = {
+            switch affordance.state {
+            case .allowed: return .green
+            case .caution: return .orange
+            case .awaitingActiveBalance: return .secondary
+            }
+        }()
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Can run now")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: affordance.state == .caution ? "exclamationmark.triangle.fill" : "bolt.fill")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(tint)
+                    .padding(.top, 3)
+                Text(LoadTimingPresentation.actionTitle(for: affordance))
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundStyle(tint)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .minimumScaleFactor(0.75)
+            }
+            Text(LoadTimingPresentation.actionContext(for: affordance))
+                .font(.subheadline.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+            if let nextStep = LoadTimingPresentation.actionNextStep(for: affordance) {
+                Text(nextStep)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-            case .nextCheaper(let next):
-                Label {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Wait for \(DashboardPresentation.tariffPeriodTitle(next.name))")
-                            .font(.headline)
-                        Text("\(DashboardPresentation.loadRate(next.marginalCost, code: currencyCode)) · \(next.phrase)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                } icon: {
-                    Image(systemName: "clock.arrow.circlepath")
-                }
-                .accessibilityLabel(
-                    "Wait for \(DashboardPresentation.tariffPeriodTitle(next.name)), \(DashboardPresentation.loadRateAccessibilityLabel(next.marginalCost, code: currencyCode)), \(next.phrase)"
-                )
-            case .cheapestNow:
-                Label("Now is the cheapest observed period", systemImage: "checkmark.circle.fill")
-                    .font(.headline)
-                    .foregroundStyle(.green)
-                    .accessibilityElement(children: .combine)
-            case .message(let message):
-                Text(message)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let advice = LoadTimingPresentation.actionCheaperAdvice(affordance.nextCheaper) {
+                Label(advice, systemImage: "clock.arrow.circlepath")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(LoadTimingPresentation.actionAccessibilityLabel(for: affordance, currencyCode: currencyCode))
     }
 
     private func observedPeriods(_ timing: LoadTiming) -> some View {

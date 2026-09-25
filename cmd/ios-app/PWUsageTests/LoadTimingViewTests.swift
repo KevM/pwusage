@@ -133,22 +133,6 @@ struct LoadTimingViewTests {
         #expect(estimate.verdict == .tight)
     }
 
-    @Test("Next cheaper recommendation takes precedence over cheapest-now cue")
-    func nextCheaperCueTakesPrecedence() {
-        let next = NextCheaperPeriod(name: "Off peak", marginalCost: 0.12, phrase: "in 2 hours")
-        let timing = LoadTiming(
-            hasTariff: true,
-            hasCycleData: true,
-            activeIsCheapest: true,
-            periods: [],
-            pricingPeriods: [],
-            nextCheaper: next,
-            nextCheaperPhrase: "in 2 hours",
-            nextStartPhraseByKey: [:]
-        )
-        #expect(LoadTimingPresentation.recommendationCue(timing) == .nextCheaper(next))
-    }
-
     @Test("Successful bill response without load timing shows unavailable, not loading")
     func missingLoadTimingResponseIsUnavailable() {
         #expect(LoadTimingPresentation.detailState(hasBillResponse: true, hasLoadTiming: false, isUnavailable: false) == .unavailable("Configure a tariff or check its rates on the website to make load timing available."))
@@ -181,11 +165,44 @@ struct LoadTimingViewTests {
         #expect(LoadTimingPresentation.orderedPricingPeriods([future, active, unobserved]).map(\.name) == ["Peak", "Off peak", "Shoulder"])
     }
 
-    @Test("Cycle data controls estimator visibility and gives a clear no-data cue")
+    @Test("Cycle data controls estimator visibility")
     func cycleDataControlsEstimatorVisibility() {
         #expect(LoadTimingPresentation.shouldShowEstimator(hasCycleData: false) == false)
         #expect(LoadTimingPresentation.shouldShowEstimator(hasCycleData: true) == true)
-        let timing = LoadTiming(hasTariff: true, hasCycleData: false, activeIsCheapest: false, periods: [], pricingPeriods: [], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-        #expect(LoadTimingPresentation.recommendationCue(timing) == .noCycleData)
+    }
+
+    @Test("Action panel presents the largest covered load, balance, and next shortfall")
+    func actionPanelShowsRunnableLoadAndNextShortfall() {
+        let affordance = LoadTimingAffordance.evaluate(timing: actionTiming(balance: 17), plannedCarKwh: 30)
+        #expect(LoadTimingPresentation.actionTitle(for: affordance) == "Dishwasher")
+        #expect(LoadTimingPresentation.actionContext(for: affordance) == "Peak · Surplus 17.0 kWh")
+        #expect(LoadTimingPresentation.actionNextStep(for: affordance) == "Next: Laundry needs 3.0 kWh more")
+        #expect(LoadTimingPresentation.actionAccessibilityLabel(for: affordance).contains("Can run now. Dishwasher."))
+    }
+
+    @Test("Action panel warns when no large load is covered and preserves cheaper period advice")
+    func actionPanelShowsCautionAndCheaperAdvice() {
+        let affordance = LoadTimingAffordance.evaluate(timing: actionTiming(
+            balance: -4,
+            nextCheaper: .init(name: "Off peak", marginalCost: 0.12, phrase: "in 2 hours")
+        ), plannedCarKwh: 30)
+        #expect(LoadTimingPresentation.actionTitle(for: affordance) == "Avoid large loads")
+        #expect(LoadTimingPresentation.actionContext(for: affordance) == "Peak · Deficit 4.0 kWh")
+        #expect(LoadTimingPresentation.actionNextStep(for: affordance) == "Next: Dishwasher needs 9.0 kWh more")
+        #expect(LoadTimingPresentation.actionCheaperAdvice(affordance.nextCheaper) == "Cheaper in Off peak · 12¢/kWh · in 2 hours")
+        #expect(LoadTimingPresentation.actionAccessibilityLabel(for: affordance).contains("12 cents per kilowatt-hour"))
+    }
+
+    @Test("Action panel explains when the active period balance is unobserved")
+    func actionPanelExplainsUnobservedBalance() {
+        let timing = LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: [], pricingPeriods: [], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
+        let affordance = LoadTimingAffordance.evaluate(timing: timing, plannedCarKwh: 30)
+        #expect(LoadTimingPresentation.actionTitle(for: affordance) == "Balance not recorded yet")
+        #expect(LoadTimingPresentation.actionContext(for: affordance) == "This period's balance is not recorded yet.")
+    }
+
+    private func actionTiming(balance: Double, nextCheaper: NextCheaperPeriod? = nil) -> LoadTiming {
+        let active = LoadTimingPeriod(name: "Peak", marginalCost: 0.48, basis: "buy", cycleNetExportKwh: balance, isActive: true, nextStartPhrase: nil, buyRate: 0.48, sellRate: 0.12)
+        return LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: [active], pricingPeriods: [active], nextCheaper: nextCheaper, nextCheaperPhrase: nextCheaper?.phrase, nextStartPhraseByKey: [:])
     }
 }
