@@ -87,6 +87,8 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.loadBalance(nil) == "No balance yet")
         #expect(DashboardPresentation.loadBalanceAccessibilityLabel(-3.25) == "Surplus 3.3 kilowatt-hours")
         #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12, code: "USD", locale: Locale(identifier: "en_US")) == "12 cents per kilowatt-hour")
+        #expect(DashboardPresentation.loadRateAccessibilityLabel(0.01, code: "USD", locale: Locale(identifier: "en_US")) == "1 cent per kilowatt-hour")
+        #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12345, code: "USD", locale: Locale(identifier: "en_US")) == "12.34 cents per kilowatt-hour")
     }
 
     @Test("Tariff period titles match website normalization")

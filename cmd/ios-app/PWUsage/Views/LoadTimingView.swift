@@ -187,7 +187,9 @@ struct LoadTimingView: View {
                 } icon: {
                     Image(systemName: "clock.arrow.circlepath")
                 }
-                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "Wait for \(DashboardPresentation.tariffPeriodTitle(next.name)), \(DashboardPresentation.loadRateAccessibilityLabel(next.marginalCost, code: currencyCode)), \(next.phrase)"
+                )
             case .cheapestNow:
                 Label("Now is the cheapest observed period", systemImage: "checkmark.circle.fill")
                     .font(.headline)

@@ -72,15 +72,24 @@ struct LoadTimingViewTests {
         #expect(DashboardPresentation.hasActiveTariff(label: "Residential TOU") == true)
     }
 
-    @Test("Live rate uses currency-neutral cents until bill currency is known")
-    func liveSummaryUsesNeutralRate() {
+    @Test("Live rate stays hidden until bill currency is known")
+    func liveSummaryWaitsForCurrency() {
         let summary = DashboardPresentation.loadTimingSummary(
             .init(periodName: "Peak", buyRate: 0.485, sellRate: 0.12, marginalCost: 0.485, basis: "buy", balanceKwh: 2, energyDataThrough: nil),
             hasTariff: true,
             isStale: false
         )
-        #expect(summary.rate == "48.5¢/kWh")
-        #expect(summary.accessibilityLabel.contains("49 cents per kilowatt-hour"))
+        #expect(summary.rate == nil)
+        #expect(!summary.accessibilityLabel.contains("cents per kilowatt-hour"))
+
+        let localized = DashboardPresentation.loadTimingSummary(
+            .init(periodName: "Peak", buyRate: 0.485, sellRate: 0.12, marginalCost: 0.485, basis: "buy", balanceKwh: 2, energyDataThrough: nil),
+            hasTariff: true,
+            isStale: false,
+            currencyCode: "USD"
+        )
+        #expect(localized.rate == "48.5¢/kWh")
+        #expect(localized.accessibilityLabel.contains("48.5 cents per kilowatt-hour"))
     }
 
     @Test("Selected preset supplies its own tightness threshold and unknown coverage stays unknown")

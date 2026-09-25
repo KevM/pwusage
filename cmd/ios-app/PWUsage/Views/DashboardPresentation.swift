@@ -124,8 +124,9 @@ enum DashboardPresentation {
     static func loadRateAccessibilityLabel(_ amountPerKwh: Double?, code: String, locale: Locale = .current) -> String {
         guard let amountPerKwh else { return "Cost per kilowatt-hour unavailable" }
         if code == "USD" {
-            let cents = Int((amountPerKwh * 100).rounded())
-            return "\(cents) \(cents == 1 ? "cent" : "cents") per kilowatt-hour"
+            let cents = loadRateInCents(amountPerKwh, locale: locale)
+                .replacingOccurrences(of: "¢/kWh", with: "")
+            return "\(cents) \(cents == "1" ? "cent" : "cents") per kilowatt-hour"
         }
         return "\(currency(amountPerKwh, code: code, locale: locale)) per kilowatt-hour"
     }
@@ -146,10 +147,10 @@ enum DashboardPresentation {
         let title = tariffPeriodTitle(timing.periodName)
         let isUnobserved = timing.basis == "unobserved"
         let rateValue = isUnobserved ? timing.buyRate : timing.marginalCost
-        let rate = currencyCode.map { loadRate(rateValue, code: $0) } ?? loadRateInCents(rateValue)
+        let rate = currencyCode.map { loadRate(rateValue, code: $0) }
         let balance = isUnobserved ? "No balance yet" : (timing.balanceKwh.map(liveLoadBalance) ?? "Balance unavailable")
         let freshness = isStale ? "Showing the last successful live summary" : nil
-        let spokenRate = currencyCode.map { loadRateAccessibilityLabel(rateValue, code: $0) } ?? loadRateInCentsAccessibilityLabel(rateValue)
+        let spokenRate = currencyCode.map { loadRateAccessibilityLabel(rateValue, code: $0) }
         let label = [title, spokenRate, isUnobserved ? "No balance yet" : liveLoadBalanceAccessibilityLabel(timing.balanceKwh), freshness]
             .compactMap { $0 }
             .joined(separator: ", ")
@@ -170,12 +171,6 @@ enum DashboardPresentation {
         formatter.maximumFractionDigits = 2
         formatter.locale = locale
         return "\(formatter.string(from: NSNumber(value: amountPerKwh * 100)) ?? String(format: "%.1f", amountPerKwh * 100))¢/kWh"
-    }
-
-    private static func loadRateInCentsAccessibilityLabel(_ amountPerKwh: Double?) -> String {
-        guard let amountPerKwh else { return "Cost per kilowatt-hour unavailable" }
-        let cents = Int((amountPerKwh * 100).rounded())
-        return "\(cents) \(cents == 1 ? "cent" : "cents") per kilowatt-hour"
     }
 
     private static func loadEnergyNumber(_ kWh: Double) -> String {
