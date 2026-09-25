@@ -24,6 +24,7 @@ struct DashboardView: View {
                     liveSection
                     todaySection
                     billNavigation
+                    loadTimingNavigation
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 14)
@@ -50,6 +51,9 @@ struct DashboardView: View {
             }
             .navigationDestination(for: BillDestination.self) { _ in
                 BillView(coordinator: coordinator, site: site)
+            }
+            .navigationDestination(for: LoadTimingDestination.self) { _ in
+                LoadTimingView(coordinator: coordinator, site: site)
             }
         }
     }
@@ -209,6 +213,71 @@ struct DashboardView: View {
         }
     }
 
+    private var loadTimingNavigation: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeading("Load timing", subtitle: live.map {
+                "Live summary · \(DashboardPresentation.freshness($0.activeLoadTiming?.energyDataThrough ?? $0.sources.energyDataThrough, staleAfter: 30 * 60).replacingOccurrences(of: "Updated ", with: ""))"
+            } ?? "Waiting for active tariff")
+            let summarySource = live?.activeLoadTiming?.energyDataThrough ?? live?.sources.energyDataThrough
+            let summaryIsStale = coordinator.live.isUnavailable || (summarySource.map { Date.now.timeIntervalSince($0) > 30 * 60 } ?? false)
+            let summary = DashboardPresentation.loadTimingSummary(
+                live?.activeLoadTiming,
+                hasTariff: DashboardPresentation.hasActiveTariff(label: live?.activeTariff),
+                isStale: summaryIsStale,
+                currencyCode: bill?.currentBill.currency
+            )
+            NavigationLink(value: LoadTimingDestination.current) {
+                StatusCard {
+                    HStack(spacing: 14) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.teal)
+                            .frame(width: 48, height: 48)
+                            .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(summary.title)
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                            if let rate = summary.rate {
+                                Text(rate)
+                                    .font(.subheadline.weight(.semibold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(.primary)
+                            }
+                            if let balance = summary.balance {
+                                Text(balance)
+                                    .font(.footnote)
+                                    .foregroundStyle(balance.hasPrefix("Surplus") ? .green : .secondary)
+                            }
+                            if let message = summary.message {
+                                Text(message)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let freshness = summary.freshness {
+                                Text(freshness)
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summary.accessibilityLabel)
+                .accessibilityHint("View load timing and estimate appliance costs by tariff period")
+            }
+            .buttonStyle(.plain)
+            .hoverEffect()
+        }
+    }
+
     private var siteTimeZone: String { bill?.site.timezone ?? live?.site.timezone ?? "UTC" }
 
     private func adaptiveGrid(_ tiles: [MetricTile]) -> some View {
@@ -257,6 +326,7 @@ struct DashboardView: View {
 }
 
 private struct BillDestination: Hashable { static let current = Self() }
+private struct LoadTimingDestination: Hashable { static let current = Self() }
 
 private struct StatusCard<Content: View>: View {
     @ViewBuilder let content: Content
@@ -375,4 +445,3 @@ struct DischargeSymbol: Shape {
         return path
     }
 }
-
