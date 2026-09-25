@@ -117,4 +117,26 @@ struct LoadTimingViewTests {
         )
         #expect(LoadTimingPresentation.recommendationCue(timing) == .nextCheaper(next))
     }
+
+    @Test("Successful bill response without load timing shows unavailable, not loading")
+    func missingLoadTimingResponseIsUnavailable() {
+        #expect(LoadTimingPresentation.detailState(hasBillResponse: true, hasLoadTiming: false, isUnavailable: false) == .unavailable("No tariff details are available for load timing."))
+        #expect(LoadTimingPresentation.detailState(hasBillResponse: false, hasLoadTiming: false, isUnavailable: false) == .loading)
+    }
+
+    @Test("Estimator periods put the active period first")
+    func estimatorPeriodsPutActivePeriodFirst() {
+        let future = LoadTimingPeriod(name: "Off peak", marginalCost: 0.12, basis: "sell", cycleNetExportKwh: 10, isActive: false, nextStartPhrase: "in 2 hours", buyRate: 0.2, sellRate: 0.12)
+        let active = LoadTimingPeriod(name: "Peak", marginalCost: 0.48, basis: "buy", cycleNetExportKwh: -2, isActive: true, nextStartPhrase: nil, buyRate: 0.48, sellRate: 0.12)
+        let unobserved = LoadTimingPeriod(name: "Shoulder", marginalCost: nil, basis: "unobserved", cycleNetExportKwh: 0, isActive: false, nextStartPhrase: "tomorrow", buyRate: 0.3, sellRate: 0.08)
+        #expect(LoadTimingPresentation.orderedPricingPeriods([future, active, unobserved]).map(\.name) == ["Peak", "Off peak", "Shoulder"])
+    }
+
+    @Test("Cycle data controls estimator visibility and gives a clear no-data cue")
+    func cycleDataControlsEstimatorVisibility() {
+        #expect(LoadTimingPresentation.shouldShowEstimator(hasCycleData: false) == false)
+        #expect(LoadTimingPresentation.shouldShowEstimator(hasCycleData: true) == true)
+        let timing = LoadTiming(hasTariff: true, hasCycleData: false, activeIsCheapest: false, periods: [], pricingPeriods: [], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
+        #expect(LoadTimingPresentation.recommendationCue(timing) == .noCycleData)
+    }
 }

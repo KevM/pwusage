@@ -1,6 +1,12 @@
 import SwiftUI
 
 enum LoadTimingPresentation {
+    enum DetailState: Equatable {
+        case loading
+        case ready
+        case unavailable(String)
+    }
+
     enum RecommendationCue: Equatable {
         case noCycleData
         case nextCheaper(NextCheaperPeriod)
@@ -12,6 +18,31 @@ enum LoadTimingPresentation {
         guard hasTariff else { return "No active tariff is configured for this site." }
         guard !hasCycleData else { return nil }
         return "Recommendations will appear after energy is recorded in this billing cycle."
+    }
+
+    static func detailState(hasBillResponse: Bool, hasLoadTiming: Bool, isUnavailable: Bool) -> DetailState {
+        if hasBillResponse {
+            return hasLoadTiming ? .ready : .unavailable("No tariff details are available for load timing.")
+        }
+        if isUnavailable {
+            return .unavailable("The server could not provide tariff period details. Try again when your connection is available.")
+        }
+        return .loading
+    }
+
+    static func orderedPricingPeriods(_ periods: [LoadTimingPeriod]) -> [LoadTimingPeriod] {
+        periods.enumerated()
+            .sorted { lhs, rhs in
+                if lhs.element.isActive != rhs.element.isActive {
+                    return lhs.element.isActive
+                }
+                return lhs.offset < rhs.offset
+            }
+            .map(\.element)
+    }
+
+    static func shouldShowEstimator(hasCycleData: Bool) -> Bool {
+        hasCycleData
     }
 
     static func sourceStatus(isUnavailable: Bool, energyDataThrough: Date?, now: Date = .now) -> String {
@@ -73,17 +104,23 @@ struct LoadTimingView: View {
                 if coordinator.bill.isUnavailable {
                     AvailabilityBanner(message: "Load timing could not be refreshed. Showing the last successful cycle snapshot with its original source time.", symbol: "clock.badge.exclamationmark")
                 }
-                if let response, let timing {
-                    if !timing.hasTariff {
-                        EmptyCard(symbol: "tag.slash", title: "Load timing unavailable", message: LoadTimingPresentation.emptyMessage(hasTariff: false, hasCycleData: false) ?? "")
-                    } else {
-                        recommendation(timing)
-                        observedPeriods(timing)
-                        estimator(timing)
+                if let response {
+                    if let timing {
+                        if !timing.hasTariff {
+                            EmptyCard(symbol: "tag.slash", title: "Load timing unavailable", message: LoadTimingPresentation.emptyMessage(hasTariff: false, hasCycleData: false) ?? "")
+                        } else {
+                            recommendation(timing)
+                            observedPeriods(timing)
+                            if LoadTimingPresentation.shouldShowEstimator(hasCycleData: timing.hasCycleData) {
+                                estimator(timing)
+                            }
+                        }
+                    } else if case .unavailable(let message) = LoadTimingPresentation.detailState(hasBillResponse: true, hasLoadTiming: false, isUnavailable: coordinator.bill.isUnavailable) {
+                        EmptyCard(symbol: "tag.slash", title: "Load timing unavailable", message: message)
                     }
                     metadata(response)
-                } else if coordinator.bill.isUnavailable {
-                    EmptyCard(symbol: "chart.bar.xaxis", title: "Load timing unavailable", message: "The server could not provide tariff period details. Try again when your connection is available.")
+                } else if case .unavailable(let message) = LoadTimingPresentation.detailState(hasBillResponse: false, hasLoadTiming: false, isUnavailable: coordinator.bill.isUnavailable) {
+                    EmptyCard(symbol: "chart.bar.xaxis", title: "Load timing unavailable", message: message)
                 } else {
                     HStack(spacing: 12) {
                         ProgressView()
@@ -184,9 +221,10 @@ struct LoadTimingView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     VStack(spacing: 0) {
-                        ForEach(Array(timing.pricingPeriods.enumerated()), id: \.offset) { index, period in
+                        let orderedPeriods = LoadTimingPresentation.orderedPricingPeriods(timing.pricingPeriods)
+                        ForEach(Array(orderedPeriods.enumerated()), id: \.offset) { index, period in
                             estimateRow(period)
-                            if index < timing.pricingPeriods.count - 1 { Divider() }
+                            if index < orderedPeriods.count - 1 { Divider() }
                         }
                     }
                 }
