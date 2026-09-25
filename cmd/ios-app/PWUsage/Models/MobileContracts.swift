@@ -12,6 +12,7 @@ struct MobileLiveResponse: Decodable, Equatable {
     let live: Live
     let stateOfCharge: Double?
     let activeTariff: String?
+    let activeLoadTiming: ActiveLoadTiming?
     let today: Today
     let todayComplete: Bool
     let currentBill: Bill?
@@ -56,7 +57,7 @@ struct MobileLiveResponse: Decodable, Equatable {
         case unsupportedVersion(Int)
     }
 
-    private enum CodingKeys: String, CodingKey { case version, site, live, stateOfCharge, activeTariff, today, todayComplete, currentBill, sources }
+    private enum CodingKeys: String, CodingKey { case version, site, live, stateOfCharge, activeTariff, activeLoadTiming, today, todayComplete, currentBill, sources }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -67,6 +68,7 @@ struct MobileLiveResponse: Decodable, Equatable {
         live = try container.decode(Live.self, forKey: .live)
         stateOfCharge = try container.decodeIfPresent(Double.self, forKey: .stateOfCharge)
         activeTariff = try container.decodeIfPresent(String.self, forKey: .activeTariff)
+        activeLoadTiming = try container.decodeIfPresent(ActiveLoadTiming.self, forKey: .activeLoadTiming)
         today = try container.decode(Today.self, forKey: .today)
         todayComplete = try container.decode(Bool.self, forKey: .todayComplete)
         currentBill = try container.decodeIfPresent(Bill.self, forKey: .currentBill)
@@ -78,6 +80,7 @@ struct MobileBillResponse: Decodable, Equatable {
     let version: Int
     let site: Site
     let currentBill: Bill
+    let loadTiming: LoadTiming?
     let sources: Sources
 
     struct Site: Decodable, Equatable {
@@ -104,7 +107,7 @@ struct MobileBillResponse: Decodable, Equatable {
         case siteMismatch(expected: String, actual: String)
     }
 
-    private enum CodingKeys: String, CodingKey { case version, site, currentBill, sources }
+    private enum CodingKeys: String, CodingKey { case version, site, currentBill, loadTiming, sources }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -113,6 +116,7 @@ struct MobileBillResponse: Decodable, Equatable {
         self.version = version
         site = try container.decode(Site.self, forKey: .site)
         currentBill = try container.decode(Bill.self, forKey: .currentBill)
+        loadTiming = try container.decodeIfPresent(LoadTiming.self, forKey: .loadTiming)
         sources = try container.decode(Sources.self, forKey: .sources)
     }
 
@@ -122,6 +126,44 @@ struct MobileBillResponse: Decodable, Equatable {
         }
         return self
     }
+}
+
+struct ActiveLoadTiming: Decodable, Equatable {
+    let periodName: String
+    let buyRate: Double
+    let sellRate: Double
+    let marginalCost: Double?
+    let basis: String
+    let balanceKwh: Double?
+    let energyDataThrough: Date?
+}
+
+struct LoadTiming: Decodable, Equatable {
+    let hasTariff: Bool
+    let hasCycleData: Bool
+    let activeIsCheapest: Bool
+    let periods: [LoadTimingPeriod]
+    let pricingPeriods: [LoadTimingPeriod]
+    let nextCheaper: NextCheaperPeriod?
+    let nextCheaperPhrase: String?
+    let nextStartPhraseByKey: [String: String]
+}
+
+struct LoadTimingPeriod: Decodable, Equatable {
+    let name: String
+    let marginalCost: Double?
+    let basis: String
+    let cycleNetExportKwh: Double
+    let isActive: Bool
+    let nextStartPhrase: String?
+    let buyRate: Double
+    let sellRate: Double
+}
+
+struct NextCheaperPeriod: Decodable, Equatable {
+    let name: String
+    let marginalCost: Double
+    let phrase: String
 }
 
 struct Period: Decodable, Equatable {

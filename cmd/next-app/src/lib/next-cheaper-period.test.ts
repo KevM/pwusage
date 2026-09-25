@@ -123,6 +123,25 @@ describe('findNextCheaperPeriod', () => {
         expect(result).toBeNull();
     });
 
+    it('uses season rates when a future schedule has no rate overrides', () => {
+        const t0 = new Date(Date.UTC(2026, 2, 15, 18, 0, 0));
+        const active = makePeriod(100, 'Active', 0.20, 0.02,
+            new Date(Date.UTC(2026, 2, 15, 16, 0, 0)),
+            new Date(Date.UTC(2026, 2, 15, 19, 59, 59, 999)));
+        const future = makePeriod(200, 'Future', 0.35, 0.04,
+            new Date(Date.UTC(2026, 2, 15, 20, 0, 0)),
+            new Date(Date.UTC(2026, 2, 15, 23, 59, 59, 999)));
+        future.schedule.buy_rate = null;
+        future.schedule.sell_rate = null;
+
+        const cycle: UsageData[] = [
+            makeUsage('Active', 0.20, 0.02, 100_000),
+            makeUsage('Future', 0.35, 0.04, 100_000),
+        ];
+
+        expect(findNextCheaperPeriod(makeStubSchedule([active, future]), t0, cycle, 'UTC', 48)).toBeNull();
+    });
+
     it('returns null when active period has no resolvable marginal cost', () => {
         const t0 = new Date(Date.UTC(2026, 2, 15, 18, 0, 0));
         const onPeak = makePeriod(100, 'On-Peak', 0.30, 0.03,

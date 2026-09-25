@@ -1,6 +1,15 @@
 import Foundation
 
 enum DashboardPresentation {
+    struct LoadTimingSummary: Equatable {
+        let title: String
+        let rate: String?
+        let balance: String?
+        let message: String?
+        let freshness: String?
+        let accessibilityLabel: String
+    }
+
     enum BatteryDirection: Equatable {
         case charging
         case discharging
@@ -78,6 +87,101 @@ enum DashboardPresentation {
         formatter.currencyCode = code
         formatter.locale = locale
         return formatter.string(from: NSNumber(value: amount)) ?? "\(amount) \(code)"
+    }
+
+    static func loadRate(_ amountPerKwh: Double?, code: String, locale: Locale = .current) -> String {
+        guard let amountPerKwh else { return "Unavailable" }
+        if code == "USD" {
+            return "\(loadRateInCents(amountPerKwh, locale: locale))"
+        }
+        return "\(currency(amountPerKwh, code: code, locale: locale))/kWh"
+    }
+
+    static func loadBalance(_ balanceKwh: Double?) -> String {
+        guard let balanceKwh else { return "No balance yet" }
+        let status = balanceKwh < 0 ? "Surplus" : (balanceKwh > 0 ? "Deficit" : "Balanced")
+        return "\(status) \(loadEnergyNumber(abs(balanceKwh))) kWh"
+    }
+
+    static func liveLoadBalance(_ cycleNetExportKwh: Double?) -> String {
+        guard let cycleNetExportKwh else { return "No balance yet" }
+        let status = cycleNetExportKwh > 0 ? "Surplus" : (cycleNetExportKwh < 0 ? "Deficit" : "Balanced")
+        return "\(status) \(loadEnergyNumber(abs(cycleNetExportKwh))) kWh"
+    }
+
+    static func loadBalanceAccessibilityLabel(_ balanceKwh: Double?) -> String {
+        guard let balanceKwh else { return "No balance yet" }
+        let status = balanceKwh < 0 ? "Surplus" : (balanceKwh > 0 ? "Deficit" : "Balanced")
+        return "\(status) \(loadEnergyNumber(abs(balanceKwh))) kilowatt-hours"
+    }
+
+    static func liveLoadBalanceAccessibilityLabel(_ cycleNetExportKwh: Double?) -> String {
+        guard let cycleNetExportKwh else { return "No balance yet" }
+        let status = cycleNetExportKwh > 0 ? "Surplus" : (cycleNetExportKwh < 0 ? "Deficit" : "Balanced")
+        return "\(status) \(loadEnergyNumber(abs(cycleNetExportKwh))) kilowatt-hours"
+    }
+
+    static func loadRateAccessibilityLabel(_ amountPerKwh: Double?, code: String, locale: Locale = .current) -> String {
+        guard let amountPerKwh else { return "Cost per kilowatt-hour unavailable" }
+        if code == "USD" {
+            let cents = loadRateInCents(amountPerKwh, locale: locale)
+                .replacingOccurrences(of: "¢/kWh", with: "")
+            return "\(cents) \(cents == "1" ? "cent" : "cents") per kilowatt-hour"
+        }
+        return "\(currency(amountPerKwh, code: code, locale: locale)) per kilowatt-hour"
+    }
+
+    static func loadTimingSummary(
+        _ timing: ActiveLoadTiming?,
+        hasTariff: Bool,
+        isStale: Bool,
+        currencyCode: String? = nil
+    ) -> LoadTimingSummary {
+        guard hasTariff else {
+            return LoadTimingSummary(title: "Load timing unavailable", rate: nil, balance: nil, message: "No active tariff is configured", freshness: nil, accessibilityLabel: "Load timing unavailable. No active tariff is configured")
+        }
+        guard let timing else {
+            return LoadTimingSummary(title: "Load timing unavailable", rate: nil, balance: nil, message: "Load timing is unavailable", freshness: nil, accessibilityLabel: "Load timing unavailable")
+        }
+
+        let title = tariffPeriodTitle(timing.periodName)
+        let isUnobserved = timing.basis == "unobserved"
+        let rateValue = isUnobserved ? timing.buyRate : timing.marginalCost
+        let rate = currencyCode.map { loadRate(rateValue, code: $0) }
+        let balance = isUnobserved ? "No balance yet" : (timing.balanceKwh.map(liveLoadBalance) ?? "Balance unavailable")
+        let freshness = isStale ? "Showing the last successful live summary" : nil
+        let spokenRate = currencyCode.map { loadRateAccessibilityLabel(rateValue, code: $0) }
+        let label = [title, spokenRate, isUnobserved ? "No balance yet" : liveLoadBalanceAccessibilityLabel(timing.balanceKwh), freshness]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+        return LoadTimingSummary(title: title, rate: rate, balance: balance, message: nil, freshness: freshness, accessibilityLabel: label)
+    }
+
+    static func hasActiveTariff(label: String?) -> Bool {
+        guard let label else { return false }
+        let normalized = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !normalized.isEmpty && normalized.caseInsensitiveCompare("Unknown") != .orderedSame
+    }
+
+    static func loadRateInCents(_ amountPerKwh: Double?, locale: Locale = .current) -> String {
+        guard let amountPerKwh else { return "Cost unavailable/kWh" }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        let cents = amountPerKwh * 100
+        let roundedCents = cents.rounded()
+        formatter.minimumFractionDigits = abs(cents - roundedCents) < 0.00000001 ? 0 : 1
+        formatter.maximumFractionDigits = 2
+        formatter.locale = locale
+        return "\(formatter.string(from: NSNumber(value: cents)) ?? String(format: "%.1f", cents))¢/kWh"
+    }
+
+    private static func loadEnergyNumber(_ kWh: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        formatter.roundingMode = .halfUp
+        return formatter.string(from: NSNumber(value: kWh)) ?? String(format: "%.1f", kWh)
     }
 
     static func freshness(_ date: Date?, now: Date = .now, staleAfter: TimeInterval = 15 * 60) -> String {

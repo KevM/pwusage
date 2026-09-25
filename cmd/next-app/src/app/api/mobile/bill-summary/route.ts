@@ -6,6 +6,8 @@ import { withRequestContext } from '@/lib/request-context';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
 import { MOBILE_DASHBOARD_CONTRACT_VERSION, type MobileBillPeriod } from '@/lib/mobile-dashboard-contract';
 import { wattsToKilowatts } from '@/lib/energy-utils';
+import { Schedule } from '@/lib/schedule';
+import { computeLoadTiming } from '@/lib/load-timing';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +43,23 @@ export async function GET(request: Request) {
                 netGridKwh: wattsToKilowatts(item.gridUsage),
                 cost: item.cost ?? 0,
             }));
+            const schedule = new Schedule(site.tariffs, site.timezone);
+            const active = schedule.getTariffPeriod(now);
+            const buyRate = active ? active.schedule.buy_rate ?? active.season.buy_rate : null;
+            const sellRate = active ? active.schedule.sell_rate ?? active.season.sell_rate : null;
+            const hasResolvableSeasonRates = active !== null && (active.season.schedules ?? []).every((period) =>
+                Number.isFinite(period.buy_rate ?? active.season.buy_rate)
+                && Number.isFinite(period.sell_rate ?? active.season.sell_rate)
+            );
+            const hasResolvableActiveRates = hasResolvableSeasonRates
+                && typeof buyRate === 'number' && Number.isFinite(buyRate)
+                && typeof sellRate === 'number' && Number.isFinite(sellRate);
+            const activePeriod = active && hasResolvableActiveRates ? {
+                name: active.schedule.name || 'Standard', buyRate, sellRate,
+            } : null;
+            const loadTiming = site.tariffs.length > 0 && activePeriod
+                ? computeLoadTiming(schedule, usage, now, site.timezone, activePeriod)
+                : null;
 
             return NextResponse.json({
                 version: MOBILE_DASHBOARD_CONTRACT_VERSION,
@@ -52,6 +71,7 @@ export async function GET(request: Request) {
                     cycleEnd: cycleEnd.toISOString(),
                     periods,
                 },
+                loadTiming,
                 sources: {
                     calculatedAt: now.toISOString(),
                     energyDataThrough: energyDataThrough?.toISOString() ?? null,

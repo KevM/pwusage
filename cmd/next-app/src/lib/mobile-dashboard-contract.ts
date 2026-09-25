@@ -1,6 +1,8 @@
 import type { EnergySiteLiveStatus } from './tesla-client';
 import { sumTodayRows, type TodayTotals } from './energy-repo';
 import type { EnergyData } from './db-types';
+import type { MobileActiveLoadTiming } from './mobile-load-timing';
+import type { LoadTimingView } from './load-timing';
 
 export const MOBILE_DASHBOARD_CONTRACT_VERSION = 1;
 export const MOBILE_SOC_STALE_AFTER_MS = 20 * 60 * 1000;
@@ -13,6 +15,7 @@ export interface MobileDashboardContractInput {
     energyTimestamp: Date | null;
     now: Date;
     activeTariff: string;
+    activeLoadTiming?: MobileActiveLoadTiming | null;
     today: MobileTodayTotals;
     todayComplete: boolean;
     bill: {
@@ -44,6 +47,7 @@ export interface MobileBillSummary {
     version: number;
     site: { id: string; name: string; timezone: string };
     currentBill: MobileCurrentBill;
+    loadTiming?: LoadTimingView | null;
     sources: { calculatedAt: string; energyDataThrough: string | null };
 }
 
@@ -52,6 +56,7 @@ export type MobileTodayTotals = Pick<TodayTotals,
 
 export interface MobileDashboardWithBillSummary extends MobileDashboardContract {
     billSources: MobileBillSummary['sources'];
+    loadTiming?: LoadTimingView | null;
 }
 
 export function withMobileBillSummary(
@@ -65,6 +70,7 @@ export function withMobileBillSummary(
         ...dashboard,
         currentBill: summary.currentBill,
         billSources: summary.sources,
+        ...(summary.loadTiming !== undefined ? { loadTiming: summary.loadTiming } : {}),
     };
 }
 
@@ -74,6 +80,7 @@ export interface MobileDashboardContract {
     live: { solarPower: number; loadPower: number; batteryPower: number; gridPower: number };
     stateOfCharge: number | null;
     activeTariff: string | null;
+    activeLoadTiming?: MobileActiveLoadTiming | null;
     today: MobileTodayTotals;
     todayComplete: boolean;
     currentBill: MobileCurrentBill | null;
@@ -112,6 +119,7 @@ export function buildMobileDashboardContract(input: MobileDashboardContractInput
         },
         stateOfCharge,
         activeTariff: input.activeTariff || null,
+        ...(input.activeLoadTiming !== undefined ? { activeLoadTiming: input.activeLoadTiming } : {}),
         today: input.today,
         todayComplete: input.todayComplete,
         currentBill: input.bill ? {
