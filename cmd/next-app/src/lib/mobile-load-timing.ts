@@ -9,7 +9,7 @@ export interface MobileActiveLoadTiming {
     buyRate: number;
     sellRate: number;
     marginalCost: number | null;
-    basis: MarginalCostBasis | null;
+    basis: MarginalCostBasis | 'unobserved';
     balanceKwh: number | null;
     energyDataThrough: string | null;
 }
@@ -35,15 +35,15 @@ export function activeLoadTimingForMobile(
     const periodName = active.schedule.name || 'Standard';
     const buyRate = finiteRate(active.schedule.buy_rate) ?? finiteRate(active.season.buy_rate);
     const sellRate = finiteRate(active.schedule.sell_rate) ?? finiteRate(active.season.sell_rate);
-    if (buyRate === null || sellRate === null) return null;
+    if (buyRate === null || sellRate === null || (buyRate === 0 && sellRate === 0)) return null;
 
     const todayByPeriod = todayNetExportByPeriod(todayRows, siteMidnight, schedule);
     const priorForActive = priorCycle.filter((row) => (row.touName || 'Standard') === periodName);
     const hasObservation = priorForActive.length > 0 || todayByPeriod.has(periodName);
 
     let balanceKwh: number | null = null;
-    let marginalCost: number | null = null;
-    let basis: MarginalCostBasis | null = null;
+    let marginalCost: number | null = buyRate;
+    let basis: MobileActiveLoadTiming['basis'] = 'unobserved';
     if (hasObservation) {
         const priorBalance = priorForActive.reduce((total, row) => total - row.gridUsage / 1000, 0);
         balanceKwh = priorBalance + (todayByPeriod.get(periodName) ?? 0);

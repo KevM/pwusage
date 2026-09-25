@@ -31,7 +31,7 @@ describe('buildMobileDashboardContract', () => {
     it('includes an additive active load timing summary with its balance state and source time', () => {
         const activeLoadTiming = {
             periodName: 'Peak', buyRate: 0.4, sellRate: 0.05,
-            marginalCost: null, basis: null, balanceKwh: null,
+            marginalCost: 0.4, basis: 'unobserved', balanceKwh: null,
             energyDataThrough: '2026-09-23T11:55:00.000Z',
         } as const;
         const result = buildMobileDashboardContract({ ...base, activeLoadTiming });

@@ -53,11 +53,11 @@ describe('activeLoadTimingForMobile', () => {
         expect(result?.basis).toBe('neutral');
     });
 
-    it('keeps an unobserved active period unknown when another period was observed', () => {
+    it('shows the configured buy rate while keeping an unobserved active period balance unknown', () => {
         const result = activeLoadTimingForMobile(schedule(), NOW, [usage('Peak', -5_000)], [], MIDNIGHT, SAMPLE);
         expect(result?.balanceKwh).toBeNull();
-        expect(result?.marginalCost).toBeNull();
-        expect(result?.basis).toBeNull();
+        expect(result?.marginalCost).toBe(0.2);
+        expect(result?.basis).toBe('unobserved');
     });
 
     it('derives today balance from the existing bins and preserves the real sample time', () => {
@@ -76,5 +76,6 @@ describe('activeLoadTimingForMobile', () => {
         const noPeriod = { getTariffPeriod: () => null } as unknown as Schedule;
         expect(activeLoadTimingForMobile(noPeriod, NOW, [], [], MIDNIGHT, null)).toBeNull();
         expect(activeLoadTimingForMobile(schedule('Off peak', null, null, null, null), NOW, [], [], MIDNIGHT, null)).toBeNull();
+        expect(activeLoadTimingForMobile(schedule('Off peak', 0, 0, 0, 0), NOW, [], [], MIDNIGHT, null)).toBeNull();
     });
 });

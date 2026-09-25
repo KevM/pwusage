@@ -81,7 +81,7 @@ describe('site-live-data mobile response', () => {
         expect(body.currentBill).toBeNull();
         expect(body.activeLoadTiming).toEqual({
             periodName: 'All day', buyRate: 0.2, sellRate: 0.05,
-            marginalCost: null, basis: null, balanceKwh: null, energyDataThrough: null,
+            marginalCost: 0.2, basis: 'unobserved', balanceKwh: null, energyDataThrough: null,
         });
         expect(bucketedMock).toHaveBeenCalledTimes(1);
         expect(usageMock).toHaveBeenCalledTimes(1);
