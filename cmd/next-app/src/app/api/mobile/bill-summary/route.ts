@@ -47,7 +47,12 @@ export async function GET(request: Request) {
             const active = schedule.getTariffPeriod(now);
             const buyRate = active ? active.schedule.buy_rate ?? active.season.buy_rate : null;
             const sellRate = active ? active.schedule.sell_rate ?? active.season.sell_rate : null;
-            const hasResolvableActiveRates = typeof buyRate === 'number' && Number.isFinite(buyRate)
+            const hasResolvableSeasonRates = active !== null && (active.season.schedules ?? []).every((period) =>
+                Number.isFinite(period.buy_rate ?? active.season.buy_rate)
+                && Number.isFinite(period.sell_rate ?? active.season.sell_rate)
+            );
+            const hasResolvableActiveRates = hasResolvableSeasonRates
+                && typeof buyRate === 'number' && Number.isFinite(buyRate)
                 && typeof sellRate === 'number' && Number.isFinite(sellRate);
             const activePeriod = active && hasResolvableActiveRates ? {
                 name: active.schedule.name || 'Standard', buyRate, sellRate,

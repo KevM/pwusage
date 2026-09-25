@@ -225,6 +225,55 @@ describe('mobile bill summary route', () => {
         vi.useRealTimers();
     });
 
+    it('returns unknown detail when another current-season period has no effective rates', async () => {
+        const configured = tariff();
+        configured.seasons[0].schedules[1].buy_rate = null;
+        configured.seasons[0].schedules[1].sell_rate = null;
+        configured.seasons[0].buy_rate = null as unknown as number;
+        configured.seasons[0].sell_rate = null as unknown as number;
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
+            tariffs: [configured],
+        });
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 2.4, gridUsage: 6000, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: configured, touName: 'Peak', buyRate: 0.4, sellRate: 0.05 },
+        ]);
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+        const body = await response.json();
+
+        expect(body.loadTiming).toBeNull();
+        vi.useRealTimers();
+    });
+
+    it('accepts legitimate zero rates for every current-season period', async () => {
+        const configured = tariff();
+        configured.seasons[0].buy_rate = 0;
+        configured.seasons[0].sell_rate = 0;
+        for (const period of configured.seasons[0].schedules) {
+            period.buy_rate = null;
+            period.sell_rate = null;
+        }
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
+            tariffs: [configured],
+        });
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 0, gridUsage: 0, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: configured, touName: 'Peak', buyRate: 0, sellRate: 0 },
+        ]);
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+        const body = await response.json();
+
+        expect(body.loadTiming).not.toBeNull();
+        expect(body.loadTiming.pricingPeriods).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'Off peak', buyRate: 0, sellRate: 0, marginalCost: 0 }),
+        ]));
+        vi.useRealTimers();
+    });
+
     it('does not include detail data for an unauthorized site', async () => {
         verifyAccessMock.mockResolvedValue(false);
 
