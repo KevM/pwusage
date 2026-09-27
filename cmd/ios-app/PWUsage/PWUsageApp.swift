@@ -101,7 +101,8 @@ final class PWUsageAppModel: ObservableObject {
             await installAuthorizedSites(availableSites)
         } catch let error as PWUsageAPIError {
             if error == .signInRequired {
-                await authService.invalidateAuthenticatedSession()
+                do { try await authService.invalidateAuthenticatedSession() }
+                catch { signInMessage = "Could not clear local solar forecast data. Please try again." }
                 screenState = .signedOut
             } else {
                 screenState = .unavailable
@@ -127,9 +128,10 @@ final class PWUsageAppModel: ObservableObject {
             await installAuthorizedSites(availableSites)
         } catch let error as PWUsageAPIError {
             if error == .signInRequired {
-                await authService.invalidateAuthenticatedSession()
+                do { try await authService.invalidateAuthenticatedSession() }
+                catch { signInMessage = "Could not clear local solar forecast data. Please try again." }
                 screenState = .signedOut
-                signInMessage = "Sign-in expired. Please try again."
+                if signInMessage == nil { signInMessage = "Sign-in expired. Please try again." }
             } else if authService.isAuthenticated {
                 screenState = .unavailable
                 signInMessage = "You’re signed in, but pwusage could not load your sites. Check your connection and try again."
@@ -151,7 +153,8 @@ final class PWUsageAppModel: ObservableObject {
             let availableSites = try await api.fetchSites()
             await installAuthorizedSites(availableSites)
         } catch let error as PWUsageAPIError where error == .signInRequired {
-            await authService.invalidateAuthenticatedSession()
+            do { try await authService.invalidateAuthenticatedSession() }
+            catch { signInMessage = "Could not clear local solar forecast data. Please try again." }
             screenState = .signedOut
         } catch {
             screenState = authService.isAuthenticated ? .unavailable : .signedOut
@@ -171,8 +174,10 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func signOut() async {
+        var cleanupFailed = false
         do { try await authService.logout() }
-        catch { /* The local cookie and sign-in state are cleared by MobileAuthService even on network failure. */ }
+        catch let error as MobileAuthService.AuthError where error == .forecastCleanupFailed { cleanupFailed = true }
+        catch { /* A remote logout failure does not prevent local sign-out. */ }
         coordinator = nil
         coordinatorAuthSubscription = nil
         sites = []
@@ -180,14 +185,18 @@ final class PWUsageAppModel: ObservableObject {
         isSitePickerPresented = false
         userDefaults.removeObject(forKey: Self.selectedSiteDefaultsKey)
         screenState = .signedOut
-        signInMessage = nil
+        signInMessage = cleanupFailed ? "Could not clear local solar forecast data. Please try again." : nil
     }
 
     func sessionExpired() async {
-        await authService.invalidateAuthenticatedSession()
+        var cleanupFailed = false
+        do { try await authService.invalidateAuthenticatedSession() }
+        catch { cleanupFailed = true }
         isSitePickerPresented = false
         screenState = .signedOut
-        signInMessage = "Your session expired. Sign in to continue."
+        signInMessage = cleanupFailed
+            ? "Could not clear local solar forecast data. Please try again."
+            : "Your session expired. Sign in to continue."
     }
 
     private func installAuthorizedSites(_ availableSites: [MobileSite]) async {

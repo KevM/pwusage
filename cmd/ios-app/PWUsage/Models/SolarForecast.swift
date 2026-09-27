@@ -147,7 +147,7 @@ private enum SolcastPeriod {
     }
 }
 
-struct SolarForecastInterval: Equatable, Sendable {
+struct SolarForecastInterval: Codable, Equatable, Sendable {
     let periodStart: Date
     let periodEnd: Date
     let powerKw: Double

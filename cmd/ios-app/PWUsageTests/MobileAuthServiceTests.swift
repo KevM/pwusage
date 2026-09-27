@@ -10,6 +10,7 @@ final class MobileAuthServiceTests {
     private static let attemptID = "9b47b05a-3f0b-498e-b604-9e43fa7df015"
     private var fakeAPI = FakeMobileAuthAPI()
     private var fakeSession = FakeWebAuthenticationSession()
+    private var fakeForecastCleanup = FakeSolarForecastSessionCleanup()
 
     @Test("PKCE material uses base64URL without padding and SHA256 challenge")
     func pkceMaterialUsesBase64URLWithoutPaddingAndSHA256Challenge() throws {
@@ -168,6 +169,7 @@ final class MobileAuthServiceTests {
         #expect(fakeAPI.logoutCount == 1)
         #expect(fakeAPI.cookieClearCount == 1)
         #expect(!service.isAuthenticated)
+        #expect(fakeForecastCleanup.signOutCount == 1)
     }
 
     @Test("Logout success also clears cookie")
@@ -177,17 +179,31 @@ final class MobileAuthServiceTests {
         #expect(fakeAPI.logoutCount == 1)
         #expect(fakeAPI.cookieClearCount == 1)
         #expect(!service.isAuthenticated)
+        #expect(fakeForecastCleanup.signOutCount == 1)
+    }
+
+    @Test("Logout reports local forecast cleanup failure after clearing authentication")
+    func logoutReportsForecastCleanupFailure() async {
+        fakeForecastCleanup.shouldFail = true
+        let service = makeService(isAuthenticated: true)
+
+        await #expect(throws: MobileAuthService.AuthError.forecastCleanupFailed) {
+            try await service.logout()
+        }
+        #expect(fakeAPI.cookieClearCount == 1)
+        #expect(!service.isAuthenticated)
+        #expect(fakeForecastCleanup.signOutCount == 1)
     }
 
     @Test("Restored session marks authenticated only after caller validates cookie")
-    func restoredSessionMarksAuthenticatedOnlyAfterCallerValidatesCookie() async {
+    func restoredSessionMarksAuthenticatedOnlyAfterCallerValidatesCookie() async throws {
         let service = makeService()
         #expect(!service.isAuthenticated)
 
         service.restoreAuthenticatedSession()
 
         #expect(service.isAuthenticated)
-        await service.invalidateAuthenticatedSession()
+        try await service.invalidateAuthenticatedSession()
         #expect(!service.isAuthenticated)
         #expect(fakeAPI.cookieClearCount == 1)
     }
@@ -224,6 +240,7 @@ final class MobileAuthServiceTests {
         return MobileAuthService(
             configuration: apiConfiguration,
             api: fakeAPI,
+            forecastCleanup: fakeForecastCleanup,
             initialAuthenticationState: isAuthenticated,
             sessionFactory: { url, callbackScheme, completion in
                 self.fakeSession.configure(url: url, callbackScheme: callbackScheme, completion: completion)
@@ -243,6 +260,18 @@ final class MobileAuthServiceTests {
             .replacingOccurrences(of: "=", with: "")
     }
 }
+
+@MainActor
+private final class FakeSolarForecastSessionCleanup: SolarForecastSessionCleanup {
+    private(set) var signOutCount = 0
+    var shouldFail = false
+    func signOut() async throws {
+        signOutCount += 1
+        if shouldFail { throw TestCleanupError.failed }
+    }
+}
+
+private enum TestCleanupError: Error { case failed }
 
 @MainActor
 private final class FakeWebAuthenticationSession: MobileAuthWebSession {
