@@ -144,9 +144,59 @@ struct LoadTiming: Decodable, Equatable {
     let activeIsCheapest: Bool
     let periods: [LoadTimingPeriod]
     let pricingPeriods: [LoadTimingPeriod]
+    let tariffTimeline: [LoadTimingTariffSegment]
     let nextCheaper: NextCheaperPeriod?
     let nextCheaperPhrase: String?
     let nextStartPhraseByKey: [String: String]
+
+    private enum CodingKeys: String, CodingKey {
+        case hasTariff, hasCycleData, activeIsCheapest, periods, pricingPeriods, tariffTimeline
+        case nextCheaper, nextCheaperPhrase, nextStartPhraseByKey
+    }
+
+    init(
+        hasTariff: Bool,
+        hasCycleData: Bool,
+        activeIsCheapest: Bool,
+        periods: [LoadTimingPeriod],
+        pricingPeriods: [LoadTimingPeriod],
+        tariffTimeline: [LoadTimingTariffSegment] = [],
+        nextCheaper: NextCheaperPeriod?,
+        nextCheaperPhrase: String?,
+        nextStartPhraseByKey: [String: String]
+    ) {
+        self.hasTariff = hasTariff
+        self.hasCycleData = hasCycleData
+        self.activeIsCheapest = activeIsCheapest
+        self.periods = periods
+        self.pricingPeriods = pricingPeriods
+        self.tariffTimeline = tariffTimeline
+        self.nextCheaper = nextCheaper
+        self.nextCheaperPhrase = nextCheaperPhrase
+        self.nextStartPhraseByKey = nextStartPhraseByKey
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        hasTariff = try container.decode(Bool.self, forKey: .hasTariff)
+        hasCycleData = try container.decode(Bool.self, forKey: .hasCycleData)
+        activeIsCheapest = try container.decode(Bool.self, forKey: .activeIsCheapest)
+        periods = try container.decode([LoadTimingPeriod].self, forKey: .periods)
+        pricingPeriods = try container.decode([LoadTimingPeriod].self, forKey: .pricingPeriods)
+        tariffTimeline = try container.decodeIfPresent([LoadTimingTariffSegment].self, forKey: .tariffTimeline) ?? []
+        nextCheaper = try container.decodeIfPresent(NextCheaperPeriod.self, forKey: .nextCheaper)
+        nextCheaperPhrase = try container.decodeIfPresent(String.self, forKey: .nextCheaperPhrase)
+        nextStartPhraseByKey = try container.decode([String: String].self, forKey: .nextStartPhraseByKey)
+    }
+}
+
+struct LoadTimingTariffSegment: Decodable, Equatable {
+    let start: Date
+    let end: Date
+    let periodKey: String
+    let name: String
+    let buyRate: Double
+    let sellRate: Double
 }
 
 struct LoadTimingPeriod: Decodable, Equatable {

@@ -61,6 +61,30 @@ struct MobileContractsTests {
         #expect(response.sources.energyDataThrough == ISO8601DateFormatter.parse("2026-09-23T12:00:00Z"))
     }
 
+    @Test("Decodes tariff timeline segments and supports cached payloads without a timeline")
+    func decodesTariffTimelineAndLegacyPayload() throws {
+        let fixture = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"America/Chicago"},"currentBill":{"estimatedCost":2,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":false,"periods":[],"pricingPeriods":[],"tariffTimeline":[{"start":"2026-09-23T23:30:00.125Z","end":"2026-09-24T00:00:00.875Z","periodKey":"off-peak","name":"Off peak","buyRate":0.2134,"sellRate":0.0712}],"nextCheaper":null,"nextCheaperPhrase":null,"nextStartPhraseByKey":{}},"sources":{"calculatedAt":"2026-09-23T12:34:56.123Z","energyDataThrough":null}}"#
+        let response = try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(fixture.utf8))
+        let segment = try #require(response.loadTiming?.tariffTimeline.first)
+        #expect(segment.start == ISO8601DateFormatter.parse("2026-09-23T23:30:00.125Z"))
+        #expect(segment.end == ISO8601DateFormatter.parse("2026-09-24T00:00:00.875Z"))
+        #expect(segment.periodKey == "off-peak")
+        #expect(segment.name == "Off peak")
+        #expect(segment.buyRate == 0.2134)
+        #expect(segment.sellRate == 0.0712)
+
+        let emptyTimeline = fixture.replacingOccurrences(
+            of: #""tariffTimeline":[{"start":"2026-09-23T23:30:00.125Z","end":"2026-09-24T00:00:00.875Z","periodKey":"off-peak","name":"Off peak","buyRate":0.2134,"sellRate":0.0712}]"#,
+            with: #""tariffTimeline":[]"#
+        )
+        let emptyResponse = try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(emptyTimeline.utf8))
+        #expect(emptyResponse.loadTiming?.tariffTimeline == [])
+
+        let cached = fixture.replacingOccurrences(of: #","tariffTimeline":[{"start":"2026-09-23T23:30:00.125Z","end":"2026-09-24T00:00:00.875Z","periodKey":"off-peak","name":"Off peak","buyRate":0.2134,"sellRate":0.0712}]"#, with: "")
+        let legacyResponse = try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(cached.utf8))
+        #expect(legacyResponse.loadTiming?.tariffTimeline == [])
+    }
+
     @Test("Rejects unsupported live version")
     func rejectsUnsupportedLiveVersion() throws {
         let fixture = try #require(#"{"version":2}"#.data(using: .utf8))

@@ -128,7 +128,18 @@ describe('mobile bill summary route', () => {
         expect(body.loadTiming.periods[0].nextStartPhrase).toBeNull();
         expect(body.loadTiming.pricingPeriods.find((period: { name: string }) => period.name === 'Off peak').nextStartPhrase).toEqual(expect.any(String));
         expect(body.loadTiming.pricingPeriods).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Winter peak' })]));
+        expect(body.loadTiming.tariffTimeline[0]).toMatchObject({
+            start: '2026-09-19T02:00:00.000Z',
+            end: '2026-09-19T03:00:00.000Z',
+            periodKey: 'Peak', name: 'Peak', buyRate: 0.4, sellRate: 0.05,
+        });
+        expect(body.loadTiming.tariffTimeline.at(-1)?.end).toBe('2026-09-26T02:00:00.000Z');
+        expect(body.loadTiming.tariffTimeline[1]).toMatchObject({
+            start: '2026-09-19T03:00:00.000Z', periodKey: 'Off peak', name: 'Off peak', buyRate: 0.1, sellRate: 0.03,
+        });
         expect(body.sources).toEqual({ calculatedAt: '2026-09-19T02:00:00.000Z', energyDataThrough: '2026-09-19T01:55:00.000Z' });
+        expect(siteMock).toHaveBeenCalledTimes(1);
+        expect(currencyMock).toHaveBeenCalledTimes(1);
         expect(JSON.stringify(body)).not.toContain('tariff_content_v2');
         expect(JSON.stringify(body)).not.toContain('gridUsage');
         vi.useRealTimers();

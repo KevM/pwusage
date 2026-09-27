@@ -1,67 +1,46 @@
+import Foundation
 import Testing
 @testable import PWUsage
 
-@Suite
+@Suite("Load Timing Affordance Tests")
 struct LoadTimingAffordanceTests {
-    @Test
-    func selectsLargestCoveredLoadAndNextShortfall() throws {
-        let result = LoadTimingAffordance.evaluate(timing: timing(activeBalance: 17), plannedCarKwh: 30)
+    @Test("Start-now estimate is described as an estimate, never guaranteed free or covered")
+    func estimateLanguageDoesNotGuaranteeCoverage() {
+        let estimate = LoadTimingEstimator.StartNowEstimate(
+            total: 2.34,
+            finishTime: Date(timeIntervalSince1970: 1_800_000_000),
+            batteryKwh: 0,
+            wallKwh: 8,
+            durationHours: 2,
+            segments: [],
+            hasUnobservedBalance: false
+        )
 
-        #expect(result.state == .allowed(.dishwasher))
-        #expect(result.periodName == "Peak")
-        #expect(result.balanceKwh == 17)
-        #expect(result.nextUnmet?.choice == .laundry)
-        #expect(result.nextUnmet?.shortfallKwh == 3)
+        let summary = LoadTimingPresentation.startNowSummary(estimate, currencyCode: "USD", timeZone: "UTC")
+        #expect(summary.total == "Estimated $2.34 to start now")
+        #expect(!summary.total.localizedCaseInsensitiveContains("free"))
+        #expect(!summary.total.localizedCaseInsensitiveContains("covered"))
+        #expect(summary.energy == "About 8.0 kWh from the wall")
+        #expect(summary.finish.contains("Finishes"))
+        #expect(summary.finish.contains("about 2.0 hours"))
     }
 
-    @Test
-    func laundryIsCoveredAtItsHeadroomBoundary() {
-        let result = LoadTimingAffordance.evaluate(timing: timing(activeBalance: 20), plannedCarKwh: 30)
-        #expect(result.state == .allowed(.laundry))
-        #expect(result.nextUnmet?.choice == .car)
-        #expect(result.nextUnmet?.shortfallKwh == 28)
+    @Test("Missing cycle balance is called out while retaining the estimate")
+    func missingBalanceNoteIsExplicit() {
+        #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: true) == "Some tariff periods have no observed billing-cycle balance; those portions are estimated at the buy rate.")
+        #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: false) == nil)
     }
 
-    @Test
-    func carUsesDynamicHeadroomForPositivePlannedCharge() {
-        let result = LoadTimingAffordance.evaluate(timing: timing(activeBalance: 48), plannedCarKwh: 30)
-        #expect(result.state == .allowed(.car))
-        #expect(result.nextUnmet == nil)
+    @Test("Unavailable reasons and zero-charge state are clear")
+    func unavailableAndZeroChargeStates() {
+        #expect(LoadTimingPresentation.unavailableMessage(.incompleteTimeline) == "Tariff timing is incomplete, so a start-now cost estimate is unavailable.")
+        #expect(LoadTimingPresentation.unavailableMessage(.invalidInput) == "Profile or tariff values are invalid, so a start-now estimate is unavailable.")
+        #expect(LoadTimingPresentation.noChargeMessage == "No charging needed at this target.")
     }
 
-    @Test
-    func deficitReturnsCautionForNextSmallestLoadAndShortfall() {
-        let result = LoadTimingAffordance.evaluate(timing: timing(activeBalance: -4), plannedCarKwh: 30)
-        #expect(result.state == .caution)
-        #expect(result.nextUnmet?.choice == .dishwasher)
-        #expect(result.nextUnmet?.shortfallKwh == 9)
-    }
-
-    @Test
-    func syntheticActivePricingPeriodDoesNotReplaceMissingObservation() {
-        let result = LoadTimingAffordance.evaluate(timing: timing(activeBalance: nil, syntheticActiveBalance: 100), plannedCarKwh: 30)
-        #expect(result.state == .awaitingActiveBalance)
-        #expect(result.periodName == nil)
-        #expect(result.balanceKwh == nil)
-    }
-
-    @Test
-    func zeroPlannedCarChargeDoesNotOfferCar() {
-        let result = LoadTimingAffordance.evaluate(timing: timing(activeBalance: 50), plannedCarKwh: 0)
-        #expect(result.state == .allowed(.laundry))
-        #expect(result.choices.map(\.choice) == [.dishwasher, .laundry])
-    }
-
-    @Test
-    func preservesNextCheaperPeriod() {
-        let result = LoadTimingAffordance.evaluate(timing: timing(activeBalance: 17, nextCheaper: .init(name: "Off peak", marginalCost: 0.12, phrase: "in 2 hours")), plannedCarKwh: 30)
-        #expect(result.nextCheaper == .init(name: "Off peak", marginalCost: 0.12, phrase: "in 2 hours"))
-    }
-
-    private func timing(activeBalance: Double?, syntheticActiveBalance: Double? = nil, nextCheaper: NextCheaperPeriod? = nil) -> LoadTiming {
-        let active = LoadTimingPeriod(name: "Peak", marginalCost: 0.48, basis: activeBalance == nil ? "unobserved" : "buy", cycleNetExportKwh: activeBalance ?? 0, isActive: true, nextStartPhrase: nil, buyRate: 0.48, sellRate: 0.12)
-        let periods = activeBalance == nil ? [] : [active]
-        let pricingActive = LoadTimingPeriod(name: "Peak", marginalCost: 0.48, basis: "buy", cycleNetExportKwh: syntheticActiveBalance ?? activeBalance ?? 0, isActive: true, nextStartPhrase: nil, buyRate: 0.48, sellRate: 0.12)
-        return LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: periods, pricingPeriods: [pricingActive], nextCheaper: nextCheaper, nextCheaperPhrase: nextCheaper?.phrase, nextStartPhraseByKey: [:])
+    @Test("No cycle observations remain visible as an informational note")
+    func noCycleDataNote() {
+        #expect(LoadTimingPresentation.cycleObservationMessage(hasCycleData: false) == "Billing-cycle observations are unavailable. The start-now estimate uses buy rates where no balance has been observed.")
+        #expect(LoadTimingPresentation.cycleObservationMessage(hasCycleData: true) == nil)
     }
 }

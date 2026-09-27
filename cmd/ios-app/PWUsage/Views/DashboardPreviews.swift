@@ -5,6 +5,12 @@ private enum DashboardPreviewMode: String, CaseIterable {
     case normal
     case empty
     case stale
+    case modestSurplus
+    case abundantSurplus
+    case noFit
+    case unknownBalance
+    case tariffCrossing
+    case longLevel1
     case noTariff
     case error
 }
@@ -18,21 +24,60 @@ private final class DashboardPreviewAPI: MobileDashboardDataAPI {
     init(mode: DashboardPreviewMode) {
         self.mode = mode
         let sourceOffset: TimeInterval = mode == .stale ? -2 * 60 * 60 : 0
-        let sourceTime = ISO8601DateFormatter().string(from: Date.now.addingTimeInterval(sourceOffset))
+        let previewNow = Date.now
+        let sourceTime = ISO8601DateFormatter().string(from: previewNow.addingTimeInterval(sourceOffset))
+        let calculatedTime = ISO8601DateFormatter().string(from: previewNow)
+        let calendar = Calendar.current
+        let cycleStart = calendar.dateInterval(of: .month, for: previewNow)?.start ?? previewNow.addingTimeInterval(-14 * 86400)
+        let cycleEnd = calendar.date(byAdding: .month, value: 1, to: cycleStart) ?? previewNow.addingTimeInterval(14 * 86400)
+        let billDateFormatter = ISO8601DateFormatter()
+        let cycleStartText = billDateFormatter.string(from: cycleStart)
+        let cycleEndText = billDateFormatter.string(from: cycleEnd)
         let hasData = mode != .empty
         let hasTariff = mode != .noTariff
+        let peakBalance: Double = switch mode {
+        case .modestSurplus, .normal: 2.5
+        case .abundantSurplus: 120
+        case .stale: 20
+        case .noFit: -12
+        case .unknownBalance: -4.2
+        default: -4.2
+        }
+        let offPeakBalance: Double = switch mode {
+        case .modestSurplus: 1.5
+        case .abundantSurplus: 120
+        case .noFit: -12
+        case .unknownBalance: 32.4
+        default: 32.4
+        }
+        let timelineFormatter = ISO8601DateFormatter()
+        timelineFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let tariffTimelineJSON = (0..<28).map { index in
+            let interval: TimeInterval = mode == .tariffCrossing ? 60 * 60 : 6 * 60 * 60
+            let start = previewNow.addingTimeInterval(TimeInterval(index) * interval)
+            let end = previewNow.addingTimeInterval(TimeInterval(index + 1) * interval)
+            let name = mode == .tariffCrossing ? (index.isMultiple(of: 2) ? "Peak" : "Off peak") : (index.isMultiple(of: 4) ? "Peak" : "Off peak")
+            let buyRate = name == "Peak" ? 0.48 : 0.22
+            let sellRate = 0.12
+            return #"{"start":"\#(timelineFormatter.string(from: start))","end":"\#(timelineFormatter.string(from: end))","periodKey":"\#(name)","name":"\#(name)","buyRate":\#(buyRate),"sellRate":\#(sellRate)}"#
+        }.joined(separator: ",")
         let activeLoadTiming = !hasTariff
             ? "null"
             : hasData
-            ? #"{"periodName":"Peak","buyRate":0.48,"sellRate":0.12,"marginalCost":0.48,"basis":"buy","balanceKwh":4.2,"energyDataThrough":"\#(sourceTime)"}"#
+            ? #"{"periodName":"Peak","buyRate":0.48,"sellRate":0.12,"marginalCost":\#(peakBalance > 0 ? "0.12" : "0.48"),"basis":\#(peakBalance > 0 ? #""sell""# : #""buy""#),"balanceKwh":\#(peakBalance),"energyDataThrough":"\#(sourceTime)"}"#
             : #"{"periodName":"Peak","buyRate":0.48,"sellRate":0.12,"marginalCost":null,"basis":"unobserved","balanceKwh":null,"energyDataThrough":null}"#
         let tariffJSON = hasTariff ? #""Residential · Time of use""# : #""Unknown""#
         let liveJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago","localDate":"2026-09-23"},"live":{"solarPower":4180,"loadPower":1260,"batteryPower":-2920,"gridPower":0},"stateOfCharge":\#(mode == .stale ? "null" : "72"),"activeTariff":\#(tariffJSON),"activeLoadTiming":\#(activeLoadTiming),"today":{"homeKwh":18.4,"solarKwh":14.8,"gridNetKwh":3.6,"batteryNetKwh":-2.1},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"\#(sourceTime)","energyDataThrough":\#(hasData ? #""\#(sourceTime)""# : "null")}}"#
-        let observedPeriods = hasData
-            ? #"[{"name":"Peak","marginalCost":0.48,"basis":"buy","cycleNetExportKwh":-4.2,"isActive":true,"nextStartPhrase":"in 3 hours","buyRate":0.48,"sellRate":0.12},{"name":"Off peak","marginalCost":0.12,"basis":"sell","cycleNetExportKwh":32.4,"isActive":false,"nextStartPhrase":"tomorrow at 12:00 AM","buyRate":0.22,"sellRate":0.12}]"#
-            : "[]"
-        let loadTimingJSON = #"{"hasTariff":true,"hasCycleData":\#(hasData ? "true" : "false"),"activeIsCheapest":false,"periods":\#(observedPeriods),"pricingPeriods":[{"name":"Off peak","marginalCost":\#(hasData ? "0.12" : "null"),"basis":\#(hasData ? #""sell""# : #""unobserved""#),"cycleNetExportKwh":\#(hasData ? "32.4" : "0"),"isActive":false,"nextStartPhrase":"tomorrow at 12:00 AM","buyRate":0.22,"sellRate":0.12},{"name":"Peak","marginalCost":\#(hasData ? "0.48" : "null"),"basis":\#(hasData ? #""buy""# : #""unobserved""#),"cycleNetExportKwh":\#(hasData ? "-4.2" : "0"),"isActive":true,"nextStartPhrase":"in 3 hours","buyRate":0.48,"sellRate":0.12},{"name":"Shoulder","marginalCost":null,"basis":"unobserved","cycleNetExportKwh":0,"isActive":false,"nextStartPhrase":"tomorrow at 10:00 PM","buyRate":0.30,"sellRate":0.08}],"nextCheaper":\#(hasData ? #"{"name":"Off peak","marginalCost":0.12,"phrase":"in 3 hours"}"# : "null"),"nextCheaperPhrase":\#(hasData ? #""Wait until Off peak in 3 hours""# : "null"),"nextStartPhraseByKey":{"Peak":"in 3 hours","Off peak":"tomorrow at 12:00 AM","Shoulder":"tomorrow at 10:00 PM"}}"#
-        let billJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago"},"currentBill":{"estimatedCost":146.82,"currency":"USD","cycleStart":"2026-09-01T05:00:00Z","cycleEnd":"2026-10-01T05:00:00Z","periods":[{"tariffName":"Residential · Time of use","periodName":"Off peak","netGridKwh":214.6,"cost":26.83},{"tariffName":"Residential · Time of use","periodName":"Peak","netGridKwh":142.8,"cost":87.75},{"tariffName":"Residential · Time of use","periodName":"Solar credit","netGridKwh":-94.2,"cost":-8.72}]},"loadTiming":\#(hasTariff ? loadTimingJSON : "null"),"sources":{"calculatedAt":"\#(sourceTime)","energyDataThrough":\#(sourceTime)}}"#
+        let observedPeriods: String
+        if !hasData {
+            observedPeriods = "[]"
+        } else if mode == .unknownBalance {
+            observedPeriods = #"[{"name":"Off peak","marginalCost":0.12,"basis":"sell","cycleNetExportKwh":\#(offPeakBalance),"isActive":false,"nextStartPhrase":"tomorrow at 12:00 AM","buyRate":0.22,"sellRate":0.12}]"#
+        } else {
+            observedPeriods = #"[{"name":"Peak","marginalCost":\#(peakBalance > 0 ? "0.12" : "0.48"),"basis":\#(peakBalance > 0 ? #""sell""# : #""buy""#),"cycleNetExportKwh":\#(peakBalance),"isActive":true,"nextStartPhrase":"in 3 hours","buyRate":0.48,"sellRate":0.12},{"name":"Off peak","marginalCost":0.12,"basis":"sell","cycleNetExportKwh":\#(offPeakBalance),"isActive":false,"nextStartPhrase":"tomorrow at 12:00 AM","buyRate":0.22,"sellRate":0.12}]"#
+        }
+        let loadTimingJSON = #"{"hasTariff":true,"hasCycleData":\#(hasData ? "true" : "false"),"activeIsCheapest":false,"periods":\#(observedPeriods),"pricingPeriods":[{"name":"Off peak","marginalCost":\#(hasData ? "0.12" : "null"),"basis":\#(hasData ? #""sell""# : #""unobserved""#),"cycleNetExportKwh":\#(hasData ? String(offPeakBalance) : "0"),"isActive":false,"nextStartPhrase":"tomorrow at 12:00 AM","buyRate":0.22,"sellRate":0.12},{"name":"Peak","marginalCost":\#(hasData ? (peakBalance > 0 ? "0.12" : "0.48") : "null"),"basis":\#(hasData ? (peakBalance > 0 ? #""sell""# : #""buy""#) : #""unobserved""#),"cycleNetExportKwh":\#(hasData ? String(peakBalance) : "0"),"isActive":true,"nextStartPhrase":"in 3 hours","buyRate":0.48,"sellRate":0.12},{"name":"Shoulder","marginalCost":null,"basis":"unobserved","cycleNetExportKwh":0,"isActive":false,"nextStartPhrase":"tomorrow at 10:00 PM","buyRate":0.30,"sellRate":0.08}],"tariffTimeline":[\#(tariffTimelineJSON)],"nextCheaper":\#(hasData ? #"{"name":"Off peak","marginalCost":0.12,"phrase":"in 3 hours"}"# : "null"),"nextCheaperPhrase":\#(hasData ? #""Wait until Off peak in 3 hours""# : "null"),"nextStartPhraseByKey":{"Peak":"in 3 hours","Off peak":"tomorrow at 12:00 AM","Shoulder":"tomorrow at 10:00 PM"}}"#
+        let billJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago"},"currentBill":{"estimatedCost":146.82,"currency":"USD","cycleStart":"\#(cycleStartText)","cycleEnd":"\#(cycleEndText)","periods":[{"tariffName":"Residential · Time of use","periodName":"Off peak","netGridKwh":214.6,"cost":26.83},{"tariffName":"Residential · Time of use","periodName":"Peak","netGridKwh":142.8,"cost":87.75},{"tariffName":"Residential · Time of use","periodName":"Solar credit","netGridKwh":-94.2,"cost":-8.72}]},"loadTiming":\#(hasTariff ? loadTimingJSON : "null"),"sources":{"calculatedAt":"\#(calculatedTime)","energyDataThrough":"\#(sourceTime)"}}"#
         liveResponse = try! MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(liveJSON.utf8))
         billResponse = try! MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(billJSON.utf8))
     }
@@ -91,16 +136,27 @@ private struct BillPreview: View {
 @MainActor
 private struct LoadTimingPreview: View {
     @StateObject private var coordinator: DashboardCoordinator
+    private let profileStore: LoadProfileStore
+    private let exploredProfileID: String?
     private let site = MobileSite(id: "preview-home", name: "Cedar House", utility: "Demo utility")
 
-    init(mode: DashboardPreviewMode) {
+    init(mode: DashboardPreviewMode, exploredProfileID: String? = nil) {
         let api = DashboardPreviewAPI(mode: mode)
         _coordinator = StateObject(wrappedValue: DashboardCoordinator(siteID: "preview-home", api: api, timerInterval: nil))
+        let suiteName = "pwusage.preview.load-timing.\(mode.rawValue)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = LoadProfileStore(userDefaults: defaults)
+        if mode == .longLevel1 {
+            _ = try? store.editProfile(id: "car", energyKwh: 36, durationHours: 24, carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level1))
+        }
+        profileStore = store
+        self.exploredProfileID = exploredProfileID
     }
 
     var body: some View {
         NavigationStack {
-            LoadTimingView(coordinator: coordinator, site: site)
+            LoadTimingView(coordinator: coordinator, site: site, profileStore: profileStore, initialExploredProfileID: exploredProfileID)
         }
         .task {
             coordinator.scenePhaseChanged(isActive: true)
@@ -148,6 +204,39 @@ private struct LoadTimingPreview: View {
 
 #Preview("Load timing · Stale source") {
     LoadTimingPreview(mode: .stale)
+}
+
+#Preview("Load timing · Modest surplus") {
+    LoadTimingPreview(mode: .modestSurplus)
+}
+
+#Preview("Load timing · Abundant surplus") {
+    LoadTimingPreview(mode: .abundantSurplus)
+}
+
+#Preview("Load timing · Alternative estimate") {
+    LoadTimingPreview(mode: .abundantSurplus, exploredProfileID: "washer")
+}
+
+#Preview("Load timing · No fit") {
+    LoadTimingPreview(mode: .noFit)
+}
+
+#Preview("Load timing · Unknown balance") {
+    LoadTimingPreview(mode: .unknownBalance)
+}
+
+#Preview("Load timing · Tariff crossing") {
+    LoadTimingPreview(mode: .tariffCrossing)
+}
+
+#Preview("Load timing · Long Level 1") {
+    LoadTimingPreview(mode: .longLevel1)
+}
+
+#Preview("Load timing · Accessibility text") {
+    LoadTimingPreview(mode: .normal)
+        .environment(\.dynamicTypeSize, .accessibility2)
 }
 
 #Preview("Load timing · No tariff") {

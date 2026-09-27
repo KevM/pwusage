@@ -8,6 +8,7 @@ import { MOBILE_DASHBOARD_CONTRACT_VERSION, type MobileBillPeriod } from '@/lib/
 import { wattsToKilowatts } from '@/lib/energy-utils';
 import { Schedule } from '@/lib/schedule';
 import { computeLoadTiming } from '@/lib/load-timing';
+import { buildLoadTimingTimeline } from '@/lib/load-timing-timeline';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,6 +61,16 @@ export async function GET(request: Request) {
             const loadTiming = site.tariffs.length > 0 && activePeriod
                 ? computeLoadTiming(schedule, usage, now, site.timezone, activePeriod)
                 : null;
+            const loadTimingWithTimeline = loadTiming
+                ? {
+                    ...loadTiming,
+                    tariffTimeline: buildLoadTimingTimeline(
+                        schedule,
+                        now,
+                        new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+                    ),
+                }
+                : null;
 
             return NextResponse.json({
                 version: MOBILE_DASHBOARD_CONTRACT_VERSION,
@@ -71,7 +82,7 @@ export async function GET(request: Request) {
                     cycleEnd: cycleEnd.toISOString(),
                     periods,
                 },
-                loadTiming,
+                loadTiming: loadTimingWithTimeline,
                 sources: {
                     calculatedAt: now.toISOString(),
                     energyDataThrough: energyDataThrough?.toISOString() ?? null,

@@ -1,155 +1,204 @@
 import SwiftUI
 
 enum LoadTimingPresentation {
-    enum DetailState: Equatable {
-        case loading
-        case ready
-        case unavailable(String)
+    struct RecommendationMessage: Equatable {
+        let title: String
+        let detail: String
     }
 
-    static func actionTitle(for affordance: LoadTimingAffordance) -> String {
-        switch affordance.state {
-        case .allowed(let choice):
-            switch choice {
-            case .dishwasher: return "Dishwasher"
-            case .laundry: return "Laundry"
-            case .car: return "Car charge"
+    struct EnergyImpact: Equatable {
+        let surplusConsumed: String
+        let energyBought: String
+        let remainingSurplus: String?
+    }
+
+    static let noResponseRecommendationMessage = RecommendationMessage(
+        title: "Recommendation unavailable",
+        detail: "The latest refresh failed and no saved bill data is available, so no recommendation or load estimates can be shown."
+    )
+    static let noResponseExplorationMessage = "A saved bill response and tariff data are required before a load estimate or calculation is available."
+
+    struct StartNowSummary: Equatable {
+        let total: String
+        let energy: String
+        let finish: String
+    }
+
+    struct RunCardSummary: Equatable {
+        let total: String
+        let finish: String
+    }
+
+    struct BreakdownRow: Equatable {
+        let periodKey: String
+        let wallEnergy: String
+        let balance: String
+        let total: String
+    }
+
+    static func profileChipTitle(_ profile: LoadProfile) -> String {
+        if profile.kind == .car, let settings = profile.carSettings,
+           let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) {
+            return "\(profile.name) · \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0...1)))) kWh battery"
+        }
+        return "\(profile.name) · \(profile.energyKwh.formatted(.number.precision(.fractionLength(0...1)))) kWh"
+    }
+
+    static func profileChipAccessibilityLabel(_ profile: LoadProfile) -> String {
+        if profile.kind == .car, let settings = profile.carSettings,
+           let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) {
+            return "\(profile.name), \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours to the battery, about \(estimate.wallKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours from the wall, Level \(settings.chargingLevel == .level1 ? "1" : "2")"
+        }
+        return "\(profile.name), \(profile.energyKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours, \(profile.durationHours.formatted(.number.precision(.fractionLength(0...1)))) hours"
+    }
+
+    static func actionTitle(for profile: LoadProfile) -> String {
+        "\(profile.kind == .car ? "Charge" : "Run") \(profile.name)"
+    }
+
+    static func explorationTitle(for profile: LoadProfile) -> String {
+        "What if you \(profile.kind == .car ? "charge" : "run") \(profile.name)?"
+    }
+
+    static func recommendationMessage(
+        for state: LoadTimingRecommendation.State,
+        refreshUnavailable: Bool = false,
+        hasTariff: Bool = true,
+        hasExpiredCandidate: Bool = false
+    ) -> RecommendationMessage {
+        switch state {
+        case .ready:
+            return RecommendationMessage(title: "Good fit now", detail: "Your observed tariff surplus covers this run’s estimated energy.")
+        case .noFit:
+            if refreshUnavailable {
+                return RecommendationMessage(title: "Recommendation unavailable", detail: "The latest refresh failed, so the saved data cannot confirm whether any load fits now.")
             }
-        case .caution:
-            return "Avoid large loads"
-        case .awaitingActiveBalance:
-            return "Balance not recorded yet"
+            return RecommendationMessage(title: "Your surplus won’t cover a full load.", detail: "No configured load fits entirely within the observed surplus for the tariff periods it would use.")
+        case .incompleteData:
+            if !hasTariff {
+                return RecommendationMessage(title: "Tariff data needed", detail: "An active tariff is missing, so load costs and surplus coverage cannot be estimated.")
+            }
+            if hasExpiredCandidate {
+                return RecommendationMessage(title: "No safe recommendation", detail: "This run would continue beyond the current billing cycle, so its current-cycle surplus cannot be used for the estimate.")
+            }
+            return RecommendationMessage(title: "Tariff data incomplete", detail: "Some tariff periods or billing-cycle balances are missing, so a full-load recommendation is unavailable.")
+        case .stale:
+            let detail = refreshUnavailable
+                ? "The latest refresh failed. This saved estimate may be old, so no recommendation is offered."
+                : "Energy observations are older than one hour or have no valid source time, so no recommendation is offered."
+            return RecommendationMessage(title: "Recommendation unavailable", detail: detail)
+        case .noEnergyNeeded:
+            return RecommendationMessage(title: "No energy needed", detail: "Every configured load is already at its target, so no energy is needed right now.")
+        case .noCandidates:
+            if !hasTariff {
+                return RecommendationMessage(title: "Tariff and load profiles needed", detail: "Add a load profile and configure an active tariff to compare estimates with observed surplus.")
+            }
+            return RecommendationMessage(title: "No load profiles yet", detail: "Add a load profile to compare its estimate with your observed tariff surplus.")
         }
     }
 
-    static func actionContext(for affordance: LoadTimingAffordance) -> String {
-        guard let periodName = affordance.periodName, let balance = affordance.balanceKwh else {
-            return "This period's balance is not recorded yet."
+    static func energyImpact(_ candidate: LoadTimingRecommendation.Candidate) -> EnergyImpact {
+        let surplus = candidate.surplusKwh.formatted(.number.precision(.fractionLength(1)))
+        let bought = candidate.boughtKwh.formatted(.number.precision(.fractionLength(1)))
+        let remaining = candidate.remainingSurplusKwh.map {
+            "\($0.formatted(.number.precision(.fractionLength(1)))) kWh surplus remains across the tariff periods used"
         }
-        let direction = balance > 0 ? "Surplus" : (balance < 0 ? "Deficit" : "Balanced")
-        let amount = abs(balance).formatted(.number.precision(.fractionLength(0...1)))
-        return "\(DashboardPresentation.tariffPeriodTitle(periodName)) · \(direction) \(amount) kWh"
+        return EnergyImpact(
+            surplusConsumed: "Uses \(surplus) kWh of observed surplus",
+            energyBought: "Buys \(bought) kWh at tariff rates",
+            remainingSurplus: remaining
+        )
     }
 
-    static func actionNextStep(for affordance: LoadTimingAffordance) -> String? {
-        guard let next = affordance.nextUnmet else { return nil }
-        let name: String
-        switch next.choice {
-        case .dishwasher: name = "Dishwasher"
-        case .laundry: name = "Laundry"
-        case .car: name = "Car charge"
-        }
-        let shortfall = next.shortfallKwh.formatted(.number.precision(.fractionLength(0...1)))
-        return "\(name) needs \(shortfall) kWh more"
+    static func costDifference(alternativeCost: Double?, suggestedCost: Double?, currencyCode: String) -> String? {
+        guard let alternativeCost, let suggestedCost,
+              alternativeCost.isFinite, suggestedCost.isFinite else { return nil }
+        let difference = alternativeCost - suggestedCost
+        guard difference.isFinite else { return nil }
+        if abs(difference) < 0.01 { return "About the same estimated cost as the suggestion" }
+        let amount = DashboardPresentation.currency(abs(difference), code: currencyCode)
+        return difference > 0
+            ? "Estimated \(amount) more than the suggestion"
+            : "Estimated \(amount) less than the suggestion"
     }
 
-    static func actionCheaperAdvice(_ next: NextCheaperPeriod?, currencyCode: String) -> String? {
-        guard let next else { return nil }
-        let rate = DashboardPresentation.loadRate(next.marginalCost, code: currencyCode)
-        return "Cheaper: \(DashboardPresentation.tariffPeriodTitle(next.name)) · \(rate) · \(next.phrase)"
+    static func showsBackToSuggestion(explicitID: String?, suggestedID: String?) -> Bool {
+        guard let explicitID, let suggestedID else { return false }
+        return explicitID != suggestedID
     }
 
-    static func actionAccessibilityLabel(for affordance: LoadTimingAffordance, currencyCode: String = "USD") -> String {
-        let title = actionTitle(for: affordance)
-        let context: String
-        if let periodName = affordance.periodName, let balance = affordance.balanceKwh {
-            context = "\(DashboardPresentation.tariffPeriodTitle(periodName)), \(DashboardPresentation.liveLoadBalanceAccessibilityLabel(balance))"
-        } else {
-            context = actionContext(for: affordance)
-        }
-        let nextStep = actionNextStep(for: affordance).map { ", \($0)" } ?? ""
-        let cheaper: String
-        if let next = affordance.nextCheaper {
-            let rate = DashboardPresentation.loadRateAccessibilityLabel(next.marginalCost, code: currencyCode)
-            cheaper = ", Cheaper in \(DashboardPresentation.tariffPeriodTitle(next.name)), \(rate), \(next.phrase)"
-        } else {
-            cheaper = ""
-        }
-        return "Can run now. \(title). \(context)\(nextStep)\(cheaper)"
+    static let runDetailsAccessibilityLabel = "Load run details"
+
+    static func activeBalanceSummary(_ timing: LoadTiming) -> String? {
+        guard timing.hasCycleData, let active = timing.periods.first(where: \.isActive) else { return nil }
+        let balance = active.cycleNetExportKwh
+        let direction = balance > 0 ? "surplus" : (balance < 0 ? "deficit" : "balanced")
+        return "Current \(DashboardPresentation.tariffPeriodTitle(active.name)) billing-cycle balance: \(abs(balance).formatted(.number.precision(.fractionLength(0...1)))) kWh \(direction)."
     }
 
-    static func emptyMessage(hasTariff: Bool, hasCycleData: Bool) -> String? {
-        guard hasTariff else { return "No active tariff is configured for this site." }
+    static func observedBalances(_ timing: LoadTiming) -> [String: Double] {
+        guard timing.hasCycleData else { return [:] }
+        return timing.periods.reduce(into: [:]) { balances, period in
+            balances[period.name] = period.cycleNetExportKwh
+        }
+    }
+
+    static func sourceTimeSummary(_ energyDataThrough: Date?, timeZone: String) -> String {
+        let time = energyDataThrough.map { DashboardPresentation.date($0, timeZoneIdentifier: timeZone, dateStyle: .medium, timeStyle: .short) } ?? "unavailable"
+        return "Energy observations through \(time)"
+    }
+
+    static func startNowSummary(_ estimate: LoadTimingEstimator.StartNowEstimate, currencyCode: String, timeZone: String) -> StartNowSummary {
+        StartNowSummary(
+            total: "Estimated \(DashboardPresentation.currency(estimate.total, code: currencyCode)) to start now",
+            energy: "About \(estimate.wallKwh.formatted(.number.precision(.fractionLength(1)))) kWh from the wall",
+            finish: "Finishes \(DashboardPresentation.date(estimate.finishTime, timeZoneIdentifier: timeZone, dateStyle: .medium, timeStyle: .short)) · about \(estimate.durationHours.formatted(.number.precision(.fractionLength(1)))) hours"
+        )
+    }
+
+    static func runCardSummary(_ estimate: LoadTimingEstimator.StartNowEstimate, currencyCode: String, timeZone: String) -> RunCardSummary {
+        let summary = startNowSummary(estimate, currencyCode: currencyCode, timeZone: timeZone)
+        return RunCardSummary(total: summary.total, finish: summary.finish)
+    }
+
+    static func missingBalanceNote(hasUnobservedBalance: Bool) -> String? {
+        guard hasUnobservedBalance else { return nil }
+        return "Some tariff periods have no observed billing-cycle balance; those portions are estimated at the buy rate."
+    }
+
+    static func unavailableMessage(_ reason: LoadTimingEstimator.StartNowUnavailableReason) -> String {
+        switch reason {
+        case .invalidInput: return "Profile or tariff values are invalid, so a start-now estimate is unavailable."
+        case .incompleteTimeline: return "Tariff timing is incomplete, so a start-now cost estimate is unavailable."
+        case .billingCycleExpired: return "This run extends beyond the current billing cycle, so its surplus cannot be estimated safely."
+        }
+    }
+
+    static let noChargeMessage = "No charging needed at this target."
+
+    static func cycleObservationMessage(hasCycleData: Bool) -> String? {
         guard !hasCycleData else { return nil }
-        return "Recommendations will appear after energy is recorded in this billing cycle."
+        return "Billing-cycle observations are unavailable. The start-now estimate uses buy rates where no balance has been observed."
     }
 
-    static func detailState(hasBillResponse: Bool, hasLoadTiming: Bool, isUnavailable: Bool) -> DetailState {
-        if hasBillResponse {
-            return hasLoadTiming ? .ready : .unavailable("Configure a tariff or check its rates on the website to make load timing available.")
+    static func breakdownRows(_ segments: [LoadTimingEstimator.StartNowSegment], currencyCode: String, unobservedPeriodKeys: Set<String> = []) -> [BreakdownRow] {
+        segments.map { segment in
+            let balance = unobservedPeriodKeys.contains(segment.periodKey)
+                ? "No observed balance · estimated at buy rate"
+                : "\(segment.surplusKwh.formatted(.number.precision(.fractionLength(1)))) kWh observed surplus · \(segment.boughtKwh.formatted(.number.precision(.fractionLength(1)))) kWh at buy rate"
+            return BreakdownRow(
+                periodKey: segment.periodKey,
+                wallEnergy: "\(segment.wallKwh.formatted(.number.precision(.fractionLength(1)))) kWh",
+                balance: balance,
+                total: DashboardPresentation.currency(segment.total, code: currencyCode)
+            )
         }
-        if isUnavailable {
-            return .unavailable("The server could not provide tariff period details. Try again when your connection is available.")
-        }
-        return .loading
-    }
-
-    static func orderedPricingPeriods(_ periods: [LoadTimingPeriod]) -> [LoadTimingPeriod] {
-        periods.enumerated()
-            .sorted { lhs, rhs in
-                if lhs.element.isActive != rhs.element.isActive {
-                    return lhs.element.isActive
-                }
-                return lhs.offset < rhs.offset
-            }
-            .map(\.element)
-    }
-
-    static func shouldShowEstimator(hasCycleData: Bool) -> Bool {
-        hasCycleData
     }
 
     static func sourceStatus(isUnavailable: Bool, energyDataThrough: Date?, now: Date = .now) -> String {
         let freshness = DashboardPresentation.freshness(energyDataThrough, now: now, staleAfter: 60 * 60)
-        if isUnavailable {
-            return "Refresh unavailable · \(freshness.lowercased())"
-        }
-        return freshness
+        return isUnavailable ? "Refresh unavailable · \(freshness.lowercased())" : freshness
     }
-
-    static func estimate(
-        amount: Double,
-        period: LoadTimingPeriod,
-        selectedProfile: LoadTimingEstimator.Profile?
-    ) -> LoadTimingEstimator.Cost {
-        guard period.marginalCost != nil || period.basis == "unobserved" else {
-            return LoadTimingEstimator.costToRun(amount, pricing: nil)
-        }
-        return LoadTimingEstimator.costToRun(
-            amount,
-            pricing: .init(surplusKwh: period.cycleNetExportKwh, buyRate: period.buyRate, sellRate: period.sellRate),
-            headroomKwh: selectedProfile?.headroomKwh
-        )
-    }
-
-    static func coverageSummary(_ cost: LoadTimingEstimator.Cost) -> String {
-        guard cost.verdict != .unknown else { return "Coverage unavailable" }
-        return "\(cost.coveredKwh.formatted(.number.precision(.fractionLength(1)))) kWh covered · \(cost.boughtKwh.formatted(.number.precision(.fractionLength(1)))) kWh bought"
-    }
-
-    static func estimateAccessibilityLabel(
-        period: LoadTimingPeriod,
-        estimate: LoadTimingEstimator.Cost,
-        startPhrase: String?,
-        verdict: String,
-        currencyCode: String,
-        locale: Locale = .current
-    ) -> String {
-        let title = DashboardPresentation.tariffPeriodTitle(period.name)
-        let unitRate = period.marginalCost ?? (period.basis == "unobserved" ? period.buyRate : nil)
-        let rate = DashboardPresentation.loadRateAccessibilityLabel(unitRate, code: currencyCode, locale: locale)
-        let spokenRate = period.basis == "unobserved" ? "Buy rate, \(rate)" : rate
-        let start = period.isActive ? "Currently active" : startPhrase.map { "Starts \($0)" } ?? "Start time unavailable"
-        let total = estimate.total.map { DashboardPresentation.currency($0, code: currencyCode, locale: locale) } ?? "unavailable"
-        let coverage: String
-        if estimate.verdict == .unknown {
-            coverage = "Coverage unavailable"
-        } else {
-            coverage = "\(estimate.coveredKwh.formatted(.number.precision(.fractionLength(1)))) kilowatt-hours covered, \(estimate.boughtKwh.formatted(.number.precision(.fractionLength(1)))) kilowatt-hours bought"
-        }
-        return "\(title), \(spokenRate), \(start), \(verdict), estimated cost \(total), \(coverage)"
-    }
-
 }
 
 struct LoadTimingView: View {
@@ -157,373 +206,313 @@ struct LoadTimingView: View {
     let site: MobileSite
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @FocusState private var isNumericInputFocused: Bool
-    @State private var selectedProfileID: String? = "car"
-    @State private var customAmount = 20.0
-    @State private var batteryCapacityKwh = 60.0
-    @State private var currentChargePercent = 20.0
-    @State private var targetChargePercent = 80.0
+    @StateObject private var profileStore: LoadProfileStore
+    @State private var isProfileSheetPresented = false
+    @State private var runDetailsSnapshot: LoadRunDetailsSnapshot?
+    @State private var exploredProfileID: String?
+
+    init(coordinator: DashboardCoordinator, site: MobileSite, profileStore: LoadProfileStore? = nil, initialExploredProfileID: String? = nil) {
+        self.coordinator = coordinator
+        self.site = site
+        _profileStore = StateObject(wrappedValue: profileStore ?? LoadProfileStore())
+        _exploredProfileID = State(initialValue: initialExploredProfileID)
+    }
 
     private var response: MobileBillResponse? { coordinator.bill.response }
     private var timing: LoadTiming? { response?.loadTiming }
-    private var selectedProfile: LoadTimingEstimator.Profile? {
-        if selectedProfileID == "car" {
-            let plannedKwh = selectedAmount
-            return .init(id: "car", label: "Car", kwh: plannedKwh, headroomKwh: LoadTimingEstimator.carHeadroomKwh(plannedKwh: plannedKwh))
-        }
-        return LoadTimingEstimator.profiles.first { $0.id == selectedProfileID }
-    }
-    private var selectedAmount: Double {
-        if selectedProfileID == "car" {
-            return LoadTimingEstimator.carChargeKwh(capacityKwh: batteryCapacityKwh, currentPercent: currentChargePercent, targetPercent: wholePercentTargetCharge)
-        }
-        return selectedProfile?.kwh ?? LoadTimingEstimator.customAmount(customAmount)
-    }
-    private var plannedCarKwh: Double {
-        LoadTimingEstimator.carChargeKwh(capacityKwh: batteryCapacityKwh, currentPercent: currentChargePercent, targetPercent: wholePercentTargetCharge)
-    }
-    private var wholePercentTargetCharge: Double {
-        LoadTimingEstimator.chargeTargetPercent(targetPercent: targetChargePercent, currentPercent: currentChargePercent)
-    }
-    private var targetChargeSliderValue: Binding<Double> {
-        Binding(
-            get: { wholePercentTargetCharge },
-            set: { targetChargePercent = LoadTimingEstimator.chargeTargetPercent(targetPercent: $0, currentPercent: currentChargePercent) }
-        )
-    }
-    private var isCustomSelected: Bool { selectedProfileID == nil }
     private var currencyCode: String { response?.currentBill.currency ?? "USD" }
     private var timeZone: String { response?.site.timezone ?? "UTC" }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                if coordinator.bill.isUnavailable {
-                    AvailabilityBanner(message: "Load timing could not be refreshed. Showing the last successful cycle snapshot with its original source time.", symbol: "clock.badge.exclamationmark")
-                }
-                if let response {
-                    if let timing {
-                        if !timing.hasTariff {
-                            EmptyCard(symbol: "tag.slash", title: "Load timing unavailable", message: LoadTimingPresentation.emptyMessage(hasTariff: false, hasCycleData: false) ?? "")
-                        } else {
-                            actionPanel(timing)
-                            observedPeriods(timing)
-                            if LoadTimingPresentation.shouldShowEstimator(hasCycleData: timing.hasCycleData) {
-                                estimator(timing)
-                            }
+        TimelineView(.everyMinute) { _ in
+            let now = Date()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if coordinator.bill.isUnavailable {
+                        AvailabilityBanner(message: "Load timing could not be refreshed. Showing the last successful cycle snapshot with its original source time.", symbol: "clock.badge.exclamationmark")
+                    }
+                    if let response {
+                        let timingForDisplay = timing ?? LoadTiming(
+                            hasTariff: false,
+                            hasCycleData: false,
+                            activeIsCheapest: false,
+                            periods: [],
+                            pricingPeriods: [],
+                            tariffTimeline: [],
+                            nextCheaper: nil,
+                            nextCheaperPhrase: nil,
+                            nextStartPhraseByKey: [:]
+                        )
+                        let recommendation = LoadTimingRecommendation.evaluate(
+                            profiles: profileStore.profiles,
+                            start: now,
+                            timing: timingForDisplay,
+                            energyDataThrough: response.sources.energyDataThrough,
+                            cycleEnd: response.currentBill.cycleEnd,
+                            refreshUnavailable: coordinator.bill.isUnavailable
+                        )
+                        recommendationCard(recommendation, timing: timingForDisplay, response: response, now: now)
+                        explorerCard(recommendation, timing: timingForDisplay, response: response, now: now)
+                        observedPeriods(timingForDisplay)
+                        metadata(response, now: now)
+                    } else if coordinator.bill.isUnavailable {
+                        LoadTimingCard(title: "Recommendation", symbol: "bolt.fill") {
+                            Text(LoadTimingPresentation.noResponseRecommendationMessage.title)
+                                .font(.title3.weight(.bold))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(LoadTimingPresentation.noResponseRecommendationMessage.detail)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                    } else if case .unavailable(let message) = LoadTimingPresentation.detailState(hasBillResponse: true, hasLoadTiming: false, isUnavailable: coordinator.bill.isUnavailable) {
-                        EmptyCard(symbol: "tag.slash", title: "Load timing unavailable", message: message)
+                        noResponseExplorerCard
+                    } else {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Loading load timing").foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(22)
+                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
                     }
-                    metadata(response)
-                } else if case .unavailable(let message) = LoadTimingPresentation.detailState(hasBillResponse: false, hasLoadTiming: false, isUnavailable: coordinator.bill.isUnavailable) {
-                    EmptyCard(symbol: "chart.bar.xaxis", title: "Load timing unavailable", message: message)
-                } else {
-                    HStack(spacing: 12) {
-                        ProgressView()
-                        Text("Loading load timing")
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(22)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
                 }
+                .padding(20)
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
             }
-            .padding(20)
-            .frame(maxWidth: 760)
-            .frame(maxWidth: .infinity)
+            .refreshable { await coordinator.refreshBill() }
+            .background(Color(uiColor: .systemGroupedBackground))
         }
-        .refreshable {
-            await coordinator.refreshBill()
-        }
-        .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Load timing")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { isNumericInputFocused = false }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { isProfileSheetPresented = true } label: { Image(systemName: "gearshape") }
+                    .accessibilityLabel("Manage load profiles")
+            }
+        }
+        .sheet(isPresented: $isProfileSheetPresented) {
+            LoadProfilesSheet(store: profileStore)
+        }
+        .sheet(item: $runDetailsSnapshot) { snapshot in
+            LoadRunDetailsSheet(snapshot: snapshot)
+        }
+        .onChange(of: profileStore.profiles) { _, profiles in
+            if let exploredProfileID, !profiles.contains(where: { $0.id == exploredProfileID }) {
+                self.exploredProfileID = nil
             }
         }
     }
 
-    private func actionPanel(_ timing: LoadTiming) -> some View {
-        let affordance = LoadTimingAffordance.evaluate(timing: timing, plannedCarKwh: plannedCarKwh)
-        let tint: Color = {
-            switch affordance.state {
-            case .allowed: return .green
-            case .caution: return .orange
-            case .awaitingActiveBalance: return .secondary
-            }
-        }()
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("Can run now")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: affordance.state == .caution ? "exclamationmark.triangle.fill" : "bolt.fill")
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(tint)
-                    .padding(.top, 3)
-                Text(LoadTimingPresentation.actionTitle(for: affordance))
-                    .font(.largeTitle.weight(.bold))
-                    .foregroundStyle(tint)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .minimumScaleFactor(0.75)
-            }
-            Text(LoadTimingPresentation.actionContext(for: affordance))
-                .font(.subheadline.weight(.medium))
+    private func recommendationCard(_ recommendation: LoadTimingRecommendation, timing: LoadTiming, response: MobileBillResponse, now: Date) -> some View {
+        let hasExpiredCandidate = recommendation.candidates.contains { $0.result == .unavailable(.billingCycleExpired) }
+        let copy = LoadTimingPresentation.recommendationMessage(
+            for: recommendation.state,
+            refreshUnavailable: coordinator.bill.isUnavailable,
+            hasTariff: timing.hasTariff,
+            hasExpiredCandidate: hasExpiredCandidate
+        )
+        return LoadTimingCard(title: "Recommendation", symbol: "bolt.fill") {
+            Text(copy.title)
+                .font(.title3.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
-            if let nextStep = LoadTimingPresentation.actionNextStep(for: affordance) {
-                Text(nextStep)
+            if recommendation.state == .ready, let candidate = recommendation.suggested, let estimate = candidate.estimate {
+                Label(LoadTimingPresentation.actionTitle(for: candidate.profile), systemImage: "play.fill")
+                    .font(.title2.weight(.bold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(LoadTimingPresentation.actionTitle(for: candidate.profile))
+                Text(copy.detail)
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+                let summary = LoadTimingPresentation.runCardSummary(estimate, currencyCode: currencyCode, timeZone: timeZone)
+                Text(summary.total)
+                    .font(.headline)
+                    .monospacedDigit()
+                Text(summary.finish)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(copy.detail)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let advice = LoadTimingPresentation.actionCheaperAdvice(affordance.nextCheaper, currencyCode: currencyCode) {
-                Label(advice, systemImage: "clock.arrow.circlepath")
+            Text("Estimates use billing-cycle balances, not live solar. Each load is evaluated independently from the same snapshot.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(LoadTimingPresentation.sourceStatus(isUnavailable: coordinator.bill.isUnavailable, energyDataThrough: response.sources.energyDataThrough, now: now))
+                .font(.caption)
+                .foregroundStyle(coordinator.bill.isUnavailable ? .orange : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Source freshness: \(LoadTimingPresentation.sourceStatus(isUnavailable: coordinator.bill.isUnavailable, energyDataThrough: response.sources.energyDataThrough, now: now))")
+        }
+    }
+
+    private func explorerCard(_ recommendation: LoadTimingRecommendation, timing: LoadTiming, response: MobileBillResponse, now: Date) -> some View {
+        let candidate = recommendation.exploredProfile(explicitID: exploredProfileID)
+        return LoadTimingCard(title: "Explore another load", symbol: "slider.horizontal.3") {
+            if !profileStore.profiles.isEmpty {
+                Picker("Load profile", selection: Binding(
+                    get: { candidate?.profile.id ?? profileStore.profiles[0].id },
+                    set: { exploredProfileID = $0 }
+                )) {
+                    ForEach(profileStore.profiles) { profile in
+                        Text(profile.name).tag(profile.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(minHeight: 44)
+                .accessibilityHint("Choose a saved load to estimate independently")
+
+                if let candidate {
+                    explorerCandidate(candidate, recommendation: recommendation, timing: timing, response: response, now: now)
+                }
+            } else {
+                Text("Add a load profile to explore estimates.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(LoadTimingPresentation.actionAccessibilityLabel(for: affordance, currencyCode: currencyCode))
+    }
+
+    private var noResponseExplorerCard: some View {
+        let selectedProfile = exploredProfileID.flatMap { profileStore.profile(id: $0) } ?? profileStore.profiles.first
+        return LoadTimingCard(title: "Explore another load", symbol: "slider.horizontal.3") {
+            if !profileStore.profiles.isEmpty {
+                Picker("Load profile", selection: Binding(
+                    get: { selectedProfile?.id ?? profileStore.profiles[0].id },
+                    set: { exploredProfileID = $0 }
+                )) {
+                    ForEach(profileStore.profiles) { profile in
+                        Text(profile.name).tag(profile.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(minHeight: 44)
+                .accessibilityHint("Choose a saved load to explore when bill and tariff data are available")
+
+                if let selectedProfile {
+                    Text(LoadTimingPresentation.explorationTitle(for: selectedProfile))
+                        .font(.title3.weight(.bold))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text("Add a load profile to explore estimates.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Text(LoadTimingPresentation.noResponseExplorationMessage)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private func explorerCandidate(_ candidate: LoadTimingRecommendation.Candidate, recommendation: LoadTimingRecommendation, timing: LoadTiming, response: MobileBillResponse, now: Date) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(LoadTimingPresentation.explorationTitle(for: candidate.profile))
+                .font(.title3.weight(.bold))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button {
+                runDetailsSnapshot = LoadRunDetailsSnapshot(
+                    profile: candidate.profile,
+                    timing: timing,
+                    response: response,
+                    result: candidate.result,
+                    currencyCode: currencyCode,
+                    timeZone: timeZone,
+                    capturedAt: now
+                )
+            } label: {
+                Image(systemName: "info.circle")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(LoadTimingPresentation.runDetailsAccessibilityLabel)
+            .accessibilityHint("Shows the estimate and tariff calculation details")
+        }
+
+        switch candidate.result {
+        case .estimate(let estimate):
+            let summary = LoadTimingPresentation.runCardSummary(estimate, currencyCode: currencyCode, timeZone: timeZone)
+            Text(summary.total)
+                .font(.title3.weight(.bold))
+                .monospacedDigit()
+            Text(summary.finish)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            let impact = LoadTimingPresentation.energyImpact(candidate)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(impact.surplusConsumed)
+                Text(impact.energyBought)
+                if let remaining = impact.remainingSurplus { Text(remaining) }
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            if estimate.hasUnobservedBalance, let note = LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: true) {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .unavailable(let reason):
+            Label(LoadTimingPresentation.unavailableMessage(reason), systemImage: "exclamationmark.triangle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        case .noCharge:
+            Label(LoadTimingPresentation.noChargeMessage, systemImage: "checkmark.circle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if let suggested = recommendation.suggested,
+           LoadTimingPresentation.showsBackToSuggestion(explicitID: exploredProfileID, suggestedID: suggested.profile.id) {
+            if let alternativeEstimate = candidate.estimate, let suggestedEstimate = suggested.estimate,
+               let difference = LoadTimingPresentation.costDifference(alternativeCost: alternativeEstimate.total, suggestedCost: suggestedEstimate.total, currencyCode: currencyCode) {
+                Text(difference)
+                    .font(.subheadline.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button("Back to suggestion") { exploredProfileID = nil }
+                .font(.body.weight(.semibold))
+                .frame(minHeight: 44)
+                .accessibilityHint("Return to the currently recommended load")
+        }
     }
 
     private func observedPeriods(_ timing: LoadTiming) -> some View {
-        LoadTimingCard(title: "Your energy balance", symbol: "chart.bar.fill") {
-            Text("By rate period this billing cycle")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            if timing.periods.isEmpty {
-                Text("No tariff periods have cycle observations yet.")
+        LoadTimingCard(title: "Your energy periods", symbol: "chart.bar.fill") {
+            if !timing.hasTariff {
+                Text("No active tariff is configured for this site.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else if timing.periods.isEmpty {
+                Text("Billing-cycle observation unavailable for all rate periods.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                adaptiveGrid(timing.periods.map { period in
-                    LoadTimingPeriodTile(period: period, currencyCode: currencyCode)
-                })
+                adaptiveGrid(timing.periods.map { LoadTimingPeriodTile(period: $0, currencyCode: currencyCode) })
             }
         }
     }
 
-    private func estimator(_ timing: LoadTiming) -> some View {
-        LoadTimingCard(title: "Can I run this now?", symbol: "bolt.fill") {
-            VStack(alignment: .leading, spacing: 11) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        carButton
-                        presetButtons
-                        customButton
-                    }
-                    .fixedSize(horizontal: true, vertical: false)
-                }
-                if selectedProfileID == "car" {
-                    VStack(alignment: .leading, spacing: 7) {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 12) {
-                                compactNumberField("Battery", value: $batteryCapacityKwh, range: 1...200, fallback: 60, unit: "kWh")
-                                compactNumberField("Current", value: $currentChargePercent, range: 0...100, fallback: 20, unit: "%")
-                            }
-                            VStack(alignment: .leading, spacing: 4) {
-                                compactNumberField("Battery", value: $batteryCapacityKwh, range: 1...200, fallback: 60, unit: "kWh")
-                                compactNumberField("Current", value: $currentChargePercent, range: 0...100, fallback: 20, unit: "%")
-                            }
-                        }
-                        if currentChargePercent < 100 {
-                            HStack {
-                                Text("Charge to")
-                                Spacer()
-                                Text("\(Int(wholePercentTargetCharge))%")
-                                    .monospacedDigit()
-                            }
-                            .font(.subheadline)
-                            Slider(value: targetChargeSliderValue, in: ((currentChargePercent / 10).rounded(.up) * 10)...100) {
-                                Text("Charge to")
-                            }
-                            .accessibilityLabel("Charge to")
-                            .accessibilityValue("\(Int(wholePercentTargetCharge)) percent")
-                        } else {
-                            Text("At 100% charge")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        Text("\(selectedAmount, specifier: "%.1f") kWh energy to add, approximate; charging losses excluded")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Approximately \(selectedAmount.formatted(.number.precision(.fractionLength(1)))) kilowatt-hours to add; charging losses excluded")
-                    }
-                    .onChange(of: currentChargePercent) { _, current in
-                        targetChargePercent = max(targetChargePercent, current)
-                    }
-                } else if isCustomSelected {
-                    compactNumberField("Custom load", value: $customAmount, range: 1...100, fallback: 20, unit: "kWh")
-                }
-                if selectedProfileID == "car" && !LoadTimingEstimator.shouldEstimateCarCharge(selectedAmount) {
-                    Label("No charging needed at this target", systemImage: "checkmark.circle.fill")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.green)
-                        .accessibilityElement(children: .combine)
-                } else if timing.pricingPeriods.isEmpty {
-                    Divider()
-                    Text("Period pricing is unavailable for the current schedule.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Divider()
-                    VStack(spacing: 0) {
-                        let orderedPeriods = LoadTimingPresentation.orderedPricingPeriods(timing.pricingPeriods)
-                        ForEach(Array(orderedPeriods.enumerated()), id: \.offset) { index, period in
-                            estimateRow(period)
-                            if index < orderedPeriods.count - 1 { Divider() }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var presetButtons: some View {
-        ForEach(LoadTimingEstimator.profiles) { profile in
-            Button {
-                selectedProfileID = profile.id
-            } label: {
-                Text(profile.label)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .foregroundStyle(selectedProfileID == profile.id ? Color.white : Color.primary)
-                    .background(selectedProfileID == profile.id ? Color.indigo : Color(uiColor: .tertiarySystemGroupedBackground), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(profile.label), \(Int(profile.kwh)) kilowatt-hours")
-            .accessibilityAddTraits(selectedProfileID == profile.id ? .isSelected : [])
-        }
-    }
-
-    private var carButton: some View {
-        Button { selectedProfileID = "car" } label: {
-            Text("Car")
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .foregroundStyle(selectedProfileID == "car" ? Color.white : Color.primary)
-                .background(selectedProfileID == "car" ? Color.indigo : Color(uiColor: .tertiarySystemGroupedBackground), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Car charge estimate")
-        .accessibilityAddTraits(selectedProfileID == "car" ? .isSelected : [])
-    }
-
-    private func compactNumberField(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, fallback: Double, unit: String) -> some View {
-        HStack(spacing: 5) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField(title, value: value, format: .number.precision(.fractionLength(0)))
-                .keyboardType(.numberPad)
-                .focused($isNumericInputFocused)
-                .multilineTextAlignment(.trailing)
-                .monospacedDigit()
-                .frame(minWidth: 38, maxWidth: 64)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 6)
-                .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 7))
-                .accessibilityLabel(title == "Battery" ? "Battery capacity in kilowatt-hours" : title == "Current" ? "Current charge percent" : "Custom load size in kilowatt-hours")
-            Text(unit)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .onChange(of: value.wrappedValue) { _, newValue in
-            value.wrappedValue = LoadTimingEstimator.boundedInput(newValue, fallback: fallback, range: range)
-        }
-        .accessibilityValue("\(Int(LoadTimingEstimator.boundedInput(value.wrappedValue, fallback: fallback, range: range))) \(unit == "kWh" ? "kilowatt-hours" : "percent")")
-    }
-
-    private var customButton: some View {
-        Button {
-            selectedProfileID = nil
-        } label: {
-            Text("Custom")
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .foregroundStyle(selectedProfileID == nil ? Color.white : Color.primary)
-                .background(selectedProfileID == nil ? Color.indigo : Color(uiColor: .tertiarySystemGroupedBackground), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selectedProfileID == nil ? .isSelected : [])
-    }
-
-    private func estimateRow(_ period: LoadTimingPeriod) -> some View {
-        let estimate = LoadTimingPresentation.estimate(amount: selectedAmount, period: period, selectedProfile: selectedProfile)
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(DashboardPresentation.tariffPeriodTitle(period.name))
-                            .font(.subheadline.weight(.semibold))
-                        if period.isActive {
-                            Text("ACTIVE")
-                                .font(.system(size: 9, weight: .bold))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 3)
-                                .background(Color.indigo.opacity(0.12), in: Capsule())
-                                .foregroundStyle(.indigo)
-                        }
-                    }
-                    let unitRate = period.marginalCost ?? (period.basis == "unobserved" ? period.buyRate : nil)
-                    Text("\(period.basis == "unobserved" ? "Buy rate · " : "")\(DashboardPresentation.loadRate(unitRate, code: currencyCode))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if let phrase = timing?.nextStartPhraseByKey[period.name] {
-                        Text("Starts \(phrase)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if let phrase = period.nextStartPhrase {
-                        Text("Starts \(phrase)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 8)
-                Text(estimate.total.map { DashboardPresentation.currency($0, code: currencyCode) } ?? "Unavailable")
-                    .font(.subheadline.weight(.bold))
-                    .monospacedDigit()
-                    .multilineTextAlignment(.trailing)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(LoadTimingPresentation.coverageSummary(estimate))
-                    .foregroundStyle(.secondary)
-                Text("·")
-                    .foregroundStyle(.tertiary)
-                Text(verdictText(estimate.verdict))
-                    .foregroundStyle(verdictColor(estimate.verdict))
-            }
-            .font(.caption)
-        }
-        .padding(.vertical, 10)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(LoadTimingPresentation.estimateAccessibilityLabel(
-            period: period,
-            estimate: estimate,
-            startPhrase: timing?.nextStartPhraseByKey[period.name] ?? period.nextStartPhrase,
-            verdict: verdictText(estimate.verdict),
-            currencyCode: currencyCode
-        ))
-    }
-
-    private func metadata(_ response: MobileBillResponse) -> some View {
+    private func metadata(_ response: MobileBillResponse, now: Date) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Billing cycle \(DashboardPresentation.date(response.currentBill.cycleStart, timeZoneIdentifier: timeZone, dateStyle: .short)) – \(DashboardPresentation.date(response.currentBill.cycleEnd, timeZoneIdentifier: timeZone, dateStyle: .short))")
-            Text("Energy through \(response.sources.energyDataThrough.map { DashboardPresentation.date($0, timeZoneIdentifier: timeZone, dateStyle: .medium, timeStyle: .short) } ?? "time unavailable")")
+            Text(LoadTimingPresentation.sourceTimeSummary(response.sources.energyDataThrough, timeZone: timeZone))
             Text("Calculated \(DashboardPresentation.date(response.sources.calculatedAt, timeZoneIdentifier: timeZone, dateStyle: .medium, timeStyle: .short))")
-            Text(LoadTimingPresentation.sourceStatus(isUnavailable: coordinator.bill.isUnavailable, energyDataThrough: response.sources.energyDataThrough))
+            Text(LoadTimingPresentation.sourceStatus(isUnavailable: coordinator.bill.isUnavailable, energyDataThrough: response.sources.energyDataThrough, now: now))
                 .foregroundStyle(coordinator.bill.isUnavailable ? .orange : .secondary)
         }
         .font(.caption)
@@ -539,25 +528,148 @@ struct LoadTimingView: View {
             AnyView(LazyVGrid(columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)], spacing: 9) { ForEach(tiles.indices, id: \.self) { tiles[$0] } })
         }
     }
+}
 
-    private func verdictText(_ verdict: LoadTimingEstimator.Verdict) -> String {
-        switch verdict {
-        case .covered: "Covered by cycle surplus"
-        case .tight: "Surplus covers this load, with limited headroom"
-        case .partial: "Partly covered by cycle surplus"
-        case .bought: "Purchased at the buy rate"
-        case .unknown: "Cost estimate unavailable"
+struct LoadRunDetailsSnapshot: Identifiable {
+    let id = UUID()
+    let profile: LoadProfile
+    let timing: LoadTiming
+    let response: MobileBillResponse?
+    let result: LoadTimingEstimator.StartNowResult
+    let currencyCode: String
+    let timeZone: String
+    let capturedAt: Date
+}
+
+private struct LoadRunDetailsSheet: View {
+    let snapshot: LoadRunDetailsSnapshot
+
+    private var profile: LoadProfile { snapshot.profile }
+    private var timing: LoadTiming { snapshot.timing }
+    private var response: MobileBillResponse? { snapshot.response }
+    private var result: LoadTimingEstimator.StartNowResult { snapshot.result }
+    private var currencyCode: String { snapshot.currencyCode }
+    private var timeZone: String { snapshot.timeZone }
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var observedBalances: [String: Double] { LoadTimingPresentation.observedBalances(timing) }
+    private var unobservedKeys: Set<String> { Set(timing.tariffTimeline.map(\.periodKey)).subtracting(observedBalances.keys) }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text(profile.name)
+                        .font(.title2.weight(.bold))
+                    resultDetails
+                    Text("How the estimate works")
+                        .font(.headline)
+                    Text("The estimate uses your current billing-cycle balance as a snapshot. That balance can change while the load is running.")
+                        .foregroundStyle(.secondary)
+                    if let message = LoadTimingPresentation.cycleObservationMessage(hasCycleData: timing.hasCycleData) {
+                        detailLabel(message, symbol: "info.circle")
+                    }
+                    if let balance = LoadTimingPresentation.activeBalanceSummary(timing) {
+                        detailLabel(balance, symbol: "bolt.circle")
+                    }
+                    if let response {
+                        detailLabel(LoadTimingPresentation.sourceTimeSummary(response.sources.energyDataThrough, timeZone: timeZone), symbol: "clock")
+                    }
+                    if profile.kind == .car, let car = profile.carSettings {
+                        carDetails(car)
+                    }
+                    if let cheaper = timing.nextCheaper {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Cheaper time")
+                                .font(.headline)
+                            Text("Lower marginal rate in \(DashboardPresentation.tariffPeriodTitle(cheaper.name)) · \(cheaper.phrase)")
+                                .foregroundStyle(.secondary)
+                            Text("This compares rates only; it does not promise a lower total cost.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("Load run details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    @ViewBuilder
+    private var resultDetails: some View {
+        switch result {
+        case .estimate(let estimate):
+            VStack(alignment: .leading, spacing: 10) {
+                let summary = LoadTimingPresentation.startNowSummary(estimate, currencyCode: currencyCode, timeZone: timeZone)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(summary.total)
+                        .font(.title3.weight(.bold))
+                        .monospacedDigit()
+                    Text(summary.finish)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Text(summary.energy)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if let note = LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: estimate.hasUnobservedBalance) {
+                    detailLabel(note, symbol: "info.circle")
+                }
+                if !estimate.segments.isEmpty {
+                    Text("Tariff breakdown")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(Array(LoadTimingPresentation.breakdownRows(estimate.segments, currencyCode: currencyCode, unobservedPeriodKeys: unobservedKeys).enumerated()), id: \.offset) { index, row in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(DashboardPresentation.tariffPeriodTitle(row.periodKey)).fontWeight(.semibold)
+                                Spacer()
+                                Text(row.total).fontWeight(.bold).monospacedDigit()
+                            }
+                            Text("\(row.wallEnergy) · \(row.balance)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 6)
+                        if index < estimate.segments.count - 1 { Divider() }
+                    }
+                }
+            }
+        case .unavailable(let reason):
+            detailLabel(LoadTimingPresentation.unavailableMessage(reason), symbol: "exclamationmark.triangle")
+        case .noCharge:
+            detailLabel(LoadTimingPresentation.noChargeMessage, symbol: "checkmark.circle.fill")
         }
     }
 
-    private func verdictColor(_ verdict: LoadTimingEstimator.Verdict) -> Color {
-        switch verdict {
-        case .covered: .green
-        case .tight: .orange
-        case .partial: .orange
-        case .bought: .secondary
-        case .unknown: .secondary
+    private func carDetails(_ car: CarLoadSettings) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Car charge")
+                .font(.headline)
+            Text("Current \(car.initialStateOfCharge.formatted(.number.precision(.fractionLength(0...1))))% · target \(car.targetStateOfCharge.formatted(.number.precision(.fractionLength(0...1))))% · Level \(car.chargingLevel == .level1 ? "1" : "2")")
+                .foregroundStyle(.secondary)
+            if let estimate = LoadTimingEstimator.carChargeEstimate(settings: car) {
+                Text("About \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(1)))) kWh added to the battery from \(estimate.wallKwh.formatted(.number.precision(.fractionLength(1)))) kWh at the wall.")
+                    .foregroundStyle(.secondary)
+            }
         }
+    }
+
+    private func detailLabel(_ text: String, symbol: String) -> some View {
+        Label(text, systemImage: symbol)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
