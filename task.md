@@ -1,20 +1,19 @@
-# Configurable iOS load profiles
+# iOS Solcast load timing
 
-- [x] Mobile tariff timeline and response
-- [x] iOS timeline contract
-- [x] Device-wide load profile storage
-- [x] Start-now segmented estimator
-- [x] Load profiles settings sheet
-- [x] Selected-load result and action panel
-- [x] Combined profile reordering, persisted across sites
-- [x] Full web and native verification, review, commit
+- [x] Restart from `origin/main` with configurable load profiles/tariff timeline from PR #115.
+- [x] Reapply the Solcast design and implementation plan commits.
+- [x] Baseline verification and prerequisite review.
+- [x] Task 1: Typed provider contract and interval aggregation. (`37c5e54`)
+- [x] Task 2: Local credentials, selection, cache, and request budget. (`b757511`)
+- [ ] Task 3: Bounded historical planning context. (Luna implementing)
+- [ ] Task 4: Pure lowest-cost comparison engine.
+- [ ] Task 5: Connection settings and foreground orchestration.
+- [ ] Task 6: Recommendation presentation and fallback.
+- [ ] Task 7: Integration verification and handoff.
 
-## On-device load recommendations
+## Notes
 
-- [x] Verify the existing checkout and native baseline (108 tests passed)
-- [x] Implement and test the pure recommendation model (18 recommendation tests)
-- [x] Review model behavior for spec compliance and code quality
-- [x] Integrate the persistent recommendation and independent explorer UI (19 focused view tests)
-- [x] Review UI integration for spec compliance and code quality
-- [x] Run full native and web verification (134 iOS tests; lint; 824 web tests; build)
-- [x] Complete final implementation review and commit verified changes
+- Sol coordinates; Luna implements one bounded task at a time.
+- Native tests run only through `cmd/ios-app/run-tests.sh`, sequentially.
+- No live Solcast quota use in automated verification.
+- Solcast keys/resource IDs/forecasts remain device-local.
