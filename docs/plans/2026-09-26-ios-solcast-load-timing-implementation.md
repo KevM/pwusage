@@ -8,6 +8,8 @@
 
 **Tech Stack:** SwiftUI, Foundation URLSession, Security Keychain, Swift Testing; existing Next.js mobile API, TypeScript and Vitest for planning context. Design: `docs/plans/2026-09-26-ios-solcast-load-timing-design.md`.
 
+**Required progressive behavior:** The existing estimator renders immediately and remains usable without a Solcast key. A key enables optional forecasting automatically once its inputs are valid. Failed Solcast requests or unusable forecast/context inputs automatically restore the basic estimate; successful recovery restores the enhancement. No separate feature toggle, mandatory setup, or blocking forecast error. Preserve profile selection and the original basic pricing semantics throughout.
+
 ---
 
 ## Coordination and prerequisites
@@ -68,7 +70,7 @@
 **Create:** `cmd/ios-app/PWUsage/Views/SolarForecastSettingsSheet.swift`, `cmd/ios-app/PWUsageTests/SolarForecastCoordinatorTests.swift`.
 **Modify:** `cmd/ios-app/PWUsage/Networking/PWUsageAPI.swift`, `cmd/ios-app/PWUsage/State/DashboardCoordinator.swift`, `cmd/ios-app/PWUsage/PWUsageApp.swift`, `cmd/ios-app/PWUsage/Views/LoadTimingView.swift`.
 
-1. Add coordinator tests for independent Solcast/PWUsage transports, context fetch only when configured/needed, no added live-dashboard polling, stale or failed context, logout during fetch, and switching sites while requests complete.
+1. Add coordinator tests for independent Solcast/PWUsage transports, zero Solcast/context requests without a key, context fetch only when configured/needed, no added live-dashboard polling, stale or failed context, logout during fetch, and switching sites while requests complete. Test basic -> loading-with-basic -> enhanced -> request-failed-with-basic -> recovered-enhanced -> disconnected-basic. A failed refresh must select basic even if a previously valid batch remains stored; a late completion must not restore enhancement after disconnect.
 2. Run `./run-tests.sh SolarForecastCoordinatorTests`; expect failure.
 3. Add typed planning-context decoding/API fetch. Cache historical context locally for up to 24 hours with site/source validation; fetch on entering the configured detail screen. Use the existing bill/tariff refresh path for fresh balances. Profile edits and start comparisons perform no network requests.
 4. Build settings with secure key input, connection/error status, explicit array checkboxes, tags as hints, Save and Disconnect. No real key in previews. Offer manual resource-ID entry if discovery is unavailable, without silently selecting unrelated resources. Respect the same request budget for validation and refresh.
@@ -78,9 +80,9 @@
 
 **Modify:** `cmd/ios-app/PWUsage/Views/LoadTimingView.swift`, `cmd/ios-app/PWUsage/Views/DashboardPreviews.swift`, `cmd/ios-app/PWUsageTests/LoadTimingViewTests.swift`; add a pure presentation helper if the view would otherwise own business logic.
 
-1. Write tests for recommend now, recommend later, insignificant savings, no full run in horizon, no forecast connection, stale/missing forecast, insufficient baseline, and zero-charge car. Each unavailable forecast state retains the prerequisite estimate without labeling it forecast-aware.
+1. Write tests for recommend now, recommend later, insignificant savings, no full run in horizon, no key, incomplete array selection, first-load pending, invalid key, timeout, 429, partial-array failure, stale/missing forecast, context failure, insufficient baseline, key removal, recovery, and zero-charge car. Assert every unavailable/pending forecast state retains the prerequisite estimate and selected profile without labeling it forecast-aware. Assert basic total and breakdown match the unenhanced estimator exactly, and no forecast setup/error state blocks its controls. Missing tariffs remain a basic-estimator unavailable state, not a fabricated fallback cost.
 2. Run `./run-tests.sh LoadTimingViewTests`; expect new assertions to fail.
-3. Show start-now and recommended costs, savings, finish time, estimated solar contribution, data ages and actual comparison horizon. Detail text says typical household/battery behavior is assumed and final bill cost may differ. Do not promise battery refill or precise forecast confidence. Preserve cycle balances as observed data; never replace them with predicted balances in the existing cards.
+3. Show start-now and recommended costs, savings, finish time, estimated solar contribution, data ages and actual comparison horizon when enhanced inputs are valid. Otherwise render the existing estimator immediately. Keep connection setup optional; show a small informational fallback note only when relevant to a configured connection. Do not show forecast-derived savings/solar values beside a basic cost after failure. Detail text says typical household/battery behavior is assumed and final bill cost may differ. Do not promise battery refill or precise forecast confidence. Preserve cycle balances as observed data; never replace them with predicted balances in the existing cards.
 4. Add synthetic previews for East/West combined data, tariff crossing, long charge, stale cache, incomplete array and missing context. Check VoiceOver order, currency formatting, date/timezone wording and accessibility sizes. Rerun the suite; expect pass. Commit `feat(ios): show solar-aware load timing recommendations`.
 
 ## Task 7: Integration verification and handoff

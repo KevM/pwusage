@@ -6,6 +6,14 @@ Recommend the lowest estimated cost start time for a selected load, showing expe
 
 This document records the agreed direction and proposed implementation defaults. The defaults below are engineering assumptions, not claims that Solcast or battery forecasts are certain.
 
+## Progressive enhancement (required)
+
+The existing nonforecast load estimator is the default experience for every user. Solcast is optional: a locally stored key enables attempts to enhance the estimate, with no additional feature toggle or mandatory setup gate. Array selection must still be completed before forecasting can be used. Users without a key retain the existing profiles, tariff/balance calculation, and load estimate unchanged; do not issue Solcast or forecast-only planning-context requests for them.
+
+Render the existing estimate immediately while optional forecast inputs load. Upgrade it only when the key, array association, complete fresh forecast, and planning context are usable. On a Solcast request failure (including invalid credentials, timeout, quota exhaustion, or a failed array), automatically show the existing nonforecast estimate. Missing/stale inputs, incomplete setup, and planning-context failures follow the same path. A forecast failure must never hide or block a valid basic estimate, reset the selected profile, or require a retry to use Load timing. The basic estimator's own missing-tariff/data states still apply.
+
+Keep connection setup optional and nonblocking. Label the enhanced result as using a solar forecast. When a configured connection fails, use a small informational note such as “Solar forecast unavailable — using tariff and balance data”; no blocking error screen or repeated connection prompt. A successful subsequent refresh automatically restores the enhanced estimate. Removing the key immediately restores the basic experience. Test transitions in both directions, not just isolated empty/error screens.
+
 ## Prerequisite
 
 Complete `2026-09-25-ios-configurable-load-profiles-implementation.md` first, or verify its equivalent has landed. At planning time, profiles with duration and the upcoming tariff timeline exist only in that plan. Reuse its load energy, duration, tariff segments, and fallback estimate; do not create a second profile system.
@@ -26,7 +34,7 @@ Use rooftop discovery during setup, then fetch each selected array's forecast se
 
 Refresh on foreground entry to Load timing if the cache is older than three hours, with a default automatic allowance of eight request attempts per UTC day and a hard local cap of ten. Count all Solcast attempts conservatively, including discovery and failures; reserve enough budget for the complete array set before starting a refresh. Manual refresh may use the remaining allowance. Persist the count before dispatch; deduplicate concurrent requests. Honor 429 and Retry-After without retry loops. Other apps/devices may consume the same account quota, so the local count is not authoritative remaining quota. No scheduled background guarantee and no estimated-actuals fetches.
 
-Keep the last complete batch if one array fails. Mark forecast age prominently: up to six hours old can inform a recommendation; older data can be displayed as stale but cannot produce a new recommendation. These age/budget defaults are centralized and tested. Expired or incomplete forecasts fall back to the existing nonforecast estimate.
+Keep the last complete batch in storage if one array fails, but switch the active estimate to the basic fallback after that failed refresh; retained data must not mask the failure. A valid cached batch can enhance the estimate when no refresh failure is outstanding. Mark forecast age prominently: up to six hours old can inform a recommendation; older data can be displayed as stale but cannot produce a new recommendation. These age/budget defaults are centralized and tested. Expired or incomplete forecasts fall back to the existing nonforecast estimate. Clear the failed-refresh state only after a successful complete refresh (or disconnect, which leaves the basic estimator active).
 
 ## Expected household and battery behavior
 
