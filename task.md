@@ -6,8 +6,8 @@
 - [x] Task 1: Typed provider contract and interval aggregation. (`37c5e54`)
 - [x] Task 2: Local credentials, selection, cache, and request budget. (`b757511`)
 - [x] Task 3: Bounded historical planning context. (`39daa1b`)
-- [ ] Task 4: Pure lowest-cost comparison engine. (Luna implementing)
-- [ ] Task 5: Connection settings and foreground orchestration.
+- [x] Task 4: Pure lowest-cost comparison engine. (`0008ef1`)
+- [ ] Task 5: Connection settings and foreground orchestration. (Luna implementing)
 - [ ] Task 6: Recommendation presentation and fallback.
 - [ ] Task 7: Integration verification and handoff.
 
