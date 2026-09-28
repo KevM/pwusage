@@ -7,7 +7,7 @@
 - [x] Task 2: Local credentials, selection, cache, and request budget. (`b757511`)
 - [x] Task 3: Bounded historical planning context. (`39daa1b`)
 - [x] Task 4: Pure lowest-cost comparison engine. (`0008ef1`)
-- [ ] Task 5: Connection settings and foreground orchestration. (Luna implementing)
+- [x] Task 5: Connection settings and foreground orchestration.
 - [ ] Task 6: Recommendation presentation and fallback.
 - [ ] Task 7: Integration verification and handoff.
 

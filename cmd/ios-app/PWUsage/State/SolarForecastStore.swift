@@ -60,6 +60,19 @@ enum SolarForecastRefreshResult: Equatable, Sendable {
     case cancelled
 }
 
+protocol SolarForecastManaging: Sendable {
+    func activateAccountScope(_ accountScopeID: String?) async
+    func credential(accountScopeID: String, siteID: String) async -> SolarForecastCredential?
+    func connect(apiKey: String, accountScopeID: String, siteID: String, resourceIDs: [String]?) async throws -> String
+    func discoverSites(accountScopeID: String, siteID: String, manual: Bool) async throws -> [SolcastSite]
+    func selectArrays(_ resourceIDs: [String], accountScopeID: String, siteID: String) async throws
+    func refresh(accountScopeID: String, siteID: String, manual: Bool) async -> SolarForecastRefreshResult
+    func cachedBatch(accountScopeID: String, siteID: String) async -> SolarForecastBatch?
+    func isRecommendationUsable(accountScopeID: String, siteID: String) async -> Bool
+    func budget(for accountScopeID: String, siteID: String) async -> SolarForecastBudget
+    func disconnect(accountScopeID: String, siteID: String) async throws
+}
+
 actor SolarForecastStore {
     static let shared = SolarForecastStore()
     static let foregroundRefreshThreshold: TimeInterval = 3 * 60 * 60
@@ -74,7 +87,12 @@ actor SolarForecastStore {
     private var state: SolarForecastPersistedState
     private var loaded = false
     private var generations: [String: Int] = [:]
-    private var inFlight: [String: Task<SolarForecastRefreshResult, Never>] = [:]
+    private struct InFlightRefresh {
+        let id: UUID
+        let task: Task<SolarForecastRefreshResult, Never>
+    }
+
+    private var inFlight: [String: InFlightRefresh] = [:]
     private var activeAccountScopeID: String?
     private(set) var lastErrorDescription: String?
 
@@ -98,13 +116,14 @@ actor SolarForecastStore {
         let scope = SolarForecastScope.key(accountScopeID, siteID)
         let previousState = state
         let previousCredential = state.credentials[scope]
-        let selectedResources = resourceIDs ?? previousCredential?.resourceIDs ?? []
+        let credentialID = Self.credentialID(for: apiKey)
+        let selectedResources = resourceIDs
+            ?? (previousCredential?.credentialID == credentialID ? previousCredential?.resourceIDs ?? [] : [])
         guard (0...2).contains(selectedResources.count), Set(selectedResources).count == selectedResources.count,
               selectedResources.allSatisfy({ !$0.isEmpty }) else { throw StoreError.invalidConfiguration }
         let previousKey = try await keychain.load(accountScopeID: accountScopeID, siteID: siteID)
         activateAccountScope(accountScopeID)
-        generations[scope, default: 0] += 1
-        let credentialID = Self.credentialID(for: apiKey)
+        invalidateRefresh(scope: scope)
         let credential = SolarForecastCredential(accountScopeID: accountScopeID, siteID: siteID, credentialID: credentialID, resourceIDs: selectedResources)
         try await keychain.save(key: apiKey, accountScopeID: accountScopeID, siteID: siteID, credentialID: credentialID)
         var nextState = previousState
@@ -156,7 +175,7 @@ actor SolarForecastStore {
         }
         for scope in Array(inFlight.keys) {
             generations[scope, default: 0] += 1
-            inFlight[scope]?.cancel()
+            inFlight[scope]?.task.cancel()
         }
         inFlight.removeAll()
         activeAccountScopeID = accountScopeID
@@ -233,7 +252,7 @@ actor SolarForecastStore {
               resourceIDs.allSatisfy({ !$0.isEmpty }) else { throw StoreError.invalidConfiguration }
         let scope = SolarForecastScope.key(accountScopeID, siteID)
         guard let currentCredential = state.credentials[scope], await credentialHasMatchingKey(currentCredential) else { throw StoreError.notConfigured }
-        generations[scope, default: 0] += 1
+        invalidateRefresh(scope: scope)
         var nextState = state
         nextState.credentials[scope] = SolarForecastCredential(accountScopeID: accountScopeID, siteID: siteID, credentialID: currentCredential.credentialID, resourceIDs: resourceIDs)
         nextState.caches.removeValue(forKey: scope)
@@ -245,7 +264,7 @@ actor SolarForecastStore {
         do { try await loadIfNeeded() } catch { return .failed(.requestFailed) }
         let scope = SolarForecastScope.key(accountScopeID, siteID)
         guard activeAccountScopeID == accountScopeID else { return .notConfigured }
-        if let existing = inFlight[scope] { return await existing.value }
+        if let existing = inFlight[scope] { return await existing.task.value }
         guard let credential = state.credentials[scope], credential.resourceIDs.count > 0 else { return .notConfigured }
         if !manual,
            let batch = state.caches[scope], batch.credentialID == credential.credentialID,
@@ -259,10 +278,11 @@ actor SolarForecastStore {
             return .deferred
         }
         let generation = generations[scope, default: 0]
+        let refreshID = UUID()
         let task = Task { await self.performRefresh(scope: scope, credential: credential, generation: generation, manual: manual) }
-        inFlight[scope] = task
+        inFlight[scope] = InFlightRefresh(id: refreshID, task: task)
         let result = await task.value
-        inFlight.removeValue(forKey: scope)
+        if inFlight[scope]?.id == refreshID { inFlight.removeValue(forKey: scope) }
         return result
     }
 
@@ -270,7 +290,7 @@ actor SolarForecastStore {
         try await loadIfNeeded()
         let scope = SolarForecastScope.key(accountScopeID, siteID)
         generations[scope, default: 0] += 1
-        inFlight[scope]?.cancel()
+        inFlight[scope]?.task.cancel()
         inFlight.removeValue(forKey: scope)
         var failed = false
         do { try await keychain.delete(accountScopeID: accountScopeID, siteID: siteID) } catch { failed = true }
@@ -292,7 +312,7 @@ actor SolarForecastStore {
         let scopes = Set(Array(state.credentials.keys) + Array(state.caches.keys) + Array(inFlight.keys) + Array(generations.keys))
         for scope in scopes {
             generations[scope, default: 0] += 1
-            inFlight[scope]?.cancel()
+            inFlight[scope]?.task.cancel()
             inFlight.removeValue(forKey: scope)
         }
         activeAccountScopeID = nil
@@ -305,6 +325,12 @@ actor SolarForecastStore {
         do { try await persist() } catch { failed = true }
         do { try await keychain.deleteAllCredentials() } catch { failed = true }
         if failed { throw StoreError.cleanupFailed }
+    }
+
+    private func invalidateRefresh(scope: String) {
+        generations[scope, default: 0] += 1
+        inFlight[scope]?.task.cancel()
+        inFlight.removeValue(forKey: scope)
     }
 
     private func performRefresh(scope: String, credential: SolarForecastCredential, generation: Int, manual: Bool) async -> SolarForecastRefreshResult {
@@ -520,6 +546,8 @@ actor SolarForecastStore {
 
     enum StoreError: Error, Equatable { case invalidConfiguration, notConfigured, budgetExhausted, deferred, requestFailed, discoveryFailed(SolarForecastRefreshFailure), persistenceFailed, cleanupFailed, cancelled }
 }
+
+extension SolarForecastStore: SolarForecastManaging {}
 
 actor DeviceSolarForecastPersistence: SolarForecastPersistence {
     private let fileURL: URL

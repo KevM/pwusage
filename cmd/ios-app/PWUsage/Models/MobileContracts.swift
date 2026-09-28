@@ -128,6 +128,96 @@ struct MobileBillResponse: Decodable, Equatable {
     }
 }
 
+struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
+    static let maximumAge: TimeInterval = 24 * 60 * 60
+
+    let version: Int
+    let site: Site
+    let units: Units
+    let asOf: Date
+    let availability: Availability
+    let unavailableReason: String?
+    let usableDayCount: Int
+    let historyStart: Date
+    let historyEnd: Date
+    let slots: [Slot]
+
+    struct Site: Decodable, Equatable, Sendable {
+        let id: String
+        let timezone: String
+    }
+
+    struct Units: Decodable, Equatable, Sendable {
+        let power: String
+        let localMinute: String
+    }
+
+    enum Availability: String, Decodable, Equatable, Sendable {
+        case available
+        case unavailable
+    }
+
+    struct Slot: Decodable, Equatable, Sendable {
+        let localMinute: Int
+        let homeKw: Double?
+        let batteryNetChargeKw: Double?
+        let sampleCount: Int
+        let coverage: Double
+    }
+
+    enum ContractError: Error, Equatable {
+        case unsupportedVersion(Int)
+        case siteMismatch(expected: String, actual: String)
+        case invalidSource
+    }
+
+    func validating(siteID: String, now: Date) throws -> Self {
+        let sourceAge = now.timeIntervalSince(asOf)
+        guard version == 1 else { throw ContractError.unsupportedVersion(version) }
+        guard site.id == siteID else { throw ContractError.siteMismatch(expected: siteID, actual: site.id) }
+        guard units.power == "kW", units.localMinute == "minute-of-day",
+              TimeZone(identifier: site.timezone) != nil,
+              asOf.timeIntervalSince1970.isFinite,
+              historyStart.timeIntervalSince1970.isFinite,
+              historyEnd.timeIntervalSince1970.isFinite,
+              historyStart < historyEnd,
+              historyEnd <= asOf,
+              sourceAge >= -(5 * 60),
+              sourceAge <= Self.maximumAge,
+              slots.count == 48,
+              slots.enumerated().allSatisfy({ index, slot in
+                  slot.localMinute == index * 30
+                      && slot.sampleCount >= 0
+                      && slot.coverage.isFinite && (0...1).contains(slot.coverage)
+                      && slot.homeKw.map(\.isFinite) ?? true
+                      && slot.batteryNetChargeKw.map(\.isFinite) ?? true
+              }),
+              availability != .available || (
+                  usableDayCount >= 5
+                      && slots.allSatisfy { slot in
+                          guard slot.homeKw != nil || slot.batteryNetChargeKw != nil else { return true }
+                          return slot.sampleCount >= 5 && slot.coverage >= 0.9
+                      }
+              ) else { throw ContractError.invalidSource }
+        return self
+    }
+
+    var estimatorContext: LoadTimingForecastEstimator.PlanningContext? {
+        guard availability == .available else { return nil }
+        return LoadTimingForecastEstimator.PlanningContext(
+            timeZone: site.timezone,
+            slots: slots.map {
+                LoadTimingForecastEstimator.PlanningSlot(
+                    localMinute: $0.localMinute,
+                    homeKw: $0.homeKw,
+                    batteryNetChargeKw: $0.batteryNetChargeKw
+                )
+            },
+            asOf: asOf
+        )
+    }
+}
+
 struct ActiveLoadTiming: Decodable, Equatable {
     let periodName: String
     let buyRate: Double

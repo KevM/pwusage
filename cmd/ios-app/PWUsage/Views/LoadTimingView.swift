@@ -208,6 +208,7 @@ struct LoadTimingView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var profileStore: LoadProfileStore
     @State private var isProfileSheetPresented = false
+    @State private var isSolarForecastSheetPresented = false
     @State private var runDetailsSnapshot: LoadRunDetailsSnapshot?
     @State private var exploredProfileID: String?
 
@@ -286,6 +287,10 @@ struct LoadTimingView: View {
         .navigationTitle("Load timing")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { isSolarForecastSheetPresented = true } label: { Image(systemName: "sun.max") }
+                    .accessibilityLabel("Solar forecast settings")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { isProfileSheetPresented = true } label: { Image(systemName: "gearshape") }
                     .accessibilityLabel("Manage load profiles")
@@ -294,13 +299,22 @@ struct LoadTimingView: View {
         .sheet(isPresented: $isProfileSheetPresented) {
             LoadProfilesSheet(store: profileStore)
         }
+        .sheet(isPresented: $isSolarForecastSheetPresented) {
+            SolarForecastSettingsSheet(coordinator: coordinator)
+        }
         .sheet(item: $runDetailsSnapshot) { snapshot in
             LoadRunDetailsSheet(snapshot: snapshot)
         }
         .onChange(of: profileStore.profiles) { _, profiles in
+            coordinator.loadProfileDidEdit()
             if let exploredProfileID, !profiles.contains(where: { $0.id == exploredProfileID }) {
                 self.exploredProfileID = nil
             }
+        }
+        .task { await coordinator.loadTimingDetailAppeared() }
+        .onChange(of: coordinator.isForeground) { _, isForeground in
+            guard isForeground else { return }
+            Task { await coordinator.loadTimingDetailAppeared() }
         }
     }
 

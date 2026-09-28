@@ -9,6 +9,21 @@ protocol MobileDashboardDataAPI: Sendable {
 
 extension PWUsageAPI: MobileDashboardDataAPI {}
 
+@MainActor
+protocol MobileLoadPlanningDataAPI: Sendable {
+    func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse
+}
+
+extension PWUsageAPI: MobileLoadPlanningDataAPI {}
+
+enum SolarForecastEnhancementState: Equatable {
+    case basic
+    case loadingWithBasic
+    case enhanced
+    case failedWithBasic
+    case disconnectedBasic
+}
+
 struct DashboardEndpointState<Response: Equatable>: Equatable {
     fileprivate(set) var response: Response?
     fileprivate(set) var lastAttempt: Date?
@@ -29,16 +44,23 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
 final class DashboardCoordinator: ObservableObject {
     static let liveInterval: TimeInterval = 5 * 60
     static let billInterval: TimeInterval = 30 * 60
+    static let planningContextLifetime: TimeInterval = 24 * 60 * 60
 
     @Published private(set) var selectedSiteID: String
     @Published private(set) var live = DashboardEndpointState<MobileLiveResponse>()
     @Published private(set) var bill = DashboardEndpointState<MobileBillResponse>()
     @Published private(set) var isForeground = false
     @Published private(set) var requiresSignIn = false
+    @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
+    @Published private(set) var solarForecastBatch: SolarForecastBatch?
+    @Published private(set) var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
 
     var pollingTimerIsActive: Bool { timerTask != nil }
 
     private let api: any MobileDashboardDataAPI
+    private let planningAPI: (any MobileLoadPlanningDataAPI)?
+    private let forecastStore: (any SolarForecastManaging)?
+    private let accountScopeID: String?
     private let now: () -> Date
     private let timerInterval: Duration?
     private var sceneIsActive = false
@@ -46,15 +68,35 @@ final class DashboardCoordinator: ObservableObject {
     private var liveTask: Task<Void, Never>?
     private var billTask: Task<Void, Never>?
     private var siteGeneration = 0
+    private var forecastGeneration = 0
+    private var billSuccessGeneration = 0
+    private var planningContextCache: [String: PlanningContextCacheEntry] = [:]
+    private var planningContextTasks: [String: PlanningContextTask] = [:]
+
+    private struct PlanningContextCacheEntry {
+        let response: MobileLoadPlanningContextResponse
+        let fetchedAt: Date
+    }
+
+    private struct PlanningContextTask {
+        let id: UUID
+        let task: Task<MobileLoadPlanningContextResponse?, Never>
+    }
 
     init(
         siteID: String,
         api: any MobileDashboardDataAPI,
+        planningAPI: (any MobileLoadPlanningDataAPI)? = nil,
+        forecastStore: (any SolarForecastManaging)? = nil,
+        accountScopeID: String? = nil,
         now: @escaping () -> Date = Date.init,
         timerInterval: Duration? = .seconds(30)
     ) {
         selectedSiteID = siteID
         self.api = api
+        self.planningAPI = planningAPI
+        self.forecastStore = forecastStore
+        self.accountScopeID = accountScopeID
         self.now = now
         self.timerInterval = timerInterval
     }
@@ -86,16 +128,29 @@ final class DashboardCoordinator: ObservableObject {
         Task { await refreshDue() }
     }
 
+    /// Invalidates optional forecast work before the authenticated app state is
+    /// discarded. Late provider/context completions must never restore it.
+    func authenticationInvalidated() {
+        forecastGeneration += 1
+        solarForecastBatch = nil
+        loadPlanningContext = nil
+        solarForecastState = .basic
+    }
+
     func selectSite(_ siteID: String) {
         guard siteID != selectedSiteID else { return }
         selectedSiteID = siteID
         siteGeneration += 1
+        forecastGeneration += 1
         liveTask?.cancel()
         billTask?.cancel()
         liveTask = nil
         billTask = nil
         live.reset()
         bill.reset()
+        solarForecastState = .basic
+        solarForecastBatch = nil
+        loadPlanningContext = nil
         guard isForeground, !requiresSignIn else { return }
         Task { await refreshDue() }
     }
@@ -150,6 +205,184 @@ final class DashboardCoordinator: ObservableObject {
         await billTask?.value
     }
 
+    /// Starts the optional enhancement only when a local credential and array
+    /// selection exist. This path refreshes bill/context data but never live data.
+    func loadTimingDetailAppeared() async {
+        let operation = beginForecastOperation()
+        guard let forecastStore, let planningAPI, let accountScopeID else {
+            solarForecastState = .basic
+            return
+        }
+        let siteID = selectedSiteID
+        guard let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID),
+              !credential.resourceIDs.isEmpty else {
+            guard operation == forecastGeneration, siteID == selectedSiteID else { return }
+            solarForecastState = .basic
+            solarForecastBatch = nil
+            loadPlanningContext = nil
+            return
+        }
+        guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
+        solarForecastState = .loadingWithBasic
+
+        let billSuccessBeforeRefresh = billSuccessGeneration
+        async let billRefresh: Void = refreshBill(force: true)
+        async let refreshResult = forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: false)
+        async let contextResult = planningContext(siteID: siteID, api: planningAPI)
+        let (refresh, context) = await (refreshResult, contextResult)
+        await billRefresh
+
+        guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
+        guard refresh == .refreshed || refresh == .alreadyFresh,
+              billSuccessGeneration > billSuccessBeforeRefresh,
+              bill.response?.site.id == siteID,
+              bill.response?.site.timezone == context?.timeZone,
+              await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
+              let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID),
+              let context else {
+            solarForecastBatch = nil
+            loadPlanningContext = nil
+            solarForecastState = .failedWithBasic
+            return
+        }
+        solarForecastBatch = batch
+        loadPlanningContext = context
+        solarForecastState = .enhanced
+    }
+
+    func refreshSolarForecast(manual: Bool) async {
+        let operation = beginForecastOperation()
+        guard let forecastStore, let accountScopeID else {
+            solarForecastState = .basic
+            return
+        }
+        let siteID = selectedSiteID
+        guard await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID) != nil else {
+            guard operation == forecastGeneration, siteID == selectedSiteID else { return }
+            solarForecastState = .basic
+            return
+        }
+        solarForecastState = .loadingWithBasic
+        let refresh = await forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: manual)
+        guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
+        guard refresh == .refreshed || refresh == .alreadyFresh,
+              await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
+              let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID),
+              loadPlanningContext != nil else {
+            solarForecastBatch = nil
+            solarForecastState = .failedWithBasic
+            return
+        }
+        solarForecastBatch = batch
+        solarForecastState = .enhanced
+    }
+
+    @discardableResult
+    func connectSolarForecast(apiKey: String) async throws -> String {
+        let operation = beginForecastOperation()
+        guard let forecastStore, let accountScopeID else { throw SolarForecastStore.StoreError.invalidConfiguration }
+        let siteID = selectedSiteID
+        let credentialID = try await forecastStore.connect(
+            apiKey: apiKey,
+            accountScopeID: accountScopeID,
+            siteID: siteID,
+            resourceIDs: nil
+        )
+        if operation == forecastGeneration, siteID == selectedSiteID {
+            resetForecastEnhancement(state: .basic)
+        }
+        return credentialID
+    }
+
+    func discoverSolarSites(manual: Bool = true) async throws -> [SolcastSite] {
+        _ = beginForecastOperation()
+        guard let forecastStore, let accountScopeID else { throw SolarForecastStore.StoreError.invalidConfiguration }
+        return try await forecastStore.discoverSites(
+            accountScopeID: accountScopeID,
+            siteID: selectedSiteID,
+            manual: manual
+        )
+    }
+
+    func selectSolarArrays(_ resourceIDs: [String]) async throws {
+        let operation = beginForecastOperation()
+        guard let forecastStore, let accountScopeID else { throw SolarForecastStore.StoreError.invalidConfiguration }
+        let siteID = selectedSiteID
+        try await forecastStore.selectArrays(resourceIDs, accountScopeID: accountScopeID, siteID: siteID)
+        if operation == forecastGeneration, siteID == selectedSiteID {
+            resetForecastEnhancement(state: .basic)
+        }
+    }
+
+    func solarForecastCredential() async -> SolarForecastCredential? {
+        guard let forecastStore, let accountScopeID else { return nil }
+        return await forecastStore.credential(accountScopeID: accountScopeID, siteID: selectedSiteID)
+    }
+
+    func solarForecastBudget() async -> SolarForecastBudget? {
+        guard let forecastStore, let accountScopeID else { return nil }
+        return await forecastStore.budget(for: accountScopeID, siteID: selectedSiteID)
+    }
+
+    func disconnectSolarForecast() async throws {
+        let operation = beginForecastOperation()
+        guard let forecastStore, let accountScopeID else { throw SolarForecastStore.StoreError.invalidConfiguration }
+        let siteID = selectedSiteID
+        try await forecastStore.disconnect(accountScopeID: accountScopeID, siteID: siteID)
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return }
+        resetForecastEnhancement(state: .disconnectedBasic)
+    }
+
+    /// Settings text edits and profile comparisons are deliberately local.
+    func solarForecastSettingsDidEdit() { _ = beginForecastOperation() }
+    func loadProfileDidEdit() {}
+
+    private func planningContext(
+        siteID: String,
+        api: any MobileLoadPlanningDataAPI
+    ) async -> LoadTimingForecastEstimator.PlanningContext? {
+        let requestTime = now()
+        if let cached = planningContextCache[siteID],
+           requestTime.timeIntervalSince(cached.fetchedAt) >= 0,
+           requestTime.timeIntervalSince(cached.fetchedAt) < Self.planningContextLifetime,
+           let validated = try? cached.response.validating(siteID: siteID, now: requestTime) {
+            return validated.estimatorContext
+        }
+        let pending: PlanningContextTask
+        if let existing = planningContextTasks[siteID] {
+            pending = existing
+        } else {
+            let id = UUID()
+            let task = Task { try? await api.fetchLoadPlanningContext(siteID: siteID) }
+            pending = PlanningContextTask(id: id, task: task)
+            planningContextTasks[siteID] = pending
+        }
+        do {
+            let response = await pending.task.value
+            let receiveTime = now()
+            if planningContextTasks[siteID]?.id == pending.id { planningContextTasks.removeValue(forKey: siteID) }
+            guard let response else { return nil }
+            let validated = try response.validating(siteID: siteID, now: receiveTime)
+            guard validated.availability == .available, let context = validated.estimatorContext else { return nil }
+            planningContextCache[siteID] = PlanningContextCacheEntry(response: validated, fetchedAt: receiveTime)
+            return context
+        } catch {
+            if planningContextTasks[siteID]?.id == pending.id { planningContextTasks.removeValue(forKey: siteID) }
+            return nil
+        }
+    }
+
+    private func beginForecastOperation() -> Int {
+        forecastGeneration += 1
+        return forecastGeneration
+    }
+
+    private func resetForecastEnhancement(state: SolarForecastEnhancementState) {
+        solarForecastBatch = nil
+        loadPlanningContext = nil
+        solarForecastState = state
+    }
+
     private func launchBillTaskIfNeeded(force: Bool, requestTime: Date, generation: Int) {
         guard billTask == nil else { return }
         if force || isDue(lastAttempt: bill.lastAttempt, interval: Self.billInterval, at: requestTime) {
@@ -188,6 +421,7 @@ final class DashboardCoordinator: ObservableObject {
             let response = try await api.fetchBill(siteID: siteID)
             guard generation == siteGeneration, !requiresSignIn else { return }
             bill.response = response
+            billSuccessGeneration += 1
             bill.lastSuccess = now()
             bill.isUnavailable = false
             bill.unavailableStatusCode = nil
@@ -201,6 +435,7 @@ final class DashboardCoordinator: ObservableObject {
     private func handle(_ error: Error, generation: Int, endpoint: Endpoint) {
         guard generation == siteGeneration else { return }
         if error as? PWUsageAPIError == .signInRequired {
+            authenticationInvalidated()
             requiresSignIn = true
             isForeground = false
             liveTask?.cancel()

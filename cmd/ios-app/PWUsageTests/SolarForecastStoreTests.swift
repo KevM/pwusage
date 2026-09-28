@@ -173,6 +173,55 @@ struct SolarForecastStoreTests {
         #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a") == nil)
     }
 
+    @Test("Replacing a key during refresh invalidates the old task instead of reusing it")
+    func keyReplacementInvalidatesInFlightRefresh() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        await h.transport.holdResponses()
+        let oldRefresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) }
+        await h.transport.waitUntilRequestsStarted(1)
+
+        try await h.store.connect(apiKey: "key-b", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["west"])
+        let newRefresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) }
+        try await Task.sleep(for: .milliseconds(10))
+
+        #expect(await h.transport.requestCount == 2)
+        await h.transport.resumeResponses()
+        #expect(await oldRefresh.value == .cancelled)
+        #expect(await newRefresh.value == .refreshed)
+        #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a")?.resourceIDs == ["west"])
+    }
+
+    @Test("Changing array selection during refresh invalidates the old task instead of reusing it")
+    func selectionChangeInvalidatesInFlightRefresh() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        await h.transport.holdResponses()
+        let oldRefresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) }
+        await h.transport.waitUntilRequestsStarted(1)
+
+        try await h.store.selectArrays(["west"], accountScopeID: "account-a", siteID: "site-a")
+        let newRefresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) }
+        try await Task.sleep(for: .milliseconds(10))
+
+        #expect(await h.transport.requestCount == 2)
+        await h.transport.resumeResponses()
+        #expect(await oldRefresh.value == .cancelled)
+        #expect(await newRefresh.value == .refreshed)
+        #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a")?.resourceIDs == ["west"])
+    }
+
+    @Test("A different replacement key requires explicit array selection")
+    func replacementKeyClearsPriorSelection() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+
+        try await h.store.connect(apiKey: "key-b", accountScopeID: "account-a", siteID: "site-a")
+
+        #expect(await h.store.credential(accountScopeID: "account-a", siteID: "site-a")?.resourceIDs == [])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .notConfigured)
+    }
+
     @Test("Disconnect removes key, mapping and cache while preserving nonsecret budget")
     func disconnectCleansAssociationButKeepsBudget() async throws {
         let h = Harness()

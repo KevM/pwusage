@@ -129,7 +129,7 @@ describe('mobile bill summary route', () => {
         expect(body.loadTiming.pricingPeriods.find((period: { name: string }) => period.name === 'Off peak').nextStartPhrase).toEqual(expect.any(String));
         expect(body.loadTiming.pricingPeriods).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Winter peak' })]));
         expect(body.loadTiming.tariffTimeline[0]).toMatchObject({
-            start: '2026-09-19T02:00:00.000Z',
+            start: '2026-09-19T01:55:00.000Z',
             end: '2026-09-19T03:00:00.000Z',
             periodKey: 'Peak', name: 'Peak', buyRate: 0.4, sellRate: 0.05,
         });

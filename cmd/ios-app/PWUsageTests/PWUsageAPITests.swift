@@ -81,6 +81,30 @@ final class PWUsageAPITests {
         #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "siteId" })?.value == "site/one & two")
     }
 
+    @Test("Planning context uses the authenticated PWUsage transport and typed contract")
+    func planningContextUsesPWUsageTransport() async throws {
+        var recordedRequest: URLRequest?
+        let slots = (0..<48).map { index in
+            "{\"localMinute\":\(index * 30),\"homeKw\":1.25,\"batteryNetChargeKw\":-0.1,\"sampleCount\":14,\"coverage\":1}"
+        }.joined(separator: ",")
+        let fixture = "{\"version\":1,\"site\":{\"id\":\"site/one & two\",\"timezone\":\"UTC\"},\"units\":{\"power\":\"kW\",\"localMinute\":\"minute-of-day\"},\"asOf\":\"2027-01-15T08:00:00Z\",\"availability\":\"available\",\"unavailableReason\":null,\"usableDayCount\":14,\"historyStart\":\"2027-01-01T00:00:00Z\",\"historyEnd\":\"2027-01-15T00:00:00Z\",\"slots\":[\(slots)]}"
+        StubURLProtocol.requestHandler = { request in
+            recordedRequest = request
+            return (try Self.response(request, status: 200), Data(fixture.utf8))
+        }
+
+        let context = try await api.fetchLoadPlanningContext(siteID: "site/one & two")
+
+        #expect(context.site.id == "site/one & two")
+        #expect(context.slots.count == 48)
+        #expect(context.slots[0].batteryNetChargeKw == -0.1)
+        let request = try #require(recordedRequest)
+        let url = try #require(request.url)
+        #expect(url.path == "/api/mobile/load-planning-context")
+        #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "siteId" })?.value == "site/one & two")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
     @Test("Unauthorized maps to sign-in required")
     func unauthorizedMapsToSignInRequired() async {
         StubURLProtocol.requestHandler = { request in (try Self.response(request, status: 401), Data(#"{"error":"Unauthorized"}"#.utf8)) }
