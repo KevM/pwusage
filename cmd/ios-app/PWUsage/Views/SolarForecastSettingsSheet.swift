@@ -24,6 +24,7 @@ struct SolarForecastSettingsSheet: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .onChange(of: apiKey) { coordinator.solarForecastSettingsDidEdit() }
+                        .disabled(isWorking)
                     Button(isConnected ? "Replace key" : "Save key") {
                         Task { await saveKeyAndDiscover() }
                     }
@@ -55,6 +56,7 @@ struct SolarForecastSettingsSheet: View {
                                     }
                                 }
                             }
+                            .disabled(isWorking)
                         }
                         Button("Save array selection") {
                             Task { await saveSelection(Array(selectedResourceIDs).sorted()) }
@@ -72,10 +74,12 @@ struct SolarForecastSettingsSheet: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .onChange(of: manualResourceID1) { coordinator.solarForecastSettingsDidEdit() }
+                            .disabled(isWorking)
                         TextField("Array 2 resource ID (optional)", text: $manualResourceID2)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .onChange(of: manualResourceID2) { coordinator.solarForecastSettingsDidEdit() }
+                            .disabled(isWorking)
                         Button("Save manual IDs") {
                             let ids = [manualResourceID1, manualResourceID2]
                                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -112,10 +116,11 @@ struct SolarForecastSettingsSheet: View {
                                     selectedResourceIDs = []
                                     statusMessage = "Disconnected. Load timing will use tariff and balance data."
                                 } catch {
-                                    applyStatus(error, operation: .disconnect)
+                                    await applyStatus(error, operation: .disconnect)
                                 }
                             }
                         }
+                        .disabled(isWorking)
                     }
                 }
             }
@@ -164,16 +169,22 @@ struct SolarForecastSettingsSheet: View {
         defer { isWorking = false }
         do {
             _ = try await coordinator.connectSolarForecast(apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines))
-            isConnected = true
-            allowsManualIDs = false
-            apiKey = ""
+        } catch {
+            await applyStatus(error, operation: .connection)
+            budget = await coordinator.solarForecastBudget()
+            return
+        }
+        isConnected = true
+        allowsManualIDs = false
+        apiKey = ""
+        do {
             discoveredSites = try await coordinator.discoverSolarSites()
             allowsManualIDs = true
             statusMessage = discoveredSites.isEmpty
                 ? "No arrays were discovered. Enter one or two resource IDs manually."
                 : "Choose the arrays that belong to this PWUsage site."
         } catch {
-            applyStatus(error, operation: .discovery)
+            await applyStatus(error, operation: .discovery)
         }
         budget = await coordinator.solarForecastBudget()
     }
@@ -191,16 +202,17 @@ struct SolarForecastSettingsSheet: View {
             statusMessage = "Array selection saved on this device."
             await coordinator.loadTimingDetailAppeared()
         } catch {
-            applyStatus(error, operation: .selection)
+            await applyStatus(error, operation: .selection)
         }
         budget = await coordinator.solarForecastBudget()
     }
 
-    private func applyStatus(_ error: Error, operation: SolarForecastSettingsOperation) {
+    private func applyStatus(_ error: Error, operation: SolarForecastSettingsOperation) async {
+        let hasCredential = await coordinator.solarForecastCredential() != nil
         let presentation = SolarForecastSettingsStatus.presentation(
             for: error,
             operation: operation,
-            hasCredential: isConnected
+            hasCredential: hasCredential
         )
         isConnected = presentation.isConnected
         allowsManualIDs = presentation.allowsManualIDs

@@ -334,7 +334,7 @@ final class DashboardCoordinator: ObservableObject {
     }
 
     /// Settings text edits and profile comparisons are deliberately local.
-    func solarForecastSettingsDidEdit() { _ = beginForecastOperation() }
+    func solarForecastSettingsDidEdit() {}
     func loadProfileDidEdit() {}
 
     private func planningContext(

@@ -50,6 +50,12 @@ enum SolarForecastSettingsStatus {
                 isConnected: hasCredential,
                 allowsManualIDs: false
             )
+        case .persistenceFailed where operation == .connection:
+            return SolarForecastSettingsPresentation(
+                message: "This device could not safely save the Solcast connection. Please try again.",
+                isConnected: hasCredential,
+                allowsManualIDs: false
+            )
         case .persistenceFailed, .cleanupFailed,
              .discoveryFailed(.storageFailure), .discoveryFailed(.cleanupFailure):
             return SolarForecastSettingsPresentation(

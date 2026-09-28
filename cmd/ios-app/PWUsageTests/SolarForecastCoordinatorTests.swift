@@ -384,6 +384,46 @@ struct SolarForecastCoordinatorTests {
         #expect(api.billSiteIDs.isEmpty)
         #expect(api.liveSiteIDs.isEmpty)
     }
+
+    @Test("Unsaved settings edits do not strand a loading enhancement")
+    func settingsEditDoesNotInvalidateLoading() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        await forecast.setHoldRefresh(true)
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        let request = Task { await coordinator.loadTimingDetailAppeared() }
+        await forecast.waitUntilRefreshStarts()
+        coordinator.solarForecastSettingsDidEdit()
+        await forecast.resumeRefresh(with: .refreshed)
+        await request.value
+
+        #expect(coordinator.solarForecastState == .enhanced)
+    }
+
+    @Test("Unsaved settings edits do not supersede a disconnect in progress")
+    func settingsEditDoesNotInvalidateDisconnect() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        await forecast.setHoldDisconnect(true)
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        let disconnect = Task { try? await coordinator.disconnectSolarForecast() }
+        await forecast.waitUntilDisconnectStarts()
+        coordinator.solarForecastSettingsDidEdit()
+        await forecast.resumeDisconnect()
+        await disconnect.value
+
+        #expect(coordinator.solarForecastState == .disconnectedBasic)
+    }
 }
 
 private final class ForecastTestClock: @unchecked Sendable {
@@ -399,6 +439,10 @@ private actor ForecastManagerSpy: SolarForecastManaging {
     private var refreshContinuations: [Int: CheckedContinuation<SolarForecastRefreshResult, Never>] = [:]
     private var refreshCountWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var disconnectError: SolarForecastStore.StoreError?
+    private var holdDisconnect = false
+    private var disconnectStarted = false
+    private var disconnectStartWaiter: CheckedContinuation<Void, Never>?
+    private var disconnectContinuation: CheckedContinuation<Void, Never>?
     private(set) var refreshCount = 0
     private(set) var discoveryCount = 0
     private(set) var connectCount = 0
@@ -422,6 +466,12 @@ private actor ForecastManagerSpy: SolarForecastManaging {
         refreshContinuations.removeValue(forKey: index)?.resume(returning: result)
     }
     func setDisconnectError(_ error: SolarForecastStore.StoreError?) { disconnectError = error }
+    func setHoldDisconnect(_ value: Bool) { holdDisconnect = value }
+    func waitUntilDisconnectStarts() async {
+        if disconnectStarted { return }
+        await withCheckedContinuation { disconnectStartWaiter = $0 }
+    }
+    func resumeDisconnect() { disconnectContinuation?.resume(); disconnectContinuation = nil }
 
     func activateAccountScope(_ accountScopeID: String?) {}
     func credential(accountScopeID: String, siteID: String) -> SolarForecastCredential? {
@@ -463,7 +513,11 @@ private actor ForecastManagerSpy: SolarForecastManaging {
     func budget(for accountScopeID: String, siteID: String) -> SolarForecastBudget {
         SolarForecastBudget(utcDay: Date(timeIntervalSince1970: 1_800_000_000), totalAttempts: 1, automaticAttempts: 1, deferredUntil: nil)
     }
-    func disconnect(accountScopeID: String, siteID: String) throws {
+    func disconnect(accountScopeID: String, siteID: String) async throws {
+        disconnectStarted = true
+        disconnectStartWaiter?.resume()
+        disconnectStartWaiter = nil
+        if holdDisconnect { await withCheckedContinuation { disconnectContinuation = $0 } }
         if let disconnectError { throw disconnectError }
         configuredSiteID = nil
         let pending = Array(refreshContinuations.values)

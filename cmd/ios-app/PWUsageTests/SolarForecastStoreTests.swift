@@ -396,6 +396,70 @@ struct SolarForecastStoreTests {
         #expect(await h.store.lastErrorDescription?.contains("key-a") == false)
     }
 
+    @Test("Unauthorized discovery removes the rejected key across reopen")
+    func unauthorizedDiscoveryDoesNotReopenConnected() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        await h.transport.nextStatusCode(401)
+
+        await #expect(throws: SolarForecastStore.StoreError.discoveryFailed(.unauthorized)) {
+            try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a", manual: true)
+        }
+
+        #expect(await h.store.credential(accountScopeID: "account-a", siteID: "site-a") == nil)
+        #expect(await h.keychain.count == 0)
+        let reopened = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
+        #expect(await reopened.credential(accountScopeID: "account-a", siteID: "site-a") == nil)
+    }
+
+    @Test("Refresh cannot enter while key replacement persistence is held")
+    func refreshIsBlockedDuringConnectMutation() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        let budgetBefore = await h.store.budget(for: "account-a", siteID: "site-a")
+        await h.files.holdNextSave()
+        let mutation = Task { try await h.store.connect(apiKey: "key-b", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["west"]) }
+        await h.files.waitUntilSaveIsHeld()
+
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .cancelled)
+        #expect(await h.transport.requestCount == 0)
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a") == budgetBefore)
+        await h.files.resumeHeldSave()
+        _ = try await mutation.value
+    }
+
+    @Test("Refresh cannot enter while same-credential selection persistence is held")
+    func refreshIsBlockedDuringSelectionMutation() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        let budgetBefore = await h.store.budget(for: "account-a", siteID: "site-a")
+        await h.files.holdNextSave()
+        let mutation = Task { try await h.store.selectArrays(["west"], accountScopeID: "account-a", siteID: "site-a") }
+        await h.files.waitUntilSaveIsHeld()
+
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .cancelled)
+        #expect(await h.transport.requestCount == 0)
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a") == budgetBefore)
+        await h.files.resumeHeldSave()
+        try await mutation.value
+    }
+
+    @Test("Refresh cannot enter while disconnect keychain cleanup is held")
+    func refreshIsBlockedDuringDisconnectMutation() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        let budgetBefore = await h.store.budget(for: "account-a", siteID: "site-a")
+        await h.keychain.holdNextDelete()
+        let mutation = Task { try await h.store.disconnect(accountScopeID: "account-a", siteID: "site-a") }
+        await h.keychain.waitUntilDeleteIsHeld()
+
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .cancelled)
+        #expect(await h.transport.requestCount == 0)
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a") == budgetBefore)
+        await h.keychain.resumeHeldDelete()
+        try await mutation.value
+    }
+
     @Test("Discovery rate limit persists deferral and preserves typed failure")
     func discoveryRateLimitDefers() async throws {
         let h = Harness()
@@ -617,6 +681,8 @@ private actor TestCredentialKeychain: SolcastCredentialKeychain {
     private var values: [String: SolcastStoredCredential] = [:]
     private var shouldFailDeleteAll = false
     private var successfulSavesBeforeFailure: Int?
+    private var shouldHoldNextDelete = false
+    private var heldDelete: CheckedContinuation<Void, Never>?
     var count: Int { values.count }
     func save(key: String, accountScopeID: String, siteID: String, credentialID: String) async throws {
         if let remaining = successfulSavesBeforeFailure {
@@ -626,7 +692,13 @@ private actor TestCredentialKeychain: SolcastCredentialKeychain {
         values[SolarForecastScope.key(accountScopeID, siteID)] = SolcastStoredCredential(key: key, credentialID: credentialID)
     }
     func load(accountScopeID: String, siteID: String) async throws -> SolcastStoredCredential? { values[SolarForecastScope.key(accountScopeID, siteID)] }
-    func delete(accountScopeID: String, siteID: String) async throws { values.removeValue(forKey: SolarForecastScope.key(accountScopeID, siteID)) }
+    func delete(accountScopeID: String, siteID: String) async throws {
+        if shouldHoldNextDelete {
+            shouldHoldNextDelete = false
+            await withCheckedContinuation { heldDelete = $0 }
+        }
+        values.removeValue(forKey: SolarForecastScope.key(accountScopeID, siteID))
+    }
     func deleteAll(accountScopeID: String) async throws { values = values.filter { !$0.key.hasPrefix(SolarForecastScope.prefix(accountScopeID)) } }
     func deleteAllCredentials() async throws {
         if shouldFailDeleteAll { shouldFailDeleteAll = false; throw TestFileError.failedWrite }
@@ -634,6 +706,9 @@ private actor TestCredentialKeychain: SolcastCredentialKeychain {
     }
     func failDeleteAll() { shouldFailDeleteAll = true }
     func failSaveAfter(successfulSaves: Int) { successfulSavesBeforeFailure = successfulSaves }
+    func holdNextDelete() { shouldHoldNextDelete = true }
+    func waitUntilDeleteIsHeld() async { while heldDelete == nil { await Task.yield() } }
+    func resumeHeldDelete() { heldDelete?.resume(); heldDelete = nil }
 }
 
 private actor TestSolarForecastFiles: SolarForecastPersistence {
@@ -641,8 +716,14 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
     private var payload = Data()
     private var shouldFailNextSave = false
     private var successfulSavesBeforeFailure: Int?
+    private var shouldHoldNextSave = false
+    private var heldSave: CheckedContinuation<Void, Never>?
     func loadState() async throws -> SolarForecastPersistedState { state }
     func saveState(_ newState: SolarForecastPersistedState) async throws {
+        if shouldHoldNextSave {
+            shouldHoldNextSave = false
+            await withCheckedContinuation { heldSave = $0 }
+        }
         if let remaining = successfulSavesBeforeFailure {
             if remaining == 0 { successfulSavesBeforeFailure = nil; throw TestFileError.failedWrite }
             successfulSavesBeforeFailure = remaining - 1
@@ -653,6 +734,9 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
     }
     func failNextSave() { shouldFailNextSave = true }
     func failNextSaveAfter(successfulSaves: Int) { successfulSavesBeforeFailure = successfulSaves }
+    func holdNextSave() { shouldHoldNextSave = true }
+    func waitUntilSaveIsHeld() async { while heldSave == nil { await Task.yield() } }
+    func resumeHeldSave() { heldSave?.resume(); heldSave = nil }
     func setFetchedAt(_ date: Date, accountScopeID: String, siteID: String) {
         let key = SolarForecastScope.key(accountScopeID, siteID)
         guard let batch = state.caches[key] else { return }

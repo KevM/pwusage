@@ -50,6 +50,19 @@ struct SolarForecastSettingsStatusTests {
         #expect(status.message == "Solcast could not be reached. You can enter resource IDs manually or retry discovery.")
     }
 
+    @Test("Connection storage failure never offers discovery fallback")
+    func connectionStorageFailureIsClassifiedSeparately() {
+        let status = SolarForecastSettingsStatus.presentation(
+            for: SolarForecastStore.StoreError.persistenceFailed,
+            operation: .connection,
+            hasCredential: false
+        )
+
+        #expect(!status.isConnected)
+        #expect(!status.allowsManualIDs)
+        #expect(status.message == "This device could not safely save the Solcast connection. Please try again.")
+    }
+
     @Test("Cleanup failure retains connected state and gives retry guidance")
     func cleanupFailureRetainsConnection() {
         let status = SolarForecastSettingsStatus.presentation(

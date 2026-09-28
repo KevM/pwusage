@@ -93,6 +93,7 @@ actor SolarForecastStore {
     }
 
     private var inFlight: [String: InFlightRefresh] = [:]
+    private var mutatingScopes: Set<String> = []
     private var activeAccountScopeID: String?
     private(set) var lastErrorDescription: String?
 
@@ -121,9 +122,10 @@ actor SolarForecastStore {
             ?? (previousCredential?.credentialID == credentialID ? previousCredential?.resourceIDs ?? [] : [])
         guard (0...2).contains(selectedResources.count), Set(selectedResources).count == selectedResources.count,
               selectedResources.allSatisfy({ !$0.isEmpty }) else { throw StoreError.invalidConfiguration }
-        let previousKey = try await keychain.load(accountScopeID: accountScopeID, siteID: siteID)
         activateAccountScope(accountScopeID)
-        invalidateRefresh(scope: scope)
+        try beginMutation(scope: scope)
+        defer { endMutation(scope: scope) }
+        let previousKey = try await keychain.load(accountScopeID: accountScopeID, siteID: siteID)
         let credential = SolarForecastCredential(accountScopeID: accountScopeID, siteID: siteID, credentialID: credentialID, resourceIDs: selectedResources)
         try await keychain.save(key: apiKey, accountScopeID: accountScopeID, siteID: siteID, credentialID: credentialID)
         var nextState = previousState
@@ -234,6 +236,12 @@ actor SolarForecastStore {
         } catch let error as SolcastClientError {
             guard generation == generations[scope], activeAccountScopeID == accountScopeID else { throw StoreError.cancelled }
             recordRateLimit(error, credentialID: credential.credentialID)
+            if Self.failureKind(error) == .unauthorized {
+                try beginMutation(scope: scope)
+                defer { endMutation(scope: scope) }
+                guard await removeRejectedCredential(credential, scope: scope) else { throw StoreError.cleanupFailed }
+                throw StoreError.discoveryFailed(.unauthorized)
+            }
             let outcome = await persistFailureState(scope: scope, credential: credential, description: Self.safeDescription(error))
             guard outcome == .persisted else { throw Self.discoveryError(for: outcome, ordinaryError: .persistenceFailed) }
             throw StoreError.discoveryFailed(Self.failureKind(error))
@@ -251,8 +259,10 @@ actor SolarForecastStore {
               (1...2).contains(resourceIDs.count), Set(resourceIDs).count == resourceIDs.count,
               resourceIDs.allSatisfy({ !$0.isEmpty }) else { throw StoreError.invalidConfiguration }
         let scope = SolarForecastScope.key(accountScopeID, siteID)
-        guard let currentCredential = state.credentials[scope], await credentialHasMatchingKey(currentCredential) else { throw StoreError.notConfigured }
-        invalidateRefresh(scope: scope)
+        guard let currentCredential = state.credentials[scope] else { throw StoreError.notConfigured }
+        try beginMutation(scope: scope)
+        defer { endMutation(scope: scope) }
+        guard await credentialHasMatchingKey(currentCredential) else { throw StoreError.notConfigured }
         var nextState = state
         nextState.credentials[scope] = SolarForecastCredential(accountScopeID: accountScopeID, siteID: siteID, credentialID: currentCredential.credentialID, resourceIDs: resourceIDs)
         nextState.caches.removeValue(forKey: scope)
@@ -264,6 +274,7 @@ actor SolarForecastStore {
         do { try await loadIfNeeded() } catch { return .failed(.requestFailed) }
         let scope = SolarForecastScope.key(accountScopeID, siteID)
         guard activeAccountScopeID == accountScopeID else { return .notConfigured }
+        guard !mutatingScopes.contains(scope) else { return .cancelled }
         if let existing = inFlight[scope] { return await existing.task.value }
         guard let credential = state.credentials[scope], credential.resourceIDs.count > 0 else { return .notConfigured }
         if !manual,
@@ -289,11 +300,14 @@ actor SolarForecastStore {
     func disconnect(accountScopeID: String, siteID: String) async throws {
         try await loadIfNeeded()
         let scope = SolarForecastScope.key(accountScopeID, siteID)
-        generations[scope, default: 0] += 1
-        inFlight[scope]?.task.cancel()
-        inFlight.removeValue(forKey: scope)
-        var failed = false
-        do { try await keychain.delete(accountScopeID: accountScopeID, siteID: siteID) } catch { failed = true }
+        try beginMutation(scope: scope)
+        defer { endMutation(scope: scope) }
+        do {
+            try await keychain.delete(accountScopeID: accountScopeID, siteID: siteID)
+        } catch {
+            lastErrorDescription = "Forecast credential could not be removed"
+            throw StoreError.cleanupFailed
+        }
         state.credentials.removeValue(forKey: scope)
         state.caches.removeValue(forKey: scope)
         state.budgetLinks.removeValue(forKey: scope)
@@ -303,8 +317,7 @@ actor SolarForecastStore {
            !state.credentials.values.contains(where: { $0.accountScopeID == accountScopeID }) {
             activeAccountScopeID = nil
         }
-        do { try await persist() } catch { failed = true }
-        if failed { throw StoreError.cleanupFailed }
+        do { try await persist() } catch { throw StoreError.cleanupFailed }
     }
 
     func signOut() async throws {
@@ -331,6 +344,42 @@ actor SolarForecastStore {
         generations[scope, default: 0] += 1
         inFlight[scope]?.task.cancel()
         inFlight.removeValue(forKey: scope)
+    }
+
+    private func beginMutation(scope: String) throws {
+        guard mutatingScopes.insert(scope).inserted else { throw StoreError.cancelled }
+        invalidateRefresh(scope: scope)
+    }
+
+    private func endMutation(scope: String) {
+        mutatingScopes.remove(scope)
+    }
+
+    private func removeRejectedCredential(_ credential: SolarForecastCredential, scope: String) async -> Bool {
+        do {
+            try await keychain.delete(accountScopeID: credential.accountScopeID, siteID: credential.siteID)
+        } catch {
+            lastErrorDescription = "Rejected forecast credential could not be removed"
+            return false
+        }
+        var nextState = state
+        nextState.credentials.removeValue(forKey: scope)
+        nextState.caches.removeValue(forKey: scope)
+        nextState.budgetLinks.removeValue(forKey: scope)
+        nextState.failedScopes.remove(scope)
+        do {
+            try await files.saveState(nextState)
+        } catch {
+            lastErrorDescription = "Rejected forecast credential cleanup could not be saved"
+            return false
+        }
+        state = nextState
+        if activeAccountScopeID == credential.accountScopeID,
+           !state.credentials.values.contains(where: { $0.accountScopeID == credential.accountScopeID }) {
+            activeAccountScopeID = nil
+        }
+        lastErrorDescription = "Forecast service rejected the credential"
+        return true
     }
 
     private func performRefresh(scope: String, credential: SolarForecastCredential, generation: Int, manual: Bool) async -> SolarForecastRefreshResult {
