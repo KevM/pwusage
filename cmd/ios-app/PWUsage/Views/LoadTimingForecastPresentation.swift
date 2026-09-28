@@ -51,11 +51,14 @@ enum LoadTimingForecastPresentation {
     }
 
     static let unavailableNotePrefix = "Solar forecast unavailable — using tariff and balance data."
+    /// Matches `SolarForecastStore.recommendationFreshness`. Data older than this
+    /// may be shown as stale, but must not produce a new recommendation.
+    static let maximumForecastAge: TimeInterval = 6 * 60 * 60
 
     static func overlay(
         enhancement: SolarForecastEnhancementState,
         connection: SolarForecastConnectionState,
-        failure: SolarForecastRefreshFailure?,
+        cause: SolarForecastUnavailableCause?,
         result: LoadTimingForecastEstimator.Result,
         forecastFetchedAt: Date?,
         contextAsOf: Date?,
@@ -64,11 +67,12 @@ enum LoadTimingForecastPresentation {
         now: Date
     ) -> Overlay {
         if enhancement == .enhanced, connection == .ready, let comparison = result.comparison,
+           let fetchedAt = forecastFetchedAt, now.timeIntervalSince(fetchedAt) <= maximumForecastAge,
            comparison.costNow.isFinite, comparison.recommendedCost.isFinite,
            comparison.savings.isFinite, comparison.estimatedSolarContribution.isFinite {
             return Overlay(
                 isForecastAware: true,
-                enhanced: enhancedSection(comparison, forecastFetchedAt: forecastFetchedAt,
+                enhanced: enhancedSection(comparison, forecastFetchedAt: fetchedAt,
                                           contextAsOf: contextAsOf, currencyCode: currencyCode,
                                           timeZone: timeZone, now: now),
                 note: nil,
@@ -80,7 +84,7 @@ enum LoadTimingForecastPresentation {
             isForecastAware: false,
             enhanced: nil,
             note: note(enhancement: enhancement, connection: connection,
-                       failure: failure, result: result),
+                       cause: cause, result: result),
             detail: ""
         )
     }
@@ -136,39 +140,62 @@ enum LoadTimingForecastPresentation {
     private static func note(
         enhancement: SolarForecastEnhancementState,
         connection: SolarForecastConnectionState,
-        failure: SolarForecastRefreshFailure?,
+        cause: SolarForecastUnavailableCause?,
         result: LoadTimingForecastEstimator.Result
     ) -> String? {
         // No key on this device means there is nothing to explain.
-        guard connection != .notConnected else { return nil }
         switch connection {
+        case .notConnected:
+            return nil
         case .awaitingArraySelection:
             return "Choose your solar arrays to add a forecast. Your estimate below already works without it."
         case .ready:
             break
-        case .notConnected:
-            return nil
         }
         if enhancement == .loadingWithBasic {
             return "Checking your solar forecast. Your estimate below already works without it."
         }
-        // A load that needs no energy has nothing to forecast.
-        if result.unavailableReason == .noEnergyNeeded { return nil }
-        return failureNote(failure)
+        // Name the actual blocker. A spent allowance or a stale balance is not a
+        // Solcast failure, and telling the user to retry would be wrong.
+        switch result.unavailableReason {
+        case .none:
+            break
+        case .noEnergyNeeded:
+            return nil
+        case .staleBalance:
+            return "\(unavailableNotePrefix) Energy observations are older than 30 minutes, so the solar comparison is paused."
+        case .incompleteBalance:
+            return "\(unavailableNotePrefix) Some billing-period balances are missing, so the solar comparison is paused."
+        case .noFittingRun:
+            return "\(unavailableNotePrefix) This load is longer than the search horizon. Try a smaller charge or a faster charging level."
+        case .incompleteContext:
+            return "\(unavailableNotePrefix) There is not enough household history yet to estimate expected usage."
+        case .missingTariff:
+            return "\(unavailableNotePrefix) An active tariff is needed before costs can be compared."
+        case .incompleteCoverage, .invalidInput, .none:
+            // These also stand in for "the view had nothing to evaluate", so the
+            // device's own request bookkeeping is the better explanation.
+            break
+        }
+        return causeNote(cause)
     }
 
-    private static func failureNote(_ failure: SolarForecastRefreshFailure?) -> String {
-        switch failure {
+    private static func causeNote(_ cause: SolarForecastUnavailableCause?) -> String {
+        switch cause {
         case .unauthorized:
             return "\(unavailableNotePrefix) Solcast rejected the saved key. Retry from Solar forecast settings."
         case .rateLimited:
-            return "\(unavailableNotePrefix) Today's request allowance is used up. Retry later today."
+            return "\(unavailableNotePrefix) Solcast is limiting requests. Retry later today."
         case .requestFailed:
             return "\(unavailableNotePrefix) Solcast could not be reached. Retry when you have a connection."
         case .invalidForecast:
             return "\(unavailableNotePrefix) An array returned no usable forecast. Retry the array selection or refresh."
         case .storageFailure, .cleanupFailure:
             return "\(unavailableNotePrefix) Saved forecast data could not be used. Retry a refresh."
+        case .budgetExhausted:
+            return "\(unavailableNotePrefix) This device has used its forecast allowance for today. Try again tomorrow."
+        case .deferred:
+            return "\(unavailableNotePrefix) Requests are paused until the daily limit resets. Retry tomorrow."
         case nil:
             return "\(unavailableNotePrefix) The forecast was too old or incomplete to use. Retry a refresh."
         }

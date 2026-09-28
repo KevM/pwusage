@@ -71,6 +71,7 @@ protocol SolarForecastManaging: Sendable {
     func isRecommendationUsable(accountScopeID: String, siteID: String) async -> Bool
     func budget(for accountScopeID: String, siteID: String) async -> SolarForecastBudget
     func disconnect(accountScopeID: String, siteID: String) async throws
+    func signOut() async throws
 }
 
 actor SolarForecastStore {
@@ -647,6 +648,8 @@ actor DeviceSolarForecastPersistence: SolarForecastPersistence {
 
 @MainActor
 struct SolarForecastStoreSessionCleanup: SolarForecastSessionCleanup {
-    let store: SolarForecastStore
+    /// Held as the protocol so an injected store is actually used. Bypassing this
+    /// would clear the real shared store during tests.
+    let store: any SolarForecastManaging
     func signOut() async throws { try await store.signOut() }
 }

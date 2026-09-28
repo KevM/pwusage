@@ -291,7 +291,7 @@ struct LoadTimingForecastPresentationTests {
         let overlay = LoadTimingForecastPresentation.overlay(
             enhancement: .enhanced,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.enhanced(Self.waitingComparison()),
             forecastFetchedAt: Self.now.addingTimeInterval(-20 * 60),
             contextAsOf: Self.now.addingTimeInterval(-6 * 60 * 60),
@@ -318,7 +318,7 @@ struct LoadTimingForecastPresentationTests {
         let overlay = LoadTimingForecastPresentation.overlay(
             enhancement: .enhanced,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.enhanced(Self.waitingComparison(recommendedStart: Self.now, recommendedEnd: Self.now.addingTimeInterval(3600),
                                                    recommendedCost: 3.40, savings: 0, bestAlternativeSavings: 0)),
             forecastFetchedAt: Self.now,
@@ -341,7 +341,7 @@ struct LoadTimingForecastPresentationTests {
         let overlay = LoadTimingForecastPresentation.overlay(
             enhancement: .enhanced,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.enhanced(Self.waitingComparison(recommendedStart: Self.now, recommendedEnd: Self.now.addingTimeInterval(3600),
                                                    recommendedCost: 3.36, savings: 0, bestAlternativeSavings: 0.04)),
             forecastFetchedAt: Self.now,
@@ -361,7 +361,7 @@ struct LoadTimingForecastPresentationTests {
         let overlay = LoadTimingForecastPresentation.overlay(
             enhancement: .enhanced,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.enhanced(Self.waitingComparison()),
             forecastFetchedAt: Self.now,
             contextAsOf: Self.now,
@@ -379,7 +379,7 @@ struct LoadTimingForecastPresentationTests {
         let overlay = LoadTimingForecastPresentation.overlay(
             enhancement: .enhanced,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.enhanced(Self.waitingComparison()),
             forecastFetchedAt: Self.now,
             contextAsOf: Self.now,
@@ -398,7 +398,7 @@ struct LoadTimingForecastPresentationTests {
     func everyFallbackStateStaysBasic() {
         // Distinctive values that must never appear beside a basic cost.
         let comparison = Self.waitingComparison()
-        let unusable: [(String, SolarForecastEnhancementState, SolarForecastConnectionState, SolarForecastRefreshFailure?, LoadTimingForecastEstimator.Result)] = [
+        let unusable: [(String, SolarForecastEnhancementState, SolarForecastConnectionState, SolarForecastUnavailableCause?, LoadTimingForecastEstimator.Result)] = [
             ("no key", .basic, .notConnected, nil, Self.unavailable(.incompleteCoverage)),
             ("key removed", .disconnectedBasic, .notConnected, nil, Self.unavailable(.incompleteCoverage)),
             ("array selection incomplete", .basic, .awaitingArraySelection, nil, Self.unavailable(.incompleteCoverage)),
@@ -416,11 +416,11 @@ struct LoadTimingForecastPresentationTests {
             ("zero-charge car", .enhanced, .ready, nil, Self.unavailable(.noEnergyNeeded))
         ]
 
-        for (label, enhancement, connection, failure, result) in unusable {
+        for (label, enhancement, connection, cause, result) in unusable {
             let overlay = LoadTimingForecastPresentation.overlay(
                 enhancement: enhancement,
                 connection: connection,
-                failure: failure,
+                cause: cause,
                 result: result,
                 forecastFetchedAt: Self.now.addingTimeInterval(-20 * 60),
                 contextAsOf: Self.now,
@@ -443,11 +443,11 @@ struct LoadTimingForecastPresentationTests {
 
     @Test("A configured connection that fails shows one small note and never a blocking message")
     func configuredFailureShowsOneInformationalNote() {
-        for failure in [SolarForecastRefreshFailure.unauthorized, .rateLimited, .requestFailed, .invalidForecast] {
+        for cause in [SolarForecastUnavailableCause.unauthorized, .rateLimited, .requestFailed, .invalidForecast] {
             let overlay = LoadTimingForecastPresentation.overlay(
                 enhancement: .failedWithBasic,
                 connection: .ready,
-                failure: failure,
+                cause: cause,
                 result: Self.unavailable(.incompleteCoverage),
                 forecastFetchedAt: nil,
                 contextAsOf: nil,
@@ -470,7 +470,7 @@ struct LoadTimingForecastPresentationTests {
                 let overlay = LoadTimingForecastPresentation.overlay(
                     enhancement: enhancement,
                     connection: connection,
-                    failure: nil,
+                    cause: nil,
                     result: Self.unavailable(.incompleteCoverage),
                     forecastFetchedAt: nil,
                     contextAsOf: nil,
@@ -488,7 +488,7 @@ struct LoadTimingForecastPresentationTests {
         let overlay = LoadTimingForecastPresentation.overlay(
             enhancement: .basic,
             connection: .awaitingArraySelection,
-            failure: nil,
+            cause: nil,
             result: Self.unavailable(.incompleteCoverage),
             forecastFetchedAt: nil,
             contextAsOf: nil,
@@ -507,7 +507,7 @@ struct LoadTimingForecastPresentationTests {
         let overlay = LoadTimingForecastPresentation.overlay(
             enhancement: .loadingWithBasic,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.unavailable(.incompleteCoverage),
             forecastFetchedAt: nil,
             contextAsOf: nil,
@@ -527,7 +527,7 @@ struct LoadTimingForecastPresentationTests {
         let overlay = LoadTimingForecastPresentation.overlay(
             enhancement: .enhanced,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.unavailable(.missingTariff),
             forecastFetchedAt: Self.now,
             contextAsOf: Self.now,
@@ -549,7 +549,7 @@ struct LoadTimingForecastPresentationTests {
         let overlay = LoadTimingForecastPresentation.overlay(
             enhancement: .enhanced,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.unavailable(.noEnergyNeeded),
             forecastFetchedAt: Self.now,
             contextAsOf: Self.now,
@@ -568,7 +568,7 @@ struct LoadTimingForecastPresentationTests {
         let failed = LoadTimingForecastPresentation.overlay(
             enhancement: .failedWithBasic,
             connection: .ready,
-            failure: .rateLimited,
+            cause: .rateLimited,
             result: Self.unavailable(.incompleteCoverage),
             forecastFetchedAt: nil,
             contextAsOf: nil,
@@ -579,7 +579,7 @@ struct LoadTimingForecastPresentationTests {
         let recovered = LoadTimingForecastPresentation.overlay(
             enhancement: .enhanced,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.enhanced(Self.waitingComparison()),
             forecastFetchedAt: Self.now,
             contextAsOf: Self.now,
@@ -599,7 +599,7 @@ struct LoadTimingForecastPresentationTests {
         let jpy = LoadTimingForecastPresentation.overlay(
             enhancement: .enhanced,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.enhanced(Self.waitingComparison(costNow: 340, recommendedCost: 220, savings: 120)),
             forecastFetchedAt: Self.now,
             contextAsOf: Self.now,
@@ -619,7 +619,7 @@ struct LoadTimingForecastPresentationTests {
         let overlay = LoadTimingForecastPresentation.overlay(
             enhancement: .enhanced,
             connection: .ready,
-            failure: nil,
+            cause: nil,
             result: Self.enhanced(Self.waitingComparison()),
             forecastFetchedAt: Self.now,
             contextAsOf: Self.now,
@@ -644,6 +644,122 @@ struct LoadTimingForecastPresentationTests {
     private static func normalized(_ text: String) -> String {
         text.replacingOccurrences(of: "\u{202F}", with: " ")
             .replacingOccurrences(of: "\u{00A0}", with: " ")
+    }
+
+    @Test("A spent daily allowance is not mistaken for a stale forecast")
+    func budgetExhaustedNoteDoesNotAskForAnImpossibleRetry() throws {
+        for cause in [SolarForecastUnavailableCause.budgetExhausted, .deferred] {
+            let overlay = LoadTimingForecastPresentation.overlay(
+                enhancement: .failedWithBasic,
+                connection: .ready,
+                cause: cause,
+                result: Self.unavailable(.incompleteCoverage),
+                forecastFetchedAt: nil,
+                contextAsOf: nil,
+                currencyCode: "USD",
+                timeZone: "UTC",
+                now: Self.now
+            )
+            let note = try #require(overlay.note)
+
+            #expect(note.contains("using tariff and balance data"))
+            #expect(!note.contains("Retry a refresh"), "\(cause) must not send the user to retry an exhausted budget")
+            #expect(!note.lowercased().contains("too old or incomplete"), "\(cause) must not blame forecast age")
+            #expect(overlay.enhanced == nil)
+        }
+    }
+
+    @Test("A stale billing balance is reported as stale energy data, not a Solcast problem")
+    func staleBalanceNoteNamesTheRightSubsystem() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .failedWithBasic,
+            connection: .ready,
+            cause: nil,
+            result: Self.unavailable(.staleBalance),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(note.lowercased().contains("energy observations"))
+        #expect(!note.lowercased().contains("solcast"))
+        #expect(!note.lowercased().contains("too old or incomplete"))
+    }
+
+    @Test("A run longer than the search horizon says so instead of blaming the forecast")
+    func noFittingRunNoteExplainsTheHorizon() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .failedWithBasic,
+            connection: .ready,
+            cause: nil,
+            result: Self.unavailable(.noFittingRun),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(note.contains("search horizon"))
+        #expect(!note.lowercased().contains("too old or incomplete"))
+    }
+
+    @Test("A forecast older than the recommendation window cannot produce a new recommendation")
+    func staleForecastCannotProduceARecommendation() {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            cause: nil,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: Self.now.addingTimeInterval(-6 * 60 * 60 - 60),
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+
+        #expect(overlay.enhanced == nil)
+        #expect(!overlay.isForecastAware)
+        #expect(overlay.note?.contains("too old") == true)
+    }
+
+    @Test("A forecast inside the recommendation window still produces a recommendation")
+    func freshForecastStillRecommends() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            cause: nil,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: Self.now.addingTimeInterval(-6 * 60 * 60),
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+
+        #expect(overlay.enhanced != nil)
+        #expect(overlay.isForecastAware)
+    }
+
+    @Test("A forecast with no recorded fetch time cannot produce a recommendation")
+    func missingFetchTimeCannotRecommend() {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            cause: nil,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: nil,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+
+        #expect(overlay.enhanced == nil)
     }
 
     private static func enhanced(

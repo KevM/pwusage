@@ -365,6 +365,26 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastBatch == nil)
     }
 
+    @Test("Switching sites re-runs the detail load for the newly selected site")
+    func siteSwitchStartsEnhancementForNewSite() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a", alsoConfigured: ["site-b"])
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        await coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.loadTimingDetailAppeared()
+        let beforeSwitch = await forecast.refreshCount
+
+        coordinator.selectSite("site-b")
+        let retried = await forecast.reachedRefreshCount(beforeSwitch + 1)
+
+        #expect(coordinator.selectedSiteID == "site-b")
+        #expect(retried, "Switching sites must re-run the forecast detail load for the new site")
+    }
+
     @Test("Profile comparisons and settings edits perform no requests")
     func localEditsPerformNoRequests() async throws {
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
@@ -433,7 +453,7 @@ private final class ForecastTestClock: @unchecked Sendable {
 }
 
 private actor ForecastManagerSpy: SolarForecastManaging {
-    private var configuredSiteID: String?
+    private var configuredSiteIDs: Set<String>
     private var results: [SolarForecastRefreshResult] = [.refreshed]
     private var holdRefresh = false
     private var refreshContinuations: [Int: CheckedContinuation<SolarForecastRefreshResult, Never>] = [:]
@@ -447,7 +467,9 @@ private actor ForecastManagerSpy: SolarForecastManaging {
     private(set) var discoveryCount = 0
     private(set) var connectCount = 0
 
-    init(configuredSiteID: String? = nil) { self.configuredSiteID = configuredSiteID }
+    init(configuredSiteID: String? = nil, alsoConfigured siteIDs: Set<String> = []) {
+        self.configuredSiteIDs = Set(siteIDs).union(configuredSiteID.map { [$0] } ?? [])
+    }
 
     var totalNetworkOperations: Int { refreshCount + discoveryCount }
     func setRefreshResults(_ values: [SolarForecastRefreshResult]) { results = values }
@@ -458,6 +480,14 @@ private actor ForecastManagerSpy: SolarForecastManaging {
     func waitUntilRefreshCount(_ expected: Int) async {
         if refreshCount >= expected { return }
         await withCheckedContinuation { refreshCountWaiters.append((expected, $0)) }
+    }
+    /// Bounded wait so a missing behaviour fails the test instead of hanging it.
+    func reachedRefreshCount(_ target: Int, withinMilliseconds budget: Int = 2000) async -> Bool {
+        for _ in 0..<budget {
+            if refreshCount >= target { return true }
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        return refreshCount >= target
     }
     func resumeRefresh(with result: SolarForecastRefreshResult) {
         resumeRefresh(at: refreshContinuations.keys.min() ?? 0, with: result)
@@ -475,12 +505,12 @@ private actor ForecastManagerSpy: SolarForecastManaging {
 
     func activateAccountScope(_ accountScopeID: String?) {}
     func credential(accountScopeID: String, siteID: String) -> SolarForecastCredential? {
-        guard configuredSiteID == siteID else { return nil }
+        guard configuredSiteIDs.contains(siteID) else { return nil }
         return SolarForecastCredential(accountScopeID: accountScopeID, siteID: siteID, credentialID: "fixture", resourceIDs: ["east"])
     }
     func connect(apiKey: String, accountScopeID: String, siteID: String, resourceIDs: [String]?) throws -> String {
         connectCount += 1
-        configuredSiteID = siteID
+        configuredSiteIDs.insert(siteID)
         return "fixture"
     }
     func discoverSites(accountScopeID: String, siteID: String, manual: Bool) throws -> [SolcastSite] {
@@ -500,7 +530,7 @@ private actor ForecastManagerSpy: SolarForecastManaging {
         return results.isEmpty ? .refreshed : results.removeFirst()
     }
     func cachedBatch(accountScopeID: String, siteID: String) -> SolarForecastBatch? {
-        guard configuredSiteID == siteID else { return nil }
+        guard configuredSiteIDs.contains(siteID) else { return nil }
         return SolarForecastBatch(
             credentialID: "fixture", resourceIDs: ["east"],
             intervals: [SolarForecastInterval(
@@ -509,17 +539,18 @@ private actor ForecastManagerSpy: SolarForecastManaging {
             )], fetchedAt: Date(timeIntervalSince1970: 1_800_000_000)
         )
     }
-    func isRecommendationUsable(accountScopeID: String, siteID: String) -> Bool { configuredSiteID == siteID }
+    func isRecommendationUsable(accountScopeID: String, siteID: String) -> Bool { configuredSiteIDs.contains(siteID) }
     func budget(for accountScopeID: String, siteID: String) -> SolarForecastBudget {
         SolarForecastBudget(utcDay: Date(timeIntervalSince1970: 1_800_000_000), totalAttempts: 1, automaticAttempts: 1, deferredUntil: nil)
     }
+    func signOut() async throws {}
     func disconnect(accountScopeID: String, siteID: String) async throws {
         disconnectStarted = true
         disconnectStartWaiter?.resume()
         disconnectStartWaiter = nil
         if holdDisconnect { await withCheckedContinuation { disconnectContinuation = $0 } }
         if let disconnectError { throw disconnectError }
-        configuredSiteID = nil
+        configuredSiteIDs.removeAll()
         let pending = Array(refreshContinuations.values)
         refreshContinuations.removeAll()
         pending.forEach { $0.resume(returning: .cancelled) }

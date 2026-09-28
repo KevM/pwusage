@@ -19,8 +19,11 @@ struct SolarForecastSettingsSheet: View {
         NavigationStack {
             Form {
                 Section("Connection") {
+                    // Deliberately no `.textContentType`: the password AutoFill
+                    // flow can offer to save the key into the user's iCloud
+                    // Keychain, which would break the device-only guarantee that
+                    // the Keychain item itself provides.
                     SecureField("Solcast API key", text: $apiKey)
-                        .textContentType(.password)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .onChange(of: apiKey) { coordinator.solarForecastSettingsDidEdit() }

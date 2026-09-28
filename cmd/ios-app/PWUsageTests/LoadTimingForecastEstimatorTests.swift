@@ -40,6 +40,50 @@ struct LoadTimingForecastEstimatorTests {
         return .init(timeZone: "UTC", slots: slots, asOf: start)
     }
 
+    @Test("A tariff season boundary truncates the horizon instead of disabling the comparison")
+    func seasonBoundaryTruncatesHorizon() throws {
+        // A seasonal tariff: the future season uses different period names, so it
+        // has no observed cycle balance yet.
+        let segments = [
+            tariff(0, 21_600, key: "summer_peak", buy: 0.48, sell: 0.10),
+            tariff(21_600, 43_200, key: "summer_offpeak", buy: 0.22, sell: 0.08),
+            tariff(43_200, 64_800, key: "winter_peak", buy: 0.52, sell: 0.11),
+            tariff(64_800, 86_400, key: "winter_offpeak", buy: 0.20, sell: 0.07)
+        ]
+        let result = evaluate(
+            now: 0,
+            tariffs: segments,
+            balances: ["summer_peak": 4, "summer_offpeak": 3],
+            pricingBalances: ["summer_peak": 4, "summer_offpeak": 3],
+            forecast: (0..<48).map { forecast(4, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+        )
+
+        let comparison = try #require(result.comparison, "A season boundary must not disable forecasting")
+        // The horizon stops at the first period without an observed balance.
+        #expect(comparison.horizonEnd <= start.addingTimeInterval(43_200))
+        #expect(comparison.evaluatedStarts.allSatisfy { $0 < start.addingTimeInterval(43_200) })
+    }
+
+    @Test("A missing balance for a period already under way still rejects the comparison")
+    func missingBalanceInElapsedPeriodRejects() {
+        // "q" is already in progress at `now` and has no observed balance, so the
+        // baseline cannot be projected at all.
+        let segments = [
+            tariff(-1800, 21_600, key: "q", buy: 0.30, sell: 0.05),
+            tariff(21_600, 43_200, key: "p", buy: 0.30, sell: 0.05)
+        ]
+        let result = evaluate(
+            now: 0,
+            tariffs: segments,
+            balances: ["p": 2],
+            pricingBalances: ["p": 2],
+            forecast: (0..<48).map { forecast(4, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+        )
+
+        #expect(result.comparison == nil)
+        #expect(result.unavailableReason == .incompleteBalance)
+    }
+
     private func evaluate(
         profile: LoadProfile? = nil,
         now: TimeInterval = 0,

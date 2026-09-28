@@ -55,7 +55,7 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
     init(
         configuration: AppConfiguration,
         api: (any MobileAuthAPI)? = nil,
-        forecastCleanup: any SolarForecastSessionCleanup = SolarForecastStoreSessionCleanup(store: .shared),
+        forecastCleanup: any SolarForecastSessionCleanup = SolarForecastStoreSessionCleanup(store: SolarForecastStore.shared),
         initialAuthenticationState: Bool = false,
         sessionFactory: @escaping SessionFactory = MobileAuthService.makeSystemWebSession
     ) {

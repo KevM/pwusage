@@ -98,7 +98,11 @@ final class PWUsageAppModel: ObservableObject {
         self.api = api
         self.userDefaults = userDefaults
         self.forecastStore = forecastStore
-        authService = MobileAuthService(configuration: configuration, api: api)
+        authService = MobileAuthService(
+            configuration: configuration,
+            api: api,
+            forecastCleanup: SolarForecastStoreSessionCleanup(store: forecastStore)
+        )
     }
 
     func bootstrap() async {

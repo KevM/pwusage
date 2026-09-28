@@ -123,10 +123,27 @@ struct LoadTimingForecastEstimator {
 
         let finalRateSet = supportedRates(in: tariffs, from: balanceSourceTime, before: horizonEnd)
         guard !finalRateSet.invalid else { return unavailable(.invalidInput) }
-        let rates = finalRateSet.rates
+        var rates = finalRateSet.rates
 
         let observedBalances = Dictionary(timing.pricingPeriods.map { ($0.name, $0.cycleNetExportKwh) },
                                           uniquingKeysWith: { _, latest in latest })
+
+        // A tariff period with no observed balance cannot be projected. If it has
+        // not started yet — a seasonal schedule boundary, for example — end the
+        // shared horizon there instead of discarding the whole comparison. If it
+        // is already under way the baseline is unsound, so reject.
+        if let firstUnbalanced = rates.keys.compactMap({ key -> Date? in
+            guard observedBalances[key] == nil else { return nil }
+            return tariffs.first(where: { $0.periodKey == key && $0.start < horizonEnd })?.start
+        }).min() {
+            guard firstUnbalanced > now else { return unavailable(.incompleteBalance) }
+            horizonEnd = min(horizonEnd, firstUnbalanced)
+            guard horizonEnd > now else { return unavailable(.incompleteCoverage) }
+            let truncated = supportedRates(in: tariffs, from: balanceSourceTime, before: horizonEnd)
+            guard !truncated.invalid else { return unavailable(.invalidInput) }
+            rates = truncated.rates
+        }
+
         var balances: [String: Double] = [:]
         for key in rates.keys {
             guard let balance = observedBalances[key] else { return unavailable(.incompleteBalance) }

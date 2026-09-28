@@ -33,6 +33,41 @@ enum SolarForecastConnectionState: Equatable {
     case ready
 }
 
+/// Why forecast enhancement is unavailable, from the device's own request
+/// bookkeeping. Kept apart from `SolarForecastRefreshFailure` so a spent daily
+/// allowance is not reported as a failed request.
+enum SolarForecastUnavailableCause: Equatable {
+    case unauthorized
+    case rateLimited
+    case requestFailed
+    case invalidForecast
+    case storageFailure
+    case cleanupFailure
+    case budgetExhausted
+    case deferred
+
+    init(_ failure: SolarForecastRefreshFailure) {
+        switch failure {
+        case .unauthorized: self = .unauthorized
+        case .rateLimited: self = .rateLimited
+        case .requestFailed: self = .requestFailed
+        case .invalidForecast: self = .invalidForecast
+        case .storageFailure: self = .storageFailure
+        case .cleanupFailure: self = .cleanupFailure
+        }
+    }
+
+    /// `nil` when the attempt succeeded or was never a provider failure.
+    init?(_ result: SolarForecastRefreshResult) {
+        switch result {
+        case .failed(let failure): self = SolarForecastUnavailableCause(failure)
+        case .budgetExhausted: self = .budgetExhausted
+        case .deferred: self = .deferred
+        case .refreshed, .alreadyFresh, .notConfigured, .cancelled: return nil
+        }
+    }
+}
+
 struct DashboardEndpointState<Response: Equatable>: Equatable {
     fileprivate(set) var response: Response?
     fileprivate(set) var lastAttempt: Date?
@@ -62,7 +97,7 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var requiresSignIn = false
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
     @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
-    @Published private(set) var solarForecastFailure: SolarForecastRefreshFailure?
+    @Published private(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
     @Published private(set) var solarForecastBatch: SolarForecastBatch?
     @Published private(set) var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
 
@@ -160,6 +195,9 @@ final class DashboardCoordinator: ObservableObject {
         resetForecastEnhancement(state: .basic, connection: .notConnected)
         guard isForeground, !requiresSignIn else { return }
         Task { await refreshDue() }
+        // The destination view is not re-inserted on a site switch, so re-run the
+        // optional enhancement here or the new site stays on the basic estimate.
+        Task { await loadTimingDetailAppeared() }
     }
 
     /// Called by the foreground timer and lifecycle events. Missed intervals collapse to one request.
@@ -225,7 +263,7 @@ final class DashboardCoordinator: ObservableObject {
             guard operation == forecastGeneration, siteID == selectedSiteID else { return }
             solarForecastState = .basic
             solarForecastConnection = .notConnected
-            solarForecastFailure = nil
+            solarForecastUnavailableCause = nil
             solarForecastBatch = nil
             loadPlanningContext = nil
             return
@@ -234,7 +272,7 @@ final class DashboardCoordinator: ObservableObject {
             guard operation == forecastGeneration, siteID == selectedSiteID else { return }
             solarForecastState = .basic
             solarForecastConnection = .awaitingArraySelection
-            solarForecastFailure = nil
+            solarForecastUnavailableCause = nil
             solarForecastBatch = nil
             loadPlanningContext = nil
             return
@@ -242,7 +280,7 @@ final class DashboardCoordinator: ObservableObject {
         guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
         solarForecastState = .loadingWithBasic
         solarForecastConnection = .ready
-        solarForecastFailure = nil
+        solarForecastUnavailableCause = nil
 
         let billSuccessBeforeRefresh = billSuccessGeneration
         async let billRefresh: Void = refreshBill(force: true)
@@ -259,7 +297,7 @@ final class DashboardCoordinator: ObservableObject {
               await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
               let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID),
               let context else {
-            if case .failed(let reason) = refresh { solarForecastFailure = reason }
+            solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
             solarForecastBatch = nil
             loadPlanningContext = nil
             solarForecastState = .failedWithBasic
@@ -291,13 +329,13 @@ final class DashboardCoordinator: ObservableObject {
               await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
               let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID),
               loadPlanningContext != nil else {
-            if case .failed(let reason) = refresh { solarForecastFailure = reason }
+            solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
             solarForecastBatch = nil
             solarForecastState = .failedWithBasic
             return
         }
         solarForecastBatch = batch
-        solarForecastFailure = nil
+        solarForecastUnavailableCause = nil
         solarForecastState = .enhanced
     }
 
@@ -406,7 +444,7 @@ final class DashboardCoordinator: ObservableObject {
         loadPlanningContext = nil
         solarForecastState = state
         solarForecastConnection = connection
-        solarForecastFailure = nil
+        solarForecastUnavailableCause = nil
     }
 
     private func launchBillTaskIfNeeded(force: Bool, requestTime: Date, generation: Int) {

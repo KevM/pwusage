@@ -156,4 +156,47 @@ describe('buildLoadPlanningContext', () => {
         expect(result.slots).toHaveLength(48);
         expect(result.slots.every((slot) => slot.homeKw === null && slot.batteryNetChargeKw === null)).toBe(true);
     });
+
+    // A stored timestamp that lands a few seconds off the site-local five-minute
+    // grid must not silently empty the whole profile.
+    it.each([1000, 30_000, 60_000])('tolerates a %ims offset between stored rows and the local grid', (offsetMs) => {
+        const rows = rowsForDays('2026-08-01', 14, {
+            loadWh: (_day, hour, minute) => (hour === 8 && minute < 30 ? 300 : 100),
+        }).map((row) => ({ ...row, timestamp: new Date(row.timestamp.getTime() + offsetMs) }));
+
+        const result = buildLoadPlanningContext(rows, TIME_ZONE, new Date('2026-08-15T07:00:00Z'));
+
+        expect(result.availability).toBe('available');
+        const morning = result.slots.find((slot) => slot.localMinute === 8 * 60);
+        expect(morning?.homeKw).toBe(3.6);
+        expect(morning?.sampleCount).toBe(14);
+    });
+
+    it('does not let a tolerance window assign one row to two intervals', () => {
+        // Two rows three seconds apart must still yield one observation per slot.
+        const rows = rowsForDays('2026-08-01', 14).flatMap((row) => ([
+            { ...row, timestamp: new Date(row.timestamp.getTime() - 1500) },
+            { ...row, timestamp: new Date(row.timestamp.getTime() + 1500) },
+        ]));
+
+        const result = buildLoadPlanningContext(rows, TIME_ZONE, new Date('2026-08-15T07:00:00Z'));
+
+        expect(result.availability).toBe('available');
+        const midnight = result.slots.find((slot) => slot.localMinute === 0);
+        // 100 Wh over one five-minute interval is 1.2 kW. Doubling the rows must
+        // not change it, which is what an unclamped tolerance window would do.
+        expect(midnight?.homeKw).toBe(1.2);
+        expect(midnight?.coverage).toBeLessThanOrEqual(1);
+    });
+
+    it('reports a distinguishable reason when stored rows never land on the grid', () => {
+        // Seven minutes is neither on the five-minute grid nor inside tolerance.
+        const rows = rowsForDays('2026-08-01', 14)
+            .map((row) => ({ ...row, timestamp: new Date(row.timestamp.getTime() + 7 * 60 * 1000) }));
+
+        const result = buildLoadPlanningContext(rows, TIME_ZONE, new Date('2026-08-15T07:00:00Z'));
+
+        expect(result.availability).toBe('unavailable');
+        expect(result.unavailableReason).toBe('timestamp-misaligned');
+    });
 });

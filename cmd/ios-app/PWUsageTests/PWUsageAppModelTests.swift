@@ -132,6 +132,46 @@ struct PWUsageAppModelTests {
         #expect(replacementScope != originalScope)
     }
 
+    @Test("Signing out clears the injected forecast store rather than the shared one")
+    func signOutUsesTheInjectedForecastStore() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let defaults = makeDefaults()
+        let forecast = AppForecastManagerSpy()
+        let model = PWUsageAppModel(
+            configuration: Self.configuration,
+            api: api,
+            userDefaults: defaults,
+            forecastStore: forecast
+        )
+
+        await model.bootstrap()
+        await model.signOut()
+
+        #expect(await forecast.signOutCount == 1)
+    }
+
+    @Test("A failing forecast sign-out is reported to the user instead of silently ignored")
+    func forecastSignOutFailureSurfaces() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let defaults = makeDefaults()
+        let forecast = AppForecastManagerSpy()
+        await forecast.setSignOutError(.cleanupFailed)
+        let model = PWUsageAppModel(
+            configuration: Self.configuration,
+            api: api,
+            userDefaults: defaults,
+            forecastStore: forecast
+        )
+
+        await model.bootstrap()
+        try #require(model.signInMessage == nil)
+        await model.signOut()
+
+        #expect(await forecast.signOutCount == 1)
+        #expect(model.signInMessage?.contains("Could not clear local solar forecast data") == true)
+        #expect(model.screenState == .signedOut)
+    }
+
     private static let configuration = try! AppConfiguration(apiOriginString: "https://pwusage.test")
 
     private func makeDefaults() -> UserDefaults {
@@ -209,8 +249,15 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI {
 
 private actor AppForecastManagerSpy: SolarForecastManaging {
     private(set) var activations: [String?] = []
+    private(set) var signOutCount = 0
+    private var signOutError: SolarForecastStore.StoreError?
 
+    func setSignOutError(_ error: SolarForecastStore.StoreError?) { signOutError = error }
     func activateAccountScope(_ accountScopeID: String?) { activations.append(accountScopeID) }
+    func signOut() async throws {
+        signOutCount += 1
+        if let signOutError { throw signOutError }
+    }
     func credential(accountScopeID: String, siteID: String) -> SolarForecastCredential? { nil }
     func connect(apiKey: String, accountScopeID: String, siteID: String, resourceIDs: [String]?) throws -> String {
         throw SolarForecastStore.StoreError.invalidConfiguration

@@ -107,6 +107,7 @@ private actor PreviewForecastStore: SolarForecastManaging {
     }
 
     func disconnect(accountScopeID: String, siteID: String) async throws {}
+    func signOut() async throws {}
 }
 
 @MainActor

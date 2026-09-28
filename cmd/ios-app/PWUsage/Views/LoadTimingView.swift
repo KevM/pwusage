@@ -251,12 +251,14 @@ struct LoadTimingView: View {
                 currencyCode: currencyCode
             )
         } else {
-            result = LoadTimingForecastEstimator.Result(comparison: nil, unavailableReason: .incompleteCoverage)
+            // Nothing to evaluate. Leave the reason unset so the overlay explains
+            // the device's own request state rather than a fabricated one.
+            result = LoadTimingForecastEstimator.Result(comparison: nil, unavailableReason: nil)
         }
         return LoadTimingForecastPresentation.overlay(
             enhancement: enhancedState,
             connection: coordinator.solarForecastConnection,
-            failure: coordinator.solarForecastFailure,
+            cause: coordinator.solarForecastUnavailableCause,
             result: result,
             forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
             contextAsOf: coordinator.loadPlanningContext?.asOf,
