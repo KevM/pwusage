@@ -9,7 +9,7 @@
 - [x] Task 4: Pure lowest-cost comparison engine. (`0008ef1`)
 - [x] Task 5: Connection settings and foreground orchestration. (`72b57ee`)
 - [x] Task 6: Recommendation presentation and fallback.
-- [ ] Task 7: Integration verification and handoff.
+- [x] Task 7: Integration verification and handoff.
 
 ## Ledger
 
