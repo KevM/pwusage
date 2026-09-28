@@ -36,7 +36,12 @@ final class DashboardPreviewAPI: MobileDashboardDataAPI {
         let hasData = mode != .empty
         let hasTariff = mode != .noTariff
         let peakBalance: Double = switch mode {
-        case .modestSurplus, .normal: 2.5
+        case .modestSurplus: 2.5
+        // Peak is a net buyer and Off peak a net seller. That gives the tiles a
+        // real 48c-vs-12c difference instead of two identical sell rates, and it
+        // leaves the basic layer with no suggestion — the case where the solar
+        // forecast belongs on the explorer card rather than the recommendation.
+        case .normal: -4.2
         case .abundantSurplus: 120
         case .stale: 20
         case .noFit: -12

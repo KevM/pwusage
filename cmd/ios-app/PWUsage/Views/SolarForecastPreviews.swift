@@ -17,6 +17,9 @@ enum ForecastPreviewMode: String, CaseIterable {
     case incompleteArraySelection
     /// No historical household context available.
     case missingContext
+    /// A modest array while Peak is a net buyer: the basic layer has no
+    /// suggestion, so the forecast renders on the explorer card.
+    case peakDeficit
 }
 
 private actor PreviewForecastStore: SolarForecastManaging {
@@ -31,7 +34,10 @@ private actor PreviewForecastStore: SolarForecastManaging {
     private var hasCredential: Bool { mode != .incompleteArraySelection }
 
     private var resourceIDs: [String] {
-        mode == .combinedArrays ? ["east-1234", "west-5678"] : ["east-1234"]
+        switch mode {
+        case .combinedArrays: ["east-1234", "west-5678"]
+        default: ["east-1234"]
+        }
     }
 
     private var fetchedAt: Date {
@@ -55,7 +61,11 @@ private actor PreviewForecastStore: SolarForecastManaging {
             default: solarShape = 0
             }
             // Combined arrays carry a higher ceiling than a single array.
-            let ceiling = mode == .combinedArrays ? 9.0 : 5.0
+            let ceiling: Double = switch mode {
+            case .combinedArrays: 9.0
+            case .peakDeficit: 2.5
+            default: 5.0
+            }
             let scale = mode == .longCharge ? 0.75 : 1.0
             return SolarForecastInterval(
                 periodStart: periodStart,
@@ -193,6 +203,10 @@ private struct SolarForecastPreview: View {
 
 #Preview("Solar · Combined east + west") {
     SolarForecastPreview(mode: .combinedArrays)
+}
+
+#Preview("Solar · Peak deficit · forecast on the explorer card") {
+    SolarForecastPreview(mode: .peakDeficit)
 }
 
 #Preview("Solar · Tariff crossing") {
