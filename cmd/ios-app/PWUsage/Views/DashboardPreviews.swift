@@ -1,7 +1,7 @@
 #if DEBUG
 import SwiftUI
 
-private enum DashboardPreviewMode: String, CaseIterable {
+enum DashboardPreviewMode: String, CaseIterable {
     case normal
     case empty
     case stale
@@ -16,7 +16,7 @@ private enum DashboardPreviewMode: String, CaseIterable {
 }
 
 @MainActor
-private final class DashboardPreviewAPI: MobileDashboardDataAPI {
+final class DashboardPreviewAPI: MobileDashboardDataAPI {
     let mode: DashboardPreviewMode
     private let liveResponse: MobileLiveResponse
     private let billResponse: MobileBillResponse

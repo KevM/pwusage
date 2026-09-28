@@ -34,6 +34,10 @@ struct LoadTimingForecastEstimator {
         let recommendedEnd: Date
         let recommendedCost: Double
         let savings: Double
+        /// Raw saving of the cheapest non-now start, before the minor-unit
+        /// threshold. Lets the UI distinguish "nothing cheaper exists" from
+        /// "waiting would save a rounding error" without inventing a saving.
+        let bestAlternativeSavings: Double
         let estimatedSolarContribution: Double
         let horizonStart: Date
         let horizonEnd: Date
@@ -168,6 +172,12 @@ struct LoadTimingForecastEstimator {
         let rawSavings = nowCandidate.cost - best.cost
         guard rawSavings.isFinite else { return unavailable(.invalidInput) }
         let savings = max(0, rawSavings)
+        let alternative = scored
+            .filter { $0.start != now }
+            .min(by: { $0.cost == $1.cost ? $0.start < $1.start : $0.cost < $1.cost })
+        let rawAlternative = alternative.map { nowCandidate.cost - $0.cost } ?? 0
+        guard rawAlternative.isFinite else { return unavailable(.invalidInput) }
+        let bestAlternativeSavings = max(0, rawAlternative)
         let minorUnit = currencyMinorUnit(currencyCode)
         let recommendation = savings > minorUnit ? best : nowCandidate
         return Result(comparison: Comparison(
@@ -176,6 +186,7 @@ struct LoadTimingForecastEstimator {
             recommendedEnd: recommendation.end,
             recommendedCost: recommendation.cost,
             savings: recommendation.start == nowCandidate.start ? 0 : savings,
+            bestAlternativeSavings: bestAlternativeSavings,
             estimatedSolarContribution: recommendation.solarContribution,
             horizonStart: now,
             horizonEnd: horizonEnd,

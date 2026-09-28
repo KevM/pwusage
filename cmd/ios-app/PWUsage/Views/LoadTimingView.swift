@@ -224,6 +224,48 @@ struct LoadTimingView: View {
     private var currencyCode: String { response?.currentBill.currency ?? "USD" }
     private var timeZone: String { response?.site.timezone ?? "UTC" }
 
+    /// The forecast overlay is derived fresh from coordinator state. It can only
+    /// add an enhanced section and one note; the basic estimate below is rendered
+    /// regardless, and is never replaced by a forecast value.
+    private func forecastOverlay(
+        now: Date,
+        timing: LoadTiming,
+        response: MobileBillResponse,
+        profile: LoadProfile?
+    ) -> LoadTimingForecastPresentation.Overlay {
+        let enhancedState = coordinator.solarForecastState
+        let result: LoadTimingForecastEstimator.Result
+        if enhancedState == .enhanced,
+           let profile,
+           let batch = coordinator.solarForecastBatch,
+           let context = coordinator.loadPlanningContext,
+           let balanceSourceTime = response.sources.energyDataThrough {
+            result = LoadTimingForecastEstimator.evaluate(
+                profile: profile,
+                now: now,
+                timing: timing,
+                forecast: batch.intervals,
+                context: context,
+                balanceSourceTime: balanceSourceTime,
+                billingCycleEnd: response.currentBill.cycleEnd,
+                currencyCode: currencyCode
+            )
+        } else {
+            result = LoadTimingForecastEstimator.Result(comparison: nil, unavailableReason: .incompleteCoverage)
+        }
+        return LoadTimingForecastPresentation.overlay(
+            enhancement: enhancedState,
+            connection: coordinator.solarForecastConnection,
+            failure: coordinator.solarForecastFailure,
+            result: result,
+            forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
+            contextAsOf: coordinator.loadPlanningContext?.asOf,
+            currencyCode: currencyCode,
+            timeZone: timeZone,
+            now: now
+        )
+    }
+
     var body: some View {
         TimelineView(.everyMinute) { _ in
             let now = Date()
@@ -326,6 +368,8 @@ struct LoadTimingView: View {
             hasTariff: timing.hasTariff,
             hasExpiredCandidate: hasExpiredCandidate
         )
+        let overlay = forecastOverlay(now: now, timing: timing, response: response,
+                                      profile: recommendation.suggested?.profile)
         return LoadTimingCard(title: "Recommendation", symbol: "bolt.fill") {
             Text(copy.title)
                 .font(.title3.weight(.bold))
@@ -352,6 +396,7 @@ struct LoadTimingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            forecastSection(overlay)
             Text("Estimates use billing-cycle balances, not live solar. Each load is evaluated independently from the same snapshot.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -361,6 +406,66 @@ struct LoadTimingView: View {
                 .foregroundStyle(coordinator.bill.isUnavailable ? .orange : .secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel("Source freshness: \(LoadTimingPresentation.sourceStatus(isUnavailable: coordinator.bill.isUnavailable, energyDataThrough: response.sources.energyDataThrough, now: now))")
+        }
+    }
+
+    @ViewBuilder
+    private func forecastSection(_ overlay: LoadTimingForecastPresentation.Overlay) -> some View {
+        if let note = overlay.note {
+            Label(note, systemImage: "sun.max.trianglebadge.exclamationmark")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let enhanced = overlay.enhanced {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Solar forecast")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(enhanced.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(enhanced.recommendedCost)
+                    .font(.headline)
+                    .monospacedDigit()
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(enhanced.costNow)
+                    .font(.subheadline)
+                    .monospacedDigit()
+                    .fixedSize(horizontal: false, vertical: true)
+                if let savings = enhanced.savings {
+                    Text(savings)
+                        .font(.subheadline)
+                        .foregroundStyle(.green)
+                        .monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(enhanced.window)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(enhanced.solarContribution)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(enhanced.horizon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(enhanced.sourceAges, id: \.self) { age in
+                    Text(age)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(overlay.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 4)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(overlay.accessibilityLabel)
         }
     }
 

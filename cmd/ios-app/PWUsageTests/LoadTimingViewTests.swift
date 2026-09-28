@@ -278,3 +278,406 @@ struct LoadTimingViewTests {
         return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
     }
 }
+
+/// Forecast-aware presentation is strictly additive: it contributes an enhanced
+/// section and at most one small note. It can never replace or annotate the basic
+/// estimator's own total, breakdown, or selected profile.
+@Suite("Load Timing Forecast Presentation Tests")
+struct LoadTimingForecastPresentationTests {
+    static let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    @Test("A later start shows both costs, the saving, the window, solar, and the real horizon")
+    func waitingRecommendationShowsFullComparison() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            failure: nil,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: Self.now.addingTimeInterval(-20 * 60),
+            contextAsOf: Self.now.addingTimeInterval(-6 * 60 * 60),
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let enhanced = try #require(overlay.enhanced)
+
+        #expect(overlay.isForecastAware)
+        #expect(enhanced.headline == "Waiting could save an estimated $1.20")
+        #expect(enhanced.costNow == "Start now: $3.40")
+        #expect(Self.normalized(enhanced.recommendedCost) == Self.normalized("Start at 10:00 AM: $2.20"))
+        #expect(enhanced.savings == "Estimated savings $1.20")
+        #expect(Self.normalized(enhanced.window) == Self.normalized("Runs 10:00 AM – 11:00 AM"))
+        #expect(enhanced.solarContribution == "About 2.1 kWh of this run could come from your solar")
+        #expect(Self.normalized(enhanced.horizon) == Self.normalized("Compared 8:00 AM – 6:00 PM"))
+        #expect(enhanced.sourceAges.contains("Solar forecast · Updated 20 min ago"))
+        #expect(enhanced.sourceAges.contains { $0.contains("Household pattern") })
+    }
+
+    @Test("Recommending now never promises a saving")
+    func startNowRecommendationMakesNoSavingsPromise() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            failure: nil,
+            result: Self.enhanced(Self.waitingComparison(recommendedStart: Self.now, recommendedEnd: Self.now.addingTimeInterval(3600),
+                                                   recommendedCost: 3.40, savings: 0, bestAlternativeSavings: 0)),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let enhanced = try #require(overlay.enhanced)
+
+        #expect(overlay.isForecastAware)
+        #expect(enhanced.headline == "Start now — no cheaper start was found")
+        #expect(enhanced.savings == nil)
+        #expect(enhanced.costNow == "Start now: $3.40")
+        #expect(Self.normalized(enhanced.recommendedCost) == Self.normalized("Start now: $3.40"))
+    }
+
+    @Test("A saving too small to act on is described as similarly priced, not as a saving")
+    func insignificantSavingIsNotAdvertised() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            failure: nil,
+            result: Self.enhanced(Self.waitingComparison(recommendedStart: Self.now, recommendedEnd: Self.now.addingTimeInterval(3600),
+                                                   recommendedCost: 3.36, savings: 0, bestAlternativeSavings: 0.04)),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let enhanced = try #require(overlay.enhanced)
+
+        #expect(enhanced.headline == "Start now — waiting would save about $0.04, which is not worth delaying")
+        #expect(enhanced.savings == nil)
+    }
+
+    @Test("Enhanced detail states the behavioral assumption and that the final bill can differ")
+    func enhancedDetailCarriesRequiredCaveats() {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            failure: nil,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+
+        #expect(overlay.detail.contains("typical household and battery behavior"))
+        #expect(overlay.detail.lowercased().contains("final bill cost may differ"))
+    }
+
+    @Test("Enhanced copy never promises a battery refill or forecast confidence")
+    func enhancedCopyMakesNoConfidencePromise() {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            failure: nil,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let text = overlay.allText.joined(separator: " ").lowercased()
+
+        for forbidden in ["guarantee", "refill", "recharge", "accurate", "confidence", "certain", "%"] {
+            #expect(!text.contains(forbidden), "Enhanced copy must not contain \"\(forbidden)\"")
+        }
+    }
+
+    @Test("Every non-enhanced state keeps the basic estimate and drops all forecast values")
+    func everyFallbackStateStaysBasic() {
+        // Distinctive values that must never appear beside a basic cost.
+        let comparison = Self.waitingComparison()
+        let unusable: [(String, SolarForecastEnhancementState, SolarForecastConnectionState, SolarForecastRefreshFailure?, LoadTimingForecastEstimator.Result)] = [
+            ("no key", .basic, .notConnected, nil, Self.unavailable(.incompleteCoverage)),
+            ("key removed", .disconnectedBasic, .notConnected, nil, Self.unavailable(.incompleteCoverage)),
+            ("array selection incomplete", .basic, .awaitingArraySelection, nil, Self.unavailable(.incompleteCoverage)),
+            ("first load pending", .loadingWithBasic, .ready, nil, Self.unavailable(.incompleteCoverage)),
+            ("invalid key", .failedWithBasic, .ready, .unauthorized, Self.unavailable(.incompleteCoverage)),
+            ("timeout", .failedWithBasic, .ready, .requestFailed, Self.unavailable(.incompleteCoverage)),
+            ("quota exhausted", .failedWithBasic, .ready, .rateLimited, Self.unavailable(.incompleteCoverage)),
+            ("partial array failure", .failedWithBasic, .ready, .invalidForecast, Self.unavailable(.incompleteCoverage)),
+            ("stale forecast", .failedWithBasic, .ready, nil, Self.unavailable(.incompleteCoverage)),
+            ("missing forecast", .failedWithBasic, .ready, nil, Self.unavailable(.incompleteCoverage)),
+            ("context failure", .failedWithBasic, .ready, nil, Self.unavailable(.incompleteContext)),
+            ("insufficient baseline", .failedWithBasic, .ready, nil, Self.unavailable(.incompleteBalance)),
+            ("no full run in horizon", .enhanced, .ready, nil, Self.unavailable(.noFittingRun)),
+            ("stale balance", .enhanced, .ready, nil, Self.unavailable(.staleBalance)),
+            ("zero-charge car", .enhanced, .ready, nil, Self.unavailable(.noEnergyNeeded))
+        ]
+
+        for (label, enhancement, connection, failure, result) in unusable {
+            let overlay = LoadTimingForecastPresentation.overlay(
+                enhancement: enhancement,
+                connection: connection,
+                failure: failure,
+                result: result,
+                forecastFetchedAt: Self.now.addingTimeInterval(-20 * 60),
+                contextAsOf: Self.now,
+                currencyCode: "USD",
+                timeZone: "UTC",
+                now: Self.now
+            )
+            let text = overlay.allText.joined(separator: " ")
+
+            #expect(!overlay.isForecastAware, "\(label) must not be forecast-aware")
+            #expect(overlay.enhanced == nil, "\(label) must not carry an enhanced section")
+            for value in ["$3.40", "$2.20", "$1.20", "2.1 kWh", "10:00 AM", "11:00 AM", "6:00 PM"] {
+                #expect(!text.contains(value), "\(label) leaked forecast value \(value)")
+            }
+            #expect(!text.lowercased().contains("savings"), "\(label) must not promise savings")
+            #expect(!text.lowercased().contains("could come from your solar"), "\(label) must not promise solar")
+            #expect(comparison.savings == 1.20)
+        }
+    }
+
+    @Test("A configured connection that fails shows one small note and never a blocking message")
+    func configuredFailureShowsOneInformationalNote() {
+        for failure in [SolarForecastRefreshFailure.unauthorized, .rateLimited, .requestFailed, .invalidForecast] {
+            let overlay = LoadTimingForecastPresentation.overlay(
+                enhancement: .failedWithBasic,
+                connection: .ready,
+                failure: failure,
+                result: Self.unavailable(.incompleteCoverage),
+                forecastFetchedAt: nil,
+                contextAsOf: nil,
+                currencyCode: "USD",
+                timeZone: "UTC",
+                now: Self.now
+            )
+
+            let note = overlay.note
+            #expect(note?.contains("using tariff and balance data") == true)
+            #expect(note?.contains("Retry") == true, "A failed connection must remain retryable, not terminal")
+            #expect(overlay.enhanced == nil)
+        }
+    }
+
+    @Test("Without a configured connection no forecast note appears at all")
+    func unconfiguredStateShowsNoNote() {
+        for connection in [SolarForecastConnectionState.notConnected] {
+            for enhancement in [SolarForecastEnhancementState.basic, .disconnectedBasic, .loadingWithBasic, .failedWithBasic] {
+                let overlay = LoadTimingForecastPresentation.overlay(
+                    enhancement: enhancement,
+                    connection: connection,
+                    failure: nil,
+                    result: Self.unavailable(.incompleteCoverage),
+                    forecastFetchedAt: nil,
+                    contextAsOf: nil,
+                    currencyCode: "USD",
+                    timeZone: "UTC",
+                    now: Self.now
+                )
+                #expect(overlay.note == nil, "No key means no forecast note to show")
+            }
+        }
+    }
+
+    @Test("An incomplete array selection explains the remaining setup step without promising values")
+    func incompleteSelectionExplainsSetup() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .basic,
+            connection: .awaitingArraySelection,
+            failure: nil,
+            result: Self.unavailable(.incompleteCoverage),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(note.contains("Choose your solar arrays"))
+        #expect(!overlay.isForecastAware)
+    }
+
+    @Test("The first load says the basic estimate already works while it waits")
+    func pendingFirstLoadReassures() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .loadingWithBasic,
+            connection: .ready,
+            failure: nil,
+            result: Self.unavailable(.incompleteCoverage),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(note.contains("Checking your solar forecast"))
+        #expect(note.contains("already works without it"))
+        #expect(overlay.enhanced == nil)
+    }
+
+    @Test("A missing tariff stays a basic unavailable state with no fabricated forecast cost")
+    func missingTariffStaysBasicUnavailable() {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            failure: nil,
+            result: Self.unavailable(.missingTariff),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+
+        #expect(overlay.enhanced == nil)
+        #expect(!overlay.isForecastAware)
+        // The connection is configured, so the user is told why nothing is
+        // forecast-aware — but no cost is invented to fill the gap.
+        #expect(overlay.note?.contains("using tariff and balance data") == true)
+        #expect(!overlay.allText.joined(separator: " ").contains("$"))
+    }
+
+    @Test("A zero-charge car keeps the basic outcome and adds no forecast section")
+    func zeroChargeCarKeepsBasicOutcome() {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            failure: nil,
+            result: Self.unavailable(.noEnergyNeeded),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+
+        #expect(overlay.enhanced == nil)
+        #expect(!overlay.isForecastAware)
+        #expect(overlay.note == nil)
+    }
+
+    @Test("Recovery restores the enhanced section after a failure without any user action")
+    func recoveryRestoresEnhancement() throws {
+        let failed = LoadTimingForecastPresentation.overlay(
+            enhancement: .failedWithBasic,
+            connection: .ready,
+            failure: .rateLimited,
+            result: Self.unavailable(.incompleteCoverage),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let recovered = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            failure: nil,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+
+        #expect(failed.enhanced == nil)
+        #expect(recovered.enhanced != nil)
+        #expect(recovered.isForecastAware)
+        #expect(recovered.note == nil)
+    }
+
+    @Test("Forecast-aware costs use the response currency, including a zero-decimal one")
+    func enhancedCostsHonorResponseCurrency() throws {
+        let jpy = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            failure: nil,
+            result: Self.enhanced(Self.waitingComparison(costNow: 340, recommendedCost: 220, savings: 120)),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "JPY",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let enhanced = try #require(jpy.enhanced)
+
+        #expect(enhanced.costNow.contains("340"))
+        #expect(enhanced.costNow.contains("220") == false)
+        #expect(enhanced.savings?.contains("120") == true)
+    }
+
+    @Test("A forecast-aware overlay reads its numbers before its caveats for assistive technology")
+    func overlayAccessibilityOrderIsStable() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            failure: nil,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let label = overlay.accessibilityLabel
+
+        #expect(label.contains("$3.40"))
+        #expect(label.contains("$2.20"))
+        #expect(label.contains("2.1 kWh"))
+        #expect(Self.normalized(label).contains("Compared 8:00 AM – 6:00 PM"))
+        let costIndex = try #require(label.range(of: "$2.20"))
+        let caveatIndex = try #require(label.range(of: "typical household and battery behavior"))
+        #expect(costIndex.lowerBound < caveatIndex.lowerBound)
+    }
+
+    /// iOS 17+ `DateFormatter` separates a time from its AM/PM marker with a
+    /// narrow no-break space. Normalize it so these assertions test the copy
+    /// rather than the platform's choice of space character.
+    private static func normalized(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{202F}", with: " ")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+    }
+
+    private static func enhanced(
+        _ comparison: LoadTimingForecastEstimator.Comparison
+    ) -> LoadTimingForecastEstimator.Result {
+        LoadTimingForecastEstimator.Result(comparison: comparison, unavailableReason: nil)
+    }
+
+    private static func unavailable(
+        _ reason: LoadTimingForecastEstimator.UnavailableReason
+    ) -> LoadTimingForecastEstimator.Result {
+        LoadTimingForecastEstimator.Result(comparison: nil, unavailableReason: reason)
+    }
+
+    private static func waitingComparison(
+        recommendedStart: Date = Date(timeIntervalSince1970: 1_800_007_200),
+        recommendedEnd: Date = Date(timeIntervalSince1970: 1_800_010_800),
+        costNow: Double = 3.40,
+        recommendedCost: Double = 2.20,
+        savings: Double = 1.20,
+        bestAlternativeSavings: Double? = nil
+    ) -> LoadTimingForecastEstimator.Comparison {
+        LoadTimingForecastEstimator.Comparison(
+            costNow: costNow,
+            recommendedStart: recommendedStart,
+            recommendedEnd: recommendedEnd,
+            recommendedCost: recommendedCost,
+            savings: savings,
+            bestAlternativeSavings: bestAlternativeSavings ?? savings,
+            estimatedSolarContribution: 2.1,
+            horizonStart: Date(timeIntervalSince1970: 1_800_000_000),
+            horizonEnd: Date(timeIntervalSince1970: 1_800_036_000),
+            evaluatedStarts: [Date(timeIntervalSince1970: 1_800_000_000), recommendedStart],
+            assumptions: []
+        )
+    }
+}

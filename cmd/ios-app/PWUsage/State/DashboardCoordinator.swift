@@ -24,6 +24,15 @@ enum SolarForecastEnhancementState: Equatable {
     case disconnectedBasic
 }
 
+/// Whether the user has finished setting forecasting up on this device. Kept
+/// apart from `SolarForecastEnhancementState` so the UI can stay silent when no
+/// key exists and explain itself when one does.
+enum SolarForecastConnectionState: Equatable {
+    case notConnected
+    case awaitingArraySelection
+    case ready
+}
+
 struct DashboardEndpointState<Response: Equatable>: Equatable {
     fileprivate(set) var response: Response?
     fileprivate(set) var lastAttempt: Date?
@@ -52,6 +61,8 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var isForeground = false
     @Published private(set) var requiresSignIn = false
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
+    @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
+    @Published private(set) var solarForecastFailure: SolarForecastRefreshFailure?
     @Published private(set) var solarForecastBatch: SolarForecastBatch?
     @Published private(set) var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
 
@@ -132,9 +143,7 @@ final class DashboardCoordinator: ObservableObject {
     /// discarded. Late provider/context completions must never restore it.
     func authenticationInvalidated() {
         forecastGeneration += 1
-        solarForecastBatch = nil
-        loadPlanningContext = nil
-        solarForecastState = .basic
+        resetForecastEnhancement(state: .basic, connection: .notConnected)
     }
 
     func selectSite(_ siteID: String) {
@@ -148,9 +157,7 @@ final class DashboardCoordinator: ObservableObject {
         billTask = nil
         live.reset()
         bill.reset()
-        solarForecastState = .basic
-        solarForecastBatch = nil
-        loadPlanningContext = nil
+        resetForecastEnhancement(state: .basic, connection: .notConnected)
         guard isForeground, !requiresSignIn else { return }
         Task { await refreshDue() }
     }
@@ -214,16 +221,28 @@ final class DashboardCoordinator: ObservableObject {
             return
         }
         let siteID = selectedSiteID
-        guard let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID),
-              !credential.resourceIDs.isEmpty else {
+        guard let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID) else {
             guard operation == forecastGeneration, siteID == selectedSiteID else { return }
             solarForecastState = .basic
+            solarForecastConnection = .notConnected
+            solarForecastFailure = nil
+            solarForecastBatch = nil
+            loadPlanningContext = nil
+            return
+        }
+        guard !credential.resourceIDs.isEmpty else {
+            guard operation == forecastGeneration, siteID == selectedSiteID else { return }
+            solarForecastState = .basic
+            solarForecastConnection = .awaitingArraySelection
+            solarForecastFailure = nil
             solarForecastBatch = nil
             loadPlanningContext = nil
             return
         }
         guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
         solarForecastState = .loadingWithBasic
+        solarForecastConnection = .ready
+        solarForecastFailure = nil
 
         let billSuccessBeforeRefresh = billSuccessGeneration
         async let billRefresh: Void = refreshBill(force: true)
@@ -240,6 +259,7 @@ final class DashboardCoordinator: ObservableObject {
               await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
               let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID),
               let context else {
+            if case .failed(let reason) = refresh { solarForecastFailure = reason }
             solarForecastBatch = nil
             loadPlanningContext = nil
             solarForecastState = .failedWithBasic
@@ -257,11 +277,13 @@ final class DashboardCoordinator: ObservableObject {
             return
         }
         let siteID = selectedSiteID
-        guard await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID) != nil else {
+        guard let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID) else {
             guard operation == forecastGeneration, siteID == selectedSiteID else { return }
             solarForecastState = .basic
+            solarForecastConnection = .notConnected
             return
         }
+        solarForecastConnection = credential.resourceIDs.isEmpty ? .awaitingArraySelection : .ready
         solarForecastState = .loadingWithBasic
         let refresh = await forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: manual)
         guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
@@ -269,11 +291,13 @@ final class DashboardCoordinator: ObservableObject {
               await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
               let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID),
               loadPlanningContext != nil else {
+            if case .failed(let reason) = refresh { solarForecastFailure = reason }
             solarForecastBatch = nil
             solarForecastState = .failedWithBasic
             return
         }
         solarForecastBatch = batch
+        solarForecastFailure = nil
         solarForecastState = .enhanced
     }
 
@@ -289,7 +313,7 @@ final class DashboardCoordinator: ObservableObject {
             resourceIDs: nil
         )
         if operation == forecastGeneration, siteID == selectedSiteID {
-            resetForecastEnhancement(state: .basic)
+            resetForecastEnhancement(state: .basic, connection: .awaitingArraySelection)
         }
         return credentialID
     }
@@ -310,7 +334,7 @@ final class DashboardCoordinator: ObservableObject {
         let siteID = selectedSiteID
         try await forecastStore.selectArrays(resourceIDs, accountScopeID: accountScopeID, siteID: siteID)
         if operation == forecastGeneration, siteID == selectedSiteID {
-            resetForecastEnhancement(state: .basic)
+            resetForecastEnhancement(state: .basic, connection: .ready)
         }
     }
 
@@ -330,7 +354,7 @@ final class DashboardCoordinator: ObservableObject {
         let siteID = selectedSiteID
         try await forecastStore.disconnect(accountScopeID: accountScopeID, siteID: siteID)
         guard operation == forecastGeneration, siteID == selectedSiteID else { return }
-        resetForecastEnhancement(state: .disconnectedBasic)
+        resetForecastEnhancement(state: .disconnectedBasic, connection: .notConnected)
     }
 
     /// Settings text edits and profile comparisons are deliberately local.
@@ -377,10 +401,12 @@ final class DashboardCoordinator: ObservableObject {
         return forecastGeneration
     }
 
-    private func resetForecastEnhancement(state: SolarForecastEnhancementState) {
+    private func resetForecastEnhancement(state: SolarForecastEnhancementState, connection: SolarForecastConnectionState) {
         solarForecastBatch = nil
         loadPlanningContext = nil
         solarForecastState = state
+        solarForecastConnection = connection
+        solarForecastFailure = nil
     }
 
     private func launchBillTaskIfNeeded(force: Bool, requestTime: Date, generation: Int) {
