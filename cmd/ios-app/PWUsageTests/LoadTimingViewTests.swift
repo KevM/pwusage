@@ -762,6 +762,110 @@ struct LoadTimingForecastPresentationTests {
         #expect(overlay.enhanced == nil)
     }
 
+    @Test("A saving too small to render is not advertised as a saving")
+    func subMinorSavingIsNotAdvertised() throws {
+        // 0.4 of a cent rounds to "$0.00", which would read as nonsense.
+        for alternative in [0.0001, 0.004] {
+            let overlay = LoadTimingForecastPresentation.overlay(
+                enhancement: .enhanced,
+                connection: .ready,
+                cause: nil,
+                result: Self.enhanced(Self.waitingComparison(
+                    recommendedStart: Self.now, recommendedEnd: Self.now.addingTimeInterval(3600),
+                    recommendedCost: 3.40, savings: 0, bestAlternativeSavings: alternative)),
+                forecastFetchedAt: Self.now,
+                contextAsOf: Self.now,
+                currencyCode: "USD",
+                timeZone: "UTC",
+                now: Self.now
+            )
+            let enhanced = try #require(overlay.enhanced)
+
+            #expect(enhanced.headline == "Start now — no cheaper start was found",
+                    "A \(alternative) saving must not be advertised")
+            #expect(enhanced.savings == nil)
+            #expect(!enhanced.headline.contains("$0.00"))
+        }
+    }
+
+    @Test("A saving worth one cent is still explained")
+    func minorUnitSavingIsExplained() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            cause: nil,
+            result: Self.enhanced(Self.waitingComparison(
+                recommendedStart: Self.now, recommendedEnd: Self.now.addingTimeInterval(3600),
+                recommendedCost: 3.34, savings: 0, bestAlternativeSavings: 0.06)),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let enhanced = try #require(overlay.enhanced)
+
+        #expect(enhanced.headline == "Start now — waiting would save about $0.06, which is not worth delaying")
+    }
+
+    @Test("The forecast is still shown when no load fits the observed surplus")
+    func forecastIsPlacedWhenNoLoadFitsSurplus() throws {
+        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 8, durationHours: 2, carSettings: nil)
+        // A deficit: nothing fits, so the basic layer has no suggestion at all.
+        let candidate = LoadTimingRecommendation.Candidate(
+            profile: washer,
+            result: .estimate(.init(total: 4, finishTime: Self.now.addingTimeInterval(7200), batteryKwh: 0,
+                                    wallKwh: 8, durationHours: 2, segments: [], hasUnobservedBalance: false)),
+            remainingSurplusKwh: nil
+        )
+        let recommendation = LoadTimingRecommendation(candidates: [candidate], suggested: nil, state: .noFit)
+        #expect(recommendation.suggested == nil)
+
+        let placement = try #require(
+            LoadTimingForecastPresentation.placement(recommendation: recommendation, explicitExploredID: nil)
+        )
+
+        #expect(placement.profile.id == "washer", "A deficit must not hide the forecast entirely")
+    }
+
+    @Test("The forecast sits on the recommendation card when it matches the suggested load")
+    func forecastSitsOnRecommendationCardForSuggestion() throws {
+        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
+        let candidate = LoadTimingRecommendation.Candidate(profile: washer, result: .noCharge, remainingSurplusKwh: 0)
+        let recommendation = LoadTimingRecommendation(candidates: [candidate], suggested: candidate, state: .ready)
+
+        let placement = try #require(
+            LoadTimingForecastPresentation.placement(recommendation: recommendation, explicitExploredID: nil)
+        )
+
+        #expect(placement.card == .recommendation)
+        #expect(placement.profile.id == "washer")
+    }
+
+    @Test("The forecast moves to the explorer when a different load is chosen")
+    func forecastMovesToExplorerForExplicitChoice() throws {
+        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
+        let car = LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 0, durationHours: 0,
+                              carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20, targetStateOfCharge: 30, chargingLevel: .level2))
+        let washerCandidate = LoadTimingRecommendation.Candidate(profile: washer, result: .noCharge, remainingSurplusKwh: 0)
+        let carCandidate = LoadTimingRecommendation.Candidate(profile: car, result: .noCharge, remainingSurplusKwh: 0)
+        let recommendation = LoadTimingRecommendation(candidates: [washerCandidate, carCandidate], suggested: washerCandidate, state: .ready)
+
+        let placement = try #require(
+            LoadTimingForecastPresentation.placement(recommendation: recommendation, explicitExploredID: "car")
+        )
+
+        #expect(placement.card == .explorer)
+        #expect(placement.profile.id == "car")
+    }
+
+    @Test("There is nowhere to place a forecast when the user has no load profiles")
+    func forecastPlacementIsEmptyWithoutProfiles() {
+        let recommendation = LoadTimingRecommendation(candidates: [], suggested: nil, state: .noCandidates)
+
+        #expect(LoadTimingForecastPresentation.placement(recommendation: recommendation, explicitExploredID: nil) == nil)
+    }
+
     private static func enhanced(
         _ comparison: LoadTimingForecastEstimator.Comparison
     ) -> LoadTimingForecastEstimator.Result {

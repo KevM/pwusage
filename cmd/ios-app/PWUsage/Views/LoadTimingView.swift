@@ -370,8 +370,13 @@ struct LoadTimingView: View {
             hasTariff: timing.hasTariff,
             hasExpiredCandidate: hasExpiredCandidate
         )
-        let overlay = forecastOverlay(now: now, timing: timing, response: response,
-                                      profile: recommendation.suggested?.profile)
+        // The forecast rides on whichever card is already showing the load it
+        // describes, so it stays visible even when the basic layer has no
+        // suggestion of its own.
+        let placement = LoadTimingForecastPresentation.placement(
+            recommendation: recommendation, explicitExploredID: exploredProfileID
+        )
+        let showsForecast = placement?.card == .recommendation
         return LoadTimingCard(title: "Recommendation", symbol: "bolt.fill") {
             Text(copy.title)
                 .font(.title3.weight(.bold))
@@ -398,7 +403,7 @@ struct LoadTimingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            forecastSection(overlay)
+            forecastSection(showsForecast ? placement.map { forecastOverlay(now: now, timing: timing, response: response, profile: $0.profile) } : nil)
             Text("Estimates use billing-cycle balances, not live solar. Each load is evaluated independently from the same snapshot.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -412,67 +417,75 @@ struct LoadTimingView: View {
     }
 
     @ViewBuilder
-    private func forecastSection(_ overlay: LoadTimingForecastPresentation.Overlay) -> some View {
-        if let note = overlay.note {
-            Label(note, systemImage: "sun.max.trianglebadge.exclamationmark")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        if let enhanced = overlay.enhanced {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Solar forecast")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(enhanced.headline)
-                    .font(.subheadline.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(enhanced.recommendedCost)
-                    .font(.headline)
-                    .monospacedDigit()
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(enhanced.costNow)
-                    .font(.subheadline)
-                    .monospacedDigit()
-                    .fixedSize(horizontal: false, vertical: true)
-                if let savings = enhanced.savings {
-                    Text(savings)
-                        .font(.subheadline)
-                        .foregroundStyle(.green)
-                        .monospacedDigit()
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Text(enhanced.window)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(enhanced.solarContribution)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(enhanced.horizon)
+    private func forecastSection(_ overlay: LoadTimingForecastPresentation.Overlay?) -> some View {
+        if let overlay {
+            if let note = overlay.note {
+                Label(note, systemImage: "sun.max.trianglebadge.exclamationmark")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                ForEach(enhanced.sourceAges, id: \.self) { age in
-                    Text(age)
+            }
+            if let enhanced = overlay.enhanced {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Solar forecast")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(enhanced.headline)
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(enhanced.recommendedCost)
+                        .font(.headline)
+                        .monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(enhanced.costNow)
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let savings = enhanced.savings {
+                        Text(savings)
+                            .font(.subheadline)
+                            .foregroundStyle(.green)
+                            .monospacedDigit()
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(enhanced.window)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(enhanced.solarContribution)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(enhanced.horizon)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(enhanced.sourceAges, id: \.self) { age in
+                        Text(age)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(overlay.detail)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text(overlay.detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(overlay.accessibilityLabel)
             }
-            .padding(.top, 4)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(overlay.accessibilityLabel)
         }
     }
 
     private func explorerCard(_ recommendation: LoadTimingRecommendation, timing: LoadTiming, response: MobileBillResponse, now: Date) -> some View {
         let candidate = recommendation.exploredProfile(explicitID: exploredProfileID)
+        let placement = LoadTimingForecastPresentation.placement(
+            recommendation: recommendation, explicitExploredID: exploredProfileID
+        )
+        let explorerOverlay = placement?.card == .explorer
+            ? forecastOverlay(now: now, timing: timing, response: response, profile: placement?.profile)
+            : nil
         return LoadTimingCard(title: "Explore another load", symbol: "slider.horizontal.3") {
             if !profileStore.profiles.isEmpty {
                 Picker("Load profile", selection: Binding(
@@ -490,6 +503,7 @@ struct LoadTimingView: View {
                 if let candidate {
                     explorerCandidate(candidate, recommendation: recommendation, timing: timing, response: response, now: now)
                 }
+                forecastSection(explorerOverlay)
             } else {
                 Text("Add a load profile to explore estimates.")
                     .font(.subheadline)

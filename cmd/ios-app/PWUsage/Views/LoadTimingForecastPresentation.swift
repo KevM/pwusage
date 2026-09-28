@@ -50,6 +50,31 @@ enum LoadTimingForecastPresentation {
         }
     }
 
+    /// Which card carries the forecast comparison, and for which load.
+    enum Card: Equatable {
+        case recommendation
+        case explorer
+    }
+
+    struct Placement: Equatable {
+        let card: Card
+        let profile: LoadProfile
+    }
+
+    /// The forecast always attaches to a load the user can actually see, and
+    /// appears exactly once. The basic recommendation is deliberately not a
+    /// precondition: a surplus shortfall or stale observations must not hide the
+    /// forecast, because comparing tomorrow's start times is most useful precisely
+    /// when the basic layer cannot recommend anything.
+    static func placement(
+        recommendation: LoadTimingRecommendation,
+        explicitExploredID: String?
+    ) -> Placement? {
+        let explored = recommendation.exploredProfile(explicitID: explicitExploredID)
+        guard let profile = explored?.profile else { return nil }
+        let card: Card = recommendation.suggested?.profile.id == profile.id ? .recommendation : .explorer
+        return Placement(card: card, profile: profile)    }
+
     static let unavailableNotePrefix = "Solar forecast unavailable — using tariff and balance data."
     /// Matches `SolarForecastStore.recommendationFreshness`. Data older than this
     /// may be shown as stale, but must not produce a new recommendation.
@@ -110,8 +135,9 @@ enum LoadTimingForecastPresentation {
         let headline: String
         let savings: String?
         if startNow {
+            // Anything below one minor unit renders as $0.00 and reads as noise.
             let alternative = comparison.bestAlternativeSavings
-            if alternative > 0 {
+            if alternative > LoadTimingForecastEstimator.currencyMinorUnit(currencyCode) {
                 headline = "Start now — waiting would save about \(money(alternative)), which is not worth delaying"
             } else {
                 headline = "Start now — no cheaper start was found"

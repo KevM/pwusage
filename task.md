@@ -88,7 +88,21 @@ the design. Eight Important findings entered one fix pass, each TDD-verified:
 
 Final: minor (deferred): a sub-minor saving renders as "waiting would save about
 $0.00, which is not worth delaying"; the branch tests `> 0` rather than the minor
-unit.
+unit. **Fixed after review** — the branch now requires the saving to exceed the
+currency's minor unit, so anything that would render as $0.00 falls through to
+"no cheaper start was found".
+Final: fixed — the forecast section was wired to `recommendation.suggested`, which
+is nil whenever no load fits the observed surplus, when observations are stale, or
+when any period lacks a balance. A household in deficit therefore saw no forecast
+UI at all, which is the common case for someone timing loads. Placement is now
+derived by `LoadTimingForecastPresentation.placement` from the load the user is
+actually viewing, and the section renders in exactly one card (recommendation when
+it matches the suggestion, explorer otherwise). Tests `The forecast is still shown
+when no load fits the observed surplus`, `The forecast sits on the recommendation
+card when it matches the suggested load`, `The forecast moves to the explorer when
+a different load is chosen`, and `There is nowhere to place a forecast when the
+user has no load profiles` RED->GREEN; the visibility test was mutation-checked
+against the original `suggested != nil` guard.
 Final: minor (deferred): `refreshSolarForecast(manual:)` has no UI caller, so the
 "Retry" wording in failure notes points at an action the app does not offer.
 Final: minor (deferred): `Comparison.assumptions` is computed and never rendered,
