@@ -2,6 +2,11 @@
 import Foundation
 import SwiftUI
 
+/// The preview site's timezone. The bill fixture, the planning context, and the
+/// synthetic solar curve must all agree: the coordinator rejects the enhancement
+/// when the bill's site timezone and the planning context's differ.
+let SitePreviewTimeZone = "America/Chicago"
+
 /// Synthetic, offline forecast fixtures for Load timing previews. No Solcast key
 /// or account data is present anywhere in this file.
 enum ForecastPreviewMode: String, CaseIterable {
@@ -22,7 +27,7 @@ enum ForecastPreviewMode: String, CaseIterable {
     case peakDeficit
 }
 
-private actor PreviewForecastStore: SolarForecastManaging {
+actor PreviewForecastStore: SolarForecastManaging {
     private let mode: ForecastPreviewMode
     private let now: Date
 
@@ -45,12 +50,15 @@ private actor PreviewForecastStore: SolarForecastManaging {
     }
 
     /// A believable day: nothing overnight, a broad midday peak, tapering tails.
+    /// Shaped in the site's local time so it lines up with the planning slots.
     private func intervals() -> [SolarForecastInterval] {
         let step: TimeInterval = 30 * 60
         let start = now.addingTimeInterval(-30 * 60)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: SitePreviewTimeZone) ?? .current
         return (0..<48).map { index in
             let periodStart = start.addingTimeInterval(TimeInterval(index) * step)
-            let hour = Calendar(identifier: .gregorian).component(.hour, from: periodStart)
+            let hour = calendar.component(.hour, from: periodStart)
             let solarShape: Double
             switch hour {
             case 5...8: solarShape = 0.25
@@ -121,7 +129,7 @@ private actor PreviewForecastStore: SolarForecastManaging {
 }
 
 @MainActor
-private final class PreviewPlanningAPI: MobileLoadPlanningDataAPI {
+final class PreviewPlanningAPI: MobileLoadPlanningDataAPI {
     private let mode: ForecastPreviewMode
     private let response: MobileLoadPlanningContextResponse
 
@@ -141,7 +149,7 @@ private final class PreviewPlanningAPI: MobileLoadPlanningDataAPI {
         }
         response = MobileLoadPlanningContextResponse(
             version: 1,
-            site: .init(id: "preview-home", timezone: "UTC"),
+            site: .init(id: "preview-home", timezone: SitePreviewTimeZone),
             units: .init(power: "kW", localMinute: "minute-of-day"),
             asOf: now,
             availability: mode == .missingContext ? .unavailable : .available,

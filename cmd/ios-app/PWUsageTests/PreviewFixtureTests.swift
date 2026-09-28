@@ -45,4 +45,86 @@ struct PreviewFixtureTests {
         )
         #expect(placement.card == .explorer)
     }
+
+    /// The whole point of the solar previews is to reach the enhanced state. A
+    /// silent mismatch between the bill's site timezone and the planning context's
+    /// makes the coordinator reject the enhancement, so every preview shows the
+    /// "forecast unavailable" note instead of a forecast.
+    @Test("The solar preview reaches the enhanced state without a real Solcast key")
+    func solarPreviewReachesEnhanced() async {
+        let now = Date.now
+        let coordinator = DashboardCoordinator(
+            siteID: "preview-home",
+            api: DashboardPreviewAPI(mode: .normal),
+            planningAPI: PreviewPlanningAPI(mode: .combinedArrays, now: now),
+            forecastStore: PreviewForecastStore(mode: .combinedArrays, now: now),
+            accountScopeID: "preview-account",
+            now: { now },
+            timerInterval: nil
+        )
+        await coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastConnection == .ready)
+        #expect(coordinator.solarForecastState == .enhanced,
+                "The preview must render a real forecast comparison, not the fallback note")
+        #expect(coordinator.solarForecastBatch?.intervals.isEmpty == false)
+        #expect(coordinator.loadPlanningContext != nil)
+    }
+
+    @Test("The preview planning context uses the same timezone as the preview bill")
+    func previewTimezonesAgree() async throws {
+        let response = try await DashboardPreviewAPI(mode: .normal).fetchBill(siteID: "preview-home")
+        let context = try await PreviewPlanningAPI(mode: .combinedArrays, now: Date.now)
+            .fetchLoadPlanningContext(siteID: "preview-home")
+
+        #expect(response.site.timezone == context.site.timezone)
+    }
+
+    @Test("Preview forecast data produces an actual cost comparison")
+    func previewForecastProducesComparison() async throws {
+        let now = Date.now
+        let response = try await DashboardPreviewAPI(mode: .normal).fetchBill(siteID: "preview-home")
+        let timing = try #require(response.loadTiming)
+        let context = try await PreviewPlanningAPI(mode: .combinedArrays, now: now)
+            .fetchLoadPlanningContext(siteID: "preview-home")
+        let estimatorContext = try #require(context.estimatorContext)
+        let store = PreviewForecastStore(mode: .combinedArrays, now: now)
+        let batch = try #require(await store.cachedBatch(accountScopeID: "preview-account", siteID: "preview-home"))
+        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
+
+        let result = LoadTimingForecastEstimator.evaluate(
+            profile: washer,
+            now: now,
+            timing: timing,
+            forecast: batch.intervals,
+            context: estimatorContext,
+            balanceSourceTime: try #require(response.sources.energyDataThrough),
+            billingCycleEnd: response.currentBill.cycleEnd,
+            currencyCode: response.currentBill.currency
+        )
+        let comparison = try #require(result.comparison, "The preview must produce real numbers, not a fallback: \(String(describing: result.unavailableReason))")
+
+        #expect(comparison.recommendedEnd > comparison.recommendedStart)
+        #expect(comparison.horizonEnd > comparison.horizonStart)
+        #expect(comparison.evaluatedStarts.count > 1)
+        #expect(comparison.estimatedSolarContribution >= 0)
+
+        // And the overlay must turn that comparison into visible forecast copy.
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            cause: nil,
+            result: .init(comparison: comparison, unavailableReason: nil),
+            forecastFetchedAt: batch.fetchedAt,
+            contextAsOf: context.asOf,
+            currencyCode: response.currentBill.currency,
+            timeZone: response.site.timezone,
+            now: now
+        )
+        let enhanced = try #require(overlay.enhanced)
+        #expect(overlay.isForecastAware)
+        #expect(enhanced.recommendedCost.contains("$"))
+        #expect(!enhanced.horizon.isEmpty)
+    }
 }
