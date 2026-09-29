@@ -13,13 +13,13 @@ struct SolcastClientTests {
 
     @Test("Decodes fractional and whole-second UTC forecast timestamps and optional percentiles")
     func decodesForecastTimestampsAndOptionalPercentiles() throws {
-        let data = Data(#"{"forecasts":[{"period_end":"2026-09-27T12:30:00.125Z","period":"PT30M","pv_estimate":4.0,"pv_estimate10":3.1},{"period_end":"2026-09-27T13:00:00+00:00","period":"PT30M","pv_estimate":0.0}]}"#.utf8)
+        let data = Data(#"{"forecasts":[{"period_end":"2026-09-27T12:30:00.125Z","period":"PT30M","pv_estimate":0.004,"pv_estimate10":0.0031},{"period_end":"2026-09-27T13:00:00+00:00","period":"PT30M","pv_estimate":0.0}]}"#.utf8)
         let response = try JSONDecoder().decode(SolcastForecastResponse.self, from: data)
         #expect(response.forecasts.count == 2)
         #expect(response.forecasts[0].periodEnd == ISO8601DateFormatter.parse("2026-09-27T12:30:00.125Z"))
         #expect(response.forecasts[0].periodDuration == 1800)
-        #expect(response.forecasts[0].pvEstimateKw == 4)
-        #expect(response.forecasts[0].pvEstimate10Kw == 3.1)
+        #expect(abs((response.forecasts[0].pvEstimateKw ?? 0) - 4) < 0.0001)
+        #expect(abs((response.forecasts[0].pvEstimate10Kw ?? 0) - 3.1) < 0.0001)
         #expect(response.forecasts[0].pvEstimate90Kw == nil)
         #expect(response.forecasts[1].periodEnd == ISO8601DateFormatter.parse("2026-09-27T13:00:00+00:00"))
         #expect(response.forecasts[1].pvEstimateKw == 0)
@@ -42,6 +42,24 @@ struct SolcastClientTests {
         #expect(requests[1].url?.absoluteString == "https://api.solcast.com.au/rooftop_sites/site-abc_123/forecasts?format=json")
         #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer synthetic-key" })
         #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Cookie") == nil })
+    }
+
+    /// Solcast's hobbyist rooftop endpoint reports `pv_estimate` in **MW**, per
+    /// its output-parameter table. A 5 kW array peaks around 0.005. Reading that
+    /// as kW understates every forecast by 1000x.
+    @Test("Converts the provider's megawatt estimate to kilowatts")
+    func convertsMegawattsToKilowatts() async throws {
+        let data = Data(#"{"forecasts":[{"period_end":"2026-09-27T12:30:00Z","period":"PT30M","pv_estimate":0.005,"pv_estimate10":0.004}]}"#.utf8)
+        let transport = RecordingSolcastTransport { request in
+            (data, HTTPURLResponse(url: try #require(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let client = SolcastClient(apiKey: "synthetic-key", transport: transport)
+
+        let points = try await client.fetchForecast(resourceID: "east-1")
+
+        #expect(points.count == 1)
+        #expect(abs((points[0].pvEstimateKw ?? 0) - 5.0) < 0.0001)
+        #expect(abs((points[0].pvEstimate10Kw ?? 0) - 4.0) < 0.0001)
     }
 
     @Test("Rejects resource IDs that could escape their single path component")
