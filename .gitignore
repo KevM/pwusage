@@ -14,3 +14,6 @@ cmd/ios-app/build/
 cmd/ios-app/DerivedData/
 # Brainstorming visual companion scratch dir
 .superpowers/
+# Redacted Solcast captures produced by scripts/solcast-forecast-capture.ts.
+# These are ground truth from a live provider response and must not be committed.
+cmd/ios-app/PWUsageTests/Fixtures/solcast-capture.json
