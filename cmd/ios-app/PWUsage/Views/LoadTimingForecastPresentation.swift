@@ -214,6 +214,9 @@ enum LoadTimingForecastPresentation {
             return "\(unavailableNotePrefix) Solcast is limiting requests. Retry later today."
         case .requestFailed:
             return "\(unavailableNotePrefix) Solcast could not be reached. Retry when you have a connection."
+        case .unknownResource:
+            return "\(unavailableNotePrefix) Solcast does not recognise one of your Solar System IDs, "
+                + "so that request counted as an attempt. Choose your arrays again in Solar forecast settings."
         case .invalidForecast:
             return "\(unavailableNotePrefix) An array returned no usable forecast. Retry the array selection or refresh."
         case .storageFailure, .cleanupFailure:

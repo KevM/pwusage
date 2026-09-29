@@ -42,6 +42,12 @@ enum SolarForecastSettingsStatus {
                 isConnected: hasCredential,
                 allowsManualIDs: false
             )
+        case .discoveryFailed(.unknownResource):
+            return SolarForecastSettingsPresentation(
+                message: "Solcast does not recognise that Solar System ID. Tap Discover arrays and choose from the list.",
+                isConnected: hasCredential,
+                allowsManualIDs: true
+            )
         case .discoveryFailed(.requestFailed), .discoveryFailed(.invalidForecast), .requestFailed:
             return providerFailure(hasCredential: hasCredential, operation: operation)
         case .cleanupFailed where operation == .disconnect:

@@ -40,6 +40,7 @@ enum SolarForecastUnavailableCause: Equatable {
     case unauthorized
     case rateLimited
     case requestFailed
+    case unknownResource
     case invalidForecast
     case storageFailure
     case cleanupFailure
@@ -51,6 +52,7 @@ enum SolarForecastUnavailableCause: Equatable {
         case .unauthorized: self = .unauthorized
         case .rateLimited: self = .rateLimited
         case .requestFailed: self = .requestFailed
+        case .unknownResource: self = .unknownResource
         case .invalidForecast: self = .invalidForecast
         case .storageFailure: self = .storageFailure
         case .cleanupFailure: self = .cleanupFailure

@@ -45,6 +45,7 @@ enum SolarForecastRefreshFailure: Equatable, Sendable {
     case unauthorized
     case rateLimited
     case requestFailed
+    case unknownResource
     case invalidForecast
     case storageFailure
     case cleanupFailure
@@ -568,6 +569,10 @@ actor SolarForecastStore {
     private static func failureKind(_ error: SolcastClientError) -> SolarForecastRefreshFailure {
         if case let .httpStatus(statusCode, _) = error, statusCode == 401 || statusCode == 403 { return .unauthorized }
         if case let .httpStatus(statusCode, _) = error, statusCode == 429 { return .rateLimited }
+        // A 404 here means the array is not on this account, usually a mistyped
+        // Solar System ID. Reporting that as an unreachable service sends the user
+        // to the wrong remedy, and the attempt is still charged either way.
+        if case let .httpStatus(statusCode, _) = error, statusCode == 404 { return .unknownResource }
         return error == .decodingFailure ? .invalidForecast : .requestFailed
     }
 

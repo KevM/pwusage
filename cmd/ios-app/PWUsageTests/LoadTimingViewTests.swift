@@ -394,6 +394,27 @@ struct LoadTimingForecastPresentationTests {
         }
     }
 
+    @Test("An unrecognised Solar System ID points at array selection, not the network")
+    func unknownResourceNoteNamesTheRemedy() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .failedWithBasic,
+            connection: .ready,
+            cause: .unknownResource,
+            result: Self.unavailable(.incompleteCoverage),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(note.contains("does not recognise"))
+        #expect(note.lowercased().contains("choose your arrays again"))
+        #expect(note.lowercased().contains("counted as an attempt"))
+        #expect(!note.lowercased().contains("could not be reached"))
+    }
+
     @Test("Every non-enhanced state keeps the basic estimate and drops all forecast values")
     func everyFallbackStateStaysBasic() {
         // Distinctive values that must never appear beside a basic cost.

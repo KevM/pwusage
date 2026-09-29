@@ -51,6 +51,19 @@ struct SolarForecastStoreTests {
         #expect(budget.automaticAttempts == 1)
     }
 
+    @Test("A 404 names the array as unknown rather than reporting a network fault")
+    func unknownResourceIsNotReportedAsUnreachable() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        await h.transport.nextStatusCode(404)
+
+        let result = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true)
+
+        #expect(result == .failed(.unknownResource))
+        // The attempt is still charged, so the note should say so.
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == 1)
+    }
+
     @Test("UTC day rollover resets attempt counters")
     func utcDayRolloverResetsBudget() async throws {
         let h = Harness(now: Self.date("2026-09-27T23:59:00Z"))
