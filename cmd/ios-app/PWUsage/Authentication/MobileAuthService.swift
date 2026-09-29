@@ -44,12 +44,29 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
 
     @Published private(set) var isAuthenticated: Bool
 
+    /// Test-only: exposes whether a sign-in continuation is still pending.
+    var pendingContinuationForTesting: Bool { pendingSignIn != nil }
+
+    /// Test-only: exposes whether a web session is still held. A superseded attempt's
+    /// callback must leave this true, otherwise the presented sheet can no longer be
+    /// cancelled and the next callback for it bails out.
+    var hasWebSessionForTesting: Bool { webSession != nil }
+
     private let configuration: AppConfiguration
     private let api: any MobileAuthAPI
     private let forecastCleanup: any SolarForecastSessionCleanup
     private let sessionFactory: SessionFactory
     private var webSession: (any MobileAuthWebSession)?
-    private var pendingContinuation: CheckedContinuation<Void, Error>?
+    /// A sign-in attempt parked on a continuation, tagged with the generation that owns it.
+    /// `CheckedContinuation` is a struct, so the generation is the attempt's identity: a
+    /// completion may only touch the slot while it is still the owner.
+    private struct PendingSignIn {
+        let generation: Int
+        let continuation: CheckedContinuation<Void, Error>
+    }
+    private var pendingSignIn: PendingSignIn?
+    /// Monotonic sign-in attempt counter. Bumped once per `signIn()` and never reused.
+    private var signInGeneration = 0
     private var activeAttempt: PKCEMaterial?
 
     init(
@@ -112,29 +129,56 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
     }
 
     func signIn() async throws {
-        guard pendingContinuation == nil else { throw AuthError.alreadyInProgress }
+        guard pendingSignIn == nil else { throw AuthError.alreadyInProgress }
         let material = try Self.makePKCEMaterial()
         let loginURL = try makeLoginURL(material: material)
+        signInGeneration += 1
+        let generation = signInGeneration
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            pendingContinuation = continuation
-            activeAttempt = material
-            let session = sessionFactory(loginURL, "pwusage") { [weak self] callbackURL, error in
-                guard let self else {
-                    continuation.resume(throwing: AuthError.webAuthenticationFailed)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: AuthError.cancelled)
                     return
                 }
-                self.finishAuthentication(callbackURL: callbackURL, error: error)
+                pendingSignIn = PendingSignIn(generation: generation, continuation: continuation)
+                activeAttempt = material
+                let session = sessionFactory(loginURL, "pwusage") { [weak self] callbackURL, error in
+                    guard let self else {
+                        // Bypasses `completeSignIn` on purpose: it is an instance method and
+                        // `self` is already deallocated, so there is no pending sign-in
+                        // to clear and nothing left that could resume twice.
+                        continuation.resume(throwing: AuthError.webAuthenticationFailed)
+                        return
+                    }
+                    // The generation travels *with* the callback. Reading it from the
+                    // pending slot here would identify whichever attempt is current, not the
+                    // one this session belongs to — and a session's completion can arrive long
+                    // after a newer attempt has claimed the slot.
+                    self.finishAuthentication(callbackURL: callbackURL, error: error, generation: generation)
+                }
+                session.prefersEphemeralWebBrowserSession = false
+                session.presentationContextProvider = self
+                webSession = session
+                guard session.start() else {
+                    webSession = nil
+                    activeAttempt = nil
+                    completeSignIn(generation: generation, continuation, with: .failure(AuthError.sessionCouldNotStart))
+                    return
+                }
             }
-            session.prefersEphemeralWebBrowserSession = false
-            session.presentationContextProvider = self
-            webSession = session
-            guard session.start() else {
+        } onCancel: {
+            Task { @MainActor in
+                // Every side effect is scoped to this attempt. `onCancel` can run long after
+                // this attempt's continuation was resumed by its own session callback, so an
+                // unguarded `webSession?.cancel()` would cancel the sheet of a newer attempt,
+                // and an unguarded `activeAttempt = nil` would make that attempt's real
+                // callback bail — stranding its continuation in `.alreadyInProgress` forever.
+                guard let pending = pendingSignIn, pending.generation == generation else { return }
+                webSession?.cancel()
                 webSession = nil
                 activeAttempt = nil
-                pendingContinuation = nil
-                continuation.resume(throwing: AuthError.sessionCouldNotStart)
-                return
+                completeSignIn(generation: generation, pending.continuation, with: .failure(AuthError.cancelled))
             }
         }
     }
@@ -168,23 +212,32 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
             .first(where: \.isKeyWindow) ?? ASPresentationAnchor()
     }
 
-    private func finishAuthentication(callbackURL: URL?, error: Error?) {
-        let continuation = pendingContinuation
-        let material = activeAttempt
+    private func finishAuthentication(callbackURL: URL?, error: Error?, generation: Int) {
+        // `generation` is the attempt this session was started for, not "the current
+        // attempt". A completion belonging to a superseded attempt is dropped whole: it
+        // must not clear the newer attempt's `webSession`/`activeAttempt`, and it must not
+        // apply its own result to the newer attempt's continuation.
+        guard let pending = pendingSignIn, pending.generation == generation else { return }
+        guard let material = activeAttempt else {
+            // Unreachable while the slot and the material are cleared together, but resuming
+            // is strictly safer than returning: a silent return here would leak `pending`.
+            completeSignIn(generation: generation, pending.continuation, with: .failure(AuthError.webAuthenticationFailed))
+            return
+        }
         webSession = nil
         activeAttempt = nil
-        guard let continuation, let material else { return }
+        let continuation = pending.continuation
 
         if let error {
             if Self.isUserCancellation(error) {
-                completeSignIn(continuation, with: .failure(AuthError.cancelled))
+                completeSignIn(generation: generation, continuation, with: .failure(AuthError.cancelled))
             } else {
-                completeSignIn(continuation, with: .failure(AuthError.webAuthenticationFailed))
+                completeSignIn(generation: generation, continuation, with: .failure(AuthError.webAuthenticationFailed))
             }
             return
         }
         guard let callbackURL else {
-            completeSignIn(continuation, with: .failure(AuthError.invalidCallback))
+            completeSignIn(generation: generation, continuation, with: .failure(AuthError.invalidCallback))
             return
         }
 
@@ -199,22 +252,35 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
             Task { @MainActor in
                 do {
                     try await api.exchangeSession(exchange)
-                    isAuthenticated = true
-                    completeSignIn(continuation, with: .success(()))
+                    if completeSignIn(generation: generation, continuation, with: .success(())) {
+                        isAuthenticated = true
+                    }
                 } catch {
-                    isAuthenticated = false
-                    completeSignIn(continuation, with: .failure(error))
+                    if completeSignIn(generation: generation, continuation, with: .failure(error)) {
+                        isAuthenticated = false
+                    }
                 }
             }
         } catch {
-            completeSignIn(continuation, with: .failure(error))
+            completeSignIn(generation: generation, continuation, with: .failure(error))
         }
     }
 
-    private func completeSignIn(_ continuation: CheckedContinuation<Void, Error>, with result: Result<Void, Error>) {
-        guard pendingContinuation != nil else { return }
-        pendingContinuation = nil
+    /// Resume `continuation` exactly once, and only while `generation` still owns the pending
+    /// slot. A completion belonging to a superseded attempt finds a newer generation in the
+    /// slot and is dropped: it must neither resume its own (already resumed) continuation,
+    /// which traps, nor clear the slot, which would strand the newer attempt. Returns
+    /// whether this call performed the resume, so callers can guard their side effects.
+    @discardableResult
+    private func completeSignIn(
+        generation: Int,
+        _ continuation: CheckedContinuation<Void, Error>,
+        with result: Result<Void, Error>
+    ) -> Bool {
+        guard let pending = pendingSignIn, pending.generation == generation else { return false }
+        pendingSignIn = nil
         continuation.resume(with: result)
+        return true
     }
 
     private func makeLoginURL(material: PKCEMaterial) throws -> URL {
