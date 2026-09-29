@@ -65,7 +65,7 @@ enum SolarForecastSettingsStatus {
             )
         case .invalidConfiguration:
             return SolarForecastSettingsPresentation(
-                message: "Check the key or resource IDs and try again.",
+                message: "Check the key or Solar System IDs and try again.",
                 isConnected: hasCredential,
                 allowsManualIDs: false
             )
@@ -90,7 +90,7 @@ enum SolarForecastSettingsStatus {
     ) -> SolarForecastSettingsPresentation {
         SolarForecastSettingsPresentation(
             message: operation == .discovery
-                ? "Solcast could not be reached. You can enter resource IDs manually or retry discovery."
+                ? "Solcast could not be reached. You can enter Solar System IDs manually or retry discovery."
                 : "Solcast could not be reached. Check your connection and try again.",
             isConnected: hasCredential,
             allowsManualIDs: operation == .discovery && hasCredential

@@ -47,7 +47,7 @@ struct SolarForecastSettingsStatusTests {
 
         #expect(status.isConnected)
         #expect(status.allowsManualIDs)
-        #expect(status.message == "Solcast could not be reached. You can enter resource IDs manually or retry discovery.")
+        #expect(status.message == "Solcast could not be reached. You can enter Solar System IDs manually or retry discovery.")
     }
 
     @Test("Connection storage failure never offers discovery fallback")

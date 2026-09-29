@@ -35,6 +35,24 @@ struct SolarForecastSettingsSheet: View {
                     if isConnected {
                         Label("Connected on this device", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
+                        // Array names are provider data we deliberately do not
+                        // persist, so the selection is shown by ID until someone
+                        // spends a request rediscovering it.
+                        if !selectedResourceIDs.isEmpty {
+                            Text("Selected: \(selectedResourceIDs.sorted().joined(separator: ", "))")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text("No arrays selected yet, so no forecast is requested.")
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Button("Discover arrays") {
+                            Task { await discoverArrays() }
+                        }
+                        .disabled(isWorking)
                     }
                     if let statusMessage {
                         Text(statusMessage)
@@ -46,6 +64,12 @@ struct SolarForecastSettingsSheet: View {
                 if !discoveredSites.isEmpty {
                     Section("Solar arrays") {
                         Text("Select one or two arrays. Tags are shown only as hints.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        // A configured connection makes discovery the only route
+                        // back to the friendly array list, so it needs its own
+                        // action rather than being a side effect of saving a key.
+                        Text("Rediscovery spends one of this device's requests today.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                         ForEach(discoveredSites, id: \.resourceID) { site in
@@ -69,16 +93,16 @@ struct SolarForecastSettingsSheet: View {
                 }
 
                 if isConnected && allowsManualIDs {
-                    Section("Manual resource IDs") {
-                        Text("Use this when discovery is unavailable. Resource IDs stay on this device.")
+                    Section("Manual Solar System IDs") {
+                        Text("Use this when discovery is unavailable. Solar System IDs stay on this device.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
-                        TextField("Array 1 resource ID", text: $manualResourceID1)
+                        TextField("Solar System 1 ID", text: $manualResourceID1)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .onChange(of: manualResourceID1) { coordinator.solarForecastSettingsDidEdit() }
                             .disabled(isWorking)
-                        TextField("Array 2 resource ID (optional)", text: $manualResourceID2)
+                        TextField("Solar System 2 ID (optional)", text: $manualResourceID2)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .onChange(of: manualResourceID2) { coordinator.solarForecastSettingsDidEdit() }
@@ -163,7 +187,27 @@ struct SolarForecastSettingsSheet: View {
         let credential = await coordinator.solarForecastCredential()
         isConnected = credential != nil
         allowsManualIDs = credential != nil
-        selectedResourceIDs = Set(credential?.resourceIDs ?? [])
+        let selection = (credential?.resourceIDs ?? []).sorted()
+        selectedResourceIDs = Set(selection)
+        // Mirror the saved selection into the manual fields so the current state
+        // is visible and editable even before anyone rediscovers the array list.
+        manualResourceID1 = selection.first ?? ""
+        manualResourceID2 = selection.dropFirst().first ?? ""
+        budget = await coordinator.solarForecastBudget()
+    }
+
+    private func discoverArrays() async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            discoveredSites = try await coordinator.discoverSolarSites()
+            allowsManualIDs = true
+            statusMessage = discoveredSites.isEmpty
+                ? "No solar systems were discovered. Enter one or two Solar System IDs manually."
+                : "Choose the arrays that belong to this PWUsage site."
+        } catch {
+            await applyStatus(error, operation: .discovery)
+        }
         budget = await coordinator.solarForecastBudget()
     }
 
@@ -184,7 +228,7 @@ struct SolarForecastSettingsSheet: View {
             discoveredSites = try await coordinator.discoverSolarSites()
             allowsManualIDs = true
             statusMessage = discoveredSites.isEmpty
-                ? "No arrays were discovered. Enter one or two resource IDs manually."
+                ? "No solar systems were discovered. Enter one or two Solar System IDs manually."
                 : "Choose the arrays that belong to this PWUsage site."
         } catch {
             await applyStatus(error, operation: .discovery)
@@ -194,7 +238,7 @@ struct SolarForecastSettingsSheet: View {
 
     private func saveSelection(_ resourceIDs: [String]) async {
         guard (1...2).contains(resourceIDs.count), Set(resourceIDs).count == resourceIDs.count else {
-            statusMessage = "Choose one or two different resource IDs."
+            statusMessage = "Choose one or two different Solar System IDs."
             return
         }
         isWorking = true

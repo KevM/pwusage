@@ -83,9 +83,12 @@ struct PreviewFixtureTests {
 
     @Test("Preview forecast data produces an actual cost comparison")
     func previewForecastProducesComparison() async throws {
-        let now = Date.now
         let response = try await DashboardPreviewAPI(mode: .normal).fetchBill(siteID: "preview-home")
         let timing = try #require(response.loadTiming)
+        // Take "now" from the fixture rather than the wall clock: the API captures
+        // its own instant when constructed, so a wall-clock `now` can land
+        // fractionally before the balance source time and flake.
+        let now = try #require(response.sources.energyDataThrough)
         let context = try await PreviewPlanningAPI(mode: .combinedArrays, now: now)
             .fetchLoadPlanningContext(siteID: "preview-home")
         let estimatorContext = try #require(context.estimatorContext)
