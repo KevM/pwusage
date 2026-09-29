@@ -400,6 +400,24 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastUnavailableReason == .contextInvalid)
     }
 
+    @Test("A missing route is reported as a server that is out of date")
+    func missingRouteIsReportedAsAnOutdatedServer() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        api.contextError = PWUsageAPIError.requestRejected(statusCode: 404, message: nil)
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastUnavailableReason == .serverOutdated,
+                "A 404 means the server predates this route, not that data is missing")
+    }
+
     @Test("A misaligned history is distinguished from a short one")
     func misalignedHistoryIsReportedDistinctly() async {
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a")

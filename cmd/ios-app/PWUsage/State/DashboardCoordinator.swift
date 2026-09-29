@@ -85,6 +85,8 @@ enum SolarForecastEnhancementUnavailableReason: Equatable {
     case requestFailed
     /// The server answered, but the payload failed contract validation.
     case contextInvalid
+    /// The server does not have this route, so it predates the app build.
+    case serverOutdated
     case forecastNotUsable
     case billUnavailable
     case siteMismatch
@@ -502,8 +504,15 @@ final class DashboardCoordinator: ObservableObject {
             // A thrown error means we never learned anything about the profile.
             // Reporting it as an unreadable profile would be a guess, and the
             // user is already frustrated by guesses.
-            let reason: SolarForecastEnhancementUnavailableReason =
-                (error is MobileLoadPlanningContextResponse.ContractError) ? .contextInvalid : .requestFailed
+            let reason: SolarForecastEnhancementUnavailableReason
+            if error is MobileLoadPlanningContextResponse.ContractError {
+                reason = .contextInvalid
+            } else if let rejected = error as? PWUsageAPIError,
+                case .requestRejected(let statusCode, _) = rejected, statusCode == 404 {
+                reason = .serverOutdated
+            } else {
+                reason = .requestFailed
+            }
             return PlanningContextOutcome(context: nil, unavailableReason: reason)
         }
     }

@@ -216,6 +216,9 @@ enum LoadTimingForecastPresentation {
         case .requestFailed:
             return "\(unavailableNotePrefix) This device could not reach your server for household data. "
                 + "Check the app is signed in and online, then pull down to retry."
+        case .serverOutdated:
+            return "\(unavailableNotePrefix) This app build is newer than the server it is talking to, "
+                + "so household data cannot be loaded yet. Nothing is wrong with your data."
         case .contextInvalid:
             return "\(unavailableNotePrefix) The server sent household data this app could not read. "
                 + "Please report this so it can be investigated."
