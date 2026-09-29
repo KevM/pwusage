@@ -4,12 +4,13 @@
 
 **Status values:** `OPEN` → `IN PROGRESS (PR #N)` → `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)`
 
-**Progress:** 69 findings tracked. 0 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
+**Progress:** 72 findings tracked. 4 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
 
 | Status | Count | Findings |
 | --- | --- | --- |
-| OPEN | 69 | all |
-| FIXED | 0 | — |
+| OPEN | 66 | all except §3.3, §3.12, §3.13, §3.14 |
+| IN PROGRESS | 0 | — |
+| FIXED | 4 | §3.3, §3.12, §3.13, §3.14 |
 
 ---
 
@@ -31,7 +32,7 @@
 5. **[High] "Bill at most every 30 minutes" is bypassed on every Load-timing appearance and foreground** — §5.3 — `DashboardCoordinator.swift:319`, `LoadTimingView.swift:357-362`
 6. **[High] The forecast estimator re-runs on the main actor up to twice per body, every minute** — §7.1 — `LoadTimingView.swift:243`, `:273`, `:407`, `:488`
 7. **[High] App can latch permanently on "Connecting to pwusage…"** — §3.2 — `PWUsageApp.swift:108-123`
-8. **[High] Sign-in continuation has no cancellation handler and no double-resume guard** — §3.3 — `MobileAuthService.swift:114-140`, `:171-218`
+8. **[High] Sign-in continuation has no cancellation handler and no double-resume guard** — §3.3 — `MobileAuthService.swift:131-168`, `:170-183`
 9. **[High] Release origin validation accepts any HTTPS host, with no production allowlist** — §6.2 — `AppConfiguration.swift:35-47`
 10. **[High] Battery SoC freshness is enforced only server-side; the client never re-checks it** — §5.4 — `MobileContracts.swift:68`, `DashboardView.swift:71`
 
@@ -79,13 +80,13 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Confidence:** High
 
 ### 3.3 Sign-in continuation has no cancellation handler and no double-resume guard
-- **Location:** `PWUsage/Authentication/MobileAuthService.swift:114-140`, `:171-218`
-- **What:** `signIn()` stores a `CheckedContinuation` in `pendingContinuation` and relies entirely on the `ASWebAuthenticationSession` completion; there is no `withTaskCancellationHandler`. The `session.start() == false` branch at `:132-138` resumes the local `continuation` after having stored it in `pendingContinuation`, and the `[weak self]`-nil path at `:122-124` does the same. Separately, the token exchange at `:199` runs in a `Task { @MainActor }` that is not a child of `signIn()`, so cancelling the sign-in does not stop it.
-- **Why:** If the calling task is cancelled mid-flow, the continuation is never resumed and `pendingContinuation` stays non-nil, so every later sign-in throws `.alreadyInProgress` (`:115`) forever. The shape is also fragile against double-resume ("SWIFT TASK CONTINUATION MISUSE"), which is not production-reachable today but is one refactor away.
-- **Action:** Wrap in `withTaskCancellationHandler` and call `session.cancel()` on cancellation; route *every* completion path through the existing idempotent `completeSignIn` (`:213-217`) rather than resuming locally; nil out `webSession` in a `deinit`.
+- **Location:** `PWUsage/Authentication/MobileAuthService.swift:131-168`, `:170-183`
+- **What:** `signIn()` stores a `CheckedContinuation` in `pendingContinuation` and relies entirely on the `ASWebAuthenticationSession` completion; there is no `withTaskCancellationHandler`. The `session.start() == false` branch at `:163-168` resumes the local `continuation` after having stored it in `pendingContinuation`, and the `[weak self]`-nil path at `:147-153` does the same. Separately, the token exchange at `:252` runs in a `Task { @MainActor }` that is not a child of `signIn()`, so cancelling the sign-in does not stop it.
+- **Why:** If the calling task is cancelled mid-flow, the continuation is never resumed and `pendingContinuation` stays non-nil, so every later sign-in throws `.alreadyInProgress` (`:132`) forever. The shape is also fragile against double-resume ("SWIFT TASK CONTINUATION MISUSE"), which is not production-reachable today but is one refactor away.
+- **Action:** Done. `signIn()` is wrapped in `withTaskCancellationHandler`; `onCancel` (`:170-183`) cancels the session and routes the resume through `completeSignIn`, and the start-failure and `[weak self]`-nil paths do the same, so every completion path is idempotent and generation-scoped. The originally prescribed `deinit` was **dropped, deliberately**: it was a provable no-op (the object is deallocating and `ASWebAuthenticationSession` does not retain the service, so `webSession = nil` releases nothing), and its own comment conceded it was no substitute for `onCancel`. Cancelling the sheet is `onCancel`'s job and is now done there. See §3.13 and §3.14 for the generation scoping that makes those paths safe.
 - **Severity:** High
-- **Status:** OPEN
-- **Confidence:** High — verified `:114-140` and `:171-218`.
+- **Status:** FIXED (PR pending)
+- **Confidence:** High — verified `:131-168` and `:170-183`, and the `deinit` claim by confirming the session is never retained by the service (the completion closure captures `self` weakly).
 
 ### 3.4 A cancelled fetch is recorded as "data unavailable"
 - **Location:** `PWUsage/State/DashboardCoordinator.swift:591-605`, `:607-622`, `:626-651`
@@ -158,6 +159,33 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Severity:** Medium
 - **Status:** OPEN
 - **Confidence:** High
+
+### 3.12 A late failed token exchange can sign out a newer, successful sign-in
+- **Location:** `PWUsage/Authentication/MobileAuthService.swift:252-263`
+- **What:** The token exchange runs in a detached `Task { @MainActor }` that is not a child of `signIn()`, so it keeps running after the sign-in is cancelled. On failure it assigned `isAuthenticated = false` unconditionally, before calling `completeSignIn`. The success branch was guarded by `completeSignIn`'s `Bool` return; the failure branch was not.
+- **Why:** Cancelling a sign-in whose exchange is already in flight leaves that exchange running. If it then fails, the unguarded assignment clears `isAuthenticated` for whatever session state exists at that moment — including a *newer* sign-in that has already succeeded. A user who cancels one sign-in and immediately signs in again can be signed straight back out, with no action of their own.
+- **Action:** Route the failure branch through the same guard: `if completeSignIn(continuation, with: .failure(error)) { isAuthenticated = false }`. Covered by `lateFailedExchangeCannotSignOutNewerSuccessfulSignIn`.
+- **Severity:** High
+- **Status:** FIXED (PR pending)
+- **Confidence:** High — verified by reverting the guard and observing the new test fail.
+
+### 3.13 `completeSignIn` guards on "some continuation is pending", not "this continuation is pending"
+- **Location:** `PWUsage/Authentication/MobileAuthService.swift:274-284` (`completeSignIn`), reached from the detached exchange task at `:252-263` and from the `onCancel` handler at `:170-183`
+- **What:** The guard is `pendingContinuation != nil`, not an identity check against the `continuation` argument. `CheckedContinuation` is a struct, so identity is not directly available and a partial fix is not a one-liner. Any completion therefore claims the shared slot, regardless of which sign-in attempt it belongs to.
+- **Why:** Sign-in A is cancelled while its detached exchange is in flight: `onCancel` runs `completeSignIn(A)`, which resumes A's continuation and clears the slot. A newer sign-in B then sets `pendingContinuation = B`. When A's exchange finally reports a result, `completeSignIn(A)` still sees a non-nil slot, so it (a) resumes **A's already-resumed continuation** a second time — a process-level "SWIFT TASK CONTINUATION MISUSE" trap, not an observable error — and (b) nils out the slot, discarding B's continuation so B's own later success fails its guard and never sets `isAuthenticated = true`. The window is narrow and needs a slow exchange plus a fast re-sign-in, but the consequence is a crash or a permanently stuck signed-out state, not merely a brief flicker. Note `lateFailedExchangeCannotSignOutNewerSuccessfulSignIn` does not cover this: it awaits B to completion before resuming A's exchange, so the slot is already nil.
+- **Action:** Done. The pending slot is now a `PendingSignIn` value pairing the continuation with the sign-in generation that owns it; `signIn()` bumps `signInGeneration` and captures it, and `completeSignIn(generation:_:with:)` refuses to resume or clear unless that generation still owns the slot. Every completion path (session callback, start failure, `onCancel`, detached exchange) goes through it, and its `Bool` return still gates the `isAuthenticated` side effects. Covered by `lateFailedExchangeCannotDisturbNewerPendingSignIn`.
+- **Severity:** High
+- **Status:** FIXED (PR pending)
+- **Confidence:** High — the double-resume was reproduced before the fix. `lateFailedExchangeCannotDisturbNewerPendingSignIn` drove A to a stalled exchange, cancelled A, let B claim the slot, then failed A's exchange; the pre-fix binary died with `EXC_BREAKPOINT`/SIGTRAP ("SWIFT TASK CONTINUATION MISUSE") at `MobileAuthService.swift:248` `continuation.resume(with:)` from the detached exchange task, killing the whole test process with 0 assertions reported. The fix leaves A's late failure inert and B completes and authenticates.
+
+### 3.14 A superseded attempt's session callback is applied to the live attempt
+- **Location:** `PWUsage/Authentication/MobileAuthService.swift:215-229` (`finishAuthentication`), reached from the session closure at `:146-159`
+- **What:** `finishAuthentication` read `pendingSignIn` and `activeAttempt` as *whatever was current*: it took the pending slot's generation, nil'd `webSession`/`activeAttempt`, and then called `completeSignIn(generation: <the live attempt's generation>, …)` with its own error. The generation counter introduced for §3.13 therefore guarded the continuation but not the other per-attempt state. The same hole existed in `onCancel` (`:170-183`), where `webSession?.cancel()` and both nils ran *before* the generation check.
+- **Why:** This is pre-existing, not a regression — the unguarded read predates §3.13's fix, and §3.13 left it in place. The window is the *common* ordering, not a rare race: attempt A presents its sheet, the view tears down and A's task is cancelled, so `onCancel` cancels the session, frees A's slot and resumes A. The session's own completion was already in flight out of process and lands *after* that. The user taps sign in again; B claims the slot and its sheet is up; A's stale `.canceledLogin` then resumes B's continuation, so B dies with a bogus `.cancelled` and the user is told the sign-in was cancelled when they never cancelled it. Because `webSession` was also nil'd, the service can no longer cancel a presented session. The mirror case in `onCancel` — a late cancel for an attempt whose continuation was already resumed — cancels B's presented sheet and nils B's `activeAttempt`, which makes B's real callback bail at `guard let material` and park B's continuation, reproducing the original §3.3 `.alreadyInProgress`-forever symptom. The window was previously unexercised because the test fake never delivered a completion on `cancel()`, so the stale callback could not be produced at all.
+- **Action:** Done. The `generation` is captured in the `sessionFactory` closure and passed into `finishAuthentication(callbackURL:error:generation:)`, which early-returns unless `pendingSignIn?.generation == generation`; the `webSession`/`activeAttempt` clearing moved inside that guard, so a superseded callback touches nothing. `onCancel` moves its `webSession?.cancel()` and both nils behind the same `pending.generation == generation` check. Covered by `staleSessionCallbackIsAppliedToNoOne`, which captures A's completion before cancelling A, then delivers it after B has claimed the slot and asserts B is undisturbed and still completes.
+- **Severity:** High
+- **Status:** FIXED (PR pending)
+- **Confidence:** High — verified by reverting only the `finishAuthentication` guard: `staleSessionCallbackIsAppliedToNoOne` failed on `service.pendingContinuationForTesting` and `service.hasWebSessionForTesting` (B's slot and session were destroyed by A's callback) and then on B never authenticating, without hanging.
 
 ---
 
