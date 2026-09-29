@@ -214,8 +214,19 @@ enum LoadTimingForecastPresentation {
     private static func enhancementNote(_ reason: SolarForecastEnhancementUnavailableReason) -> String {
         switch reason {
         case .contextUnavailable:
-            return "\(unavailableNotePrefix) This device has not enough household history yet to estimate "
-                + "expected usage, so no start time can be compared. It fills in as more energy data arrives."
+            return "\(unavailableNotePrefix) This device could not read your household profile, so no start "
+                + "time can be compared. It fills in as more energy data arrives."
+        case .insufficientHistory:
+            // The profile is built from the last 14 days only, so a site with years
+            // of history can still fail here. Say so plainly rather than implying the
+            // site has no history at all.
+            return "\(unavailableNotePrefix) Your household profile needs at least 5 complete days in the "
+                + "last 14 days. Your energy history is intact, but too many of those recent days have gaps "
+                + "to compare start times. It will resolve itself once those days fill in."
+        case .timestampMisaligned:
+            return "\(unavailableNotePrefix) Your energy readings exist, but their timestamps do not line up "
+                + "with this site's local time, so a household profile cannot be built. This is a data "
+                + "problem rather than a missing-history one."
         case .forecastNotUsable:
             return "\(unavailableNotePrefix) The saved forecast could not be used. Pull down to refresh it."
         case .billUnavailable:

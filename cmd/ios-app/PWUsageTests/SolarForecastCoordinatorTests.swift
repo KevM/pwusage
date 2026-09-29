@@ -365,6 +365,42 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastBatch == nil)
     }
 
+    @Test("A misaligned history is distinguished from a short one")
+    func misalignedHistoryIsReportedDistinctly() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        api.contextIsUnavailable = true
+        api.contextUnavailableReason = "timestamp-misaligned"
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastUnavailableReason == .timestampMisaligned)
+    }
+
+    @Test("A short history is reported as such rather than as a generic gap")
+    func shortHistoryIsReportedDistinctly() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        api.contextIsUnavailable = true
+        api.contextUnavailableReason = "insufficient-history"
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastUnavailableReason == .insufficientHistory)
+    }
+
     @Test("A missing planning context is distinguished from an unusable forecast")
     func missingContextIsReportedDistinctly() async {
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
@@ -635,7 +671,8 @@ private extension MobileLoadPlanningContextResponse {
         usableDayCount: Int = 14,
         sampleCount: Int = 14,
         coverage: Double = 1,
-        availability: MobileLoadPlanningContextResponse.Availability = .available
+        availability: MobileLoadPlanningContextResponse.Availability = .available,
+        unavailableReason: String? = nil
     ) -> Self {
         Self(
             version: 1,
@@ -643,7 +680,7 @@ private extension MobileLoadPlanningContextResponse {
             units: Units(power: "kW", localMinute: "minute-of-day"),
             asOf: asOf,
             availability: availability,
-            unavailableReason: availability == .available ? nil : "insufficient-history",
+            unavailableReason: unavailableReason,
             usableDayCount: usableDayCount,
             historyStart: asOf.addingTimeInterval(-14 * 24 * 60 * 60),
             historyEnd: asOf.addingTimeInterval(-60),
@@ -668,6 +705,7 @@ private final class ForecastDashboardAPISpy: MobileDashboardDataAPI, MobileLoadP
     var contextSampleCount = 14
     var contextCoverage = 1.0
     var contextIsUnavailable = false
+    var contextUnavailableReason: String?
     var beforeContextResponse: (() -> Void)?
     var holdContextResponses = false
     var billError: Error?
@@ -700,7 +738,8 @@ private final class ForecastDashboardAPISpy: MobileDashboardDataAPI, MobileLoadP
             usableDayCount: contextIsUnavailable ? 2 : contextUsableDayCount,
             sampleCount: contextSampleCount,
             coverage: contextCoverage,
-            availability: contextIsUnavailable ? .unavailable : .available
+            availability: contextIsUnavailable ? .unavailable : .available,
+            unavailableReason: contextUnavailableReason
         )
     }
 

@@ -394,6 +394,48 @@ struct LoadTimingForecastPresentationTests {
         }
     }
 
+    @Test("A short recent history explains the recent window, not a total lack of history")
+    func shortHistoryNoteExplainsTheRecentWindow() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .failedWithBasic,
+            connection: .ready,
+            cause: nil,
+            enhancementReason: .insufficientHistory,
+            result: Self.unavailable(.incompleteCoverage),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(note.contains("last 14 days"),
+                "The note must not imply the site has no history at all")
+        #expect(note.lowercased().contains("5"), "It should say how many complete days are needed")
+    }
+
+    @Test("A misaligned history is named as a timestamp problem, not a short one")
+    func misalignedHistoryNoteNamesTimestamps() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .failedWithBasic,
+            connection: .ready,
+            cause: nil,
+            enhancementReason: .timestampMisaligned,
+            result: Self.unavailable(.incompleteCoverage),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(note.lowercased().contains("timestamps"))
+        #expect(!note.contains("last 14 days"),
+                "A timestamp problem is not a short-history problem")
+    }
+
     @Test("A missing household history is named as such, not blamed on the forecast")
     func missingContextNoteNamesTheRealBlocker() throws {
         let overlay = LoadTimingForecastPresentation.overlay(
@@ -410,7 +452,7 @@ struct LoadTimingForecastPresentationTests {
         )
         let note = try #require(overlay.note)
 
-        #expect(note.lowercased().contains("household history"))
+        #expect(note.lowercased().contains("household profile"))
         #expect(!note.lowercased().contains("too old or incomplete"))
         #expect(!note.lowercased().contains("retry a refresh"),
                 "The copy must not promise an action that does not exist")

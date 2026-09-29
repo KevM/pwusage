@@ -75,6 +75,12 @@ enum SolarForecastUnavailableCause: Equatable {
 /// forecast, even when our own planning context was the missing piece.
 enum SolarForecastEnhancementUnavailableReason: Equatable {
     case contextUnavailable
+    /// The server has history, but too few of the most recent days are complete
+    /// to build a household profile.
+    case insufficientHistory
+    /// The server has history, but its timestamps never line up with the site's
+    /// local five-minute grid, so no day can be counted.
+    case timestampMisaligned
     case forecastNotUsable
     case billUnavailable
     case siteMismatch
@@ -299,7 +305,8 @@ final class DashboardCoordinator: ObservableObject {
         async let billRefresh: Void = refreshBill(force: true)
         async let refreshResult = forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: false)
         async let contextResult = planningContext(siteID: siteID, api: planningAPI)
-        let (refresh, context) = await (refreshResult, contextResult)
+        let (refresh, outcome) = await (refreshResult, contextResult)
+        let context = outcome.context
         await billRefresh
 
         guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
@@ -312,15 +319,18 @@ final class DashboardCoordinator: ObservableObject {
         let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID)
         guard refreshSucceeded, billSucceeded, siteMatches, timeZoneMatches,
               forecastUsable, let batch, let context else {
-            solarForecastUnavailableReason = Self.enhancementUnavailableReason(
-                refreshSucceeded: refreshSucceeded,
-                billSucceeded: billSucceeded,
-                siteMatches: siteMatches,
-                timeZoneMatches: timeZoneMatches,
-                forecastUsable: forecastUsable,
-                hasBatch: batch != nil,
-                hasContext: context != nil
-            )
+            // The server's wire reason is more specific than anything inferred
+            // locally, so it takes priority when present.
+            solarForecastUnavailableReason = outcome.unavailableReason
+                ?? Self.enhancementUnavailableReason(
+                    refreshSucceeded: refreshSucceeded,
+                    billSucceeded: billSucceeded,
+                    siteMatches: siteMatches,
+                    timeZoneMatches: timeZoneMatches,
+                    forecastUsable: forecastUsable,
+                    hasBatch: batch != nil,
+                    hasContext: context != nil
+                )
             solarForecastBatch = nil
             loadPlanningContext = nil
             solarForecastState = .failedWithBasic
@@ -423,16 +433,24 @@ final class DashboardCoordinator: ObservableObject {
     func solarForecastSettingsDidEdit() {}
     func loadProfileDidEdit() {}
 
+    private struct PlanningContextOutcome {
+        let context: LoadTimingForecastEstimator.PlanningContext?
+        let unavailableReason: SolarForecastEnhancementUnavailableReason?
+    }
+
     private func planningContext(
         siteID: String,
         api: any MobileLoadPlanningDataAPI
-    ) async -> LoadTimingForecastEstimator.PlanningContext? {
+    ) async -> PlanningContextOutcome {
         let requestTime = now()
         if let cached = planningContextCache[siteID],
            requestTime.timeIntervalSince(cached.fetchedAt) >= 0,
            requestTime.timeIntervalSince(cached.fetchedAt) < Self.planningContextLifetime,
            let validated = try? cached.response.validating(siteID: siteID, now: requestTime) {
-            return validated.estimatorContext
+            return PlanningContextOutcome(
+                context: validated.estimatorContext,
+                unavailableReason: Self.enhancementReason(forReason: validated.unavailableReason)
+            )
         }
         let pending: PlanningContextTask
         if let existing = planningContextTasks[siteID] {
@@ -447,14 +465,17 @@ final class DashboardCoordinator: ObservableObject {
             let response = await pending.task.value
             let receiveTime = now()
             if planningContextTasks[siteID]?.id == pending.id { planningContextTasks.removeValue(forKey: siteID) }
-            guard let response else { return nil }
+            guard let response else { return PlanningContextOutcome(context: nil, unavailableReason: nil) }
             let validated = try response.validating(siteID: siteID, now: receiveTime)
-            guard validated.availability == .available, let context = validated.estimatorContext else { return nil }
+            let reason = Self.enhancementReason(forReason: validated.unavailableReason)
+            guard validated.availability == .available, let context = validated.estimatorContext else {
+                return PlanningContextOutcome(context: nil, unavailableReason: reason)
+            }
             planningContextCache[siteID] = PlanningContextCacheEntry(response: validated, fetchedAt: receiveTime)
-            return context
+            return PlanningContextOutcome(context: context, unavailableReason: nil)
         } catch {
             if planningContextTasks[siteID]?.id == pending.id { planningContextTasks.removeValue(forKey: siteID) }
-            return nil
+            return PlanningContextOutcome(context: nil, unavailableReason: nil)
         }
     }
 
@@ -467,6 +488,18 @@ final class DashboardCoordinator: ObservableObject {
             await refreshSolarForecast(manual: true)
         } else {
             await loadTimingDetailAppeared()
+        }
+    }
+
+    /// Map the server's wire reason onto our own vocabulary so the note can be
+    /// specific about which half of the household profile is missing.
+    private static func enhancementReason(
+        forReason reason: String?
+    ) -> SolarForecastEnhancementUnavailableReason? {
+        switch reason {
+        case "insufficient-history": return .insufficientHistory
+        case "timestamp-misaligned": return .timestampMisaligned
+        default: return .contextUnavailable
         }
     }
 
