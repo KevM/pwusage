@@ -216,7 +216,7 @@ actor SolarForecastStore {
               let storedKey = try await keychain.load(accountScopeID: accountScopeID, siteID: siteID),
               credential.credentialID == storedKey.credentialID,
               Self.credentialID(for: storedKey.key) == credential.credentialID else { throw StoreError.notConfigured }
-        let generation = generations[scope, default: 0]
+        let generation = generations[scope] ?? 0
         if let deferredUntil = normalizedBudget(state.budgets[credential.credentialID], at: clock.now()).deferredUntil,
            deferredUntil > clock.now() { throw StoreError.deferred }
         guard reserveRequests(1, credentialID: credential.credentialID, manual: manual) else {
@@ -227,15 +227,15 @@ actor SolarForecastStore {
             let outcome = await persistFailureState(scope: scope, credential: credential, description: "Forecast request budget could not be saved")
             throw Self.discoveryError(for: outcome, ordinaryError: .persistenceFailed)
         }
-        guard generation == generations[scope], activeAccountScopeID == accountScopeID,
+        guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID,
               state.credentials[scope]?.credentialID == credential.credentialID else { throw StoreError.cancelled }
         do {
             let sites = try await SolcastClient(apiKey: storedKey.key, transport: transport).discoverSites()
-            guard generation == generations[scope], activeAccountScopeID == accountScopeID,
+            guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID,
                   state.credentials[scope]?.credentialID == credential.credentialID else { throw StoreError.cancelled }
             return sites
         } catch let error as SolcastClientError {
-            guard generation == generations[scope], activeAccountScopeID == accountScopeID else { throw StoreError.cancelled }
+            guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID else { throw StoreError.cancelled }
             recordRateLimit(error, credentialID: credential.credentialID)
             if Self.failureKind(error) == .unauthorized {
                 try beginMutation(scope: scope)
@@ -247,7 +247,7 @@ actor SolarForecastStore {
             guard outcome == .persisted else { throw Self.discoveryError(for: outcome, ordinaryError: .persistenceFailed) }
             throw StoreError.discoveryFailed(Self.failureKind(error))
         } catch {
-            guard generation == generations[scope], activeAccountScopeID == accountScopeID else { throw StoreError.cancelled }
+            guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID else { throw StoreError.cancelled }
             let outcome = await persistFailureState(scope: scope, credential: credential, description: "Forecast request failed")
             guard outcome == .persisted else { throw Self.discoveryError(for: outcome, ordinaryError: .persistenceFailed) }
             throw StoreError.discoveryFailed(.requestFailed)
@@ -289,7 +289,7 @@ actor SolarForecastStore {
            normalizedBudget(state.budgets[credentialID], at: clock.now()).deferredUntil.map({ $0 > clock.now() }) == true {
             return .deferred
         }
-        let generation = generations[scope, default: 0]
+        let generation = generations[scope] ?? 0
         let refreshID = UUID()
         let task = Task { await self.performRefresh(scope: scope, credential: credential, generation: generation, manual: manual) }
         inFlight[scope] = InFlightRefresh(id: refreshID, task: task)
@@ -394,7 +394,7 @@ actor SolarForecastStore {
             case .cleanupFailed: return .failed(.cleanupFailure)
             }
         }
-        guard generation == generations[scope], activeAccountScopeID == credential.accountScopeID,
+        guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID,
               state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
         let requestCount = credential.resourceIDs.count
         guard reserveRequests(requestCount, credentialID: credential.credentialID, manual: manual) else {
@@ -405,7 +405,7 @@ actor SolarForecastStore {
             let outcome = await persistFailureState(scope: scope, credential: credential, description: "Forecast request budget could not be saved")
             return Self.refreshResult(for: outcome, ordinaryResult: .failed(.requestFailed))
         }
-        guard generation == generations[scope], activeAccountScopeID == credential.accountScopeID,
+        guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID,
               state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
         let client = SolcastClient(apiKey: storedKey.key, transport: transport)
         do {
@@ -415,7 +415,7 @@ actor SolarForecastStore {
                 arrays.append(try await client.fetchForecast(resourceID: resourceID))
             }
             try Task.checkCancellation()
-            guard generation == generations[scope], activeAccountScopeID == credential.accountScopeID,
+            guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID,
                   state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
             let intervals = try SolarForecast.combine(arrays)
             state.caches[scope] = SolarForecastBatch(credentialID: credential.credentialID, resourceIDs: credential.resourceIDs, intervals: intervals, fetchedAt: clock.now())
@@ -424,14 +424,14 @@ actor SolarForecastStore {
             try await persist()
             return .refreshed
         } catch let error as SolcastClientError {
-            guard generation == generations[scope], activeAccountScopeID == credential.accountScopeID else { return .cancelled }
+            guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID else { return .cancelled }
             recordRateLimit(error, credentialID: credential.credentialID)
             let outcome = await persistFailureState(scope: scope, credential: credential, description: Self.safeDescription(error))
             return outcome == .persisted ? Self.refreshFailure(error) : Self.refreshResult(for: outcome, ordinaryResult: Self.refreshFailure(error))
         } catch is CancellationError {
             return .cancelled
         } catch {
-            guard generation == generations[scope], activeAccountScopeID == credential.accountScopeID else { return .cancelled }
+            guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID else { return .cancelled }
             let outcome = await persistFailureState(scope: scope, credential: credential, description: "Forecast request failed")
             let failure: SolarForecastRefreshFailure = (error as? SolarForecastError) == nil ? .requestFailed : .invalidForecast
             return Self.refreshResult(for: outcome, ordinaryResult: .failed(failure))

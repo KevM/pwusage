@@ -19,6 +19,38 @@ struct SolarForecastStoreTests {
         #expect(await h.transport.requestCount == 2)
     }
 
+    /// A device that keeps a saved key and array selection across a relaunch, on a
+    /// new UTC day, with no usable cache. This is the "I redeployed and see no
+    /// attempts" scenario: the in-memory account scope and cache are both gone.
+    @Test("A saved selection still requests on a new day after a relaunch")
+    func savedSelectionRequestsOnNewDayAfterRelaunch() async throws {
+        let dayOne = Self.date("2026-09-27T12:00:00Z")
+        let h = Harness(now: dayOne)
+        let credentialID = try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        _ = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == 1)
+
+        // Relaunch: a brand new store over the same keychain and files, one day later.
+        let dayTwo = Self.date("2026-09-28T09:00:00Z")
+        let relaunched = Harness(now: dayTwo)
+        try await relaunched.keychain.save(key: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", credentialID: credentialID)
+        try await relaunched.files.saveState(await h.files.loadState())
+        await relaunched.store.activateAccountScope("account-a")
+
+        // The selection must be visible, which is what the settings sheet shows.
+        let credential = try #require(await relaunched.store.credential(accountScopeID: "account-a", siteID: "site-a"))
+        #expect(credential.resourceIDs == ["east"])
+        #expect(await relaunched.store.budget(for: "account-a", siteID: "site-a").totalAttempts == 0)
+
+        let result = await relaunched.store.refresh(accountScopeID: "account-a", siteID: "site-a")
+
+        #expect(result == .refreshed, "A saved selection must still request on a new day")
+        #expect(await relaunched.transport.requestCount == 1)
+        let budget = await relaunched.store.budget(for: "account-a", siteID: "site-a")
+        #expect(budget.totalAttempts == 1)
+        #expect(budget.automaticAttempts == 1)
+    }
+
     @Test("UTC day rollover resets attempt counters")
     func utcDayRolloverResetsBudget() async throws {
         let h = Harness(now: Self.date("2026-09-27T23:59:00Z"))
