@@ -90,14 +90,12 @@ struct SolcastForecastPoint: Decodable, Equatable, Sendable {
         guard value.isFinite else {
             throw DecodingError.dataCorruptedError(forKey: key, in: values, debugDescription: "Forecast estimate must be finite")
         }
-        // Solcast's hobbyist rooftop endpoint reports `pv_estimate` in MW, per its
-        // published output-parameter table. Everything downstream works in kW, so
-        // convert once here rather than scattering a factor through the maths.
-        let kilowatts = value * 1000
-        guard kilowatts.isFinite else {
-            throw DecodingError.dataCorruptedError(forKey: key, in: values, debugDescription: "Forecast estimate is out of range once converted to kilowatts")
-        }
-        return kilowatts
+        // `pv_estimate` on the hobbyist rooftop endpoint is kilowatts, verified
+        // against a live capture (peak 3.4543 kW for a residential array). Solcast's
+        // published output-parameter table lists `pv_estimate` in MW, but that entry
+        // belongs to the grid-aggregation endpoints, not this one; converting here
+        // overstated every forecast by 1000x.
+        return value
     }
 }
 

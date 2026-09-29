@@ -13,7 +13,7 @@ struct SolcastClientTests {
 
     @Test("Decodes fractional and whole-second UTC forecast timestamps and optional percentiles")
     func decodesForecastTimestampsAndOptionalPercentiles() throws {
-        let data = Data(#"{"forecasts":[{"period_end":"2026-09-27T12:30:00.125Z","period":"PT30M","pv_estimate":0.004,"pv_estimate10":0.0031},{"period_end":"2026-09-27T13:00:00+00:00","period":"PT30M","pv_estimate":0.0}]}"#.utf8)
+        let data = Data(#"{"forecasts":[{"period_end":"2026-09-27T12:30:00.125Z","period":"PT30M","pv_estimate":4.0,"pv_estimate10":3.1},{"period_end":"2026-09-27T13:00:00+00:00","period":"PT30M","pv_estimate":0.0}]}"#.utf8)
         let response = try JSONDecoder().decode(SolcastForecastResponse.self, from: data)
         #expect(response.forecasts.count == 2)
         #expect(response.forecasts[0].periodEnd == ISO8601DateFormatter.parse("2026-09-27T12:30:00.125Z"))
@@ -47,9 +47,14 @@ struct SolcastClientTests {
     /// Solcast's hobbyist rooftop endpoint reports `pv_estimate` in **MW**, per
     /// its output-parameter table. A 5 kW array peaks around 0.005. Reading that
     /// as kW understates every forecast by 1000x.
-    @Test("Converts the provider's megawatt estimate to kilowatts")
-    func convertsMegawattsToKilowatts() async throws {
-        let data = Data(#"{"forecasts":[{"period_end":"2026-09-27T12:30:00Z","period":"PT30M","pv_estimate":0.005,"pv_estimate10":0.004}]}"#.utf8)
+    /// Verified against a live capture: `pv_estimate` on the hobbyist rooftop
+    /// endpoint peaks at 3.4543 for a residential array, so the field is already
+    /// kilowatts. Solcast's output-parameter table lists `pv_estimate` as MW, but
+    /// that row belongs to the grid-aggregation endpoints. Multiplying here
+    /// overstated every forecast by 1000x.
+    @Test("Reads the provider's pv_estimate as kilowatts without rescaling")
+    func readsEstimateAsKilowatts() async throws {
+        let data = Data(#"{"forecasts":[{"period_end":"2026-09-27T12:30:00Z","period":"PT30M","pv_estimate":3.4543,"pv_estimate10":2.8}]}"#.utf8)
         let transport = RecordingSolcastTransport { request in
             (data, HTTPURLResponse(url: try #require(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!)
         }
@@ -58,8 +63,8 @@ struct SolcastClientTests {
         let points = try await client.fetchForecast(resourceID: "east-1")
 
         #expect(points.count == 1)
-        #expect(abs((points[0].pvEstimateKw ?? 0) - 5.0) < 0.0001)
-        #expect(abs((points[0].pvEstimate10Kw ?? 0) - 4.0) < 0.0001)
+        #expect(abs((points[0].pvEstimateKw ?? 0) - 3.4543) < 0.0001)
+        #expect(abs((points[0].pvEstimate10Kw ?? 0) - 2.8) < 0.0001)
     }
 
     /// Solcast derives rooftop resource IDs from the site name in the toolkit, so a
