@@ -93,19 +93,37 @@ function describe(label: string, value: unknown): void {
 
 async function run(): Promise<void> {
     const apiKey = required('SOLCAST_API_KEY');
-    const resourceID = required('SOLCAST_RESOURCE_ID');
+    const configuredID = required('SOLCAST_RESOURCE_ID');
 
     const outIndex = process.argv.indexOf('--out');
     const outPath = outIndex >= 0 && process.argv[outIndex + 1]
         ? process.argv[outIndex + 1]
         : path.resolve(process.env.TMPDIR ?? '/tmp', 'solcast-capture.json');
 
-    console.log(`Fetching discovery and forecast for a redacted resource (${redacted(resourceID)}).`);
-
+    console.log(`Fetching discovery first; its resource IDs are authoritative.`);
     const sites = await get('/rooftop_sites', apiKey);
-    const forecasts = await get(`/rooftop_sites/${encodeURIComponent(resourceID)}/forecasts`, apiKey);
-
     describe('discovery response', sites);
+
+    const discovered = ((sites as Unknown).sites as { resource_id?: string }[] | undefined)
+        ?.map((site) => site.resource_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0) ?? [];
+
+    if (discovered.length === 0) {
+        throw new Error('Discovery returned no rooftop sites. Check the key and that a site exists in the toolkit.');
+    }
+
+    // Prefer the ID the provider just returned. A hand-copied ID differing by even
+    // one character, or in its encoding, produces a 404 that looks like a network
+    // problem but is not.
+    const resourceID = discovered[0];
+    console.log(`\n== resource id check ==`);
+    console.log(`  configured in .env: ${redacted(configuredID)}`);
+    console.log(`  returned by API:    ${redacted(resourceID)}`);
+    console.log(`  they ${resourceID === configuredID ? 'match' : 'DO NOT MATCH — using the API value'}`);
+    console.log('  non-ASCII characters in the id:', /[^\x20-\x7E]/.test(resourceID) ? 'yes' : 'no');
+
+    console.log(`\nFetching forecast for ${redacted(resourceID)}.`);
+    const forecasts = await get(`/rooftop_sites/${encodeURIComponent(resourceID)}/forecasts`, apiKey);
     describe('forecast response', forecasts);
 
     const points = Array.isArray((forecasts as Unknown).forecasts)
@@ -127,11 +145,11 @@ async function run(): Promise<void> {
         _note: 'Redacted Solcast capture. Resource IDs removed; the API key is never written.',
         _capturedAt: new Date().toISOString(),
         discovery: {
-            sites: ((sites as Unknown).sites as Unknown[] | undefined)?.map((site) => ({
-                resource_id: redacted(String(site.resource_id ?? '')),
+            sites: (discovered.length > 0 ? [resourceID] : []).map((id) => ({
+                resource_id: redacted(id),
                 name: 'redacted',
-                tags: Array.isArray(site.tags) ? site.tags.map(() => 'redacted') : [],
-            })) ?? [],
+                tags: ['redacted'],
+            })),
         },
         forecast: { forecasts: points },
     };

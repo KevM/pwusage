@@ -62,6 +62,31 @@ struct SolcastClientTests {
         #expect(abs((points[0].pvEstimate10Kw ?? 0) - 4.0) < 0.0001)
     }
 
+    /// Solcast derives rooftop resource IDs from the site name in the toolkit, so a
+    /// real ID can contain non-ASCII characters. The client must still refuse
+    /// anything that could escape its path component or start a query or fragment.
+    @Test("Accepts the non-ASCII resource IDs Solcast actually issues")
+    func acceptsNonASCIIResourceIDs() async throws {
+        let resourceID = "381e-\u{0435}\u{0431}\u{0430}\u{0441}-145\u{0430}-4695"
+        let data = Data(#"{"forecasts":[]}"#.utf8)
+        let transport = RecordingSolcastTransport { request in
+            (data, HTTPURLResponse(url: try #require(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let client = SolcastClient(apiKey: "synthetic-key", transport: transport)
+
+        _ = try await client.fetchForecast(resourceID: resourceID)
+
+        #expect(transport.requests.count == 1)
+        let url = try #require(transport.requests.first?.url)
+        // The ID must stay a single path segment: "/", "rooftop_sites", <id>, "forecasts".
+        #expect(url.pathComponents.count == 4)
+        #expect(url.pathComponents.first == "/")
+        #expect(url.pathComponents[1] == "rooftop_sites")
+        #expect(url.pathComponents[3] == "forecasts")
+        #expect(url.query == "format=json")
+        #expect(url.host == "api.solcast.com.au")
+    }
+
     @Test("Rejects resource IDs that could escape their single path component")
     func rejectsUnsafeResourceIDs() async {
         let transport = RecordingSolcastTransport { _ in throw URLError(.unsupportedURL) }
