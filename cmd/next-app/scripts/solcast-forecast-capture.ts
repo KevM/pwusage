@@ -104,35 +104,48 @@ async function run(): Promise<void> {
     const sites = await get('/rooftop_sites', apiKey);
     describe('discovery response', sites);
 
-    const discovered = ((sites as Unknown).sites as { resource_id?: string }[] | undefined)
-        ?.map((site) => site.resource_id)
-        .filter((id): id is string => typeof id === 'string' && id.length > 0) ?? [];
+    const discovered = ((sites as Unknown).sites as { resource_id?: string; name?: string }[] | undefined)
+        ?.filter((site): site is { resource_id: string; name?: string } =>
+            typeof site.resource_id === 'string' && site.resource_id.length > 0) ?? [];
 
     if (discovered.length === 0) {
         throw new Error('Discovery returned no rooftop sites. Check the key and that a site exists in the toolkit.');
     }
 
-    // Prefer the ID the provider just returned. A hand-copied ID differing by even
-    // one character, or in its encoding, produces a 404 that looks like a network
-    // problem but is not.
-    const resourceID = discovered[0];
-    console.log(`\n== resource id check ==`);
-    console.log(`  configured in .env: ${redacted(configuredID)}`);
-    console.log(`  returned by API:    ${redacted(resourceID)}`);
-    console.log(`  they ${resourceID === configuredID ? 'match' : 'DO NOT MATCH — using the API value'}`);
-    console.log('  non-ASCII characters in the id:', /[^\x20-\x7E]/.test(resourceID) ? 'yes' : 'no');
+    console.log(`\n== discovered arrays ==`);
+    discovered.forEach((site, index) => {
+        const nonAscii = /[^\x20-\x7E]/.test(site.resource_id) ? 'yes' : 'no';
+        console.log(`  [${index}] ${redacted(site.resource_id)}  non-ascii: ${nonAscii}`);
+    });
+    console.log(`  configured in .env: ${redacted(configuredID)}` +
+        `${discovered.some((s) => s.resource_id === configuredID) ? ' (matches one of the above)' : ' (matches none of the above)'}`);
 
-    console.log(`\nFetching forecast for ${redacted(resourceID)}.`);
-    const forecasts = await get(`/rooftop_sites/${encodeURIComponent(resourceID)}/forecasts`, apiKey);
-    describe('forecast response', forecasts);
-
-    const points = Array.isArray((forecasts as Unknown).forecasts)
-        ? (redactForecast((forecasts as Unknown).forecasts as unknown[]))
-        : [];
-
-    if (points.length === 0) {
-        throw new Error('The forecast response contained no points; nothing to capture.');
+    // Every array is worth testing: a non-ASCII ID is accepted by the app's
+    // validation but may still be rejected by the provider once percent-encoded,
+    // and that is only visible by asking for each one.
+    const results: { site: { resource_id: string; name?: string }; points: unknown[]; error?: string }[] = [];
+    for (const [index, site] of discovered.entries()) {
+        console.log(`\nFetching forecast for array [${index}] ${redacted(site.resource_id)}...`);
+        try {
+            const forecasts = await get(`/rooftop_sites/${encodeURIComponent(site.resource_id)}/forecasts`, apiKey);
+            const points = Array.isArray((forecasts as Unknown).forecasts)
+                ? redactForecast((forecasts as Unknown).forecasts as unknown[])
+                : [];
+            describe('forecast response', forecasts);
+            results.push({ site, points });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.log(`  FAILED: ${message}`);
+            results.push({ site, points: [], error: message });
+        }
     }
+
+    const captured = results.find((result) => result.points.length > 0);
+    if (!captured) {
+        throw new Error('No array returned forecast points. Every array is listed above with its status.');
+    }
+    const resourceID = captured.site.resource_id;
+    const points = captured.points;
 
     const sample = points[0] as Unknown;
     const rawEstimate = Number(sample.pv_estimate);
@@ -141,11 +154,17 @@ async function run(): Promise<void> {
     console.log('  If this is around 0.001-0.02 the provider is reporting MW; the app');
     console.log('  must convert to kW by multiplying by 1000 before any cost maths.');
 
+    console.log(`\n== per-array summary ==`);
+    for (const result of results) {
+        console.log(`  ${redacted(result.site.resource_id)}: ` +
+            (result.error ? `FAILED (${result.error})` : `${result.points.length} points`));
+    }
+
     const payload = {
         _note: 'Redacted Solcast capture. Resource IDs removed; the API key is never written.',
         _capturedAt: new Date().toISOString(),
         discovery: {
-            sites: (discovered.length > 0 ? [resourceID] : []).map((id) => ({
+            sites: [resourceID].map((id) => ({
                 resource_id: redacted(id),
                 name: 'redacted',
                 tags: ['redacted'],
