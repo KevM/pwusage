@@ -87,7 +87,8 @@ final class MobileAuthServiceTests {
         #expect(fakeSession.callbackScheme == "pwusage")
         #expect(!fakeSession.prefersEphemeralWebBrowserSession)
 
-        fakeSession.complete(url: try #require(URL(string: "pwusage://auth/callback?code=opaque-code&attempt=\(Self.attemptID)&state=\(state)")))
+        let callback = URL(string: "pwusage://auth/callback?code=opaque-code&attempt=\(Self.attemptID)&state=\(state)")!
+        fakeSession.complete(url: callback)
         try await task.value
 
         #expect(service.isAuthenticated)

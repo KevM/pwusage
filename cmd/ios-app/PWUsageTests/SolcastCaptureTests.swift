@@ -54,7 +54,7 @@ struct SolcastCaptureTests {
 
         for point in response.forecasts {
             #expect(point.periodDuration > 0)
-            #expect(point.pvEstimateKw ?? 0 >= 0)
+            #expect(point.pvEstimateKw >= 0)
         }
     }
 

@@ -531,7 +531,7 @@ struct SolarForecastCoordinatorTests {
             forecastStore: forecast, accountScopeID: "local-account",
             now: { api.now }, timerInterval: nil
         )
-        await coordinator.scenePhaseChanged(isActive: true)
+        coordinator.scenePhaseChanged(isActive: true)
         await coordinator.loadTimingDetailAppeared()
         let beforeSwitch = await forecast.refreshCount
 

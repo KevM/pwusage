@@ -481,9 +481,8 @@ struct LoadTimingForecastPresentationTests {
                     timeZone: "UTC",
                     now: Self.now
                 ).note
-                let text = try? #require(note)
-                #expect(text?.contains("using tariff and balance data") == true)
-                #expect(text?.contains("Retry a refresh") == false,
+                #expect(note?.contains("using tariff and balance data") == true)
+                #expect(note?.contains("Retry a refresh") == false,
                         "No note may promise a refresh affordance that does not exist")
             }
         }

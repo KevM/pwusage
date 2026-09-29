@@ -68,7 +68,7 @@ struct SolarForecastStoreTests {
     func utcDayRolloverResetsBudget() async throws {
         let h = Harness(now: Self.date("2026-09-27T23:59:00Z"))
         try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
-        await h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
+        _ = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == 1)
         h.clock.advance(by: 120)
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == 0)
@@ -90,7 +90,7 @@ struct SolarForecastStoreTests {
         let h = Harness()
         try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         await h.transport.failNext(3)
-        for _ in 0..<3 { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") }
+        for _ in 0..<3 { _ = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") }
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == 3)
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").automaticAttempts == 3)
     }
@@ -194,7 +194,7 @@ struct SolarForecastStoreTests {
     func accountAndSiteSwitchesAreIsolated() async throws {
         let h = Harness()
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
-        await h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
+        _ = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
         #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a") != nil)
         #expect(await h.store.cachedBatch(accountScopeID: "account-b", siteID: "site-a") == nil)
         #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-b") == nil)
@@ -271,7 +271,7 @@ struct SolarForecastStoreTests {
     func disconnectCleansAssociationButKeepsBudget() async throws {
         let h = Harness()
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
-        await h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
+        _ = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
         let before = await h.store.budget(for: "account-a", siteID: "site-a")
         try await h.store.disconnect(accountScopeID: "account-a", siteID: "site-a")
         #expect(await h.keychain.count == 0)
@@ -284,7 +284,7 @@ struct SolarForecastStoreTests {
     func signOutClearsAccountState() async throws {
         let h = Harness()
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
-        await h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
+        _ = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
         try await h.store.signOut()
         #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a") == nil)
         #expect(await h.store.credential(accountScopeID: "account-a", siteID: "site-a") == nil)

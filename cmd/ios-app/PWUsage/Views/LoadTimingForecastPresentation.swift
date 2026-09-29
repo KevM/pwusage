@@ -203,7 +203,7 @@ enum LoadTimingForecastPresentation {
             return "\(unavailableNotePrefix) There is not enough household history yet to estimate expected usage."
         case .missingTariff:
             return "\(unavailableNotePrefix) An active tariff is needed before costs can be compared."
-        case .incompleteCoverage, .invalidInput, .none:
+        case .incompleteCoverage, .invalidInput:
             // These also stand in for "the view had nothing to evaluate", so the
             // device's own request bookkeeping is the better explanation.
             break

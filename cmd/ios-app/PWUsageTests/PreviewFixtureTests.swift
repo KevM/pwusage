@@ -62,7 +62,7 @@ struct PreviewFixtureTests {
             now: { now },
             timerInterval: nil
         )
-        await coordinator.scenePhaseChanged(isActive: true)
+        coordinator.scenePhaseChanged(isActive: true)
         await coordinator.loadTimingDetailAppeared()
 
         #expect(coordinator.solarForecastConnection == .ready)
