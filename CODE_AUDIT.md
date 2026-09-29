@@ -1,5 +1,18 @@
 # iOS Code Audit — `cmd/ios-app`
 
+> **This file is the live tracking list for iOS audit work across PRs.** Every finding carries a `Status` bullet. Update it in the same commit that fixes the finding — do not batch the check-offs into a later cleanup. Section and finding numbers (`§N.M`) are stable: never renumber, because other documents and PR descriptions reference them. If a finding is dropped rather than fixed, leave its number in place and write `_REMOVED: <reason>_` as its body.
+
+**Status values:** `OPEN` → `IN PROGRESS (PR #N)` → `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)`
+
+**Progress:** 69 findings tracked. 0 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
+
+| Status | Count | Findings |
+| --- | --- | --- |
+| OPEN | 69 | all |
+| FIXED | 0 | — |
+
+---
+
 **Branch:** `feature/ios-solcast-load-timing-v2` (working tree clean)
 **Date:** 2026-09-29
 **Scope:** 48 Swift files, ~13,500 LOC (28 app / 20 test). iOS 18 deployment target, Swift 6, SwiftUI, Swift Testing.
@@ -53,6 +66,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** The timer loop at `:655-660` holds a strong `self` across `await self.refreshDue()`, and its guard is `self.isForeground, !self.requiresSignIn` — both of which remain `true`/unchanged after sign-out. A live and bill request can therefore be issued *after* the user has signed out.
 - **Action:** Add a `deinit` cancelling all three tasks, and have `PWUsageAppModel` call `scenePhaseChanged(isActive: false)` before dropping the coordinator in both `signOut()` and `invalidateSession()`.
 - **Severity:** High
+- **Status:** OPEN
 - **Confidence:** High — verified by reading `:212-215`, `:653-660`, `PWUsageApp.swift:181-196`, and confirming no `deinit` exists.
 
 ### 3.2 App can latch permanently on "Connecting to pwusage…"
@@ -61,6 +75,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** A cancellation between those points propagates to the `catch` at `:120`, which sets `.unavailable` only for errors thrown *out of* `bootstrap`. If cancellation lands such that `screenState` stays `.bootstrapping` with `sites` populated, the `.task` reruns on re-appear, `bootstrap()` returns immediately on the `didBootstrap` latch, and the spinner is permanent. There is no retry path.
 - **Action:** Reset the latch when bootstrap does not reach a terminal state, or drive it from `.task(id:)` keyed on `screenState` rather than a one-shot boolean.
 - **Severity:** High
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 3.3 Sign-in continuation has no cancellation handler and no double-resume guard
@@ -69,6 +84,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** If the calling task is cancelled mid-flow, the continuation is never resumed and `pendingContinuation` stays non-nil, so every later sign-in throws `.alreadyInProgress` (`:115`) forever. The shape is also fragile against double-resume ("SWIFT TASK CONTINUATION MISUSE"), which is not production-reachable today but is one refactor away.
 - **Action:** Wrap in `withTaskCancellationHandler` and call `session.cancel()` on cancellation; route *every* completion path through the existing idempotent `completeSignIn` (`:213-217`) rather than resuming locally; nil out `webSession` in a `deinit`.
 - **Severity:** High
+- **Status:** OPEN
 - **Confidence:** High — verified `:114-140` and `:171-218`.
 
 ### 3.4 A cancelled fetch is recorded as "data unavailable"
@@ -77,6 +93,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** Cancelling a pull-to-refresh, or the sibling-cancel in the `signInRequired` branch, shows "Live data is temporarily unavailable" even though nothing failed. The generation check filters the site-switch case but not these.
 - **Action:** Handle `CancellationError` and `URLError.cancelled` explicitly in `performLive`/`performBill` and return without touching endpoint state.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 3.5 The timer loop can exit without clearing `timerTask`
@@ -85,6 +102,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** A later `startTimer()` becomes a no-op and `pollingTimerIsActive` lies. This is currently latent — I could not find a path where `isForeground` or `requiresSignIn` changes without `stopTimer` also running — but §3.1 shows the invariant is maintained only by convention, and §3.6 makes the exit reachable.
 - **Action:** Clear `timerTask` in the loop's exit path (a `defer` inside the task body).
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 3.6 `refreshAll` awaits detached task handles, so caller cancellation escapes a non-throwing API
@@ -93,6 +111,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** `Task.value` honours cancellation of the *awaiting* context, so a `CancellationError` can escape the timer loop's `Task<Void, Never>` body, terminating the polling loop and leaving `timerTask` non-nil — the exact combination §3.5 describes.
 - **Action:** Make the awaits cancellation-tolerant, or convert to `async let` children. Wrap the timer body in a `catch is CancellationError` that clears `timerTask`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** Medium — reasoned from `Task.value` semantics, not observed at runtime.
 
 ### 3.7 Cadence timestamps are stamped before the request runs
@@ -101,6 +120,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** A request that fails or is abandoned still suppresses the next attempt for the full 5/30 minutes. A transient network failure or a user-cancelled pull-to-refresh silently costs a full cadence window of freshness.
 - **Action:** Record the attempt time on completion, or track last-success separately from last-attempt for the cadence decision.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 3.8 `selectSite` starts multi-endpoint work without checking foreground state
@@ -109,6 +129,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** A site switch made while inactive (or immediately before backgrounding) issues a full bill + planning-context + Solcast refresh that continues after the scene is no longer active, spending Solcast budget with no user watching. This is the clearest violation of the README's "stops timers in the background" claim.
 - **Action:** Apply the same `isForeground` guard to the enhancement task, or defer it to the next foreground transition.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 3.9 Planning-context cache and in-flight tasks survive sign-out
@@ -117,6 +138,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** A cached household profile survives a session change and is reused verbatim when the same site is re-selected after re-authentication; an in-flight request issued under the old session still writes to the cache at `:500` on return. The `siteID`/generation guards cover the *published* state but not the cache, so the two can disagree.
 - **Action:** Clear `planningContextCache` and cancel/clear `planningContextTasks` in `authenticationInvalidated()` and `selectSite`.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 3.10 `@MainActor` on the data protocols but not on the conforming class
@@ -125,6 +147,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** Not a correctness bug (URLSession work is nominally nonisolated), but the same object is simultaneously isolated and not depending on which protocol it is viewed through, and the dependency cannot be injected behind a background actor.
 - **Action:** Drop `@MainActor` from the two data protocols and let the `@MainActor` coordinator do its own state mutation after `await`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 3.11 Unstructured `Task { }` with no retained handle
@@ -133,6 +156,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** They cannot be cancelled when their view disappears — `LoadTimingView.swift:362` fires a full bill + context + Solcast refresh on foreground that outlives the screen, and the Combine sink at `PWUsageApp.swift:253` can race a subsequent sign-in.
 - **Action:** Use structured scopes: `.task`/`.task(id:)` in views, retained `Task?` properties in stores, `AsyncStream` instead of `sink` + `Task` in `PWUsageAppModel`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ---
@@ -145,6 +169,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** The main modernization gap. It drags `import Combine` into `PWUsageApp.swift` solely for `AnyCancellable`, routes every update through a full `objectWillChange` invalidation instead of per-property tracking, and is what forces the sink-plus-Task pattern in `installAuthorizedSites`.
 - **Action:** Migrate the four types to `@Observable` (with `@ObservationIgnored` where views should not observe), replace `@StateObject`/`@ObservedObject` with `@State`/`@Environment`, and replace the Combine pipeline with a direct callback or `AsyncStream`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 4.2 `async` declared on synchronous operations
@@ -153,6 +178,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** No functional bug, but it forces `await` at call sites that cannot suspend, and it hides that the synchronous `SecItem*` calls run on the actor's cooperative executor rather than a dedicated queue.
 - **Action:** Declare the synchronous members as synchronous; if the intent is to keep Keychain I/O off the cooperative pool, move the bodies to a dedicated serial executor.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 4.3 `async let` children interleave three dependent main-actor mutations
@@ -161,6 +187,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** Not a data race (all main-actor), but `billSucceeded` at `:329` is derived from a generation counter incremented by a concurrently running task, so the result depends on where the suspension points land. The "wait for live before asking for the bill" ordering is expressed in `refreshAll` but not here.
 - **Action:** Derive `billSucceeded` from actual response state, or express the ordering structurally.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** Medium
 
 ### 4.4 `@unchecked Sendable` on a stateless URLSession delegate
@@ -169,6 +196,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** The class holds no mutable state and its method is a pure function of its arguments, so the escape hatch is unnecessary. It is the only `@unchecked Sendable` in the app, which makes it a pattern others may copy.
 - **Action:** Keep the conformance but document why it is sound (stateless delegate; `delegateQueue: nil` so URLSession supplies a serial queue).
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 4.5 Duplicate UIKit scene traversal from both `.task` and `.onAppear`
@@ -177,6 +205,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** Two full passes over `UIApplication.shared.connectedScenes` per appearance. `scenePhaseChanged` is idempotent today, so the impact is wasted work — but this becomes a double-timer the moment either call stops being idempotent.
 - **Action:** Keep the work in one place (`.task` is sufficient).
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 4.6 Deprecation sweep — no findings
@@ -194,6 +223,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** For a 36 kWh Level 2 car charge the true cost can be an order of magnitude larger than the delta shown, so the user is shown a number that is not the cost of the thing they are about to do. The `savings` figure at `:149` *is* correct (a difference of two deltas), which makes the mislabel easy to miss.
 - **Action:** Present the delta with explicit wording ("adds about $X to your projected bill"), or compute and store the absolute loaded cost alongside the delta and display that.
 - **Severity:** High
+- **Status:** OPEN
 - **Confidence:** High — verified `:461-474` computes `loadedCost - baselineCost`; verified `:131-134` labels it "Start now: $X".
 
 ### 5.2 Pull-to-refresh can never recover a missing household profile
@@ -202,6 +232,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** If the planning context failed once — transient network, `contextInvalid`, or an out-of-date server that was later redeployed — the user can pull to refresh forever and never get it back. The only escape is disconnecting and reconnecting the Solcast credential. The note shown is `causeNote(nil)` ("Pull down to refresh it"), which sends the user into exactly that loop. This path also never sets `solarForecastUnavailableReason`, discarding the `serverOutdated`/`contextInvalid` diagnosis computed elsewhere.
 - **Action:** When `loadPlanningContext == nil` in the manual refresh path, fall through to `loadTimingDetailAppeared()` instead of returning a forecast-only failure, and preserve `solarForecastUnavailableReason`.
 - **Severity:** High
+- **Status:** OPEN
 - **Confidence:** High — verified `:379` and `:523-530`.
 
 ### 5.3 "Bill at most every 30 minutes" is bypassed on every Load-timing appearance
@@ -210,6 +241,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** The README states the bill is requested "at most every 30 minutes while the app is foregrounded". For any user with a Solcast key connected, every foreground transition, site switch, and settings save issues a forced bill request, bypassing the `billInterval` cadence check at `:579`. This is an unbudgeted cost on a database-heavy TOU rollup, and it is invisible because the UI looks like a normal refresh.
 - **Action:** Make `loadTimingDetailAppeared` respect cadence — `refreshBill(force: false)` and rely on `isDue(lastAttempt:interval:at:)` — reserving `force: true` for explicit user gestures (`.refreshable`, the Refresh menu).
 - **Severity:** High
+- **Status:** OPEN
 - **Confidence:** High — verified `:319` and `:357-362`.
 
 ### 5.4 Battery SoC freshness is enforced only server-side
@@ -218,6 +250,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** The README's "values older than two hours remain unknown (`--`)" is entirely a property of `buildMobileDashboardContract` on the server. Any drift there — a stale contract version, a proxy, a cached response — silently produces a stale percentage presented as current, which is exactly what the README says must never happen. This is the load-bearing battery-provenance invariant from `DesignDecisions.md`, defended in only one of two places.
 - **Action:** Independently suppress `stateOfCharge` to `nil` on the client when `sources.stateOfChargeAt` is missing or older than two hours, mirroring the server rule.
 - **Severity:** High
+- **Status:** OPEN
 - **Confidence:** High — verified `:68` decodes bare, `:71` renders unconditionally, `:209-215` only adds a caption.
 
 ### 5.5 A persist failure after a *successful* Solcast fetch deletes a valid API key
@@ -226,6 +259,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** The only fault is a disk/write failure, not a bad credential or a bad response, yet the user's working Solcast API key is destroyed and they must re-enter it. The `failedScopes` quarantine semantics are meant for unusable data, not for "the filesystem said no".
 - **Action:** Distinguish persistence failure from request failure: on a persist failure, keep the in-memory cache, mark the scope failed, and surface a distinct "could not save" state — without deleting the Keychain item.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High — verified `:425` → `:434` → `:442-476`.
 
 ### 5.6 Two Solcast arrays with different interval boundaries void the whole forecast
@@ -234,6 +268,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** Two arrays on the same account are not guaranteed to return byte-identical interval sets, and a single difference (a day-boundary offset, a different horizon length) throws `incompleteCoverage` and produces *nothing*. The failure surfaces as "An array returned no usable forecast" rather than as a partial forecast from the arrays that did line up.
 - **Action:** Align arrays onto the union of their interval boundaries (bucketing and re-weighting each array's kW onto a common grid) rather than requiring identical key sets.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** Medium — the exact-match requirement is verified; the frequency of key divergence is inferred from Solcast's API contract, not observed.
 
 ### 5.7 All cadence and staleness decisions trust the device clock
@@ -242,6 +277,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** A user who moves the clock backward causes `date.timeIntervalSince(lastAttempt) >= interval` to be false for an unbounded period, so the 5-minute live poll and 30-minute bill poll **stop entirely** with no error and no UI indication. In the other direction the negative-age checks in `isFresh` and `overlay` correctly reject, but the presentation path at `:96` has no `>= 0` guard, so a backwards clock makes any age look fresh.
 - **Action:** Add a bounded skew allowance, treat a negative age as stale rather than fresh in the forecast overlay gate, and anchor cadence to `ContinuousClock` rather than `Date`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 5.8 `asOf` staleness for the planning context allows only 5 minutes of negative skew
@@ -250,6 +286,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** A device more than five minutes fast rejects every server response as `contextInvalid`, permanently — and the cached re-validation at `:463` re-rejects the same bad entry on every read rather than refetching. The message shown ("The server sent household data this app could not read. Please report this") points at the wrong component.
 - **Action:** Widen the negative-skew allowance to match the live contract's tolerance, and on repeated `contextInvalid` evict the cache entry and refetch once.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** Medium
 
 ### 5.9 `stateOfCharge` is decoded without range or finiteness validation
@@ -258,6 +295,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** The server validates the range, so this only manifests under contract drift — but the client would render "150%" and a full-battery glyph from a malformed response. `MobileLoadPlanningContextResponse` *does* validate its numerics, so the live DTO is the inconsistent one.
 - **Action:** Validate range and finiteness of `stateOfCharge` and the four live power values during decode, mapping out-of-range to unknown.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** Medium
 
 ### 5.10 Errors swallowed or replaced with generic copy
@@ -266,6 +304,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** A persistence failure is reported to the user as a validation problem, sending them to edit values that were already fine.
 - **Action:** Let the thrown errors surface in `validationMessage`; reserve `try?` for genuinely ignorable failures.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 5.11 Silent fallback to the production origin on configuration failure
@@ -274,6 +313,7 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** In a Debug build an invalid origin silently produces a connection to **production** rather than beta — exactly the confusion `README.md:26` warns about. The failure is invisible: no log, no UI indication.
 - **Action:** Surface the failure (fatal with a descriptive message in Debug, an explicit error state otherwise) rather than falling back to production, and log the underlying error.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High — note the `try!` itself cannot actually trap, because `AppConfiguration()` with the default origin always passes `validate`; the defect is the silent fallback, not the force-try. See §12.
 
 ---
@@ -288,6 +328,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Leaks the signing team identity in the repository and makes a teammate's fork attempt a signed build against someone else's team. The README and the spec now actively disagree, so a reader following the README would be surprised.
 - **Action:** Remove it from the committed spec and inject it from a local, git-ignored `.xcconfig` or an `xcodebuild` build setting, as the README already describes.
 - **Severity:** High
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 6.2 Release origin validation accepts any HTTPS host, with no production allowlist
@@ -296,6 +337,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The current `project.yml` Release value is correct, so this is not a live bug, but the safety property is much weaker than "Release requires HTTPS" reads. A build-configuration slip that leaves the Debug beta URL in Release — or points at any other host — ships silently, and the `site_auth` session cookie is scoped to whatever origin the app talks to, so this is the one place where a wrong-server failure is quiet rather than loud.
 - **Action:** In Release, additionally require the host to be an explicit allowlist entry (`pwusage.fm.rodeo`) and refuse loudly at launch rather than falling back.
 - **Severity:** High
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 6.3 Untested destructive keychain path
@@ -304,6 +346,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** A bulk credential wipe that no test exercises and no caller can reach is untested destructive security-adjacent code, and `clearConnections` is a second, weaker path for erasing credentials.
 - **Action:** Delete both, or add tests that exercise them before keeping them.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ---
@@ -316,6 +359,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** With ~50-60 candidate starts over a horizon that can reach 48 hours, this is on the order of 10⁵ main-thread operations per body evaluation, every 60 seconds, for a result that only changes when the balance or forecast changes. The inner lookups (`forecast.first(where:)`, `tariffs.first(where:)`, `context.slots.filter`) are linear scans repeated per midpoint, compounding the cost. It also uses `Date()` at `:274` rather than the timeline's `context.date`, so the tick's value is discarded.
 - **Action:** Evaluate once per `(balance, forecast, context)` tuple and cache the `Result` on the coordinator; narrow the `TimelineView` to the freshness/source-status labels that genuinely show a moving clock and pass `context.date` in.
 - **Severity:** High
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 7.2 `DateFormatter`/`NumberFormatter`/`ISO8601DateFormatter` allocated per call, including on the decode path
@@ -324,6 +368,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Formatter construction is among the most expensive Foundation operations, and these are on hot paths. `ISO8601DateFormatter.parse` is invoked **once per timestamp** by the custom date-decoding strategy, so a response with a few hundred timestamps allocates hundreds of formatters before a single view renders. `BillView` recomputes period title, balance, and currency for every row's accessibility label; `LoadTimingView.swift:412`/`:416` evaluates the same `sourceStatus(...)` call twice.
 - **Action:** Adopt `FormatStyle` (`Date.FormatStyle` / `FloatingPointFormatStyle`) — allocation-free, and the codebase already uses `.formatted(.number...)` elsewhere — or cache formatters keyed by locale/currency/timezone. Hold shared `static let` ISO-8601 formatters for the decode path, and share one timestamp parser between `MobileContracts` and `SolarForecast`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 7.3 `LoadProfileStore` is constructed — and writes to `UserDefaults` — from a view's `init`
@@ -332,6 +377,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** `StateObject` discards every instance after the first, so each re-initialization of the view still pays a synchronous `UserDefaults` read, a JSON decode, and a `UserDefaults` **write** on the main actor. That is side-effecting I/O in `init`, which makes view construction non-idempotent. Previews also wipe shared defaults domains as a side effect of merely rendering (`DashboardPreviews.swift:156-168`, `SolarForecastPreviews.swift:176-199`).
 - **Action:** Construct the store once outside the view and pass it in; persist on first mutation rather than in `init`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 7.4 Duplicate validation and summary formatting across the profile UI
@@ -340,6 +386,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Two validators that must agree will drift — the Save button can enable itself for a profile the store then rejects, producing the generic "Enter valid profile settings and try again" alert. Two summary formatters can show different numbers for the same profile in the sheet and on the Load timing card.
 - **Action:** Make the store's validation the single source; move the chip summary functions into one shared presentation type.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 7.5 `URLSession` instances are created per Solcast refresh and never invalidated
@@ -348,6 +395,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** A `URLSession` retains its delegate until invalidated, so each session is a leaked resource until GC pressure reclaims it. With the daily budget capped at ten attempts the absolute growth is small but unbounded across the app's lifetime.
 - **Action:** Hold one long-lived session per timeout value in the store and reuse it, or invalidate on completion.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** Medium
 
 ### 7.6 The estimator's `assumptions` are computed, tested, and never shown
@@ -356,6 +404,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** A test asserts on copy the app never displays, so the guarantee "the estimate states its assumptions" is not enforced for the user, and the two texts can drift silently.
 - **Action:** Have `LoadTimingForecastPresentation` render `comparison.assumptions`, or delete the field and its test.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 7.7 `refreshable` is attached inside a `TimelineView` that rebuilds its content every minute
@@ -364,6 +413,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Pull-to-refresh state lives on the scroll view, which is re-created each minute, so the refresh control's spinner/offset is reset on an unrelated schedule. I could not verify the exact SwiftUI behaviour; the layering is at minimum fragile and makes the minute tick the dominant invalidation path for the whole screen.
 - **Action:** Keep `ScrollView` + `.refreshable` outside the `TimelineView` — which is the same restructuring §7.1 calls for.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** Medium — unverified
 
 ---
@@ -376,6 +426,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** In any locale with non-ASCII digits (Arabic-Indic) the `replacingOccurrences` no-ops and the `"1"` comparison never matches, so "1 cent" reads as "1 cents" and the unit is announced twice. With a grouping separator the stripped string is not a bare number at all.
 - **Action:** Build the spoken string from the numeric values directly, never by editing a display-formatted string; use automatic grammar agreement for "cent/percents".
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High — verified `:127` and `:129`.
 
 ### 8.2 Fixed point-size fonts break Dynamic Type
@@ -384,6 +435,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The 9pt badge does not scale at all and is illegible for many users including at default text sizes. The decorative glyphs ignore accessibility sizes (though they are `accessibilityHidden`, so the impact is visual only).
 - **Action:** Use relative text styles (`.caption2.weight(.bold)`) for the badge; `@ScaledMetric` or relative styles for the glyphs.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.3 Third array toggle is silently rejected with feedback the user cannot see
@@ -392,6 +444,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The tap appears to do nothing; the explanation is off-screen in a section the user has likely scrolled past, so the array list looks broken.
 - **Action:** Disable or visually mark the remaining `Toggle`s once two are selected, and/or surface the message adjacent to the list.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High — verified `:168-184` and the `:76-87` call site.
 
 ### 8.4 Destructive dialog's button label ignores the profile it targets
@@ -400,6 +453,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** A user with several custom loads sees a generic button that does not name what will be removed — exactly the ambiguity a destructive confirmation exists to remove. The reset dialog at `:73-90` has the same shape but its button ("Reset to Defaults") is generic by nature, so the asymmetry only reads oddly for delete.
 - **Action:** Build the button title from the pending profile so title and action agree.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High — verified `:63-64`.
 
 ### 8.5 Staleness thresholds scattered as twelve-plus magic numbers, one reimplemented inline
@@ -408,6 +462,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** These are the load-bearing values the `Agents.md` freshness rules depend on, and a change to any one is not discoverable from any single place. The inline copy at `:222` is the most likely to be missed.
 - **Action:** Define named constants (or a `DataFreshness` enum with named windows) and pass them to `freshness(staleAfter:)`; delete the inline recomputation at `:222`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.6 Freshness is derived two ways, by post-hoc string surgery on the display string
@@ -416,6 +471,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Fragile string coupling: rewording the freshness string silently breaks all three subtitles with no compile error, producing a double-prefixed or empty result.
 - **Action:** Have `freshness` return a small struct (`isStale` + age text) and let callers compose the prefix.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.7 Color chosen by string prefix
@@ -424,6 +480,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Color is the only differentiator, and it depends on presentation-layer formatting staying in sync. It also ignores `accessibilityDifferentiateWithoutColor`.
 - **Action:** Return a signed numeric balance alongside its label from `DashboardPresentation`, switch on the number, and add a glyph or text cue so the distinction survives without color.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.8 `AnyView` used for a two-branch layout decision
@@ -432,6 +489,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** `AnyView` erases the concrete type, defeating SwiftUI's structural diffing and view identity for a container that re-renders on every tick of the Load Timing timeline (§7.1).
 - **Action:** Make the grid its own `View` and switch between `VStack` and `LazyVGrid` inside its `body`, or use a single `ViewThatFits`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.9 Index- and string-identified `ForEach`
@@ -440,6 +498,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Positional identity makes SwiftUI reuse the wrong tile when the underlying list changes length or order (the period grid and the bill period list), losing animations and briefly showing mismatched content.
 - **Action:** Make the tile and row types `Identifiable` with a stable key and iterate the arrays directly.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.10 Legacy C-style and hand-rolled number formatting
@@ -448,6 +507,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Decimal separators do not follow the user's locale. The rest of the codebase already uses `.formatted(.number.precision(...))`.
 - **Action:** Use `.formatted(.number.precision(.fractionLength(1)))` consistently.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.11 Hand-rolled empty and loading states instead of `ContentUnavailableView`
@@ -456,6 +516,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** `ContentUnavailableView` gets correct VoiceOver semantics, Dynamic Type behavior, and Reduce Motion handling for free; the hand-rolled ones do none of that consistently, and the copies drift apart.
 - **Action:** Replace the empty states with `ContentUnavailableView` and extract a single shared loading placeholder.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.12 Hand-rolled `Binding(get:set:)` for dialogs and pickers
@@ -464,6 +525,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The picker binding's `get` returns a fallback ID while `set` writes an explicit ID, so picking the already-defaulted profile makes the view think the user diverged from the suggestion.
 - **Action:** Drive dialogs from a `Bool` plus a separate pending item, or use `confirmationDialog(item:)`; replace the picker binding with a `String` selection state normalized on change.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.13 Sheet and coordinator work triggered by `onChange` instead of `task(id:)`
@@ -472,6 +534,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The `onChange` handlers also fire on programmatic writes (the sheet clears `apiKey` at `:226` and rewrites the manual ID fields at `:194-195`), so they notify the coordinator for changes the user did not make. The duplicated foreground `Task` bypasses the structured cancellation the `.task` provides. Both of the coordinator methods they call are empty (§9.4), so the net effect today is a wasted invalidation.
 - **Action:** Move the edit notification to a `.task(id:)` keyed on the value; express the foreground reload with a single `.task(id: coordinator.isForeground)`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.14 Values clipped by `lineLimit` + `minimumScaleFactor`
@@ -480,6 +543,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** At larger Dynamic Type sizes the currency/rate digits become progressively smaller rather than wrapping, so the app counteracts the user's chosen text size — a direct contrast with §8.2, where fonts are too small at default sizes.
 - **Action:** Allow two lines (`lineLimit(2, reservesSpace:)`) and drop the aggressive scale factor, or switch to a `LabeledContent` layout that stacks at accessibility sizes.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.15 `accessibilityAddTraits(.updatesFrequently)` misused on a static error
@@ -488,6 +552,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** It makes VoiceOver re-announce a static error and misleads users about whether the text is live.
 - **Action:** Drop the trait; consider moving the message to an `.alert` so it is announced once.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.16 `.hoverEffect()` on a phone-first app
@@ -496,6 +561,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** A no-op on iPhone; only fires for pointer input on iPad.
 - **Action:** Remove, or keep only if iPad pointer feedback is an explicit design goal.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 8.17 Preview gaps
@@ -504,6 +570,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Those sheets contain the most conditional layout in the app and the only non-`List` form, and they are never visually checked. The README also notes previews "were not visually inspected in this run because the Mac UI session was locked."
 - **Action:** Add previews for those views, at least one at an accessibility text size.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ---
@@ -516,6 +583,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Readers assume these are live, and the associated ~90 lines of `LoadTimingEstimatorTests.swift:165-252` give a false sense of coverage of code the app never runs.
 - **Action:** Delete the cluster and its tests, or move it to a clearly-marked experimental file.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.2 `LoadTimingAffordance` is a whole production file with no production caller
@@ -524,6 +592,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Two names for one operation invites drift, and the type reads as the app's canonical "one profile's result" wrapper when it is not.
 - **Action:** Delete the file and the two test call sites, or adopt the type in the recommendation path.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.3 `lastErrorDescription` is written in eleven places and never read by any view
@@ -532,6 +601,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The most specific diagnostics the store produces — including the storage-failure and quarantine messages, which are exactly what §5.5 needs — can never reach the user. The UI is driven entirely by the coarser `SolarForecastUnavailableCause` enum, so several failure modes present generic text.
 - **Action:** Surface it on the coordinator so the settings sheet can show it, or fold the distinct messages into `SolarForecastUnavailableCause`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.4 Empty coordinator methods called from view bodies as if they did something
@@ -540,6 +610,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Reads as "we invalidate the cached forecast when the key changes" when nothing is invalidated. The `onChange` in `LoadTimingView` exists solely to call one, costing a view invalidation on every profile edit.
 - **Action:** Delete both methods and their call sites, or give them the invalidation the comment at `:446` implies.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.5 Dead coordinator state written on every response but never read
@@ -548,6 +619,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The tests are asserting on an implementation detail rather than behaviour. `unavailableStatusCode` in particular would genuinely improve the availability banner by distinguishing "server returned 503" from "no network".
 - **Action:** Surface the status code in the banner, or delete both fields and the assertions that only exist to cover them.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.6 Preview-only code in the release target, and a test target that depends on Debug-only sources
@@ -556,6 +628,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Preview fixture data (a `UserDefaults` suite name, "Workshop heater"/"Garden pump" profiles) is compiled into the release binary, and `xcodebuild test -configuration Release` will fail to build the entire test target.
 - **Action:** Move the `LoadProfilesSheet` previews into a `#if DEBUG`-guarded file alongside the other two; consider moving the preview doubles into a shared test-support target.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.7 Solar forecast state file has no schema version
@@ -564,6 +637,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Any future change to `SolarForecastCredential`, `SolarForecastBatch`, or `SolarForecastBudget` makes `loadState` throw, `loadIfNeeded` fails for every call, and the entire Solcast feature silently stops working with no migration path and no user-visible reason — the `try?` at `:166`, `:189`, `:206`, `:276` swallows the cause.
 - **Action:** Add a `version` field and either migrate or discard-and-reconnect explicitly on mismatch, mirroring `LoadProfileStore.loadCollection`.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.8 `SolarForecastStore.swift` is a 660-line actor covering five responsibilities
@@ -572,6 +646,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** `discoverSites` (`:212-256`) and `performRefresh` (`:387-440`) each repeat the same five-step sequence of generation check → budget reserve → persist → re-check generation → catch-and-classify, so any change to the safety protocol must be made twice.
 - **Action:** Split out the persistence actor and the session-cleanup adapter, and factor the repeated sequence into one private helper.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.9 `LoadTimingView.swift` is an 877-line file mixing four concerns
@@ -580,6 +655,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The 200-line enum is the most-tested unit in the repo (`LoadTimingViewTests.swift` is 1018 lines) yet is invisible from the filename — which is why the test file is named for a View it never touches.
 - **Action:** Extract each into its own file; rename the test file to match.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.10 Three near-identical titled card container views
@@ -588,6 +664,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Three subtly different copies of the app's most-repeated visual pattern; the drift is already visible.
 - **Action:** Promote one shared `CardContainer` and delete the other two.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.11 Duplicated per-point validation and double processing in `SolarForecast.combine`
@@ -596,6 +673,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The two copies must stay in sync or one array will be accepted that the other rejects. The redundant pass is wasted work on the refresh path.
 - **Action:** Extract the guard-and-key into one private helper returning the keyed dictionary, and seed the loop from the first array's result.
 - **Severity:** Medium
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.12 `LoadTimingViewTests.swift` is named for a View it never touches
@@ -604,6 +682,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** `run-tests.sh` targets suites by name, so `./run-tests.sh LoadTimingViewTests` runs neither `LoadTimingForecastPresentationTests` nor anything view-related — the tool's documented workflow misleads here.
 - **Action:** Split into `LoadTimingPresentationTests.swift` and `LoadTimingForecastPresentationTests.swift`, matching the source files.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.13 Test assertions depend on the device locale
@@ -612,6 +691,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** These pass on a US-English simulator and fail on any simulator with a different region or currency format — a green local run can hide a red CI run. This is the same locale coupling as §8.1.
 - **Action:** Pass an explicit `Locale(identifier:)` into the presentation calls under test (the parameter already exists on `currency` and `loadRate`) and assert against fixed-locale output.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.14 Three hand-rolled `MobileDashboardDataAPI` stubs and two auth fakes
@@ -620,6 +700,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** A protocol change requires three edits in three files, which is why the coordinator tests grew to 382 lines.
 - **Action:** Extract one configurable test double per protocol into a `PWUsageTests/Support/` file.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ### 9.15 Stale doc comment on `maximumCarCapacityKwh`
@@ -628,6 +709,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The stale comment would mislead anyone reasoning about the 200 kWh cap.
 - **Action:** Update the comment to describe the actual horizon bound; hoist the `250` ceiling to a named constant.
 - **Severity:** Low
+- **Status:** OPEN
 - **Confidence:** High
 
 ---

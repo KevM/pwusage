@@ -25,6 +25,14 @@ Fix the 10 High-severity findings from the `cmd/ios-app` audit, plus the three M
 - No `any`. Explicit types for all parameters and returns. — `AGENTS.md`
 - Swift Testing runs use `./run-tests.sh <Suite>` to target a suite.
 
+## Tracking
+
+[`CODE_AUDIT.md`](../../CODE_AUDIT.md) is retained as the **live cross-PR tracking list** for iOS audit work, not a one-shot report. It carries a `Status` bullet on every finding, updated in the same commit that fixes the finding — never batched into a later cleanup. Section and finding numbers are stable across edits, so a later branch can reference `§3.1` in its PR description and mean the same thing.
+
+This branch fixes the 10 High findings plus 3 coupled Mediums and flips those specific `Status` bullets. The remaining 56 findings stay `OPEN` for later branches.
+
+`task.md` remains the per-session ledger for *why* a decision was made; `CODE_AUDIT.md` remains the list of *what* is still outstanding. They are not duplicates: a `Ruling:` line in `task.md` explains a departure from the audit's recommendation, while the `Status` bullet records completion.
+
 ## Decisions already made with the reviewer
 
 Four design questions were settled before this spec was written. Each is recorded here because the reasoning, not just the outcome, is what a future reader needs.
