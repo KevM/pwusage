@@ -4,6 +4,11 @@ import Foundation
 /// solar forecast and the site's historical local-time household/battery profile.
 struct LoadTimingForecastEstimator {
     static let maximumBalanceAge: TimeInterval = 30 * 60
+    /// Each `EnergyData` row holds signed energy for a five-minute interval and
+    /// its timestamp marks that interval's start, so the cycle balance already
+    /// includes the interval beginning at `balanceSourceTime`. Projecting the
+    /// baseline from that same timestamp would count the latest interval twice.
+    static let observedIntervalDuration: TimeInterval = 5 * 60
 
     enum UnavailableReason: Equatable {
         case invalidInput
@@ -101,11 +106,16 @@ struct LoadTimingForecastEstimator {
         let tariffs = timing.tariffTimeline.sorted { $0.start < $1.start }
         guard validTariffIntervals(tariffs), validForecast(forecast) else { return unavailable(.invalidInput) }
 
+        // The balance already covers observed data through the end of the final
+        // five-minute interval, so projection starts there rather than at
+        // `balanceSourceTime`, and never after the present.
+        let projectionStart = min(balanceSourceTime.addingTimeInterval(Self.observedIntervalDuration), now)
+
         let tomorrowEnd = endOfTomorrow(after: now, timeZone: zone)
         guard let tomorrowEnd, tomorrowEnd > now else { return unavailable(.invalidInput) }
         var horizonEnd = min(tomorrowEnd, billingCycleEnd)
-        horizonEnd = min(horizonEnd, contiguousEnd(of: forecast, startingAt: balanceSourceTime))
-        horizonEnd = min(horizonEnd, contiguousTariffEnd(tariffs, startingAt: balanceSourceTime))
+        horizonEnd = min(horizonEnd, contiguousEnd(of: forecast, startingAt: projectionStart))
+        horizonEnd = min(horizonEnd, contiguousTariffEnd(tariffs, startingAt: projectionStart))
         guard horizonEnd > now else { return unavailable(.incompleteCoverage) }
 
         // A rate change for one billing-period balance ends the shared search
@@ -115,7 +125,7 @@ struct LoadTimingForecastEstimator {
         if let boundary = rateSet.incompatibleBoundary { horizonEnd = min(horizonEnd, boundary) }
         guard horizonEnd > now else { return unavailable(.incompleteCoverage) }
 
-        if let contextGap = firstContextGap(from: balanceSourceTime, to: horizonEnd, forecast: forecast,
+        if let contextGap = firstContextGap(from: projectionStart, to: horizonEnd, forecast: forecast,
                                             tariffs: tariffs, context: context, timeZone: zone) {
             horizonEnd = min(horizonEnd, contextGap)
             guard horizonEnd > now else { return unavailable(.incompleteContext) }
@@ -152,15 +162,15 @@ struct LoadTimingForecastEstimator {
         }
         guard !balances.isEmpty else { return unavailable(.incompleteBalance) }
 
-        // Forecast/context/tariff coverage from the balance snapshot through the
-        // shared horizon is needed even when a candidate run starts later.
-        guard completeCoverage(from: balanceSourceTime, to: horizonEnd, forecast: forecast,
+        // Forecast/context/tariff coverage from the end of observed data through
+        // the shared horizon is needed even when a candidate run starts later.
+        guard completeCoverage(from: projectionStart, to: horizonEnd, forecast: forecast,
                                tariffs: tariffs, timeZone: zone) else {
             return unavailable(.incompleteCoverage)
         }
 
         let baseBalances: [String: Double]
-        switch integrateBaseline(from: balanceSourceTime, to: horizonEnd, balances: balances,
+        switch integrateBaseline(from: projectionStart, to: horizonEnd, balances: balances,
                                  forecast: forecast, tariffs: tariffs, context: context, timeZone: zone) {
         case .balances(let projected): baseBalances = projected
         case .invalidInput: return unavailable(.invalidInput)

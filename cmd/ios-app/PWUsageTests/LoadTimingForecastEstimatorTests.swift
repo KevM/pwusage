@@ -110,6 +110,30 @@ struct LoadTimingForecastEstimatorTests {
         #expect(abs(result.costNow - 0.40) < 0.000_001)
     }
 
+    @Test func theFinalObservedIntervalIsNotCountedTwice() throws {
+        // `balanceSourceTime` is the start of the final observed five-minute
+        // interval, so that interval is already inside the cycle balance and
+        // must not be projected a second time. The household profile is 1 kW of
+        // draw with no solar, and the cycle balance is sized to leave the
+        // projected baseline on the export side of zero, so the load crosses the
+        // boundary and the baseline's own credit is visible in the result.
+        //
+        // Projecting the 60 unobserved minutes: 47/24 - 1 = 23/24 kWh of export,
+        // which the 3 kWh load turns into 2.04167 kWh of import:
+        // 2.04167 * 0.30 + 0.95833 * 0.05 = 0.660417. Re-projecting the 5
+        // already-observed minutes as well would leave 0.875 kWh of export and
+        // report 0.68125 instead.
+        let result = try #require(evaluate(
+            now: 0,
+            tariffs: [tariff(-300, 3600, buy: 0.30, sell: 0.05)],
+            balances: ["p": 47.0 / 24.0],
+            forecast: [forecast(0, from: -300, to: 3600)],
+            context: context(home: 1),
+            balanceSource: -300
+        ).comparison)
+        #expect(abs(result.costNow - 0.660_416_666_666) < 0.000_001)
+    }
+
     @Test func signedDeficitMakesIncrementalCostNinetyCents() throws {
         let result = try #require(evaluate(tariffs: [tariff(0, 3600)], balances: ["p": -2], forecast: [forecast(0, from: 0, to: 3600)]).comparison)
         #expect(abs(result.costNow - 0.90) < 0.000_001)

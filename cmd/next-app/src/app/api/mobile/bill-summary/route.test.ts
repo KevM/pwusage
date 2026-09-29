@@ -145,6 +145,30 @@ describe('mobile bill summary route', () => {
         vi.useRealTimers();
     });
 
+    it('clamps the tariff timeline start to the usable freshness window for a stale site', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
+            tariffs: [tariff()],
+        });
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 2.4, gridUsage: 6000, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: tariff(), touName: 'Peak', buyRate: 0.4, sellRate: 0.05 },
+        ]);
+        // A site that stopped reporting eight months ago.
+        latestMock.mockResolvedValue(new Date('2026-01-19T02:00:00Z'));
+
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+        const body = await response.json();
+
+        expect(response.status).toBe(200);
+        // The reported source is still the true last sample; only the walk is
+        // bounded, so the app sees the staleness for itself.
+        expect(body.sources.energyDataThrough).toBe('2026-01-19T02:00:00.000Z');
+        expect(body.loadTiming.tariffTimeline[0].start).toBe('2026-09-19T01:30:00.000Z');
+        expect(body.loadTiming.tariffTimeline.at(-1)?.end).toBe('2026-09-26T02:00:00.000Z');
+        vi.useRealTimers();
+    });
+
     it('provides explicit unavailable pricing when no tariff or cycle data exists', async () => {
         usageMock.mockResolvedValue([]);
 

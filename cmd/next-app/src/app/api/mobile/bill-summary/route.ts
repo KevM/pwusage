@@ -12,6 +12,15 @@ import { buildLoadTimingTimeline } from '@/lib/load-timing-timeline';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * The tariff timeline is consumed only for forward planning from the balance
+ * snapshot, and the iOS estimator rejects a balance older than 30 minutes. The
+ * timeline is built by walking UTC minutes, so a site that last reported months
+ * ago would otherwise make this request resolve tariffs across the entire gap
+ * between its final sample and now. Clamp the start to that usable window.
+ */
+const TIMELINE_LOOKBACK_MS = 30 * 60 * 1000;
+
 export async function GET(request: Request) {
     return withRequestContext(async () => {
         try {
@@ -61,12 +70,19 @@ export async function GET(request: Request) {
             const loadTiming = site.tariffs.length > 0 && activePeriod
                 ? computeLoadTiming(schedule, usage, now, site.timezone, activePeriod)
                 : null;
+            // Start the timeline at the balance snapshot the app will project
+            // from, but never further back than the freshness window that
+            // projection requires.
+            const timelineStart = new Date(Math.max(
+                energyDataThrough ? Math.min(energyDataThrough.getTime(), now.getTime()) : now.getTime(),
+                now.getTime() - TIMELINE_LOOKBACK_MS,
+            ));
             const loadTimingWithTimeline = loadTiming
                 ? {
                     ...loadTiming,
                     tariffTimeline: buildLoadTimingTimeline(
                         schedule,
-                        energyDataThrough && energyDataThrough < now ? energyDataThrough : now,
+                        timelineStart,
                         new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
                     ),
                 }
