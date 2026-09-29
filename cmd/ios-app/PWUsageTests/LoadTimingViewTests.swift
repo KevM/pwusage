@@ -394,6 +394,59 @@ struct LoadTimingForecastPresentationTests {
         }
     }
 
+    @Test("A missing household history is named as such, not blamed on the forecast")
+    func missingContextNoteNamesTheRealBlocker() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .failedWithBasic,
+            connection: .ready,
+            cause: nil,
+            enhancementReason: .contextUnavailable,
+            result: Self.unavailable(.incompleteCoverage),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(note.lowercased().contains("household history"))
+        #expect(!note.lowercased().contains("too old or incomplete"))
+        #expect(!note.lowercased().contains("retry a refresh"),
+                "The copy must not promise an action that does not exist")
+    }
+
+    @Test("Every unavailable note tells the user something they can actually do")
+    func unavailableNotesAreActionable() {
+        let reasons: [SolarForecastEnhancementUnavailableReason] = [
+            .contextUnavailable, .forecastNotUsable, .billUnavailable, .siteMismatch
+        ]
+        let causes: [SolarForecastUnavailableCause?] = [
+            nil, .unauthorized, .rateLimited, .requestFailed, .unknownResource,
+            .invalidForecast, .storageFailure, .cleanupFailure, .budgetExhausted, .deferred
+        ]
+        for reason in reasons {
+            for cause in causes {
+                let note = LoadTimingForecastPresentation.overlay(
+                    enhancement: .failedWithBasic,
+                    connection: .ready,
+                    cause: cause,
+                    enhancementReason: reason,
+                    result: Self.unavailable(.incompleteCoverage),
+                    forecastFetchedAt: nil,
+                    contextAsOf: nil,
+                    currencyCode: "USD",
+                    timeZone: "UTC",
+                    now: Self.now
+                ).note
+                let text = try? #require(note)
+                #expect(text?.contains("using tariff and balance data") == true)
+                #expect(text?.contains("Retry a refresh") == false,
+                        "No note may promise a refresh affordance that does not exist")
+            }
+        }
+    }
+
     @Test("An unrecognised Solar System ID points at array selection, not the network")
     func unknownResourceNoteNamesTheRemedy() throws {
         let overlay = LoadTimingForecastPresentation.overlay(

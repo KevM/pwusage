@@ -365,7 +365,75 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastBatch == nil)
     }
 
-    @Test("Switching sites re-runs the detail load for the newly selected site")
+    @Test("A missing planning context is distinguished from an unusable forecast")
+    func missingContextIsReportedDistinctly() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        api.contextIsUnavailable = true
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastUnavailableReason == .contextUnavailable)
+    }
+
+    @Test("An unusable forecast cache is distinguished from a missing context")
+    func unusableForecastIsReportedDistinctly() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        await forecast.setRecommendationUsable(false)
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastUnavailableReason == .forecastNotUsable)
+    }
+
+    @Test("An enhanced load has no unavailable reason")
+    func enhancedLoadHasNoUnavailableReason() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.solarForecastUnavailableReason == nil)
+    }
+
+    @Test("A manual forecast refresh runs when the detail view is pulled to refresh")
+    func pullToRefreshAlsoRefreshesTheForecast() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        await coordinator.loadTimingDetailAppeared()
+        let before = await forecast.refreshCount
+
+        await coordinator.loadTimingDetailRefreshed()
+
+        #expect(await forecast.refreshCount > before,
+                "Pull to refresh must actually refresh the forecast, or the note lies")
+    }
+
+    @Test("Site switch re-runs the detail load for the newly selected site")
     func siteSwitchStartsEnhancementForNewSite() async {
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a", alsoConfigured: ["site-b"])
         let api = ForecastDashboardAPISpy()
@@ -463,6 +531,7 @@ private actor ForecastManagerSpy: SolarForecastManaging {
     private var disconnectStarted = false
     private var disconnectStartWaiter: CheckedContinuation<Void, Never>?
     private var disconnectContinuation: CheckedContinuation<Void, Never>?
+    private var recommendationUsable = true
     private(set) var refreshCount = 0
     private(set) var discoveryCount = 0
     private(set) var connectCount = 0
@@ -496,6 +565,7 @@ private actor ForecastManagerSpy: SolarForecastManaging {
         refreshContinuations.removeValue(forKey: index)?.resume(returning: result)
     }
     func setDisconnectError(_ error: SolarForecastStore.StoreError?) { disconnectError = error }
+    func setRecommendationUsable(_ value: Bool) { recommendationUsable = value }
     func setHoldDisconnect(_ value: Bool) { holdDisconnect = value }
     func waitUntilDisconnectStarts() async {
         if disconnectStarted { return }
@@ -539,7 +609,7 @@ private actor ForecastManagerSpy: SolarForecastManaging {
             )], fetchedAt: Date(timeIntervalSince1970: 1_800_000_000)
         )
     }
-    func isRecommendationUsable(accountScopeID: String, siteID: String) -> Bool { configuredSiteIDs.contains(siteID) }
+    func isRecommendationUsable(accountScopeID: String, siteID: String) -> Bool { recommendationUsable }
     func budget(for accountScopeID: String, siteID: String) -> SolarForecastBudget {
         SolarForecastBudget(utcDay: Date(timeIntervalSince1970: 1_800_000_000), totalAttempts: 1, automaticAttempts: 1, deferredUntil: nil)
     }
@@ -564,15 +634,16 @@ private extension MobileLoadPlanningContextResponse {
         asOf: Date,
         usableDayCount: Int = 14,
         sampleCount: Int = 14,
-        coverage: Double = 1
+        coverage: Double = 1,
+        availability: MobileLoadPlanningContextResponse.Availability = .available
     ) -> Self {
         Self(
             version: 1,
             site: Site(id: siteID, timezone: timeZone),
             units: Units(power: "kW", localMinute: "minute-of-day"),
             asOf: asOf,
-            availability: .available,
-            unavailableReason: nil,
+            availability: availability,
+            unavailableReason: availability == .available ? nil : "insufficient-history",
             usableDayCount: usableDayCount,
             historyStart: asOf.addingTimeInterval(-14 * 24 * 60 * 60),
             historyEnd: asOf.addingTimeInterval(-60),
@@ -596,6 +667,7 @@ private final class ForecastDashboardAPISpy: MobileDashboardDataAPI, MobileLoadP
     var contextUsableDayCount = 14
     var contextSampleCount = 14
     var contextCoverage = 1.0
+    var contextIsUnavailable = false
     var beforeContextResponse: (() -> Void)?
     var holdContextResponses = false
     var billError: Error?
@@ -625,9 +697,10 @@ private final class ForecastDashboardAPISpy: MobileDashboardDataAPI, MobileLoadP
             siteID: contextResponseSiteID,
             timeZone: contextTimeZone,
             asOf: contextAsOf ?? now,
-            usableDayCount: contextUsableDayCount,
+            usableDayCount: contextIsUnavailable ? 2 : contextUsableDayCount,
             sampleCount: contextSampleCount,
-            coverage: contextCoverage
+            coverage: contextCoverage,
+            availability: contextIsUnavailable ? .unavailable : .available
         )
     }
 

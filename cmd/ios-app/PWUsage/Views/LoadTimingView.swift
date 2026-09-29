@@ -259,6 +259,7 @@ struct LoadTimingView: View {
             enhancement: enhancedState,
             connection: coordinator.solarForecastConnection,
             cause: coordinator.solarForecastUnavailableCause,
+            enhancementReason: coordinator.solarForecastUnavailableReason,
             result: result,
             forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
             contextAsOf: coordinator.loadPlanningContext?.asOf,
@@ -325,7 +326,7 @@ struct LoadTimingView: View {
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
             }
-            .refreshable { await coordinator.refreshBill() }
+            .refreshable { await coordinator.loadTimingDetailRefreshed() }
             .background(Color(uiColor: .systemGroupedBackground))
         }
         .navigationTitle("Load timing")

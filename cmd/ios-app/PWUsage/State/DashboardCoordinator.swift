@@ -70,6 +70,16 @@ enum SolarForecastUnavailableCause: Equatable {
     }
 }
 
+/// Why the optional enhancement is not showing, when the connection itself is
+/// healthy. Without this every failure collapsed into one sentence that named the
+/// forecast, even when our own planning context was the missing piece.
+enum SolarForecastEnhancementUnavailableReason: Equatable {
+    case contextUnavailable
+    case forecastNotUsable
+    case billUnavailable
+    case siteMismatch
+}
+
 struct DashboardEndpointState<Response: Equatable>: Equatable {
     fileprivate(set) var response: Response?
     fileprivate(set) var lastAttempt: Date?
@@ -100,6 +110,7 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
     @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
     @Published private(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
+    @Published private(set) var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
     @Published private(set) var solarForecastBatch: SolarForecastBatch?
     @Published private(set) var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
 
@@ -292,14 +303,24 @@ final class DashboardCoordinator: ObservableObject {
         await billRefresh
 
         guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
-        guard refresh == .refreshed || refresh == .alreadyFresh,
-              billSuccessGeneration > billSuccessBeforeRefresh,
-              bill.response?.site.id == siteID,
-              bill.response?.site.timezone == context?.timeZone,
-              await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
-              let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID),
-              let context else {
-            solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
+        solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
+        let refreshSucceeded = refresh == .refreshed || refresh == .alreadyFresh
+        let billSucceeded = billSuccessGeneration > billSuccessBeforeRefresh
+        let siteMatches = bill.response?.site.id == siteID
+        let timeZoneMatches = context != nil && bill.response?.site.timezone == context?.timeZone
+        let forecastUsable = await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID)
+        let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID)
+        guard refreshSucceeded, billSucceeded, siteMatches, timeZoneMatches,
+              forecastUsable, let batch, let context else {
+            solarForecastUnavailableReason = Self.enhancementUnavailableReason(
+                refreshSucceeded: refreshSucceeded,
+                billSucceeded: billSucceeded,
+                siteMatches: siteMatches,
+                timeZoneMatches: timeZoneMatches,
+                forecastUsable: forecastUsable,
+                hasBatch: batch != nil,
+                hasContext: context != nil
+            )
             solarForecastBatch = nil
             loadPlanningContext = nil
             solarForecastState = .failedWithBasic
@@ -307,6 +328,7 @@ final class DashboardCoordinator: ObservableObject {
         }
         solarForecastBatch = batch
         loadPlanningContext = context
+        solarForecastUnavailableReason = nil
         solarForecastState = .enhanced
     }
 
@@ -436,6 +458,37 @@ final class DashboardCoordinator: ObservableObject {
         }
     }
 
+    /// Pull to refresh on the Load timing screen. This is the only place a person
+    /// can ask for a new forecast, so it must genuinely do that rather than
+    /// refreshing bill data alone.
+    func loadTimingDetailRefreshed() async {
+        await refreshBill(force: true)
+        if solarForecastConnection != .notConnected {
+            await refreshSolarForecast(manual: true)
+        } else {
+            await loadTimingDetailAppeared()
+        }
+    }
+
+    private static func enhancementUnavailableReason(
+        refreshSucceeded: Bool,
+        billSucceeded: Bool,
+        siteMatches: Bool,
+        timeZoneMatches: Bool,
+        forecastUsable: Bool,
+        hasBatch: Bool,
+        hasContext: Bool
+    ) -> SolarForecastEnhancementUnavailableReason? {
+        if !refreshSucceeded { return nil }
+        if !billSucceeded { return .billUnavailable }
+        // A missing context is checked before the timezone comparison, otherwise
+        // the absent value looks like a mismatch and names the wrong cause.
+        if !hasContext { return .contextUnavailable }
+        if !siteMatches || !timeZoneMatches { return .siteMismatch }
+        if !forecastUsable || !hasBatch { return .forecastNotUsable }
+        return nil
+    }
+
     private func beginForecastOperation() -> Int {
         forecastGeneration += 1
         return forecastGeneration
@@ -447,6 +500,7 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastState = state
         solarForecastConnection = connection
         solarForecastUnavailableCause = nil
+        solarForecastUnavailableReason = nil
     }
 
     private func launchBillTaskIfNeeded(force: Bool, requestTime: Date, generation: Int) {

@@ -84,6 +84,7 @@ enum LoadTimingForecastPresentation {
         enhancement: SolarForecastEnhancementState,
         connection: SolarForecastConnectionState,
         cause: SolarForecastUnavailableCause?,
+        enhancementReason: SolarForecastEnhancementUnavailableReason? = nil,
         result: LoadTimingForecastEstimator.Result,
         forecastFetchedAt: Date?,
         contextAsOf: Date?,
@@ -109,7 +110,7 @@ enum LoadTimingForecastPresentation {
             isForecastAware: false,
             enhanced: nil,
             note: note(enhancement: enhancement, connection: connection,
-                       cause: cause, result: result),
+                       cause: cause, enhancementReason: enhancementReason, result: result),
             detail: ""
         )
     }
@@ -167,6 +168,7 @@ enum LoadTimingForecastPresentation {
         enhancement: SolarForecastEnhancementState,
         connection: SolarForecastConnectionState,
         cause: SolarForecastUnavailableCause?,
+        enhancementReason: SolarForecastEnhancementUnavailableReason?,
         result: LoadTimingForecastEstimator.Result
     ) -> String? {
         // No key on this device means there is nothing to explain.
@@ -183,6 +185,9 @@ enum LoadTimingForecastPresentation {
         }
         // Name the actual blocker. A spent allowance or a stale balance is not a
         // Solcast failure, and telling the user to retry would be wrong.
+        if let enhancementReason {
+            return enhancementNote(enhancementReason)
+        }
         switch result.unavailableReason {
         case .none:
             break
@@ -206,6 +211,20 @@ enum LoadTimingForecastPresentation {
         return causeNote(cause)
     }
 
+    private static func enhancementNote(_ reason: SolarForecastEnhancementUnavailableReason) -> String {
+        switch reason {
+        case .contextUnavailable:
+            return "\(unavailableNotePrefix) This device has not enough household history yet to estimate "
+                + "expected usage, so no start time can be compared. It fills in as more energy data arrives."
+        case .forecastNotUsable:
+            return "\(unavailableNotePrefix) The saved forecast could not be used. Pull down to refresh it."
+        case .billUnavailable:
+            return "\(unavailableNotePrefix) Bill data could not be refreshed, so costs cannot be compared yet."
+        case .siteMismatch:
+            return "\(unavailableNotePrefix) Bill and household data disagree about this site. Pull down to retry."
+        }
+    }
+
     private static func causeNote(_ cause: SolarForecastUnavailableCause?) -> String {
         switch cause {
         case .unauthorized:
@@ -226,7 +245,7 @@ enum LoadTimingForecastPresentation {
         case .deferred:
             return "\(unavailableNotePrefix) Requests are paused until the daily limit resets. Retry tomorrow."
         case nil:
-            return "\(unavailableNotePrefix) The forecast was too old or incomplete to use. Retry a refresh."
+            return "\(unavailableNotePrefix) The forecast was too old or incomplete to use. Pull down to refresh it."
         }
     }
 }
