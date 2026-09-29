@@ -7,7 +7,9 @@
  * agree with.
  *
  * Usage:
- *   SOLCAST_API_KEY=... SOLCAST_RESOURCE_ID=... npx tsx scripts/solcast-forecast-capture.ts
+ *   npx tsx scripts/solcast-forecast-capture.ts
+ *
+ * Reads SOLCAST_API_KEY and SOLCAST_RESOURCE_ID from the environment or `.env`.
  *
  * The API key is read from the environment only and is never written, logged, or
  * echoed. The resource ID is redacted in the output, because the design requires
@@ -16,8 +18,12 @@
  * Output is written OUTSIDE the repository by default. Pass --out <path> to
  * override. Nothing here should ever be committed with a live resource ID.
  */
+import { loadEnvConfig } from '@next/env';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+
+// Load env BEFORE reading any configuration, per the repository script convention.
+loadEnvConfig(path.resolve(__dirname, '../'));
 
 const ORIGIN = 'https://api.solcast.com.au';
 const REDACTED_ID = 'redacted-resource-id';
@@ -27,7 +33,9 @@ type Unknown = Record<string, unknown>;
 function required(name: string): string {
     const value = process.env[name];
     if (!value) {
-        console.error(`Missing ${name}. Set it in the environment or .env before running.`);
+        console.error(`Missing ${name}.`);
+        console.error(`Add it to cmd/next-app/.env, for example:`);
+        console.error(`  ${name}="..."`);
         process.exit(2);
     }
     return value.trim();
