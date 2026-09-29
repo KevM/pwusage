@@ -81,6 +81,10 @@ enum SolarForecastEnhancementUnavailableReason: Equatable {
     /// The server has history, but its timestamps never line up with the site's
     /// local five-minute grid, so no day can be counted.
     case timestampMisaligned
+    /// The request itself was rejected, so nothing is known about the profile.
+    case requestFailed
+    /// The server answered, but the payload failed contract validation.
+    case contextInvalid
     case forecastNotUsable
     case billUnavailable
     case siteMismatch
@@ -143,9 +147,17 @@ final class DashboardCoordinator: ObservableObject {
         let fetchedAt: Date
     }
 
+    /// The result of a planning-context fetch, keeping the failure instead of
+    /// collapsing it. `try?` here previously discarded the error, which made a
+    /// rejected request indistinguishable from an unreachable one.
+    private struct PlanningContextFetchResult {
+        let response: MobileLoadPlanningContextResponse?
+        let error: (any Error)?
+    }
+
     private struct PlanningContextTask {
         let id: UUID
-        let task: Task<MobileLoadPlanningContextResponse?, Never>
+        let task: Task<PlanningContextFetchResult, Never>
     }
 
     init(
@@ -457,15 +469,27 @@ final class DashboardCoordinator: ObservableObject {
             pending = existing
         } else {
             let id = UUID()
-            let task = Task { try? await api.fetchLoadPlanningContext(siteID: siteID) }
+            let task = Task {
+                do {
+                    return PlanningContextFetchResult(
+                        response: try await api.fetchLoadPlanningContext(siteID: siteID),
+                        error: nil
+                    )
+                } catch {
+                    return PlanningContextFetchResult(response: nil, error: error)
+                }
+            }
             pending = PlanningContextTask(id: id, task: task)
             planningContextTasks[siteID] = pending
         }
         do {
-            let response = await pending.task.value
+            let fetched = await pending.task.value
             let receiveTime = now()
             if planningContextTasks[siteID]?.id == pending.id { planningContextTasks.removeValue(forKey: siteID) }
-            guard let response else { return PlanningContextOutcome(context: nil, unavailableReason: nil) }
+            guard let response = fetched.response else {
+                if let error = fetched.error { throw error }
+                return PlanningContextOutcome(context: nil, unavailableReason: .requestFailed)
+            }
             let validated = try response.validating(siteID: siteID, now: receiveTime)
             let reason = Self.enhancementReason(forReason: validated.unavailableReason)
             guard validated.availability == .available, let context = validated.estimatorContext else {
@@ -475,7 +499,12 @@ final class DashboardCoordinator: ObservableObject {
             return PlanningContextOutcome(context: context, unavailableReason: nil)
         } catch {
             if planningContextTasks[siteID]?.id == pending.id { planningContextTasks.removeValue(forKey: siteID) }
-            return PlanningContextOutcome(context: nil, unavailableReason: nil)
+            // A thrown error means we never learned anything about the profile.
+            // Reporting it as an unreadable profile would be a guess, and the
+            // user is already frustrated by guesses.
+            let reason: SolarForecastEnhancementUnavailableReason =
+                (error is MobileLoadPlanningContextResponse.ContractError) ? .contextInvalid : .requestFailed
+            return PlanningContextOutcome(context: nil, unavailableReason: reason)
         }
     }
 

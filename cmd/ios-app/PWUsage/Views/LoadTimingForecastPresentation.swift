@@ -213,6 +213,12 @@ enum LoadTimingForecastPresentation {
 
     private static func enhancementNote(_ reason: SolarForecastEnhancementUnavailableReason) -> String {
         switch reason {
+        case .requestFailed:
+            return "\(unavailableNotePrefix) This device could not reach your server for household data. "
+                + "Check the app is signed in and online, then pull down to retry."
+        case .contextInvalid:
+            return "\(unavailableNotePrefix) The server sent household data this app could not read. "
+                + "Please report this so it can be investigated."
         case .contextUnavailable:
             return "\(unavailableNotePrefix) This device could not read your household profile, so no start "
                 + "time can be compared. It fills in as more energy data arrives."

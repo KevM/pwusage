@@ -365,6 +365,41 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastBatch == nil)
     }
 
+    @Test("An HTTP failure is reported as a request failure, not as a missing profile")
+    func httpFailureIsNotReportedAsAMissingProfile() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        api.contextError = PWUsageAPIError.recoverableServerError(statusCode: 500)
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastUnavailableReason == .requestFailed,
+                "A rejected request must never be reported as a profile we could not read")
+    }
+
+    @Test("A contract rejection is reported distinctly from a missing profile")
+    func contractRejectionIsReportedDistinctly() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        api.contextError = MobileLoadPlanningContextResponse.ContractError.invalidSource
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastUnavailableReason == .contextInvalid)
+    }
+
     @Test("A misaligned history is distinguished from a short one")
     func misalignedHistoryIsReportedDistinctly() async {
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
