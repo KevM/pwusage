@@ -808,7 +808,7 @@ struct LoadTimingForecastPresentationTests {
     /// the device's currency symbol or decimal separator (§9.13). The production
     /// entry point takes no locale, so pinning one here would be wrong.
     private static func money(_ amount: Double) -> String {
-        DashboardPresentation.currency(amount, code: "USD", locale: .current) ?? "\(amount)"
+        DashboardPresentation.currency(amount, code: "USD", locale: .current)
     }
 
     @Test("A spent daily allowance is not mistaken for a stale forecast")

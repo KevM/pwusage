@@ -203,7 +203,7 @@ struct DashboardCoordinatorTests {
         // the base revision unchanged. It is kept only because it now guards the
         // invariant `deinit` depends on — a strongly-capturing timer task added
         // later would silently make the whole `deinit` unreachable.
-        weak var released = coordinator
+        weak let released = coordinator
         coordinator = nil
         for _ in 0..<200 where released != nil {
             try await Task.sleep(for: .milliseconds(10))
