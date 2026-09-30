@@ -105,9 +105,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {
-        let (data, response): (Data, URLResponse)
-        do { (data, response) = try await session.data(for: request) }
-        catch { throw error }
+        let (data, response): (Data, URLResponse) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw PWUsageAPIError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw PWUsageAPIError.signInRequired }
