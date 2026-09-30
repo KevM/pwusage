@@ -22,6 +22,26 @@ enum DashboardPresentation {
         return .idle
     }
 
+    /// The charge bands and the charging bolt, kept here rather than on the view so
+    /// the mapping is unit-testable. A `nil` charge is an unknown reading, not a
+    /// full battery: it draws the blank outline, matching the TRMNL renderer, which
+    /// renders an unfilled battery when `soc` is null. The charging bolt is omitted
+    /// for the same reason — a bolt beside a blank battery asserts flow that the
+    /// blank fill denies.
+    static func batterySymbol(powerWatts: Double, stateOfCharge: Double?) -> String {
+        guard let stateOfCharge else { return "battery.0percent" }
+        let isCharging = batteryDirection(powerWatts: powerWatts) == .charging
+        let level: String
+        switch Int(stateOfCharge.rounded()) {
+        case ..<13: level = "0percent"
+        case 13..<38: level = "25percent"
+        case 38..<63: level = "50percent"
+        case 63..<88: level = "75percent"
+        default: level = "100percent"
+        }
+        return isCharging ? "battery.\(level).bolt" : "battery.\(level)"
+    }
+
     static func tariffPeriodTitle(_ name: String) -> String {
         guard !name.isEmpty,
               name.utf8.allSatisfy({ (65...90).contains($0) || $0 == 95 }) else {
