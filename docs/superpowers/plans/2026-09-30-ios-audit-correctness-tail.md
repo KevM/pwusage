@@ -807,9 +807,11 @@ EOF
 
 ## Task 4: §5.8 — planning-context clock skew and cache eviction
 
-`validating` (`MobileContracts.swift:219-231`) requires `sourceAge` within `[-(5 * 60), 24h]`. A device
+`validating` (`MobileContracts.swift:230-274`) requires `sourceAge` within `[-(5 * 60), 24h]`. A device
 more than five minutes **behind** the server rejects **every** response as `contextInvalid`, permanently, and the cached
-re-validation at `DashboardCoordinator.swift:506` re-rejects the same entry on every read.
+re-validation at `DashboardCoordinator.swift:533-536` re-rejects the same entry on every read.
+
+**Amended 2026-09-30, in the branch's second review pass:** the three citations in this passage were corrected in place against the current tree — `MobileContracts.swift:120` to `:119` (the `age >= 0` guard), `:219-231` to `:230-274` (`validating`, which grew when the skew-direction comment was corrected), and `DashboardCoordinator.swift:506` to `:533-536` (the cache-hit block). All three sat in text this branch had already edited for the skew direction, and a citation pass that fixed the wording around them and left the line numbers behind is how a document ends up asserting things about code it never opened.
 
 **Amended 2026-09-30, in the branch's final review pass:** the skew direction is wrong throughout this document. `sourceAge = now.timeIntervalSince(asOf)` compares the *server's* `asOf` against the *device's* clock, so `asOf` looks future-dated only when the device is **behind**; a device running fast makes it look *older*, which the pre-fix `[-300s, 24h]` window already accepted and which was therefore never this finding's population. Every "fast" below is corrected to "behind" / "slow" in the text it appears in; the reasoning and the code change were always right, and only the description of who the fix rescues was not. The landed commit subject for §5.8 still says "fast" and cannot be corrected without rewriting the branch's history, so that one instance is recorded rather than fixed.
 

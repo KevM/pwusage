@@ -161,7 +161,7 @@ forecast is available, it just is not on disk.
 Two halves, both worth fixing, and the audit's instructions for both needed correction.
 
 **Negative skew.** The audit says to widen the allowance "to match the live contract's tolerance",
-but the live contract has *zero* negative tolerance — `MobileContracts.swift:120` requires
+but the live contract has *zero* negative tolerance — `MobileContracts.swift:119` requires
 `age >= 0`, which is **stricter**, not more lenient. The two cases are not comparable. A
 future-stamped SoC *reading* is suspect data; `asOf` is a *server* timestamp compared against a
 device clock, and a device whose clock is **behind** makes it look future-dated without the data being wrong. A device running fast does the opposite and was never this finding's population.
@@ -170,10 +170,12 @@ stands. The bound is asymmetric on purpose: the cost of leniency is that `asOf` 
 computed slightly wrong for a bounded window; the cost of strictness is a permanently broken
 feature with a message that blames the server.
 
+**Amended 2026-09-30, in the branch's second review pass:** the three citations in this passage were corrected in place against the current tree — `MobileContracts.swift:120` to `:119` (the `age >= 0` guard), `:219-231` to `:230-274` (`validating`, which grew when the skew-direction comment was corrected), and `DashboardCoordinator.swift:506` to `:533-536` (the cache-hit block). All three sat in text this branch had already edited for the skew direction, and a citation pass that fixed the wording around them and left the line numbers behind is how a document ends up asserting things about code it never opened.
+
 **Eviction needs no counter — and may need no eviction at all.** The audit's "evict the cache entry and
 refetch once" implies a failure counter, because `validating` is a pure function that cannot know it has
 failed before. It does not need one. The poison path is the **cached** entry at
-`DashboardCoordinator.swift:506`. A cached entry can fail re-validation while the lifetime check at
+`DashboardCoordinator.swift:533-536`. A cached entry can fail re-validation while the lifetime check at
 `:504` still passes, because `asOf <= fetchedAt`, so `asOf` crosses the 24h bound slightly *before*
 `fetchedAt` does. And when a fresh response also fails at `:538`, `:543` never overwrites the cache,
 so the poisoned entry lingers and re-fails on every read forever. Evicting on re-validation failure
@@ -411,12 +413,12 @@ the evidence; a claim that the helper "throws now" is not.
 
 ### §5.8 — planning-context skew and cache eviction
 
-**Defect.** `validating(siteID:now:)` (`MobileContracts.swift:219-231`) requires `sourceAge` within
+**Defect.** `validating(siteID:now:)` (`MobileContracts.swift:230-274`) requires `sourceAge` within
 `[-(5 * 60), maximumAge]`. A device more than five minutes **behind** the server rejects **every** server response as
 `contextInvalid`, permanently, and the cached re-validation at
 **Amended 2026-09-30, in the branch's final review pass:** the skew direction is wrong throughout this document. `sourceAge = now.timeIntervalSince(asOf)` compares the *server's* `asOf` against the *device's* clock, so `asOf` looks future-dated only when the device is **behind**; a device running fast makes it look *older*, which the pre-fix `[-300s, 24h]` window already accepted and which was therefore never this finding's population. Every "fast" below is corrected to "behind" / "slow" in the text it appears in; the reasoning and the code change were always right, and only the description of who the fix rescues was not. The landed commit subject for §5.8 still says "fast" and cannot be corrected without rewriting the branch's history, so that one instance is recorded rather than fixed.
 
-`DashboardCoordinator.swift:506` re-rejects the same entry on every read rather than refetching. The
+`DashboardCoordinator.swift:533-536` re-rejects the same entry on every read rather than refetching. The
 note shown points at the wrong component: *"The server sent household data this app could not
 read. Please report this."*
 

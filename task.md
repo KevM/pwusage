@@ -215,10 +215,13 @@ ledger commit; it therefore predicted **six** code commits and the branch has **
   `cd cmd/ios-app && ./run-tests.sh` exits **0**, **380 tests in 21 suites** passing.
   `./generate.sh && xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination
   'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` prints **BUILD SUCCEEDED**
-  with `grep -c "warning:"` = **0**. `CODE_AUDIT.md`'s header documents the one
-  `appintentsmetadataprocessor` "Metadata extraction skipped" toolchain line as the expected
-  warning; it did **not** appear in this run, so the count is 0 and not 1.
-  `ls ~/Library/Logs/DiagnosticReports/ | grep -c "^PWUsage-"` is **0**. `generate.sh` left no
+  with `grep -c "warning:"` = **1** on a clean build. The single hit is the
+  `appintestsmetadataprocessor` "Metadata extraction skipped" toolchain line that
+  `CODE_AUDIT.md`'s header documents as the sole permitted exemption. An
+  incremental build may report **0** because the metadata processor does not
+  re-run; that is a DerivedData artifact, not a stricter result, and both figures
+  have been measured on this branch.
+  `generate.sh` left no
   tracked change. The §5.12 `373 tests in 21 suites` figures are time-scoped to that commit
   and have since grown with the tests later commits added.
 
@@ -348,7 +351,10 @@ to look for them, because each lives in the seam between two correct commits.
 - [x] `aa88d26` fix(ios): keep the promise the save-failure note makes
 - [x] `e64c052` test(ios): remove the last two try! from the preview fixtures
 - [x] `cb5e5f7` fix(ios): close the load-timing staleness site 5.7's survey missed
-- [x] This commit — docs and ledger corrections.
+- [x] `d3111aa` docs(ios): correct the ledger, the plan and the design after the review
+- [x] fix(ios): report a failed budget write as a save failure, not a network one — the second review pass's Finding 1 (`aa44771` at the time of writing)
+- [x] docs(ios): make the zero-warning claim durable instead of measured once
+- The first of those three had its **commit message rebuilt in place** after the fact. It claimed a re-record of the zero-warning figure that its own diff did not contain — the same shape as the spec's struck item 2, and the reason the repo's git rules ban interactive flags mattered here: the fix was done with plumbing so the message could be reworded without a rebase. It now names the omission and points at the commit that fixed it. Its two successors were rebuilt with it, so their SHAs moved; the content of all three is byte-identical to what was originally committed.
 - Review: Ruling: §5.5's fix is **complete only once both refresh paths agree**, and they did not
   until this pass. `refreshSolarForecast(manual:)` learned that a save failure is not an
   unavailability; `loadTimingDetailAppeared` never did, so it failed its guard, niled the batch
@@ -368,6 +374,19 @@ to look for them, because each lives in the seam between two correct commits.
   the point, and a tripwire rewrite is exactly what §5.12 warns against. Cost if wrong: a device
   with a transient disk fault shows no forecast recommendation until the next successful refresh
   clears the marking — conservative, visible, and self-healing.
+  **REVERSED in the branch's second review pass — this ruling was wrong on the merits, and the
+  test it leaned on turned out to encode the wrong behaviour rather than guard a right one.** The
+  argument's premise was its own undoing: the disk that would have recorded the budget is the
+  disk that just failed, so `failedScopes` is not persisted either and the marking is
+  session-only. It delivered none of the cross-relaunch protection it was cited for, while
+  `isRecommendationUsable` gating on it hid a good forecast for the rest of the session, and a
+  disk fault surfaced to the user as "Solcast could not be reached". Both budget saves now
+  return `.failed(.saveFailed)` and mark nothing, and the test was rewritten to pin that.
+  The tripwire rule was misapplied the first time and correctly *not* applied the second: it
+  protects correct behaviour, and that assertion was the behaviour under review. Cost if wrong:
+  on a device whose disk is failing, the on-disk request counter can drift by every reservation
+  made since the last successful write — bounded and self-correcting, and the same class of
+  staleness as losing the whole cache — against which a working forecast is always shown.
 - Review: Ruling: the save-failure note's promise is **kept, not withdrawn**. The alternative —
   delete "It will be retried on the next refresh" — was rejected because the promise was the
   honest description of what the user should expect, and the defect was that nothing implemented
