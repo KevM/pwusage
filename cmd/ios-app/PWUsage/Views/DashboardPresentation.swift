@@ -177,6 +177,24 @@ enum DashboardPresentation {
         return LoadTimingSummary(title: title, rate: rate, balance: balance, message: nil, freshness: freshness, accessibilityLabel: label)
     }
 
+    /// Whether the Load timing card must say it is showing a stale summary.
+    ///
+    /// A negative age counts as stale, and it has to: the summary's own heading is
+    /// built by `freshness(_:staleAfter:)`, which renders "Source time is in the
+    /// future" for exactly this case. An upper bound alone reported the summary as
+    /// current while the heading two lines above said the opposite — the same
+    /// self-contradiction §5.7 fixed for the forecast overlay and §8.18 for the
+    /// battery glyph. `liveFreshnessNotice` already treats a negative age the same
+    /// way, so this keeps the two on one rule.
+    ///
+    /// A `nil` source is not stale: there is nothing dated to be out of date, and
+    /// the heading is already saying the source time is unavailable.
+    static func loadTimingSummaryIsStale(source: Date?, now: Date = .now, staleAfter: TimeInterval = 30 * 60) -> Bool {
+        guard let source else { return false }
+        let age = now.timeIntervalSince(source)
+        return age < 0 || age > staleAfter
+    }
+
     static func hasActiveTariff(label: String?) -> Bool {
         guard let label else { return false }
         let normalized = label.trimmingCharacters(in: .whitespacesAndNewlines)
