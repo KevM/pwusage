@@ -19,7 +19,12 @@ final class PWUsageAPITests {
         configuration.httpCookieAcceptPolicy = .always
         self.session = URLSession(configuration: configuration)
         StubURLProtocol.cookieStorage = storage
-        self.api = PWUsageAPI(configuration: try AppConfiguration(apiOriginString: "https://pwusage.test"), session: session)
+        // `pwusage.test` is a stub host that no Release build may name, so the
+        // allowlist opt-out has to be explicit here.
+        self.api = PWUsageAPI(
+            configuration: try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true),
+            session: session
+        )
     }
 
     deinit {

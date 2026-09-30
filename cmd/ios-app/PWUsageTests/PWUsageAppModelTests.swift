@@ -266,7 +266,12 @@ struct PWUsageAppModelTests {
         await cancelled.value
     }
 
-    private static let configuration = try! AppConfiguration(apiOriginString: "https://pwusage.test")
+    // `pwusage.test` is a stub host, so the allowlist opt-out is explicit. The
+    // `try!` is pre-existing and out of scope for this change.
+    private static let configuration = try! AppConfiguration(
+        apiOriginString: "https://pwusage.test",
+        allowUnlistedHost: true
+    )
 
     private func makeModel(
         api: ApplicationAPISpy,

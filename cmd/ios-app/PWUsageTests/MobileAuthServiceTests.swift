@@ -415,7 +415,10 @@ final class MobileAuthServiceTests {
         ]))
         cookieStorage.setCookie(siteCookie)
         cookieStorage.setCookie(preferenceCookie)
-        let api = PWUsageAPI(configuration: try AppConfiguration(apiOrigin: origin), session: session)
+        let api = PWUsageAPI(
+            configuration: try AppConfiguration(apiOrigin: origin, allowUnlistedHost: true),
+            session: session
+        )
 
         await api.clearSiteAuthCookie()
 
@@ -430,7 +433,8 @@ final class MobileAuthServiceTests {
         api: FakeMobileAuthAPI? = nil,
         sessionFactory: MobileAuthService.SessionFactory? = nil
     ) -> MobileAuthService {
-        let apiConfiguration = try! AppConfiguration(apiOriginString: "https://pwusage.test")
+        // `pwusage.test` is a stub host, so the allowlist opt-out is explicit.
+        let apiConfiguration = try! AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true)
         fakeSession.startResult = startResult
         fakeSession.completionBeforeStartResult = nil
         return MobileAuthService(
