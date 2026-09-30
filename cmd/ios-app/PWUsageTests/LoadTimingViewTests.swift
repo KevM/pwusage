@@ -920,6 +920,24 @@ struct LoadTimingForecastPresentationTests {
         #expect(overlay.note?.contains("too old") == true)
     }
 
+    @Test("A forecast stamped in the future cannot produce a recommendation")
+    func futureDatedForecastCannotProduceARecommendation() {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            cause: nil,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: Self.now.addingTimeInterval(600),
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+
+        #expect(overlay.enhanced == nil)
+        #expect(!overlay.isForecastAware)
+    }
+
     @Test("A save failure keeps the forecast and is not reported as unavailable")
     func saveFailureKeepsForecastAndIsNotReportedAsUnavailable() {
         let overlay = LoadTimingForecastPresentation.overlay(

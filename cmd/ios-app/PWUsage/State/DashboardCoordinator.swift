@@ -655,7 +655,13 @@ final class DashboardCoordinator: ObservableObject {
 
     private func isDue(lastAttempt: Date?, interval: TimeInterval, at date: Date) -> Bool {
         guard let lastAttempt else { return true }
-        return date.timeIntervalSince(lastAttempt) >= interval
+        let elapsed = date.timeIntervalSince(lastAttempt)
+        // A negative elapsed time means the device clock moved backwards, so real
+        // elapsed time is unknown. Treat it as due: a spurious poll costs one
+        // request, while stalling freezes live and bill data indefinitely with no
+        // error and nothing on screen to explain it.
+        guard elapsed.isFinite else { return true }
+        return elapsed < 0 || elapsed >= interval
     }
 
     /// Whether the bill response on hand was fetched inside the appearance floor.
