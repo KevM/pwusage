@@ -2,15 +2,17 @@
 
 > **This file is the live tracking list for iOS audit work across PRs.** Every finding carries a `Status` bullet. Update it in the same commit that fixes the finding — do not batch the check-offs into a later cleanup. Section and finding numbers (`§N.M`) are stable: never renumber, because other documents and PR descriptions reference them. If a finding is dropped rather than fixed, leave its number in place and write `_REMOVED: <reason>_` as its body.
 
-**Status values:** `OPEN` → `IN PROGRESS (PR #N)` → `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)`
+**Status values:** `OPEN` → `IN PROGRESS (PR #N)` → `FIXED (PR pending)` → `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)`
 
-**Progress:** 73 findings tracked. 14 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
+*`FIXED (PR pending)` is the form every entry on this branch uses: the finding is fixed and verified in-tree, but the PR number and commit are stamped once the branch merges. Once merged, replace it with `FIXED (PR #N, commit <sha>)`. Do not mix the two forms in one file.*
+
+**Progress:** 73 findings tracked. 16 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
 
 | Status | Count | Findings |
 | --- | --- | --- |
-| OPEN | 59 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 |
+| OPEN | 57 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2, §7.1, §7.7 |
 | IN PROGRESS | 0 | — |
-| FIXED | 14 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 (§4.6 is a recorded negative result, not a finding) |
+| FIXED | 16 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2, §7.1, §7.7 (§4.6 is a recorded negative result, not a finding) |
 
 ---
 
@@ -29,7 +31,7 @@
 2. **[High] Pull-to-refresh can never recover a missing household profile** — §5.2 — `DashboardCoordinator.swift:379`, `:523-530`
 3. **[High] `DEVELOPMENT_TEAM` is committed to `project.yml`, contradicting the README** — §6.1 — `project.yml:48`
 4. **[High] Coordinator polls the API after sign-out; no `deinit` anywhere in the app** — §3.1 — `DashboardCoordinator.swift:653-660`, `PWUsageApp.swift:181-196`
-5. **[High] "Bill at most every 30 minutes" is bypassed on every Load-timing appearance and foreground** — §5.3 — `DashboardCoordinator.swift:319`, `LoadTimingView.swift:357-362`
+5. **[High] "Bill at most every 30 minutes" is bypassed on every Load-timing appearance and foreground** — §5.3 — `DashboardCoordinator.swift:319`, `LoadTimingView.swift:411-415`
 6. **[High] The forecast estimator re-runs on the main actor up to twice per body, every minute** — §7.1 — `LoadTimingView.swift:243`, `:273`, `:407`, `:488`
 7. **[High] App can latch permanently on "Connecting to pwusage…"** — §3.2 — `PWUsageApp.swift:108-123`
 8. **[High] Sign-in continuation has no cancellation handler and no double-resume guard** — §3.3 — `MobileAuthService.swift:131-168`, `:170-183`
@@ -44,7 +46,7 @@
 
 Each of these is a small, self-contained edit.
 
-- **`DashboardCoordinator.swift:447-448`** — delete the two empty methods `solarForecastSettingsDidEdit()` and `loadProfileDidEdit()` and their six call sites (`SolarForecastSettingsSheet.swift:29`, `:103`, `:108`, `:181`; `LoadTimingView.swift:354`).
+- **`DashboardCoordinator.swift:447-448`** — delete the two empty methods `solarForecastSettingsDidEdit()` and `loadProfileDidEdit()` and their six call sites (`SolarForecastSettingsSheet.swift:29`, `:103`, `:108`, `:181`; `LoadTimingView.swift:406`).
 - **`LoadTimingView.swift:273`** — the `TimelineView(.everyMinute) { _ in` closure discards the timeline's `context.date` and calls `Date()` instead. Pass `context.date` through, or narrow the timeline to the two freshness labels that actually show a moving clock.
 - **`PWUsageAPI.swift:109-110`** — remove the no-op `do { … } catch { throw error }` wrapper.
 - **`PWUsageAPI.swift:42`** — `fetchSites` uses a bare `JSONDecoder()` while `:49`, `:58`, `:67` all use `MobileContractDecoder.make()`. Route it through the shared decoder.
@@ -152,9 +154,9 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Confidence:** High
 
 ### 3.11 Unstructured `Task { }` with no retained handle
-- **Location:** ~20 sites: `DashboardCoordinator.swift:190`, `:207`, `:230`, `:233`, `:474-486`; `PWUsageApp.swift:38`, `:56`, `:253`, `:297`, `:304`, `:308`, `:327`, `:363`; `LoadTimingView.swift:362`; `SolarForecastSettingsSheet.swift:32`, `:53`, `:89`, `:114`, `:134`; `MobileAuthService.swift:199`, `:239`
+- **Location:** ~20 sites: `DashboardCoordinator.swift:190`, `:207`, `:230`, `:233`, `:474-486`; `PWUsageApp.swift:38`, `:56`, `:253`, `:297`, `:304`, `:308`, `:327`, `:363`; `LoadTimingView.swift:414`; `SolarForecastSettingsSheet.swift:32`, `:53`, `:89`, `:114`, `:134`; `MobileAuthService.swift:199`, `:239`
 - **What:** Fire-and-forget tasks spawned from `init`-adjacent, button-action, `onChange`, and Combine-sink contexts; none retain a handle or check `Task.isCancelled`.
-- **Why:** They cannot be cancelled when their view disappears — `LoadTimingView.swift:362` fires a full bill + context + Solcast refresh on foreground that outlives the screen, and the Combine sink at `PWUsageApp.swift:253` can race a subsequent sign-in.
+- **Why:** They cannot be cancelled when their view disappears — `LoadTimingView.swift:414` fires a full bill + context + Solcast refresh on foreground that outlives the screen, and the Combine sink at `PWUsageApp.swift:253` can race a subsequent sign-in.
 - **Action:** Use structured scopes: `.task`/`.task(id:)` in views, retained `Task?` properties in stores, `AsyncStream` instead of `sink` + `Task` in `PWUsageAppModel`.
 - **Severity:** Medium
 - **Status:** OPEN
@@ -192,7 +194,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 ## 4. API modernity
 
 ### 4.1 `ObservableObject` throughout, on an iOS 18 target
-- **Location:** `PWUsageApp.swift:13`, `:18`, `:33`, `:66-82`; `DashboardCoordinator.swift:111-129`; `MobileAuthService.swift:18`, `:45`; `LoadProfileStore.swift:5`, `:29-30`; `LoadTimingView.swift:205`, `:209`, `:218`; `DashboardView.swift:4`; `BillView.swift:4`; `SolarForecastSettingsSheet.swift:4`; `LoadProfilesSheet.swift:4`
+- **Location:** `PWUsageApp.swift:13`, `:18`, `:33`, `:66-82`; `DashboardCoordinator.swift:111-129`; `MobileAuthService.swift:18`, `:45`; `LoadProfileStore.swift:5`, `:29-30`; `LoadTimingView.swift:212`, `:216`, `:225`; `DashboardView.swift:4`; `BillView.swift:4`; `SolarForecastSettingsSheet.swift:4`; `LoadProfilesSheet.swift:4`
 - **What:** All four observable types use the Combine-backed `ObservableObject` pattern rather than the `@Observable` macro available since iOS 17.
 - **Why:** The main modernization gap. It drags `import Combine` into `PWUsageApp.swift` solely for `AnyCancellable`, routes every update through a full `objectWillChange` invalidation instead of per-property tracking, and is what forces the sink-plus-Task pattern in `installAuthorizedSites`.
 - **Action:** Migrate the four types to `@Observable` (with `@ObservationIgnored` where views should not observe), replace `@StateObject`/`@ObservedObject` with `@State`/`@Environment`, and replace the Combine pipeline with a direct callback or `AsyncStream`.
@@ -266,8 +268,8 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Confidence:** High — verified `:379` and `:523-530`.
 
 ### 5.3 "Bill at most every 30 minutes" is bypassed on every Load-timing appearance
-- **Location:** `PWUsage/State/DashboardCoordinator.swift:319`, `:523`; `PWUsage/Views/LoadTimingView.swift:357-362`; `PWUsage/Views/SolarForecastSettingsSheet.swift:250`; `PWUsage/State/DashboardCoordinator.swift:233`
-- **What:** `loadTimingDetailAppeared()` unconditionally runs `async let billRefresh: Void = refreshBill(force: true)` at `:319`. It is invoked from a `.task` on view appearance (`LoadTimingView.swift:357`), from an `onChange(of: coordinator.isForeground)` at `:359-362`, from `selectSite` (`DashboardCoordinator.swift:233`), and after every array-selection save (`SolarForecastSettingsSheet.swift:250`).
+- **Location:** `PWUsage/State/DashboardCoordinator.swift:319`, `:523`; `PWUsage/Views/LoadTimingView.swift:411-415`; `PWUsage/Views/SolarForecastSettingsSheet.swift:250`; `PWUsage/State/DashboardCoordinator.swift:233`
+- **What:** `loadTimingDetailAppeared()` unconditionally runs `async let billRefresh: Void = refreshBill(force: true)` at `:319`. It is invoked from a `.task` on view appearance (`LoadTimingView.swift:411`), from an `onChange(of: coordinator.isForeground)` at `:412-415`, from `selectSite` (`DashboardCoordinator.swift:233`), and after every array-selection save (`SolarForecastSettingsSheet.swift:250`).
 - **Why:** The README states the bill is requested "at most every 30 minutes while the app is foregrounded". For any user with a Solcast key connected, every foreground transition, site switch, and settings save issues a forced bill request, bypassing the `billInterval` cadence check at `:579`. This is an unbudgeted cost on a database-heavy TOU rollup, and it is invisible because the UI looks like a normal refresh.
 - **Action:** Make `loadTimingDetailAppeared` respect cadence — `refreshBill(force: false)` and rely on `isDue(lastAttempt:interval:at:)` — reserving `force: true` for explicit user gestures (`.refreshable`, the Refresh menu). Note that the fix also widened this path's bill-freshness tolerance from *required a new success* to *under five minutes old*: once the appearance-driven refresh is floored, a bill fetched moments earlier by an earlier appearance, a site switch, or a pull produces no new success, and requiring one would drop the enhancement every time the screen is reopened inside the floor. The wider tolerance is what makes §5.2's recovery observable — a success at T followed by an appearance at T+299s is suppressed by `isDue`, leaves `billSuccessGeneration` unchanged, is reported fresh by `billIsFresh`, and the enhancement still proceeds. It is not a fresh bill in the strict sense, but the bill is computed from live data that may itself be five minutes old, so the tolerance adds no meaningful staleness.
 - **Severity:** High
@@ -394,25 +396,30 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 ## 7. Performance
 
 ### 7.1 The forecast estimator re-runs on the main actor up to twice per body, every minute
-- **Location:** `PWUsage/Views/LoadTimingView.swift:243`, `:273`, `:407`, `:488`; `PWUsage/Models/LoadTimingForecastEstimator.swift:365-387`, `:339`, `:356`, `:406`, `:435`
-- **What:** `forecastOverlay` calls `LoadTimingForecastEstimator.evaluate` at `:243`, and is invoked from both `recommendationCard` (`:407`) and `explorerCard` (`:488`) — up to twice per body evaluation. The entire subtree is wrapped in `TimelineView(.everyMinute)` at `:273`, so it re-runs every minute regardless of state change. `evaluate` calls `integrationBoundaries` at least four times (and once per candidate), each running a per-minute scan loop over its window and building/sorting a `Set<Date>`.
-- **Why:** With ~50-60 candidate starts over a horizon that can reach 48 hours, this is on the order of 10⁵ main-thread operations per body evaluation, every 60 seconds, for a result that only changes when the balance or forecast changes. The inner lookups (`forecast.first(where:)`, `tariffs.first(where:)`, `context.slots.filter`) are linear scans repeated per midpoint, compounding the cost. It also uses `Date()` at `:274` rather than the timeline's `context.date`, so the tick's value is discarded.
+- **Location:** `PWUsage/Views/LoadTimingView.swift:243`, `:285-286`, `:307-320`, `:328-354`; `PWUsage/Models/LoadTimingForecastEstimator.swift:93`, `:350`, `:367`, `:376-398`, `:417`, `:446` (re-derived after the fix; the estimator was not changed, and the pre-fix references in this entry were stale)
+- **What:** `forecastOverlay` called `LoadTimingForecastEstimator.evaluate` at `:243` and was invoked from both `recommendationCard` and `explorerCard`, each of which also made its own `placement(...)` call — up to two estimator runs per body evaluation. The entire subtree was wrapped in `TimelineView(.everyMinute)`, so it re-ran every minute regardless of state change. `evaluate` calls `integrationBoundaries` four times in fixed code paths (`:350`, `:367`, `:417`, `:446`) plus once per candidate, each running a per-minute scan loop over its window and building/sorting a `Set<Date>`.
+- **Why:** With ~50-60 candidate starts over a horizon that can reach 48 hours, this is on the order of 10⁵ main-thread operations per body evaluation, every 60 seconds, for a result that only changes when the balance or forecast changes. The inner lookups (`forecast.first(where:)`, `tariffs.first(where:)`, `context.slots.filter`) are linear scans repeated per midpoint, compounding the cost. The pre-fix timeline also discarded `context.date` in favour of a fresh `Date()`.
 - **Action:** Evaluate once per `(balance, forecast, context)` tuple and cache the `Result` on the coordinator; narrow the `TimelineView` to the freshness/source-status labels that genuinely show a moving clock and pass `context.date` in.
+- **Resolution:** Resolved without a cache or any new stored state, per the agreed design decision: the duplication is gone and the tick no longer drives the estimator. `body` resolves `placement(...)` once (`:307`) and derives a single `overlay` from it (`:318`) — both **outside** any timeline — and passes them into `recommendationCard` (`:418`) and `explorerCard` (`:548`); neither card calls `forecastOverlay` or `placement` on the hot path any more, and the second independent `placement` call is gone.
+- **The tick now reaches the verdict, deliberately.** A first pass narrowed the timeline to the freshness labels alone. Review caught the consequence: `LoadTimingRecommendation.isFresh` (`LoadTimingRecommendation.swift:43`, `:138`) and `sourceStatus` (`:205`) apply the same 60-minute window to the same `energyDataThrough`, so with the verdict frozen the screen could show `Stale · updated 60 min ago` directly above a still-confident `Good fit now` — the most user-visible claim on the screen was the one thing that stopped moving. The verdict is *cheap* (no horizon search), unlike the overlay, so it was put back on the tick: a `TimelineView(.everyMinute)` now wraps **only the two cards** (`:328-354`), re-running one estimator-free `LoadTimingRecommendation.evaluate` per tick and passing `context.date` into it. It contains no scroll view and computes no forecast, so §7.7 stays fixed and the estimator stays off the tick. Per-minute cost drops from *2 × forecast evaluate + 2 × recommendation* to *1 × recommendation*.
+- **The frozen overlay is guarded against mis-attribution.** Because the overlay is computed at body-pass time and the tick's recommendation is not, the two can disagree about which load the forecast describes — at the freshness boundary `.ready` → `.stale` the suggested profile changes, and an unguarded frozen overlay would be shown against a different profile's estimate. Each card therefore re-derives `placement` (cheap: it selects a profile and never estimates) via `currentPlacement(for:)` (`:478`) and shows the forecast only while that equals the `forecastPlacement` the overlay was computed for (`:432`, `:557`). `Placement` is `Equatable`, so an unchanged verdict keeps the forecast on screen and a changed one **withholds** it until the next body pass recomputes one that fits. A stale forecast is never shown against the wrong load.
+- **Residual divergence, recorded rather than hidden:** the forecast overlay's *own* figures — cost now, recommended cost, savings, window, solar contribution, horizon, and source ages — are still computed at body-pass time and do **not** advance with the tick. They refresh when `body` re-evaluates (coordinator state, profiles, or exploration change). This is the accepted cost of the no-cache decision: the estimator's horizon start is a function of the clock, and freezing it is a behaviour change nobody asked for. The guard above bounds the blast radius to "the forecast section is absent for one tick" rather than "the forecast describes the wrong load".
+- **Accessibility, verified against the pre-fix source.** The discarded `context.date` is gone: the old `_ in let now = Date()` no longer exists, the label uses its timeline's `context.date` (`:759-763`), and the cards use their own timeline's `context.date`. A review claimed the extracted label had silently dropped a `"Source freshness: …"` prefix from the metadata footer. That claim was checked against `587af15` and is **incorrect**: `git show 587af15:…LoadTimingView.swift` contains exactly one `"Source freshness: …"` `.accessibilityLabel`, at `:416` inside `recommendationCard`; the footer's `Text` at `:651` never had one. The `announcesFreshness` flag therefore preserves each call site's pre-fix VoiceOver output exactly — the card announces the prefix, the footer does not — and its comment now says so instead of claiming to avoid a nesting hazard. Whether wrapping a child in a `TimelineView` changes what `.accessibilityElement(children: .combine)` announces is **not answerable from this repository's source**; it is a SwiftUI implementation detail, and a device check is required to confirm (see §7.7).
 - **Severity:** High
-- **Status:** OPEN
-- **Confidence:** High
+- **Status:** FIXED (PR pending)
+- **Confidence:** High — for the code change. The minute-tick behaviour and the accessibility output are unverified on a device: the app gates every screen behind a real sign-in and no credentials were available, so no simulator check was possible.
 
 ### 7.2 `DateFormatter`/`NumberFormatter`/`ISO8601DateFormatter` allocated per call, including on the decode path
 - **Location:** `PWUsage/Views/DashboardPresentation.swift:83-90`, `:166-176`, `:178-185`, `:217-224`; `PWUsage/Models/LoadTimingForecastEstimator.swift:230-237`; `PWUsage/Networking/SolcastClient.swift:99-105`; `PWUsage/Models/MobileContracts.swift:331-339`; `PWUsage/Models/SolarForecast.swift:113-123`; `PWUsage/Views/BillView.swift:83`, `:92`, `:105`
 - **What:** Each helper constructs a fresh formatter on every invocation.
-- **Why:** Formatter construction is among the most expensive Foundation operations, and these are on hot paths. `ISO8601DateFormatter.parse` is invoked **once per timestamp** by the custom date-decoding strategy, so a response with a few hundred timestamps allocates hundreds of formatters before a single view renders. `BillView` recomputes period title, balance, and currency for every row's accessibility label; `LoadTimingView.swift:412`/`:416` evaluates the same `sourceStatus(...)` call twice.
+- **Why:** Formatter construction is among the most expensive Foundation operations, and these are on hot paths. `ISO8601DateFormatter.parse` is invoked **once per timestamp** by the custom date-decoding strategy, so a response with a few hundred timestamps allocates hundreds of formatters before a single view renders. `BillView` recomputes period title, balance, and currency for every row's accessibility label; `LoadTimingView` used to evaluate the same `sourceStatus(...)` call twice (status text plus accessibility label), though that one duplicate call was removed as a side effect of the §7.1 restructure, which extracted the label into a view that formats once.
 - **Action:** Adopt `FormatStyle` (`Date.FormatStyle` / `FloatingPointFormatStyle`) — allocation-free, and the codebase already uses `.formatted(.number...)` elsewhere — or cache formatters keyed by locale/currency/timezone. Hold shared `static let` ISO-8601 formatters for the decode path, and share one timestamp parser between `MobileContracts` and `SolarForecast`.
 - **Severity:** Medium
 - **Status:** OPEN
 - **Confidence:** High
 
 ### 7.3 `LoadProfileStore` is constructed — and writes to `UserDefaults` — from a view's `init`
-- **Location:** `PWUsage/Views/LoadTimingView.swift:209`, `:215-220`; `PWUsage/State/LoadProfileStore.swift:34-46`
+- **Location:** `PWUsage/Views/LoadTimingView.swift:216`, `:222-227`; `PWUsage/State/LoadProfileStore.swift:34-46`
 - **What:** `LoadTimingView.init` evaluates `LoadProfileStore()` eagerly as the `StateObject` argument; that initializer reads `UserDefaults`, JSON-decodes the saved collection, then unconditionally calls `persist()`.
 - **Why:** `StateObject` discards every instance after the first, so each re-initialization of the view still pays a synchronous `UserDefaults` read, a JSON decode, and a `UserDefaults` **write** on the main actor. That is side-effecting I/O in `init`, which makes view construction non-idempotent. Previews also wipe shared defaults domains as a side effect of merely rendering (`DashboardPreviews.swift:156-168`, `SolarForecastPreviews.swift:176-199`).
 - **Action:** Construct the store once outside the view and pass it in; persist on first mutation rather than in `init`.
@@ -448,12 +455,15 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High
 
 ### 7.7 `refreshable` is attached inside a `TimelineView` that rebuilds its content every minute
-- **Location:** `PWUsage/Views/LoadTimingView.swift:272-331`
-- **What:** The `ScrollView` and its `.refreshable` modifier live inside `TimelineView(.everyMinute)`, which discards and rebuilds the content closure on every tick.
+- **Location:** `PWUsage/Views/LoadTimingView.swift:286-417` (re-derived after the fix)
+- **What:** The `ScrollView` and its `.refreshable` modifier lived inside `TimelineView(.everyMinute)`, which discarded and rebuilt the content closure on every tick.
 - **Why:** Pull-to-refresh state lives on the scroll view, which is re-created each minute, so the refresh control's spinner/offset is reset on an unrelated schedule. I could not verify the exact SwiftUI behaviour; the layering is at minimum fragile and makes the minute tick the dominant invalidation path for the whole screen.
 - **Action:** Keep `ScrollView` + `.refreshable` outside the `TimelineView` — which is the same restructuring §7.1 calls for.
+- **Resolution:** Resolved as a side effect of the §7.1 restructure, not by a dedicated change to this finding. `LoadTimingView.body` is now a plain `ScrollView` (`:286`) with `.refreshable` attached to it directly (`:382`); the screen-wide `TimelineView(.everyMinute)` that used to wrap both is gone. Two timelines remain in the file, and **neither contains a scroll view**: one wraps only the two load cards (`:328-354`) to re-derive the cheap verdict each minute, and one lives inside `LoadTimingFreshnessLabel` (`:747-763`) for the freshness caption. What is verified here is the layering, by construction and by reading the resulting view tree. The specific interaction claim above remains **unverified**: no device check was possible, because the app gates every screen behind a real sign-in and no credentials were available in this environment.
+- **Device check still owed**, and it would need to confirm: (a) pull-to-refresh shows its spinner and completes without a minute tick resetting it; (b) the freshness caption updates roughly once a minute and the verdict beside it flips in the same tick; (c) with VoiceOver on, the metadata footer is announced as one combined element whose freshness portion is the bare status text with no `"Source freshness: …"` prefix, and the recommendation card's caption *is* announced with that prefix — this is the check that would confirm the extracted label preserves the pre-fix tree, since whether a `TimelineView` child is transparent to `.combine` is not derivable from source; (d) VoiceOver focus is not thrown when the tick redraws a timeline nested inside a combined accessibility element.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Confidence:** Medium — the layering is confirmed, the SwiftUI interaction is unverified
 - **Confidence:** Medium — unverified
 
 ---
@@ -461,7 +471,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 ## 8. SwiftUI / UI
 
 ### 8.1 Accessibility labels assembled by string surgery on formatted output
-- **Location:** `PWUsage/Views/DashboardPresentation.swift:124-132`; `PWUsage/Views/DashboardView.swift:370`, `:98-101`; `PWUsage/Views/LoadTimingView.swift:849`
+- **Location:** `PWUsage/Views/DashboardPresentation.swift:124-132`; `PWUsage/Views/DashboardView.swift:370`, `:98-101`; `PWUsage/Views/LoadTimingView.swift:974`
 - **What:** `loadRateAccessibilityLabel` formats a localized cents string, then deletes the `"¢/kWh"` substring to reuse it as speech, and pluralizes by comparing the result to the literal `"1"`.
 - **Why:** In any locale with non-ASCII digits (Arabic-Indic) the `replacingOccurrences` no-ops and the `"1"` comparison never matches, so "1 cent" reads as "1 cents" and the unit is announced twice. With a grouping separator the stripped string is not a bare number at all.
 - **Action:** Build the spoken string from the numeric values directly, never by editing a display-formatted string; use automatic grammar agreement for "cent/percents".
@@ -470,7 +480,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High — verified `:127` and `:129`.
 
 ### 8.2 Fixed point-size fonts break Dynamic Type
-- **Location:** `PWUsage/Views/LoadTimingView.swift:827` (9pt "ACTIVE" badge); `PWUsage/Views/DashboardView.swift:78` (44pt battery glyph); `PWUsage/Views/SignInView.swift:16` (48pt logo); `PWUsage/PWUsageApp.swift:378`
+- **Location:** `PWUsage/Views/LoadTimingView.swift:952` (9pt "ACTIVE" badge); `PWUsage/Views/DashboardView.swift:78` (44pt battery glyph); `PWUsage/Views/SignInView.swift:16` (48pt logo); `PWUsage/PWUsageApp.swift:378`
 - **What:** The tariff badge uses `.system(size: 9, weight: .bold)`; the decorative glyphs use 42-48pt fixed sizes.
 - **Why:** The 9pt badge does not scale at all and is illegible for many users including at default text sizes. The decorative glyphs ignore accessibility sizes (though they are `accessibilityHidden`, so the impact is visual only).
 - **Action:** Use relative text styles (`.caption2.weight(.bold)`) for the badge; `@ScaledMetric` or relative styles for the glyphs.
@@ -497,7 +507,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High — verified `:63-64`.
 
 ### 8.5 Staleness thresholds scattered as twelve-plus magic numbers, one reimplemented inline
-- **Location:** `PWUsage/Views/DashboardView.swift:222` (inline `> 30 * 60`), `:127`, `:219`; `LoadTimingForecastEstimator.swift:6`; `MobileContracts.swift:185`; `DashboardPresentation.swift:187`, `:205`, `:212`; `LoadTimingView.swift:199`; `LoadTimingRecommendation.swift:43`; `LoadTimingForecastPresentation.swift:81`, `:162`; `SolarForecastStore.swift:81`; `DashboardCoordinator.swift:115`
+- **Location:** `PWUsage/Views/DashboardView.swift:222` (inline `> 30 * 60`), `:127`, `:219`; `LoadTimingForecastEstimator.swift:6`; `MobileContracts.swift:185`; `DashboardPresentation.swift:187`, `:205`, `:212`; `LoadTimingView.swift:205`; `LoadTimingRecommendation.swift:43`; `LoadTimingForecastPresentation.swift:81`, `:162`; `SolarForecastStore.swift:81`; `DashboardCoordinator.swift:115`
 - **What:** Twelve-plus independently written staleness thresholds across eight files, with `DashboardView:222` hand-duplicating a rule `DashboardPresentation.freshness(staleAfter:)` already encapsulates.
 - **Why:** These are the load-bearing values the `Agents.md` freshness rules depend on, and a change to any one is not discoverable from any single place. The inline copy at `:222` is the most likely to be missed.
 - **Action:** Define named constants (or a `DataFreshness` enum with named windows) and pass them to `freshness(staleAfter:)`; delete the inline recomputation at `:222`.
@@ -524,7 +534,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High
 
 ### 8.8 `AnyView` used for a two-branch layout decision
-- **Location:** `PWUsage/Views/DashboardView.swift:283-293`; `PWUsage/Views/LoadTimingView.swift:660-666`
+- **Location:** `PWUsage/Views/DashboardView.swift:283-293`; `PWUsage/Views/LoadTimingView.swift:732-738`
 - **What:** `adaptiveGrid` returns `AnyView` from both branches of an accessibility-size check.
 - **Why:** `AnyView` erases the concrete type, defeating SwiftUI's structural diffing and view identity for a container that re-renders on every tick of the Load Timing timeline (§7.1).
 - **Action:** Make the grid its own `View` and switch between `VStack` and `LazyVGrid` inside its `body`, or use a single `ViewThatFits`.
@@ -533,7 +543,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High
 
 ### 8.9 Index- and string-identified `ForEach`
-- **Location:** `PWUsage/Views/DashboardView.swift:286`, `:290`; `PWUsage/Views/LoadTimingView.swift:464`, `:662`, `:664`, `:769`; `PWUsage/Views/BillView.swift:80`
+- **Location:** `PWUsage/Views/DashboardView.swift:286`, `:290`; `PWUsage/Views/LoadTimingView.swift:530`, `:734`, `:736`, `:894`; `PWUsage/Views/BillView.swift:80`
 - **What:** `ForEach(tiles.indices, id: \.self)` and `ForEach(Array(...enumerated()), id: \.offset)` identify rows by position; `ForEach(enhanced.sourceAges, id: \.self)` identifies `String`s by value.
 - **Why:** Positional identity makes SwiftUI reuse the wrong tile when the underlying list changes length or order (the period grid and the bill period list), losing animations and briefly showing mismatched content.
 - **Action:** Make the tile and row types `Identifiable` with a stable key and iterate the arrays directly.
@@ -551,7 +561,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High
 
 ### 8.11 Hand-rolled empty and loading states instead of `ContentUnavailableView`
-- **Location:** `PWUsage/Views/DashboardView.swift:117-121`, `:128-129`, `:160-162`, `:388-417`; `PWUsage/Views/BillView.swift:21-32`; `PWUsage/Views/LoadTimingView.swift:304-323`, `:508-511`, `:537-541`; `PWUsage/PWUsageApp.swift:286-294`, `:368-389`
+- **Location:** `PWUsage/Views/DashboardView.swift:117-121`, `:128-129`, `:160-162`, `:388-417`; `PWUsage/Views/BillView.swift:21-32`; `PWUsage/Views/LoadTimingView.swift:368-376`, `:577-581`, `:606-610`; `PWUsage/PWUsageApp.swift:286-294`, `:368-389`
 - **What:** Six bespoke "symbol + title + message" stacks, plus three bespoke `ProgressView` + text cards, stand in for empty and loading states.
 - **Why:** `ContentUnavailableView` gets correct VoiceOver semantics, Dynamic Type behavior, and Reduce Motion handling for free; the hand-rolled ones do none of that consistently, and the copies drift apart.
 - **Action:** Replace the empty states with `ContentUnavailableView` and extract a single shared loading placeholder.
@@ -569,7 +579,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High
 
 ### 8.13 Sheet and coordinator work triggered by `onChange` instead of `task(id:)`
-- **Location:** `PWUsage/Views/SolarForecastSettingsSheet.swift:29`, `:103`, `:108`; `PWUsage/Views/LoadTimingView.swift:353-363`
+- **Location:** `PWUsage/Views/SolarForecastSettingsSheet.swift:29`, `:103`, `:108`; `PWUsage/Views/LoadTimingView.swift:405-415`
 - **What:** Forecast settings call `solarForecastSettingsDidEdit()` from three `onChange` handlers; Load Timing duplicates a `.task` load with an `onChange(of: coordinator.isForeground)` that spawns a raw `Task`.
 - **Why:** The `onChange` handlers also fire on programmatic writes (the sheet clears `apiKey` at `:226` and rewrites the manual ID fields at `:194-195`), so they notify the coordinator for changes the user did not make. The duplicated foreground `Task` bypasses the structured cancellation the `.task` provides. Both of the coordinator methods they call are empty (§9.4), so the net effect today is a wasted invalidation.
 - **Action:** Move the edit notification to a `.task(id:)` keyed on the value; express the foreground reload with a single `.task(id: coordinator.isForeground)`.
@@ -578,7 +588,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High
 
 ### 8.14 Values clipped by `lineLimit` + `minimumScaleFactor`
-- **Location:** `PWUsage/Views/DashboardView.swift:354-359`; `PWUsage/Views/LoadTimingView.swift:831-835`; `PWUsage/Views/BillView.swift:57-61`
+- **Location:** `PWUsage/Views/DashboardView.swift:354-359`; `PWUsage/Views/LoadTimingView.swift:956-960`; `PWUsage/Views/BillView.swift:57-61`
 - **What:** Numeric values are pinned to one line and shrunk as low as 0.75×.
 - **Why:** At larger Dynamic Type sizes the currency/rate digits become progressively smaller rather than wrapping, so the app counteracts the user's chosen text size — a direct contrast with §8.2, where fonts are too small at default sizes.
 - **Action:** Allow two lines (`lineLimit(2, reservesSpace:)`) and drop the aggressive scale factor, or switch to a `LabeledContent` layout that stacks at accessibility sizes.
@@ -645,7 +655,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High
 
 ### 9.4 Empty coordinator methods called from view bodies as if they did something
-- **Location:** `PWUsage/State/DashboardCoordinator.swift:447-448`; called at `SolarForecastSettingsSheet.swift:29`, `:103`, `:108`, `:181` and `LoadTimingView.swift:354`
+- **Location:** `PWUsage/State/DashboardCoordinator.swift:447-448`; called at `SolarForecastSettingsSheet.swift:29`, `:103`, `:108`, `:181` and `LoadTimingView.swift:406`
 - **What:** Both `solarForecastSettingsDidEdit()` and `loadProfileDidEdit()` have empty bodies. Calling a method on an `ObservableObject` does not emit `objectWillChange`, so all six call sites have no effect whatsoever.
 - **Why:** Reads as "we invalidate the cached forecast when the key changes" when nothing is invalidated. The `onChange` in `LoadTimingView` exists solely to call one, costing a view invalidation on every profile edit.
 - **Action:** Delete both methods and their call sites, or give them the invalidation the comment at `:446` implies.
@@ -690,7 +700,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High
 
 ### 9.9 `LoadTimingView.swift` is an 877-line file mixing four concerns
-- **Location:** `PWUsage/Views/LoadTimingView.swift:3-202` (a 200-line `LoadTimingPresentation` enum of pure string-building), `:204-667` (the main view), `:669-810` (`LoadRunDetailsSheet`), `:812-851` (`LoadTimingPeriodTile`), `:853-877` (`LoadTimingCard`)
+- **Location:** `PWUsage/Views/LoadTimingView.swift:3-209` (a 200-line `LoadTimingPresentation` enum of pure string-building), `:211-739` (the main view), `:747-792` (`LoadTimingFreshnessLabel` and its announcement modifier), `:805-935` (`LoadRunDetailsSheet`), `:937-976` (`LoadTimingPeriodTile`), `:978-1002` (`LoadTimingCard`)
 - **What:** Presentation logic, the main screen, a detail sheet, a tile, and a card container all live in one file.
 - **Why:** The 200-line enum is the most-tested unit in the repo (`LoadTimingViewTests.swift` is 1018 lines) yet is invisible from the filename — which is why the test file is named for a View it never touches.
 - **Action:** Extract each into its own file; rename the test file to match.
@@ -699,7 +709,7 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High
 
 ### 9.10 Three near-identical titled card container views
-- **Location:** `PWUsage/Views/DashboardView.swift:331-339` (`StatusCard`); `PWUsage/Views/BillView.swift:133-148` (`BillInformationCard`); `PWUsage/Views/LoadTimingView.swift:853-877` (`LoadTimingCard`)
+- **Location:** `PWUsage/Views/DashboardView.swift:331-339` (`StatusCard`); `PWUsage/Views/BillView.swift:133-148` (`BillInformationCard`); `PWUsage/Views/LoadTimingView.swift:978-1002` (`LoadTimingCard`)
 - **What:** Three private generics each wrap content in a titled `Label` header plus a padded, corner-rounded `secondarySystemGroupedBackground` rectangle, with padding 16/17/17 and corner radius 22/20/20.
 - **Why:** Three subtly different copies of the app's most-repeated visual pattern; the drift is already visible.
 - **Action:** Promote one shared `CardContainer` and delete the other two.
@@ -803,7 +813,7 @@ Verified lines for each High finding:
 - **§3.3** — `MobileAuthService.swift:114-140` (no `withTaskCancellationHandler`; `start() == false` branch resumes the local continuation at `:136` after storing it at `:117`; `[weak self]`-nil path resumes at `:123`); `:171-218` (`completeSignIn` at `:213-217` is idempotent but is not used by those two paths).
 - **§5.1** — `LoadTimingForecastEstimator.swift:461-474` (`total = Σ(loadedCost - baselineCost)`); `LoadTimingForecastPresentation.swift:131-134` (`"Start now: \(money(comparison.costNow))"`), `:148-149` (`savings` is a difference of deltas — correct).
 - **§5.2** — `DashboardCoordinator.swift:379` (`loadPlanningContext != nil` in the success guard; no context re-fetch in this function); `:523-530` (`loadTimingDetailRefreshed` routes to `refreshSolarForecast(manual: true)` unless `.notConnected`).
-- **§5.3** — `DashboardCoordinator.swift:319` (`async let billRefresh: Void = refreshBill(force: true)`, unconditional), `:233` (`selectSite`), `:579` (cadence check bypassed); `LoadTimingView.swift:357` (`.task`), `:359-362` (`onChange` → `Task`).
+- **§5.3** — `DashboardCoordinator.swift:319` (`async let billRefresh: Void = refreshBill(force: true)`, unconditional), `:233` (`selectSite`), `:579` (cadence check bypassed); `LoadTimingView.swift:411` (`.task`), `:412-415` (`onChange` → `Task`).
 - **§5.4** — `MobileContracts.swift:68` (`try container.decodeIfPresent(Double.self, forKey: .stateOfCharge)` — no validation), `:53` (`stateOfChargeAt` decoded), `:68` context; `DashboardView.swift:71` (renders unconditionally); `DashboardPresentation.swift:209-215` (`chargeAgeLabel` returns a caption string only).
 - **§6.1** — `project.yml:48` (`DEVELOPMENT_TEAM: 6HQGHHRK87`); `git ls-files --error-unmatch project.yml` → tracked; `README.md:16` and `:19` (contradict it).
 - **§6.2** — `AppConfiguration.swift:35-47` (`validate` checks scheme/host-emptiness/userinfo/path/query/fragment; never compares `components.host` against an allowlist); `:20-29` (`fromBundle` defaults to `defaultAPIOrigin` at `:23`).
