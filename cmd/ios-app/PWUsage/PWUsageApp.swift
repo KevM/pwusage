@@ -81,23 +81,41 @@ final class PWUsageAppModel: ObservableObject {
     @Published var isSitePickerPresented = false
     @Published private(set) var accountScopeID: String?
 
+    /// Builds the dashboard coordinator for a site. Injected so tests can control
+    /// the polling cadence and the clock.
+    typealias CoordinatorFactory = @MainActor (_ siteID: String, _ accountScopeID: String) -> DashboardCoordinator
+
     let authService: MobileAuthService
     private let api: any PWUsageApplicationAPI
     private let userDefaults: UserDefaults
     private let forecastStore: any SolarForecastManaging
+    private let coordinatorFactory: CoordinatorFactory
     private var coordinatorAuthSubscription: AnyCancellable?
-    private var didBootstrap = false
     private var sceneIsActive = false
 
     init(
         configuration: AppConfiguration,
         api: any PWUsageApplicationAPI,
         userDefaults: UserDefaults = .standard,
-        forecastStore: any SolarForecastManaging = SolarForecastStore.shared
+        forecastStore: any SolarForecastManaging = SolarForecastStore.shared,
+        coordinatorFactory: CoordinatorFactory? = nil
     ) {
         self.api = api
         self.userDefaults = userDefaults
         self.forecastStore = forecastStore
+        if let coordinatorFactory {
+            self.coordinatorFactory = coordinatorFactory
+        } else {
+            self.coordinatorFactory = { siteID, accountScopeID in
+                DashboardCoordinator(
+                    siteID: siteID,
+                    api: api,
+                    planningAPI: api,
+                    forecastStore: forecastStore,
+                    accountScopeID: accountScopeID
+                )
+            }
+        }
         authService = MobileAuthService(
             configuration: configuration,
             api: api,
@@ -105,9 +123,15 @@ final class PWUsageAppModel: ObservableObject {
         )
     }
 
+    /// Retries until a terminal state is reached. The `.task` that drives this is
+    /// cancelled when the view disappears, which can land inside
+    /// `installAuthorizedSites` and leave the screen on the spinner, so a
+    /// latch set on entry would strand it with no way back.
     func bootstrap() async {
-        guard !didBootstrap else { return }
-        didBootstrap = true
+        switch screenState {
+        case .signedIn, .signedOut, .unavailable: return
+        case .bootstrapping, .noSites: break
+        }
         do {
             let availableSites = try await api.fetchSites()
             await installAuthorizedSites(availableSites)
@@ -179,7 +203,7 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func signOut() async {
-        coordinator?.authenticationInvalidated()
+        teardownCoordinator()
         var cleanupFailed = false
         do { try await authService.logout() }
         catch let error as MobileAuthService.AuthError where error == .forecastCleanupFailed { cleanupFailed = true }
@@ -200,7 +224,7 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     private func invalidateSession(message: String?) async {
-        coordinator?.authenticationInvalidated()
+        teardownCoordinator()
         var cleanupFailed = false
         do { try await authService.invalidateAuthenticatedSession() }
         catch { cleanupFailed = true }
@@ -215,6 +239,15 @@ final class PWUsageAppModel: ObservableObject {
         signInMessage = cleanupFailed
             ? "Could not clear local solar forecast data. Please try again."
             : message
+    }
+
+    /// The coordinator must not outlive the session. `authenticationInvalidated`
+    /// discards in-flight work; going inactive is what actually stops the
+    /// polling timer, which otherwise keeps a strong reference and keeps asking
+    /// for authenticated data after the user has signed out.
+    private func teardownCoordinator() {
+        coordinator?.authenticationInvalidated()
+        coordinator?.scenePhaseChanged(isActive: false)
     }
 
     private func installAuthorizedSites(_ availableSites: [MobileSite]) async {
@@ -238,13 +271,7 @@ final class PWUsageAppModel: ObservableObject {
             coordinator.authenticationRestored()
             coordinator.scenePhaseChanged(isActive: sceneIsActive)
         } else {
-            let nextCoordinator = DashboardCoordinator(
-                siteID: chosen.id,
-                api: api,
-                planningAPI: api,
-                forecastStore: forecastStore,
-                accountScopeID: accountScopeID
-            )
+            let nextCoordinator = coordinatorFactory(chosen.id, accountScopeID)
             coordinator = nextCoordinator
             coordinatorAuthSubscription = nextCoordinator.$requiresSignIn
                 .removeDuplicates()

@@ -4,13 +4,13 @@
 
 **Status values:** `OPEN` → `IN PROGRESS (PR #N)` → `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)`
 
-**Progress:** 72 findings tracked. 4 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
+**Progress:** 72 findings tracked. 8 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
 
 | Status | Count | Findings |
 | --- | --- | --- |
-| OPEN | 66 | all except §3.3, §3.12, §3.13, §3.14 |
+| OPEN | 64 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3 |
 | IN PROGRESS | 0 | — |
-| FIXED | 4 | §3.3, §3.12, §3.13, §3.14 |
+| FIXED | 8 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3 (§4.6 is a recorded negative result, not a finding) |
 
 ---
 
@@ -67,7 +67,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** The timer loop at `:655-660` holds a strong `self` across `await self.refreshDue()`, and its guard is `self.isForeground, !self.requiresSignIn` — both of which remain `true`/unchanged after sign-out. A live and bill request can therefore be issued *after* the user has signed out.
 - **Action:** Add a `deinit` cancelling all three tasks, and have `PWUsageAppModel` call `scenePhaseChanged(isActive: false)` before dropping the coordinator in both `signOut()` and `invalidateSession()`.
 - **Severity:** High
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** High — verified by reading `:212-215`, `:653-660`, `PWUsageApp.swift:181-196`, and confirming no `deinit` exists.
 
 ### 3.2 App can latch permanently on "Connecting to pwusage…"
@@ -76,7 +76,7 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** A cancellation between those points propagates to the `catch` at `:120`, which sets `.unavailable` only for errors thrown *out of* `bootstrap`. If cancellation lands such that `screenState` stays `.bootstrapping` with `sites` populated, the `.task` reruns on re-appear, `bootstrap()` returns immediately on the `didBootstrap` latch, and the spinner is permanent. There is no retry path.
 - **Action:** Reset the latch when bootstrap does not reach a terminal state, or drive it from `.task(id:)` keyed on `screenState` rather than a one-shot boolean.
 - **Severity:** High
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** High
 
 ### 3.3 Sign-in continuation has no cancellation handler and no double-resume guard
@@ -260,16 +260,16 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** If the planning context failed once — transient network, `contextInvalid`, or an out-of-date server that was later redeployed — the user can pull to refresh forever and never get it back. The only escape is disconnecting and reconnecting the Solcast credential. The note shown is `causeNote(nil)` ("Pull down to refresh it"), which sends the user into exactly that loop. This path also never sets `solarForecastUnavailableReason`, discarding the `serverOutdated`/`contextInvalid` diagnosis computed elsewhere.
 - **Action:** When `loadPlanningContext == nil` in the manual refresh path, fall through to `loadTimingDetailAppeared()` instead of returning a forecast-only failure, and preserve `solarForecastUnavailableReason`.
 - **Severity:** High
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** High — verified `:379` and `:523-530`.
 
 ### 5.3 "Bill at most every 30 minutes" is bypassed on every Load-timing appearance
 - **Location:** `PWUsage/State/DashboardCoordinator.swift:319`, `:523`; `PWUsage/Views/LoadTimingView.swift:357-362`; `PWUsage/Views/SolarForecastSettingsSheet.swift:250`; `PWUsage/State/DashboardCoordinator.swift:233`
 - **What:** `loadTimingDetailAppeared()` unconditionally runs `async let billRefresh: Void = refreshBill(force: true)` at `:319`. It is invoked from a `.task` on view appearance (`LoadTimingView.swift:357`), from an `onChange(of: coordinator.isForeground)` at `:359-362`, from `selectSite` (`DashboardCoordinator.swift:233`), and after every array-selection save (`SolarForecastSettingsSheet.swift:250`).
 - **Why:** The README states the bill is requested "at most every 30 minutes while the app is foregrounded". For any user with a Solcast key connected, every foreground transition, site switch, and settings save issues a forced bill request, bypassing the `billInterval` cadence check at `:579`. This is an unbudgeted cost on a database-heavy TOU rollup, and it is invisible because the UI looks like a normal refresh.
-- **Action:** Make `loadTimingDetailAppeared` respect cadence — `refreshBill(force: false)` and rely on `isDue(lastAttempt:interval:at:)` — reserving `force: true` for explicit user gestures (`.refreshable`, the Refresh menu).
+- **Action:** Make `loadTimingDetailAppeared` respect cadence — `refreshBill(force: false)` and rely on `isDue(lastAttempt:interval:at:)` — reserving `force: true` for explicit user gestures (`.refreshable`, the Refresh menu). Note that the fix also widened this path's bill-freshness tolerance from *required a new success* to *under five minutes old*: once the appearance-driven refresh is floored, a bill fetched moments earlier by an earlier appearance, a site switch, or a pull produces no new success, and requiring one would drop the enhancement every time the screen is reopened inside the floor. The wider tolerance is what makes §5.2's recovery observable — a success at T followed by an appearance at T+299s is suppressed by `isDue`, leaves `billSuccessGeneration` unchanged, is reported fresh by `billIsFresh`, and the enhancement still proceeds. It is not a fresh bill in the strict sense, but the bill is computed from live data that may itself be five minutes old, so the tolerance adds no meaningful staleness.
 - **Severity:** High
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** High — verified `:319` and `:357-362`.
 
 ### 5.4 Battery SoC freshness is enforced only server-side
