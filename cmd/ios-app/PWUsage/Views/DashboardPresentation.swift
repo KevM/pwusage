@@ -1,6 +1,83 @@
 import Foundation
 
 enum DashboardPresentation {
+    enum PowerSource: String, CaseIterable, Identifiable {
+        case solar, home, grid, battery
+        var id: Self { self }
+        var title: String { rawValue.capitalized }
+    }
+
+    enum PowerRole: Equatable {
+        case supplying, receiving, idle, unknown
+    }
+
+    struct PowerCard: Equatable, Identifiable {
+        let id: PowerSource
+        let watts: Double?
+        let role: PowerRole
+        let detail: String
+    }
+
+    struct PowerFlow: Equatable {
+        var supplying: [PowerCard]
+        var receiving: [PowerCard]
+    }
+
+    static func powerFlow(live: MobileLiveResponse.Live, sourceTime: Date?, isUnavailable: Bool,
+                          now: Date = .now) -> PowerFlow {
+        let isCurrent = !isUnavailable && sourceTime.map {
+            let age = now.timeIntervalSince($0)
+            return age >= 0 && age <= 15 * 60
+        } == true
+        let readings: [(PowerSource, Double)] = [
+            (.solar, live.solarPower), (.home, live.loadPower),
+            (.grid, live.gridPower), (.battery, live.batteryPower)
+        ]
+        let cards = readings.map { source, watts -> PowerCard in
+            guard isCurrent, watts.isFinite else {
+                return PowerCard(id: source, watts: watts.isFinite ? abs(watts) : nil,
+                                 role: .unknown, detail: "Flow unknown")
+            }
+            let role: PowerRole
+            let detail: String
+            switch source {
+            case .solar, .home:
+                if watts < 0 {
+                    role = .unknown
+                    detail = "Flow unknown"
+                } else if watts == 0 {
+                    role = .idle
+                    detail = "Idle"
+                } else {
+                    role = source == .solar ? .supplying : .receiving
+                    detail = source == .solar ? "Producing" : "Using"
+                }
+            case .grid, .battery:
+                if abs(watts) <= 50 {
+                    role = .idle
+                    detail = "Idle"
+                } else {
+                    role = watts > 0 ? .supplying : .receiving
+                    detail = source == .grid
+                        ? (watts > 0 ? "Importing" : "Exporting")
+                        : (watts > 0 ? "Discharging" : "Charging")
+                }
+            }
+            return PowerCard(id: source, watts: abs(watts), role: role, detail: detail)
+        }
+        var result = PowerFlow(supplying: cards.filter { $0.role == .supplying },
+                               receiving: cards.filter { $0.role == .receiving })
+        // Inactive cards occupy spare slots, but their placement never assigns a flow role.
+        for card in cards where card.role == .idle || card.role == .unknown {
+            if result.supplying.count <= result.receiving.count {
+                result.supplying.append(card)
+            } else {
+                result.receiving.append(card)
+            }
+        }
+        return result
+    }
+
     struct LoadTimingSummary: Equatable {
         let title: String
         let rate: String?

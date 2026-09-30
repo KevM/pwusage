@@ -7,6 +7,7 @@ struct DashboardView: View {
     let onSignOut: () -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var live: MobileLiveResponse? { coordinator.live.response }
     private var bill: MobileBillResponse? { coordinator.bill.response }
@@ -71,14 +72,14 @@ struct DashboardView: View {
                                 Text(live.stateOfCharge.map { "\(Int($0.rounded()))%" } ?? "--")
                                     .font(.system(.largeTitle, design: .rounded, weight: .bold))
                                     .monospacedDigit()
-                                    .contentTransition(.numericText())
+                                    .contentTransition(reduceMotion ? .identity : .numericText())
                                     .accessibilityLabel(live.stateOfCharge.map { "Battery charge \(Int($0.rounded())) percent" } ?? "Battery charge unknown")
                                 HStack(alignment: .center, spacing: 4) {
-                                    Image(systemName: batterySymbol(live.live.batteryPower, stateOfCharge: live.stateOfCharge))
+                                    Image(systemName: batterySymbol(livePowerIsCurrent ? live.live.batteryPower : 0, stateOfCharge: live.stateOfCharge))
                                         .font(.system(size: 44, weight: .bold))
                                         .foregroundStyle(.green)
                                         .accessibilityHidden(true)
-                                    if DashboardPresentation.batteryDirection(powerWatts: live.live.batteryPower) == .discharging {
+                                    if livePowerIsCurrent && DashboardPresentation.batteryDirection(powerWatts: live.live.batteryPower) == .discharging {
                                         DischargeSymbol()
                                             .stroke(Color.secondary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                                             .frame(width: 16, height: 16)
@@ -96,16 +97,16 @@ struct DashboardView: View {
                         }
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(
-                            DashboardPresentation.batteryDescription(stateOfCharge: live.stateOfCharge, powerWatts: live.live.batteryPower)
+                            (livePowerIsCurrent
+                                ? DashboardPresentation.batteryDescription(stateOfCharge: live.stateOfCharge, powerWatts: live.live.batteryPower)
+                                : "Battery \(live.stateOfCharge.map { "\(Int($0.rounded()))%" } ?? "--"), flow unknown")
                             + (DashboardPresentation.chargeAgeLabel(live.sources.stateOfChargeAt).map { ", \($0)" } ?? "")
                         )
                         Divider()
-                        adaptiveGrid([
-                            MetricTile(title: "Home", value: DashboardPresentation.power(live.live.loadPower), detail: "Using", symbol: "house.fill", tint: .blue),
-                            MetricTile(title: "Solar", value: DashboardPresentation.power(live.live.solarPower), detail: "Producing", symbol: "sun.max.fill", tint: .orange),
-                            MetricTile(title: "Grid", value: DashboardPresentation.power(live.live.gridPower), detail: gridDirection(live.live.gridPower), symbol: live.live.gridPower >= 0 ? "arrow.down.to.line" : "arrow.up.to.line", tint: .gray),
-                            MetricTile(title: "Battery", value: DashboardPresentation.batteryPower(live.live.batteryPower), detail: DashboardPresentation.batteryPowerDetail(live.live.batteryPower), symbol: batterySymbol(live.live.batteryPower, stateOfCharge: live.stateOfCharge), tint: .green)
-                        ])
+                        LivePowerFlowCards(flow: DashboardPresentation.powerFlow(
+                            live: live.live, sourceTime: live.sources.liveStatusAt,
+                            isUnavailable: coordinator.live.isUnavailable
+                        ))
                     }
                 }
                 if let notice = DashboardPresentation.liveFreshnessNotice(live.sources.liveStatusAt) {
@@ -320,9 +321,12 @@ struct DashboardView: View {
         return isCharging ? "battery.\(level).bolt" : "battery.\(level)"
     }
 
-    private func gridDirection(_ watts: Double) -> String {
-        watts > 50 ? "Importing" : (watts < -50 ? "Exporting" : "Balanced")
+    private var livePowerIsCurrent: Bool {
+        !coordinator.live.isUnavailable && live.map {
+            DashboardPresentation.liveFreshnessNotice($0.sources.liveStatusAt) == nil
+        } == true
     }
+
 }
 
 private struct BillDestination: Hashable { static let current = Self() }
@@ -344,17 +348,23 @@ private struct MetricTile: View {
     var detail: String? = nil
     let symbol: String
     let tint: Color
+    var isMuted = false
+    var numericValue: Double? = nil
+    var spokenRole: String? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: symbol)
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(tint)
+                .foregroundStyle(isMuted ? .secondary : tint)
                 .labelStyle(.titleAndIcon)
             Text(value)
+                .contentTransition(reduceMotion || numericValue == nil ? .identity : .numericText(value: numericValue ?? 0))
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: numericValue)
                 .font(.title3.weight(.bold))
                 .monospacedDigit()
-                .foregroundStyle(.primary)
+                .foregroundStyle(isMuted ? .secondary : .primary)
                 .minimumScaleFactor(0.8)
                 .lineLimit(1)
             if let detail {
@@ -365,9 +375,115 @@ private struct MetricTile: View {
         }
         .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
         .padding(12)
-        .background(tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(isMuted ? Color(uiColor: .tertiarySystemGroupedBackground) : tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title), \(value)\(detail.map { ", \($0)" } ?? "")")
+        .accessibilityLabel([title, value, detail, spokenRole].compactMap { $0 }.joined(separator: ", "))
+    }
+}
+
+// All four cards keep their identity as the layout changes their column and row.
+// This animates role changes without repeated energy-flow animation or duplicate views.
+struct LivePowerFlowCards: View {
+    let flow: DashboardPresentation.PowerFlow
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var cards: [DashboardPresentation.PowerCard] { flow.supplying + flow.receiving }
+    private var flowIsUnknown: Bool { cards.allSatisfy { $0.role == .unknown } }
+
+    var body: some View {
+        PowerFlowLayout(stacked: dynamicTypeSize.isAccessibilitySize) {
+            heading(flowIsUnknown ? "Last readings" : "Supplying", column: 0)
+            heading(flowIsUnknown ? "Flow unknown" : "Receiving", column: 1)
+            ForEach(DashboardPresentation.PowerSource.allCases) { source in
+                if let card = cards.first(where: { $0.id == source }) {
+                    tile(card)
+                        .layoutValue(key: FlowColumn.self, value: flow.supplying.contains(card) ? 0 : 1)
+                        .layoutValue(key: FlowRow.self, value: (flow.supplying.firstIndex(of: card) ?? flow.receiving.firstIndex(of: card) ?? 0) + 1)
+                }
+            }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: flow.supplying.map(\.id))
+        .transaction { if reduceMotion { $0.disablesAnimations = true } }
+    }
+
+    private func heading(_ title: String, column: Int) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilitySortPriority(column == 0 ? 100 : 50)
+            .layoutValue(key: FlowColumn.self, value: column)
+    }
+
+    private func tile(_ card: DashboardPresentation.PowerCard) -> some View {
+        let symbol: String
+        let tint: Color
+        switch card.id {
+        case .solar: symbol = "sun.max.fill"; tint = .orange
+        case .home: symbol = "house.fill"; tint = .blue
+        case .grid: symbol = card.role == .unknown || card.role == .idle ? "powerplug" : (card.role == .supplying ? "arrow.down.to.line" : "arrow.up.to.line"); tint = .gray
+        case .battery: symbol = card.role == .receiving ? "battery.100percent.bolt" : "battery.100percent"; tint = .green
+        }
+        let role = card.role == .supplying ? "Supplying power" : (card.role == .receiving ? "Receiving power" : nil)
+        return MetricTile(title: card.id.title, value: card.watts.map(DashboardPresentation.power) ?? "--",
+                          detail: card.detail, symbol: symbol, tint: tint,
+                          isMuted: card.role == .idle || card.role == .unknown,
+                          numericValue: card.watts, spokenRole: role)
+            .accessibilitySortPriority(flow.supplying.firstIndex(of: card).map { Double(99 - $0) }
+                ?? Double(49 - (flow.receiving.firstIndex(of: card) ?? 0)))
+    }
+}
+
+private struct FlowColumn: LayoutValueKey { static let defaultValue = 0 }
+private struct FlowRow: LayoutValueKey { static let defaultValue = 0 }
+
+private struct PowerFlowLayout: Layout {
+    var stacked: Bool
+    private let spacing: CGFloat = 10
+
+    private func frames(width: CGFloat, subviews: Subviews) -> [CGRect] {
+        let useStack = stacked || width < 280
+        let cardWidth = useStack ? width : (width - spacing) / 2
+        let sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: cardWidth, height: nil)) }
+        var result = Array(repeating: CGRect.zero, count: subviews.count)
+        var y: CGFloat = 0
+        if useStack {
+            for column in 0...1 {
+                let indices = subviews.indices.filter { subviews[$0][FlowColumn.self] == column }
+                    .sorted { subviews[$0][FlowRow.self] < subviews[$1][FlowRow.self] }
+                for index in indices {
+                    result[index] = CGRect(x: 0, y: y, width: cardWidth, height: sizes[index].height)
+                    y += sizes[index].height + spacing
+                }
+            }
+        } else {
+            let maxRow = subviews.map { $0[FlowRow.self] }.max() ?? 0
+            for row in 0...maxRow {
+                let indices = subviews.indices.filter { subviews[$0][FlowRow.self] == row }
+                let height = indices.map { sizes[$0].height }.max() ?? 0
+                for index in indices {
+                    result[index] = CGRect(x: CGFloat(subviews[index][FlowColumn.self]) * (cardWidth + spacing),
+                                           y: y, width: cardWidth, height: height)
+                }
+                y += height + spacing
+            }
+        }
+        return result
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 320
+        return CGSize(width: width, height: frames(width: width, subviews: subviews).map(\.maxY).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let positions = frames(width: bounds.width, subviews: subviews)
+        for index in subviews.indices {
+            let frame = positions[index]
+            subviews[index].place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                                  anchor: .topLeading, proposal: ProposedViewSize(frame.size))
+        }
     }
 }
 
