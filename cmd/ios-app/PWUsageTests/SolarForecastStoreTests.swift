@@ -590,6 +590,50 @@ struct SolarForecastStoreTests {
         #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
     }
 
+    @Test("A write left pending by a save failure is retried on the next refresh")
+    func pendingWriteIsRetriedOnTheNextRefresh() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+        let firstFetch = h.clock.now()
+        h.clock.advance(by: 1800)
+
+        // One save is let through so the post-fetch write is the one that fails.
+        await h.files.failNextSaveAfter(successfulSaves: 1)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.saveFailed))
+        let secondFetch = h.clock.now()
+
+        // The batch is still fresh in memory, so the .alreadyFresh short-circuit is
+        // the one that runs here. It has to attempt the write before reporting the
+        // cache fresh, or the note's promise to retry is kept by nothing.
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        // Asserted on the stamp, not on existence: a stale batch from the first
+        // refresh is still on disk either way, so merely finding a cache after a
+        // restart would pass against the unfixed code and prove nothing. The retry
+        // is what makes the *newer* batch the one that survives.
+        let restarted = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
+        await restarted.activateAccountScope("account-a")
+        #expect(await restarted.cachedBatch(accountScopeID: "account-a", siteID: "site-a")?.fetchedAt == secondFetch)
+        #expect(secondFetch > firstFetch)
+    }
+
+    @Test("A write that keeps failing is reported as a save failure, not as a fresh cache")
+    func persistentlyFailingWriteKeepsReportingSaveFailure() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        // Budget save let through, then the post-fetch write fails, then the retry on
+        // the next refresh fails too. Reporting .alreadyFresh while the write is
+        // still outstanding would clear the note the user needs.
+        await h.files.failSaves(2, afterSuccessfulSaves: 1)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.saveFailed))
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .failed(.saveFailed))
+        // The retry must not become a new route to quarantine.
+        #expect(await h.keychain.count == 1)
+    }
+
     @Test("A save failure on the budget reservation never quarantines the credential")
     func budgetReservationSaveFailureNeverQuarantines() async throws {
         let h = Harness()
