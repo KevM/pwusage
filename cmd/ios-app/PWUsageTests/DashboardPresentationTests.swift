@@ -4,6 +4,115 @@ import Testing
 
 @Suite("Dashboard Presentation Tests")
 struct DashboardPresentationTests {
+    private let flowNow = Date(timeIntervalSince1970: 1_800_000_000)
+
+    private func flow(solar: Double, home: Double, grid: Double, battery: Double,
+                      age: TimeInterval = 0, unavailable: Bool = false) -> DashboardPresentation.PowerFlow {
+        DashboardPresentation.powerFlow(
+            solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
+            sourceTime: flowNow.addingTimeInterval(-age), isUnavailable: unavailable, now: flowNow
+        )
+    }
+
+    @Test("Screenshot flow keeps idle grid in the spare receiving slot")
+    func screenshotPowerFlow() {
+        let result = flow(solar: 754, home: 1064, grid: 0, battery: 310)
+        #expect(result.supplying.map(\.id) == [.solar, .battery])
+        #expect(result.receiving.map(\.id) == [.home, .grid])
+        #expect(result.receiving.last?.role == .idle)
+        #expect(result.receiving.last?.detail == "Idle")
+    }
+
+    @Test("Grid charging and night flow stay two by two with idle solar")
+    func idleCardsFillSpareSlots() {
+        let charging = flow(solar: 0, home: 1000, grid: 3000, battery: -2000)
+        #expect(charging.supplying.map(\.id) == [.grid, .solar])
+        #expect(charging.receiving.map(\.id) == [.home, .battery])
+        #expect(charging.receiving.last?.detail == "Charging")
+        let night = flow(solar: 0, home: 1000, grid: 0, battery: 1000)
+        #expect(night.supplying.count == 2)
+        #expect(night.receiving.count == 2)
+        #expect(night.supplying.first?.id == .battery)
+        #expect(night.supplying.first?.detail == "Discharging")
+    }
+
+    @Test("Export and charge are receivers, even when three active receivers need three rows")
+    func exportAndChargeRoles() {
+        let result = flow(solar: 4000, home: 1000, grid: -1000, battery: -2000)
+        #expect(result.supplying.map(\.id) == [.solar])
+        #expect(result.receiving.map(\.id) == [.home, .grid, .battery])
+        #expect(result.receiving[1].detail == "Exporting")
+        #expect(result.receiving.allSatisfy { $0.role == .receiving })
+    }
+
+    @Test("Every direction combination keeps each card exactly once")
+    func allPowerCardsPersist() {
+        for solar in [0.0, 1000.0] {
+            for grid in [-1000.0, 0.0, 1000.0] {
+                for battery in [-1000.0, 0.0, 1000.0] {
+                    let result = flow(solar: solar, home: 1000, grid: grid, battery: battery)
+                    let cards = result.supplying + result.receiving
+                    #expect(cards.count == 4)
+                    #expect(Set(cards.map(\.id)).count == 4)
+                    #expect(cards.filter { $0.role == .supplying }.allSatisfy { result.supplying.contains($0) })
+                    #expect(cards.filter { $0.role == .receiving }.allSatisfy { result.receiving.contains($0) })
+                }
+            }
+        }
+    }
+
+    @Test("Grid and battery use the existing 50 watt deadband")
+    func powerFlowDeadband() {
+        for watts in [-50.0, 0.0, 50.0] {
+            let cards = flow(solar: 0, home: 0, grid: watts, battery: watts)
+            #expect((cards.supplying + cards.receiving).allSatisfy { $0.role == .idle })
+        }
+        let importing = flow(solar: 0, home: 100, grid: 51, battery: 51)
+        #expect(importing.supplying.map(\.id).contains(.grid))
+        #expect(importing.supplying.map(\.id).contains(.battery))
+    }
+
+    @Test("Stale, unavailable, missing and future source times never imply current flow or idle")
+    func unknownPowerFlow() {
+        for age in [901.0, -1.0] {
+            let result = flow(solar: 1000, home: 1000, grid: 0, battery: 0, age: age)
+            #expect((result.supplying + result.receiving).allSatisfy { $0.role == .unknown && $0.detail == "Flow unknown" })
+        }
+        let unavailable = flow(solar: 1000, home: 1000, grid: 0, battery: 0, unavailable: true)
+        #expect((unavailable.supplying + unavailable.receiving).allSatisfy { $0.role == .unknown })
+        let missing = DashboardPresentation.powerFlow(
+            solarPower: 0, loadPower: 0, batteryPower: 0, gridPower: 0,
+            sourceTime: nil, isUnavailable: false, now: flowNow
+        )
+        #expect((missing.supplying + missing.receiving).allSatisfy { $0.role == .unknown })
+        let invalid = flow(solar: .nan, home: -.infinity, grid: 100, battery: 0)
+        #expect((invalid.supplying + invalid.receiving).filter { $0.id == .solar || $0.id == .home }.allSatisfy { $0.role == .unknown && $0.watts == nil })
+    }
+
+    @Test("Unchanged readings expire locally before the next five-minute refresh")
+    func powerFlowExpiresWithoutNewResponse() throws {
+        let sourceTime = flowNow.addingTimeInterval(-899)
+        let updates = DashboardPresentation.livePowerUpdateDates(sourceTime: sourceTime, now: flowNow)
+        let expiry = try #require(updates.last)
+        #expect(expiry > flowNow)
+        #expect(expiry.timeIntervalSince(flowNow) < 2)
+        func cards(at now: Date) -> [DashboardPresentation.PowerCard] {
+            let result = DashboardPresentation.powerFlow(
+                solarPower: 754, loadPower: 1064, batteryPower: 310, gridPower: 0,
+                sourceTime: sourceTime, isUnavailable: false, now: now
+            )
+            return result.supplying + result.receiving
+        }
+        #expect(cards(at: flowNow).contains { $0.role == .supplying })
+        #expect(DashboardPresentation.liveFreshnessNotice(sourceTime, now: flowNow) == nil)
+        #expect(cards(at: expiry).allSatisfy { $0.role == .unknown })
+        #expect(DashboardPresentation.liveFreshnessNotice(sourceTime, now: expiry) != nil)
+        #expect(DashboardPresentation.livePowerUpdateDates(sourceTime: nil, now: flowNow) == [flowNow])
+        #expect(DashboardPresentation.livePowerUpdateDates(sourceTime: flowNow.addingTimeInterval(-901), now: flowNow) == [flowNow])
+        let replacement = DashboardPresentation.livePowerUpdateDates(sourceTime: flowNow, now: flowNow)
+        #expect(try #require(replacement.last) > expiry)
+    }
+
     @Test("Battery direction matches website power threshold and signs")
     func batteryDirectionMatchesWebsitePowerThresholdAndSigns() {
         #expect(DashboardPresentation.batteryDirection(powerWatts: -51) == .charging)
