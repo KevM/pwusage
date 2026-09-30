@@ -328,8 +328,8 @@ struct DashboardCoordinatorTests {
         #expect(coordinator.solarForecastState == .failedWithBasic)
     }
 
-    @Test("Force refreshAll bypasses interval checks and fetches both live and bill")
-    func forceRefreshAllBypassesIntervalChecksAndFetchesBoth() async {
+    @Test("A user-gesture refreshAll bypasses interval checks and fetches both live and bill")
+    func userGestureRefreshAllBypassesIntervalChecksAndFetchesBoth() async {
         let clock = TestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
@@ -346,8 +346,8 @@ struct DashboardCoordinatorTests {
         #expect(api.billSiteIDs == ["site-1", "site-1"])
     }
 
-    @Test("Force refreshBill bypasses interval checks and fetches only bill")
-    func forceRefreshBillBypassesIntervalChecksAndFetchesOnlyBill() async {
+    @Test("A user-gesture refreshBill bypasses interval checks and fetches only bill")
+    func userGestureRefreshBillBypassesIntervalChecksAndFetchesOnlyBill() async {
         let clock = TestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
