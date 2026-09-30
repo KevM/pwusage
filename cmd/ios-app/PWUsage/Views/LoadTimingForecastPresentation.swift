@@ -96,8 +96,10 @@ enum LoadTimingForecastPresentation {
         timeZone: String,
         now: Date
     ) -> Overlay {
+        let forecastAge = forecastFetchedAt.map { now.timeIntervalSince($0) }
         if enhancement == .enhanced, connection == .ready, let comparison = result.comparison,
-           let fetchedAt = forecastFetchedAt, now.timeIntervalSince(fetchedAt) <= maximumForecastAge,
+           let fetchedAt = forecastFetchedAt, let forecastAge,
+           forecastAge >= 0, forecastAge <= maximumForecastAge,
            comparison.costNow.isFinite, comparison.recommendedCost.isFinite,
            comparison.savings.isFinite, comparison.estimatedSolarContribution.isFinite {
             return Overlay(

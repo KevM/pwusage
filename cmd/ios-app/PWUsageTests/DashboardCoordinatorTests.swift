@@ -25,6 +25,22 @@ struct DashboardCoordinatorTests {
         #expect(api.billSiteIDs.count == 2, "Bill is fetched at t=0,30 in [0,60m).")
     }
 
+    @Test("A clock moved backwards does not stall the poll")
+    func backwardsClockDoesNotStallThePoll() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        #expect(api.liveSiteIDs == ["site-1"])
+
+        // The user's clock jumps back an hour.
+        clock.advance(minutes: -60)
+        await coordinator.refreshDue()
+        #expect(api.liveSiteIDs == ["site-1", "site-1"])
+    }
+
     @Test("Background suspends polling and foreground return makes one due request")
     func backgroundSuspendsPollingAndForegroundReturnMakesOneDueRequest() async {
         let clock = TestClock()
