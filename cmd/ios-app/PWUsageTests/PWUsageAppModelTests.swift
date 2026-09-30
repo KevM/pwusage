@@ -9,7 +9,7 @@ struct PWUsageAppModelTests {
     func bootstrapRestoresCookieSessionAndFetchesSitesOnlyOnce() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
         let defaults = makeDefaults()
-        let model = PWUsageAppModel(configuration: Self.configuration, api: api, userDefaults: defaults)
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: defaults)
         model.scenePhaseChanged(isActive: true)
 
         await model.bootstrap()
@@ -29,7 +29,7 @@ struct PWUsageAppModelTests {
     func siteSelectionPersistsAndDoesNotRefetchSiteList() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
         let defaults = makeDefaults()
-        let model = PWUsageAppModel(configuration: Self.configuration, api: api, userDefaults: defaults)
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: defaults)
         model.scenePhaseChanged(isActive: true)
         await model.bootstrap()
         try await waitForDashboardRequests(api)
@@ -44,13 +44,13 @@ struct PWUsageAppModelTests {
     }
 
     @Test("Unauthorized cookie bootstrap clears local session and shows sign-in")
-    func unauthorizedCookieBootstrapClearsLocalSessionAndShowsSignIn() async {
+    func unauthorizedCookieBootstrapClearsLocalSessionAndShowsSignIn() async throws {
         let api = ApplicationAPISpy(sites: [], sitesError: PWUsageAPIError.signInRequired)
         let defaults = makeDefaults()
         defaults.set("stale-account-scope", forKey: PWUsageAppModel.accountScopeDefaultsKey)
         let forecast = AppForecastManagerSpy()
         let model = PWUsageAppModel(
-            configuration: Self.configuration,
+            configuration: try Self.makeConfiguration(),
             api: api,
             userDefaults: defaults,
             forecastStore: forecast
@@ -67,9 +67,9 @@ struct PWUsageAppModelTests {
     }
 
     @Test("Authorized account without sites gets distinct empty state")
-    func authorizedAccountWithoutSitesGetsDistinctEmptyState() async {
+    func authorizedAccountWithoutSitesGetsDistinctEmptyState() async throws {
         let api = ApplicationAPISpy(sites: [])
-        let model = PWUsageAppModel(configuration: Self.configuration, api: api, userDefaults: makeDefaults())
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults())
 
         await model.bootstrap()
 
@@ -79,9 +79,9 @@ struct PWUsageAppModelTests {
     }
 
     @Test("Successful site retry after bootstrap failure restores authenticated state")
-    func successfulSiteRetryAfterBootstrapFailureRestoresAuthenticatedState() async {
+    func successfulSiteRetryAfterBootstrapFailureRestoresAuthenticatedState() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")], sitesError: PWUsageAPIError.recoverableServerError(statusCode: 503))
-        let model = PWUsageAppModel(configuration: Self.configuration, api: api, userDefaults: makeDefaults())
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults())
 
         await model.bootstrap()
         #expect(model.screenState == .unavailable)
@@ -101,7 +101,7 @@ struct PWUsageAppModelTests {
         let defaults = makeDefaults()
         let forecast = AppForecastManagerSpy()
         let model = PWUsageAppModel(
-            configuration: Self.configuration,
+            configuration: try Self.makeConfiguration(),
             api: api,
             userDefaults: defaults,
             forecastStore: forecast
@@ -122,7 +122,7 @@ struct PWUsageAppModelTests {
         #expect(signedOutActivations[1] == nil)
 
         let nextModel = PWUsageAppModel(
-            configuration: Self.configuration,
+            configuration: try Self.makeConfiguration(),
             api: api,
             userDefaults: defaults,
             forecastStore: forecast
@@ -138,7 +138,7 @@ struct PWUsageAppModelTests {
         let defaults = makeDefaults()
         let forecast = AppForecastManagerSpy()
         let model = PWUsageAppModel(
-            configuration: Self.configuration,
+            configuration: try Self.makeConfiguration(),
             api: api,
             userDefaults: defaults,
             forecastStore: forecast
@@ -157,7 +157,7 @@ struct PWUsageAppModelTests {
         let forecast = AppForecastManagerSpy()
         await forecast.setSignOutError(.cleanupFailed)
         let model = PWUsageAppModel(
-            configuration: Self.configuration,
+            configuration: try Self.makeConfiguration(),
             api: api,
             userDefaults: defaults,
             forecastStore: forecast
@@ -176,7 +176,7 @@ struct PWUsageAppModelTests {
     func signOutStopsTheCoordinatorSoNoRequestFollowsTheSignOut() async throws {
         let clock = AppTestClock()
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
-        let model = makeModel(
+        let model = try makeModel(
             api: api,
             timerInterval: .milliseconds(20),
             now: { clock.now }
@@ -207,7 +207,7 @@ struct PWUsageAppModelTests {
         let clock = AppTestClock()
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
         api.holdLive = true
-        let model = makeModel(api: api, timerInterval: .milliseconds(20), now: { clock.now })
+        let model = try makeModel(api: api, timerInterval: .milliseconds(20), now: { clock.now })
         model.scenePhaseChanged(isActive: true)
         await model.bootstrap()
         try await waitUntil { !api.liveSiteIDs.isEmpty }
@@ -222,9 +222,9 @@ struct PWUsageAppModelTests {
     }
 
     @Test("A cancelled bootstrap that never settled retries instead of latching")
-    func cancelledBootstrapThatNeverSettledRetries() async {
+    func cancelledBootstrapThatNeverSettledRetries() async throws {
         let api = ApplicationAPISpy(sites: [])
-        let model = makeModel(api: api)
+        let model = try makeModel(api: api)
 
         let cancelled = Task { await model.bootstrap() }
         cancelled.cancel()
@@ -243,7 +243,7 @@ struct PWUsageAppModelTests {
         // Park the first bootstrap inside installAuthorizedSites, after `sites`
         // is populated but before `screenState` is settled.
         await forecast.setHoldActivation(true)
-        let model = makeModel(api: api, forecast: forecast)
+        let model = try makeModel(api: api, forecast: forecast)
 
         let cancelled = Task { await model.bootstrap() }
         try await waitUntil { await forecast.activationIsParked }
@@ -291,21 +291,21 @@ struct PWUsageAppModelTests {
         #expect(model.coordinator?.selectedSiteID == "site-2", "The stale attempt must not replace the newer coordinator.")
     }
 
-    // `pwusage.test` is a stub host, so the allowlist opt-out is explicit. The
-    // `try!` is pre-existing and out of scope for this change.
-    private static let configuration = try! AppConfiguration(
-        apiOriginString: "https://pwusage.test",
-        allowUnlistedHost: true
-    )
+    // `pwusage.test` is a stub host, so the allowlist opt-out is explicit. Built by
+    // a throwing helper rather than a force-unwrapped `static let`, so a rejected origin fails
+    // the one test that used it instead of trapping the whole binary.
+    private static func makeConfiguration() throws -> AppConfiguration {
+        try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true)
+    }
 
     private func makeModel(
         api: ApplicationAPISpy,
         forecast: any SolarForecastManaging = AppForecastManagerSpy(),
         timerInterval: Duration? = nil,
         now: @escaping () -> Date = Date.init
-    ) -> PWUsageAppModel {
+    ) throws -> PWUsageAppModel {
         PWUsageAppModel(
-            configuration: Self.configuration,
+            configuration: try Self.makeConfiguration(),
             api: api,
             userDefaults: makeDefaults(),
             forecastStore: forecast,
@@ -398,7 +398,13 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI {
         let pending = liveContinuations
         liveContinuations.removeAll()
         for (siteID, continuation) in pending {
-            continuation.resume(returning: try! Self.liveResponse(siteID: siteID))
+            do {
+                continuation.resume(returning: try Self.liveResponse(siteID: siteID))
+            } catch {
+                // A broken fixture fails the one test awaiting this continuation,
+                // with the decode error attached, instead of trapping the binary.
+                continuation.resume(throwing: error)
+            }
         }
     }
 
