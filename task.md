@@ -215,10 +215,13 @@ ledger commit; it therefore predicted **six** code commits and the branch has **
   `cd cmd/ios-app && ./run-tests.sh` exits **0**, **380 tests in 21 suites** passing.
   `./generate.sh && xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination
   'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` prints **BUILD SUCCEEDED**
-  with `grep -c "warning:"` = **0**. `CODE_AUDIT.md`'s header documents the one
-  `appintentsmetadataprocessor` "Metadata extraction skipped" toolchain line as the expected
-  warning; it did **not** appear in this run, so the count is 0 and not 1.
-  `ls ~/Library/Logs/DiagnosticReports/ | grep -c "^PWUsage-"` is **0**. `generate.sh` left no
+  with `grep -c "warning:"` = **1** on a clean build. The single hit is the
+  `appintentsmetadataprocessor` "Metadata extraction skipped" toolchain line that
+  `CODE_AUDIT.md`'s header documents as the sole permitted exemption. An
+  incremental build may report **0** because the metadata processor does not
+  re-run; that is a DerivedData artifact, not a stricter result, and both figures
+  have been measured on this branch.
+  `generate.sh` left no
   tracked change. The §5.12 `373 tests in 21 suites` figures are time-scoped to that commit
   and have since grown with the tests later commits added.
 
@@ -350,8 +353,9 @@ to look for them, because each lives in the seam between two correct commits.
 - [x] `cb5e5f7` fix(ios): close the load-timing staleness site 5.7's survey missed
 - [x] docs(ios): correct the ledger, the plan and the design after the review — the second review pass's citation and claim corrections
 - [x] fix(ios): report a failed budget write as a save failure, not a network one — the second review pass's Finding 1
-- The two commits above are **named by subject and not by SHA**, where every other entry in this list carries one. A SHA recorded here would be dead on arrival, because both were rewritten after they landed, and the repo's own rule already says to subject-identify a commit rather than cite it. The rewrite was not cosmetic: the commit carrying the §5.5 behaviour change is now the one that carries its own reversal. Before it, `CODE_AUDIT.md` and this file went on asserting — for one commit — that the two budget saves still mark the scope failed and that `reservationPersistenceFailureDisablesCache` pins it, while the code in the same commit had already stopped marking it and had renamed the test. That is the defect `CODE_AUDIT.md:3` exists to prevent, and it was invisible while the commits were the branch tip.
-- [x] This commit — docs and ledger corrections.
+- [x] docs(ios): re-derive the citations the budget fix moved and make the warning gate durable
+- The three commits above are **named by subject and not by SHA**, where every other entry in this list carries one. They were rewritten after they landed, so a SHA recorded here would be dead on arrival — and the repo's own rule already says to subject-identify a commit rather than cite it, precisely because forward references break on every amend. The rewrite was not cosmetic: the commit carrying the §5.5 behaviour change did not carry its own reversal. `CODE_AUDIT.md` and this file went on asserting, for one commit, that the two budget saves still mark the scope failed and that `reservationPersistenceFailureDisablesCache` pins it, while the code in the same commit had already stopped marking it and had renamed the test. That is the exact defect `CODE_AUDIT.md:3` exists to prevent — a ledger correction batched into a later commit instead of made alongside the fix — and it was invisible precisely because the three commits were the branch tip. Nothing was pushed, so the rewrite was free; after it, no commit in the branch asserts a behaviour its own code contradicts.
+- One of the three had its **commit message rebuilt in place** before the rewrite, after it was found to claim a re-record of the zero-warning figure that its own diff did not contain — the same shape as the spec's struck item 2. It now names the omission and points at the commit that fixed it. All three were then rewritten together so that the §5.5 reversal rides with the commit that made it necessary.
 - Review: Ruling: §5.5's fix is **complete only once both refresh paths agree**, and they did not
   until this pass. `refreshSolarForecast(manual:)` learned that a save failure is not an
   unavailability; `loadTimingDetailAppeared` never did, so it failed its guard, niled the batch
