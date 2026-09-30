@@ -153,6 +153,20 @@ struct LoadProfileStoreTests {
         car.carSettings?.initialStateOfCharge = 81
         #expect(throws: LoadProfileError.self) { try store.updateProfile(car) }
     }
+
+    @Test("Describes every profile failure in user-facing language")
+    func describesProfileErrors() {
+        let cases: [(LoadProfileError, String)] = [
+            (.invalidProfile, "Enter a name for custom loads, and energy and duration greater than zero. Check the car charge settings too."),
+            (.profileNotFound, "That load profile is no longer available. Close and reopen load profiles."),
+            (.cannotDeleteBuiltIn, "Built-in load profiles can’t be deleted. Edit them instead, or reset them to their default settings."),
+            (.cannotResetCustom, "Custom loads can’t be reset to defaults. Delete the load and add it again instead.")
+        ]
+        for (error, expected) in cases {
+            #expect(error.errorDescription == expected)
+            #expect(error.localizedDescription == expected)
+        }
+    }
 }
 
 @MainActor
