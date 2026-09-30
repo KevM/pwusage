@@ -221,7 +221,7 @@ struct DashboardView: View {
                 "Live summary · \(DashboardPresentation.freshness($0.activeLoadTiming?.energyDataThrough ?? $0.sources.energyDataThrough, staleAfter: 30 * 60).replacingOccurrences(of: "Updated ", with: ""))"
             } ?? "Waiting for active tariff")
             let summarySource = live?.activeLoadTiming?.energyDataThrough ?? live?.sources.energyDataThrough
-            let summaryIsStale = coordinator.live.isUnavailable || (summarySource.map { Date.now.timeIntervalSince($0) > 30 * 60 } ?? false)
+            let summaryIsStale = coordinator.live.isUnavailable || DashboardPresentation.loadTimingSummaryIsStale(source: summarySource)
             let summary = DashboardPresentation.loadTimingSummary(
                 live?.activeLoadTiming,
                 hasTariff: DashboardPresentation.hasActiveTariff(label: live?.activeTariff),

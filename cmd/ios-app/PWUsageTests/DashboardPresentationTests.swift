@@ -138,6 +138,21 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.liveFreshnessNotice(nil, now: now) == "Source time unavailable")
     }
 
+    @Test("A future-dated load timing source is stale, not current")
+    func futureDatedLoadTimingSourceIsStale() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        // The heading for this card is built by `freshness`, which says "Source
+        // time is in the future" for a source ahead of the clock. Reporting the
+        // summary as current underneath it is the §8.18 shape: the two halves of
+        // one card disagreeing about the same timestamp.
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(30 * 60), now: now))
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(1), now: now))
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(-31 * 60), now: now))
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(-30 * 60), now: now) == false)
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(-5 * 60), now: now) == false)
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: nil, now: now) == false)
+    }
+
     @Test("Older charge is clearly dated")
     func olderChargeIsClearlyDated() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
