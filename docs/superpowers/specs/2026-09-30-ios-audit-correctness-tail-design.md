@@ -195,10 +195,10 @@ demonstrated is how a fix stops being a fix.
 ### D6 — §2's quick win #1 and §9.4 are wrong as audited
 
 Both propose deleting `solarForecastSettingsDidEdit()` and `loadProfileDidEdit()` as dead code. They
-are not dead. `SolarForecastCoordinatorTests.swift:552-611` uses them as a deliberate
-**synchronization seam**: three tests call them *mid-flight* to model "the user typed in the
-settings sheet while a refresh was in progress", then assert the in-flight work still completes
-correctly.
+are not dead. `SolarForecastCoordinatorTests.swift:573`, `:593` and `:613` (the range `:552-611`
+this paragraph used to cite was stale) use them as a deliberate **synchronization seam**: three tests
+call them *mid-flight* to model "the user typed in the settings sheet while a refresh was in
+progress", then assert the in-flight work still completes correctly.
 
 The tests are named for the invariant they protect — *"Profile comparisons and settings edits
 perform no requests"*, *"Unsaved settings edits do not strand a loading enhancement"*, *"Unsaved
@@ -206,21 +206,52 @@ settings edits do not supersede a disconnect in progress"*. **The emptiness is t
 test.** It is a tripwire: a guard that a future edit does not quietly add network work to a local
 edit. Deleting the methods deletes three regression tests.
 
-The legitimate half of the finding is the four **view** call sites, which fire a no-op per keystroke
+The legitimate half of the finding is the **view** call sites, which fire a no-op per keystroke
 (`.onChange(of: apiKey) { coordinator.solarForecastSettingsDidEdit() }`).
 
-**Decision:** keep both methods and all three tests; delete the four view call sites; record in
+**Amended 2026-09-30, after the branch landed (ledger reconciliation):** "the four view call sites"
+was an undercount. There are **five** (four in `SolarForecastSettingsSheet`, one in
+`LoadTimingView`), of which **three** were whole `.onChange` bodies; the fourth sheet site is a
+direct call inside a `Toggle` binding and the `LoadTimingView` one shares an `.onChange(of:
+profileStore.profiles)` with a real body, so neither is a bare wrapper. The two numbers describe
+different things and were being used interchangeably. The stale `:552-611` test range above was
+corrected in the body itself rather than only here, so this paragraph and the paragraph it amends
+cannot state different things.
+
+**Decision:** keep both methods and all three tests; delete the five view call sites; record in
 §9.4 that the methods are an intentional no-op seam, so the next reader does not file the same
 finding again.
 
-### D7 — §2's quick win #2 is already fixed
+### D7 — §2's quick win #2 is ~~already fixed~~ **WRONG ON THE MERITS — implement it**
 
-The audit proposes removing the no-op `do { … } catch { throw error }` from `PWUsageAPI.swift`. It
-is gone: §6.2's rewrite replaced it with meaningful `catch let error as MobileLiveResponse.ContractError
-{ throw error }` / `catch { throw PWUsageAPIError.invalidResponse }` pairs
-(`PWUsageAPI.swift:49-51`, `:57-60`). Note the file also moved from `PWUsage/Services/` to
-`PWUsage/Networking/`, so the audit's path is stale. The quick win is struck rather than
-implemented.
+**Amended 2026-09-30, after the branch landed (ledger reconciliation):** this decision was wrong,
+not merely badly reasoned, and every one of its factual claims is false.
+
+1. *The wrapper was not gone.* The no-op `do { … } catch { throw error }` was still in
+   `perform(_:)` at `PWUsage/Networking/PWUsageAPI.swift:109-110` at the start of this branch. The
+   audit's citation was exactly correct; only the reasoning written around it was wrong.
+2. *No prior finding could have removed it.* `perform(_:)` had not been edited since the Solcast
+   commit `c05947b`, and this branch's own quick-wins commit `fcabe56` edited the same file only
+   for `fetchSites` and the consolidated conformances. Reading that commit's diff is how the claim
+   looked plausible.
+3. *The `ContractError` pairs cited below are a different piece of code.* They are the `fetchLive`
+   (`:50-51`) and `fetchBill` (`:59-60`) decodes — real error mapping, and not this item.
+4. *The file never moved.* The original text here claimed the file moved from `PWUsage/Services/`
+   to `PWUsage/Networking/`, so the audit's path was stale. `PWUsage/Services/PWUsageAPI.swift` has
+   **never existed in any commit** in this repository (`git log --all -- <path>` is empty); the
+   audit's `PWUsage/Networking/` path was correct all along.
+
+**Consequence.** The quick win is not struck. It was implemented in its own commit, `03c41d5`
+`refactor(ios): remove the no-op do/catch in the API transport`, which collapses the declaration to
+`let (data, response): (Data, URLResponse) = try await session.data(for: request)`. A rethrow is the
+identity, so no behaviour changed and no test was added; `PWUsageAPITests` covers the request path.
+
+**What this ruling cost.** Two lines of dead code, which is cheap. The expensive half is the
+precedent: a design document had recorded a specific line number as already fixed when it was not,
+and the plan, the Task 7 step, and the §2 table all inherited that claim. A later reader trusting
+this document would have skipped the item a second time. Treat this section as the worked example
+of the rule the rest of this document follows — a status is changed by opening the code, never by
+reading another finding's commit message.
 
 ## Commit sequence
 
@@ -238,6 +269,17 @@ bisectable.
 | 5 | `fix(ios): stop a backwards clock stalling polls and faking freshness` | §5.7 a+b | coordinator, presentation |
 | 6 | `refactor(ios): take the audit's self-contained quick wins` | §2 | 8 files |
 | 7 | `docs(ios): reconcile the audit ledger with the correctness tail` | ledger | `CODE_AUDIT.md`, `task.md` |
+
+**Amended 2026-09-30, after the branch landed (ledger reconciliation):** the branch carries **ten**
+commits, not the seven tabulated above. Since row 7 is this ledger commit, the table predicted
+**six** code commits and the branch has **nine**. Each extra commit, with its reason, is recorded in
+`task.md` under the commit-count ruling:
+
+| # | Commit | Why it is not in the table above |
+| --- | --- | --- |
+| 4 | `test(ios): clear three pre-existing test-target warnings` | The branch's ground rule is zero warnings, but the gate the plan measures builds the app target only, so every test run reported a non-pristine build. Two of the three were dead code and were deleted; the third was live intent. |
+| 6a | `fix(ios): stop blaming a stale forecast for a backwards clock` | Split out of row 5 on review: §5.7(b) suppressed the forecast panel but left the panel's own accurate string "Source time is in the future" replaced by the generic "too old or incomplete" fallback — two false claims shown to the user, which the combined commit did not notice. |
+| 9 | `refactor(ios): remove the no-op do/catch in the API transport` | §2 quick win #2, which D7 struck. D7 was wrong (see above), so the item was implemented rather than skipped. |
 
 ## Per-finding design
 
@@ -265,6 +307,29 @@ the request-failure `catch`. Add `SolarForecastRefreshFailure.saveFailed`. On sa
 
 The budget-reservation persist at `:403-406` already performs exactly this separation for the same
 reason. The fix applies the existing shape to the second call site; no new mechanism.
+
+**Amended 2026-09-30, after the branch landed (ledger reconciliation):** the sentence above is
+**false**, and it matters. The budget-reservation persist does not separate a persistence failure
+from a request failure; on failure it calls `persistFailureState`, which quarantines the credential
+on a *second* failure — the identical defect class, at a different call site. The line has not
+moved except downward: it is now `SolarForecastStore.swift:409-412`. It was deliberately left
+unfixed, and the reason is *not* that an existing test pins the current behaviour — it does not.
+**No test covers a budget-save failure at all.** The two quarantine tests arm
+`failNextSaveAfter(successfulSaves: 1)`, which lets the first save after arming through, and that
+first save is the budget persist at `:409`; the failure therefore lands on the request-failure write
+inside `persistFailureState`. The double's own doc comment says so
+(`SolarForecastStoreTests.swift:809-810`). Closing the hazard needs a **new** test aimed at `:409`,
+of the same shape as `saveFailureAfterSuccessfulFetchNeverQuarantines` but arming
+`failSaves(2, afterSuccessfulSaves: 0)`, plus a decision about what that path should return. **Two
+consecutive failures are required, not incidental:** a single failure at `:409` escalates to
+`persistFailureState`, whose own fallback write at `:463` then succeeds and returns `.persisted`
+(`:505`), and `quarantineCredential` is reached only from that `catch` (`:466`) — so one failure
+deletes nothing. The obvious-looking `failNextSaveAfter(successfulSaves: 0)` nils its own arm on the
+first throw (`SolarForecastStoreTests.swift:798`) and yields that single harmless failure, so a test
+written that way would pass against the unfixed code. It is
+recorded as a note in §5.5's `Fix:` bullet rather than as a new numbered finding, so it has no
+`§N.M` handle and nothing will chase it automatically. The real shape of the fix is therefore **one**
+call site separated, not two, and the second is still open.
 
 *Coordinator.* `SolarForecastUnavailableCause.init(_ failure:)` (`:50`) becomes **failable**,
 returning `nil` for `.saveFailed`, with a comment stating that a save failure is not an
@@ -410,8 +475,8 @@ branch's review, so this is the sibling case.
 
 | Item | Change | Note |
 | --- | --- | --- |
-| #1 | Delete the 4 view call sites; keep both methods + 3 tests | D6 — §9.4 gets a note |
-| #2 | — | D7 — already fixed by §6.2 |
+| #1 | Delete the **five** view call sites; keep both methods + 3 tests | D6 — §9.4 gets a note. **Amended 2026-09-30: "4" was an undercount; see D6's amendment above.** |
+| #2 | Remove the no-op `do`/`catch` in `perform(_:)` | **Amended 2026-09-30: D7 was wrong — implemented as `03c41d5`** |
 | #3 | `fetchSites` (`PWUsageAPI.swift:42`) → `MobileContractDecoder.make()` | `:42` is the only bare `JSONDecoder()` among the four contract decodes; `:79`/`:117` decode `SessionResponse`/`ErrorResponse`, which are not contracts |
 | #4 | Consolidate 3 scattered `extension PWUsageAPI:` conformances | `PWUsageApp.swift:11`, `DashboardCoordinator.swift:10`, `:17` |
 | #5 | Interpolate `SolarForecastStore.totalAttemptsPerUTCDay` at `SolarForecastSettingsSheet.swift:122` | removes a duplicated literal of `:83` |
@@ -473,9 +538,9 @@ In `CODE_AUDIT.md`, in the same commit as each fix:
 | §5.12 | `FIXED (PR pending)` | Record the mutation check, including the before/after crash count. |
 | §8.18 | `FIXED (PR pending)` | Record the TRMNL precedent, the neutral-tint and no-bolt refinements, and that the device check is still owed. |
 | §5.6 | `WON'T FIX` | D2's rationale and the condition for revisiting. Number stays in place. |
-| §9.4 | stays `OPEN`, gains a note | D6: the methods are an intentional no-op seam with three tripwire tests; the four view call sites are gone. |
+| §9.4 | stays `OPEN`, gains a note | D6: the methods are an intentional no-op seam with three tripwire tests; the five view call sites are gone. |
 | §3.15 | **new finding** | `ContinuousClock` cadence anchoring, filed so part (c) of §5.7 is not lost behind a `FIXED` status. Severity Medium. |
-| §2 | strike #2, mark #1 corrected | D7 and D6. |
+| §2 | ~~strike #2~~ **implement #2**, mark #1 corrected | D6 stands. **Amended 2026-09-30: D7 was wrong — #2 was implemented as `03c41d5`, not struck.** |
 
 Counts move from **57 OPEN / 17 FIXED** to **52 OPEN / 22 FIXED / 1 WON'T FIX**, over 75 tracked
 findings: five findings flip to `FIXED` (§5.5, §5.7, §5.8, §5.12, §8.18), §5.6 leaves `OPEN` for
@@ -484,6 +549,12 @@ not a numbered finding so it does not move any count.
 
 In `task.md`, a Ledger section for this branch with the seven `Ruling:` lines (D1-D7), matching the
 established format: what was decided, why, and what it costs if the ruling is wrong.
+
+**Amended 2026-09-30, after the branch landed (ledger reconciliation):** eight `Ruling:` lines were
+written, not seven. D1-D7 plus a commit-count ruling recording the three commits added during
+execution, which is the one thing a reader counting against the table above would otherwise have to
+guess at. Every ruling names its cost, including D7's — which is the reason the amended D7 above
+leads with "what this ruling cost" rather than only listing the corrections.
 
 ## Risks
 

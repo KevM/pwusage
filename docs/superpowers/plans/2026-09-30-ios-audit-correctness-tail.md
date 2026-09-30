@@ -1199,20 +1199,37 @@ EOF
 
 ## Task 6: §2 — the eight surviving quick wins
 
-Mechanical edits. Two of §2's nine items are not implemented here: **#2 is already fixed** by §6.2,
-which replaced the no-op `do/catch` in `PWUsageAPI.swift` with real `ContractError` handling; and
-**#1 is corrected** — see below.
+Mechanical edits. **#1 is corrected** — see below.
+
+**Amended 2026-09-30, after the branch landed (ledger reconciliation):** this originally also said
+**#2 is already fixed** by §6.2, "which replaced the no-op `do/catch` in `PWUsageAPI.swift` with
+real `ContractError` handling". **Both of that claim's premises are false**, so #2 was
+implemented instead, in its own commit `03c41d5`. The no-op `do { … } catch { throw error }` was
+still in `perform(_:)` at `PWUsage/Networking/PWUsageAPI.swift:109-110` at the start of this
+branch — so the audit's citation was exactly right and only the reasoning around it was wrong —
+and `perform(_:)` had not been edited since the Solcast commit `c05947b`, so no prior finding
+could have removed it. The `ContractError` pairs the claim pointed at are the `fetchLive`
+(`:50-51`) and `fetchBill` (`:59-60`) decodes: real error mapping, not this item, and predating
+this branch. See the corrected Step 4 below and the `D7` ruling in `task.md`.
 
 **#1 — delete the view call sites, keep the methods.** The audit and §9.4 both propose deleting
 `solarForecastSettingsDidEdit()` and `loadProfileDidEdit()` as dead code. They are not dead:
-`SolarForecastCoordinatorTests.swift:552-611` uses them as a synchronization seam, calling them
+`SolarForecastCoordinatorTests.swift:573`, `:593` and `:613` use them as a synchronization seam, calling them
 mid-flight to model a settings edit during an in-progress refresh. The tests are named for the
 invariant — *"Profile comparisons and settings edits perform no requests"*, *"Unsaved settings edits do
 not strand a loading enhancement"*, *"Unsaved settings edits do not supersede a disconnect in
-progress"*. **The emptiness is the contract under test.** Delete only the four view call sites:
-`SolarForecastSettingsSheet.swift:29`, `:103`, `:108`, `:181` and `LoadTimingView.swift:406`. Then
-remove the now-dangling `.onChange` wrappers where a call site was the whole body, leaving the
-modifier list intact.
+progress"*. **The emptiness is the contract under test.** Delete only the five view call sites:
+`SolarForecastSettingsSheet.swift:29`, `:103`, `:108`, `:181` and `LoadTimingView.swift:406` (pre-fix
+line numbers). Then remove the now-dangling `.onChange` wrappers where a call site was the whole
+body, leaving the modifier list intact.
+
+**Amended 2026-09-30, after the branch landed (ledger reconciliation):** "the four view call sites"
+was an undercount twice over. There are **five** view call sites (four in the settings sheet, one
+in `LoadTimingView`), of which **three** were whole `.onChange` bodies — the `:181` site is a direct
+call inside a `Toggle` binding and the `LoadTimingView` one shares an `.onChange(of:
+profileStore.profiles)` with a real body, so neither is a bare wrapper. Both numbers are correct
+about different things, and the two were being used interchangeably. The seam test range was
+likewise stale: the three tests are at `:573`, `:593` and `:613`, not `:552-611`.
 
 Keep all three tests and both methods. Update §9.4's `Status` to stay `OPEN` with a note recording
 that the methods are an intentional no-op seam, so the finding is not filed a third time.
@@ -1272,11 +1289,21 @@ dead code, but SolarForecastCoordinatorTests uses them as a
 synchronization seam: three tests call them mid-flight to model a
 settings edit during an in-progress refresh, and are named for the
 invariant they protect. The emptiness is the contract under test. Only
-the four view call sites go; the methods and the tests stay, and 9.4
+the five view call sites go; the methods and the tests stay, and 9.4
 now records why so it is not filed a third time.
 
-Item 2 is already done. 6.2's rewrite replaced the no-op do/catch in
-PWUsageAPI with real ContractError handling.
+**Amended 2026-09-30, after the branch landed (ledger reconciliation):** the
+paragraph this heredoc template originally carried in place of the one above
+("Item 2 is already done. 6.2's rewrite replaced the no-op do/catch in
+PWUsageAPI with real ContractError handling.") was false, so item 2 is not part
+of the `fcabe56` commit at all — it landed separately as `03c41d5`, once the
+premise had been checked against the tree and found to be wrong. Five view call
+sites went, not the four this message claimed; see the correction above.
+
+**Note for anyone auditing this branch:** the false paragraph existed only in
+*this template*. The commit message actually landed in `fcabe56` is the
+corrected one, so `git log` will **not** turn up a false claim — do not go
+looking for one.
 
 The rest: fetchSites routes through the shared contract decoder; three
 scattered retroactive conformances are consolidated; the settings sheet
@@ -1338,6 +1365,14 @@ number stays in place.
 In §2, mark item 2 as already done by §6.2, and annotate item 1 to point at §9.4's note so the two
 cannot drift apart again.
 
+**Amended 2026-09-30, after the branch landed (ledger reconciliation):** the first half of this
+step is not achievable as written and must not be performed by a later reader. Item 2 was **not**
+already done by §6.2 — the no-op `do/catch` was still in `perform(_:)` at the start of the branch —
+so "strike" is the wrong instruction and the item was implemented in `03c41d5` instead. Item 1's
+annotation is the half that still holds. The rule this step was reaching for is worth keeping
+explicitly, though: an item must not be struck on the authority of another finding's commit
+message unless the cited lines have been opened in the current tree.
+
 ### Step 5: Write the task.md Ledger section
 
 Append a `## iOS audit correctness tail (fix/ios-audit-correctness-tail)` section to `task.md` with a
@@ -1388,6 +1423,11 @@ Run after Task 7. Every gate must pass before the branch is offered for review.
       shows it only inside the `switch`, never as a `nil` fallback
 - [ ] **Ledger sums:** OPEN + FIXED + WON'T FIX == 75
 - [ ] **Commits:** seven, in the spec's order, each green on its own
+      — **Amended 2026-09-30: the branch has ten.** Three were added during execution
+      (`8c44dc9` test-target warnings, `3a367bb` split out of the §5.7 commit on review,
+      `03c41d5` §2 item 2, which D7 wrongly struck). Each commit's reason is recorded in
+      `task.md` under the commit-count ruling, and the design doc's commit table carries the
+      same three rows with the same reasons.
 
 ## Not in this branch
 
