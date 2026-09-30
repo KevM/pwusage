@@ -177,7 +177,9 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
     static let maximumAge: TimeInterval = 24 * 60 * 60
 
     /// `asOf` is stamped by the *server* and compared against the *device* clock, so a
-    /// device running fast sees it in the future even though the data is fine. This
+    /// device whose clock is *behind* the server sees it in the future even though the
+    /// data is fine. A device running fast is the opposite: it makes `asOf` look older,
+    /// which the positive bound below already accepted. This
     /// bound is deliberately asymmetric with the positive one: leniency here costs a
     /// bounded amount of mis-measured freshness, while strictness makes a mis-set
     /// device clock reject every response forever and blame the server for it.

@@ -193,6 +193,11 @@ ledger commit; it therefore predicted **six** code commits and the branch has **
 - [x] `8c44dc9` test(ios): clear three pre-existing test-target warnings — *(not in the
   spec's table; see the commit-count ruling below).*
 - [x] `3a7a98d` fix(ios): tolerate a fast device clock on the planning context — §5.8.
+  **The subject says "fast" and is wrong** — §5.8 rescues a device whose clock is *behind* the
+  server, not one running fast (see §5.8's `Why:`). A commit subject cannot be corrected without
+  rewriting the branch, which would invalidate every reference to this SHA, so the error is
+  recorded here instead. The direction is corrected everywhere it is editable: this ledger, the
+  code comment, the test name, and both the plan and the design.
 - [x] `089e3b0` fix(ios): stop a backwards clock stalling polls and faking freshness —
   §5.7 parts (a) and (b).
 - [x] `3a367bb` fix(ios): stop blaming a stale forecast for a backwards clock — *(not in
@@ -281,7 +286,7 @@ ledger commit; it therefore predicted **six** code commits and the branch has **
   comparable — a future-stamped SoC *reading* is suspect data, while `asOf` is a *server*
   timestamp whose "future" is a statement about the local clock — so `asOf` gets its own
   named `maximumNegativeAgeSkew` of one hour, deliberately asymmetric with the 24h
-  positive bound. Cost if wrong: a device running fast gets up to an hour of
+  positive bound. Cost if wrong: a device whose clock is behind the server gets up to an hour of
   mis-measured `asOf` freshness instead of a permanently broken feature that blames the
   server; and if the cache ever stops self-healing, the retained test fails loudly rather
   than silently.
@@ -332,6 +337,83 @@ ledger commit; it therefore predicted **six** code commits and the branch has **
   failure mode this ledger exists to prevent; the reverse error, folding them into their
   neighbours, would hide that a test-target warning was a behavioural trap rather than
   dead code, and that a user-visible string was wrong.
+
+## Whole-branch review pass (`6ddea83`..HEAD)
+
+Seven findings, all of them the same shape: a fix or a claim that was correct
+in isolation and wrong in company. Ten task-scoped reviews each had no reason
+to look for them, because each lives in the seam between two correct commits.
+
+- [x] `672dec4` fix(ios): close the two destructive save-failure paths 5.5 left open
+- [x] `aa88d26` fix(ios): keep the promise the save-failure note makes
+- [x] `e64c052` test(ios): remove the last two try! from the preview fixtures
+- [x] `cb5e5f7` fix(ios): close the load-timing staleness site 5.7's survey missed
+- [x] This commit — docs and ledger corrections.
+- Review: Ruling: §5.5's fix is **complete only once both refresh paths agree**, and they did not
+  until this pass. `refreshSolarForecast(manual:)` learned that a save failure is not an
+  unavailability; `loadTimingDetailAppeared` never did, so it failed its guard, niled the batch
+  and rendered "The forecast was too old or incomplete to use" after a *successful* fetch of a
+  brand-new forecast — the exact symptom the finding exists to remove, through the door the first
+  fix left unlocked, and on the *dominant* path rather than the exception. Both budget saves also
+  escalated a write failure to `persistFailureState`, whose own failing write deletes the
+  Keychain item; the one in `discoverSites` is the first-run path, so two failed writes destroyed
+  the key the user had just typed. Cost if wrong: a working Solcast key is still destroyable by a
+  disk failure, which is the one outcome §5.5 exists to make impossible, and the false "too old"
+  note is back on every screen open.
+- Review: Ruling: on the two budget saves the scope is still marked failed, unlike the post-fetch
+  save, and that asymmetry is deliberate. An unpersisted *budget* means the daily request
+  allowance cannot be enforced across a relaunch, so failing closed is the honest direction;
+  `reservationPersistenceFailureDisablesCache` pins it and passes unmodified. Dropping the
+  escalation while rewriting that test was available and was rejected: widening quarantine is not
+  the point, and a tripwire rewrite is exactly what §5.12 warns against. Cost if wrong: a device
+  with a transient disk fault shows no forecast recommendation until the next successful refresh
+  clears the marking — conservative, visible, and self-healing.
+- Review: Ruling: the save-failure note's promise is **kept, not withdrawn**. The alternative —
+  delete "It will be retried on the next refresh" — was rejected because the promise was the
+  honest description of what the user should expect, and the defect was that nothing implemented
+  it. A `dirtyScopes` set now records a write left pending and the `.alreadyFresh` short-circuit
+  attempts it, returning `.refreshed` on success and `.failed(.saveFailed)` on failure. The retry
+  is a file write only: no request is charged, no Solcast call is made, and it cannot spin,
+  because a failed retry returns without refetching so the cache is not re-stamped. Cost if wrong:
+  a permanently failing disk is written to once per refresh call instead of not at all — a small,
+  bounded cost against a warning that would otherwise lie.
+- Review: Ruling: the preview fixtures' `try!` pair is fixed by **decoding inside the two
+  `fetch` methods rather than by making `init` throwing**. Both were available. A throwing `init`
+  would have forced `try` into all nine construction sites — four of them inside `#Preview` bodies
+  with nowhere sensible to handle it — and would have made a preview that cannot be constructed
+  fail to render at all. Decoding in the already-`throws` fetches puts the failure on the one call
+  that needed the value and hands the caller the `DecodingError`. Cost if wrong: the JSON is held
+  rather than the decoded value, so each `fetch` re-decodes — irrelevant for a preview, and the
+  trade is invisible if the API is ever used in a hot path.
+- Review: Ruling: §5.7's title says "**All** cadence and staleness decisions", which is a
+  completeness claim, so the survey is written into the finding and is checkable rather than
+  asserted. Eleven sites make an age decision and all eleven now handle a negative age. Verifying
+  it turned up two things the review that prompted it had wrong: the estimator's balance guard is
+  split across two lines (so grepping the staleness line for `>= 0` finds nothing and the site
+  reads as unguarded), and `chargeAgeLabel` has the same upper-bound-only shape and is provably
+  *not* a defect — a negative age returns `nil`, which is correct, and widening it would
+  *introduce* the bug. Cost if wrong: a future reader trusts the survey instead of redoing it,
+  and either opens a non-bug or misses the next one; the survey is a floor, not a substitute for
+  looking.
+- Review: Ruling: §5.8's skew direction was **wrong in the wrong direction to be harmless**.
+  `sourceAge` compares the server's `asOf` to the *device's* clock, so `asOf` looks future-dated
+  only when the device is **behind**; a fast clock was never in the affected population. The
+  reasoning and the code were always right, and the error is inherited from the pre-branch audit.
+  Corrected in this ledger, the code comment, the test name, and both the plan and the design
+  after a claim-grep found eight further instances the review had not listed. Cost if wrong: a
+  user with a fast clock reads §5.8, sees their own symptom described as fixed, and never learns
+  the real cause is the opposite one — the most expensive kind of wrong prose, because it is
+  indistinguishable from being helped. The landed commit subject still says "fast" and cannot be
+  corrected without rewriting the branch; that is recorded rather than silently left.
+- Review: Ruling: §8.18's `Fix:` bullet is corrected on **what the precedent does**, and the
+  product decision is not reversed. The blank fill matches all three TRMNL renderers and the web
+  tile; the direction glyph does not — TRMNL picks `CHARGING_ICON`/`DISCHARGING_ICON` from the
+  `status` argument alone and emits it regardless of `soc`, and the web tile does the same, while
+  iOS folds direction into the glyph name. The previous wording claimed TRMNL "is always neutral"
+  and that a bolt "asserts flow the blank fill denies", conflating level with direction. Cost if
+  wrong: a reader deciding this later is misled about the precedent, which is the one input the
+  decision actually rests on; the choice itself survives either way, and the tint change does not
+  depend on the precedent at all.
 
 ## Notes
 
