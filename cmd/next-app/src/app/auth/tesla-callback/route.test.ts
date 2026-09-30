@@ -45,7 +45,8 @@ describe('GET /auth/tesla-callback', () => {
         process.env = {
             ...origEnv,
             PUBLIC_TESLA_OAUTH_CLIENT_ID: 'client-123',
-            PUBLIC_TESLA_OAUTH_AUDIENCE: 'https://fleet-api.prd.na.vn.cloud.tesla.com'
+            PUBLIC_TESLA_OAUTH_AUDIENCE: 'https://fleet-api.prd.na.vn.cloud.tesla.com',
+            TESLA_OAUTH_SECRET: 'secret-123'
         };
 
         mocks.cookies.mockResolvedValue({
@@ -57,6 +58,11 @@ describe('GET /auth/tesla-callback', () => {
 
     afterEach(() => {
         process.env = origEnv;
+        // vi.clearAllMocks() clears calls but not implementations, and the mobile
+        // tests below install a getCookie implementation. Reset it here so a test
+        // that fails partway through cannot hand a mobile state cookie to the next
+        // one - which would turn the web-path assertions into 307 redirects.
+        mocks.getCookie.mockReset();
     });
 
     it('returns 500 when environment variables are missing', async () => {
@@ -65,6 +71,61 @@ describe('GET /auth/tesla-callback', () => {
         const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
         const res = await GET(req);
         expect(res.status).toBe(500);
+    });
+
+    // handleTeslaCallback reads all three via requireEnv and throws on a missing
+    // one, so without this check a deploy missing TESLA_OAUTH_SECRET would
+    // surface as an unhandled throw (raw 500 from Next) rather than this route's
+    // own JSON. Asserted per-variable so adding a fourth cannot silently skip it.
+    it.each([
+        'PUBLIC_TESLA_OAUTH_CLIENT_ID',
+        'PUBLIC_TESLA_OAUTH_AUDIENCE',
+        'TESLA_OAUTH_SECRET',
+    ])('returns 500 without reaching the auth service when %s is missing', async (variable) => {
+        delete process.env[variable];
+
+        const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
+        const res = await GET(req);
+
+        expect(res.status).toBe(500);
+        expect(await res.json()).toEqual({ error: 'Server misconfigured' });
+        expect(mocks.handleTeslaCallback).not.toHaveBeenCalled();
+    });
+
+    // A whitespace-only value is not a value: requireEnv trims and then rejects it,
+    // so the guard above has to agree. Truthiness alone would pass it, and the
+    // request would then die downstream as `invalid-id-token` (or a raw throw) -
+    // the exact misleading outcome this guard exists to prevent. Same three
+    // variables as the missing-var case above, so a fourth cannot skip this.
+    it.each([
+        'PUBLIC_TESLA_OAUTH_CLIENT_ID',
+        'PUBLIC_TESLA_OAUTH_AUDIENCE',
+        'TESLA_OAUTH_SECRET',
+    ])('treats a whitespace-only %s as missing', async (variable) => {
+        process.env[variable] = '   ';
+
+        const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
+        const res = await GET(req);
+
+        expect(res.status).toBe(500);
+        expect(await res.json()).toEqual({ error: 'Server misconfigured' });
+        expect(mocks.handleTeslaCallback).not.toHaveBeenCalled();
+    });
+
+    it('returns mobile login to the app when the client id is whitespace-only', async () => {
+        process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID = '   ';
+        mocks.getCookie.mockImplementation((name: string) => name === 'auth_mobile_state'
+            ? { value: 'B'.repeat(32) }
+            : undefined);
+
+        const response = await GET(new NextRequest('https://pwusage.test/auth/tesla-callback?code=tesla-code&state=xyz'));
+        const location = response.headers.get('location') || '';
+
+        expect(location).toMatch(/^pwusage:\/\/auth\/callback\?/);
+        expect(location).toContain('error=login_unavailable');
+        expect(location).toContain('state=' + 'B'.repeat(32));
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_mobile_state');
+        expect(mocks.handleTeslaCallback).not.toHaveBeenCalled();
     });
 
     it('returns 400 when code or state parameters are missing', async () => {

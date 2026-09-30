@@ -6,12 +6,18 @@ import { UserRepo } from './user-repo';
 import { TeslaClient, TeslaClientConfig } from './tesla-client';
 import { Importer } from './importer';
 import { isUniqueViolation } from './db';
+import {
+    TeslaTokenEndpointError,
+    postToTeslaTokenEndpoint,
+    requireEnv,
+} from './tesla-token-endpoint';
+import { parseRefreshedTokens } from './tesla-auth';
 
 
 // Whitelist of allowed Tesla OAuth issuers.
 // Typed as a non-empty tuple so it satisfies jsonwebtoken's VerifyOptions.issuer
 // (string | [string, ...string[]]) while still supporting .includes().
-const ALLOWED_TESLA_ISSUERS: [string, ...string[]] = [
+export const ALLOWED_TESLA_ISSUERS: [string, ...string[]] = [
     'https://auth.tesla.com/oauth2/v3/nts',
     'https://auth.tesla.com/oauth2/v3',
 ];
@@ -28,83 +34,194 @@ export function getDiscoveryEndpointFromIssuer(issuer: string): string | null {
     return `${issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`;
 }
 
-// Discover the correct JWKS endpoint from OpenID Connect discovery
-async function getTeslaJwksUri(issuer?: string): Promise<string> {
-    let discoveryUrl = 'https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration';
+// Each Tesla issuer publishes its own key set (verified 2026-09-30):
+//   /nts -> /oauth2/v3/discovery/thirdparty/keys   <- what Tesla actually issues
+//   /v3  -> /oauth2/v3/discovery/keys
+// A single hardcoded fallback previously resolved the base /v3 set for /nts
+// tokens, so any transient discovery failure produced a guaranteed kid miss
+// and silently downgraded ID token signature verification.
+//
+// A Map rather than an object literal: object indexing would return inherited
+// members (e.g. 'constructor') for an unrecognised issuer. Unreachable today
+// because verifyTeslaIdToken rejects any issuer outside ALLOWED_TESLA_ISSUERS
+// before key lookup, but this path is security-critical and cheap to harden.
+const NTS_ISSUER = 'https://auth.tesla.com/oauth2/v3/nts';
 
-    if (issuer) {
-        const discoveryFromIssuer = getDiscoveryEndpointFromIssuer(issuer);
-        if (discoveryFromIssuer) {
-            discoveryUrl = discoveryFromIssuer;
-            console.log('[TeslaAuthService] Using discovery endpoint derived from issuer:', discoveryUrl);
-        }
+const FALLBACK_JWKS_URIS = new Map<string, string>([
+    [NTS_ISSUER, 'https://auth.tesla.com/oauth2/v3/discovery/thirdparty/keys'],
+    ['https://auth.tesla.com/oauth2/v3', 'https://auth.tesla.com/oauth2/v3/discovery/keys'],
+]);
+
+export function getFallbackJwksUri(issuer?: string): string {
+    const defaultUri = FALLBACK_JWKS_URIS.get(NTS_ISSUER);
+    if (!defaultUri) {
+        throw new Error(`Missing JWKS fallback for ${NTS_ISSUER}`);
+    }
+    return (issuer ? FALLBACK_JWKS_URIS.get(issuer) : undefined) ?? defaultUri;
+}
+
+const DISCOVERY_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const DISCOVERY_TIMEOUT_MS = 5000;
+
+const discoveryCache = new Map<string, { uri: string; fetchedAt: number }>();
+
+/**
+ * The OAuth client id as issued, normalized the same way `requireEnv` normalizes it
+ * before the exchange sends it. Every audience comparison must use this: a raw
+ * `process.env` read disagrees with Tesla's token the moment the configured value has
+ * surrounding whitespace, which fails every login as `invalid-id-token`.
+ *
+ * Returns undefined when unset, because `undefined` is what tells `jsonwebtoken` to skip
+ * the audience check - `requireEnv` would make an optional check mandatory.
+ */
+function expectedTokenAudience(): string | undefined {
+    const value = process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID?.trim();
+    return value ? value : undefined;
+}
+
+// Discover the correct JWKS endpoint from OpenID Connect discovery, cached per
+// issuer so steady-state logins avoid a network round-trip before the JWKS
+// fetch. Cold-path timeouts live here and on the jwks client, not wrapped
+// around the whole verification: a warm cache hit performs no network I/O and
+// therefore cannot hang.
+//
+// Unbounded by design-but-bounded-in-practice: the only caller is
+// getOrCreateJwksClient, whose issuer is gated by ALLOWED_TESLA_ISSUERS, so the
+// key space is at most three entries. A Map rather than an object literal so an
+// unrecognised issuer can never resolve to an inherited member (see the note on
+// FALLBACK_JWKS_URIS above).
+export async function getTeslaJwksUri(issuer?: string): Promise<string> {
+    const cacheKey = issuer ?? 'default';
+    const cached = discoveryCache.get(cacheKey);
+    if (cached && Date.now() - cached.fetchedAt < DISCOVERY_CACHE_TTL_MS) {
+        return cached.uri;
+    }
+
+    let discoveryUrl = 'https://auth.tesla.com/oauth2/v3/.well-known/openid-configuration';
+    const discoveryFromIssuer = issuer ? getDiscoveryEndpointFromIssuer(issuer) : null;
+    if (discoveryFromIssuer) {
+        discoveryUrl = discoveryFromIssuer;
     }
 
     try {
-        console.log('[TeslaAuthService] Discovering JWKS endpoint from OIDC configuration');
         const response = await fetch(discoveryUrl, {
             method: 'GET',
-            headers: { 'Accept': 'application/json' }
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
         });
-        console.log('[TeslaAuthService] OIDC discovery response status:', response.status);
 
         if (response.ok) {
             const config = await response.json();
-            console.log('[TeslaAuthService] OIDC discovery successful, config issuer:', config.issuer);
-            if (config.jwks_uri) {
-                console.log('[TeslaAuthService] Using discovered JWKS URI:', config.jwks_uri);
+            if (typeof config?.jwks_uri === 'string') {
+                discoveryCache.set(cacheKey, { uri: config.jwks_uri, fetchedAt: Date.now() });
                 return config.jwks_uri;
             }
         } else {
-            console.error('[TeslaAuthService] OIDC discovery failed with status', response.status);
+            // warn, not error: every path below this point recovers — either by
+            // reusing the cached URI or by using the issuer-aware fallback. A
+            // discovery outage is expected to be survivable, so it must not page
+            // whoever watches for error-level logs.
+            console.warn('[TeslaAuthService] OIDC discovery failed with status', response.status);
         }
     } catch (e) {
-        console.error('[TeslaAuthService] OIDC discovery failed:', e);
+        console.warn('[TeslaAuthService] OIDC discovery failed:', e);
     }
 
-    console.log('[TeslaAuthService] Using fallback JWKS endpoint: https://auth.tesla.com/oauth2/v3/discovery/keys');
-    return 'https://auth.tesla.com/oauth2/v3/discovery/keys';
+    // Note that the DISCOVERY_TIMEOUT_MS above lands here too: a *slow* discovery
+    // is indistinguishable from a failed one once the signal aborts, so slow and
+    // dead both fall through to the fallback below rather than propagating. That
+    // is routine, not exceptional — this sits on the login critical path, and
+    // there is no third option that keeps discovery on it. Both whitelisted
+    // issuers appear in FALLBACK_JWKS_URIS, so the hardcoded URI names the right
+    // key set either way and the login proceeds to the JWKS fetch.
+    //
+    // Discovery failed. Prefer a previously cached URI over any fallback, so a
+    // transient failure does not downgrade us to a possibly different key set.
+    if (cached) {
+        console.warn('[TeslaAuthService] Discovery failed; reusing cached JWKS URI', cached.uri);
+        return cached.uri;
+    }
+
+    const fallback = getFallbackJwksUri(issuer);
+    console.warn('[TeslaAuthService] Discovery unavailable; using issuer-aware fallback:', fallback);
+    return fallback;
 }
 
 let teslaJwksClient: ReturnType<typeof jwksClient> | null = null;
-let teslaJwksUri: string | null = null;
 let lastIssuer: string | null = null;
+
+const JWKS_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+// Availability vs security trade, documented upstream: when the JWKS endpoint
+// is unreachable and cacheMaxAge has expired, keep serving the last known good
+// key for this additional window instead of failing every login. The cost is
+// that a rotated-and-compromised key stays trusted for up to
+// JWKS_CACHE_MAX_AGE_MS + this, i.e. 70 minutes from the last *successful*
+// fetch. That total is a deliberate bound on our tolerance for stale keys, not
+// a prediction of Tesla's recovery time: the window does not grow if Tesla's
+// JWKS stays down longer, it just stops helping.
+// onStaleCacheFallback makes every degraded serve observable so a long outage
+// cannot pass silently.
+//
+// The library measures the stale window as
+// `Date.now() - fetchedAt < cacheMaxAge + cacheMaxAgeFallback`
+// (node_modules/jwks-rsa/src/wrappers/cache.js), so cacheMaxAge is *not* merely
+// a freshness target — it is added to the exposure. See DesignDecisions.md §5.
+const JWKS_STALE_FALLBACK_MS = 60 * 60 * 1000;
+// jwks-rsa defaults `timeout` to 30000ms. Cut 6x because this value sits on the
+// login critical path: it is now the primary bound on a slow JWKS endpoint,
+// replacing the 3s race that 2ca62ef ("prevent Vercel function timeout on slow
+// JWKS calls") put around the whole verification. That race also leaked — its
+// `finally` cleared the timer but not the in-flight request. Be precise about
+// what improved: for this path the user-visible outcome did NOT change. A slow
+// JWKS fetch still fails the login with `invalid-id-token`, exactly as the race
+// did. Only the cause reported in the logs got better — a real JWKS error
+// instead of a generic `Verification timeout`. The discovery path is the one
+// that started succeeding (see getTeslaJwksUri's fallback).
+const JWKS_REQUEST_TIMEOUT_MS = 5000;
+// Equals jwks-rsa's own default (wrappers/rateLimit.js), so this constant changes
+// no behavior today. Pinned explicitly anyway: this app's JWKS traffic is a
+// handful of logins per hour, so the limiter is never the binding constraint and
+// the value is insurance against a retry loop, not a tuned throughput figure.
+// Stating it here means a future library default change cannot silently alter
+// the ceiling.
+const JWKS_REQUESTS_PER_MINUTE = 10;
 
 async function getOrCreateJwksClient(issuer?: string) {
     if (!teslaJwksClient || (issuer && issuer !== lastIssuer)) {
-        if (issuer !== lastIssuer) {
-            console.log('[TeslaAuthService] Issuer changed, creating new JWKS client');
-            lastIssuer = issuer || null;
-        }
-        teslaJwksUri = await getTeslaJwksUri(issuer);
+        lastIssuer = issuer || null;
+        const jwksUri = await getTeslaJwksUri(issuer);
         teslaJwksClient = jwksClient({
-            jwksUri: teslaJwksUri,
+            jwksUri,
             cache: true,
-            cacheMaxAge: 10 * 60 * 1000,
+            cacheMaxEntries: 10,
+            cacheMaxAge: JWKS_CACHE_MAX_AGE_MS,
+            cacheMaxAgeFallback: JWKS_STALE_FALLBACK_MS,
+            // jwks-rsa invokes this as onStaleCacheFallback(err, kid, key) and
+            // only when the underlying failure carries isEndpointUnavailable, so
+            // the log fires exclusively on the degraded-serve path.
+            onStaleCacheFallback: (err: Error, kid: string | null | undefined) => {
+                console.warn('[TeslaAuthService] Serving stale JWKS key; Tesla JWKS endpoint is unavailable', {
+                    kid,
+                    endpointError: err.message,
+                });
+            },
             rateLimit: true,
+            jwksRequestsPerMinute: JWKS_REQUESTS_PER_MINUTE,
+            timeout: JWKS_REQUEST_TIMEOUT_MS,
         });
     }
     return teslaJwksClient;
 }
 
-async function fetchFreshJwks(jwksUri: string): Promise<{ keys?: Array<{ kid?: string; kty?: string }> }> {
-    const response = await fetch(jwksUri, {
-        headers: { 'Cache-Control': 'no-cache' }
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to fetch JWKS: ${response.status}`);
-    }
-    return response.json() as Promise<{ keys?: Array<{ kid?: string; kty?: string }> }>;
-}
-
-async function logAvailableKeys(jwksUri: string, label: string = '') {
-    try {
-        const jwks = await fetchFreshJwks(jwksUri);
-        const keyIds = (jwks.keys || []).map(k => k.kid).filter(Boolean);
-        console.log(`[TeslaAuthService] ${label} Available key IDs in JWKS:`, keyIds);
-    } catch (e) {
-        console.error('[TeslaAuthService] Failed to log available keys:', e);
-    }
+/**
+ * Reset the module-level JWKS client and OIDC discovery caches.
+ *
+ * Exported for deterministic tests only; production code has no legitimate use.
+ */
+export function __resetJwksClientForTests(): void {
+    teslaJwksClient = null;
+    lastIssuer = null;
+    discoveryCache.clear();
 }
 
 export class KidNotFoundError extends Error {
@@ -117,66 +234,74 @@ export class KidNotFoundError extends Error {
     }
 }
 
-function getTeslaSigningKeyWithIssuer(header: jwt.JwtHeader, issuer: string | undefined, callback: jwt.SigningKeyCallback) {
-    getOrCreateJwksClient(issuer).then(client => {
-        console.log('[TeslaAuthService] Looking for signing key with kid:', header.kid);
-        client.getSigningKey(header.kid, async (err, key) => {
-            if (!err && key) {
-                const signingKey = key.getPublicKey();
-                callback(null, signingKey);
-                return;
-            }
-
-            console.warn('[TeslaAuthService] Key not in cached JWKS, attempting lazy refresh', {
-                kid: header.kid,
-                error: err?.message
-            });
-
-            if (!teslaJwksUri) {
-                callback(err || new Error('JWKS URI not available'));
-                return;
-            }
-
-            try {
-                const freshJwks = await fetchFreshJwks(teslaJwksUri);
-                console.log('[TeslaAuthService] Fresh JWKS fetched, looking for kid again:', header.kid);
-
-                const foundKey = (freshJwks.keys || []).find(k => k.kid === header.kid);
-                if (foundKey) {
-                    console.log('[TeslaAuthService] Found key in fresh JWKS after lazy refresh');
-                    client.getSigningKey(header.kid, (retryErr, retryKey) => {
-                        if (retryErr) {
-                            console.error('[TeslaAuthService] Error retrieving key after lazy refresh:', {
-                                kid: header.kid,
-                                error: retryErr.message
-                            });
-                            if (teslaJwksUri) {
-                                void logAvailableKeys(teslaJwksUri, 'AFTER REFRESH');
+function getTeslaSigningKeyWithIssuer(
+    header: jwt.JwtHeader,
+    issuer: string | undefined,
+    callback: jwt.SigningKeyCallback
+) {
+    getOrCreateJwksClient(issuer)
+        .then(
+            (client) =>
+                new Promise<string>((resolve, reject) => {
+                    client.getSigningKey(
+                        header.kid,
+                        (err: Error | null, key?: { getPublicKey(): string }) => {
+                            if (err) {
+                                // jwks-rsa v4 throws SigningKeyNotFoundError from
+                                // exactly two sites in JwksClient.getSigningKey
+                                // (node_modules/jwks-rsa/src/JwksClient.js):
+                                //
+                                //   1. "Unable to find a signing key that matches
+                                //      '<kid>'" - the kid is absent from the key
+                                //      set. The cache wrapper memoizes per kid and
+                                //      keeps no second-level key set, so reaching
+                                //      here means it already re-fetched the full
+                                //      JWKS: this is the genuinely-absent case.
+                                //   2. "No KID specified and JWKS endpoint
+                                //      returned more than 1 key" - the token header
+                                //      carried no kid, so no key could be selected.
+                                //      This does NOT mean the set lacks the kid.
+                                //
+                                // Both funnel into KidNotFoundError, and
+                                // handleTeslaCallback treats that as "signature
+                                // unverifiable" and takes a degraded path that
+                                // bypasses signature verification. That is
+                                // acceptable only while case 2 is unreachable: the
+                                // id_token is minted by Tesla in a real
+                                // authorization-code exchange over TLS, so an
+                                // attacker cannot strip its kid. If that stops
+                                // being true, this condition must be narrowed to
+                                // the message in case 1 and case 2 must fail
+                                // closed.
+                                //
+                                // Every other error (endpoint unreachable, rate
+                                // limited) must NOT become KidNotFoundError, or an
+                                // outage would quietly open the bypass. jwks-rsa
+                                // never disguises a transport failure as
+                                // SigningKeyNotFoundError, so this split is sound.
+                                if (err.name === 'SigningKeyNotFoundError') {
+                                    reject(new KidNotFoundError(header.kid));
+                                    return;
+                                }
+                                console.error('[TeslaAuthService] JWKS lookup failed without a confirmed missing key', {
+                                    kid: header.kid,
+                                    errorName: err.name,
+                                    message: err.message,
+                                });
+                                reject(err);
+                                return;
                             }
-                            callback(retryErr);
-                        } else if (retryKey) {
-                            const signingKey = retryKey.getPublicKey();
-                            callback(null, signingKey);
-                        } else {
-                            callback(new KidNotFoundError(header.kid));
+                            if (!key) {
+                                reject(new KidNotFoundError(header.kid));
+                                return;
+                            }
+                            resolve(key.getPublicKey());
                         }
-                    });
-                } else {
-                    console.error('[TeslaAuthService] Key confirmed not present in JWKS after lazy refresh:', header.kid);
-                    if (teslaJwksUri) {
-                        void logAvailableKeys(teslaJwksUri, 'FINAL');
-                    }
-                    callback(new KidNotFoundError(header.kid));
-                }
-            } catch (refreshErr) {
-                console.error('[TeslaAuthService] Failed to refresh JWKS (network error):', refreshErr);
-                callback(refreshErr instanceof Error ? refreshErr : new Error(String(refreshErr)));
-            }
-        });
-    }).catch(err => {
-        console.error('[TeslaAuthService] Failed to get JWKS client:', err);
-        callback(err instanceof Error ? err : new Error(String(err)));
-    });
+                    );
+                })
+        )
+        .then((signingKey) => callback(null, signingKey))
+        .catch((err: unknown) => callback(err instanceof Error ? err : new Error(String(err))));
 }
 
 export async function verifyTeslaIdToken(token: string): Promise<jwt.JwtPayload> {
@@ -199,7 +324,7 @@ export async function verifyTeslaIdToken(token: string): Promise<jwt.JwtPayload>
                 return;
             }
         }
-        console.log('[TeslaAuthService] Expected audience (client_id):', process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID);
+        console.log('[TeslaAuthService] Expected audience (client_id):', expectedTokenAudience());
 
         const tokenIssuer = (decoded?.payload as Record<string, unknown>)?.iss as string | undefined;
 
@@ -218,7 +343,7 @@ export async function verifyTeslaIdToken(token: string): Promise<jwt.JwtPayload>
             }),
             {
                 algorithms: ['RS256'],
-                audience: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID,
+                audience: expectedTokenAudience(),
                 clockTolerance: 10,
                 issuer: ALLOWED_TESLA_ISSUERS
             },
@@ -245,6 +370,48 @@ export interface TeslaCallbackParams {
     callbackUrl: string;
 }
 
+// The documented /token response. Declared once so the injected `tokenExchange`
+// seam and the parsed body cannot drift apart.
+export interface ExchangedTokens {
+    id_token: string;
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+}
+
+/**
+ * Narrow the /token response the exchange path consumes.
+ *
+ * The twin of parseRefreshedTokens, which already covers `access_token` and
+ * `refresh_token` and is called first so the two paths cannot drift. This adds
+ * the two exchange-only fields: `id_token`, without which there is nothing to
+ * verify, and `expires_in`, whose absence is the failure that reached the DB as
+ * `NaN`. `pg` serialises NaN as the *string* "NaN" (pg/lib/utils.js:69), which
+ * Postgres rejects for `"User"."token_expires_at" BIGINT` — so a missing
+ * `expires_in` produced a silent-but-total login failure: the catch around the
+ * DB writes swallowed the rejection and the callback still returned success.
+ *
+ * Non-finite numbers are rejected as well as non-numbers, because a NaN from a
+ * `Number()`-style coercion is just as unusable as a string and `typeof` alone
+ * would let it through.
+ *
+ * The messages are fixed templates, never an interpolation of the payload:
+ * see the same rule in parseRefreshedTokens and DesignDecisions.md section 5.
+ */
+function parseExchangedTokens(payload: unknown): ExchangedTokens {
+    const { access_token, refresh_token } = parseRefreshedTokens(payload);
+
+    const { id_token, expires_in } = payload as Record<string, unknown>;
+    if (typeof id_token !== 'string' || id_token === '') {
+        throw new Error('Tesla token response did not include a non-empty string id_token');
+    }
+    if (typeof expires_in !== 'number' || !Number.isFinite(expires_in)) {
+        throw new Error('Tesla token response did not include a finite numeric expires_in');
+    }
+
+    return { id_token, access_token, refresh_token, expires_in };
+}
+
 export type TeslaCallbackResult =
     | { status: 'state-mismatch' }
     | { status: 'token-exchange-failed'; statusCode: number }
@@ -263,8 +430,19 @@ export interface TeslaAuthServiceDeps {
     teslaTokenRepo?: TeslaTokenRepo;
     teslaClientCreator?: (config: TeslaClientConfig) => TeslaClient;
     importerCreator?: (client: TeslaClient) => Pick<Importer, 'ensureSite'>;
-    tokenExchange?: (code: string, callbackUrl: string) => Promise<{ id_token: string; access_token: string; refresh_token: string; expires_in: number }>;
+    tokenExchange?: (code: string, callbackUrl: string) => Promise<ExchangedTokens>;
     verifyIdToken?: (token: string) => Promise<jwt.JwtPayload>;
+}
+
+// Both token-exchange failure paths run through here, so the invariant holds in
+// one direction only *for the pair*: anything that is not an HTTP error we
+// actually received (a null status from a network failure, or an unexpected
+// 3xx/1xx) becomes a 502 rather than being echoed into NextResponse.json's
+// `status` option. The helper's contract makes the returned-response path 4xx
+// today, so this is not a live bug — it is the guard that keeps a future helper
+// change from emitting `NextResponse.json(..., { status: 302 })`.
+function toUpstreamStatus(status: number | null): number {
+    return status !== null && status >= 400 ? status : 502;
 }
 
 export class TeslaAuthService {
@@ -278,30 +456,55 @@ export class TeslaAuthService {
         }
 
         // Exchange Token
-        let authData: { id_token: string; access_token: string; refresh_token: string; expires_in: number };
+        let authData: ExchangedTokens;
         if (this.deps.tokenExchange) {
             authData = await this.deps.tokenExchange(code, callbackUrl);
         } else {
-            const tokenResponse = await fetch("https://auth.tesla.com/oauth2/v3/token", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                body: new URLSearchParams({
-                    client_id: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID!,
-                    client_secret: process.env.TESLA_OAUTH_SECRET!,
-                    audience: process.env.PUBLIC_TESLA_OAUTH_AUDIENCE!,
+            let tokenResponse: Response;
+            try {
+                // Tesla documents fleet-auth as the required host for
+                // server-to-server /token calls; see tesla-token-endpoint.ts
+                // for the fallback policy.
+                const exchange = await postToTeslaTokenEndpoint({
+                    client_id: requireEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID'),
+                    client_secret: requireEnv('TESLA_OAUTH_SECRET'),
+                    audience: requireEnv('PUBLIC_TESLA_OAUTH_AUDIENCE'),
                     redirect_uri: callbackUrl,
-                    grant_type: "authorization_code",
-                    code: code,
-                }),
-            });
-
-            if (!tokenResponse.ok) {
-                return { status: 'token-exchange-failed', statusCode: tokenResponse.status };
+                    grant_type: 'authorization_code',
+                    code,
+                });
+                tokenResponse = exchange.response;
+            } catch (err) {
+                // Every Tesla host failed. Without this catch the error escapes
+                // handleTeslaCallback, and src/app/auth/tesla-callback/route.ts
+                // rethrows it on the web path — converting today's clean 503
+                // token-exchange-failed response into a raw 500.
+                if (!(err instanceof TeslaTokenEndpointError)) throw err;
+                console.error('[TeslaAuthService] Token exchange failed on all hosts:', err.message);
+                return { status: 'token-exchange-failed', statusCode: toUpstreamStatus(err.status) };
             }
 
-            authData = await tokenResponse.json();
+            if (!tokenResponse.ok) {
+                return { status: 'token-exchange-failed', statusCode: toUpstreamStatus(tokenResponse.status) };
+            }
+
+            try {
+                authData = parseExchangedTokens(await tokenResponse.json());
+            } catch (err) {
+                // A 2xx body we cannot use is an upstream fault, so report it as
+                // an exchange failure at 502 rather than letting the error
+                // escape: route.ts rethrows anything that leaves
+                // handleTeslaCallback on the web path, and a malformed JSON body
+                // or a missing `expires_in` must not become a raw 500. Failing
+                // here is the point — the previous code assigned `response.json()`
+                // (typed `any`) straight into the declared shape, so a 200
+                // without `expires_in` reached tokenExpiresAt as NaN, was
+                // rejected by Postgres as the string "NaN", had that rejection
+                // swallowed by the catch around the DB writes below, and then
+                // returned success with siteIds: [] — no cookie, no error.
+                console.error('[TeslaAuthService] Token exchange returned a malformed 2xx response:', err);
+                return { status: 'token-exchange-failed', statusCode: toUpstreamStatus(null) };
+            }
         }
 
         // Verify ID Token
@@ -312,19 +515,19 @@ export class TeslaAuthService {
                 decoded = await this.deps.verifyIdToken(authData.id_token);
                 signatureVerified = true;
             } else {
-                // Wrap default verify with a 3-second timeout
-                let timeoutId: NodeJS.Timeout | undefined;
-                try {
-                    const verificationPromise = verifyTeslaIdToken(authData.id_token);
-                    const timeoutPromise = new Promise<never>((_, reject) => {
-                        timeoutId = setTimeout(() => reject(new Error('Verification timeout')), 3000);
-                    });
-                    decoded = await Promise.race([verificationPromise, timeoutPromise]);
-                    signatureVerified = true;
-                    console.log('[TeslaAuthService] ID Token signature verified successfully');
-                } finally {
-                    if (timeoutId) clearTimeout(timeoutId);
-                }
+                // No outer timeout race here: timeouts belong on the individual
+                // requests. Note that a warm *discovery* cache skips only the
+                // discovery fetch — a cold JWKS fetch can still take up to
+                // JWKS_REQUEST_TIMEOUT_MS — so "cached" is not a guarantee that
+                // this call cannot block. What the removal buys is accuracy, not
+                // speed: a slow response now surfaces as the real discovery or
+                // JWKS error instead of a generic timeout. In the logs that is
+                // unambiguous; the login itself still fails with
+                // `invalid-id-token` on a slow JWKS fetch, and still succeeds
+                // on a slow or failed discovery, via getTeslaJwksUri's fallback.
+                decoded = await verifyTeslaIdToken(authData.id_token);
+                signatureVerified = true;
+                console.log('[TeslaAuthService] ID Token signature verified successfully');
             }
         } catch (err) {
             const isKidNotFound = err instanceof KidNotFoundError || (err instanceof Error && err.name === 'KidNotFoundError');
@@ -352,7 +555,7 @@ export class TeslaAuthService {
             }
 
             // Check audience if configured
-            const expectedAud = process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID;
+            const expectedAud = expectedTokenAudience();
             if (expectedAud) {
                 const tokenAud = decodedUnsafe.aud;
                 const audMatch = Array.isArray(tokenAud) ? tokenAud.includes(expectedAud) : tokenAud === expectedAud;

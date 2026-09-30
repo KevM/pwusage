@@ -63,8 +63,15 @@ Energy scope split (read vs. write):
 
 A requested scope is only granted if it is also enabled for the app's domain in the
 Tesla developer dashboard; Tesla silently drops scopes the app isn't registered for.
-After enabling a new scope, users must re-authenticate via `/login` (the authorize URL
-uses `prompt=login`) so a fresh token carries it — existing tokens are not upgraded.
+Scope additions are picked up by sending the user through `/authorize` with
+`prompt_missing_scopes=true`. This replaced a long-standing `prompt=login`
+parameter, which forced a full Tesla re-authentication on **every** login even
+when nothing had changed. Tesla prompts only for scopes the user has not
+already granted, so an unchanged login is silent.
+
+A newly-granted scope still requires a fresh authorize redirect: our existing
+refresh tokens are not retroactively upgraded. That is our token handling, not a
+claim about Tesla internals — do not word it as if it were.
 
 ### 2. OAuth callback processing
 Route: `GET /auth/tesla-callback`
@@ -88,6 +95,70 @@ Session issuance:
 
 Important implementation note:
 - `auth-checks.ts` now uses `site_auth` claims only for `verifySiteAccess`/`getAuthorizedSiteIds`; legacy `access_token` cookie fallback was removed.
+
+### ID token signature verification
+
+Tesla publishes two OIDC issuers, and each serves a **different** signing key
+set:
+
+| Issuer | JWKS |
+| --- | --- |
+| `https://auth.tesla.com/oauth2/v3/nts` | `/oauth2/v3/discovery/thirdparty/keys` |
+| `https://auth.tesla.com/oauth2/v3` | `/oauth2/v3/discovery/keys` |
+
+Tesla issues `/nts` tokens. We resolve the JWKS URI from the token issuer's own
+discovery document and cache it for **one hour**. On a discovery failure the
+resolution order is: a previously cached URI first, then a fallback keyed by the
+token's issuer. The fallback defaults to the `/nts` URI for an issuer outside the
+map — unreachable today, because both allowed issuers are in it and
+`verifyTeslaIdToken` rejects anything else before key lookup.
+
+Key lookup is delegated entirely to `jwks-rsa`, which memoizes per `kid` and
+already refetches the full key set on an unknown `kid`, rate-limited. **Do not
+add a manual JWKS refetch** — it would bypass the rate limiter and can only ever
+look at the cached URI.
+
+The key cache is fresh for **10 minutes**, with a further **60 minutes** of
+stale-serving tolerance while the JWKS endpoint is unreachable. That 70-minute
+total is a deliberate bound on how long we will verify against a key set we
+cannot currently refresh, not an accident of configuration; stale use is logged
+loudly.
+
+There is a degraded path (`tesla-auth-service.ts`) that completes login when
+`jwks-rsa` reports `SigningKeyNotFoundError`: it bypasses signature verification
+and validates the claims plus an authenticated TLS `getUserInfo` call instead.
+An unreachable or rate-limited endpoint must never map to that error; those fail
+closed as `invalid-id-token`.
+
+One correction to the stronger reading of that rule: `SigningKeyNotFoundError` is
+thrown from **two** sites, not one. The first ("Unable to find a signing key that
+matches '\<kid\>'") is the intended case — the authoritative key set was fetched
+successfully and did not contain the key. The second ("No KID specified and JWKS
+endpoint returned more than 1 key") means only that the token's JOSE header
+carried no `kid`, so no key could be selected; it says nothing about the key set
+at all. Both map to the same error and therefore to the same bypass, which is
+acceptable **only while** the second is unreachable. It is today, because the
+`id_token` is minted by Tesla over TLS during a real authorization-code exchange,
+so an attacker cannot strip its `kid` — but that is a property of a distant code
+path, not a local invariant. It is tracked for narrowing in `TODO.md`.
+
+### Token endpoint hosts
+
+Tesla's documentation requires `/token` calls from application servers to use
+`https://fleet-auth.prd.vn.cloud.tesla.com`, which carries different rate limits
+than the browser-facing host. The OIDC discovery document still declares
+`auth.tesla.com`, so `src/lib/tesla-token-endpoint.ts` tries `fleet-auth` first
+and falls back to `auth.tesla.com` on transport failure or 5xx **only**.
+
+Two cases are deliberately *not* retried against the second host:
+
+- **4xx** — a genuine authentication failure. Retrying would mask the real error
+  and re-send `client_secret` to a second origin.
+- **3xx** — thrown as `TeslaTokenEndpointError`. Redirects are followed with
+  `redirect: 'manual'` because a 307/308 preserves the method and body, which
+  would hand `client_secret` to whatever origin the redirect names. This was
+  verified against a real local server: default redirect handling re-POSTed the
+  secret to the redirect target.
 
 ### Email uniqueness
 
@@ -119,13 +190,26 @@ Middleware/proxy (`src/proxy.ts`):
 
 Tesla token refresh behavior:
 - `TeslaClient` retries once on Fleet API 401 when refresh token exists.
-- `EnergyRepo.getLockedRefreshHandler(siteId)` serializes refresh with DB lock fields on `User`.
+- `TeslaTokenRepo.getLockedRefreshHandler(siteId)` serializes refresh with DB lock fields on `User`.
 - Refreshed Tesla tokens are written back to `User`.
 - Terminal auth failures can mark user `auth_status='revoked'`.
 
 ### 5. Logout
 Route: `GET|POST /logout`
 - Deletes `site_auth` cookie and redirects to `/`.
+
+### Troubleshooting: "passkey failed" on auth.tesla.com
+
+Tesla supports passkeys as an account sign-in credential. A passkey that a
+password manager offers for `auth.tesla.com` will be **rejected by Tesla** if it
+was never enrolled through Tesla's own account security page — Tesla holds no
+public key to verify it against. The symptom is a "passkey failed" error on
+Tesla's page while the password manager insists the passkey is valid.
+
+Resolution: enroll the passkey at
+`https://accounts.tesla.com/account-settings/security`, then sign in normally.
+Nothing in this app needs to change; the failure happens entirely on Tesla's
+origin before our callback runs.
 
 ## Workflow 2: Trmnl Install and Configuration
 

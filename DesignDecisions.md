@@ -158,7 +158,229 @@ and non-accumulating (self-corrects after one charge/discharge cycle).
 
 ---
 
-## Cross-reference: superseded architectural review
+## 5. JWKS stale-key serving: a bounded availability trade
+
+**Decision:** The jwks-rsa client is configured with `cacheMaxAge: 10 min` and
+`cacheMaxAgeFallback: 60 min`, plus an `onStaleCacheFallback` logger. OIDC
+discovery is cached per issuer for 1 hour (`getTeslaJwksUri`), and a failed
+discovery **reuses the previously discovered URI** rather than falling back to a
+hardcoded one. See `cmd/next-app/src/lib/tesla-auth-service.ts`.
+
+**What it actually costs:** jwks-rsa measures the stale window as
+`Date.now() - fetchedAt < cacheMaxAge + cacheMaxAgeFallback`
+(`node_modules/jwks-rsa/src/wrappers/cache.js:32`). So the exposure is the
+**sum, not the fallback alone: 70 minutes** from the last *successful* fetch, not
+60. If Tesla rotates a key and the old one is compromised, that old key stays
+trusted for up to 70 minutes. `cacheMaxAge` is therefore not merely a freshness
+target — it adds to the window. Do not "tune" `cacheMaxAge` without re-reading
+this paragraph.
+
+**Why it exists:** when Tesla's JWKS endpoint is unreachable *and* the normal
+cache window has expired, the default behavior is to fail. That means a single
+Tesla-side JWKS outage fails **every login** for up to the next successful
+fetch. This trades a bounded, observable security exposure for login
+availability. The window is sized to *our tolerance for stale keys* — it does not
+grow if Tesla's JWKS is down longer, it simply stops helping.
+
+**Observability:** `onStaleCacheFallback` logs on every single degraded serve, so
+a prolonged outage cannot pass silently. It does **not** fire on a kid miss, and it
+does not fire on jwks-rsa's own internal rate limiter rejecting the request
+(`wrappers/rateLimit.js`) — that path never reaches the cache at all. What it does
+*not* distinguish is "unreachable" from "reachable but unhappy": the library sets
+`isEndpointUnavailable = true` on **every** `getKeys()` failure (`JwksClient.js:49`)
+and rejects any non-2xx (`wrappers/request.js:36-38`), so an upstream **429**, a
+WAF **403** or an HTML error page all log as "endpoint is unavailable" and each
+serves a stale key for up to the full 70 minutes. No security consequence — a stale
+key is still a real, verified key, and the window is unchanged — but the
+diagnostic is misleading: an operator debugging a 429 reads "unavailable" and goes
+looking for a network problem that is not there. Read the `endpointError` field
+in the log before concluding the endpoint is down.
+
+**Guardrails — do not "simplify" by:**
+- Deleting `cacheMaxAgeFallback` because "the cache already covers it." Without
+  it, jwks-rsa skips building the stale-key store entirely
+  (`wrappers/cache.js:20`), so the availability guarantee silently evaporates
+  while the code still looks configured.
+- Widening either window without treating it as a security decision. The sum is
+  the exposure; see above.
+- Dropping the `if (cached)` reuse branch in `getTeslaJwksUri` in favor of
+  falling straight through to `getFallbackJwksUri`. For the `/nts` issuer the
+  fallback URI is the wrong key set, so a transient discovery failure would
+  downgrade an `/nts` token to the base `/v3` key set and manufacture a
+  spurious kid miss. This is the exact bug fixed in Task 2.
+- Downgrading `onStaleCacheFallback` to `debug`. It is the only signal that the
+  availability trade is actively being paid.
+
+### jwks-rsa internals we depend on (jwks-rsa 4.1.0)
+
+Every item below was verified against `node_modules/jwks-rsa/src/`. Each has
+already cost a review cycle; a silent change to any of them is a security
+regression, not a refactor.
+
+| Behavior we rely on | Location | What breaks if it changes |
+| --- | --- | --- |
+| Options named `cacheMaxAgeFallback` / `onStaleCacheFallback` | `wrappers/cache.js:6` | **Silent.** The stale store is only built when `cacheMaxAgeFallback` is truthy, so a rename disables the guarantee with no error. |
+| Stale window is `cacheMaxAge + cacheMaxAgeFallback`, not the fallback alone | `wrappers/cache.js:32` | Undocumented 70-minute exposure becomes something else. |
+| `onStaleCacheFallback` is called as `(err, kid, staleKey)` | `wrappers/cache.js:35` | Our logger reads `err.message` and `kid`. |
+| The fallback triggers **only** when `err.isEndpointUnavailable` | `wrappers/cache.js:30`, set at `JwksClient.js:49` | A kid miss or rate limit could start serving stale keys, and the log would no longer mean "endpoint outage." |
+| `SigningKeyNotFoundError` is the only "kid absent" error; transport failures never masquerade as it | `JwksClient.js` | **Security-critical.** See below. |
+| `jwksRequestsPerMinute` defaults to 10 | `wrappers/rateLimit.js:6` | We pin 10 explicitly, so behavior is stable. |
+| `timeout` defaults to 30000ms | `JwksClient.js:12` | We pin 5000ms. |
+
+**Cooperation with the Task 3 invariant:** `handleTeslaCallback` treats
+`KidNotFoundError` as "signature unverifiable" and takes a degraded path that
+**bypasses signature verification**. Only a *confirmed* missing key maps to it;
+every other error propagates unchanged. Serving a stale key is what keeps a
+jwks-rsa outage from manufacturing a spurious `KidNotFoundError` and quietly
+opening that bypass — so the availability trade also happens to be a safety
+trade. It is not a substitute for the invariant: if jwks-rsa ever started
+reporting an unreachable endpoint as `SigningKeyNotFoundError`, this section's
+reasoning inverts and the bypass would open.
+
+**If jwks-rsa is upgraded:** re-verify the table above before trusting it. In
+particular, a rename of the two cache options fails *silently* — the code
+continues to pass tests that only assert the options were passed.
+
+### Verification timeout ownership
+
+**Decision:** no timeout wraps ID token verification as a whole. Each network leg
+owns its own bound — `DISCOVERY_TIMEOUT_MS` (5s) on the discovery fetch,
+`JWKS_REQUEST_TIMEOUT_MS` (5s) on the jwks client. `handleTeslaCallback` awaits
+`verifyTeslaIdToken` directly.
+
+**Why it exists:** 2ca62ef raised the callback route's `maxDuration` to 60s and
+raced `verifyTeslaIdToken` against a 3s timer, which had two defects:
+
+- **It mislabeled slow as invalid.** On expiry the race rejected with a plain
+  `Error('Verification timeout')`, which is not a `KidNotFoundError`, so
+  `handleTeslaCallback` failed closed with `invalid-id-token`. A slow network was
+  indistinguishable from a bad token.
+- **It leaked.** The `finally` cleared the timer but nothing cancelled the
+  in-flight JWKS fetch, so the rejected race left a request running that later
+  installed the module-level jwks client.
+
+**Do not reintroduce an outer race by:**
+
+- Asserting that "cached" means non-blocking. A warm *discovery* cache skips only
+  the discovery fetch; a cold JWKS fetch can still take the full
+  `JWKS_REQUEST_TIMEOUT_MS`. A claim that a warm cache "cannot hang" is true only
+  of `getTeslaJwksUri` in isolation, not of the whole verification.
+- Expecting the per-request timeouts to improve the login outcome on their own.
+  A slow **JWKS** fetch still fails the login with `invalid-id-token`; only the
+  cause recorded in the logs changed. The **discovery** path is what started
+  succeeding, because a slow or failed discovery falls back to the cached or
+  hardcoded issuer URI and the login proceeds (see the fallback note in
+  `getTeslaJwksUri`).
+- Writing a regression test that injects a `verifyIdToken` dep and expects it to
+  be slow. An injected dep takes a separate, untimed branch in
+  `handleTeslaCallback`, so such a test passes with or without the race. It must
+  drive the real verifier and inject the delay at the fetch boundary.
+
+### Terminal vs transient failures (`isTeslaAuthError` matches substrings)
+
+**Decision:** a refresh failure is "terminal" only if the credential is actually
+dead. `isTeslaAuthError` (`cmd/next-app/src/lib/tesla-client.ts:154`) is the
+predicate, and it is **broader than it looks**: besides `instanceof TeslaAuthError`
+it matches any `Error` whose **message contains** `Tesla API Error: 401`,
+`Tesla API Error: 403`, `login_required`, `invalid_grant`, or `invalid
+authentication`.
+
+**Why it matters:** `TeslaTokenRepo.getLockedRefreshHandler` treats a terminal
+error as proof the refresh token is revoked and, in one atomic write, sets
+`auth_status = 'revoked'` and `is_active = false`. That is the correct response to
+a real `login_required`. It is catastrophic for anything that merely *looks* like
+one.
+
+**Consequences for error construction — do not violate these:**
+
+- A **malformed-but-200** upstream body must throw a plain `Error` whose message
+  contains **neither** `login_required` **nor** `invalid_grant`.
+  `parseRefreshedTokens` in `src/lib/tesla-auth.ts` does exactly that. Echoing
+  upstream text verbatim into the message would match the substring test and
+  mass-de-authenticate every user during a transient upstream malformation - a
+  credential incident with no credential cause.
+- Do not throw `TeslaAuthError` for anything that is not an authentication
+  rejection. A missing required-env variable (`requireEnv`) is deliberately a
+  plain `Error`: a deployment misconfiguration should produce one alert and a
+  released lock, not a wave of revoked users.
+- Anything genuinely unclassifiable should land on the **non-terminal** side.
+  `TeslaTokenEndpointError` (every token host 5xx'd) is a plain `Error` subclass
+  and is non-terminal; `TeslaTokenRepo` releases the lock and `tesla-client.ts`
+  falls through to the original 401.
+
+**Guardrails — do not "simplify" by:**
+- Replacing the substring checks with `instanceof` alone. This is not
+  hypothetical. `isTeslaAuthError` has **11 non-test call sites across 6 files**
+  (`site-live-data/route.ts` :235, `battery-hold-service.ts` :46/:76/:129/:140,
+  `importer/index.ts` :320/:357, `site-service.ts` :160/:178,
+  `tesla-token-repo.ts` :72, `user-repo.ts` :184 — counted, not estimated), and
+  **none of the six imports `TeslaAuthError`** — they import only
+  `isTeslaAuthError`, whose declared return type (`error is TeslaAuthError`) makes
+  `instanceof`-only look entirely plausible on a read, with nothing at the call
+  site to hint at a substring branch. It is nevertheless **load-bearing**:
+  `tesla-token-repo.test.ts`
+  rejects with a *plain* `Error('Tesla API Error: 401 Unauthorized invalid_grant')`
+  and asserts the atomic `auth_status = 'revoked'` write fires. That test passes
+  **only** via the substring branch. Narrowing the predicate silently stops
+  users being revoked on a genuine 401. Treat the substring list as part of the
+  contract, not as a shortcut.
+- Interpolating an upstream response body into an error message on a path whose
+  error is inspected by `isTeslaAuthError`. If a body must be quoted, check it
+  against the substring list first.
+- Deleting the `expect(...).not.toMatch(/login_required|invalid_grant/)`
+  assertion in `tesla-auth.test.ts`. It looks redundant next to the
+  `not.toBeInstanceOf(TeslaAuthError)` check; it is the only thing guarding the
+  substring half of the predicate.
+
+**Pinned by:** `throws a plain, non-terminal error when a 200 response omits the
+tokens` in `cmd/next-app/src/lib/tesla-auth.test.ts` (its fixture carries
+`error: 'invalid_grant'` precisely so an interpolating implementation fails), and
+the `never sends a request when the audience env var is unset` /
+`never posts "undefined" as the client secret when the secret env var is unset`
+guards for the non-terminal missing-env path. The 400/401 decision table itself is
+pinned by `raises TeslaAuthError on a 401 regardless of the response body` and
+`does not raise TeslaAuthError on a 400 with a non-trigger body` — before those,
+deleting the 401 branch, or widening the 400 branch to bare `status === 400`,
+both left the suite green.
+
+### Known remaining violations
+
+The rules above are enforced on the paths this branch touched. Two code paths
+still break them. **Neither is fixed here**, and each is described in full below,
+but this section previously read as if the rules were universally held, which
+they are not.
+
+1. **`cmd/next-app/src/lib/tesla-auth.ts:63-70` — raw body interpolated into a
+   non-terminal error.** The fallthrough branch throws
+   ``Error(`Failed to refresh token: ${status} ${body}`)``. A 403 body containing
+   `login_required`, or a 400 body containing `invalid authentication`, is
+   **non-terminal** to `refreshAccessToken`'s own logic (it does not match its
+   401/400 condition) yet **terminal** to `isTeslaAuthError`, so
+   `TeslaTokenRepo` performs the atomic revoke. Verified against the real
+   predicate: both cases give `refreshAccessToken terminal=false,
+   isTeslaAuthError=true`. The two classifiers disagree about the *same* error
+   object: one says "retry later", the other says "revoke the user". The
+   status/`error`-code pair should decide, and the message should be built from
+   the parsed code rather than the raw body.
+
+2. **`cmd/next-app/src/lib/tesla-token-endpoint.ts:25-31` — `describeError` folds
+   `err.cause.message` in verbatim.** A transport error from an intermediary
+   carrying a trigger substring therefore makes `TeslaTokenEndpointError` classify
+   as terminal:
+
+   ```
+   "All Tesla token endpoints failed. Last failure: transport error: fetch failed:
+    socket hang up: invalid_grant from proxy"   → isTeslaAuthError === true
+   ```
+
+   Latent in practice — undici cause strings are DNS/TLS/socket text, so no
+   current path produces one — but it is structurally possible, and it is the
+   same "interpolate an untrusted string into a message that gets classified"
+   pattern this section forbids one file over. A doc/code contradiction, not a
+   hypothetical: the rule says never, and the code does. Deferred as a follow-up.
+
+---
+
 
 `cmd/next-app/docs/plans/2026-05-21-architectural-review.md` is partly generic
 boilerplate and contains claims that don't match the codebase. It carries a

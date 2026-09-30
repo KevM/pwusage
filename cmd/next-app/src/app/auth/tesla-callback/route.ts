@@ -20,11 +20,24 @@ export async function GET(request: NextRequest) {
     const mobileState = cookieStore.get('auth_mobile_state')?.value;
     const hasMobileCookies = !!(mobileAttemptId || mobileChallenge || mobileState);
 
-    // Validate required environment variables
-    if (!process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || !process.env.PUBLIC_TESLA_OAUTH_AUDIENCE) {
+    // Validate required environment variables. All three are read by
+    // handleTeslaCallback via requireEnv: it throws on a missing one (deliberately,
+    // so a misconfiguration can never be posted to Tesla as the literal string
+    // "undefined"), and this check is what turns that loud throw into the clean
+    // response below instead of a raw 500.
+    //
+    // Normalized the same way requireEnv normalizes, so this guard agrees with it on
+    // what "missing" means. Raw truthiness would treat a whitespace-only value as
+    // present, letting it past this check to fail during verification as a confusing
+    // `invalid-id-token` instead of the clean response below.
+    const clientId = process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID?.trim();
+    const audience = process.env.PUBLIC_TESLA_OAUTH_AUDIENCE?.trim();
+    const clientSecret = process.env.TESLA_OAUTH_SECRET?.trim();
+    if (!clientId || !audience || !clientSecret) {
         console.error('[AuthCallback] Missing required Tesla OAuth environment variables', {
-            hasClientId: !!process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID,
-            hasAudience: !!process.env.PUBLIC_TESLA_OAUTH_AUDIENCE
+            hasClientId: !!clientId,
+            hasAudience: !!audience,
+            hasClientSecret: !!clientSecret
         });
         if (hasMobileCookies) clearAuthAttemptCookies(cookieStore);
         if (mobileState && isValidAppState(mobileState)) {

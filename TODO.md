@@ -62,3 +62,122 @@ The Go tree (`cmd/pwrtool`, `internal/`, `go.mod`/`go.sum`) and the legacy Svelt
 
 **Change:** Once `eslint-plugin-react` (and `eslint-config-next`) declare eslint 10 support, bump `eslint` to `^10` and re-run `npm run lint`.
 
+
+## Tesla OAuth: consolidate the three credential paths (2026-09-30, PR #118)
+
+`/login` and `/refresh` call `requireEnv`, which **throws** on a missing variable.
+/`auth/tesla-callback` deliberately intercepts instead, and its own comment says the
+interception exists "to turn that loud throw into the clean response below instead of a
+raw 500". The two-of-three split is user-visible on iOS: a mobile client hitting `/login`
+with the client id unset gets an opaque 500 sheet instead of `AuthError.serverRejectedLogin`.
+
+Fix: have `/login` intercept the same way. That requires exporting the callback route's
+module-private `mobileCallbackResponse`. In the same change:
+
+1. Relocate `requireEnv` out of `src/lib/tesla-token-endpoint.ts` into something like
+   `src/lib/env.ts`. A token-endpoint module exporting a generic env accessor is the wrong
+   home now that a *login route* depends on it.
+2. Move `buildTeslaAuthorizeUrl` to `src/lib/tesla-authorize-url.ts`, where the rest of the
+   Tesla wire-format logic already lives.
+
+**Change:** export `mobileCallbackResponse`, intercept in `/login` before the cookie
+writes, relocate `requireEnv`, move the URL builder.
+
+## Tesla OAuth: consider `require_requested_scopes` (2026-09-30, PR #118)
+
+`prompt_missing_scopes=true` (set in PR #118) prompts for scopes the user has not granted
+but **cannot** silently grant them. The sibling `require_requested_scopes` ("user must
+authorize all requested scopes to proceed") is not set.
+
+Latent today because the scope set is static. **If a scope is ever added**, a user who
+*declines* still completes login with a partial grant, and the app fails later at
+point-of-use instead of at login. Decide the policy before the first scope addition.
+
+**Change:** set `require_requested_scopes` alongside `prompt_missing_scopes`, or document
+why a partial grant is acceptable.
+
+## Tesla OAuth: unexpected 3xx from the token endpoint (2026-09-30, PR #118)
+
+`src/lib/tesla-token-endpoint.ts` handles 4xx and 5xx explicitly, and an unexpected
+1xx/2xx/3xx throws `TeslaTokenEndpointError`. That is correct — a 307/308 would re-POST
+`client_secret` to whatever origin the redirect named, which is why `redirect: 'manual'`
+is set — but nothing **logs** it, so a Tesla-side redirect would look like an unexplained
+authentication failure.
+
+**Change:** log the status and host on the unexpected-status throw path.
+
+## Tesla OAuth: restore leaked OAuth test env vars at the source (2026-09-30, PR #118)
+
+Several suites `vi.stubEnv` the `PUBLIC_TESLA_OAUTH_*` and `TESLA_OAUTH_SECRET` variables
+and never unstub them. Harmless in a fixed file order, but Vitest may run files in any
+order, so a neighbouring suite can inherit them. Reproduce with
+`npx vitest run --sequence.shuffle`.
+
+`route.test.ts` was fixed at the file level with `afterEach(vi.unstubAllEnvs)`; the rest
+of the suites were not.
+
+**Change:** either set `unstubEnvs: true` in `vitest.config.ts`, or add a file-scope
+`afterEach(() => vi.unstubAllEnvs())` to each suite that stubs these vars.
+
+## Tesla OAuth: issuer-keyed JWKS client, and re-resolve after the discovery TTL (2026-09-30, PR #118)
+
+Raised by review on PR #118. Both are pre-existing and unchanged by that branch, verified
+against base commit `092b727`.
+
+**1. One module-level client, keyed only by the previous issuer.**
+`getOrCreateJwksClient` (`src/lib/tesla-auth-service.ts`) assigns `teslaJwksClient` *after*
+`await getTeslaJwksUri(issuer)`. Two concurrent cold-start verifications carrying different
+`iss` values both enter the branch, and the loser verifies against the wrong issuer's key
+set — takes a genuine `SigningKeyNotFoundError`, lands in the degraded path. Latent (Tesla
+issues only `/nts`) and pre-existing. The same code also thrashes the key cache on issuer
+alternation. This is the one path into the signature bypass that is *not* a key-set miss.
+
+**2. The 1-hour discovery TTL is never applied in the single-issuer flow.**
+Once a client exists for the issuer Tesla actually uses, `issuer !== lastIssuer` is false
+forever, so `getTeslaJwksUri` is never called again. Base behaved identically: its removed
+`fetchFreshJwks(jwksUri)` took the *already-resolved* URI as a parameter and did not
+re-resolve. So if Tesla ever changes an issuer's `jwks_uri`, verification keeps querying
+the old endpoint for the life of the instance. Rarely observable on serverless, where
+instances are short-lived.
+
+**Change:** key clients by issuer in a `Map<string, client>`, and rebuild the client when
+the discovery entry has passed `DISCOVERY_CACHE_TTL_MS` so `getTeslaJwksUri` is called
+again. Fixes both.
+
+## Tesla OAuth: distinguish Tesla outages from invalid login (2026-09-30, PR #118)
+
+When both token-endpoint hosts fail on transport error or 5xx, the callback reports
+`invalid-id-token`. That conflates "Tesla is down or slow" with "this token is bad", so an
+operator debugging an outage reads an auth-config error. `DesignDecisions.md` §5 records
+the related terminal-vs-transient split: `isTeslaAuthError` classifies by **substring**, so
+an upstream body interpolated into a non-terminal message (`tesla-auth.ts`) can trigger a
+user revocation. That path is now reachable for the first time, since PR #118 made the
+refresh request actually succeed.
+
+**Change:** give transport/5xx failures their own status, and classify from the parsed
+error code rather than a substring of the message.
+
+## Tesla: bound the unbounded network calls in the Tesla callback path (2026-09-30, PR #118)
+
+`src/lib/tesla-client.ts` — `getUserInfo` and `getProducts` — and `importer.ensureSite`
+have **no timeouts whatsoever**. Verified: zero occurrences of `AbortSignal` in either
+file. An earlier version of this item also claimed the token exchange was a bare `fetch`
+with no `AbortSignal`; that is stale, PR #118 routed it through `postToTeslaTokenEndpoint`,
+which sets `AbortSignal.timeout(8000)`.
+
+**Arithmetic.** The bounded legs stack to **≈18 s** for a login that *completes*: at most
+one timed-out host attempt (8 s) before the exchange succeeds, then 5 s of OIDC discovery
+and 5 s of JWKS fetch, and those two do stack (8 + 5 + 5). The exchange's own worst case is
+2 × 8 s = **16 s**, but that case never reaches verification — exhausting both hosts
+returns `token-exchange-failed` before `verifyTeslaIdToken` is called, so it cannot be
+added to the other legs. The route's `maxDuration` is 60 s, so there is headroom; the
+`tesla-client` calls are what can hang indefinitely.
+
+**Caveat on "worst case":** only the exchange and discovery figures are hard deadlines
+(`AbortSignal.timeout` fires on elapsed time). jwks-rsa's `timeout` is a
+**socket-inactivity** bound, so a trickling JWKS response can exceed 5 s in total. 5 s is
+not a deadline on that leg, and neither is any number that includes it.
+
+**Change:** add request timeouts to `tesla-client.ts`. Prefer bounded per-request
+`AbortSignal.timeout` over a whole-request race, which is what PR #118 removed from the
+verification path.
