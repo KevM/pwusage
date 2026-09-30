@@ -18,6 +18,11 @@ struct AppConfiguration: Equatable {
     /// talks to, so a wrong host fails quietly rather than loudly.
     static let releasedAPIOriginHosts: Set<String> = ["pwusage.fm.rodeo"]
 
+    /// The only port a Release origin may name, and only because it is the
+    /// default for `https`. A nonstandard port is a different origin, so it needs
+    /// its own explicit sign-off rather than riding in on the host allowlist.
+    static let releasedAPIOriginPort = 443
+
     private static let logger = Logger(subsystem: "fm.rodeo.pwusage", category: "configuration")
 
     let apiOrigin: URL
@@ -110,6 +115,15 @@ struct AppConfiguration: Equatable {
         // configuration that names another host ships a client pointed at a
         // server nobody chose, and its session cookie is scoped to that host.
         guard allowUnlistedHost || !isRelease || releasedAPIOriginHosts.contains(host) else {
+            throw ValidationError.invalidOrigin
+        }
+        // The allowlist names a host, but the origin the client dials is host *and*
+        // port, so a host check alone leaves `:8443` — or any other nonstandard
+        // port — routing the shipped client somewhere nobody chose. Only the
+        // scheme's default port is the same origin; `443` spelled out is accepted
+        // because it resolves identically. Debug is unconstrained for the same
+        // reason it is unconstrained on host: local development needs its port.
+        guard !isRelease || components.port == nil || components.port == Self.releasedAPIOriginPort else {
             throw ValidationError.invalidOrigin
         }
     }

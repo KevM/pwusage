@@ -266,6 +266,31 @@ struct PWUsageAppModelTests {
         await cancelled.value
     }
 
+    @Test("A superseded bootstrap attempt cannot overwrite the newer attempt's sites")
+    func supersededBootstrapAttemptCannotOverwriteNewerState() async throws {
+        // The first attempt parks mid-install; the second completes and installs
+        // site-2. When the first finally resumes it must not publish site-1 over it.
+        let api = ApplicationAPISpy(sites: [Self.site("site-2")], sitesSequence: [[Self.site("site-1")]])
+        let forecast = AppForecastManagerSpy()
+        await forecast.setHoldActivation(true)
+        let model = makeModel(api: api, forecast: forecast)
+
+        let stale = Task { await model.bootstrap() }
+        try await waitUntil { await forecast.activationIsParked }
+        await model.bootstrap()
+
+        #expect(model.screenState == .signedIn)
+        #expect(model.selectedSiteID == "site-2")
+
+        await forecast.resumeActivation()
+        await stale.value
+
+        #expect(model.screenState == .signedIn, "The stale attempt must not change the published screen state.")
+        #expect(model.sites.map(\.id) == ["site-2"], "The stale attempt must not replace the newer site list.")
+        #expect(model.selectedSiteID == "site-2", "The stale attempt must not reselect the site it found.")
+        #expect(model.coordinator?.selectedSiteID == "site-2", "The stale attempt must not replace the newer coordinator.")
+    }
+
     // `pwusage.test` is a stub host, so the allowlist opt-out is explicit. The
     // `try!` is pre-existing and out of scope for this change.
     private static let configuration = try! AppConfiguration(
@@ -336,6 +361,9 @@ private final class AppTestClock {
 @MainActor
 private final class ApplicationAPISpy: PWUsageApplicationAPI {
     let sites: [MobileSite]
+    /// Consumed one entry per `fetchSites` before `sites` is used, so a test can
+    /// hand successive attempts different site lists.
+    var sitesSequence: [[MobileSite]] = []
     var sitesError: Error?
     var holdLive = false
     private(set) var siteFetchCount = 0
@@ -344,15 +372,17 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI {
     private(set) var cookieClearCount = 0
     private var liveContinuations: [(String, CheckedContinuation<MobileLiveResponse, Error>)] = []
 
-    init(sites: [MobileSite], sitesError: Error? = nil) {
+    init(sites: [MobileSite], sitesError: Error? = nil, sitesSequence: [[MobileSite]] = []) {
         self.sites = sites
         self.sitesError = sitesError
+        self.sitesSequence = sitesSequence
     }
 
     func fetchSites() async throws -> [MobileSite] {
         siteFetchCount += 1
         if let sitesError { throw sitesError }
-        return sites
+        if sitesSequence.isEmpty { return sites }
+        return sitesSequence.removeFirst()
     }
 
     func fetchLive(siteID: String) async throws -> MobileLiveResponse {

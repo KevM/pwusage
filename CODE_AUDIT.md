@@ -6,13 +6,13 @@
 
 *`FIXED (PR pending)` is the form every entry on this branch uses: the finding is fixed and verified in-tree, but the PR number and commit are stamped once the branch merges. Once merged, replace it with `FIXED (PR #N, commit <sha>)`. Do not mix the two forms in one file.*
 
-**Progress:** 74 findings tracked. 17 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`). §8.18 was filed after that batch's whole-branch review.
+**Progress:** 76 findings tracked. 19 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`). §8.18 was filed after that batch's whole-branch review, and §3.15 and §6.4 were found by review of PR #117 and fixed on the same branch.
 
 | Status | Count | Findings |
 | --- | --- | --- |
-| OPEN | 57 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.10, §5.11, §6.1, §6.2, §7.1, §7.7 |
+| OPEN | 57 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §3.15, §5.1, §5.2, §5.3, §5.4, §5.9, §5.10, §5.11, §6.1, §6.2, §6.4, §7.1, §7.7 |
 | IN PROGRESS | 0 | — |
-| FIXED | 17 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.10, §5.11, §6.1, §6.2, §7.1, §7.7 (§4.6 is a recorded negative result, not a finding) |
+| FIXED | 19 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §3.15, §5.1, §5.2, §5.3, §5.4, §5.9, §5.10, §5.11, §6.1, §6.2, §6.4, §7.1, §7.7 (§4.6 is a recorded negative result, not a finding) |
 
 ---
 
@@ -189,6 +189,15 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Severity:** High
 - **Status:** FIXED (PR pending)
 - **Confidence:** High — verified by reverting only the `finishAuthentication` guard: `staleSessionCallbackIsAppliedToNoOne` failed on `service.pendingContinuationForTesting` and `service.hasWebSessionForTesting` (B's slot and session were destroyed by A's callback) and then on B never authenticating, without hanging.
+
+### 3.15 Overlapping bootstrap attempts can publish out of order, so a stale response overwrites a newer one
+- **Location:** `PWUsage/PWUsageApp.swift` — `bootstrap()`, and `installAuthorizedSites(_:)` as amended by §3.2, which `await`s `forecastStore.activateAccountScope` midway
+- **What:** `bootstrap()` had neither an in-flight guard nor a generation token. Its only admission test was the `screenState` switch, and `.bootstrapping` is a state two attempts can both observe. `installAuthorizedSites` publishes in two halves with an `await` between them: `sites`, `selectedSiteID`, and the coordinator afterwards.
+- **Why:** `bootstrap()` is driven by the root `.task` (`:405-409`), which is cancelled when the root view disappears. Cancellation is only honoured by a callee that checks it — an in-flight `URLSession` call or an actor hop that ignores it keeps going, and the re-appearing `.task` starts a second attempt that also sees `.bootstrapping` and proceeds. If the second attempt finishes first, the first then resumes and overwrites `selectedSiteID` and the coordinator with the *older* site list, so the UI shows a site the user never selected and the wrong site polls the API. §3.2's fix removed the latch that used to serialize this, so the window is open by construction; the §3.2 test itself demonstrates the precondition it needs (a retry running to completion while the older attempt is parked mid-install).
+- **Action:** Done. `claimSiteInstall()` hands each publishing attempt a `siteInstallGeneration`; `installAuthorizedSites(_:generation:)` checks it on entry **and again after the `await`**. Both checks are load-bearing: the entry check drops a loser that arrives late, and the post-`await` check drops a loser that was already inside when the winner started publishing — which an entry-only check cannot catch. `bootstrap`, `signIn`, and `reloadSitesAfterSignIn` all claim a generation and compare it before writing `screenState`, so a superseded failure cannot strand the screen on `.unavailable` either. The pre-`await` writes are deliberately left unguarded: §3.2 depends on `sites` being populated while the state is still `.bootstrapping`, and a loser reaching them has already lost a race the winner wins again immediately afterwards. This is the same generation-token shape as §3.13 and §3.14, applied to the one path in the model that had no token.
+- **Severity:** Medium
+- **Status:** FIXED (PR pending)
+- **Confidence:** High — found by review of this PR rather than by the audit, and confirmed by a failing-first test. `supersededBootstrapAttemptCannotOverwriteNewerState` parks attempt A inside `activateAccountScope`, lets attempt B install site-2, then releases A and asserts A changed nothing. Pre-fix it failed on exactly the asymmetry predicted above: `sites` stayed `["site-2"]` (B wrote it after A's pre-`await` write), while A's post-`await` half still reset `selectedSiteID` and the coordinator to site-1.
 
 ---
 
@@ -400,6 +409,15 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Severity:** Low
 - **Status:** OPEN
 - **Confidence:** High
+
+### 6.4 Release origin allowlist matches host only, so a nonstandard port slips through
+- **Location:** `PWUsage/Configuration/AppConfiguration.swift` — the `releasedAPIOriginHosts` check inside `validate`, and the new `releasedAPIOriginPort`
+- **What:** §6.2 added a host allowlist for Release and checked `components.host` against it. Nothing checked `components.port`.
+- **Why:** An origin is host *and* port, so `https://pwusage.fm.rodeo:8443` matched the allowlist on host alone and passed validation while pointing the shipped client at a different service — or at nothing. Same quiet-failure class §6.2 describes: the `site_auth` cookie is scoped to the origin, so the wrong one fails silently rather than loudly, and the check that reads as "Release requires our host" did not in fact require our origin. Verified directly: `URLComponents(string: "https://pwusage.fm.rodeo:8443")` reports `port: 8443`, so the omission was real and not unreachable.
+- **Action:** Done. `validate` now also requires `components.port == nil || components.port == releasedAPIOriginPort` (443) when `isRelease`. An explicit `:443` is accepted because it resolves identically; anything else is rejected. Debug stays unconstrained for the same reason it is unconstrained on host — local development needs its port. `allowUnlistedHost` deliberately does **not** waive this: the opt-out exists for the stub host `pwusage.test`, not for nonstandard ports, and letting it waive both would make a one-word test fixture able to ship a client on `:8443`. Covered by three tests, including one asserting the opt-out does not waive it.
+- **Severity:** Medium — not a live bug in the current `project.yml`, and the same "no current misconfiguration, weaker safety property than the check reads as" framing as §6.2. Below §6.2 because a wrong *host* silently sends the client and its cookie to a third party, whereas a nonstandard port on our own host is more likely to be a typo that fails visibly at first launch.
+- **Status:** FIXED (PR pending)
+- **Confidence:** High — found by review of this PR rather than by the audit. Confirmed by opening the post-§6.2 `validate` and by parsing `:8443` through `URLComponents`.
 
 ---
 

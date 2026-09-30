@@ -138,6 +138,11 @@ final class PWUsageAppModel: ObservableObject {
     private var coordinatorAuthSubscription: AnyCancellable?
     private var sceneIsActive = false
 
+    /// Identifies the attempt that owns the published site state. Every path that
+    /// publishes sites claims one, and a superseded attempt discards its own result
+    /// rather than overwriting a newer one. See `installAuthorizedSites`.
+    private var siteInstallGeneration = 0
+
     init(
         configuration: AppConfiguration,
         api: any PWUsageApplicationAPI,
@@ -171,22 +176,27 @@ final class PWUsageAppModel: ObservableObject {
     /// Retries until a terminal state is reached. The `.task` that drives this is
     /// cancelled when the view disappears, which can land inside
     /// `installAuthorizedSites` and leave the screen on the spinner, so a
-    /// latch set on entry would strand it with no way back.
+    /// latch set on entry would strand it with no way back. A generation token
+    /// instead: a retry is free to run alongside the attempt it supersedes, and
+    /// the older one cannot publish.
     func bootstrap() async {
         switch screenState {
         case .signedIn, .signedOut, .unavailable: return
         case .bootstrapping, .noSites: break
         }
+        let generation = claimSiteInstall()
         do {
             let availableSites = try await api.fetchSites()
-            await installAuthorizedSites(availableSites)
+            await installAuthorizedSites(availableSites, generation: generation)
         } catch let error as PWUsageAPIError {
+            guard generation == siteInstallGeneration else { return }
             if error == .signInRequired {
                 await invalidateSession(message: nil)
             } else {
                 screenState = .unavailable
             }
         } catch {
+            guard generation == siteInstallGeneration else { return }
             screenState = .unavailable
         }
     }
@@ -201,11 +211,13 @@ final class PWUsageAppModel: ObservableObject {
         isSigningIn = true
         signInMessage = nil
         defer { isSigningIn = false }
+        let generation = claimSiteInstall()
         do {
             try await authService.signIn()
             let availableSites = try await api.fetchSites()
-            await installAuthorizedSites(availableSites)
+            await installAuthorizedSites(availableSites, generation: generation)
         } catch let error as PWUsageAPIError {
+            guard generation == siteInstallGeneration else { return }
             if error == .signInRequired {
                 await invalidateSession(message: "Sign-in expired. Please try again.")
             } else if authService.isAuthenticated {
@@ -225,12 +237,15 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func reloadSitesAfterSignIn() async {
+        let generation = claimSiteInstall()
         do {
             let availableSites = try await api.fetchSites()
-            await installAuthorizedSites(availableSites)
+            await installAuthorizedSites(availableSites, generation: generation)
         } catch let error as PWUsageAPIError where error == .signInRequired {
+            guard generation == siteInstallGeneration else { return }
             await invalidateSession(message: "Your session expired. Sign in to continue.")
         } catch {
+            guard generation == siteInstallGeneration else { return }
             screenState = authService.isAuthenticated ? .unavailable : .signedOut
         }
     }
@@ -295,11 +310,37 @@ final class PWUsageAppModel: ObservableObject {
         coordinator?.scenePhaseChanged(isActive: false)
     }
 
-    private func installAuthorizedSites(_ availableSites: [MobileSite]) async {
+    /// Claims ownership of the published site state, superseding any attempt that has
+    /// not finished. A retry is deliberately *not* blocked on the attempt it replaces —
+    /// §3.2 requires it to run to completion while the older attempt is still parked —
+    /// so the guard is on publishing, not on entry.
+    private func claimSiteInstall() -> Int {
+        siteInstallGeneration += 1
+        return siteInstallGeneration
+    }
+
+    /// Publishes `availableSites`, unless `generation` has been superseded.
+    ///
+    /// Two attempts can be in flight at once — the root `.task` is cancelled on
+    /// disappear, but an API or actor call that ignores cancellation keeps running,
+    /// and the re-appearing `.task` starts a second one — so the losing attempt
+    /// reaches this function too. A single check on entry is therefore not enough:
+    /// a loser that is already inside when the winner starts publishing resumes
+    /// *after* the winner and overwrites the selected site and the coordinator.
+    /// The generation is compared again after the `await` for that reason.
+    ///
+    /// The pre-`await` writes are deliberately left unguarded. §3.2 requires
+    /// `sites` to be populated while the state is still `.bootstrapping`, because
+    /// that is what makes the screen retryable rather than a permanent spinner;
+    /// a superseded attempt reaching them has already lost a race the newer
+    /// attempt wins again immediately afterwards.
+    private func installAuthorizedSites(_ availableSites: [MobileSite], generation: Int) async {
+        guard generation == siteInstallGeneration else { return }
         sites = availableSites
         authService.restoreAuthenticatedSession()
         let accountScopeID = ensureAccountScopeID()
         await forecastStore.activateAccountScope(accountScopeID)
+        guard generation == siteInstallGeneration else { return }
         guard !availableSites.isEmpty else {
             coordinator = nil
             selectedSiteID = nil

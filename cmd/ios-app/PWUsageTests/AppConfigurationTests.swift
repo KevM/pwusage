@@ -113,6 +113,27 @@ struct AppConfigurationTests {
         }
     }
 
+    @Test("Release rejects the production host on a nonstandard port")
+    func releaseRejectsNonstandardPortOnAllowlistedHost() {
+        #expect(throws: AppConfiguration.ValidationError.invalidOrigin) {
+            try AppConfiguration(apiOriginString: "https://pwusage.fm.rodeo:8443")
+        }
+    }
+
+    @Test("Release accepts an explicit :443 as the same origin as no port")
+    func releaseAcceptsExplicitHTTPSDefaultPort() throws {
+        let configuration = try AppConfiguration(apiOriginString: "https://pwusage.fm.rodeo:443")
+
+        #expect(configuration.apiOrigin.port == 443)
+    }
+
+    @Test("The port check is not waived by the host allowlist opt-out")
+    func hostAllowlistOptOutDoesNotWaiveThePortCheck() {
+        #expect(throws: AppConfiguration.ValidationError.invalidOrigin) {
+            try AppConfiguration(apiOriginString: "https://pwusage.test:8443", allowUnlistedHost: true)
+        }
+    }
+
     @Test("Debug allows a local HTTP origin from the environment")
     func debugAllowsLocalHTTPOriginFromEnvironment() throws {
         let configuration = try AppConfiguration.fromBundle(
