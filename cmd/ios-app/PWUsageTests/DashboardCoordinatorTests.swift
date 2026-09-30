@@ -328,6 +328,71 @@ struct DashboardCoordinatorTests {
         #expect(coordinator.solarForecastState == .failedWithBasic)
     }
 
+    /// The cache self-heals: an entry the device clock has carried past the
+    /// context's own 24h bound is refetched and replaced, so a bad entry never
+    /// sticks. `revalidationFailureInsideTheLifetimeRefetchesAndReplaces` isolates
+    /// the *re-validation* half of the same fall-through, which needs a different
+    /// construction; this one covers the far more common lifetime expiry.
+    @Test("A cached entry that has aged out is replaced by the next fetch")
+    func poisonedCacheEntryIsReplacedOnNextFetch() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
+        api.contextAsOf = clock.now.addingTimeInterval(-60)
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+        )
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.loadPlanningContext != nil)
+        let fetchesAfterFirstLoad = api.contextSiteIDs.count
+
+        // Age past the context's own 24h bound and let a valid response arrive.
+        clock.advance(minutes: 24 * 60)
+        api.contextAsOf = clock.now
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastUnavailableReason == nil)
+        #expect(coordinator.loadPlanningContext != nil)
+        #expect(api.contextSiteIDs.count > fetchesAfterFirstLoad)
+    }
+
+    /// The same fall-through, reached through *re-validation* rather than the
+    /// entry's own 24h lifetime. `sourceAge` is `requestTime - asOf`, so an entry
+    /// cached at the exact `maximumAge` edge is the only one that can be inside
+    /// `planningContextLifetime` and still fail re-validation a moment later: every
+    /// other entry is either comfortably inside `maximumAge` or has already tripped
+    /// the lifetime guard first. This is where the audit's "re-rejects the same bad
+    /// entry on every read rather than refetching" claim has to be true or false.
+    @Test("A cached entry that fails re-validation while still in its lifetime is refetched and replaced")
+    func revalidationFailureInsideTheLifetimeRefetchesAndReplaces() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
+        // Exactly at the 24h `maximumAge` edge, which `validating` accepts (`<=`).
+        api.contextAsOf = clock.now.addingTimeInterval(-24 * 60 * 60)
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+        )
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.loadPlanningContext != nil)
+        let fetchesAfterFirstLoad = api.contextSiteIDs.count
+
+        // One minute on: the entry is a minute inside its lifetime, but its own
+        // age is now a minute past `maximumAge`, so re-validation must fail.
+        clock.advance(minutes: 1)
+        api.contextAsOf = clock.now
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastUnavailableReason == nil)
+        #expect(coordinator.loadPlanningContext != nil)
+        #expect(api.contextSiteIDs.count > fetchesAfterFirstLoad,
+                "A cached entry that fails re-validation must still be refetched.")
+    }
+
     @Test("A user-gesture refreshAll bypasses interval checks and fetches both live and bill")
     func userGestureRefreshAllBypassesIntervalChecksAndFetchesBoth() async {
         let clock = TestClock()

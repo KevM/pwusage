@@ -146,7 +146,7 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.loadPlanningContext == nil)
     }
 
-    @Test("Planning context is validated at receive time and permits five minutes of source clock skew")
+    @Test("Planning context is validated at receive time and permits an hour of source clock skew")
     func contextUsesReceiveTimeForValidation() async {
         let clock = ForecastTestClock()
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
@@ -164,11 +164,11 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastState == .enhanced)
     }
 
-    @Test("Planning context more than five minutes in the future is rejected")
+    @Test("Planning context more than an hour in the future is rejected")
     func contextRejectsExcessiveFutureSkew() async {
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
         let api = ForecastDashboardAPISpy()
-        api.contextAsOf = api.now.addingTimeInterval(5 * 60 + 1)
+        api.contextAsOf = api.now.addingTimeInterval(60 * 60 + 1)
         let coordinator = DashboardCoordinator(
             siteID: "site-a", api: api, planningAPI: api,
             forecastStore: forecast, accountScopeID: "local-account",

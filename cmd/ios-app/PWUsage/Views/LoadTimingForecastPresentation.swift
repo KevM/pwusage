@@ -228,8 +228,12 @@ enum LoadTimingForecastPresentation {
             return "\(unavailableNotePrefix) This app build is newer than the server it is talking to, "
                 + "so household data cannot be loaded yet. Nothing is wrong with your data."
         case .contextInvalid:
-            return "\(unavailableNotePrefix) The server sent household data this app could not read. "
-                + "Please report this so it can be investigated."
+            // `asOf` is a server timestamp read against this device's clock, so a
+            // mis-set device clock lands here. Blaming the server would send the
+            // user to file a bug that does not exist, and there is no in-app way to
+            // file one anyway — so point at the clock, which the user can fix.
+            return "\(unavailableNotePrefix) This device could not use your household profile, which is "
+                + "timestamped by your server. Check this device's date and time, then pull down to retry."
         case .contextUnavailable:
             return "\(unavailableNotePrefix) This device could not read your household profile, so no start "
                 + "time can be compared. It fills in as more energy data arrives."

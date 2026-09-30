@@ -193,6 +193,44 @@ struct MobileContractsTests {
             try response.validating(siteID: "site-1")
         }
     }
+
+    @Test("A planning context stamped ahead of a fast device clock still validates")
+    func planningContextToleratesFastDeviceClock() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        // Thirty minutes ahead: a mis-set device clock, not bad data.
+        let response = Self.makePlanningContext(siteID: "site-a", asOf: now.addingTimeInterval(30 * 60))
+        #expect(throws: Never.self) { try response.validating(siteID: "site-a", now: now) }
+    }
+
+    @Test("A planning context stamped absurdly ahead is still rejected")
+    func planningContextRejectsAbsurdFutureAsOf() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let response = Self.makePlanningContext(siteID: "site-a", asOf: now.addingTimeInterval(365 * 24 * 60 * 60))
+        #expect(throws: MobileLoadPlanningContextResponse.ContractError.self) {
+            try response.validating(siteID: "site-a", now: now)
+        }
+    }
+
+    /// Satisfies every clause of `validating`, so a test can vary `asOf` alone.
+    /// `DashboardCoordinatorTests` needs the same fixture but keeps its own copy.
+    private static func makePlanningContext(siteID: String, asOf: Date) -> MobileLoadPlanningContextResponse {
+        MobileLoadPlanningContextResponse(
+            version: 1,
+            site: .init(id: siteID, timezone: "UTC"),
+            units: .init(power: "kW", localMinute: "minute-of-day"),
+            asOf: asOf,
+            availability: .available,
+            unavailableReason: nil,
+            usableDayCount: 14,
+            historyStart: asOf.addingTimeInterval(-14 * 24 * 60 * 60),
+            historyEnd: asOf.addingTimeInterval(-60),
+            slots: (0..<48).map { index in
+                MobileLoadPlanningContextResponse.Slot(
+                    localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: 14, coverage: 1
+                )
+            }
+        )
+    }
 }
 
 private enum LiveFixture {

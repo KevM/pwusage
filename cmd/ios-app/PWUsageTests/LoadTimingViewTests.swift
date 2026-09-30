@@ -500,6 +500,34 @@ struct LoadTimingForecastPresentationTests {
                 "The copy must not promise an action that does not exist")
     }
 
+    /// `contextInvalid` is what a mis-set *device* clock produces: `asOf` is stamped
+    /// by the server and read against the local clock. The note used to say "The
+    /// server sent household data this app could not read. Please report this", which
+    /// sends the user to file a server bug that does not exist.
+    @Test("An unreadable household profile points at this device's clock, not at a server bug")
+    func contextInvalidNoteBlamesTheDeviceClock() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .failedWithBasic,
+            connection: .ready,
+            cause: nil,
+            enhancementReason: .contextInvalid,
+            result: Self.unavailable(.incompleteCoverage),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(!note.lowercased().contains("report"),
+                "The device must not be told to report a server bug that is really its own clock")
+        #expect(note.lowercased().contains("date and time"),
+                "The note should name the device's own date and time as the thing to check")
+        #expect(note.contains("using tariff and balance data"),
+                "The note must still carry the shared prefix about what keeps working")
+    }
+
     @Test("Every unavailable note tells the user something they can actually do")
     func unavailableNotesAreActionable() {
         let reasons: [SolarForecastEnhancementUnavailableReason] = [
