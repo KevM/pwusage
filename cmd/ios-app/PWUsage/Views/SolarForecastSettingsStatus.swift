@@ -63,13 +63,21 @@ enum SolarForecastSettingsStatus {
                 allowsManualIDs: false
             )
         case .persistenceFailed, .cleanupFailed,
-             // Unreachable today, and required for exhaustiveness. `discoverSites`
-             // only ever throws `.discoveryFailed` with a value from
-             // `failureKind(_:)` or `.unauthorized`/`.requestFailed`; its budget
-             // save, which used to escalate to `persistFailureState`, now throws
-             // `.persistenceFailed` instead. Listed so a reader does not go
-             // hunting for a producer that does not exist — and so that if one is
-             // ever added, this arm is already the right message for it.
+             // Unreachable today, and required for exhaustiveness.
+             //
+             // `storageFailure` means "a credential was quarantined" and
+             // `cleanupFailure` means "quarantine itself failed" — and the only
+             // way `discoverSites` produced either was its budget save escalating
+             // a *write* failure to `persistFailureState`. It no longer does, so
+             // the only `.discoveryFailed` values it can throw come from
+             // `failureKind(_:)` or are `.unauthorized`/`.requestFailed`
+             // literally. That coupling is the thing to watch: reintroducing the
+             // escalation on any save site would make these arms reachable again
+             // and silently change which message a disk fault produces.
+             //
+             // Listed so a reader does not go hunting for a producer that does not
+             // exist, and so that if one is ever added this arm is already the
+             // right message for it.
              .discoveryFailed(.storageFailure), .discoveryFailed(.cleanupFailure), .discoveryFailed(.saveFailed):
             return SolarForecastSettingsPresentation(
                 message: "This device could not safely save the change. Please try again.",

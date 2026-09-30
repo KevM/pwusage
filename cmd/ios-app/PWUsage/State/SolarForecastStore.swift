@@ -170,6 +170,9 @@ actor SolarForecastStore {
             throw StoreError.persistenceFailed
         }
         state = nextState
+        // `connect` replaces the whole state for this scope, so anything this scope
+        // had pending is either now on disk or gone with the old state.
+        dirtyScopes.remove(scope)
         return credentialID
     }
 
@@ -245,11 +248,11 @@ actor SolarForecastStore {
             // fixed on the post-fetch persist, so it gets the same shape: describe
             // it and stop.
             //
-            // The scope is marked failed for the same reason as the matching save
-            // in `performRefresh`, and for the same asymmetric reason: the budget
-            // is what enforces the daily request allowance, so an unpersisted one
-            // fails closed until a later successful refresh clears it.
-            state.failedScopes.insert(scope)
+            // Not marked failed, for the same reason and with the same reasoning as
+            // the matching save in `performRefresh`: the marking would be
+            // session-only, would deliver none of the cross-relaunch protection it
+            // was justified by, and would hide a working forecast.
+            dirtyScopes.insert(scope)
             lastErrorDescription = "Forecast request budget could not be saved"
             throw StoreError.persistenceFailed
         }
@@ -448,15 +451,26 @@ actor SolarForecastStore {
             // has just been proven to work. Same shape and same reasoning as the
             // budget save in `discoverSites` and the post-fetch save below.
             //
-            // The scope is still marked failed, unlike the post-fetch save, and
-            // that asymmetry is deliberate: an unpersisted budget is a rate limit
-            // this device cannot enforce across a relaunch, so failing closed is
-            // the honest direction. It is not a claim about the data, which is why
-            // the marking is confined here and does not quarantine. A later
-            // successful refresh clears it.
-            state.failedScopes.insert(scope)
+            // Reported as a save failure rather than a request failure, because
+            // that is what it is: no Solcast request was made and the cached data
+            // is untouched. Reporting `.requestFailed` here told the user "Solcast
+            // could not be reached. Retry when you have a connection" — a network
+            // remedy for a full disk.
+            //
+            // The scope is deliberately NOT marked failed. An earlier revision did,
+            // on the argument that an unpersisted budget cannot be enforced across
+            // a relaunch. That argument does not survive its own premise: the disk
+            // that would have recorded the budget is the disk that just failed, so
+            // `failedScopes` is not persisted either and the marking is
+            // session-only. It therefore delivers none of the cross-relaunch
+            // protection it was justified by, while `isRecommendationUsable` gates
+            // on it — so it hid a perfectly good forecast for the rest of the
+            // session over a disk error. Same self-defeating shape D4 identified for
+            // the post-fetch save: the data is fine, only the counter failed to
+            // write, and `failedScopes` cannot say that.
+            dirtyScopes.insert(scope)
             lastErrorDescription = "Forecast request budget could not be saved"
-            return .failed(.requestFailed)
+            return .failed(.saveFailed)
         }
         guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID,
               state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
@@ -669,10 +683,20 @@ actor SolarForecastStore {
     /// Re-attempts the write left pending by a failed persist. Returns whether the
     /// state on disk now matches memory. Deliberately does not escalate on failure:
     /// the fault is still the filesystem's, and the credential has done nothing wrong.
+    ///
+    /// The caller reports a successful retry as `.refreshed` even though no request
+    /// was made, because the caller's contract is "did the on-disk state catch up",
+    /// not "did a forecast arrive". Both call sites test that result in the same
+    /// `||` as `.alreadyFresh`, and `SolarForecastUnavailableCause` maps both to
+    /// `nil`, so nothing downstream can tell the difference. Clearing the stale
+    /// `lastErrorDescription` here is deliberate: the condition it describes is
+    /// gone, and leaving it would make the store report a fault that no longer
+    /// exists.
     private func retryPendingWrite(scope: String) async -> Bool {
         do {
             try await persist()
             dirtyScopes.remove(scope)
+            lastErrorDescription = nil
             return true
         } catch {
             return false

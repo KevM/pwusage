@@ -134,14 +134,16 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
     @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
     @Published private(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
-    /// The forecast was fetched but could not be written to disk. Not a cause:
-    /// the forecast is on screen and usable, so it must not claim to be
-    /// unavailable. Re-derived on every refresh outcome that reaches an
-    /// enhancement decision — both refresh paths set it explicitly, including
-    /// setting it back to `false` when they fall back to basic. The
-    /// not-configured and awaiting-array-selection early returns deliberately
-    /// leave it alone; that is inert, because the overlay reads this only on the
-    /// enhanced path, which neither early return can reach.
+    /// This device could not write its forecast state. Not a cause: the forecast
+    /// on screen is usable, so it must not claim to be unavailable.
+    ///
+    /// Re-derived on every path that reaches a refresh *result* — both refresh
+    /// paths set it from the result, and set it back to `false` when they fall
+    /// back to basic. The early returns that never reach a refresh (no store, no
+    /// credential, no array selection) deliberately leave it alone, and that is
+    /// inert rather than merely untidy: the overlay reads this only on the
+    /// enhanced-and-ready branch, and every one of those returns sets the state to
+    /// `.basic` or `.awaitingArraySelection`, which cannot reach it.
     @Published private(set) var solarForecastSaveFailure = false
     @Published private(set) var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
     @Published private(set) var solarForecastBatch: SolarForecastBatch?
