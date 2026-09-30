@@ -33,7 +33,7 @@ struct DashboardView: View {
                 .frame(maxWidth: .infinity)
             }
             .refreshable {
-                await coordinator.refreshAll()
+                await coordinator.refreshAll(trigger: .userGesture)
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle(site.name)

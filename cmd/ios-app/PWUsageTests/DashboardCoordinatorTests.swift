@@ -187,6 +187,147 @@ struct DashboardCoordinatorTests {
         #expect(api.liveSiteIDs.count == 3, "A failed attempt still anchors cadence to prevent rapid retries.")
     }
 
+    @Test("Regression pin: a released coordinator is deallocated, so its deinit backstop runs")
+    func releasedCoordinatorIsDeallocated() async throws {
+        let api = DashboardAPISpy()
+        var coordinator: DashboardCoordinator? = DashboardCoordinator(
+            siteID: "site-1", api: api, now: { Date(timeIntervalSince1970: 0) },
+            timerInterval: .seconds(3_600)
+        )
+        coordinator?.scenePhaseChanged(isActive: true)
+        #expect(coordinator?.pollingTimerIsActive == true)
+        // What this proves: the polling timer does not retain the coordinator, so
+        // `deinit` is reachable and the `timerTask` cancel in it can run. What it
+        // does not prove: that anything new happened here. The `[weak self]` timer
+        // loop already deallocated before `deinit` existed, so this test passed on
+        // the base revision unchanged. It is kept only because it now guards the
+        // invariant `deinit` depends on — a strongly-capturing timer task added
+        // later would silently make the whole `deinit` unreachable.
+        weak var released = coordinator
+        coordinator = nil
+        for _ in 0..<200 where released != nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(released == nil, "The polling timer must not keep the coordinator alive.")
+    }
+
+    @Test("Tearing down the coordinator discards a live response that is still in flight")
+    func teardownDiscardsInFlightLiveResponse() async throws {
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { Date(timeIntervalSince1970: 0) }, timerInterval: .milliseconds(20))
+        coordinator.scenePhaseChanged(isActive: true)
+        let tick = Task { await coordinator.refreshDue() }
+        await api.waitUntilLiveRequestStarts()
+        coordinator.authenticationInvalidated()
+        coordinator.scenePhaseChanged(isActive: false)
+        api.resumeRequests()
+        await tick.value
+        #expect(coordinator.live.response == nil)
+        #expect(coordinator.live.lastSuccess == nil)
+    }
+
+    @Test("Screen appearances put a five minute floor under the bill request")
+    func screenAppearancesFloorTheBillRequest() async throws {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+        await coordinator.loadTimingDetailAppeared()
+        #expect(api.billSiteIDs == ["site-1"], "A second appearance inside five minutes must not re-request the bill.")
+
+        await coordinator.refreshAll(trigger: .userGesture)
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(api.billSiteIDs == ["site-1", "site-1", "site-1"], "An explicit pull always requests.")
+
+        clock.advance(minutes: 10)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(api.billSiteIDs == ["site-1", "site-1", "site-1", "site-1"],
+                "Past the floor an appearance requests again.")
+    }
+
+    @Test("Reopening the detail inside the bill floor keeps the enhancement")
+    func reopeningInsideTheBillFloorKeepsTheEnhancement() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastState == .enhanced)
+        clock.advance(minutes: 1)
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(api.billSiteIDs == ["site-1"], "The floor suppresses the second request.")
+        #expect(coordinator.solarForecastState == .enhanced,
+                "A bill fetched inside the floor is fresh, so the enhancement must not be dropped.")
+    }
+
+    @Test("Manual refresh with a missing planning context re-fetches the context")
+    func manualRefreshRefetchesAMissingPlanningContext() async throws {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+        )
+        coordinator.scenePhaseChanged(isActive: true)
+
+        api.contextError = PWUsageAPIError.requestRejected(statusCode: 404, message: nil)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.loadPlanningContext == nil)
+        #expect(coordinator.solarForecastUnavailableReason == .serverOutdated)
+        #expect(api.contextSiteIDs == ["site-1"])
+
+        api.contextError = nil
+        await coordinator.loadTimingDetailRefreshed()
+
+        #expect(api.contextSiteIDs == ["site-1", "site-1"],
+                "A pull must re-fetch the household profile instead of failing forever.")
+        #expect(coordinator.loadPlanningContext != nil)
+        #expect(coordinator.solarForecastState == .enhanced)
+    }
+
+    @Test("Regression pin: a non-manual forecast refresh does not re-fetch a missing planning context")
+    func automaticRefreshDoesNotRefetchAMissingPlanningContext() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+        )
+        api.contextError = URLError(.notConnectedToInternet)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.loadPlanningContext == nil)
+        #expect(api.contextSiteIDs == ["site-1"])
+
+        api.contextError = nil
+        await coordinator.refreshSolarForecast(manual: false)
+
+        // What this proves: re-fetching the household profile is gated on
+        // `manual`, so the automatic path cannot hammer it and cannot turn a
+        // diagnosed `serverOutdated`/`contextInvalid` into a generic retry.
+        // What it does not prove: anything new. The base revision reached the
+        // same outcome through a trailing `loadPlanningContext != nil` guard, and
+        // this test passed on it unchanged. Kept as the negative control for
+        // `manualRefreshRefetchesAMissingPlanningContext`, which cannot show that
+        // the `manual` gate is real without a case that stays shut.
+        #expect(api.contextSiteIDs == ["site-1"],
+                "Only a manual refresh may re-fetch the household profile.")
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+    }
+
     @Test("Force refreshAll bypasses interval checks and fetches both live and bill")
     func forceRefreshAllBypassesIntervalChecksAndFetchesBoth() async {
         let clock = TestClock()
@@ -199,7 +340,7 @@ struct DashboardCoordinatorTests {
 
         // Advance by only 1 minute (neither live 5m nor bill 30m is due)
         clock.advance(minutes: 1)
-        await coordinator.refreshAll(force: true)
+        await coordinator.refreshAll(trigger: .userGesture)
 
         #expect(api.liveSiteIDs == ["site-1", "site-1"])
         #expect(api.billSiteIDs == ["site-1", "site-1"])
@@ -217,7 +358,7 @@ struct DashboardCoordinatorTests {
 
         // Advance by only 1 minute
         clock.advance(minutes: 1)
-        await coordinator.refreshBill(force: true)
+        await coordinator.refreshBill(trigger: .userGesture)
 
         #expect(api.liveSiteIDs == ["site-1"])
         #expect(api.billSiteIDs == ["site-1", "site-1"])
@@ -237,7 +378,7 @@ struct DashboardCoordinatorTests {
         #expect(api.billSiteIDs.count == 0)
 
         // refreshBill should execute immediately without waiting for live task to finish
-        await coordinator.refreshBill(force: true)
+        await coordinator.refreshBill(trigger: .userGesture)
         #expect(api.billSiteIDs.count == 1)
 
         api.resumeRequests()
@@ -252,9 +393,9 @@ struct DashboardCoordinatorTests {
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { Date(timeIntervalSince1970: 0) }, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
 
-        let first = Task { await coordinator.refreshAll(force: true) }
+        let first = Task { await coordinator.refreshAll(trigger: .userGesture) }
         await api.waitUntilLiveRequestStarts()
-        let second = Task { await coordinator.refreshAll(force: true) }
+        let second = Task { await coordinator.refreshAll(trigger: .userGesture) }
 
         #expect(api.liveSiteIDs.count == 1)
         #expect(api.billSiteIDs.count == 0)
@@ -267,9 +408,9 @@ struct DashboardCoordinatorTests {
         #expect(api.billSiteIDs.count == 1)
 
         api.holdBill = true
-        let bill1 = Task { await coordinator.refreshBill(force: true) }
+        let bill1 = Task { await coordinator.refreshBill(trigger: .userGesture) }
         await api.waitUntilBillRequestStarts(targetCount: 2)
-        let bill2 = Task { await coordinator.refreshBill(force: true) }
+        let bill2 = Task { await coordinator.refreshBill(trigger: .userGesture) }
 
         api.resumeRequests()
         await bill1.value
@@ -290,8 +431,8 @@ struct DashboardCoordinatorTests {
         let liveCount = api.liveSiteIDs.count
         let billCount = api.billSiteIDs.count
 
-        await coordinator.refreshAll(force: true)
-        await coordinator.refreshBill(force: true)
+        await coordinator.refreshAll(trigger: .userGesture)
+        await coordinator.refreshBill(trigger: .userGesture)
 
         #expect(api.liveSiteIDs.count == liveCount)
         #expect(api.billSiteIDs.count == billCount)
@@ -308,11 +449,14 @@ private final class TestClock {
 }
 
 @MainActor
-private final class DashboardAPISpy: MobileDashboardDataAPI {
+private final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
     private(set) var liveSiteIDs: [String] = []
     private(set) var billSiteIDs: [String] = []
+    private(set) var contextSiteIDs: [String] = []
     var liveError: Error?
     var billError: Error?
+    var contextError: Error?
+    var contextAsOf = Date(timeIntervalSince1970: 1_800_000_000)
     var holdLive = false
     var holdBill = false
     private var liveContinuations: [(String, CheckedContinuation<MobileLiveResponse, Error>)] = []
@@ -349,6 +493,12 @@ private final class DashboardAPISpy: MobileDashboardDataAPI {
         return Self.billResponse(siteID: siteID)
     }
 
+    func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
+        contextSiteIDs.append(siteID)
+        if let contextError { throw contextError }
+        return Self.planningContextResponse(siteID: siteID, asOf: contextAsOf)
+    }
+
     func waitUntilLiveRequestStarts() async {
         if !liveSiteIDs.isEmpty { return }
         await withCheckedContinuation { liveStartWaiters.append($0) }
@@ -379,4 +529,70 @@ private final class DashboardAPISpy: MobileDashboardDataAPI {
         let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC"},"currentBill":{"estimatedCost":42,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"sources":{"calculatedAt":"2026-09-23T12:00:00Z","energyDataThrough":null}}"#
         return try! MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
     }
+
+    private static func planningContextResponse(
+        siteID: String,
+        asOf: Date
+    ) -> MobileLoadPlanningContextResponse {
+        MobileLoadPlanningContextResponse(
+            version: 1,
+            site: .init(id: siteID, timezone: "UTC"),
+            units: .init(power: "kW", localMinute: "minute-of-day"),
+            asOf: asOf,
+            availability: .available,
+            unavailableReason: nil,
+            usableDayCount: 14,
+            historyStart: asOf.addingTimeInterval(-14 * 24 * 60 * 60),
+            historyEnd: asOf.addingTimeInterval(-60),
+            slots: (0..<48).map { index in
+                MobileLoadPlanningContextResponse.Slot(
+                    localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: 14, coverage: 1
+                )
+            }
+        )
+    }
+}
+
+/// A configured forecast store, so the Load timing appearance path runs far
+/// enough to exercise the bill refresh and the planning-context fetch.
+private actor DashboardForecastStoreSpy: SolarForecastManaging {
+    private let siteID: String
+
+    init(siteID: String) {
+        self.siteID = siteID
+    }
+
+    func activateAccountScope(_ accountScopeID: String?) {}
+    func credential(accountScopeID: String, siteID: String) -> SolarForecastCredential? {
+        guard siteID == self.siteID else { return nil }
+        return SolarForecastCredential(
+            accountScopeID: accountScopeID, siteID: siteID, credentialID: "fixture", resourceIDs: ["east"]
+        )
+    }
+    func connect(apiKey: String, accountScopeID: String, siteID: String, resourceIDs: [String]?) throws -> String {
+        throw SolarForecastStore.StoreError.invalidConfiguration
+    }
+    func discoverSites(accountScopeID: String, siteID: String, manual: Bool) throws -> [SolcastSite] { [] }
+    func selectArrays(_ resourceIDs: [String], accountScopeID: String, siteID: String) throws {}
+    func refresh(accountScopeID: String, siteID: String, manual: Bool) -> SolarForecastRefreshResult { .refreshed }
+    func cachedBatch(accountScopeID: String, siteID: String) -> SolarForecastBatch? {
+        SolarForecastBatch(
+            credentialID: "fixture",
+            resourceIDs: ["east"],
+            intervals: [SolarForecastInterval(
+                periodStart: Date(timeIntervalSince1970: 1_800_000_000),
+                periodEnd: Date(timeIntervalSince1970: 1_800_001_800),
+                powerKw: 2
+            )],
+            fetchedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+    }
+    func isRecommendationUsable(accountScopeID: String, siteID: String) -> Bool { true }
+    func budget(for accountScopeID: String, siteID: String) -> SolarForecastBudget {
+        SolarForecastBudget(
+            utcDay: Date(timeIntervalSince1970: 1_800_000_000), totalAttempts: 1, automaticAttempts: 1, deferredUntil: nil
+        )
+    }
+    func disconnect(accountScopeID: String, siteID: String) throws {}
+    func signOut() async throws {}
 }
