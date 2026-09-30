@@ -329,6 +329,7 @@ final class MobileAuthServiceTests {
         fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=second&attempt=\(Self.attemptID)&state=\(secondState)")!)
         try #require(await waitUpTo { service.isAuthenticated })
         #expect(!service.pendingContinuationForTesting)
+        _ = try? await Self.boundedValue(of: second)
     }
 
     @Test("Exchange sign-in required leaves authentication false")
