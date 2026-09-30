@@ -47,7 +47,11 @@ enum SolarForecastUnavailableCause: Equatable {
     case budgetExhausted
     case deferred
 
-    init(_ failure: SolarForecastRefreshFailure) {
+    /// `nil` when the failure does not make the forecast unavailable. A save
+    /// failure is deliberately `nil`: the forecast is available in memory, so
+    /// `causeNote`'s "Solar forecast unavailable" prefix would be false. It is
+    /// surfaced by `DashboardCoordinator.solarForecastSaveFailure` instead.
+    init?(_ failure: SolarForecastRefreshFailure) {
         switch failure {
         case .unauthorized: self = .unauthorized
         case .rateLimited: self = .rateLimited
@@ -56,13 +60,16 @@ enum SolarForecastUnavailableCause: Equatable {
         case .invalidForecast: self = .invalidForecast
         case .storageFailure: self = .storageFailure
         case .cleanupFailure: self = .cleanupFailure
+        case .saveFailed: return nil
         }
     }
 
     /// `nil` when the attempt succeeded or was never a provider failure.
     init?(_ result: SolarForecastRefreshResult) {
         switch result {
-        case .failed(let failure): self = SolarForecastUnavailableCause(failure)
+        case .failed(let failure):
+            guard let cause = SolarForecastUnavailableCause(failure) else { return nil }
+            self = cause
         case .budgetExhausted: self = .budgetExhausted
         case .deferred: self = .deferred
         case .refreshed, .alreadyFresh, .notConfigured, .cancelled: return nil
@@ -131,6 +138,11 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
     @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
     @Published private(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
+    /// The forecast was fetched but could not be written to disk. Not a cause:
+    /// the forecast is on screen and usable, so it must not claim to be
+    /// unavailable. Cleared by every reset of the enhancement and re-derived on
+    /// each refresh.
+    @Published private(set) var solarForecastSaveFailure = false
     @Published private(set) var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
     @Published private(set) var solarForecastBatch: SolarForecastBatch?
     @Published private(set) var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
@@ -382,6 +394,7 @@ final class DashboardCoordinator: ObservableObject {
         loadPlanningContext = context
         solarForecastUnavailableReason = nil
         solarForecastState = .enhanced
+        solarForecastSaveFailure = false
     }
 
     func refreshSolarForecast(manual: Bool) async {
@@ -417,17 +430,23 @@ final class DashboardCoordinator: ObservableObject {
             solarForecastState = .failedWithBasic
             return
         }
-        guard refresh == .refreshed || refresh == .alreadyFresh,
+        // A save failure is not an unavailable forecast: the batch is fresh and in
+        // memory, so the enhancement stays up behind its own note rather than being
+        // torn down behind a "Solar forecast unavailable" sentence.
+        let saveFailed = refresh == .failed(.saveFailed)
+        guard saveFailed || refresh == .refreshed || refresh == .alreadyFresh,
               await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
               let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID) else {
             solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
             solarForecastBatch = nil
             solarForecastState = .failedWithBasic
+            solarForecastSaveFailure = false
             return
         }
         solarForecastBatch = batch
         solarForecastUnavailableCause = nil
         solarForecastState = .enhanced
+        solarForecastSaveFailure = saveFailed
     }
 
     @discardableResult
@@ -615,6 +634,7 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastConnection = connection
         solarForecastUnavailableCause = nil
         solarForecastUnavailableReason = nil
+        solarForecastSaveFailure = false
     }
 
     private func launchBillTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int) {

@@ -49,6 +49,10 @@ enum SolarForecastRefreshFailure: Equatable, Sendable {
     case invalidForecast
     case storageFailure
     case cleanupFailure
+    /// The forecast was fetched successfully but could not be written to disk.
+    /// Deliberately distinct from `storageFailure`, which means a credential was
+    /// quarantined: here the data is good and the key must survive.
+    case saveFailed
 }
 
 enum SolarForecastRefreshResult: Equatable, Sendable {
@@ -409,6 +413,7 @@ actor SolarForecastStore {
         guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID,
               state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
         let client = SolcastClient(apiKey: storedKey.key, transport: transport)
+        let intervals: [SolarForecastInterval]
         do {
             var arrays: [[SolcastForecastPoint]] = []
             for resourceID in credential.resourceIDs {
@@ -418,12 +423,7 @@ actor SolarForecastStore {
             try Task.checkCancellation()
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID,
                   state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
-            let intervals = try SolarForecast.combine(arrays)
-            state.caches[scope] = SolarForecastBatch(credentialID: credential.credentialID, resourceIDs: credential.resourceIDs, intervals: intervals, fetchedAt: clock.now())
-            state.failedScopes.remove(scope)
-            lastErrorDescription = nil
-            try await persist()
-            return .refreshed
+            intervals = try SolarForecast.combine(arrays)
         } catch let error as SolcastClientError {
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID else { return .cancelled }
             recordRateLimit(error, credentialID: credential.credentialID)
@@ -437,6 +437,23 @@ actor SolarForecastStore {
             let failure: SolarForecastRefreshFailure = (error as? SolarForecastError) == nil ? .requestFailed : .invalidForecast
             return Self.refreshResult(for: outcome, ordinaryResult: .failed(failure))
         }
+
+        state.caches[scope] = SolarForecastBatch(credentialID: credential.credentialID, resourceIDs: credential.resourceIDs, intervals: intervals, fetchedAt: clock.now())
+        state.failedScopes.remove(scope)
+        lastErrorDescription = nil
+        do {
+            try await persist()
+        } catch {
+            // A disk failure is not a forecast failure. The intervals above are
+            // good and the credential is untouched, so the cache is kept in memory
+            // and the scope is deliberately NOT marked failed — isRecommendationUsable
+            // gates on failedScopes, so marking it would hide the data we just
+            // fetched. Never quarantine here: the next refresh retries the write,
+            // and destroying a working key over a full disk loses the user's setup.
+            lastErrorDescription = "Forecast could not be saved to this device"
+            return .failed(.saveFailed)
+        }
+        return .refreshed
     }
 
     private func persistFailureState(scope: String, credential: SolarForecastCredential, description: String) async -> FailurePersistenceOutcome {

@@ -72,6 +72,26 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastState == .enhanced)
     }
 
+    @Test("A save failure leaves the enhancement up and claims no unavailability cause")
+    func saveFailureLeavesEnhancementUp() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        await coordinator.loadTimingDetailAppeared()
+        await forecast.setRefreshResults([.failed(.saveFailed)])
+
+        await coordinator.refreshSolarForecast(manual: true)
+
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.solarForecastBatch != nil)
+        #expect(coordinator.solarForecastUnavailableCause == nil)
+        #expect(coordinator.solarForecastSaveFailure)
+    }
+
     @Test("Fresh validated context is reused for twenty four hours")
     func contextIsCachedForTwentyFourHours() async {
         let clock = ForecastTestClock()

@@ -266,6 +266,7 @@ struct LoadTimingView: View {
             enhancement: enhancedState,
             connection: coordinator.solarForecastConnection,
             cause: coordinator.solarForecastUnavailableCause,
+            saveFailed: coordinator.solarForecastSaveFailure,
             enhancementReason: coordinator.solarForecastUnavailableReason,
             result: result,
             forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
