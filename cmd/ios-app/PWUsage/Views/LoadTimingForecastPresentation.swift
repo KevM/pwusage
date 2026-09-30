@@ -76,6 +76,9 @@ enum LoadTimingForecastPresentation {
         return Placement(card: card, profile: profile)    }
 
     static let unavailableNotePrefix = "Solar forecast unavailable — using tariff and balance data."
+    /// Deliberately does not reuse `unavailableNotePrefix`: the forecast is
+    /// available here, it just did not reach the disk.
+    static let saveFailureNote = "Forecast fetched, but it could not be saved to this device. It will be retried on the next refresh."
     /// Matches `SolarForecastStore.recommendationFreshness`. Data older than this
     /// may be shown as stale, but must not produce a new recommendation.
     static let maximumForecastAge: TimeInterval = 6 * 60 * 60
@@ -84,6 +87,7 @@ enum LoadTimingForecastPresentation {
         enhancement: SolarForecastEnhancementState,
         connection: SolarForecastConnectionState,
         cause: SolarForecastUnavailableCause?,
+        saveFailed: Bool = false,
         enhancementReason: SolarForecastEnhancementUnavailableReason? = nil,
         result: LoadTimingForecastEstimator.Result,
         forecastFetchedAt: Date?,
@@ -101,7 +105,7 @@ enum LoadTimingForecastPresentation {
                 enhanced: enhancedSection(comparison, forecastFetchedAt: fetchedAt,
                                           contextAsOf: contextAsOf, currencyCode: currencyCode,
                                           timeZone: timeZone, now: now),
-                note: nil,
+                note: saveFailed ? saveFailureNote : nil,
                 detail: "This estimate assumes typical household and battery behavior from your history. "
                     + "Your final bill cost may differ from this estimate."
             )

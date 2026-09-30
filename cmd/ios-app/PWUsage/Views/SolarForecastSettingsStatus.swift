@@ -63,7 +63,7 @@ enum SolarForecastSettingsStatus {
                 allowsManualIDs: false
             )
         case .persistenceFailed, .cleanupFailed,
-             .discoveryFailed(.storageFailure), .discoveryFailed(.cleanupFailure):
+             .discoveryFailed(.storageFailure), .discoveryFailed(.cleanupFailure), .discoveryFailed(.saveFailed):
             return SolarForecastSettingsPresentation(
                 message: "This device could not safely save the change. Please try again.",
                 isConnected: hasCredential,

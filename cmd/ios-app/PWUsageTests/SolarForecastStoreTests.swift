@@ -590,6 +590,23 @@ struct SolarForecastStoreTests {
         #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
     }
 
+    @Test("A save failure after a successful fetch never quarantines the credential")
+    func saveFailureAfterSuccessfulFetchNeverQuarantines() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        // Two consecutive save failures: the post-fetch write, then the fallback
+        // write that persistFailureState attempts. That pair is the exact shape
+        // that used to reach quarantineCredential and delete the key. The budget
+        // save performRefresh makes before fetching is let through.
+        await h.files.failSaves(2, afterSuccessfulSaves: 1)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.saveFailed))
+        #expect(await h.keychain.count == 1)
+        #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a") != nil)
+        #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
+    }
+
     @Test("Refresh budget exhaustion disables retained cache across restart")
     func refreshBudgetExhaustionDisablesCache() async throws {
         let h = Harness()
@@ -761,6 +778,8 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
     private var payload = Data()
     private var shouldFailNextSave = false
     private var successfulSavesBeforeFailure: Int?
+    private var consecutiveSavesToFail = 0
+    private var successfulSavesBeforeConsecutiveFailure = 0
     private var shouldHoldNextSave = false
     private var heldSave: CheckedContinuation<Void, Never>?
     func loadState() async throws -> SolarForecastPersistedState { state }
@@ -768,6 +787,12 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
         if shouldHoldNextSave {
             shouldHoldNextSave = false
             await withCheckedContinuation { heldSave = $0 }
+        }
+        if successfulSavesBeforeConsecutiveFailure > 0 {
+            successfulSavesBeforeConsecutiveFailure -= 1
+        } else if consecutiveSavesToFail > 0 {
+            consecutiveSavesToFail -= 1
+            throw TestFileError.failedWrite
         }
         if let remaining = successfulSavesBeforeFailure {
             if remaining == 0 { successfulSavesBeforeFailure = nil; throw TestFileError.failedWrite }
@@ -779,6 +804,14 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
     }
     func failNextSave() { shouldFailNextSave = true }
     func failNextSaveAfter(successfulSaves: Int) { successfulSavesBeforeFailure = successfulSaves }
+    /// Fails `count` saves in a row. `afterSuccessfulSaves` lets those through
+    /// first, so the run of failures can start at a chosen point in a refresh —
+    /// `performRefresh` saves once for the request budget before it fetches, so
+    /// a test targeting the post-fetch write has to allow that one save through.
+    func failSaves(_ count: Int, afterSuccessfulSaves: Int = 0) {
+        consecutiveSavesToFail = count
+        successfulSavesBeforeConsecutiveFailure = afterSuccessfulSaves
+    }
     func holdNextSave() { shouldHoldNextSave = true }
     func waitUntilSaveIsHeld() async { while heldSave == nil { await Task.yield() } }
     func resumeHeldSave() { heldSave?.resume(); heldSave = nil }
