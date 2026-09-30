@@ -104,7 +104,9 @@ struct DashboardView: View {
                         )
                         Divider()
                         LivePowerFlowCards(flow: DashboardPresentation.powerFlow(
-                            live: live.live, sourceTime: live.sources.liveStatusAt,
+                            solarPower: live.live.solarPower, loadPower: live.live.loadPower,
+                            batteryPower: live.live.batteryPower, gridPower: live.live.gridPower,
+                            sourceTime: live.sources.liveStatusAt,
                             isUnavailable: coordinator.live.isUnavailable
                         ))
                     }

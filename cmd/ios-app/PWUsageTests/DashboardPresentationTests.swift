@@ -9,7 +9,7 @@ struct DashboardPresentationTests {
     private func flow(solar: Double, home: Double, grid: Double, battery: Double,
                       age: TimeInterval = 0, unavailable: Bool = false) -> DashboardPresentation.PowerFlow {
         DashboardPresentation.powerFlow(
-            live: .init(solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid),
+            solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
             sourceTime: flowNow.addingTimeInterval(-age), isUnavailable: unavailable, now: flowNow
         )
     }
@@ -81,7 +81,7 @@ struct DashboardPresentationTests {
         let unavailable = flow(solar: 1000, home: 1000, grid: 0, battery: 0, unavailable: true)
         #expect((unavailable.supplying + unavailable.receiving).allSatisfy { $0.role == .unknown })
         let missing = DashboardPresentation.powerFlow(
-            live: .init(solarPower: 0, loadPower: 0, batteryPower: 0, gridPower: 0),
+            solarPower: 0, loadPower: 0, batteryPower: 0, gridPower: 0,
             sourceTime: nil, isUnavailable: false, now: flowNow
         )
         #expect((missing.supplying + missing.receiving).allSatisfy { $0.role == .unknown })

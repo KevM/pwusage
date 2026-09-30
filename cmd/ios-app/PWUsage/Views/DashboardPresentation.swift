@@ -23,15 +23,16 @@ enum DashboardPresentation {
         var receiving: [PowerCard]
     }
 
-    static func powerFlow(live: MobileLiveResponse.Live, sourceTime: Date?, isUnavailable: Bool,
+    static func powerFlow(solarPower: Double, loadPower: Double, batteryPower: Double, gridPower: Double,
+                          sourceTime: Date?, isUnavailable: Bool,
                           now: Date = .now) -> PowerFlow {
         let isCurrent = !isUnavailable && sourceTime.map {
             let age = now.timeIntervalSince($0)
             return age >= 0 && age <= 15 * 60
         } == true
         let readings: [(PowerSource, Double)] = [
-            (.solar, live.solarPower), (.home, live.loadPower),
-            (.grid, live.gridPower), (.battery, live.batteryPower)
+            (.solar, solarPower), (.home, loadPower),
+            (.grid, gridPower), (.battery, batteryPower)
         ]
         let cards = readings.map { source, watts -> PowerCard in
             guard isCurrent, watts.isFinite else {
