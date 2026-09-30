@@ -485,7 +485,8 @@ unknown charge renders `--` with the label "Battery charge unknown" beside a **f
 (hero glyph `:77`, Battery tile `:107`).
 
 The TRMNL renderer already does the right thing: with `soc` null it uses `level = 0`, so
-`fillWidth = 0` and the outline renders with no fill (`components.ts:50-51`, `:83-84`, `:116-117`).
+`fillWidth = 0` and the outline renders with no fill (`level` at `components.ts:50`, `:83`, `:116`;
+`fillWidth` at `:57`, `:91`, `:118`).
 iOS matches that with a blank battery, no charging bolt, and a neutral tint.
 
 ### Step 1: Write the failing test

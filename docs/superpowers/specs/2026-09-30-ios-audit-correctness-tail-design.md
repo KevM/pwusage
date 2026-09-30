@@ -102,10 +102,16 @@ only to separate cases the display treats identically. One `nil`, one glyph.
 
 The audit's `Action` is to align arrays onto the union of their interval boundaries, bucketing and
 re-weighting each array's kW onto a common grid. The mechanism is real: each array is a **separate
-sequential HTTP request** (`SolarForecastStore.swift:414-418`), so the interval key sets come from
-different wall-clock times and can legitimately differ. `SolarForecast.combine`
-(`SolarForecast.swift:209`) requires an exact set match, so one differing interval throws
-`incompleteCoverage` and voids the whole forecast.
+sequential HTTP request** (`SolarForecastStore.swift:481-485` — the `for resourceID` loop and the
+cancellation check that follows it), so the interval key sets come from different wall-clock times and
+can legitimately differ. `SolarForecast.combine` (`SolarForecast.swift:210`) requires an exact set
+match, so one differing interval throws `incompleteCoverage` and voids the whole forecast.
+
+*Both citations re-derived 2026-09-30, in the branch's documentation pass.* `:414-418` was correct
+when this document was written — the store was 660 lines then — and drifted when the branch's own
+saves grew the file; at that line today it is `removeRejectedCredential`'s `files.saveState`. The
+second was never right: the exact-match `guard` has been at `SolarForecast.swift:210` since before
+this branch, and `:209` is the `validateNoOverlap` call above it.
 
 It is not being fixed because the audit states plainly that "the frequency of key divergence is
 inferred from Solcast's API contract, **not observed**", and because the fix lands in the energy and
@@ -310,10 +316,11 @@ the request-failure `catch`. Add `SolarForecastRefreshFailure.saveFailed`. On sa
 The budget-reservation persist at `:403-406` already performs exactly this separation for the same
 reason. The fix applies the existing shape to the second call site; no new mechanism.
 
-**Amended 2026-09-30, after the branch landed (ledger reconciliation):** the sentence above is
-**false**, and it matters. The budget-reservation persist does not separate a persistence failure
-from a request failure; on failure it calls `persistFailureState`, which quarantines the credential
-on a *second* failure — the identical defect class, at a different call site. The line has not
+**Amended 2026-09-30, after the branch landed (ledger reconciliation) — SUPERSEDED below, and kept
+as the record of what was believed then.** The sentence above is **false**, and it matters. The
+budget-reservation persist does not separate a persistence failure from a request failure; on
+failure it calls `persistFailureState`, which quarantines the credential on a *second* failure — the
+identical defect class, at a different call site. The line has not
 moved except downward: it is now `SolarForecastStore.swift:409-412`. It was deliberately left
 unfixed, and the reason is *not* that an existing test pins the current behaviour — it does not.
 **No test covers a budget-save failure at all.** The two quarantine tests arm
@@ -332,6 +339,59 @@ written that way would pass against the unfixed code. It is
 recorded as a note in §5.5's `Fix:` bullet rather than as a new numbered finding, so it has no
 `§N.M` handle and nothing will chase it automatically. The real shape of the fix is therefore **one**
 call site separated, not two, and the second is still open.
+
+**Superseded 2026-09-30, in the branch's documentation pass.** The paragraph above was right about
+the defect and wrong about the disposition. **The second call site is not still open: it is fixed**,
+in two steps and by two commits, and this document was the one tracked file those commits left
+asserting otherwise. Their messages name `CODE_AUDIT.md` and `task.md` as the artifacts that went
+stale and omit this note, which went staler — it is the file that said the hazard was live, and its
+own closing sentence is the one a reader would have acted on. Every number in the superseded
+paragraph belongs to that paragraph's own tree and none of them belongs to this one: `:403-406`
+never pointed at a budget save even when this document was written (`performRefresh`'s was `:405-408`
+then, and `discoverSites`' was `:227-230`); `:409-412` was right only at the commit that recorded it;
+and `:809-810` / `:798` were the test double's numbers at that same commit.
+
+**What closed it.** `672dec4` stopped *both* budget saves escalating a write failure to
+`persistFailureState`, which is what reached `quarantineCredential` and deleted the Keychain item.
+`be4e172` then answered the second question the note above raised and left open — what the path
+*should* return — by dropping the `failedScopes` marking and returning `.failed(.saveFailed)`. At
+this tree the `performRefresh` budget save is `SolarForecastStore.swift:446-474` and the
+`discoverSites` one is `:241-258`; `discoverSites`' is the worse of the two, because it is the
+**first-run** path, where the key at risk is the one the user has just typed and has no other copy
+of. `persistFailureState`'s own write — the only write in the file that still reaches quarantine,
+correctly, because by then the forecast *has* been judged unusable — is `:527`, returns
+`.persisted` at `:528`, and calls `quarantineCredential` at `:530`; `refreshResult(for:)` maps that
+outcome at `:569`. **There is no fourth save-failure site** and no path from a write failure to a
+Keychain delete.
+
+**The note's real finding is answered, and it was a good one.** It said closing the hazard needed a
+**new** test aimed at the budget save, because none existed. Four do now, and the two that prove
+non-quarantine are `budgetReservationSaveFailureNeverQuarantines` and
+`discoveryBudgetSaveFailureKeepsJustTypedKey`
+(both arming `failSaves(2, afterSuccessfulSaves: 0)`, as the note predicted),
+`budgetSaveFailureIsNotReportedAsARequestFailure`, and `budgetSaveFailureRetriesTheCounterWrite`.
+Its diagnostic also holds: `failNextSaveAfter(successfulSaves: 0)` still consumes its own arm on the
+first throw, at `SolarForecastStoreTests.swift:927` — the declaration is `:935`, and `:927` is the
+`successfulSavesBeforeFailure = nil` that does it — so a test written that way would still pin
+nothing. The `failSaves` doc comment the note cited by name is at
+`SolarForecastStoreTests.swift:936-939`.
+
+**Why the marking went too, and what it cost.** Closing the escalation left a second decision the
+note did not discuss, and it was decided on the merits rather than inherited. The argument for
+keeping the marking was that an unpersisted *budget* means this device cannot enforce the daily
+request allowance across a relaunch, so failing closed is the honest direction. That argument does
+not survive its own premise: **the disk that would have recorded the budget is the disk that just
+failed**, so `failedScopes` is not persisted either and the marking is session-only — it delivers
+none of the cross-relaunch protection it was justified by, while `isRecommendationUsable` gates on
+it, so a full disk hid a perfectly good cached forecast for the rest of the session. That is §5.5's
+own self-defeating shape, at the second site. **Accepted cost:** on a **persistently failing** disk the
+on-disk request counter can drift, because each rejected reservation is charged in memory and the
+write that would settle it never lands. It is bounded and self-correcting, and the alternative was
+showing no forecast at all. The phantom charge that a dropped reservation creates settles nothing
+either way — the reservation is made before the fetch and the attempt returns without fetching — so
+neither decision rests on it. `reservationPersistenceFailureDisablesCache` became
+`reservationPersistenceFailureKeepsCacheUsable` to pin the opposite invariant; the tripwire rule
+protects *correct* behaviour and that assertion was the behaviour under review.
 
 *Coordinator.* `SolarForecastUnavailableCause.init(_ failure:)` (`:50`) becomes **failable**,
 returning `nil` for `.saveFailed`, with a comment stating that a save failure is not an
