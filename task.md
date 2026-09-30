@@ -182,6 +182,157 @@ the next sign-out.
   §6.1 now says this explicitly. Cost if wrong: the identifier stays readable in
   tracked files.
 
+## iOS audit correctness tail (`fix/ios-audit-correctness-tail`)
+
+Ten commits, against the seven the plan and spec tabulate. The spec's table counts this
+ledger commit; it therefore predicted **six** code commits and the branch has **nine**.
+
+- [x] `395c15b` fix(ios): stop discarding a working Solcast key on a save failure — §5.5.
+- [x] `a3d3f3b` fix(ios): draw an unknown battery charge as blank, not full — §8.18.
+- [x] `3589ac2` test(ios): contain fixture failures to one test — §5.12.
+- [x] `8c44dc9` test(ios): clear three pre-existing test-target warnings — *(not in the
+  spec's table; see the commit-count ruling below).*
+- [x] `3a7a98d` fix(ios): tolerate a fast device clock on the planning context — §5.8.
+- [x] `089e3b0` fix(ios): stop a backwards clock stalling polls and faking freshness —
+  §5.7 parts (a) and (b).
+- [x] `3a367bb` fix(ios): stop blaming a stale forecast for a backwards clock — *(not in
+  the spec's table; see the commit-count ruling below).*
+- [x] `fcabe56` refactor(ios): take the audit's self-contained quick wins — §2 items 1
+  and 3-9.
+- [x] `03c41d5` refactor(ios): remove the no-op do/catch in the API transport — §2 item
+  2, which the spec struck (see D7 below).
+- [x] This commit — `docs(ios): reconcile the audit ledger with the correctness tail`.
+  Counts 75 tracked / 52 OPEN / 22 FIXED / 1 WON'T FIX.
+
+- **Branch gate, re-run at the final commit** *(not a task, and deliberately not a checkbox —
+  the ten `- [x]` lines above are one per commit and counting them should yield ten)*. The
+  branch's rule is that the gate is checked after every task, and this is the last one:
+  `cd cmd/ios-app && ./run-tests.sh` exits **0**, **380 tests in 21 suites** passing.
+  `./generate.sh && xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination
+  'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` prints **BUILD SUCCEEDED**
+  with `grep -c "warning:"` = **0**. `CODE_AUDIT.md`'s header documents the one
+  `appintentsmetadataprocessor` "Metadata extraction skipped" toolchain line as the expected
+  warning; it did **not** appear in this run, so the count is 0 and not 1.
+  `ls ~/Library/Logs/DiagnosticReports/ | grep -c "^PWUsage-"` is **0**. `generate.sh` left no
+  tracked change. The §5.12 `373 tests in 21 suites` figures are time-scoped to that commit
+  and have since grown with the tests later commits added.
+
+- D1: Ruling: §8.18's product decision is a **blank** battery (`battery.0percent`, no
+  `.bolt`, `.secondary` tint) rather than a one-line guard, and the precedent is the
+  TRMNL renderer rather than taste. All three of `components.ts`'s battery renderers
+  compute `level = soc == null ? 0` and then `fillWidth = (level / 100) * 18`, so an
+  e-ink dashboard already renders `--` beside an *empty* battery and never a full one.
+  That also dissolves the standing objection that a 0% glyph asserts a value: the blank
+  fill says *no fill* and the adjacent text carries the meaning, which is how TRMNL
+  distinguishes `0` from `--`. A provenance enum was considered and rejected —
+  `validatedStateOfCharge` collapses four distinct no-reading reasons into one `nil`, and
+  a new wire type would exist only to separate cases the display treats identically. The
+  Action's suggestion to pass the discharging-with-unknown-charge distinction in as a
+  separate input was declined: a second glyph for "no reading while discharging"
+  re-introduces the same ambiguity in the other direction. Cost if wrong: an unknown
+  charge draws a blank battery where a reader expected something more legible, and the
+  rendered spacing beside the `--` is still unverified on screen (the device check
+  §8.18 records as owed could not be discharged without a real sign-in).
+- D2: Ruling: §5.6 is `WON'T FIX`, not fixed. The mechanism is real — each array is a
+  separate sequential request, so the key sets come from different wall-clock times and
+  can differ — but the audit's own confidence note says the divergence is inferred from
+  Solcast's contract and **never observed**, the requests are seconds apart on a fixed
+  epoch grid, and the `Action` lands in the energy and cost math. Speculative
+  re-weighting logic written against an unobserved trigger is worse than a known sharp
+  edge. Recorded with a reopen condition: a device observed returning
+  `incompleteCoverage` for a reason other than a genuinely empty array re-opens it. Cost
+  if wrong: on a device that *does* hit the trigger, a whole day's forecast renders as
+  "An array returned no usable forecast" until someone reads this ruling and writes the
+  fix.
+- D3: Ruling: §5.7 splits rather than landing as one commit. Part (a), a backwards clock
+  silently stopping *all* polling, is a one-line boolean and lands here. Part (b), a
+  backwards clock making any forecast age look fresh, is a missing bound and lands here.
+  Part (c), anchoring cadence to `ContinuousClock`, is structural and is **re-filed as a
+  new §3.16** rather than deferred as a note, because the no-renumbering rule makes
+  `§5.7` the stable handle for "device-clock trust" and part (c) would otherwise be lost
+  behind a `FIXED` status on a partially-fixed finding. (c) is the same `lastAttempt`
+  bookkeeping as §3.7, and the two belong together: a monotonic clock is what makes
+  §3.7's "stamp after the request" rule meaningful. Cost if wrong: a user who moves the
+  clock still causes one spurious poll per interval, and the cadence model stays on
+  `Date` — a latent defect, not a visible one, until the clock is moved again.
+- D4: Ruling: §5.5's `Action` was self-defeating and is not followed literally. It says
+  "on a persist failure, keep the in-memory cache, **mark the scope failed**, and surface
+  a distinct 'could not save' state" — but `isRecommendationUsable` gates on
+  `!state.failedScopes.contains(scope)`, so marking the scope failed hides the very cache
+  the same sentence says to keep, dropping the enhancement back to `failedWithBasic`: the
+  bug's visible outcome, reached by a different route. A save failure is therefore not an
+  unavailability; the forecast stays on screen with its own note, and a new
+  `SolarForecastRefreshFailure.saveFailed` keeps it out of `SolarForecastUnavailableCause`
+  (whose every message is prefixed "Solar forecast unavailable — using tariff and balance
+  data", false here). The audit's instruction to mark the scope failed is recorded as
+  wrong. Cost if wrong: a save failure is visible to the user but the in-memory batch is
+  served without quarantine ever being consulted, so a genuinely bad credential that also
+  cannot be written to disk would be retried rather than disabled.
+- D5: Ruling: §5.8 needs **no** counter and — re-derived before any code was written —
+  needs **no eviction either**. The audit's "evict the cache entry and refetch once"
+  implies a failure counter, which `validating` cannot hold because it is a pure function;
+  no counter is needed, because a re-validation failure is part of the cache-hit
+  *condition*, so control flow falls through to the fetch and a successful refetch
+  overwrites the entry. The experiment (`revalidationFailureInsideTheLifetimeRefetchesAndReplaces`)
+  was run first, unmodified, and it passed, so the eviction was skipped and the experiment
+  kept as a regression test. The audit's second instruction, to widen the allowance "to
+  match the live contract's tolerance", is corrected: the live contract has **zero**
+  negative tolerance, which is stricter, not more lenient. The two cases are not
+  comparable — a future-stamped SoC *reading* is suspect data, while `asOf` is a *server*
+  timestamp whose "future" is a statement about the local clock — so `asOf` gets its own
+  named `maximumNegativeAgeSkew` of one hour, deliberately asymmetric with the 24h
+  positive bound. Cost if wrong: a device running fast gets up to an hour of
+  mis-measured `asOf` freshness instead of a permanently broken feature that blames the
+  server; and if the cache ever stops self-healing, the retained test fails loudly rather
+  than silently.
+- D6: Ruling: §2 quick win #1 and §9.4 are wrong as audited, so only the **view** call
+  sites were deleted and both methods and all three tests were kept. The audit and §9.4
+  both propose deleting `solarForecastSettingsDidEdit()` and `loadProfileDidEdit()` as
+  dead code. `SolarForecastCoordinatorTests` calls them **mid-flight** as a
+  synchronization seam, in three tests named for the invariant they protect; the
+  emptiness *is* the contract under test, and deleting the methods deletes three
+  regression tests. Five view call sites go (four in the settings sheet, one in
+  `LoadTimingView`); three of those were whole `.onChange` bodies, so the wrappers went
+  with them and the modifier lists stayed intact. §9.4 stays `OPEN` for the method half
+  only and carries a note so this is not filed a third time. Cost if wrong: a future edit
+  that gave these methods real invalidation work would land without the three tripwire
+  tests noticing, and this branch's own earlier reasoning had already shown how easy that
+  is to get wrong.
+- D7: Ruling: **the spec was wrong, and item 2 was implemented rather than struck.** D7
+  claimed the no-op `do { … } catch { throw error }` in `perform(_:)` was "already fixed
+  by §6.2", on two premises, both false. (i) It was not already fixed: the wrapper was
+  still in `perform(_:)` at `PWUsage/Networking/PWUsageAPI.swift:109-110` at the start of
+  this branch, so the audit's citation was exactly right and only the reasoning written
+  around it was wrong. (ii) No prior finding could have removed it: `perform(_:)` had not
+  been edited since the Solcast commit `c05947b`, and this branch's own preceding commit
+  `fcabe56` edited the same file only for `fetchSites` and the consolidated conformances.
+  The `catch let error as …ContractError` / `catch { throw …invalidResponse }` pairs
+  D7's reasoning pointed at are the `fetchLive` (`:50-51`) and `fetchBill` (`:59-60`)
+  decodes: real error mapping, not this item, and predating the branch. `03c41d5` removes
+  the wrapper, collapsing the declaration to a single `session.data(for:)` call. A
+  rethrow is the identity, so no behaviour changed and **no test was added** —
+  `PWUsageAPITests` covers the request path, and a test distinguishing a `rethrow` from
+  no `rethrow` could only assert the compiler. Cost if wrong: two lines of dead code
+  survive in the transport, and the standing risk was never the code — it was the
+  precedent, because a design document had already recorded a specific line number as
+  fixed when it was not, and a later reader inheriting that document would have skipped
+  the item a second time.
+- Commit count: Ruling: the branch carries **ten** commits, not the seven the spec's table
+  lists, and the three extra ones each have a reason recorded here rather than being left
+  as unexplained count drift. `8c44dc9` (three pre-existing test-target warnings) was added
+  because the branch's own ground rule is zero warnings but the gate the plan measures
+  builds the app target only, so every test run reported a non-pristine build; two of the
+  three were dead code and were deleted, and the third was live intent whose binding is now
+  read. `3a367bb` was split out of `089e3b0` because §5.7(b) suppressed the forecast panel
+  but left the panel's own accurate string "Source time is in the future" replaced by the
+  generic "too old or incomplete" fallback — two false claims shown to the user, which the
+  a+b commit did not notice and which needed its own test. `03c41d5` is §2 item 2, which the
+  spec struck and D7 above reinstates. Cost if wrong: a reader reconciling the branch
+  against the spec's seven-commit table finds three commits with no entry, which is the
+  failure mode this ledger exists to prevent; the reverse error, folding them into their
+  neighbours, would hide that a test-target warning was a behavioural trap rather than
+  dead code, and that a user-visible string was wrong.
+
 ## Notes
 
 - Sol coordinates; Luna implements one bounded task at a time.
