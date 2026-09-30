@@ -348,6 +348,9 @@ to look for them, because each lives in the seam between two correct commits.
 - [x] `aa88d26` fix(ios): keep the promise the save-failure note makes
 - [x] `e64c052` test(ios): remove the last two try! from the preview fixtures
 - [x] `cb5e5f7` fix(ios): close the load-timing staleness site 5.7's survey missed
+- [x] docs(ios): correct the ledger, the plan and the design after the review — the second review pass's citation and claim corrections
+- [x] fix(ios): report a failed budget write as a save failure, not a network one — the second review pass's Finding 1
+- The two commits above are **named by subject and not by SHA**, where every other entry in this list carries one. A SHA recorded here would be dead on arrival, because both were rewritten after they landed, and the repo's own rule already says to subject-identify a commit rather than cite it. The rewrite was not cosmetic: the commit carrying the §5.5 behaviour change is now the one that carries its own reversal. Before it, `CODE_AUDIT.md` and this file went on asserting — for one commit — that the two budget saves still mark the scope failed and that `reservationPersistenceFailureDisablesCache` pins it, while the code in the same commit had already stopped marking it and had renamed the test. That is the defect `CODE_AUDIT.md:3` exists to prevent, and it was invisible while the commits were the branch tip.
 - [x] This commit — docs and ledger corrections.
 - Review: Ruling: §5.5's fix is **complete only once both refresh paths agree**, and they did not
   until this pass. `refreshSolarForecast(manual:)` learned that a save failure is not an
@@ -368,6 +371,19 @@ to look for them, because each lives in the seam between two correct commits.
   the point, and a tripwire rewrite is exactly what §5.12 warns against. Cost if wrong: a device
   with a transient disk fault shows no forecast recommendation until the next successful refresh
   clears the marking — conservative, visible, and self-healing.
+  **REVERSED in the branch's second review pass — this ruling was wrong on the merits, and the
+  test it leaned on turned out to encode the wrong behaviour rather than guard a right one.** The
+  argument's premise was its own undoing: the disk that would have recorded the budget is the
+  disk that just failed, so `failedScopes` is not persisted either and the marking is
+  session-only. It delivered none of the cross-relaunch protection it was cited for, while
+  `isRecommendationUsable` gating on it hid a good forecast for the rest of the session, and a
+  disk fault surfaced to the user as "Solcast could not be reached". Both budget saves now
+  return `.failed(.saveFailed)` and mark nothing, and the test was rewritten to pin that.
+  The tripwire rule was misapplied the first time and correctly *not* applied the second: it
+  protects correct behaviour, and that assertion was the behaviour under review. Cost if wrong:
+  on a device whose disk is failing, the on-disk request counter can drift by every reservation
+  made since the last successful write — bounded and self-correcting, and the same class of
+  staleness as losing the whole cache — against which a working forecast is always shown.
 - Review: Ruling: the save-failure note's promise is **kept, not withdrawn**. The alternative —
   delete "It will be retried on the next refresh" — was rejected because the promise was the
   honest description of what the user should expect, and the defect was that nothing implemented
