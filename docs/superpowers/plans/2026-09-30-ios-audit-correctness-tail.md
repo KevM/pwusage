@@ -26,8 +26,9 @@
   cd cmd/ios-app && ./generate.sh && xcodebuild -project PWUsage.xcodeproj -scheme PWUsage \
     -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -5
   ```
-  Expected: `** BUILD SUCCEEDED **` and no `warning:` lines. `appintentsmetadataprocessor` metadata
-  extraction is an unrelated toolchain note and is not a warning.
+  Expected: `** BUILD SUCCEEDED **` and no *Swift* compiler warnings. The
+  `appintentsmetadataprocessor` metadata-extraction note is an unrelated toolchain line that also
+  contains the text `warning:`, so a `grep -c "warning:"` counts it; it is not a compiler warning.
 - **No `any`.** Explicit types on every parameter and return. — `AGENTS.md`
 - **Flip the `CODE_AUDIT.md` `Status` bullet in the same commit as the fix.** Not batched. If a
   finding's `Location` lines shifted, re-derive them and say in the `Confidence` bullet that the
@@ -83,7 +84,11 @@ baseline is not green, stop and report — a pre-existing failure is not this br
     -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build 2>&1 | grep -c "warning:"
   ```
 
-  Expected: `0`. Anything else means the tree is not at the state the audit describes.
+  Expected: `1` — the single hit is the `appintentsmetadataprocessor` "Metadata extraction skipped"
+  toolchain note that these ground rules exclude, and it is counted because its own line contains
+  `warning:`. `0` is equally correct on an incremental build, because the processor does not re-run
+  when nothing has changed. The durable claim is **zero *Swift* compiler warnings**; more than 1 means
+  the tree is not at the state the audit describes.
 
 - [ ] **Step 3: Record the DiagnosticReports count** — the §5.12 before-evidence
 
@@ -807,9 +812,11 @@ EOF
 
 ## Task 4: §5.8 — planning-context clock skew and cache eviction
 
-`validating` (`MobileContracts.swift:219-231`) requires `sourceAge` within `[-(5 * 60), 24h]`. A device
+`validating` (`MobileContracts.swift:230-259`) requires `sourceAge` within `[-(5 * 60), 24h]`. A device
 more than five minutes **behind** the server rejects **every** response as `contextInvalid`, permanently, and the cached
-re-validation at `DashboardCoordinator.swift:506` re-rejects the same entry on every read.
+re-validation at `DashboardCoordinator.swift:533-536` re-rejects the same entry on every read.
+
+**Amended 2026-09-30, in the branch's second review pass:** the three citations in this passage were corrected in place against the current tree — `MobileContracts.swift:120` to `:119` (the `age >= 0` guard), `:219-231` to `:230-259` (`validating`, which grew when the skew-direction comment was corrected), and `DashboardCoordinator.swift:506` to `:533-536` (the cache-hit block). *One of these was corrected twice: `:230-274` was itself wrong, because it was taken to the end of the enclosing struct rather than the end of `validating`, which is `:259`.* All three sat in text this branch had already edited for the skew direction, and a citation pass that fixed the wording around them and left the line numbers behind is how a document ends up asserting things about code it never opened.
 
 **Amended 2026-09-30, in the branch's final review pass:** the skew direction is wrong throughout this document. `sourceAge = now.timeIntervalSince(asOf)` compares the *server's* `asOf` against the *device's* clock, so `asOf` looks future-dated only when the device is **behind**; a device running fast makes it look *older*, which the pre-fix `[-300s, 24h]` window already accepted and which was therefore never this finding's population. Every "fast" below is corrected to "behind" / "slow" in the text it appears in; the reasoning and the code change were always right, and only the description of who the fix rescues was not. The landed commit subject for §5.8 still says "fast" and cannot be corrected without rewriting the branch's history, so that one instance is recorded rather than fixed.
 
@@ -1417,7 +1424,9 @@ EOF
 Run after Task 7. Every gate must pass before the branch is offered for review.
 
 - [ ] **Full suite green:** `cd cmd/ios-app && ./run-tests.sh` — exit 0
-- [ ] **Zero warnings:** the `xcodebuild` command in Ground rules prints `0` from `grep -c "warning:"`
+- [ ] **Zero Swift compiler warnings:** the `xcodebuild` command in Ground rules prints `1` on a clean
+      build — the single `appintentsmetadataprocessor` "Metadata extraction skipped" note the ground
+      rules exclude — and `0` on an incremental build. More than 1 is a real Swift warning.
 - [ ] **No crash reports added:** `ls ~/Library/Logs/DiagnosticReports/ | grep -c "^PWUsage-"` is not
       greater than Task 0's `N`
 - [ ] **No `try!` in tests:** `grep -rn "try!" cmd/ios-app/PWUsageTests/` returns nothing
