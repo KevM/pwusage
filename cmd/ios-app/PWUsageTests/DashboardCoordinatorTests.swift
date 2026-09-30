@@ -473,7 +473,7 @@ private final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningD
             return try await withCheckedThrowingContinuation { liveContinuations.append((siteID, $0)) }
         }
         if let liveError { throw liveError }
-        return Self.liveResponse(siteID: siteID)
+        return try Self.liveResponse(siteID: siteID)
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
@@ -490,7 +490,7 @@ private final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningD
             return try await withCheckedThrowingContinuation { billContinuations.append((siteID, $0)) }
         }
         if let billError { throw billError }
-        return Self.billResponse(siteID: siteID)
+        return try Self.billResponse(siteID: siteID)
     }
 
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
@@ -514,23 +514,37 @@ private final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningD
         holdBill = false
         let livePending = liveContinuations
         liveContinuations.removeAll()
-        livePending.forEach { siteID, continuation in continuation.resume(returning: Self.liveResponse(siteID: siteID)) }
+        for (siteID, continuation) in livePending {
+            do {
+                continuation.resume(returning: try Self.liveResponse(siteID: siteID))
+            } catch {
+                // A broken fixture fails the one test awaiting this continuation,
+                // with the decode error attached, instead of trapping the binary.
+                continuation.resume(throwing: error)
+            }
+        }
         let billPending = billContinuations
         billContinuations.removeAll()
-        billPending.forEach { siteID, continuation in continuation.resume(returning: Self.billResponse(siteID: siteID)) }
+        for (siteID, continuation) in billPending {
+            do {
+                continuation.resume(returning: try Self.billResponse(siteID: siteID))
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
     }
 
-    private static func liveResponse(siteID: String) -> MobileLiveResponse {
+    private static func liveResponse(siteID: String) throws -> MobileLiveResponse {
         // A charge reading older than two hours decodes as unknown, so date it now rather than
         // reusing the deliberately stale `liveStatusAt` above.
         let chargeAt = ISO8601DateFormatter().string(from: Date())
         let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC","localDate":"2026-09-23"},"live":{"solarPower":1,"loadPower":2,"batteryPower":3,"gridPower":4},"stateOfCharge":50,"activeTariff":"Peak","today":{"homeKwh":1,"solarKwh":2,"gridNetKwh":3,"batteryNetKwh":4},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"2026-09-23T12:00:00Z","energyDataThrough":null,"stateOfChargeAt":"\#(chargeAt)"}}"#
-        return try! MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(json.utf8))
+        return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(json.utf8))
     }
 
-    private static func billResponse(siteID: String) -> MobileBillResponse {
+    private static func billResponse(siteID: String) throws -> MobileBillResponse {
         let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC"},"currentBill":{"estimatedCost":42,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"sources":{"calculatedAt":"2026-09-23T12:00:00Z","energyDataThrough":null}}"#
-        return try! MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
+        return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
     }
 
     private static func planningContextResponse(
