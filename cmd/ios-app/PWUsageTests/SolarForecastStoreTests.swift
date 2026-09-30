@@ -590,6 +590,39 @@ struct SolarForecastStoreTests {
         #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
     }
 
+    @Test("A save failure on the budget reservation never quarantines the credential")
+    func budgetReservationSaveFailureNeverQuarantines() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        // Two consecutive write failures with nothing allowed through first, so
+        // the FIRST save performRefresh makes — the pre-fetch budget reservation —
+        // is the one that fails. Escalating that to persistFailureState would then
+        // hit its own failing write and delete a credential that was just proven
+        // to work: the request never even reached Solcast.
+        await h.files.failSaves(2, afterSuccessfulSaves: 0)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.requestFailed))
+        #expect(await h.keychain.count == 1)
+    }
+
+    @Test("A save failure on the discovery budget never destroys a just-typed key")
+    func discoveryBudgetSaveFailureKeepsJustTypedKey() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: [])
+
+        // Same two consecutive failures, aimed at the budget save in
+        // discoverSites. This is the first-run path — saveKeyAndDiscover connects
+        // and discovers back to back — so the key at risk is the one the user has
+        // just typed and has no other copy of. Nothing has been fetched yet, so
+        // there is no evidence against the credential at all.
+        await h.files.failSaves(2, afterSuccessfulSaves: 0)
+        await #expect(throws: SolarForecastStore.StoreError.persistenceFailed) {
+            try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a")
+        }
+        #expect(await h.keychain.count == 1)
+    }
+
     @Test("A save failure after a successful fetch never quarantines the credential")
     func saveFailureAfterSuccessfulFetchNeverQuarantines() async throws {
         let h = Harness()

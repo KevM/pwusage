@@ -136,8 +136,12 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
     /// The forecast was fetched but could not be written to disk. Not a cause:
     /// the forecast is on screen and usable, so it must not claim to be
-    /// unavailable. Cleared by every reset of the enhancement and re-derived on
-    /// each refresh.
+    /// unavailable. Re-derived on every refresh outcome that reaches an
+    /// enhancement decision — both refresh paths set it explicitly, including
+    /// setting it back to `false` when they fall back to basic. The
+    /// not-configured and awaiting-array-selection early returns deliberately
+    /// leave it alone; that is inert, because the overlay reads this only on the
+    /// enhanced path, which neither early return can reach.
     @Published private(set) var solarForecastSaveFailure = false
     @Published private(set) var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
     @Published private(set) var solarForecastBatch: SolarForecastBatch?
@@ -355,7 +359,15 @@ final class DashboardCoordinator: ObservableObject {
 
         guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
         solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
-        let refreshSucceeded = refresh == .refreshed || refresh == .alreadyFresh
+        // A save failure is not an unavailable forecast, on this path exactly as
+        // on `refreshSolarForecast`. The batch is fresh and in memory — the store
+        // kept it deliberately — so tearing the enhancement down here would show
+        // "The forecast was too old or incomplete to use. Pull down to refresh it"
+        // after a *successful* fetch of a brand-new forecast, which is the symptom
+        // §5.5 was filed to remove. This path is the dominant one (pull-to-refresh
+        // is the exception), so the omission is the more visible half of the bug.
+        let saveFailed = refresh == .failed(.saveFailed)
+        let refreshSucceeded = saveFailed || refresh == .refreshed || refresh == .alreadyFresh
         // The appearance-driven bill refresh is floored, so a bill fetched
         // moments ago by an earlier appearance, a site switch, or a pull is
         // already fresh. Requiring a brand new success here would drop the
@@ -384,13 +396,14 @@ final class DashboardCoordinator: ObservableObject {
             solarForecastBatch = nil
             loadPlanningContext = nil
             solarForecastState = .failedWithBasic
+            solarForecastSaveFailure = false
             return
         }
         solarForecastBatch = batch
         loadPlanningContext = context
         solarForecastUnavailableReason = nil
         solarForecastState = .enhanced
-        solarForecastSaveFailure = false
+        solarForecastSaveFailure = saveFailed
     }
 
     func refreshSolarForecast(manual: Bool) async {

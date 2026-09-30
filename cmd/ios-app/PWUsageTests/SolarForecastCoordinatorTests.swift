@@ -92,6 +92,51 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastSaveFailure)
     }
 
+    @Test("A save failure on the appearance path leaves the enhancement up too")
+    func appearancePathSaveFailureLeavesEnhancementUp() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        // Armed before the first appearance, so the appearance path itself is the
+        // one that sees the save failure. This is the dominant path — pull to
+        // refresh is the exception — and it is the one that has to agree with
+        // refreshSolarForecast about what a save failure means.
+        await forecast.setRefreshResults([.failed(.saveFailed)])
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.solarForecastBatch != nil)
+        #expect(coordinator.solarForecastUnavailableCause == nil)
+        #expect(coordinator.solarForecastSaveFailure)
+    }
+
+    @Test("A later failure on the appearance path clears an earlier save-failure note")
+    func appearancePathFailureAfterSaveFailureClearsTheNote() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        await forecast.setRefreshResults([.failed(.saveFailed), .failed(.requestFailed)])
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastSaveFailure)
+
+        await coordinator.loadTimingDetailAppeared()
+
+        // The save-failure note describes a forecast that is on screen and usable.
+        // Once the enhancement has actually been torn down, leaving it set would be
+        // a claim about a state that no longer exists.
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastSaveFailure == false)
+    }
+
     @Test("Fresh validated context is reused for twenty four hours")
     func contextIsCachedForTwentyFourHours() async {
         let clock = ForecastTestClock()
