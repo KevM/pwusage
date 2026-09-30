@@ -23,6 +23,16 @@ enum DashboardPresentation {
         var receiving: [PowerCard]
     }
 
+    static func livePowerUpdateDates(sourceTime: Date?, now: Date = .now) -> [Date] {
+        var dates = [now]
+        guard let sourceTime else { return dates }
+        if sourceTime > now { dates.append(sourceTime) }
+        // The freshness check includes exactly 15 minutes, so invalidate just beyond it.
+        let expiry = sourceTime.addingTimeInterval(15 * 60 + 0.001)
+        if expiry > now { dates.append(expiry) }
+        return dates
+    }
+
     static func powerFlow(solarPower: Double, loadPower: Double, batteryPower: Double, gridPower: Double,
                           sourceTime: Date?, isUnavailable: Bool,
                           now: Date = .now) -> PowerFlow {

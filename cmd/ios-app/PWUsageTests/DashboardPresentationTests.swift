@@ -89,6 +89,30 @@ struct DashboardPresentationTests {
         #expect((invalid.supplying + invalid.receiving).filter { $0.id == .solar || $0.id == .home }.allSatisfy { $0.role == .unknown && $0.watts == nil })
     }
 
+    @Test("Unchanged readings expire locally before the next five-minute refresh")
+    func powerFlowExpiresWithoutNewResponse() throws {
+        let sourceTime = flowNow.addingTimeInterval(-899)
+        let updates = DashboardPresentation.livePowerUpdateDates(sourceTime: sourceTime, now: flowNow)
+        let expiry = try #require(updates.last)
+        #expect(expiry > flowNow)
+        #expect(expiry.timeIntervalSince(flowNow) < 2)
+        func cards(at now: Date) -> [DashboardPresentation.PowerCard] {
+            let result = DashboardPresentation.powerFlow(
+                solarPower: 754, loadPower: 1064, batteryPower: 310, gridPower: 0,
+                sourceTime: sourceTime, isUnavailable: false, now: now
+            )
+            return result.supplying + result.receiving
+        }
+        #expect(cards(at: flowNow).contains { $0.role == .supplying })
+        #expect(DashboardPresentation.liveFreshnessNotice(sourceTime, now: flowNow) == nil)
+        #expect(cards(at: expiry).allSatisfy { $0.role == .unknown })
+        #expect(DashboardPresentation.liveFreshnessNotice(sourceTime, now: expiry) != nil)
+        #expect(DashboardPresentation.livePowerUpdateDates(sourceTime: nil, now: flowNow) == [flowNow])
+        #expect(DashboardPresentation.livePowerUpdateDates(sourceTime: flowNow.addingTimeInterval(-901), now: flowNow) == [flowNow])
+        let replacement = DashboardPresentation.livePowerUpdateDates(sourceTime: flowNow, now: flowNow)
+        #expect(try #require(replacement.last) > expiry)
+    }
+
     @Test("Battery direction matches website power threshold and signs")
     func batteryDirectionMatchesWebsitePowerThresholdAndSigns() {
         #expect(DashboardPresentation.batteryDirection(powerWatts: -51) == .charging)

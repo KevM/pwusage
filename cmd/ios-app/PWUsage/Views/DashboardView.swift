@@ -60,7 +60,17 @@ struct DashboardView: View {
     }
 
     private var liveSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        TimelineView(.explicit(DashboardPresentation.livePowerUpdateDates(sourceTime: live?.sources.liveStatusAt))) { _ in
+            // Use the actual clock even when a resumed timeline delivers a past entry.
+            liveSection(now: .now)
+        }
+    }
+
+    private func liveSection(now: Date) -> some View {
+        let livePowerIsCurrent = !coordinator.live.isUnavailable && live.map {
+            DashboardPresentation.liveFreshnessNotice($0.sources.liveStatusAt, now: now) == nil
+        } == true
+        return VStack(alignment: .leading, spacing: 12) {
             Text("Live power")
                 .font(.title3.weight(.bold))
                 .accessibilityAddTraits(.isHeader)
@@ -89,7 +99,7 @@ struct DashboardView: View {
                                 }
                             }
                             if live.stateOfCharge != nil,
-                               let ageLabel = DashboardPresentation.chargeAgeLabel(live.sources.stateOfChargeAt) {
+                               let ageLabel = DashboardPresentation.chargeAgeLabel(live.sources.stateOfChargeAt, now: now) {
                                 Text(ageLabel)
                                     .font(.caption)
                                     .foregroundStyle(.orange)
@@ -100,18 +110,18 @@ struct DashboardView: View {
                             (livePowerIsCurrent
                                 ? DashboardPresentation.batteryDescription(stateOfCharge: live.stateOfCharge, powerWatts: live.live.batteryPower)
                                 : "Battery \(live.stateOfCharge.map { "\(Int($0.rounded()))%" } ?? "--"), flow unknown")
-                            + (DashboardPresentation.chargeAgeLabel(live.sources.stateOfChargeAt).map { ", \($0)" } ?? "")
+                            + (DashboardPresentation.chargeAgeLabel(live.sources.stateOfChargeAt, now: now).map { ", \($0)" } ?? "")
                         )
                         Divider()
                         LivePowerFlowCards(flow: DashboardPresentation.powerFlow(
                             solarPower: live.live.solarPower, loadPower: live.live.loadPower,
                             batteryPower: live.live.batteryPower, gridPower: live.live.gridPower,
                             sourceTime: live.sources.liveStatusAt,
-                            isUnavailable: coordinator.live.isUnavailable
+                            isUnavailable: coordinator.live.isUnavailable, now: now
                         ))
                     }
                 }
-                if let notice = DashboardPresentation.liveFreshnessNotice(live.sources.liveStatusAt) {
+                if let notice = DashboardPresentation.liveFreshnessNotice(live.sources.liveStatusAt, now: now) {
                     Label(notice, systemImage: "clock.badge.exclamationmark")
                         .font(.footnote)
                         .foregroundStyle(.orange)
@@ -323,11 +333,6 @@ struct DashboardView: View {
         return isCharging ? "battery.\(level).bolt" : "battery.\(level)"
     }
 
-    private var livePowerIsCurrent: Bool {
-        !coordinator.live.isUnavailable && live.map {
-            DashboardPresentation.liveFreshnessNotice($0.sources.liveStatusAt) == nil
-        } == true
-    }
 
 }
 
