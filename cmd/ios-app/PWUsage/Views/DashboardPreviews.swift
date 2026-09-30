@@ -23,7 +23,10 @@ final class DashboardPreviewAPI: MobileDashboardDataAPI {
 
     init(mode: DashboardPreviewMode) {
         self.mode = mode
-        let sourceOffset: TimeInterval = mode == .stale ? -2 * 60 * 60 : 0
+        // The stale mode is 2h01m old rather than exactly 2h: a charge reading is suppressed only
+        // once it is *older* than two hours, and fixture construction and decoding happen at
+        // slightly different instants, so the exact edge would be decided by clock jitter.
+        let sourceOffset: TimeInterval = mode == .stale ? -(2 * 60 * 60 + 60) : 0
         let previewNow = Date.now
         // Production serializes both the energy observation time and the tariff
         // timeline with fractional seconds, and starts the timeline at the
@@ -80,7 +83,12 @@ final class DashboardPreviewAPI: MobileDashboardDataAPI {
             ? #"{"periodName":"Peak","buyRate":0.48,"sellRate":0.12,"marginalCost":\#(peakBalance > 0 ? "0.12" : "0.48"),"basis":\#(peakBalance > 0 ? #""sell""# : #""buy""#),"balanceKwh":\#(peakBalance),"energyDataThrough":"\#(sourceTime)"}"#
             : #"{"periodName":"Peak","buyRate":0.48,"sellRate":0.12,"marginalCost":null,"basis":"unobserved","balanceKwh":null,"energyDataThrough":null}"#
         let tariffJSON = hasTariff ? #""Residential · Time of use""# : #""Unknown""#
-        let liveJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago","localDate":"2026-09-23"},"live":{"solarPower":4180,"loadPower":1260,"batteryPower":-2920,"gridPower":0},"stateOfCharge":\#(mode == .stale ? "null" : "72"),"activeTariff":\#(tariffJSON),"activeLoadTiming":\#(activeLoadTiming),"today":{"homeKwh":18.4,"solarKwh":14.8,"gridNetKwh":3.6,"batteryNetKwh":-2.1},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"\#(sourceTime)","energyDataThrough":\#(hasData ? #""\#(sourceTime)""# : "null")}}"#
+        // `stateOfChargeAt` shares the live reading's source instant on purpose: decoding treats an
+        // undated charge as unknown (§5.4), so a fixture that omits the key would render `--` for
+        // the wrong reason. Every mode reports a charge of 72. The stale mode deliberately reports
+        // one anyway, against a source two hours and a minute old, so the `--` it shows is caused
+        // by the client-side freshness rule rather than by the fixture withholding the value.
+        let liveJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago","localDate":"2026-09-23"},"live":{"solarPower":4180,"loadPower":1260,"batteryPower":-2920,"gridPower":0},"stateOfCharge":72,"activeTariff":\#(tariffJSON),"activeLoadTiming":\#(activeLoadTiming),"today":{"homeKwh":18.4,"solarKwh":14.8,"gridNetKwh":3.6,"batteryNetKwh":-2.1},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"\#(sourceTime)","energyDataThrough":\#(hasData ? #""\#(sourceTime)""# : "null"),"stateOfChargeAt":"\#(sourceTime)"}}"#
         let observedPeriods: String
         if !hasData {
             observedPeriods = "[]"

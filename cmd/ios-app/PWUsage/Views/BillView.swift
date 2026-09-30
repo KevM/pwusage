@@ -36,7 +36,7 @@ struct BillView: View {
             .frame(maxWidth: .infinity)
         }
         .refreshable {
-            await coordinator.refreshBill()
+            await coordinator.refreshBill(trigger: .userGesture)
         }
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Current bill")

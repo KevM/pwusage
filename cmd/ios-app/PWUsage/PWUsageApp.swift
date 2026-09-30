@@ -1,5 +1,7 @@
 import SwiftUI
 import Combine
+import OSLog
+import UIKit
 
 @MainActor
 protocol PWUsageApplicationAPI: MobileDashboardDataAPI, MobileLoadPlanningDataAPI, MobileAuthAPI {
@@ -10,21 +12,64 @@ extension PWUsageAPI: PWUsageApplicationAPI {}
 
 @main
 struct PWUsageApp: App {
-    @StateObject private var model: PWUsageAppModel
+    /// Resolved once, at launch. Either a model to run or a build misconfiguration
+    /// to report. It never changes, so no observation is needed to hold on to it.
+    private enum Launch {
+        case ready(PWUsageAppModel)
+        case misconfigured(String)
+    }
+
+    private let launch: Launch
 
     init() {
-        let configuration = (try? AppConfiguration.fromBundle()) ?? (try! AppConfiguration())
-        let apiClient = PWUsageAPI(configuration: configuration)
-        _model = StateObject(wrappedValue: PWUsageAppModel(configuration: configuration, api: apiClient))
+        do {
+            let configuration = try AppConfiguration.fromBundle()
+            launch = .ready(
+                PWUsageAppModel(
+                    configuration: configuration,
+                    api: PWUsageAPI(configuration: configuration)
+                )
+            )
+        } catch let error as AppConfiguration.ValidationError {
+            // A Release build with an unusable origin has no server worth talking
+            // to, so refuse rather than guess. Building a client here is exactly
+            // the failure this replaces: it silently became a production client.
+            launch = .misconfigured(
+                "This build of pwusage was misconfigured and cannot choose a server. "
+                    + "The bundled API origin was rejected as invalid."
+            )
+            PWUsageApp.reportMisconfiguration(error)
+        } catch {
+            launch = .misconfigured("This build of pwusage was misconfigured and cannot choose a server.")
+            PWUsageApp.reportMisconfiguration(error)
+        }
+    }
+
+    private static func reportMisconfiguration(_ error: Error) {
+        Logger(subsystem: "fm.rodeo.pwusage", category: "configuration")
+            .error("Refusing to launch: \(String(describing: error), privacy: .public)")
     }
 
     var body: some Scene {
         WindowGroup {
-            PWUsageRootView()
-                .environmentObject(model)
+            switch launch {
+            case .ready(let model):
+                PWUsageRootView()
+                    .environmentObject(model)
+            case .misconfigured(let message):
+                EmptyStateScreen(
+                    symbol: "exclamationmark.triangle",
+                    title: "pwusage can’t start",
+                    message: message,
+                    actionTitle: "Copy details",
+                    action: { UIPasteboard.general.string = message }
+                )
+            }
         }
         .commands {
-            PWUsageCommands(model: model)
+            if case .ready(let model) = launch {
+                PWUsageCommands(model: model)
+            }
         }
     }
 }
@@ -81,23 +126,46 @@ final class PWUsageAppModel: ObservableObject {
     @Published var isSitePickerPresented = false
     @Published private(set) var accountScopeID: String?
 
+    /// Builds the dashboard coordinator for a site. Injected so tests can control
+    /// the polling cadence and the clock.
+    typealias CoordinatorFactory = @MainActor (_ siteID: String, _ accountScopeID: String) -> DashboardCoordinator
+
     let authService: MobileAuthService
     private let api: any PWUsageApplicationAPI
     private let userDefaults: UserDefaults
     private let forecastStore: any SolarForecastManaging
+    private let coordinatorFactory: CoordinatorFactory
     private var coordinatorAuthSubscription: AnyCancellable?
-    private var didBootstrap = false
     private var sceneIsActive = false
+
+    /// Identifies the attempt that owns the published site state. Every path that
+    /// publishes sites claims one, and a superseded attempt discards its own result
+    /// rather than overwriting a newer one. See `installAuthorizedSites`.
+    private var siteInstallGeneration = 0
 
     init(
         configuration: AppConfiguration,
         api: any PWUsageApplicationAPI,
         userDefaults: UserDefaults = .standard,
-        forecastStore: any SolarForecastManaging = SolarForecastStore.shared
+        forecastStore: any SolarForecastManaging = SolarForecastStore.shared,
+        coordinatorFactory: CoordinatorFactory? = nil
     ) {
         self.api = api
         self.userDefaults = userDefaults
         self.forecastStore = forecastStore
+        if let coordinatorFactory {
+            self.coordinatorFactory = coordinatorFactory
+        } else {
+            self.coordinatorFactory = { siteID, accountScopeID in
+                DashboardCoordinator(
+                    siteID: siteID,
+                    api: api,
+                    planningAPI: api,
+                    forecastStore: forecastStore,
+                    accountScopeID: accountScopeID
+                )
+            }
+        }
         authService = MobileAuthService(
             configuration: configuration,
             api: api,
@@ -105,19 +173,30 @@ final class PWUsageAppModel: ObservableObject {
         )
     }
 
+    /// Retries until a terminal state is reached. The `.task` that drives this is
+    /// cancelled when the view disappears, which can land inside
+    /// `installAuthorizedSites` and leave the screen on the spinner, so a
+    /// latch set on entry would strand it with no way back. A generation token
+    /// instead: a retry is free to run alongside the attempt it supersedes, and
+    /// the older one cannot publish.
     func bootstrap() async {
-        guard !didBootstrap else { return }
-        didBootstrap = true
+        switch screenState {
+        case .signedIn, .signedOut, .unavailable: return
+        case .bootstrapping, .noSites: break
+        }
+        let generation = claimSiteInstall()
         do {
             let availableSites = try await api.fetchSites()
-            await installAuthorizedSites(availableSites)
+            await installAuthorizedSites(availableSites, generation: generation)
         } catch let error as PWUsageAPIError {
+            guard generation == siteInstallGeneration else { return }
             if error == .signInRequired {
                 await invalidateSession(message: nil)
             } else {
                 screenState = .unavailable
             }
         } catch {
+            guard generation == siteInstallGeneration else { return }
             screenState = .unavailable
         }
     }
@@ -132,11 +211,13 @@ final class PWUsageAppModel: ObservableObject {
         isSigningIn = true
         signInMessage = nil
         defer { isSigningIn = false }
+        let generation = claimSiteInstall()
         do {
             try await authService.signIn()
             let availableSites = try await api.fetchSites()
-            await installAuthorizedSites(availableSites)
+            await installAuthorizedSites(availableSites, generation: generation)
         } catch let error as PWUsageAPIError {
+            guard generation == siteInstallGeneration else { return }
             if error == .signInRequired {
                 await invalidateSession(message: "Sign-in expired. Please try again.")
             } else if authService.isAuthenticated {
@@ -156,12 +237,15 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func reloadSitesAfterSignIn() async {
+        let generation = claimSiteInstall()
         do {
             let availableSites = try await api.fetchSites()
-            await installAuthorizedSites(availableSites)
+            await installAuthorizedSites(availableSites, generation: generation)
         } catch let error as PWUsageAPIError where error == .signInRequired {
+            guard generation == siteInstallGeneration else { return }
             await invalidateSession(message: "Your session expired. Sign in to continue.")
         } catch {
+            guard generation == siteInstallGeneration else { return }
             screenState = authService.isAuthenticated ? .unavailable : .signedOut
         }
     }
@@ -179,7 +263,7 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func signOut() async {
-        coordinator?.authenticationInvalidated()
+        teardownCoordinator()
         var cleanupFailed = false
         do { try await authService.logout() }
         catch let error as MobileAuthService.AuthError where error == .forecastCleanupFailed { cleanupFailed = true }
@@ -200,7 +284,7 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     private func invalidateSession(message: String?) async {
-        coordinator?.authenticationInvalidated()
+        teardownCoordinator()
         var cleanupFailed = false
         do { try await authService.invalidateAuthenticatedSession() }
         catch { cleanupFailed = true }
@@ -217,11 +301,46 @@ final class PWUsageAppModel: ObservableObject {
             : message
     }
 
-    private func installAuthorizedSites(_ availableSites: [MobileSite]) async {
+    /// The coordinator must not outlive the session. `authenticationInvalidated`
+    /// discards in-flight work; going inactive is what actually stops the
+    /// polling timer, which otherwise keeps a strong reference and keeps asking
+    /// for authenticated data after the user has signed out.
+    private func teardownCoordinator() {
+        coordinator?.authenticationInvalidated()
+        coordinator?.scenePhaseChanged(isActive: false)
+    }
+
+    /// Claims ownership of the published site state, superseding any attempt that has
+    /// not finished. A retry is deliberately *not* blocked on the attempt it replaces —
+    /// §3.2 requires it to run to completion while the older attempt is still parked —
+    /// so the guard is on publishing, not on entry.
+    private func claimSiteInstall() -> Int {
+        siteInstallGeneration += 1
+        return siteInstallGeneration
+    }
+
+    /// Publishes `availableSites`, unless `generation` has been superseded.
+    ///
+    /// Two attempts can be in flight at once — the root `.task` is cancelled on
+    /// disappear, but an API or actor call that ignores cancellation keeps running,
+    /// and the re-appearing `.task` starts a second one — so the losing attempt
+    /// reaches this function too. A single check on entry is therefore not enough:
+    /// a loser that is already inside when the winner starts publishing resumes
+    /// *after* the winner and overwrites the selected site and the coordinator.
+    /// The generation is compared again after the `await` for that reason.
+    ///
+    /// The pre-`await` writes are deliberately left unguarded. §3.2 requires
+    /// `sites` to be populated while the state is still `.bootstrapping`, because
+    /// that is what makes the screen retryable rather than a permanent spinner;
+    /// a superseded attempt reaching them has already lost a race the newer
+    /// attempt wins again immediately afterwards.
+    private func installAuthorizedSites(_ availableSites: [MobileSite], generation: Int) async {
+        guard generation == siteInstallGeneration else { return }
         sites = availableSites
         authService.restoreAuthenticatedSession()
         let accountScopeID = ensureAccountScopeID()
         await forecastStore.activateAccountScope(accountScopeID)
+        guard generation == siteInstallGeneration else { return }
         guard !availableSites.isEmpty else {
             coordinator = nil
             selectedSiteID = nil
@@ -238,13 +357,7 @@ final class PWUsageAppModel: ObservableObject {
             coordinator.authenticationRestored()
             coordinator.scenePhaseChanged(isActive: sceneIsActive)
         } else {
-            let nextCoordinator = DashboardCoordinator(
-                siteID: chosen.id,
-                api: api,
-                planningAPI: api,
-                forecastStore: forecastStore,
-                accountScopeID: accountScopeID
-            )
+            let nextCoordinator = coordinatorFactory(chosen.id, accountScopeID)
             coordinator = nextCoordinator
             coordinatorAuthSubscription = nextCoordinator.$requiresSignIn
                 .removeDuplicates()

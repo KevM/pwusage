@@ -116,6 +116,72 @@ per-request cost on the hottest mobile route.
 Final: minor (deferred): orphaned Keychain items survive a lost `state.json` until
 the next sign-out.
 
+## iOS audit high findings (`fix/ios-audit-high-findings`)
+
+- [x] Baseline: audit read, spec written, 10 High findings scoped.
+- [x] Group A — §3.12, §3.13, §3.14, §3.3 (auth continuation safety).
+- [x] Group B — §5.3 (cadence), §5.2 (context recovery), §7.1 (estimator/body).
+- [x] Group C — §5.4, §5.9 (battery SoC provenance).
+- [x] Group D — §5.11, §6.1, §6.2, §5.10, §7.7 (config, signing, origin, errors).
+- [x] Whole-branch review follow-ups (ledger reconciliation, §8.18 filed).
+
+- D1: Ruling: §5.1 keeps the marginal delta and fixes the wording; no estimator
+  change, no `absoluteCost` field. The audit filed the defect as High on the
+  claim that the displayed number could be an order of magnitude too small, but
+  re-reading the code the maths is right — `Σ (cost(withLoad) − cost(baseline))`
+  is the correct answer to "what will running this cost me?", and when the load
+  is served by stored surplus the correct answer *is* zero, because that energy
+  was already paid for. The defect was the label, not the number, so the severity
+  was overstated and is recorded as demoted to Low in `CODE_AUDIT.md` §5.1's two
+  Correction bullets. Adding an absolute cost would have been free
+  (`loadedCost` is already in scope) and would have hidden the one fact the
+  marginal figure exists to convey. Cost if wrong: the labels read oddly for a
+  case where the absolute cost is what the user expected.
+- D3: Ruling: §5.3 becomes a 5-minute debounce, not the 30-minute cadence the
+  audit proposed. The audit's recommendation was to make `loadTimingDetailAppeared`
+  respect the documented `billInterval`; doing that literally would make the Load
+  timing screen's numbers go stale on a 30-minute timer while the user is looking
+  at them, which is a worse product than the unbudgeted request it fixes. Instead
+  the `force: Bool` parameter is replaced by a three-case `BillRefreshTrigger`
+  (`.userGesture`, `.screenAppearance`, `.scheduled`) and `.screenAppearance`
+  carries a 5-minute floor. `README.md` was rewritten in the same commit to
+  describe the real behaviour rather than the "at most every 30 minutes" claim the
+  audit filed against. Consequence recorded in `CODE_AUDIT.md` §5.3: the
+  appearance path's bill-freshness test had to widen from "a new success" to
+  "under five minutes old", or the enhancement would be dropped every time the
+  screen reopened inside the floor. Cost if wrong: up to five minutes of extra
+  staleness on the Load timing screen, in exchange for the 30-minute claim in the
+  README no longer being a fiction.
+- Group B: Ruling: the ⌘R / View ▸ Refresh menu was audited as one of the
+  `force: true` sites it was actually about. It is not. `PWUsageApp` calls
+  `refreshDue()`, which routes to `.scheduled`, so ⌘R has always respected the
+  cadence. Recorded in `CODE_AUDIT.md` §5.3 so the next reader does not go
+  looking for a bypass there.
+- Review: Ruling: `DashboardView.batterySymbol`'s `nil` branch renders a
+  full-battery glyph, so §5.4 and §5.9 fix the number and the spoken label
+  while leaving the icon contradicting them. §5.9's `Fix` bullet had claimed the
+  glyph symptom was resolved; that overclaim is corrected in place, and the
+  defect is filed as §8.18 rather than fixed here. What an unknown charge
+  *should* draw — a neutral outline glyph, a second glyph distinct from the
+  discharging default, or no glyph at all — is a product decision, and
+  `batterySymbol` needs the distinction passed in as an input, because `nil`
+  alone cannot carry it. Cost if wrong: a full battery shown beside `--` and
+  "Battery charge unknown", on a path this branch made materially more common
+  (undated, future-dated, and out-of-range readings all now land on `nil`).
+- Review: Ruling: `LoadProfilesSheet`'s fixed errors depend on an `.alert`
+  presenting over a still-open `.confirmationDialog` on the same view chain,
+  which SwiftUI does not reliably do. Not fixed, not claimed fixed — recorded as
+  a device check owed in §5.10, alongside §7.7's equivalent disclosure. Cost if
+  wrong: a failed delete silently leaves the dialog up with no explanation, which
+  is the original defect in a narrower window.
+- Review: Ruling: the `DEVELOPMENT_TEAM` value remains in `CODE_AUDIT.md` (§6.1
+  and §12) and in the plan. Deliberate. It is an Apple account identifier, not a
+  secret, and it is in git history regardless; the load-bearing half of §6.1 —
+  no signing team in the committed build config — is done. Redacting the record
+  would destroy the only statement of what was removed and where it lived.
+  §6.1 now says this explicitly. Cost if wrong: the identifier stays readable in
+  tracked files.
+
 ## Notes
 
 - Sol coordinates; Luna implements one bounded task at a time.

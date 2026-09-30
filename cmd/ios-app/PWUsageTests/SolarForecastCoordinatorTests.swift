@@ -256,13 +256,16 @@ struct SolarForecastCoordinatorTests {
         await coordinator.loadTimingDetailAppeared()
         #expect(coordinator.solarForecastState == .failedWithBasic)
         api.contextError = nil
+        // Past the bill floor, so this appearance's bill refresh really runs and
+        // the enhancement is judged on fresh data.
+        api.now = api.now.addingTimeInterval(6 * 60)
         await coordinator.loadTimingDetailAppeared()
 
         #expect(coordinator.solarForecastState == .enhanced)
         #expect(api.contextSiteIDs == ["site-a", "site-a"])
     }
 
-    @Test("Enhancement requires the forced bill refresh to succeed instead of retaining an older response")
+    @Test("Enhancement requires the bill refresh to succeed instead of retaining an older response")
     func failedBillRefreshCannotEnhanceFromRetainedBill() async {
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
         let api = ForecastDashboardAPISpy()
@@ -271,9 +274,13 @@ struct SolarForecastCoordinatorTests {
             forecastStore: forecast, accountScopeID: "local-account",
             now: { api.now }, timerInterval: nil
         )
-        await coordinator.refreshBill()
+        await coordinator.refreshBill(trigger: .userGesture)
         #expect(coordinator.bill.response != nil)
         api.billError = PWUsageAPIError.recoverableServerError(statusCode: 503)
+        // Past the appearance floor, so the appearance really does attempt the
+        // bill and has to refuse the enhancement on a failed refresh rather than
+        // on a merely stale one.
+        api.now = api.now.addingTimeInterval(6 * 60)
 
         await coordinator.loadTimingDetailAppeared()
 

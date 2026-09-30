@@ -110,8 +110,17 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
 
 @MainActor
 final class DashboardCoordinator: ObservableObject {
+    /// What asked for a refresh, for both endpoints. Every call site must state
+    /// which one it is, because only an explicit gesture bypasses the
+    /// elapsed-time cadences: `.userGesture` also skips the live cadence, not
+    /// just the bill's.
+    enum RefreshTrigger { case userGesture, screenAppearance, scheduled }
+
     static let liveInterval: TimeInterval = 5 * 60
     static let billInterval: TimeInterval = 30 * 60
+    /// Floor under appearance-driven bill refreshes, so opening the Load timing
+    /// screen twice in a row does not bill twice but still feels fresh.
+    static let billMinimumInterval: TimeInterval = 5 * 60
     static let planningContextLifetime: TimeInterval = 24 * 60 * 60
 
     @Published private(set) var selectedSiteID: String
@@ -180,6 +189,19 @@ final class DashboardCoordinator: ObservableObject {
         self.timerInterval = timerInterval
     }
 
+    /// Stops the polling timer. That cancel is the only one with any effect: the
+    /// timer loop captures `self` weakly, so it is the one task that can still be
+    /// running when the last strong reference goes away. `liveTask`/`billTask`
+    /// capture `self` strongly, so they keep the coordinator alive until they
+    /// finish — by the time `deinit` runs they are already complete or nil and
+    /// cancelling them would be a no-op. Dropping an in-flight authenticated
+    /// response after sign-out is prevented by `authenticationInvalidated()`,
+    /// which the app model calls explicitly; that, not this `deinit`, is what
+    /// delivers the backstop.
+    deinit {
+        timerTask?.cancel()
+    }
+
     func scenePhaseChanged(isActive: Bool) {
         if isActive {
             sceneIsActive = true
@@ -207,10 +229,14 @@ final class DashboardCoordinator: ObservableObject {
         Task { await refreshDue() }
     }
 
-    /// Invalidates optional forecast work before the authenticated app state is
-    /// discarded. Late provider/context completions must never restore it.
+    /// Invalidates all in-flight authenticated work before the app state is
+    /// discarded: optional forecast work, plus any live or bill request that is
+    /// still on the wire. Without this a response that lands after sign-out
+    /// repopulates a coordinator the user has already left.
     func authenticationInvalidated() {
         forecastGeneration += 1
+        siteGeneration += 1
+        cancelInFlightRequests()
         resetForecastEnhancement(state: .basic, connection: .notConnected)
     }
 
@@ -219,10 +245,7 @@ final class DashboardCoordinator: ObservableObject {
         selectedSiteID = siteID
         siteGeneration += 1
         forecastGeneration += 1
-        liveTask?.cancel()
-        billTask?.cancel()
-        liveTask = nil
-        billTask = nil
+        cancelInFlightRequests()
         live.reset()
         bill.reset()
         resetForecastEnhancement(state: .basic, connection: .notConnected)
@@ -235,21 +258,21 @@ final class DashboardCoordinator: ObservableObject {
 
     /// Called by the foreground timer and lifecycle events. Missed intervals collapse to one request.
     func refreshDue() async {
-        await refreshAll(force: false)
+        await refreshAll(trigger: .scheduled)
     }
 
     /// Refreshes live power readings followed by bill estimates.
-    /// When `force` is true, bypasses elapsed cadence checks.
-    func refreshAll(force: Bool = true) async {
+    func refreshAll(trigger: RefreshTrigger) async {
         guard !requiresSignIn else { return }
-        if !force {
+        if trigger == .scheduled {
             guard isForeground else { return }
         }
         let requestTime = now()
         let generation = siteGeneration
 
         if liveTask == nil {
-            if force || isDue(lastAttempt: live.lastAttempt, interval: Self.liveInterval, at: requestTime) {
+            if trigger == .userGesture
+                || isDue(lastAttempt: live.lastAttempt, interval: Self.liveInterval, at: requestTime) {
                 live.lastAttempt = requestTime
                 let siteID = selectedSiteID
                 liveTask = Task { await performLive(siteID: siteID, generation: generation) }
@@ -259,26 +282,25 @@ final class DashboardCoordinator: ObservableObject {
         // before asking the bill endpoint to calculate from that history.
         await liveTask?.value
         guard !requiresSignIn, generation == siteGeneration else { return }
-        if !force {
+        if trigger == .scheduled {
             guard isForeground else { return }
         }
 
-        launchBillTaskIfNeeded(force: force, requestTime: requestTime, generation: generation)
+        launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation)
 
         await billTask?.value
     }
 
-    /// Refreshes the bill estimate.
-    /// When `force` is true, bypasses elapsed cadence checks.
-    func refreshBill(force: Bool = true) async {
+    /// Refreshes the bill estimate, subject to the trigger's cadence.
+    func refreshBill(trigger: RefreshTrigger) async {
         guard !requiresSignIn else { return }
-        if !force {
+        if trigger == .scheduled {
             guard isForeground else { return }
         }
         let requestTime = now()
         let generation = siteGeneration
 
-        launchBillTaskIfNeeded(force: force, requestTime: requestTime, generation: generation)
+        launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation)
 
         await billTask?.value
     }
@@ -316,7 +338,7 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastUnavailableCause = nil
 
         let billSuccessBeforeRefresh = billSuccessGeneration
-        async let billRefresh: Void = refreshBill(force: true)
+        async let billRefresh: Void = refreshBill(trigger: .screenAppearance)
         async let refreshResult = forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: false)
         async let contextResult = planningContext(siteID: siteID, api: planningAPI)
         let (refresh, outcome) = await (refreshResult, contextResult)
@@ -326,7 +348,13 @@ final class DashboardCoordinator: ObservableObject {
         guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
         solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
         let refreshSucceeded = refresh == .refreshed || refresh == .alreadyFresh
-        let billSucceeded = billSuccessGeneration > billSuccessBeforeRefresh
+        // The appearance-driven bill refresh is floored, so a bill fetched
+        // moments ago by an earlier appearance, a site switch, or a pull is
+        // already fresh. Requiring a brand new success here would drop the
+        // enhancement every time the screen is reopened inside the floor.
+        // Measured at the decision point, not before the awaits, so a slow
+        // planning-context fetch cannot age a stale bill back into freshness.
+        let billSucceeded = billSuccessGeneration > billSuccessBeforeRefresh || billIsFresh(at: now())
         let siteMatches = bill.response?.site.id == siteID
         let timeZoneMatches = context != nil && bill.response?.site.timezone == context?.timeZone
         let forecastUsable = await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID)
@@ -373,10 +401,25 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastState = .loadingWithBasic
         let refresh = await forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: manual)
         guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
+        if loadPlanningContext == nil {
+            solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
+            solarForecastBatch = nil
+            if manual {
+                // The missing half is our own household profile, not the
+                // forecast, and this path is the only place a person can ask for
+                // it. The note on screen tells them to pull down to refresh, so a
+                // pull has to actually re-fetch the context. The appearance path
+                // re-derives `solarForecastUnavailableReason`, so a `serverOutdated`
+                // or `contextInvalid` diagnosis survives a repeat failure.
+                await loadTimingDetailAppeared()
+                return
+            }
+            solarForecastState = .failedWithBasic
+            return
+        }
         guard refresh == .refreshed || refresh == .alreadyFresh,
               await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
-              let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID),
-              loadPlanningContext != nil else {
+              let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID) else {
             solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
             solarForecastBatch = nil
             solarForecastState = .failedWithBasic
@@ -521,7 +564,7 @@ final class DashboardCoordinator: ObservableObject {
     /// can ask for a new forecast, so it must genuinely do that rather than
     /// refreshing bill data alone.
     func loadTimingDetailRefreshed() async {
-        await refreshBill(force: true)
+        await refreshBill(trigger: .userGesture)
         if solarForecastConnection != .notConnected {
             await refreshSolarForecast(manual: true)
         } else {
@@ -574,18 +617,32 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastUnavailableReason = nil
     }
 
-    private func launchBillTaskIfNeeded(force: Bool, requestTime: Date, generation: Int) {
+    private func launchBillTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int) {
         guard billTask == nil else { return }
-        if force || isDue(lastAttempt: bill.lastAttempt, interval: Self.billInterval, at: requestTime) {
-            bill.lastAttempt = requestTime
-            let siteID = selectedSiteID
-            billTask = Task { await performBill(siteID: siteID, generation: generation) }
+        let due: Bool
+        switch trigger {
+        case .userGesture: due = true
+        case .screenAppearance:
+            due = isDue(lastAttempt: bill.lastAttempt, interval: Self.billMinimumInterval, at: requestTime)
+        case .scheduled:
+            due = isDue(lastAttempt: bill.lastAttempt, interval: Self.billInterval, at: requestTime)
         }
+        guard due else { return }
+        bill.lastAttempt = requestTime
+        let siteID = selectedSiteID
+        billTask = Task { await performBill(siteID: siteID, generation: generation) }
     }
 
     private func isDue(lastAttempt: Date?, interval: TimeInterval, at date: Date) -> Bool {
         guard let lastAttempt else { return true }
         return date.timeIntervalSince(lastAttempt) >= interval
+    }
+
+    /// Whether the bill response on hand was fetched inside the appearance floor.
+    private func billIsFresh(at date: Date) -> Bool {
+        guard let lastSuccess = bill.lastSuccess else { return false }
+        let age = date.timeIntervalSince(lastSuccess)
+        return age >= 0 && age < Self.billMinimumInterval
     }
 
     private func performLive(siteID: String, generation: Int) async {
@@ -626,11 +683,11 @@ final class DashboardCoordinator: ObservableObject {
     private func handle(_ error: Error, generation: Int, endpoint: Endpoint) {
         guard generation == siteGeneration else { return }
         if error as? PWUsageAPIError == .signInRequired {
+            // Already nil and cancelled in here; cancelling again would imply
+            // the sign-in-required path does something extra that it does not.
             authenticationInvalidated()
             requiresSignIn = true
             isForeground = false
-            liveTask?.cancel()
-            billTask?.cancel()
             stopTimer()
             return
         }
@@ -665,5 +722,15 @@ final class DashboardCoordinator: ObservableObject {
     private func stopTimer() {
         timerTask?.cancel()
         timerTask = nil
+    }
+
+    /// The one place that drops in-flight endpoint requests. Both site switches
+    /// and sign-out need it, and the task handles must be nil'd as well as
+    /// cancelled so the next trigger does not join a doomed request.
+    private func cancelInFlightRequests() {
+        liveTask?.cancel()
+        billTask?.cancel()
+        liveTask = nil
+        billTask = nil
     }
 }

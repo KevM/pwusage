@@ -195,6 +195,13 @@ enum LoadTimingPresentation {
         }
     }
 
+    /// One hour is deliberate and matches `LoadTimingRecommendation.detailFreshnessWindow`,
+    /// so the verdict and this label age out on the same tick. It is *not* the
+    /// same policy as `LoadTimingForecastEstimator.maximumBalanceAge` (30
+    /// minutes), which gates whether a forecast may be produced at all: a
+    /// forecast that policy already rejects can keep being described here for
+    /// up to another 30 minutes. The two are separate on purpose — one is
+    /// "can we still trust the basic estimate", the other is "may we forecast".
     static func sourceStatus(isUnavailable: Bool, energyDataThrough: Date?, now: Date = .now) -> String {
         let freshness = DashboardPresentation.freshness(energyDataThrough, now: now, staleAfter: 60 * 60)
         return isUnavailable ? "Refresh unavailable · \(freshness.lowercased())" : freshness
@@ -269,66 +276,111 @@ struct LoadTimingView: View {
         )
     }
 
+    /// The minute tick reaches two things on this screen: the freshness labels,
+    /// and the verdict with its figures. Both are cheap to re-derive. The
+    /// forecast overlay is not — it is a multi-candidate search over the
+    /// horizon — so it is resolved once per body pass, outside any timeline.
+    /// The scroll view and its refresh control sit outside a timeline too, so
+    /// neither the estimator nor a pull-to-refresh is at the mercy of the tick.
     var body: some View {
-        TimelineView(.everyMinute) { _ in
-            let now = Date()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if coordinator.bill.isUnavailable {
-                        AvailabilityBanner(message: "Load timing could not be refreshed. Showing the last successful cycle snapshot with its original source time.", symbol: "clock.badge.exclamationmark")
-                    }
-                    if let response {
-                        let timingForDisplay = timing ?? LoadTiming(
-                            hasTariff: false,
-                            hasCycleData: false,
-                            activeIsCheapest: false,
-                            periods: [],
-                            pricingPeriods: [],
-                            tariffTimeline: [],
-                            nextCheaper: nil,
-                            nextCheaperPhrase: nil,
-                            nextStartPhraseByKey: [:]
-                        )
-                        let recommendation = LoadTimingRecommendation.evaluate(
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if coordinator.bill.isUnavailable {
+                    AvailabilityBanner(message: "Load timing could not be refreshed. Showing the last successful cycle snapshot with its original source time.", symbol: "clock.badge.exclamationmark")
+                }
+                if let response {
+                    let timingForDisplay = timing ?? LoadTiming(
+                        hasTariff: false,
+                        hasCycleData: false,
+                        activeIsCheapest: false,
+                        periods: [],
+                        pricingPeriods: [],
+                        tariffTimeline: [],
+                        nextCheaper: nil,
+                        nextCheaperPhrase: nil,
+                        nextStartPhraseByKey: [:]
+                    )
+                    // Placement decides which card carries the forecast, and the
+                    // forecast is the expensive thing on this screen. Both are
+                    // resolved here so the tick below never pays for either, and
+                    // both cards are handed the same overlay.
+                    let placement = LoadTimingForecastPresentation.placement(
+                        recommendation: LoadTimingRecommendation.evaluate(
                             profiles: profileStore.profiles,
-                            start: now,
+                            start: Date(),
+                            timing: timingForDisplay,
+                            energyDataThrough: response.sources.energyDataThrough,
+                            cycleEnd: response.currentBill.cycleEnd,
+                            refreshUnavailable: coordinator.bill.isUnavailable
+                        ),
+                        explicitExploredID: exploredProfileID
+                    )
+                    let overlay = placement.map {
+                        forecastOverlay(now: Date(), timing: timingForDisplay, response: response, profile: $0.profile)
+                    }
+                    // Re-deriving the verdict on every tick costs one
+                    // estimator-free recommendation pass, and keeps the headline
+                    // consistent with the freshness label beside it. The overlay
+                    // is frozen, so each card re-checks that the tick still
+                    // places the forecast on the same load and withholds it
+                    // otherwise: a stale forecast is never worth showing against
+                    // a different profile.
+                    TimelineView(.everyMinute) { context in
+                        let tickRecommendation = LoadTimingRecommendation.evaluate(
+                            profiles: profileStore.profiles,
+                            start: context.date,
                             timing: timingForDisplay,
                             energyDataThrough: response.sources.energyDataThrough,
                             cycleEnd: response.currentBill.cycleEnd,
                             refreshUnavailable: coordinator.bill.isUnavailable
                         )
-                        recommendationCard(recommendation, timing: timingForDisplay, response: response, now: now)
-                        explorerCard(recommendation, timing: timingForDisplay, response: response, now: now)
-                        observedPeriods(timingForDisplay)
-                        metadata(response, now: now)
-                    } else if coordinator.bill.isUnavailable {
-                        LoadTimingCard(title: "Recommendation", symbol: "bolt.fill") {
-                            Text(LoadTimingPresentation.noResponseRecommendationMessage.title)
-                                .font(.title3.weight(.bold))
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(LoadTimingPresentation.noResponseRecommendationMessage.detail)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 14) {
+                            recommendationCard(
+                                tickRecommendation,
+                                timing: timingForDisplay,
+                                response: response,
+                                overlay: overlay,
+                                forecastPlacement: placement
+                            )
+                            explorerCard(
+                                tickRecommendation,
+                                timing: timingForDisplay,
+                                response: response,
+                                overlay: overlay,
+                                forecastPlacement: placement,
+                                now: context.date
+                            )
                         }
-                        noResponseExplorerCard
-                    } else {
-                        HStack(spacing: 12) {
-                            ProgressView()
-                            Text("Loading load timing").foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(22)
-                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
                     }
+                    observedPeriods(timingForDisplay)
+                    metadata(response)
+                } else if coordinator.bill.isUnavailable {
+                    LoadTimingCard(title: "Recommendation", symbol: "bolt.fill") {
+                        Text(LoadTimingPresentation.noResponseRecommendationMessage.title)
+                            .font(.title3.weight(.bold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(LoadTimingPresentation.noResponseRecommendationMessage.detail)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    noResponseExplorerCard
+                } else {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text("Loading load timing").foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(22)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
                 }
-                .padding(20)
-                .frame(maxWidth: 760)
-                .frame(maxWidth: .infinity)
             }
-            .refreshable { await coordinator.loadTimingDetailRefreshed() }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .padding(20)
+            .frame(maxWidth: 760)
+            .frame(maxWidth: .infinity)
         }
+        .refreshable { await coordinator.loadTimingDetailRefreshed() }
+        .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Load timing")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -363,7 +415,13 @@ struct LoadTimingView: View {
         }
     }
 
-    private func recommendationCard(_ recommendation: LoadTimingRecommendation, timing: LoadTiming, response: MobileBillResponse, now: Date) -> some View {
+    private func recommendationCard(
+        _ recommendation: LoadTimingRecommendation,
+        timing: LoadTiming,
+        response: MobileBillResponse,
+        overlay: LoadTimingForecastPresentation.Overlay?,
+        forecastPlacement: LoadTimingForecastPresentation.Placement?
+    ) -> some View {
         let hasExpiredCandidate = recommendation.candidates.contains { $0.result == .unavailable(.billingCycleExpired) }
         let copy = LoadTimingPresentation.recommendationMessage(
             for: recommendation.state,
@@ -371,13 +429,8 @@ struct LoadTimingView: View {
             hasTariff: timing.hasTariff,
             hasExpiredCandidate: hasExpiredCandidate
         )
-        // The forecast rides on whichever card is already showing the load it
-        // describes, so it stays visible even when the basic layer has no
-        // suggestion of its own.
-        let placement = LoadTimingForecastPresentation.placement(
-            recommendation: recommendation, explicitExploredID: exploredProfileID
-        )
-        let showsForecast = placement?.card == .recommendation
+        let showsForecast = currentPlacement(for: recommendation) == forecastPlacement
+            && forecastPlacement?.card == .recommendation
         return LoadTimingCard(title: "Recommendation", symbol: "bolt.fill") {
             Text(copy.title)
                 .font(.title3.weight(.bold))
@@ -404,17 +457,30 @@ struct LoadTimingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            forecastSection(showsForecast ? placement.map { forecastOverlay(now: now, timing: timing, response: response, profile: $0.profile) } : nil)
+            forecastSection(showsForecast ? overlay : nil)
             Text("Estimates use billing-cycle balances, not live solar. Each load is evaluated independently from the same snapshot.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(LoadTimingPresentation.sourceStatus(isUnavailable: coordinator.bill.isUnavailable, energyDataThrough: response.sources.energyDataThrough, now: now))
-                .font(.caption)
-                .foregroundStyle(coordinator.bill.isUnavailable ? .orange : .secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("Source freshness: \(LoadTimingPresentation.sourceStatus(isUnavailable: coordinator.bill.isUnavailable, energyDataThrough: response.sources.energyDataThrough, now: now))")
+            LoadTimingFreshnessLabel(isUnavailable: coordinator.bill.isUnavailable, energyDataThrough: response.sources.energyDataThrough)
         }
+    }
+
+    /// The forecast rides on whichever card is already showing the load it
+    /// describes, so it stays visible even when the basic layer has no
+    /// suggestion of its own.
+    ///
+    /// Placement itself is cheap — it selects a profile and never estimates — so
+    /// each card re-derives it on the minute tick and compares against the
+    /// placement its frozen overlay was computed for. Placement is `Equatable`,
+    /// so an unchanged verdict keeps the forecast on screen and a changed one
+    /// withholds it.
+    private func currentPlacement(
+        for recommendation: LoadTimingRecommendation
+    ) -> LoadTimingForecastPresentation.Placement? {
+        LoadTimingForecastPresentation.placement(
+            recommendation: recommendation, explicitExploredID: exploredProfileID
+        )
     }
 
     @ViewBuilder
@@ -479,14 +545,17 @@ struct LoadTimingView: View {
         }
     }
 
-    private func explorerCard(_ recommendation: LoadTimingRecommendation, timing: LoadTiming, response: MobileBillResponse, now: Date) -> some View {
+    private func explorerCard(
+        _ recommendation: LoadTimingRecommendation,
+        timing: LoadTiming,
+        response: MobileBillResponse,
+        overlay: LoadTimingForecastPresentation.Overlay?,
+        forecastPlacement: LoadTimingForecastPresentation.Placement?,
+        now: Date
+    ) -> some View {
         let candidate = recommendation.exploredProfile(explicitID: exploredProfileID)
-        let placement = LoadTimingForecastPresentation.placement(
-            recommendation: recommendation, explicitExploredID: exploredProfileID
-        )
-        let explorerOverlay = placement?.card == .explorer
-            ? forecastOverlay(now: now, timing: timing, response: response, profile: placement?.profile)
-            : nil
+        let showsForecast = currentPlacement(for: recommendation) == forecastPlacement
+            && forecastPlacement?.card == .explorer
         return LoadTimingCard(title: "Explore another load", symbol: "slider.horizontal.3") {
             if !profileStore.profiles.isEmpty {
                 Picker("Load profile", selection: Binding(
@@ -504,7 +573,7 @@ struct LoadTimingView: View {
                 if let candidate {
                     explorerCandidate(candidate, recommendation: recommendation, timing: timing, response: response, now: now)
                 }
-                forecastSection(explorerOverlay)
+                forecastSection(showsForecast ? overlay : nil)
             } else {
                 Text("Add a load profile to explore estimates.")
                     .font(.subheadline)
@@ -643,13 +712,16 @@ struct LoadTimingView: View {
         }
     }
 
-    private func metadata(_ response: MobileBillResponse, now: Date) -> some View {
+    private func metadata(_ response: MobileBillResponse) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Billing cycle \(DashboardPresentation.date(response.currentBill.cycleStart, timeZoneIdentifier: timeZone, dateStyle: .short)) – \(DashboardPresentation.date(response.currentBill.cycleEnd, timeZoneIdentifier: timeZone, dateStyle: .short))")
             Text(LoadTimingPresentation.sourceTimeSummary(response.sources.energyDataThrough, timeZone: timeZone))
             Text("Calculated \(DashboardPresentation.date(response.sources.calculatedAt, timeZoneIdentifier: timeZone, dateStyle: .medium, timeStyle: .short))")
-            Text(LoadTimingPresentation.sourceStatus(isUnavailable: coordinator.bill.isUnavailable, energyDataThrough: response.sources.energyDataThrough, now: now))
-                .foregroundStyle(coordinator.bill.isUnavailable ? .orange : .secondary)
+            LoadTimingFreshnessLabel(
+                isUnavailable: coordinator.bill.isUnavailable,
+                energyDataThrough: response.sources.energyDataThrough,
+                announcesFreshness: false
+            )
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -662,6 +734,59 @@ struct LoadTimingView: View {
             AnyView(VStack(spacing: 9) { ForEach(tiles.indices, id: \.self) { tiles[$0] } })
         } else {
             AnyView(LazyVGrid(columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)], spacing: 9) { ForEach(tiles.indices, id: \.self) { tiles[$0] } })
+        }
+    }
+}
+
+/// How stale the energy observations are, in words.
+///
+/// This is one of only two things on the load timing screen that move with the
+/// clock, so it owns a minute timeline of its own. Using the timeline's own date
+/// keeps the label and the tick that redraws it on the same clock instead of a
+/// second one.
+private struct LoadTimingFreshnessLabel: View {
+    let isUnavailable: Bool
+    let energyDataThrough: Date?
+    /// Whether the label carries a `"Source freshness: …"` accessibility prefix.
+    /// This preserves what each call site announced before the label was
+    /// extracted: the recommendation card's caption set that label, and the
+    /// metadata footer — already combined with its neighbours into one
+    /// accessibility element — did not. It is an announcement choice, not an
+    /// attempt to influence how `.combine` groups a nested timeline.
+    var announcesFreshness = true
+
+    var body: some View {
+        TimelineView(.everyMinute) { context in
+            let status = LoadTimingPresentation.sourceStatus(
+                isUnavailable: isUnavailable,
+                energyDataThrough: energyDataThrough,
+                now: context.date
+            )
+            Text(status)
+                .font(.caption)
+                .foregroundStyle(isUnavailable ? .orange : .secondary)
+                .modifier(LoadTimingFreshnessAnnouncement(announces: announcesFreshness, status: status))
+        }
+    }
+}
+
+/// The recommendation card's caption announced what the label meant and wrapped
+/// freely; the metadata footer, already combined into a single accessibility
+/// element, announced only the status text and was left to wrap like its
+/// neighbours. Restoring each call site exactly means the announcement and that
+/// wrapping have to travel together, so they are decided in one place.
+private struct LoadTimingFreshnessAnnouncement: ViewModifier {
+    let announces: Bool
+    let status: String
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if announces {
+            content
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Source freshness: \(status)")
+        } else {
+            content
         }
     }
 }

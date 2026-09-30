@@ -75,9 +75,9 @@ final class MobileAuthServiceTests {
     func signInBuildsExpectedLoginURLAndExchangesOnlyOpaqueCode() async throws {
         let service = makeService()
         let task = Task { try await service.signIn() }
-        await Task.yield()
+        try #require(await waitUpTo { fakeSession.startCount == 1 })
 
-        let loginURL = try #require(fakeSession.url)
+        let loginURL = try #require(fakeSession.configuredURLs.first)
         let components = try #require(URLComponents(url: loginURL, resolvingAgainstBaseURL: false))
         #expect(components.path == "/login")
         let query = Dictionary(uniqueKeysWithValues: try #require(components.queryItems).map { ($0.name, $0.value ?? "") })
@@ -89,7 +89,7 @@ final class MobileAuthServiceTests {
 
         let callback = URL(string: "pwusage://auth/callback?code=opaque-code&attempt=\(Self.attemptID)&state=\(state)")!
         fakeSession.complete(url: callback)
-        try await task.value
+        try await Self.boundedValue(of: task)
 
         #expect(service.isAuthenticated)
         #expect(fakeAPI.exchanges.count == 1)
@@ -118,19 +118,16 @@ final class MobileAuthServiceTests {
     func secondSignInIsRejectedUntilTheFirstSessionExchangeFinishes() async throws {
         let service = makeService()
         fakeAPI.holdExchange = true
-        var exchangeContinuation: CheckedContinuation<Void, Never>?
-        fakeAPI.onExchangeStarted = { exchangeContinuation?.resume() }
 
         let firstSignIn = Task { try await service.signIn() }
-        await Task.yield()
-        let sessionURL = try #require(fakeSession.url)
-        let state = try #require(URLComponents(url: sessionURL, resolvingAgainstBaseURL: false)?
-            .queryItems?.first(where: { $0.name == "mobile_state" })?.value)
+        try #require(await waitUpTo { fakeSession.startCount == 1 })
+        let state = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
+        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)")!)
 
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            exchangeContinuation = continuation
-            fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)"))
-        }
+        // Gate on the exchange counter rather than a published continuation: a wait on a
+        // continuation that may never be resumed is exactly the unbounded wait this suite
+        // must not contain, and the counter is monotonic, so it cannot pass vacuously.
+        try #require(await waitUpTo { fakeAPI.exchangeStartedCount == 1 })
 
         await #expect(throws: MobileAuthService.AuthError.alreadyInProgress) {
             try await service.signIn()
@@ -139,8 +136,199 @@ final class MobileAuthServiceTests {
         #expect(!service.isAuthenticated)
 
         fakeAPI.resumeExchange()
-        try await firstSignIn.value
+        try await Self.boundedValue(of: firstSignIn)
         #expect(service.isAuthenticated)
+    }
+
+    @Test("Cancelling sign-in resumes once and clears the pending continuation")
+    func cancellingSignInResumesOnceAndClearsPending() async throws {
+        let service = makeService()
+        let task = Task { try await service.signIn() }
+        try #require(await waitUpTo { service.pendingContinuationForTesting })
+
+        task.cancel()
+
+        // Assert the observable state transition first. A leaked continuation is never
+        // resumed, so awaiting the cancelled task would hang until the run-tests deadline
+        // instead of failing; #require aborts the test the moment the wait expires.
+        try #require(await waitUpTo { !service.pendingContinuationForTesting })
+        #expect(fakeSession.cancelCount == 1)
+        await #expect(throws: MobileAuthService.AuthError.cancelled) {
+            try await task.value
+        }
+
+        // The second sign-in must be gated on `startCount`, a monotonically increasing
+        // counter, and on its *own* configured URL — not on `fakeSession.url`, which still
+        // holds the first attempt's URL until this attempt configures the session. A wait on
+        // the shared value would pass vacuously, the callback would be built from the first
+        // attempt's state, and the second sign-in would never be resumed.
+        let second = Task { try await service.signIn() }
+        try #require(await waitUpTo { fakeSession.startCount == 2 })
+        let state = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
+        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)")!)
+        try #require(await waitUpTo { service.isAuthenticated })
+        #expect(!service.pendingContinuationForTesting)
+        try await Self.boundedValue(of: second)
+    }
+
+    @Test("A superseded attempt's session callback is applied to no one")
+    func staleSessionCallbackIsAppliedToNoOne() async throws {
+        let service = makeService()
+
+        // A presents its session, and its completion is captured before the cancellation.
+        // The fake never delivers a completion from `cancel()`, matching the real session
+        // whose callback crosses back from out of process — so this is the common ordering,
+        // not a rare one.
+        let first = Task { try await service.signIn() }
+        try #require(await waitUpTo { fakeSession.startCount == 1 })
+        let staleCompletion = try #require(fakeSession.takeCompletion())
+
+        // A is cancelled: the local cancellation wins, frees the slot, and resumes A.
+        first.cancel()
+        try #require(await waitUpTo { !service.pendingContinuationForTesting })
+        #expect(fakeSession.cancelCount == 1)
+        _ = try? await Self.boundedValue(of: first)
+
+        // B claims the slot and presents its own sheet.
+        let second = Task { try await service.signIn() }
+        try #require(await waitUpTo { fakeSession.startCount == 2 })
+        let secondState = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
+        #expect(secondState != Self.pendingState(in: fakeSession.configuredURLs.first))
+        #expect(service.pendingContinuationForTesting)
+
+        // A's in-flight completion now lands, carrying A's `.canceledLogin`. It must be
+        // dropped whole: resuming B's continuation would fail B's sign-in with a bogus
+        // `.cancelled`, and clearing B's `webSession` would make the presented sheet
+        // uncancellable while `activeAttempt` would strand B on its next callback.
+        staleCompletion(nil, ASWebAuthenticationSessionError(.canceledLogin))
+
+        #expect(service.pendingContinuationForTesting)
+        #expect(service.hasWebSessionForTesting)
+        #expect(!service.isAuthenticated)
+        #expect(fakeAPI.exchanges.isEmpty)
+        #expect(fakeSession.cancelCount == 1)
+
+        // B can still finish.
+        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=second&attempt=\(Self.attemptID)&state=\(secondState)")!)
+        try #require(await waitUpTo { service.isAuthenticated })
+        #expect(!service.pendingContinuationForTesting)
+        try await Self.boundedValue(of: second)
+        #expect(fakeAPI.exchanges.first?.code == "second")
+    }
+
+    @Test("A session that reports start failure after delivering a result does not resume twice")
+    func failedStartAfterResultDoesNotResumeTwice() async throws {
+        let service = makeService(startResult: false)
+        fakeSession.completionBeforeStartResult = ASWebAuthenticationSessionError(.canceledLogin)
+
+        // The completion wins the race, so it supplies the resume value. The start-failure
+        // branch must then be a no-op: resuming again traps as a continuation misuse.
+        await #expect(throws: MobileAuthService.AuthError.cancelled) {
+            try await service.signIn()
+        }
+        #expect(!service.pendingContinuationForTesting)
+    }
+
+    @Test("Cancelling during a stalled token exchange does not authenticate")
+    func cancellingDuringStalledExchangeDoesNotAuthenticate() async throws {
+        let api = FakeMobileAuthAPI()
+        api.holdExchange = true
+        let service = makeService(api: api)
+
+        let task = Task { try await service.signIn() }
+        try #require(await waitUpTo { fakeSession.startCount == 1 })
+        let state = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
+        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)")!)
+        try #require(await waitUpTo { api.exchangeStartedCount == 1 })
+
+        task.cancel()
+        try #require(await waitUpTo { !service.pendingContinuationForTesting })
+
+        // The stalled exchange belongs to a detached task, so it keeps running after the
+        // sign-in is cancelled; it must not be allowed to authenticate. Note that the
+        // regression this guards against fails as an intentional process-level trap
+        // (a continuation double-resume traps, it is not an observable error), so a
+        // crashed test binary here is expected on a regression, not a broken harness.
+        api.resumeExchange()
+        try #require(await waitUpTo { api.exchangeCompletedCount == 1 })
+        #expect(!service.isAuthenticated)
+    }
+
+    @Test("A late failed exchange cannot sign out a newer successful sign-in")
+    func lateFailedExchangeCannotSignOutNewerSuccessfulSignIn() async throws {
+        let api = FakeMobileAuthAPI()
+        api.holdExchange = true
+        let service = makeService(api: api)
+
+        // The first sign-in's exchange is detached from `signIn()`, so cancelling the
+        // sign-in does not stop it: it can still report a failure after the user has
+        // signed in again.
+        let first = Task { try await service.signIn() }
+        try #require(await waitUpTo { fakeSession.startCount == 1 })
+        let firstState = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
+        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=first&attempt=\(Self.attemptID)&state=\(firstState)")!)
+        try #require(await waitUpTo { api.exchangeStartedCount == 1 })
+
+        first.cancel()
+        try #require(await waitUpTo { !service.pendingContinuationForTesting })
+        _ = try? await Self.boundedValue(of: first)
+
+        api.holdExchange = false
+        let second = Task { try await service.signIn() }
+        try #require(await waitUpTo { fakeSession.startCount == 2 })
+        let secondState = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
+        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=second&attempt=\(Self.attemptID)&state=\(secondState)")!)
+        try await Self.boundedValue(of: second)
+        #expect(service.isAuthenticated)
+        let completedBeforeFailure = api.exchangeCompletedCount
+
+        api.exchangeError = TestExchangeError.rejected
+        api.resumeExchange()
+        try #require(await waitUpTo { api.exchangeCompletedCount > completedBeforeFailure })
+
+        #expect(service.isAuthenticated)
+    }
+
+    @Test("A late failed exchange cannot disturb a newer pending sign-in")
+    func lateFailedExchangeCannotDisturbNewerPendingSignIn() async throws {
+        let api = FakeMobileAuthAPI()
+        api.holdExchange = true
+        let service = makeService(api: api)
+
+        // Sign-in A reaches its token exchange and stalls there.
+        let first = Task { try await service.signIn() }
+        try #require(await waitUpTo { fakeSession.startCount == 1 })
+        let firstState = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
+        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=first&attempt=\(Self.attemptID)&state=\(firstState)")!)
+        try #require(await waitUpTo { api.exchangeStartedCount == 1 })
+
+        // A is cancelled, which resumes A's continuation and frees the slot.
+        first.cancel()
+        try #require(await waitUpTo { !service.pendingContinuationForTesting })
+        _ = try? await Self.boundedValue(of: first)
+
+        // Sign-in B claims the slot. Gate on B's *own* configured URL, never on the shared
+        // `fakeSession.url`: until B configures the session it still holds A's URL, so a wait
+        // on it would pass vacuously and the callback would be built from A's state.
+        let second = Task { try await service.signIn() }
+        try #require(await waitUpTo { fakeSession.startCount == 2 })
+        let secondState = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
+        #expect(secondState != firstState)
+
+        // A's detached exchange now fails. It must not resume its own already-resumed
+        // continuation (a process-level trap on a regression) and must not discard B's
+        // continuation, which would leave the user permanently unable to sign in.
+        api.exchangeError = TestExchangeError.rejected
+        api.resumeExchange()
+        try #require(await waitUpTo { api.exchangeCompletedCount == 1 })
+        #expect(!service.isAuthenticated)
+
+        // B can still finish.
+        api.holdExchange = false
+        api.exchangeError = nil
+        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=second&attempt=\(Self.attemptID)&state=\(secondState)")!)
+        try #require(await waitUpTo { service.isAuthenticated })
+        #expect(!service.pendingContinuationForTesting)
     }
 
     @Test("Exchange sign-in required leaves authentication false")
@@ -227,7 +415,10 @@ final class MobileAuthServiceTests {
         ]))
         cookieStorage.setCookie(siteCookie)
         cookieStorage.setCookie(preferenceCookie)
-        let api = PWUsageAPI(configuration: try AppConfiguration(apiOrigin: origin), session: session)
+        let api = PWUsageAPI(
+            configuration: try AppConfiguration(apiOrigin: origin, allowUnlistedHost: true),
+            session: session
+        )
 
         await api.clearSiteAuthCookie()
 
@@ -236,18 +427,65 @@ final class MobileAuthServiceTests {
         #expect(remaining.contains(where: { $0.name == "display" }))
     }
 
-    private func makeService(isAuthenticated: Bool = false) -> MobileAuthService {
-        let apiConfiguration = try! AppConfiguration(apiOriginString: "https://pwusage.test")
+    private func makeService(
+        isAuthenticated: Bool = false,
+        startResult: Bool = true,
+        api: FakeMobileAuthAPI? = nil,
+        sessionFactory: MobileAuthService.SessionFactory? = nil
+    ) -> MobileAuthService {
+        // `pwusage.test` is a stub host, so the allowlist opt-out is explicit.
+        let apiConfiguration = try! AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true)
+        fakeSession.startResult = startResult
+        fakeSession.completionBeforeStartResult = nil
         return MobileAuthService(
             configuration: apiConfiguration,
-            api: fakeAPI,
+            api: api ?? fakeAPI,
             forecastCleanup: fakeForecastCleanup,
             initialAuthenticationState: isAuthenticated,
-            sessionFactory: { url, callbackScheme, completion in
+            sessionFactory: sessionFactory ?? { url, callbackScheme, completion in
                 self.fakeSession.configure(url: url, callbackScheme: callbackScheme, completion: completion)
                 return self.fakeSession
             }
         )
+    }
+
+    private static func pendingState(in sessionURL: URL?) -> String? {
+        guard let sessionURL,
+              let components = URLComponents(url: sessionURL, resolvingAgainstBaseURL: false) else { return nil }
+        return components.queryItems?.first(where: { $0.name == "mobile_state" })?.value
+    }
+
+    /// Polls `condition` on the main actor until it holds or a short deadline expires.
+    /// Bounded on purpose: these tests must fail with a diagnostic rather than hang when
+    /// a leaked sign-in continuation is never resumed.
+    private func waitUpTo(timeout: Duration = .seconds(5), _ condition: () -> Bool) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    /// Awaits `task` under a deadline. A bare `try await task.value` on a sign-in task is an
+    /// unbounded wait: if the continuation is never resumed the suite hangs until the
+    /// run-tests deadline instead of failing. Racing it against a sleep makes a leaked
+    /// continuation a test failure, and leaves the task handle itself untouched.
+    private static func boundedValue<Value: Sendable>(
+        of task: Task<Value, Error>,
+        timeout: Duration = .seconds(5)
+    ) async throws -> Value {
+        try await withThrowingTaskGroup(of: Value.self) { group in
+            group.addTask { try await task.value }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw TestWaitTimeout.expired
+            }
+            defer { group.cancelAll() }
+            guard let value = try await group.next() else { throw TestWaitTimeout.expired }
+            return value
+        }
     }
 
     private static func isBase64URLCharacter(_ character: Character) -> Bool {
@@ -273,6 +511,8 @@ private final class FakeSolarForecastSessionCleanup: SolarForecastSessionCleanup
 }
 
 private enum TestCleanupError: Error { case failed }
+private enum TestExchangeError: Error { case rejected }
+private enum TestWaitTimeout: Error { case expired }
 
 @MainActor
 private final class FakeWebAuthenticationSession: MobileAuthWebSession {
@@ -281,25 +521,43 @@ private final class FakeWebAuthenticationSession: MobileAuthWebSession {
     private(set) var url: URL?
     private(set) var callbackScheme: String?
     private(set) var startCount = 0
-    private var startResults = [true, false]
+    private(set) var cancelCount = 0
+    /// Every URL a sign-in attempt handed to this session, in order. Reading an attempt's own
+    /// entry (rather than the shared `url`, which still holds the previous attempt's value
+    /// until the next one configures the session) is the only sound way to tell attempts apart.
+    private(set) var configuredURLs: [URL] = []
+    var startResult = true
+    var completionBeforeStartResult: Error?
     private var completion: ((URL?, Error?) -> Void)?
 
     func configure(url: URL, callbackScheme: String, completion: @escaping (URL?, Error?) -> Void) {
         self.url = url
         self.callbackScheme = callbackScheme
         self.completion = completion
+        self.configuredURLs.append(url)
     }
 
     func start() -> Bool {
         startCount += 1
-        return startResults.isEmpty ? true : startResults.removeFirst()
+        if let completionBeforeStartResult { complete(error: completionBeforeStartResult) }
+        return startResult
     }
-    func cancel() {}
+    func cancel() { cancelCount += 1 }
 
     func complete(url: URL? = nil, error: Error? = nil) {
         let callback = completion
         completion = nil
         callback?(url, error)
+    }
+
+    /// Detaches the currently configured completion so a test can deliver it *later*,
+    /// after a newer attempt has claimed the sign-in slot. `cancel()` deliberately does not
+    /// deliver a completion — matching the real session, whose callback crosses back from
+    /// out of process and can land after the local cancellation — so this is the only way
+    /// to reproduce that ordering.
+    func takeCompletion() -> ((URL?, Error?) -> Void)? {
+        defer { completion = nil }
+        return completion
     }
 }
 
@@ -311,17 +569,19 @@ private final class FakeMobileAuthAPI: MobileAuthAPI {
     var logoutError: Error?
     private(set) var cookieClearCount = 0
     var holdExchange = false
-    var onExchangeStarted: (() -> Void)?
+    private(set) var exchangeStartedCount = 0
+    private(set) var exchangeCompletedCount = 0
     private var pendingExchange: CheckedContinuation<Void, Error>?
 
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {
         exchanges.append(exchange)
         if holdExchange {
+            exchangeStartedCount += 1
             try await withCheckedThrowingContinuation { continuation in
                 pendingExchange = continuation
-                onExchangeStarted?()
             }
         }
+        exchangeCompletedCount += 1
         if let exchangeError { throw exchangeError }
     }
 
