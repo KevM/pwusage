@@ -74,9 +74,11 @@ struct DashboardView: View {
                                     .contentTransition(.numericText())
                                     .accessibilityLabel(live.stateOfCharge.map { "Battery charge \(Int($0.rounded())) percent" } ?? "Battery charge unknown")
                                 HStack(alignment: .center, spacing: 4) {
-                                    Image(systemName: batterySymbol(live.live.batteryPower, stateOfCharge: live.stateOfCharge))
+                                    Image(systemName: DashboardPresentation.batterySymbol(
+                                        powerWatts: live.live.batteryPower,
+                                        stateOfCharge: live.stateOfCharge))
                                         .font(.system(size: 44, weight: .bold))
-                                        .foregroundStyle(.green)
+                                        .foregroundStyle(live.stateOfCharge == nil ? Color.secondary : Color.green)
                                         .accessibilityHidden(true)
                                     if DashboardPresentation.batteryDirection(powerWatts: live.live.batteryPower) == .discharging {
                                         DischargeSymbol()
@@ -104,7 +106,7 @@ struct DashboardView: View {
                             MetricTile(title: "Home", value: DashboardPresentation.power(live.live.loadPower), detail: "Using", symbol: "house.fill", tint: .blue),
                             MetricTile(title: "Solar", value: DashboardPresentation.power(live.live.solarPower), detail: "Producing", symbol: "sun.max.fill", tint: .orange),
                             MetricTile(title: "Grid", value: DashboardPresentation.power(live.live.gridPower), detail: gridDirection(live.live.gridPower), symbol: live.live.gridPower >= 0 ? "arrow.down.to.line" : "arrow.up.to.line", tint: .gray),
-                            MetricTile(title: "Battery", value: DashboardPresentation.batteryPower(live.live.batteryPower), detail: DashboardPresentation.batteryPowerDetail(live.live.batteryPower), symbol: batterySymbol(live.live.batteryPower, stateOfCharge: live.stateOfCharge), tint: .green)
+                            MetricTile(title: "Battery", value: DashboardPresentation.batteryPower(live.live.batteryPower), detail: DashboardPresentation.batteryPowerDetail(live.live.batteryPower), symbol: DashboardPresentation.batterySymbol(powerWatts: live.live.batteryPower, stateOfCharge: live.stateOfCharge), tint: live.stateOfCharge == nil ? .secondary : .green)
                         ])
                     }
                 }
@@ -301,23 +303,6 @@ struct DashboardView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private func batterySymbol(_ watts: Double, stateOfCharge: Double? = nil) -> String {
-        let isCharging = DashboardPresentation.batteryDirection(powerWatts: watts) == .charging
-        let level: String
-        if let stateOfCharge {
-            switch Int(stateOfCharge.rounded()) {
-            case ..<13: level = "0percent"
-            case 13..<38: level = "25percent"
-            case 38..<63: level = "50percent"
-            case 63..<88: level = "75percent"
-            default: level = "100percent"
-            }
-        } else {
-            level = "100percent"
-        }
-        return isCharging ? "battery.\(level).bolt" : "battery.\(level)"
     }
 
     private func gridDirection(_ watts: Double) -> String {

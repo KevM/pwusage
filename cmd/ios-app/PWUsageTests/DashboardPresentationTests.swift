@@ -12,6 +12,30 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.batteryDirection(powerWatts: 51) == .discharging)
     }
 
+    @Test("An unknown battery charge draws a blank battery, never a full one")
+    func unknownChargeDrawsBlankBattery() {
+        // A reading we cannot vouch for: no fill, and no bolt asserting flow the
+        // blank fill denies. Matches the TRMNL renderer at fillWidth 0.
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 900, stateOfCharge: nil) == "battery.0percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: -900, stateOfCharge: nil) == "battery.0percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: nil) == "battery.0percent")
+    }
+
+    @Test("A known charge keeps its band and its charging bolt")
+    func knownChargeKeepsBandAndBolt() {
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 0) == "battery.0percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 12) == "battery.0percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 13) == "battery.25percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 37) == "battery.25percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 38) == "battery.50percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 62) == "battery.50percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 63) == "battery.75percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 87) == "battery.75percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 88) == "battery.100percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: -900, stateOfCharge: 50) == "battery.50percent.bolt")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 900, stateOfCharge: 50) == "battery.50percent")
+    }
+
     @Test("Battery header describes charge and direction without repeating power")
     func batteryHeaderDescribesChargeAndDirectionWithoutRepeatingPower() {
         #expect(DashboardPresentation.batteryDescription(stateOfCharge: nil, powerWatts: -250) == "Battery --, Charging")
