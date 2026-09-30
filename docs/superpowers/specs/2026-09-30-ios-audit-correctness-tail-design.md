@@ -170,16 +170,27 @@ stands. The bound is asymmetric on purpose: the cost of leniency is that `asOf` 
 computed slightly wrong for a bounded window; the cost of strictness is a permanently broken
 feature with a message that blames the server.
 
-**Eviction needs no counter.** The audit's "evict the cache entry and refetch once" implies a
-failure counter, because `validating` is a pure function that cannot know it has failed before.
-It does not need one. The poison path is the **cached** entry at `DashboardCoordinator.swift:506`.
-A cached entry can fail re-validation while the lifetime check at `:504` still passes, because
-`asOf <= fetchedAt`, so `asOf` crosses the 24h bound slightly *before* `fetchedAt` does. And when
-a fresh response also fails at `:538`, `:543` never overwrites the cache, so the poisoned entry
-lingers and re-fails on every read forever. Evicting on re-validation failure is sufficient: control
-flow already falls through to a refetch, a successful refetch re-caches at `:543`, and a failed
-refetch leaves the entry absent so the next read simply fetches again. `planningContextTasks`
-(`:513`) already dedupes concurrent fetches, so there is no loop risk inside one operation.
+**Eviction needs no counter — and may need no eviction at all.** The audit's "evict the cache entry and
+refetch once" implies a failure counter, because `validating` is a pure function that cannot know it has
+failed before. It does not need one. The poison path is the **cached** entry at
+`DashboardCoordinator.swift:506`. A cached entry can fail re-validation while the lifetime check at
+`:504` still passes, because `asOf <= fetchedAt`, so `asOf` crosses the 24h bound slightly *before*
+`fetchedAt` does. And when a fresh response also fails at `:538`, `:543` never overwrites the cache,
+so the poisoned entry lingers and re-fails on every read forever. Evicting on re-validation failure
+would be sufficient: control flow falls through to a refetch, a successful refetch re-caches at `:543`,
+and a failed refetch leaves the entry absent so the next read simply fetches again.
+`planningContextTasks` (`:513`) already dedupes concurrent fetches, so there is no loop risk.
+
+**Amended 2026-09-30, while writing the implementation plan:** re-reading the cache-hit block shows
+the audit's "re-rejects the same bad entry on every read **rather than refetching**" is inaccurate.
+`if let validated = try? …` is part of the cache-hit *condition*, so a re-validation failure drops
+through to the fetch that follows, and `:543` overwrites the entry on success — the cache self-heals.
+Since the skew constant is what actually fixes the reported failure, the eviction may fix nothing.
+The plan therefore makes Step 5 an **experiment that re-derives the claim before any code changes**,
+with the eviction conditional on that experiment failing. If it passes unmodified, the eviction is
+skipped, the experiment is kept as a regression test for the self-healing property, and §5.8's `Fix:`
+bullet records that the audit's claim was inaccurate. Adding a code change whose necessity cannot be
+demonstrated is how a fix stops being a fix.
 
 ### D6 — §2's quick win #1 and §9.4 are wrong as audited
 
@@ -350,9 +361,9 @@ read. Please report this."*
   One hour is chosen because a phone is NTP-synced to within seconds, so anything past a few
   minutes is a broken clock, while the thing being protected — a household profile that is already
   cached for 24h — changes slowly enough that an hour of mis-measured freshness costs nothing.
-- Evict `planningContextCache[siteID]` when re-validation of a **cached** entry fails, so a refetch
-  can replace it and a failed refetch cannot leave a poisoned entry in place. Leave the
-  fresh-response path (`:538`) alone: it already declines to cache an invalid response.
+- Evict `planningContextCache[siteID]` when re-validation of a **cached** entry fails — **only if the
+  plan's Step 5 experiment shows it is needed.** See the amendment above. Leave the fresh-response
+  path (`:538`) alone either way: it already declines to cache an invalid response.
 - Correct the user-facing diagnosis for this case so it does not tell the user to report a server
   bug that is really a device clock.
 
@@ -362,8 +373,10 @@ read. Please report this."*
 - A response whose `asOf` is ahead by an absurd amount (e.g. a year) does **not** validate — the
   tolerance is bounded, and this pins the bound.
 - A cached entry that fails re-validation is evicted, and the subsequent read fetches.
-- A cached entry that fails only because it aged past 24h is replaced by a fresh valid response —
-  the specific window `asOf <= fetchedAt` creates.
+- A cached entry that fails re-validation is replaced by a fresh valid response — **or, if the
+  plan's experiment shows the cache already self-heals, a test pinning that self-healing instead.**
+  Either way assert the **outcome** (a usable context, no `contextInvalid`), not the internal
+  dictionary: a test against `planningContextCache` would be rewritten by any correct refactor.
 - The note shown for a skew-rejected context does **not** tell the user to report a server bug.
   Copy is presentation-level; assert it in `LoadTimingForecastPresentationTests` rather than
   asserting only that a reason enum changed.
