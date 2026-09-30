@@ -470,3 +470,35 @@ to look for them, because each lives in the seam between two correct commits.
 - Native tests run only through `cmd/ios-app/run-tests.sh`, sequentially.
 - No live Solcast quota use in automated verification.
 - Solcast keys/resource IDs/forecasts remain device-local.
+
+## Rebase onto `main` (PR #117 landed first)
+
+`main` moved two commits while this branch was open — most importantly **PR #117, "close the 17
+highest-severity audit findings"**, which is the **squash of this branch's own first 13 commits**.
+So a plain `git rebase origin/main` tried to replay 31 commits and conflicted on files it was
+re-adding. The correct target was `git rebase --onto origin/main 19ce8bf`: replay only the 18
+correctness-tail commits, since #117 already delivered the 13 below them.
+
+Two real conflicts, and one collision that no tool could resolve:
+
+1. **`PWUsageAppModelTests.swift`** — #117 added `supersededBootstrapAttemptCannotOverwriteNewerState`
+   *and* a `try!` config stub; this branch had already converted that stub to a throwing factory for
+   §5.12. Resolved by keeping #117's test and this branch's helper. That left the new call site
+   missing `try`, caught by `./run-tests.sh` and fixed in its own commit.
+2. **`CODE_AUDIT.md` §3.15** — **both branches independently filed §3.15 for different findings.**
+   `main`'s is overlapping-bootstrap ordering (`FIXED`, from #117); this branch's was
+   `ContinuousClock` cadence anchoring (`OPEN`, re-filed from §5.7 part (c)). The ledger forbids
+   renumbering, so the collision is real. Resolved by renumbering **this branch's** finding to
+   **§3.16**, because `main`'s is already merged and cited by other documents while ours had never
+   left the branch — which is exactly the case the no-renumbering rule protects. An HTML comment
+   above §3.16 records the provenance, and all 13 references in the plan, spec and this file were
+   updated.
+
+One of the discarded conflict sides also carried a round-3 citation fix
+(`LoadTimingForecastPresentation.swift:83-89` → `:95-102`) that was **not** re-applied automatically.
+Caught by spot-checking rather than by a test, which is the fourth time on this branch that a
+mechanical merge step dropped a correction that no assertion covered.
+
+**Merged state:** 77 findings (76 from `main` + §3.16), 52 `OPEN` / 24 `FIXED` / 1 `WON'T FIX`.
+Suite is **394 tests in 21 suites** (390 here + 4 from #117), clean build with the one permitted
+`appintentsmetadataprocessor` warning, 0 crash reports. Every cited SHA resolves.
