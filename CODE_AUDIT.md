@@ -4,13 +4,13 @@
 
 **Status values:** `OPEN` → `IN PROGRESS (PR #N)` → `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)`
 
-**Progress:** 72 findings tracked. 8 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
+**Progress:** 72 findings tracked. 10 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
 
 | Status | Count | Findings |
 | --- | --- | --- |
-| OPEN | 64 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3 |
+| OPEN | 62 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9 |
 | IN PROGRESS | 0 | — |
-| FIXED | 8 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3 (§4.6 is a recorded negative result, not a finding) |
+| FIXED | 10 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9 (§4.6 is a recorded negative result, not a finding) |
 
 ---
 
@@ -278,8 +278,9 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** The README's "values older than two hours remain unknown (`--`)" is entirely a property of `buildMobileDashboardContract` on the server. Any drift there — a stale contract version, a proxy, a cached response — silently produces a stale percentage presented as current, which is exactly what the README says must never happen. This is the load-bearing battery-provenance invariant from `DesignDecisions.md`, defended in only one of two places.
 - **Action:** Independently suppress `stateOfCharge` to `nil` on the client when `sources.stateOfChargeAt` is missing or older than two hours, mirroring the server rule.
 - **Severity:** High
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** High — verified `:68` decodes bare, `:71` renders unconditionally, `:209-215` only adds a caption.
+- **Fix:** Enforced in `MobileLiveResponse.init(from:)` rather than in the view, so every consumer inherits it. `stateOfCharge` is suppressed to `nil` when `sources.stateOfChargeAt` is absent, when the reading is stamped in the future (negative age — a device or server clock behind the other), or when the age exceeds `MobileLiveResponse.stateOfChargeMaximumAge` (two hours). The clock is injected via `MobileContractDecoder.make(now:)`, which defaults to `{ Date() }` so the four existing `PWUsageAPI` call sites compile unchanged, and travels to `init(from:)` in `decoder.userInfo`. Suppression is deliberately one-directional: a dropped timestamp shows `--` rather than a reading the client cannot vouch for. No view change was needed — `DashboardView.swift:71` already renders `nil` as `--`, and the caption at `:90` is already gated on `live.stateOfCharge != nil`.
 
 ### 5.5 A persist failure after a *successful* Solcast fetch deletes a valid API key
 - **Location:** `PWUsage/State/SolarForecastStore.swift:425`, `:434-437`, `:442-476`
@@ -323,8 +324,9 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Why:** The server validates the range, so this only manifests under contract drift — but the client would render "150%" and a full-battery glyph from a malformed response. `MobileLoadPlanningContextResponse` *does* validate its numerics, so the live DTO is the inconsistent one.
 - **Action:** Validate range and finiteness of `stateOfCharge` and the four live power values during decode, mapping out-of-range to unknown.
 - **Severity:** Low
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** Medium
+- **Fix:** `stateOfCharge` is validated during decode for finiteness and the inclusive 0–100 range, mapping failures to `nil`. The four live power values are checked for **finiteness only** (`MobileLiveResponse.Live.finiteOrZero`, non-finite → `0`) — no range check, because negative grid and battery readings are legitimate and both `batterySymbol` and `batteryDirection` handle zero cleanly. `150` therefore decodes to `nil` rather than rendering a "150%" label and a full-battery glyph. Note that the **finiteness** half is defence-in-depth against a non-JSON source and is unreachable from the wire: `JSONDecoder` rejects `1e400`/`1e999` as "not representable in Swift", and `NaN`/`Infinity` are not valid JSON, so only the 0–100 range check has real test coverage (`MobileContractsTests` exercises `finiteOrZero` directly and says so in a comment).
 
 ### 5.10 Errors swallowed or replaced with generic copy
 - **Location:** `PWUsage/Views/LoadProfilesSheet.swift:65`, `:82`, `:102`, `:164-166`

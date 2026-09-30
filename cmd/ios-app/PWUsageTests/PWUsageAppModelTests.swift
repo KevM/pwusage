@@ -381,7 +381,10 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI {
     func clearSiteAuthCookie() async { cookieClearCount += 1 }
 
     private static func liveResponse(siteID: String) throws -> MobileLiveResponse {
-        let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC","localDate":"2026-09-23"},"live":{"solarPower":100,"loadPower":200,"batteryPower":0,"gridPower":100},"stateOfCharge":50,"activeTariff":"Peak","today":{"homeKwh":1,"solarKwh":2,"gridNetKwh":3,"batteryNetKwh":4},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"2026-09-23T12:00:00Z","energyDataThrough":"2026-09-23T12:00:00Z"}}"#
+        // A charge reading older than two hours decodes as unknown, so date it now rather than
+        // reusing the deliberately stale `liveStatusAt` above.
+        let chargeAt = ISO8601DateFormatter().string(from: Date())
+        let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC","localDate":"2026-09-23"},"live":{"solarPower":100,"loadPower":200,"batteryPower":0,"gridPower":100},"stateOfCharge":50,"activeTariff":"Peak","today":{"homeKwh":1,"solarKwh":2,"gridNetKwh":3,"batteryNetKwh":4},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"2026-09-23T12:00:00Z","energyDataThrough":"2026-09-23T12:00:00Z","stateOfChargeAt":"\#(chargeAt)"}}"#
         return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(json.utf8))
     }
 
