@@ -4,7 +4,7 @@
 
 **Goal:** Close the five confirmed iOS audit defects (§5.5, §5.7 a+b, §5.8, §5.12, §8.18) and §2's eight surviving quick wins, leaving an accurate cross-PR ledger for the remaining audit findings.
 
-**Architecture:** Each finding is one commit with its own TDD cycle. §5.5 introduces a distinct persistence-failure result that never quarantines a credential and keeps the forecast on screen behind a new note; §5.8 makes the planning context tolerant of a fast device clock and evicts a poisoned cache entry; §5.7 hardens two clock comparisons; §8.18 moves the battery glyph mapping onto the already-tested presentation layer; §5.12 contains test-fixture crashes to a single test.
+**Architecture:** Each finding is one commit with its own TDD cycle. §5.5 introduces a distinct persistence-failure result that never quarantines a credential and keeps the forecast on screen behind a new note; §5.8 makes the planning context tolerant of a device clock behind the server and evicts a poisoned cache entry; §5.7 hardens two clock comparisons; §8.18 moves the battery glyph mapping onto the already-tested presentation layer; §5.12 contains test-fixture crashes to a single test.
 
 **Tech Stack:** Swift 6, SwiftUI, Swift Testing, iOS 18 target, XcodeGen (`./generate.sh`)
 
@@ -808,8 +808,11 @@ EOF
 ## Task 4: §5.8 — planning-context clock skew and cache eviction
 
 `validating` (`MobileContracts.swift:219-231`) requires `sourceAge` within `[-(5 * 60), 24h]`. A device
-more than five minutes fast rejects **every** response as `contextInvalid`, permanently, and the cached
+more than five minutes **behind** the server rejects **every** response as `contextInvalid`, permanently, and the cached
 re-validation at `DashboardCoordinator.swift:506` re-rejects the same entry on every read.
+
+**Amended 2026-09-30, in the branch's final review pass:** the skew direction is wrong throughout this document. `sourceAge = now.timeIntervalSince(asOf)` compares the *server's* `asOf` against the *device's* clock, so `asOf` looks future-dated only when the device is **behind**; a device running fast makes it look *older*, which the pre-fix `[-300s, 24h]` window already accepted and which was therefore never this finding's population. Every "fast" below is corrected to "behind" / "slow" in the text it appears in; the reasoning and the code change were always right, and only the description of who the fix rescues was not. The landed commit subject for §5.8 still says "fast" and cannot be corrected without rewriting the branch's history, so that one instance is recorded rather than fixed.
+
 
 ### Step 1: Write the failing contract tests
 
@@ -842,8 +845,8 @@ other file and cannot be reused, hence the copy:
 Then the tests:
 
 ```swift
-    @Test("A planning context stamped ahead of a fast device clock still validates")
-    func planningContextToleratesFastDeviceClock() throws {
+    @Test("A planning context stamped ahead of a slow device clock still validates")
+    func planningContextToleratesClockBehindServer() throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         // Thirty minutes ahead: a mis-set device clock, not bad data.
         let response = Self.makePlanningContext(siteID: "site-a", asOf: now.addingTimeInterval(30 * 60))
@@ -870,7 +873,7 @@ anything" — it is not optional coverage.
 cd cmd/ios-app && ./run-tests.sh MobileContractsTests
 ```
 
-Expected: `planningContextToleratesFastDeviceClock` fails — 30 minutes of negative skew exceeds the
+Expected: `planningContextToleratesClockBehindServer` fails — 30 minutes of negative skew exceeds the
 current 5-minute allowance.
 
 ### Step 3: Add the named skew constant
@@ -880,7 +883,8 @@ constant:
 
 ```swift
     /// `asOf` is stamped by the *server* and compared against the *device* clock, so a
-    /// device running fast sees it in the future even though the data is fine. This
+    /// device whose clock is behind sees it in the future even though the data is fine. A
+    /// device running fast is the opposite and was never this finding's population. This
     /// bound is deliberately asymmetric with the positive one: leniency here costs a
     /// bounded amount of mis-measured freshness, while strictness makes a mis-set
     /// device clock reject every response forever and blame the server for it.
@@ -935,7 +939,7 @@ Two facts follow, and they undercut the spec's reasoning:
    (`planningContextCache[siteID] = PlanningContextCacheEntry(...)`), so a stale cached entry is
    replaced without any eviction.
 
-Combined with Step 3 — which is what actually fixes the reported failure, since a fast device clock is
+Combined with Step 3 — which is what actually fixes the reported failure, since a device clock behind the server is
 the cause and the skew constant is the cure — the eviction may fix nothing.
 
 Confirm with an experiment rather than an opinion. Add a temporary test in
@@ -1018,10 +1022,10 @@ report a server bug.
 ```bash
 git add cmd/ios-app/PWUsage cmd/ios-app/PWUsageTests CODE_AUDIT.md
 git commit -F - <<'EOF'
-fix(ios): tolerate a fast device clock on the planning context
+fix(ios): tolerate a device clock behind the server on the planning context
 
 validating required the server's asOf to be within five minutes in the
-future, so a device more than five minutes fast rejected every response
+future, so a device more than five minutes behind the server rejected every response
 as contextInvalid, permanently. The note told the user to report a
 server bug that was really their own clock.
 

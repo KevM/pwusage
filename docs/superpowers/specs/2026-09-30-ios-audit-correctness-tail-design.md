@@ -164,7 +164,7 @@ Two halves, both worth fixing, and the audit's instructions for both needed corr
 but the live contract has *zero* negative tolerance — `MobileContracts.swift:120` requires
 `age >= 0`, which is **stricter**, not more lenient. The two cases are not comparable. A
 future-stamped SoC *reading* is suspect data; `asOf` is a *server* timestamp compared against a
-device clock, and a device running fast makes it look future-dated without the data being wrong.
+device clock, and a device whose clock is **behind** makes it look future-dated without the data being wrong. A device running fast does the opposite and was never this finding's population.
 So `asOf` gets its own named constant with a generous negative bound, and the 24h positive bound
 stands. The bound is asymmetric on purpose: the cost of leniency is that `asOf` freshness is
 computed slightly wrong for a bounded window; the cost of strictness is a permanently broken
@@ -265,7 +265,7 @@ bisectable.
 | 1 | `fix(ios): stop discarding a working Solcast key on a save failure` | §5.5 | store, coordinator, presentation |
 | 2 | `fix(ios): draw an unknown battery charge as blank, not full` | §8.18 | `DashboardView`, `DashboardPresentation` |
 | 3 | `test(ios): contain fixture failures to one test` | §5.12 | 4 test files |
-| 4 | `fix(ios): tolerate a fast device clock on the planning context` | §5.8 | contracts, coordinator |
+| 4 | `fix(ios): tolerate a device clock behind the server on the planning context` | §5.8 | contracts, coordinator |
 | 5 | `fix(ios): stop a backwards clock stalling polls and faking freshness` | §5.7 a+b | coordinator, presentation |
 | 6 | `refactor(ios): take the audit's self-contained quick wins` | §2 | 8 files |
 | 7 | `docs(ios): reconcile the audit ledger with the correctness tail` | ledger | `CODE_AUDIT.md`, `task.md` |
@@ -412,8 +412,10 @@ the evidence; a claim that the helper "throws now" is not.
 ### §5.8 — planning-context skew and cache eviction
 
 **Defect.** `validating(siteID:now:)` (`MobileContracts.swift:219-231`) requires `sourceAge` within
-`[-(5 * 60), maximumAge]`. A device more than five minutes fast rejects **every** server response as
+`[-(5 * 60), maximumAge]`. A device more than five minutes **behind** the server rejects **every** server response as
 `contextInvalid`, permanently, and the cached re-validation at
+**Amended 2026-09-30, in the branch's final review pass:** the skew direction is wrong throughout this document. `sourceAge = now.timeIntervalSince(asOf)` compares the *server's* `asOf` against the *device's* clock, so `asOf` looks future-dated only when the device is **behind**; a device running fast makes it look *older*, which the pre-fix `[-300s, 24h]` window already accepted and which was therefore never this finding's population. Every "fast" below is corrected to "behind" / "slow" in the text it appears in; the reasoning and the code change were always right, and only the description of who the fix rescues was not. The landed commit subject for §5.8 still says "fast" and cannot be corrected without rewriting the branch's history, so that one instance is recorded rather than fixed.
+
 `DashboardCoordinator.swift:506` re-rejects the same entry on every read rather than refetching. The
 note shown points at the wrong component: *"The server sent household data this app could not
 read. Please report this."*
