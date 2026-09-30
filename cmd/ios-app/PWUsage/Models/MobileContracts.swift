@@ -176,6 +176,15 @@ struct MobileBillResponse: Decodable, Equatable {
 struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
     static let maximumAge: TimeInterval = 24 * 60 * 60
 
+    /// `asOf` is stamped by the *server* and compared against the *device* clock, so a
+    /// device running fast sees it in the future even though the data is fine. This
+    /// bound is deliberately asymmetric with the positive one: leniency here costs a
+    /// bounded amount of mis-measured freshness, while strictness makes a mis-set
+    /// device clock reject every response forever and blame the server for it.
+    /// This is NOT the live contract's rule — `stateOfChargeMaximumAge` is about a
+    /// suspect *reading* and requires `age >= 0`, which is stricter, not comparable.
+    static let maximumNegativeAgeSkew: TimeInterval = 60 * 60
+
     let version: Int
     let site: Site
     let units: Units
@@ -227,7 +236,7 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
               historyEnd.timeIntervalSince1970.isFinite,
               historyStart < historyEnd,
               historyEnd <= asOf,
-              sourceAge >= -(5 * 60),
+              sourceAge >= -Self.maximumNegativeAgeSkew,
               sourceAge <= Self.maximumAge,
               slots.count == 48,
               slots.enumerated().allSatisfy({ index, slot in
