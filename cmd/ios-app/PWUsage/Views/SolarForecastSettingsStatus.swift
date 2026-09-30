@@ -63,13 +63,24 @@ enum SolarForecastSettingsStatus {
                 allowsManualIDs: false
             )
         case .persistenceFailed, .cleanupFailed,
-             // Unreachable today, and required for exhaustiveness. `discoverSites`
-             // only ever throws `.discoveryFailed` with a value from
-             // `failureKind(_:)` or `.unauthorized`/`.requestFailed`; its budget
-             // save, which used to escalate to `persistFailureState`, now throws
-             // `.persistenceFailed` instead. Listed so a reader does not go
-             // hunting for a producer that does not exist — and so that if one is
-             // ever added, this arm is already the right message for it.
+             // Unreachable today, and required for exhaustiveness.
+             //
+             // `discoverSites` only ever throws `.discoveryFailed` carrying a
+             // value from `failureKind(_:)` — `.unauthorized`, `.rateLimited`,
+             // `.unknownResource`, `.invalidForecast` or `.requestFailed` — or the
+             // literal `.unauthorized`/`.requestFailed`. `discoveryError` is the
+             // other producer and it returns a *top-level* `.persistenceFailed`
+             // or `.cleanupFailed`, never a `.discoveryFailed` value, so no
+             // `.storageFailure`/`.cleanupFailure`/`.saveFailed` kind reaches
+             // here. That was already true before this branch's §5.5 fix: the
+             // budget save used to escalate a write failure to
+             // `persistFailureState`, but `discoveryError` mapped that outcome to
+             // the top-level `.persistenceFailed` the arm above already handles.
+             // The escalation was never what made these three reachable.
+             //
+             // Listed so a reader does not go hunting for a producer that does not
+             // exist, and so that if one is ever added this arm is already the
+             // right message for it.
              .discoveryFailed(.storageFailure), .discoveryFailed(.cleanupFailure), .discoveryFailed(.saveFailed):
             return SolarForecastSettingsPresentation(
                 message: "This device could not safely save the change. Please try again.",

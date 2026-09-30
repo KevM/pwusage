@@ -79,17 +79,23 @@ enum LoadTimingForecastPresentation {
     static let unavailableNotePrefix = "Solar forecast unavailable — using tariff and balance data."
     /// Deliberately does not reuse `unavailableNotePrefix`: the forecast is
     /// available here, it just did not reach the disk.
-    /// The promise in the second sentence is load-bearing and is now kept:
+    /// Shown when the device could not write its forecast state, which has two sites:
+    /// the post-fetch persist (a forecast was fetched and could not be written) and
+    /// the pre-fetch budget reservation (no request was made, and the request
+    /// counter could not be written). The wording covers both — it says what failed
+    /// and what the consequence is, not which of the two happened.
+    ///
+    /// The promise in the last sentence is load-bearing and is kept:
     /// `SolarForecastStore.dirtyScopes` records a write left pending by a failed
     /// persist, and the `.alreadyFresh` short-circuit attempts it before reporting
     /// the cache fresh. Do not "correct" this copy by removing the promise — the
     /// defect was never the wording, it was that nothing retried the write for three
     /// hours while the note said it would.
-    static let saveFailureNote = "Forecast fetched, but it could not be saved to this device. It will be retried on the next refresh."
+    static let saveFailureNote = "Forecast data could not be saved to this device, so it may not update. It will be retried on the next refresh."
     /// Deliberately does not reuse the "too old or incomplete" fallback, and does
     /// not use `unavailableNotePrefix` either: the forecast is present, and its age
     /// is unverifiable rather than too old. The batch is stamped with this device's
-    /// own clock at fetch time (`SolarForecastStore.swift:441`), so a future-dated
+    /// own clock at fetch time (`SolarForecastStore.swift:503`), so a future-dated
     /// stamp means the clock has since moved backwards, not that the server sent
     /// the wrong time. Point at the clock, which the user can fix, the same way
     /// `contextInvalid` does for `asOf`.
