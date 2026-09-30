@@ -79,6 +79,12 @@ enum LoadTimingForecastPresentation {
     static let unavailableNotePrefix = "Solar forecast unavailable — using tariff and balance data."
     /// Deliberately does not reuse `unavailableNotePrefix`: the forecast is
     /// available here, it just did not reach the disk.
+    /// The promise in the second sentence is load-bearing and is now kept:
+    /// `SolarForecastStore.dirtyScopes` records a write left pending by a failed
+    /// persist, and the `.alreadyFresh` short-circuit attempts it before reporting
+    /// the cache fresh. Do not "correct" this copy by removing the promise — the
+    /// defect was never the wording, it was that nothing retried the write for three
+    /// hours while the note said it would.
     static let saveFailureNote = "Forecast fetched, but it could not be saved to this device. It will be retried on the next refresh."
     /// Deliberately does not reuse the "too old or incomplete" fallback, and does
     /// not use `unavailableNotePrefix` either: the forecast is present, and its age

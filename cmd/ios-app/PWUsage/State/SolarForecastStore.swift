@@ -100,6 +100,13 @@ actor SolarForecastStore {
 
     private var inFlight: [String: InFlightRefresh] = [:]
     private var mutatingScopes: Set<String> = []
+    /// Scopes whose in-memory state is newer than what is on disk because the last
+    /// write failed. The batch is good and the credential is intact, so the scope is
+    /// deliberately not quarantined -- but the write still has to happen, and
+    /// `performRefresh` is the only code that performs it. Without this set the
+    /// `.alreadyFresh` short-circuit below would return early for three hours and the
+    /// pending write would never be attempted again.
+    private var dirtyScopes: Set<String> = []
     private var activeAccountScopeID: String?
     private(set) var lastErrorDescription: String?
 
@@ -287,6 +294,7 @@ actor SolarForecastStore {
         nextState.credentials[scope] = SolarForecastCredential(accountScopeID: accountScopeID, siteID: siteID, credentialID: currentCredential.credentialID, resourceIDs: resourceIDs)
         nextState.caches.removeValue(forKey: scope)
         do { try await files.saveState(nextState) } catch { throw StoreError.persistenceFailed }
+        dirtyScopes.remove(scope)
         state = nextState
     }
 
@@ -302,6 +310,15 @@ actor SolarForecastStore {
            clock.now().timeIntervalSince(batch.fetchedAt).isFinite,
            clock.now().timeIntervalSince(batch.fetchedAt) >= 0,
            clock.now().timeIntervalSince(batch.fetchedAt) < Self.foregroundRefreshThreshold {
+            // Fresh in memory, but possibly not on disk. Returning .alreadyFresh here
+            // would leave the pending write unattempted for the whole freshness window,
+            // so the note promising a retry would be a promise nothing keeps. Retry
+            // first: it is a file write only, charged to no request budget and making no
+            // Solcast call, and it cannot loop -- a failed retry returns .saveFailed
+            // without refetching, so the cache does not get re-stamped.
+            if dirtyScopes.contains(scope) {
+                return await retryPendingWrite(scope: scope) ? .refreshed : .failed(.saveFailed)
+            }
             return .alreadyFresh
         }
         if let credentialID = state.budgetLinks[scope],
@@ -332,6 +349,7 @@ actor SolarForecastStore {
         state.caches.removeValue(forKey: scope)
         state.budgetLinks.removeValue(forKey: scope)
         state.failedScopes.remove(scope)
+        dirtyScopes.remove(scope)
         lastErrorDescription = nil
         if activeAccountScopeID == accountScopeID,
            !state.credentials.values.contains(where: { $0.accountScopeID == accountScopeID }) {
@@ -353,6 +371,7 @@ actor SolarForecastStore {
         state.caches.removeAll()
         state.budgetLinks.removeAll()
         state.failedScopes.removeAll()
+        dirtyScopes.removeAll()
         lastErrorDescription = nil
         var failed = false
         do { try await persist() } catch { failed = true }
@@ -387,6 +406,7 @@ actor SolarForecastStore {
         nextState.caches.removeValue(forKey: scope)
         nextState.budgetLinks.removeValue(forKey: scope)
         nextState.failedScopes.remove(scope)
+        dirtyScopes.remove(scope)
         do {
             try await files.saveState(nextState)
         } catch {
@@ -476,11 +496,13 @@ actor SolarForecastStore {
             // good and the credential is untouched, so the cache is kept in memory
             // and the scope is deliberately NOT marked failed — isRecommendationUsable
             // gates on failedScopes, so marking it would hide the data we just
-            // fetched. Never quarantine here: the next refresh retries the write,
+            // fetched. Never quarantine here: the write is retried (see dirtyScopes),
             // and destroying a working key over a full disk loses the user's setup.
+            dirtyScopes.insert(scope)
             lastErrorDescription = "Forecast could not be saved to this device"
             return .failed(.saveFailed)
         }
+        dirtyScopes.remove(scope)
         return .refreshed
     }
 
@@ -643,6 +665,19 @@ actor SolarForecastStore {
     }
 
     private func persist() async throws { try await files.saveState(state) }
+
+    /// Re-attempts the write left pending by a failed persist. Returns whether the
+    /// state on disk now matches memory. Deliberately does not escalate on failure:
+    /// the fault is still the filesystem's, and the credential has done nothing wrong.
+    private func retryPendingWrite(scope: String) async -> Bool {
+        do {
+            try await persist()
+            dirtyScopes.remove(scope)
+            return true
+        } catch {
+            return false
+        }
+    }
 
     enum StoreError: Error, Equatable { case invalidConfiguration, notConfigured, budgetExhausted, deferred, requestFailed, discoveryFailed(SolarForecastRefreshFailure), persistenceFailed, cleanupFailed, cancelled }
 }
