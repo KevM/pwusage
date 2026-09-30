@@ -303,8 +303,9 @@ struct LoadTimingForecastPresentationTests {
 
         #expect(overlay.isForecastAware)
         #expect(enhanced.headline == "Waiting could save an estimated $1.20")
-        #expect(enhanced.costNow == "Start now: $3.40")
-        #expect(Self.normalized(enhanced.recommendedCost) == Self.normalized("Start at 10:00 AM: $2.20"))
+        #expect(enhanced.costNow == "Start now — adds \(Self.money(3.40)) to your projected bill")
+        #expect(Self.normalized(enhanced.recommendedCost)
+            == Self.normalized("Start at 10:00 AM — adds \(Self.money(2.20)) to your projected bill"))
         #expect(enhanced.savings == "Estimated savings $1.20")
         #expect(Self.normalized(enhanced.window) == Self.normalized("Runs 10:00 AM – 11:00 AM"))
         #expect(enhanced.solarContribution == "About 2.1 kWh of this run could come from your solar")
@@ -332,8 +333,49 @@ struct LoadTimingForecastPresentationTests {
         #expect(overlay.isForecastAware)
         #expect(enhanced.headline == "Start now — no cheaper start was found")
         #expect(enhanced.savings == nil)
-        #expect(enhanced.costNow == "Start now: $3.40")
-        #expect(Self.normalized(enhanced.recommendedCost) == Self.normalized("Start now: $3.40"))
+        #expect(enhanced.costNow == "Start now — adds $3.40 to your projected bill")
+        #expect(Self.normalized(enhanced.recommendedCost) == Self.normalized("Start now — adds $3.40 to your projected bill"))
+    }
+
+    /// `costNow`/`recommendedCost` are the *marginal* cost of the load against the
+    /// projected household baseline, not the absolute cost of the energy involved.
+    /// When the load is served by stored surplus that marginal cost is legitimately
+    /// near zero, and the energy was already paid for. Copy that rendered the figure
+    /// as a total ("Start now: $0.00") would read as "this run is free" — or worse,
+    /// make a real marginal cost look like a total. So the rendered form must state
+    /// that the figure is added to the bill.
+    @Test("A near-zero marginal cost is labelled as an addition to the bill, never as a total")
+    func nearZeroMarginalCostIsNotPresentedAsAnAbsoluteTotal() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            cause: nil,
+            result: Self.enhanced(Self.waitingComparison(costNow: 0.01, recommendedCost: 0, savings: 0.01)),
+            forecastFetchedAt: Self.now,
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let enhanced = try #require(overlay.enhanced)
+
+        // Built through the same formatter production uses, so this test asserts
+        // the copy rather than the device's currency symbols or decimal separators.
+        let marginalNow = Self.money(0.01)
+        let marginalLater = Self.money(0)
+
+        #expect(enhanced.costNow == "Start now — adds \(marginalNow) to your projected bill")
+        #expect(Self.normalized(enhanced.recommendedCost)
+            == Self.normalized("Start at 10:00 AM — adds \(marginalLater) to your projected bill"))
+
+        // The substantive property: neither may be readable as a standalone total.
+        for rendered in [enhanced.costNow, enhanced.recommendedCost] {
+            #expect(rendered.hasSuffix(" to your projected bill"),
+                    "Cost copy must say what the figure is added to, got \"\(rendered)\"")
+        }
+        // The "Start now:" form is the one that reads as a bare total, and only
+        // `costNow` can carry it; `recommendedCost` is checked by the equality above.
+        #expect(!enhanced.costNow.contains("Start now:"), "Cost copy must not read as a total")
     }
 
     @Test("A saving too small to act on is described as similarly priced, not as a saving")
@@ -759,6 +801,14 @@ struct LoadTimingForecastPresentationTests {
     private static func normalized(_ text: String) -> String {
         text.replacingOccurrences(of: "\u{202F}", with: " ")
             .replacingOccurrences(of: "\u{00A0}", with: " ")
+    }
+
+    /// Formats money through the same call the production path uses, with the
+    /// locale passed explicitly, so these assertions test the copy rather than
+    /// the device's currency symbol or decimal separator (§9.13). The production
+    /// entry point takes no locale, so pinning one here would be wrong.
+    private static func money(_ amount: Double) -> String {
+        DashboardPresentation.currency(amount, code: "USD", locale: .current) ?? "\(amount)"
     }
 
     @Test("A spent daily allowance is not mistaken for a stale forecast")
