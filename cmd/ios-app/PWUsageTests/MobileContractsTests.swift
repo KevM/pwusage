@@ -194,10 +194,12 @@ struct MobileContractsTests {
         }
     }
 
-    @Test("A planning context stamped ahead of a fast device clock still validates")
-    func planningContextToleratesFastDeviceClock() throws {
+    @Test("A planning context stamped ahead of a slow device clock still validates")
+    func planningContextToleratesClockBehindServer() throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        // Thirty minutes ahead: a mis-set device clock, not bad data.
+        // Thirty minutes ahead of this device. `asOf` is the server's stamp, so an
+        // `asOf` in the device's future means the *device* is behind -- a fast clock
+        // would make `asOf` look older, which the positive bound already accepted.
         let response = Self.makePlanningContext(siteID: "site-a", asOf: now.addingTimeInterval(30 * 60))
         #expect(throws: Never.self) { try response.validating(siteID: "site-a", now: now) }
     }
