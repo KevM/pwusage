@@ -45,7 +45,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: 6HQGHHRK87
       configs:
         Debug:
           PWUSAGE_API_ORIGIN: https://pwusagebeta.fm.rodeo

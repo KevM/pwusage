@@ -4,13 +4,13 @@
 
 **Status values:** `OPEN` → `IN PROGRESS (PR #N)` → `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)`
 
-**Progress:** 72 findings tracked. 10 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
+**Progress:** 72 findings tracked. 13 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
 
 | Status | Count | Findings |
 | --- | --- | --- |
-| OPEN | 62 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9 |
+| OPEN | 59 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 |
 | IN PROGRESS | 0 | — |
-| FIXED | 10 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9 (§4.6 is a recorded negative result, not a finding) |
+| FIXED | 13 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 (§4.6 is a recorded negative result, not a finding) |
 
 ---
 
@@ -339,11 +339,11 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 
 ### 5.11 Silent fallback to the production origin on configuration failure
 - **Location:** `PWUsage/PWUsageApp.swift:16`; `PWUsage/Configuration/AppConfiguration.swift:8-11`, `:20-29`
-- **What:** `(try? AppConfiguration.fromBundle()) ?? (try! AppConfiguration())` swallows any failure and substitutes the production default. `fromBundle()` falls back to `defaultAPIOrigin` at `:23` when `PWUSAGE_API_ORIGIN` is unset, and throws when it is set to something invalid.
-- **Why:** In a Debug build an invalid origin silently produces a connection to **production** rather than beta — exactly the confusion `README.md:26` warns about. The failure is invisible: no log, no UI indication.
-- **Action:** Surface the failure (fatal with a descriptive message in Debug, an explicit error state otherwise) rather than falling back to production, and log the underlying error.
+- **What:** `(try? AppConfiguration.fromBundle()) ?? (try! AppConfiguration())` swallowed any failure and substituted the production default. `fromBundle()` fell back to `defaultAPIOrigin` when `PWUSAGE_API_ORIGIN` was unset, and threw when it was set to something invalid.
+- **Why:** In a Debug build an invalid origin silently produced a connection to **production** rather than beta — exactly the confusion `README.md:26` warns about. The failure was invisible: no log, no UI indication.
+- **Action:** Done. The silent substitution is gone: `PWUsageApp.init` switches on the resolution instead of `??`-ing a default, and builds no client at all in the refusing case. `fromBundle` gained injectable `environment`/`isDebug` parameters and now logs a bad origin in **both** configurations; Debug falls back to `debugFallbackAPIOrigin` (beta, never production) and records an `initializationError` on the configuration, Release rethrows. A Release refusal renders a `pwusage can't start` screen (via the existing `EmptyStateScreen`) instead of trapping or connecting. `PWUSAGE_API_ORIGIN` unset still resolves to production, which is correct: production is the Release host and is allowlisted.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** High — note the `try!` itself cannot actually trap, because `AppConfiguration()` with the default origin always passes `validate`; the defect is the silent fallback, not the force-try. See §12.
 
 ---
@@ -354,20 +354,20 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 
 ### 6.1 `DEVELOPMENT_TEAM` is committed to `project.yml`, contradicting the README
 - **Location:** `cmd/ios-app/project.yml:48`
-- **What:** `DEVELOPMENT_TEAM: 6HQGHHRK87` is hardcoded in the committed XcodeGen spec. `project.yml` is git-tracked (confirmed via `git ls-files --error-unmatch project.yml`). `README.md:16` states "The project has no signing team configured" and `:19` says "set `DEVELOPMENT_TEAM` in your local shell (do not commit it)".
-- **Why:** Leaks the signing team identity in the repository and makes a teammate's fork attempt a signed build against someone else's team. The README and the spec now actively disagree, so a reader following the README would be surprised.
-- **Action:** Remove it from the committed spec and inject it from a local, git-ignored `.xcconfig` or an `xcodebuild` build setting, as the README already describes.
+- **What:** `DEVELOPMENT_TEAM: 6HQGHHRK87` was hardcoded in the committed XcodeGen spec. `project.yml` is git-tracked (confirmed via `git ls-files --error-unmatch project.yml`). `README.md:16` states "The project has no signing team configured" and `README.md:19` says "set `DEVELOPMENT_TEAM` in your local shell (do not commit it)".
+- **Why:** Leaked the signing team identity in the repository and made a teammate's fork attempt a signed build against someone else's team. The README and the spec actively disagreed, so a reader following the README would have been surprised.
+- **Action:** Done. The `DEVELOPMENT_TEAM` line is removed from the committed spec, so the README is now accurate: there is no signing team configured and a local device build supplies it as the README describes. `CODE_SIGN_STYLE: Automatic` is unchanged. Verified safe for CI — `.github/workflows/ios.yml` runs `./run-tests.sh`, whose `xcodebuild` invocation sets `CODE_SIGNING_ALLOWED=NO` and names no team. The regenerated `PWUsage.xcodeproj` contains no `DEVELOPMENT_TEAM`; it is gitignored, so the removal only takes effect after `./generate.sh`.
 - **Severity:** High
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** High
 
 ### 6.2 Release origin validation accepts any HTTPS host, with no production allowlist
 - **Location:** `PWUsage/Configuration/AppConfiguration.swift:20-29`, `:35-47`
-- **What:** `validate` checks scheme, non-empty host, no userinfo, empty path, no query, no fragment, and HTTPS-in-Release — but never constrains the **host**. Whatever `PWUSAGE_API_ORIGIN` resolves to is accepted.
-- **Why:** The current `project.yml` Release value is correct, so this is not a live bug, but the safety property is much weaker than "Release requires HTTPS" reads. A build-configuration slip that leaves the Debug beta URL in Release — or points at any other host — ships silently, and the `site_auth` session cookie is scoped to whatever origin the app talks to, so this is the one place where a wrong-server failure is quiet rather than loud.
-- **Action:** In Release, additionally require the host to be an explicit allowlist entry (`pwusage.fm.rodeo`) and refuse loudly at launch rather than falling back.
+- **What:** `validate` checked scheme, non-empty host, no userinfo, empty path, no query, no fragment, and HTTPS-in-Release — but never constrained the **host**. Whatever `PWUSAGE_API_ORIGIN` resolved to was accepted.
+- **Why:** The current `project.yml` Release value is correct, so this was not a live bug, but the safety property was much weaker than "Release requires HTTPS" reads. A build-configuration slip that leaves the Debug beta URL in Release — or points at any other host — shipped silently, and the `site_auth` session cookie is scoped to whatever origin the app talks to, so this was the one place where a wrong-server failure is quiet rather than loud.
+- **Action:** Done, and the check is in `validate` itself rather than in one caller, so it cannot be bypassed by forgetting an argument. `isRelease: true` (the default for every public initializer) now implies the host must be an entry in `releasedAPIOriginHosts` (`pwusage.fm.rodeo`); Release therefore accepts `https://pwusage.fm.rodeo` and **rejects** `https://pwusagebeta.fm.rodeo`, and per §5.11 a rejected Release origin rethrows so the app refuses to launch rather than falling back. Debug (`isRelease: false`) is deliberately unconstrained, so `http://localhost:5174` and any other local host still work. The only escape is `allowUnlistedHost: Bool = false`, an explicit opt-out that defaults to the safe state, so a caller that skips the check has to say so in its own source; it is used only by test fixtures that name the stub host `pwusage.test`, and it waives the host allowlist alone, not the HTTPS requirement. An earlier revision put the allowlist in `fromBundle` and gave the initializers `allowedHosts: Set<String>? = nil`; that failed closed nowhere — `nil` meant "no allowlist", so a future Release caller got no host check for free. The five stub-host fixtures are recorded in the same commit as a follow-up finding: their `try!` static initializers turn any validation error into a process-wide `SIGTRAP` rather than one failing test, which is how the earlier revision's crash storm surfaced. That `try!` problem is pre-existing and out of scope for this fix.
 - **Severity:** High
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** High
 
 ### 6.3 Untested destructive keychain path

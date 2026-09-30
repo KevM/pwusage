@@ -670,7 +670,7 @@ struct SolarForecastStoreTests {
         let refresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") }
         await h.transport.waitUntilRequestsStarted(1)
         let auth = MobileAuthService(
-            configuration: try AppConfiguration(apiOriginString: "https://pwusage.test"),
+            configuration: try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true),
             api: NoopMobileAuthAPI(),
             forecastCleanup: SolarForecastStoreSessionCleanup(store: h.store),
             initialAuthenticationState: true

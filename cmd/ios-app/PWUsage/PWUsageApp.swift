@@ -1,5 +1,7 @@
 import SwiftUI
 import Combine
+import OSLog
+import UIKit
 
 @MainActor
 protocol PWUsageApplicationAPI: MobileDashboardDataAPI, MobileLoadPlanningDataAPI, MobileAuthAPI {
@@ -10,21 +12,64 @@ extension PWUsageAPI: PWUsageApplicationAPI {}
 
 @main
 struct PWUsageApp: App {
-    @StateObject private var model: PWUsageAppModel
+    /// Resolved once, at launch. Either a model to run or a build misconfiguration
+    /// to report. It never changes, so no observation is needed to hold on to it.
+    private enum Launch {
+        case ready(PWUsageAppModel)
+        case misconfigured(String)
+    }
+
+    private let launch: Launch
 
     init() {
-        let configuration = (try? AppConfiguration.fromBundle()) ?? (try! AppConfiguration())
-        let apiClient = PWUsageAPI(configuration: configuration)
-        _model = StateObject(wrappedValue: PWUsageAppModel(configuration: configuration, api: apiClient))
+        do {
+            let configuration = try AppConfiguration.fromBundle()
+            launch = .ready(
+                PWUsageAppModel(
+                    configuration: configuration,
+                    api: PWUsageAPI(configuration: configuration)
+                )
+            )
+        } catch let error as AppConfiguration.ValidationError {
+            // A Release build with an unusable origin has no server worth talking
+            // to, so refuse rather than guess. Building a client here is exactly
+            // the failure this replaces: it silently became a production client.
+            launch = .misconfigured(
+                "This build of pwusage was misconfigured and cannot choose a server. "
+                    + "The bundled API origin was rejected as invalid."
+            )
+            PWUsageApp.reportMisconfiguration(error)
+        } catch {
+            launch = .misconfigured("This build of pwusage was misconfigured and cannot choose a server.")
+            PWUsageApp.reportMisconfiguration(error)
+        }
+    }
+
+    private static func reportMisconfiguration(_ error: Error) {
+        Logger(subsystem: "fm.rodeo.pwusage", category: "configuration")
+            .error("Refusing to launch: \(String(describing: error), privacy: .public)")
     }
 
     var body: some Scene {
         WindowGroup {
-            PWUsageRootView()
-                .environmentObject(model)
+            switch launch {
+            case .ready(let model):
+                PWUsageRootView()
+                    .environmentObject(model)
+            case .misconfigured(let message):
+                EmptyStateScreen(
+                    symbol: "exclamationmark.triangle",
+                    title: "pwusage can’t start",
+                    message: message,
+                    actionTitle: "Copy details",
+                    action: { UIPasteboard.general.string = message }
+                )
+            }
         }
         .commands {
-            PWUsageCommands(model: model)
+            if case .ready(let model) = launch {
+                PWUsageCommands(model: model)
+            }
         }
     }
 }
