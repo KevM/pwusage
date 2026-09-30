@@ -4,11 +4,11 @@
 
 **Status values:** `OPEN` → `IN PROGRESS (PR #N)` → `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)`
 
-**Progress:** 72 findings tracked. 13 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
+**Progress:** 73 findings tracked. 13 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
 
 | Status | Count | Findings |
 | --- | --- | --- |
-| OPEN | 59 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 |
+| OPEN | 60 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 |
 | IN PROGRESS | 0 | — |
 | FIXED | 13 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 (§4.6 is a recorded negative result, not a finding) |
 
@@ -352,6 +352,14 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 
 The security posture is genuinely strong and was verified end-to-end: PKCE/state/attempt are 32 random bytes from `SystemRandomNumberGenerator`; the callback is parsed against a strict allowlist (no user/password/port/fragment, duplicate and empty parameters rejected, `state` compared before anything else); the Solcast key uses `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` with `kSecAttrSynchronizable: false`; the state file is written atomically with `FileProtectionType.complete` and excluded from backup; `SolcastClient` uses an ephemeral session, no cookie storage, `reloadIgnoringLocalCacheData`, a redirect-rejecting delegate, and a post-response assertion that the final URL is still `https://api.solcast.com.au`; there are **zero** `print`/`debugPrint`/`os_log`/`Logger`/`NSLog` calls in the app; there are no ATS exceptions, no custom trust evaluation, and no `UIBackgroundModes`. The findings below are the remaining gaps.
 
+### 5.12 `try!` in test static initializers turns a fixture bug into a whole-process crash
+- **Location:** `PWUsageTests/PWUsageAppModelTests.swift:269` (and `:366`); `PWUsageTests/MobileAuthServiceTests.swift:433`; `PWUsageTests/DashboardCoordinatorTests.swift:528`, `:533`
+- **What:** Four test helpers build a fixture with `try!` inside a `static let` initializer or a shared `makeService` helper. Any thrown error — a validation rejection, a decode failure — is an assertion failure, not a failing test.
+- **Why:** The failure is scoped to the whole test binary rather than to the one test that caused it, and the diagnostics are unreadable. Observed concretely while fixing §6.2: an intermediate revision put the Release host allowlist inside `validate`, which rejected the `https://pwusage.test` fixtures, and each rejection became `_assertionFailure` → `SIGTRAP`. The result was 26 `PWUsage-*.ips` crash reports in `~/Library/Logs/DiagnosticReports`, roughly four seconds apart as each suite retried, and no test-level failure message pointing at the cause. A reader would have seen repeated process deaths rather than "these five fixtures use a host a Release build may not name".
+- **Action:** Replace the `try!` sites with a throwing fixture helper, or build the fixture lazily inside each test so a bad payload fails one test. Do not reach for `fatalError` — the point is to contain the failure. Found while fixing §6.2; deliberately left out of that change to keep it reviewable.
+- **Severity:** Medium
+- **Status:** OPEN
+- **Confidence:** High — reproduced; the 26 crash reports listed above came from exactly this mechanism.
 ### 6.1 `DEVELOPMENT_TEAM` is committed to `project.yml`, contradicting the README
 - **Location:** `cmd/ios-app/project.yml:48`
 - **What:** `DEVELOPMENT_TEAM: 6HQGHHRK87` was hardcoded in the committed XcodeGen spec. `project.yml` is git-tracked (confirmed via `git ls-files --error-unmatch project.yml`). `README.md:16` states "The project has no signing team configured" and `README.md:19` says "set `DEVELOPMENT_TEAM` in your local shell (do not commit it)".
