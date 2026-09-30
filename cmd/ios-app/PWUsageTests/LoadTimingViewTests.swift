@@ -936,6 +936,10 @@ struct LoadTimingForecastPresentationTests {
 
         #expect(overlay.enhanced == nil)
         #expect(!overlay.isForecastAware)
+        #expect(overlay.note == LoadTimingForecastPresentation.futureDatedForecastNote)
+        #expect(overlay.note?.contains("unavailable") == false)
+        #expect(overlay.note?.contains("too old") == false,
+                "A future-dated forecast is not stale; folding this case back into the stale note must fail")
     }
 
     @Test("A save failure keeps the forecast and is not reported as unavailable")
