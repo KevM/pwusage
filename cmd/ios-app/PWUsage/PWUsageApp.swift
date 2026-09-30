@@ -2,7 +2,7 @@ import SwiftUI
 import Combine
 
 @MainActor
-protocol PWUsageApplicationAPI: MobileDashboardDataAPI, MobileAuthAPI {
+protocol PWUsageApplicationAPI: MobileDashboardDataAPI, MobileLoadPlanningDataAPI, MobileAuthAPI {
     func fetchSites() async throws -> [MobileSite]
 }
 
@@ -79,18 +79,30 @@ final class PWUsageAppModel: ObservableObject {
     @Published private(set) var isSigningIn = false
     @Published private(set) var signInMessage: String?
     @Published var isSitePickerPresented = false
+    @Published private(set) var accountScopeID: String?
 
     let authService: MobileAuthService
     private let api: any PWUsageApplicationAPI
     private let userDefaults: UserDefaults
+    private let forecastStore: any SolarForecastManaging
     private var coordinatorAuthSubscription: AnyCancellable?
     private var didBootstrap = false
     private var sceneIsActive = false
 
-    init(configuration: AppConfiguration, api: any PWUsageApplicationAPI, userDefaults: UserDefaults = .standard) {
+    init(
+        configuration: AppConfiguration,
+        api: any PWUsageApplicationAPI,
+        userDefaults: UserDefaults = .standard,
+        forecastStore: any SolarForecastManaging = SolarForecastStore.shared
+    ) {
         self.api = api
         self.userDefaults = userDefaults
-        authService = MobileAuthService(configuration: configuration, api: api)
+        self.forecastStore = forecastStore
+        authService = MobileAuthService(
+            configuration: configuration,
+            api: api,
+            forecastCleanup: SolarForecastStoreSessionCleanup(store: forecastStore)
+        )
     }
 
     func bootstrap() async {
@@ -101,8 +113,7 @@ final class PWUsageAppModel: ObservableObject {
             await installAuthorizedSites(availableSites)
         } catch let error as PWUsageAPIError {
             if error == .signInRequired {
-                await authService.invalidateAuthenticatedSession()
-                screenState = .signedOut
+                await invalidateSession(message: nil)
             } else {
                 screenState = .unavailable
             }
@@ -127,9 +138,7 @@ final class PWUsageAppModel: ObservableObject {
             await installAuthorizedSites(availableSites)
         } catch let error as PWUsageAPIError {
             if error == .signInRequired {
-                await authService.invalidateAuthenticatedSession()
-                screenState = .signedOut
-                signInMessage = "Sign-in expired. Please try again."
+                await invalidateSession(message: "Sign-in expired. Please try again.")
             } else if authService.isAuthenticated {
                 screenState = .unavailable
                 signInMessage = "You’re signed in, but pwusage could not load your sites. Check your connection and try again."
@@ -151,8 +160,7 @@ final class PWUsageAppModel: ObservableObject {
             let availableSites = try await api.fetchSites()
             await installAuthorizedSites(availableSites)
         } catch let error as PWUsageAPIError where error == .signInRequired {
-            await authService.invalidateAuthenticatedSession()
-            screenState = .signedOut
+            await invalidateSession(message: "Your session expired. Sign in to continue.")
         } catch {
             screenState = authService.isAuthenticated ? .unavailable : .signedOut
         }
@@ -171,28 +179,49 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func signOut() async {
+        coordinator?.authenticationInvalidated()
+        var cleanupFailed = false
         do { try await authService.logout() }
-        catch { /* The local cookie and sign-in state are cleared by MobileAuthService even on network failure. */ }
+        catch let error as MobileAuthService.AuthError where error == .forecastCleanupFailed { cleanupFailed = true }
+        catch { /* A remote logout failure does not prevent local sign-out. */ }
         coordinator = nil
         coordinatorAuthSubscription = nil
         sites = []
         selectedSiteID = nil
         isSitePickerPresented = false
         userDefaults.removeObject(forKey: Self.selectedSiteDefaultsKey)
+        await clearAccountScopeID()
         screenState = .signedOut
-        signInMessage = nil
+        signInMessage = cleanupFailed ? "Could not clear local solar forecast data. Please try again." : nil
     }
 
     func sessionExpired() async {
-        await authService.invalidateAuthenticatedSession()
+        await invalidateSession(message: "Your session expired. Sign in to continue.")
+    }
+
+    private func invalidateSession(message: String?) async {
+        coordinator?.authenticationInvalidated()
+        var cleanupFailed = false
+        do { try await authService.invalidateAuthenticatedSession() }
+        catch { cleanupFailed = true }
         isSitePickerPresented = false
+        coordinator = nil
+        coordinatorAuthSubscription = nil
+        sites = []
+        selectedSiteID = nil
+        userDefaults.removeObject(forKey: Self.selectedSiteDefaultsKey)
+        await clearAccountScopeID()
         screenState = .signedOut
-        signInMessage = "Your session expired. Sign in to continue."
+        signInMessage = cleanupFailed
+            ? "Could not clear local solar forecast data. Please try again."
+            : message
     }
 
     private func installAuthorizedSites(_ availableSites: [MobileSite]) async {
         sites = availableSites
         authService.restoreAuthenticatedSession()
+        let accountScopeID = ensureAccountScopeID()
+        await forecastStore.activateAccountScope(accountScopeID)
         guard !availableSites.isEmpty else {
             coordinator = nil
             selectedSiteID = nil
@@ -209,7 +238,13 @@ final class PWUsageAppModel: ObservableObject {
             coordinator.authenticationRestored()
             coordinator.scenePhaseChanged(isActive: sceneIsActive)
         } else {
-            let nextCoordinator = DashboardCoordinator(siteID: chosen.id, api: api)
+            let nextCoordinator = DashboardCoordinator(
+                siteID: chosen.id,
+                api: api,
+                planningAPI: api,
+                forecastStore: forecastStore,
+                accountScopeID: accountScopeID
+            )
             coordinator = nextCoordinator
             coordinatorAuthSubscription = nextCoordinator.$requiresSignIn
                 .removeDuplicates()
@@ -223,6 +258,24 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     static let selectedSiteDefaultsKey = "pwusage.selectedSiteID"
+    static let accountScopeDefaultsKey = "pwusage.localAccountScopeID"
+
+    private func ensureAccountScopeID() -> String {
+        if let existing = userDefaults.string(forKey: Self.accountScopeDefaultsKey), !existing.isEmpty {
+            accountScopeID = existing
+            return existing
+        }
+        let created = UUID().uuidString.lowercased()
+        userDefaults.set(created, forKey: Self.accountScopeDefaultsKey)
+        accountScopeID = created
+        return created
+    }
+
+    private func clearAccountScopeID() async {
+        accountScopeID = nil
+        userDefaults.removeObject(forKey: Self.accountScopeDefaultsKey)
+        await forecastStore.activateAccountScope(nil)
+    }
 }
 
 private struct PWUsageRootView: View {

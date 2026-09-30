@@ -36,6 +36,7 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
         case cancelled
         case webAuthenticationFailed
         case sessionCouldNotStart
+        case forecastCleanupFailed
     }
 
     typealias SessionCompletion = @MainActor (URL?, Error?) -> Void
@@ -45,6 +46,7 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
 
     private let configuration: AppConfiguration
     private let api: any MobileAuthAPI
+    private let forecastCleanup: any SolarForecastSessionCleanup
     private let sessionFactory: SessionFactory
     private var webSession: (any MobileAuthWebSession)?
     private var pendingContinuation: CheckedContinuation<Void, Error>?
@@ -53,11 +55,13 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
     init(
         configuration: AppConfiguration,
         api: (any MobileAuthAPI)? = nil,
+        forecastCleanup: any SolarForecastSessionCleanup = SolarForecastStoreSessionCleanup(store: SolarForecastStore.shared),
         initialAuthenticationState: Bool = false,
         sessionFactory: @escaping SessionFactory = MobileAuthService.makeSystemWebSession
     ) {
         self.configuration = configuration
         self.api = api ?? PWUsageAPI(configuration: configuration)
+        self.forecastCleanup = forecastCleanup
         self.isAuthenticated = initialAuthenticationState
         self.sessionFactory = sessionFactory
         super.init()
@@ -136,15 +140,12 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
     }
 
     func logout() async throws {
-        do {
-            try await api.logout()
-        } catch {
-            await api.clearSiteAuthCookie()
-            isAuthenticated = false
-            throw error
-        }
+        var serverError: Error?
+        do { try await api.logout() } catch { serverError = error }
         await api.clearSiteAuthCookie()
         isAuthenticated = false
+        do { try await forecastCleanup.signOut() } catch { throw AuthError.forecastCleanupFailed }
+        if let serverError { throw serverError }
     }
 
     /// Restore local signed-in presentation only after an authorized API call
@@ -154,9 +155,10 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
     }
 
     /// End the local session after an API request reports that the cookie expired.
-    func invalidateAuthenticatedSession() async {
+    func invalidateAuthenticatedSession() async throws {
         await api.clearSiteAuthCookie()
         isAuthenticated = false
+        do { try await forecastCleanup.signOut() } catch { throw AuthError.forecastCleanupFailed }
     }
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {

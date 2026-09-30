@@ -23,6 +23,20 @@ xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination 'generic/plat
 
 Debug builds use `https://pwusagebeta.fm.rodeo` for sign-in and dashboard data. Release builds use `https://pwusage.fm.rodeo`. `AppConfiguration` accepts an injected origin for tests and local development; Release requires HTTPS. To override a Debug build for a local server, set `PWUSAGE_API_ORIGIN` in the Xcode build environment or scheme. Do not commit credentials.
 
+When checking a server-side problem by hand, match the host to the build. A Debug build talks to **beta**, so a `curl` against `pwusage.fm.rodeo` describes production and says nothing about what a Debug build sees. Note that a `401` means the route exists but rejected the unauthenticated request, while a `404` means the route is not deployed at that host. The two are easy to conflate when only one host is checked.
+
+## Server routes the app depends on
+
+Some features are only half-present in the app binary; the other half is a web route that must be deployed. Verify a route exists before blaming the device, the data, or the provider:
+
+```sh
+npx tsx scripts/check-mobile-routes-on-base.ts [baseRef]   # from the repository root
+```
+
+This exits non-zero when a route the app calls is absent from the base ref. A 404 from `/api/mobile/load-planning-context` means the deployment predates that route, and the app reports it as an out-of-date server rather than as missing household data.
+
+The Solcast enhancement is split this way: the Solcast forecast itself is device-local and works without any server route, but the household profile it is compared against comes from `/api/mobile/load-planning-context`. If that route is missing, the forecast half succeeds while the app still shows no recommendation, because there is no baseline to compare it to.
+
 ## First-release behavior
 
 - The native dashboard shows live solar, home, battery, and grid power; today’s energy totals; the active tariff; and the current bill estimate.
@@ -37,4 +51,16 @@ SwiftUI previews under `PWUsage/Views/DashboardPreviews.swift` use fixed, local 
 
 The previews compiled as part of the simulator build, but they were not visually inspected in this run because the Mac UI session was locked.
 
-Native sign-in requires the server’s mobile handoff migration to be deployed. Production deployment and real-device cookie renewal/logout checks remain release gates; they are intentionally outside this implementation task.
+Native sign-in requires the server’s mobile handoff migration to be deployed. The Solcast enhancement additionally requires `/api/mobile/load-planning-context` to be deployed; see [Server routes the app depends on](#server-routes-the-app-depends-on). Production deployment and real-device cookie renewal/logout checks remain release gates; they are intentionally outside this implementation task.
+
+## Diagnosing an unavailable forecast
+
+The Load timing screen shows one small note when the optional forecast cannot be used, and the note names the actual blocker rather than blaming the forecast in general. A "could not reach your server" note points at sign-in or connectivity; an "app build is newer than the server" note points at a deployment gap; notes naming household history describe the server’s 14-day window, which is a server-side data question rather than a device or Solcast one.
+
+To investigate a household-data problem, query the real database rather than trusting a note:
+
+```sh
+cd cmd/next-app && npx tsx scripts/load-planning-context-capture.ts <siteId>
+```
+
+This runs the same query and the same profile builder as the route and prints the diagnostics the route hides: row counts, per-day coverage against the 90 percent gate, off-grid timestamps, and non-finite values. It prints no site name, no credentials, and no per-interval values, so it is safe against production data.

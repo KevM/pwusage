@@ -60,6 +60,15 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         catch { throw PWUsageAPIError.invalidResponse }
     }
 
+    func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
+        let url = try makeURL(path: "/api/mobile/load-planning-context", siteID: siteID)
+        let data = try await request(url: url)
+        do {
+            return try MobileContractDecoder.make().decode(MobileLoadPlanningContextResponse.self, from: data)
+        } catch let error as MobileLoadPlanningContextResponse.ContractError { throw error }
+        catch { throw PWUsageAPIError.invalidResponse }
+    }
+
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {
         let url = try makeURL(path: "/api/mobile/session")
         var request = URLRequest(url: url)

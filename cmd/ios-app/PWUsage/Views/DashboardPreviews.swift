@@ -1,7 +1,7 @@
 #if DEBUG
 import SwiftUI
 
-private enum DashboardPreviewMode: String, CaseIterable {
+enum DashboardPreviewMode: String, CaseIterable {
     case normal
     case empty
     case stale
@@ -16,7 +16,7 @@ private enum DashboardPreviewMode: String, CaseIterable {
 }
 
 @MainActor
-private final class DashboardPreviewAPI: MobileDashboardDataAPI {
+final class DashboardPreviewAPI: MobileDashboardDataAPI {
     let mode: DashboardPreviewMode
     private let liveResponse: MobileLiveResponse
     private let billResponse: MobileBillResponse
@@ -25,8 +25,16 @@ private final class DashboardPreviewAPI: MobileDashboardDataAPI {
         self.mode = mode
         let sourceOffset: TimeInterval = mode == .stale ? -2 * 60 * 60 : 0
         let previewNow = Date.now
-        let sourceTime = ISO8601DateFormatter().string(from: previewNow.addingTimeInterval(sourceOffset))
-        let calculatedTime = ISO8601DateFormatter().string(from: previewNow)
+        // Production serializes both the energy observation time and the tariff
+        // timeline with fractional seconds, and starts the timeline at the
+        // observation time. Match that exactly: if the timeline begins even a
+        // fraction of a second later, the estimator's shared horizon collapses to
+        // the source instant and the forecast silently never becomes available.
+        let instantFormatter = ISO8601DateFormatter()
+        instantFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let balanceSource = previewNow.addingTimeInterval(sourceOffset)
+        let sourceTime = instantFormatter.string(from: balanceSource)
+        let calculatedTime = instantFormatter.string(from: previewNow)
         let calendar = Calendar.current
         let cycleStart = calendar.dateInterval(of: .month, for: previewNow)?.start ?? previewNow.addingTimeInterval(-14 * 86400)
         let cycleEnd = calendar.date(byAdding: .month, value: 1, to: cycleStart) ?? previewNow.addingTimeInterval(14 * 86400)
@@ -36,7 +44,12 @@ private final class DashboardPreviewAPI: MobileDashboardDataAPI {
         let hasData = mode != .empty
         let hasTariff = mode != .noTariff
         let peakBalance: Double = switch mode {
-        case .modestSurplus, .normal: 2.5
+        case .modestSurplus: 2.5
+        // Peak is a net buyer and Off peak a net seller. That gives the tiles a
+        // real 48c-vs-12c difference instead of two identical sell rates, and it
+        // leaves the basic layer with no suggestion — the case where the solar
+        // forecast belongs on the explorer card rather than the recommendation.
+        case .normal: -4.2
         case .abundantSurplus: 120
         case .stale: 20
         case .noFit: -12
@@ -50,11 +63,11 @@ private final class DashboardPreviewAPI: MobileDashboardDataAPI {
         case .unknownBalance: 32.4
         default: 32.4
         }
-        let timelineFormatter = ISO8601DateFormatter()
-        timelineFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let timelineFormatter = instantFormatter
         let tariffTimelineJSON = (0..<28).map { index in
             let interval: TimeInterval = mode == .tariffCrossing ? 60 * 60 : 6 * 60 * 60
-            let start = previewNow.addingTimeInterval(TimeInterval(index) * interval)
+            // Start the timeline at the balance source instant, as production does.
+            let start = balanceSource.addingTimeInterval(TimeInterval(index) * interval)
             let end = previewNow.addingTimeInterval(TimeInterval(index + 1) * interval)
             let name = mode == .tariffCrossing ? (index.isMultiple(of: 2) ? "Peak" : "Off peak") : (index.isMultiple(of: 4) ? "Peak" : "Off peak")
             let buyRate = name == "Peak" ? 0.48 : 0.22

@@ -208,6 +208,7 @@ struct LoadTimingView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var profileStore: LoadProfileStore
     @State private var isProfileSheetPresented = false
+    @State private var isSolarForecastSheetPresented = false
     @State private var runDetailsSnapshot: LoadRunDetailsSnapshot?
     @State private var exploredProfileID: String?
 
@@ -222,6 +223,51 @@ struct LoadTimingView: View {
     private var timing: LoadTiming? { response?.loadTiming }
     private var currencyCode: String { response?.currentBill.currency ?? "USD" }
     private var timeZone: String { response?.site.timezone ?? "UTC" }
+
+    /// The forecast overlay is derived fresh from coordinator state. It can only
+    /// add an enhanced section and one note; the basic estimate below is rendered
+    /// regardless, and is never replaced by a forecast value.
+    private func forecastOverlay(
+        now: Date,
+        timing: LoadTiming,
+        response: MobileBillResponse,
+        profile: LoadProfile?
+    ) -> LoadTimingForecastPresentation.Overlay {
+        let enhancedState = coordinator.solarForecastState
+        let result: LoadTimingForecastEstimator.Result
+        if enhancedState == .enhanced,
+           let profile,
+           let batch = coordinator.solarForecastBatch,
+           let context = coordinator.loadPlanningContext,
+           let balanceSourceTime = response.sources.energyDataThrough {
+            result = LoadTimingForecastEstimator.evaluate(
+                profile: profile,
+                now: now,
+                timing: timing,
+                forecast: batch.intervals,
+                context: context,
+                balanceSourceTime: balanceSourceTime,
+                billingCycleEnd: response.currentBill.cycleEnd,
+                currencyCode: currencyCode
+            )
+        } else {
+            // Nothing to evaluate. Leave the reason unset so the overlay explains
+            // the device's own request state rather than a fabricated one.
+            result = LoadTimingForecastEstimator.Result(comparison: nil, unavailableReason: nil)
+        }
+        return LoadTimingForecastPresentation.overlay(
+            enhancement: enhancedState,
+            connection: coordinator.solarForecastConnection,
+            cause: coordinator.solarForecastUnavailableCause,
+            enhancementReason: coordinator.solarForecastUnavailableReason,
+            result: result,
+            forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
+            contextAsOf: coordinator.loadPlanningContext?.asOf,
+            currencyCode: currencyCode,
+            timeZone: timeZone,
+            now: now
+        )
+    }
 
     var body: some View {
         TimelineView(.everyMinute) { _ in
@@ -280,12 +326,16 @@ struct LoadTimingView: View {
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
             }
-            .refreshable { await coordinator.refreshBill() }
+            .refreshable { await coordinator.loadTimingDetailRefreshed() }
             .background(Color(uiColor: .systemGroupedBackground))
         }
         .navigationTitle("Load timing")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { isSolarForecastSheetPresented = true } label: { Image(systemName: "sun.max") }
+                    .accessibilityLabel("Solar forecast settings")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { isProfileSheetPresented = true } label: { Image(systemName: "gearshape") }
                     .accessibilityLabel("Manage load profiles")
@@ -294,13 +344,22 @@ struct LoadTimingView: View {
         .sheet(isPresented: $isProfileSheetPresented) {
             LoadProfilesSheet(store: profileStore)
         }
+        .sheet(isPresented: $isSolarForecastSheetPresented) {
+            SolarForecastSettingsSheet(coordinator: coordinator)
+        }
         .sheet(item: $runDetailsSnapshot) { snapshot in
             LoadRunDetailsSheet(snapshot: snapshot)
         }
         .onChange(of: profileStore.profiles) { _, profiles in
+            coordinator.loadProfileDidEdit()
             if let exploredProfileID, !profiles.contains(where: { $0.id == exploredProfileID }) {
                 self.exploredProfileID = nil
             }
+        }
+        .task { await coordinator.loadTimingDetailAppeared() }
+        .onChange(of: coordinator.isForeground) { _, isForeground in
+            guard isForeground else { return }
+            Task { await coordinator.loadTimingDetailAppeared() }
         }
     }
 
@@ -312,6 +371,13 @@ struct LoadTimingView: View {
             hasTariff: timing.hasTariff,
             hasExpiredCandidate: hasExpiredCandidate
         )
+        // The forecast rides on whichever card is already showing the load it
+        // describes, so it stays visible even when the basic layer has no
+        // suggestion of its own.
+        let placement = LoadTimingForecastPresentation.placement(
+            recommendation: recommendation, explicitExploredID: exploredProfileID
+        )
+        let showsForecast = placement?.card == .recommendation
         return LoadTimingCard(title: "Recommendation", symbol: "bolt.fill") {
             Text(copy.title)
                 .font(.title3.weight(.bold))
@@ -338,6 +404,7 @@ struct LoadTimingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            forecastSection(showsForecast ? placement.map { forecastOverlay(now: now, timing: timing, response: response, profile: $0.profile) } : nil)
             Text("Estimates use billing-cycle balances, not live solar. Each load is evaluated independently from the same snapshot.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -350,8 +417,76 @@ struct LoadTimingView: View {
         }
     }
 
+    @ViewBuilder
+    private func forecastSection(_ overlay: LoadTimingForecastPresentation.Overlay?) -> some View {
+        if let overlay {
+            if let note = overlay.note {
+                Label(note, systemImage: "sun.max.trianglebadge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let enhanced = overlay.enhanced {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Solar forecast")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(enhanced.headline)
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(enhanced.recommendedCost)
+                        .font(.headline)
+                        .monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(enhanced.costNow)
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let savings = enhanced.savings {
+                        Text(savings)
+                            .font(.subheadline)
+                            .foregroundStyle(.green)
+                            .monospacedDigit()
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(enhanced.window)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(enhanced.solarContribution)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(enhanced.horizon)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(enhanced.sourceAges, id: \.self) { age in
+                        Text(age)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(overlay.detail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 4)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(overlay.accessibilityLabel)
+            }
+        }
+    }
+
     private func explorerCard(_ recommendation: LoadTimingRecommendation, timing: LoadTiming, response: MobileBillResponse, now: Date) -> some View {
         let candidate = recommendation.exploredProfile(explicitID: exploredProfileID)
+        let placement = LoadTimingForecastPresentation.placement(
+            recommendation: recommendation, explicitExploredID: exploredProfileID
+        )
+        let explorerOverlay = placement?.card == .explorer
+            ? forecastOverlay(now: now, timing: timing, response: response, profile: placement?.profile)
+            : nil
         return LoadTimingCard(title: "Explore another load", symbol: "slider.horizontal.3") {
             if !profileStore.profiles.isEmpty {
                 Picker("Load profile", selection: Binding(
@@ -369,6 +504,7 @@ struct LoadTimingView: View {
                 if let candidate {
                     explorerCandidate(candidate, recommendation: recommendation, timing: timing, response: response, now: now)
                 }
+                forecastSection(explorerOverlay)
             } else {
                 Text("Add a load profile to explore estimates.")
                     .font(.subheadline)

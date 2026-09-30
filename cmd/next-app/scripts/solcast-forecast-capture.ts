@@ -1,0 +1,185 @@
+/**
+ * Captures a real Solcast response so the iOS decoder can be checked against the
+ * provider rather than against fixtures we authored ourselves.
+ *
+ * This exists because every automated test used a synthetic payload, which is how
+ * a megawatt/kilowatt unit error survived review. Ground truth beats a fixture we
+ * agree with.
+ *
+ * Usage:
+ *   npx tsx scripts/solcast-forecast-capture.ts
+ *
+ * Reads SOLCAST_API_KEY and SOLCAST_RESOURCE_ID from the environment or `.env`.
+ *
+ * The API key is read from the environment only and is never written, logged, or
+ * echoed. The resource ID is redacted in the output, because the design requires
+ * keys and resource IDs to stay device-local.
+ *
+ * Output is written OUTSIDE the repository by default. Pass --out <path> to
+ * override. Nothing here should ever be committed with a live resource ID.
+ */
+import { loadEnvConfig } from '@next/env';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+
+// Load env BEFORE reading any configuration, per the repository script convention.
+loadEnvConfig(path.resolve(__dirname, '../'));
+
+const ORIGIN = 'https://api.solcast.com.au';
+const REDACTED_ID = 'redacted-resource-id';
+
+type Unknown = Record<string, unknown>;
+
+function required(name: string): string {
+    const value = process.env[name];
+    if (!value) {
+        console.error(`Missing ${name}.`);
+        console.error(`Add it to cmd/next-app/.env, for example:`);
+        console.error(`  ${name}="..."`);
+        process.exit(2);
+    }
+    return value.trim();
+}
+
+function redacted(resourceID: string): string {
+    // Keep the shape (length class, character class) so encoding and path-safety
+    // behaviour is still exercised, without recording the real identifier.
+    return `${REDACTED_ID}-${'x'.repeat(Math.min(resourceID.length, 8))}`;
+}
+
+function redactForecast(forecasts: unknown[]): unknown[] {
+    return forecasts.map((point) => {
+        const { pv_estimate10, pv_estimate90, ...rest } = point as Unknown;
+        const out: Unknown = { ...rest };
+        if (pv_estimate10 !== undefined) out.pv_estimate10 = pv_estimate10;
+        if (pv_estimate90 !== undefined) out.pv_estimate90 = pv_estimate90;
+        return out;
+    });
+}
+
+async function get(pathname: string, apiKey: string): Promise<unknown> {
+    const url = new URL(pathname, ORIGIN);
+    url.searchParams.set('format', 'json');
+    const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+    });
+    const text = await response.text();
+    if (!response.ok) {
+        // Never echo the body of an error response; it is provider data.
+        throw new Error(`Solcast returned ${response.status} ${response.statusText} for ${pathname}`);
+    }
+    try {
+        return JSON.parse(text);
+    } catch {
+        throw new Error(`Solcast returned a non-JSON body for ${pathname}`);
+    }
+}
+
+function describe(label: string, value: unknown): void {
+    console.log(`\n== ${label} ==`);
+    if (Array.isArray(value)) {
+        console.log(`  array length: ${value.length}`);
+        if (value.length > 0 && typeof value[0] === 'object' && value[0] !== null) {
+            console.log(`  keys: ${Object.keys(value[0] as Unknown).sort().join(', ')}`);
+        }
+        return;
+    }
+    if (value && typeof value === 'object') {
+        console.log(`  keys: ${Object.keys(value as Unknown).sort().join(', ')}`);
+        return;
+    }
+    console.log(`  type: ${typeof value}`);
+}
+
+async function run(): Promise<void> {
+    const apiKey = required('SOLCAST_API_KEY');
+    const configuredID = required('SOLCAST_RESOURCE_ID');
+
+    const outIndex = process.argv.indexOf('--out');
+    const outPath = outIndex >= 0 && process.argv[outIndex + 1]
+        ? process.argv[outIndex + 1]
+        : path.resolve(process.env.TMPDIR ?? '/tmp', 'solcast-capture.json');
+
+    console.log(`Fetching discovery first; its resource IDs are authoritative.`);
+    const sites = await get('/rooftop_sites', apiKey);
+    describe('discovery response', sites);
+
+    const discovered = ((sites as Unknown).sites as { resource_id?: string; name?: string }[] | undefined)
+        ?.filter((site): site is { resource_id: string; name?: string } =>
+            typeof site.resource_id === 'string' && site.resource_id.length > 0) ?? [];
+
+    if (discovered.length === 0) {
+        throw new Error('Discovery returned no rooftop sites. Check the key and that a site exists in the toolkit.');
+    }
+
+    console.log(`\n== discovered arrays ==`);
+    discovered.forEach((site, index) => {
+        const nonAscii = /[^\x20-\x7E]/.test(site.resource_id) ? 'yes' : 'no';
+        console.log(`  [${index}] ${redacted(site.resource_id)}  non-ascii: ${nonAscii}`);
+    });
+    console.log(`  configured in .env: ${redacted(configuredID)}` +
+        `${discovered.some((s) => s.resource_id === configuredID) ? ' (matches one of the above)' : ' (matches none of the above)'}`);
+
+    // Every array is worth testing: a non-ASCII ID is accepted by the app's
+    // validation but may still be rejected by the provider once percent-encoded,
+    // and that is only visible by asking for each one.
+    const results: { site: { resource_id: string; name?: string }; points: unknown[]; error?: string }[] = [];
+    for (const [index, site] of discovered.entries()) {
+        console.log(`\nFetching forecast for array [${index}] ${redacted(site.resource_id)}...`);
+        try {
+            const forecasts = await get(`/rooftop_sites/${encodeURIComponent(site.resource_id)}/forecasts`, apiKey);
+            const points = Array.isArray((forecasts as Unknown).forecasts)
+                ? redactForecast((forecasts as Unknown).forecasts as unknown[])
+                : [];
+            describe('forecast response', forecasts);
+            results.push({ site, points });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.log(`  FAILED: ${message}`);
+            results.push({ site, points: [], error: message });
+        }
+    }
+
+    const captured = results.find((result) => result.points.length > 0);
+    if (!captured) {
+        throw new Error('No array returned forecast points. Every array is listed above with its status.');
+    }
+    const resourceID = captured.site.resource_id;
+    const points = captured.points;
+
+    const sample = points[0] as Unknown;
+    const rawEstimate = Number(sample.pv_estimate);
+    console.log('\n== magnitude check ==');
+    console.log(`  pv_estimate (raw): ${rawEstimate}`);
+    console.log('  If this is around 0.001-0.02 the provider is reporting MW; the app');
+    console.log('  must convert to kW by multiplying by 1000 before any cost maths.');
+
+    console.log(`\n== per-array summary ==`);
+    for (const result of results) {
+        console.log(`  ${redacted(result.site.resource_id)}: ` +
+            (result.error ? `FAILED (${result.error})` : `${result.points.length} points`));
+    }
+
+    const payload = {
+        _note: 'Redacted Solcast capture. Resource IDs removed; the API key is never written.',
+        _capturedAt: new Date().toISOString(),
+        discovery: {
+            sites: [resourceID].map((id) => ({
+                resource_id: redacted(id),
+                name: 'redacted',
+                tags: ['redacted'],
+            })),
+        },
+        forecast: { forecasts: points },
+    };
+
+    mkdirSync(path.dirname(outPath), { recursive: true });
+    writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`);
+    console.log(`\nWrote ${points.length} forecast points to ${outPath}`);
+    console.log('Check that this file contains no live key or resource ID before sharing it.');
+}
+
+run().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+});
