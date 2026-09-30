@@ -356,6 +356,35 @@ to look for them, because each lives in the seam between two correct commits.
 - [x] docs(ios): re-derive the citations the budget fix moved and make the warning gate durable
 - The three commits above are **named by subject and not by SHA**, where every other entry in this list carries one. They were rewritten after they landed, so a SHA recorded here would be dead on arrival — and the repo's own rule already says to subject-identify a commit rather than cite it, precisely because forward references break on every amend. The rewrite was not cosmetic: the commit carrying the §5.5 behaviour change did not carry its own reversal. `CODE_AUDIT.md` and this file went on asserting, for one commit, that the two budget saves still mark the scope failed and that `reservationPersistenceFailureDisablesCache` pins it, while the code in the same commit had already stopped marking it and had renamed the test. That is the exact defect `CODE_AUDIT.md:3` exists to prevent — a ledger correction batched into a later commit instead of made alongside the fix — and it was invisible precisely because the three commits were the branch tip. Nothing was pushed, so the rewrite was free; after it, no commit in the branch asserts a behaviour its own code contradicts.
 - One of the three had its **commit message rebuilt in place** before the rewrite, after it was found to claim a re-record of the zero-warning figure that its own diff did not contain — the same shape as the spec's struck item 2. It now names the omission and points at the commit that fixed it. All three were then rewritten together so that the §5.5 reversal rides with the commit that made it necessary.
+- **Two of those three commit messages carry claims their own diffs do not, and they are now immutable.**
+  They would need another rebase of the tip to correct, so — for the same reason and in the same
+  spirit as `3a7a98d`'s subject above — they are recorded here rather than left for the next reader
+  to discover. Neither is a behavioural defect; both are the D7 shape (a message asserting a
+  correction its diff does not contain), and neither was caught by the round-3 re-review.
+  - **`1efd8c8` (`docs(ios): correct the ledger, the plan and the design after the review`).** Its
+    message says *"Three of its five ranges ended on the wrong line and a fourth was off by one"*,
+    about §9.8's ranges. **False in both readings, and both readings are checkable.** At its *own*
+    tree — where `SolarForecastStore.swift` is 740 lines and byte-identical to its parent's — three
+    of the five ranges are **exact** (`82-683`, `687-732`, `735-740`) and only the two function
+    ranges in `Why:` are wrong, ending at `:267` where `discoverSites` ends at `:281` (off by
+    **14**) and at `:487` where `performRefresh` ends at `:507` (off by **20**). At its *parent*
+    `cb5e5f7` all **five** ranges existed and **all five ends** were wrong — by 80, 80, 80, 25 and
+    67 lines — and **none** was off by one. The "three and a fourth" reading matches neither. The
+    same message then says the heading *"had been softened from '660-line' to '600+-line'";* its own
+    diff did the **opposite**, replacing the parent's `660-line actor` with `740-line file whose
+    602-line actor`. The `600+` heading it describes existed only in the pre-rebase chain, and the
+    rebase substituted the value underneath a narrative it carried forward — §9.8's `Why:` is
+    corrected on that point, and the ledger's claim that the tree it sits in was ever vaguer is
+    withdrawn.
+  - **`05f9ceb` (`docs(ios): re-derive the citations the budget fix moved and make the warning gate
+    durable`).** Its message says *"9.8's Location pointed at the actor's conformance extension
+    rather than the actor."* **False.** `82-683` starts exactly at `actor SolarForecastStore` and
+    ends **24 lines inside** it: the actor runs to `:707`, and the conformance extension is at
+    `:709`, which the range never touches. Its companion claim — that `Why:` pointed into two
+    functions rather than their ends — is **correct**: `223-267` and `425-487` both fall inside
+    `discoverSites` (`226-284`) and `performRefresh` (`428-521`). One of a message's two claims is
+    enough to mislead a reader checking the other, which is why both are recorded rather than only
+    the one that reads well.
 - Review: Ruling: §5.5's fix is **complete only once both refresh paths agree**, and they did not
   until this pass. `refreshSolarForecast(manual:)` learned that a save failure is not an
   unavailability; `loadTimingDetailAppeared` never did, so it failed its guard, niled the batch
