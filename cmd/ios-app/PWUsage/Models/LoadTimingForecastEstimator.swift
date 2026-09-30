@@ -34,9 +34,20 @@ struct LoadTimingForecastEstimator {
     }
 
     struct Comparison: Equatable {
+        /// The **marginal** cost of running the load now against the projected
+        /// household baseline — `Σ (cost(withLoad) − cost(baseline))` over the
+        /// run's intervals. This is *not* the absolute cost of the energy
+        /// involved. When the load is served by stored surplus the marginal cost
+        /// approaches zero, and zero is the right answer, because that energy was
+        /// already paid for. A reader assuming "total" will draw the wrong
+        /// conclusion, so callers must present it as an addition to the bill.
         let costNow: Double
         let recommendedStart: Date
         let recommendedEnd: Date
+        /// The **marginal** cost of running the load at `recommendedStart`, defined
+        /// and constrained exactly as `costNow` is. Like `costNow` it is a delta
+        /// against the projected household baseline, never the absolute cost of the
+        /// run, and a near-zero value means the load is served by stored surplus.
         let recommendedCost: Double
         let savings: Double
         /// Raw saving of the cheapest non-now start, before the minor-unit

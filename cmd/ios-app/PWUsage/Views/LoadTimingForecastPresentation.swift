@@ -128,10 +128,14 @@ enum LoadTimingForecastPresentation {
             DashboardPresentation.date($0, timeZoneIdentifier: timeZone, dateStyle: .none, timeStyle: .short)
         }
         let startNow = comparison.recommendedStart <= comparison.horizonStart
-        let costNow = "Start now: \(money(comparison.costNow))"
+        // Both figures are the *marginal* cost of the load against the projected
+        // household baseline, not the absolute cost of the energy involved. Say so
+        // in the copy: rendered as a bare "$X" the near-zero case (the load is
+        // served by already-paid-for stored surplus) reads as a total.
+        let costNow = "Start now — adds \(money(comparison.costNow)) to your projected bill"
         let recommendedCost = startNow
             ? costNow
-            : "Start at \(clock(comparison.recommendedStart)): \(money(comparison.recommendedCost))"
+            : "Start at \(clock(comparison.recommendedStart)) — adds \(money(comparison.recommendedCost)) to your projected bill"
 
         let headline: String
         let savings: String?

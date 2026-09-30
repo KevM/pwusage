@@ -4,13 +4,13 @@
 
 **Status values:** `OPEN` → `IN PROGRESS (PR #N)` → `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)`
 
-**Progress:** 73 findings tracked. 13 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
+**Progress:** 73 findings tracked. 14 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
 
 | Status | Count | Findings |
 | --- | --- | --- |
-| OPEN | 60 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 |
+| OPEN | 59 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 |
 | IN PROGRESS | 0 | — |
-| FIXED | 13 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 (§4.6 is a recorded negative result, not a finding) |
+| FIXED | 14 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2 (§4.6 is a recorded negative result, not a finding) |
 
 ---
 
@@ -246,13 +246,15 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 ## 5. Bugs / logic errors
 
 ### 5.1 Cost figures are marginal deltas, presented as the cost of a run
-- **Location:** `PWUsage/Models/LoadTimingForecastEstimator.swift:461-474`; `PWUsage/Views/LoadTimingForecastPresentation.swift:131-134`, `:148-149`
-- **What:** `score()` returns `total` as `Σ (cost(withLoad) − cost(baseBalances))` — the **incremental** cost of adding the load on top of the projected household baseline. The presentation renders it as `"Start now: \(money(comparison.costNow))"` and `"Start at HH:MM: \(money(comparison.recommendedCost))"`, which reads as the absolute cost of running the load.
-- **Why:** For a 36 kWh Level 2 car charge the true cost can be an order of magnitude larger than the delta shown, so the user is shown a number that is not the cost of the thing they are about to do. The `savings` figure at `:149` *is* correct (a difference of two deltas), which makes the mislabel easy to miss.
-- **Action:** Present the delta with explicit wording ("adds about $X to your projected bill"), or compute and store the absolute loaded cost alongside the delta and display that.
-- **Severity:** High
-- **Status:** OPEN
-- **Confidence:** High — verified `:461-474` computes `loadedCost - baselineCost`; verified `:131-134` labels it "Start now: $X".
+- **Location:** `PWUsage/Models/LoadTimingForecastEstimator.swift:472-480` (the `total` accumulation; the per-interval `loadedCost - baselineCost` delta at `:477`); `PWUsage/Views/LoadTimingForecastPresentation.swift:135` and `:138` (the two cost literals), `:153` (the `savings` figure)
+- **What:** At the time of the finding, `score()` returned `total` as `Σ (cost(withLoad) − cost(baseBalances))` — the **incremental** cost of adding the load on top of the projected household baseline — and the presentation rendered it as `"Start now: \(money(comparison.costNow))"` and `"Start at HH:MM: \(money(comparison.recommendedCost))"`, which read as the absolute cost of running the load. That rendering is gone; the two literals at `:135` and `:138` now say "adds … to your projected bill". The estimator half of this finding still stands as written.
+- **Why:** For a 36 kWh Level 2 car charge the true cost can be an order of magnitude larger than the delta shown, so the user is shown a number that is not the cost of the thing they are about to do. The `savings` figure *is* correct (a difference of two deltas), which made the mislabel easy to miss. **Superseded in part by the corrections below:** the premise that the number shown is wrong does not hold — only the label was.
+- **Action:** ~~Present the delta with explicit wording ("adds about $X to your projected bill"), or compute and store the absolute loaded cost alongside the delta and display that.~~ **Done, first option only.** Both figures now render as `"Start now — adds $X to your projected bill"` / `"Start at HH:MM — adds $X to your projected bill"`, and `Comparison.costNow` / `Comparison.recommendedCost` carry doc comments recording that both are marginal against the projected household baseline, so a future reader assuming "total" is corrected at the source. **The second option was considered and rejected:** adding an `absoluteCost` field would hide the one fact the marginal figure exists to convey — that a run served by stored surplus is already paid for. The estimator maths is unchanged.
+- **Severity:** High → **overstated; demoted to Low on fix.** The maths is correct and the defect is purely a label, so the "wrong number shown to the user" claim in **Why** does not hold.
+- **Status:** FIXED (PR pending)
+- **Confidence:** High — at the time of the finding, verified that the estimator computed `loadedCost - baselineCost` and that the presentation labelled the result "Start now: $X". Re-verified at fix time: the delta is still computed as `loadedCost - baselineCost` (`:477`), and the two cost literals are now at `:135`/`:138` and carry the corrected wording. Tests in `LoadTimingForecastPresentationTests` pin the new copy and would fail if it were reverted.
+- **Correction 1 of 2 — the estimator maths is correct, and is unchanged.** `score()` returning `Σ (cost(withLoad) − cost(baseline))` is the right answer to "what will running this cost me?": when the load is served by stored surplus the delta approaches zero, and zero is the *right* answer, because that energy was already paid for. The defect is the **label, not the number** — `"Start now: $5.40"` read as the absolute cost of the run. The "order of magnitude larger" figure in **What**/**Why** is the absolute cost of the energy, which the user did not ask about and which is not the decision they are making.
+- **Correction 2 of 2 — the severity was overstated.** A reader comparing this fix against the original finding should expect them to disagree on severity and on what the defect is: filed as **High** on the claim that the true cost could be an order of magnitude larger, it is a **Low** copy defect, because no number was ever wrong.
 
 ### 5.2 Pull-to-refresh can never recover a missing household profile
 - **Location:** `PWUsage/State/DashboardCoordinator.swift:379`, `:523-530`
