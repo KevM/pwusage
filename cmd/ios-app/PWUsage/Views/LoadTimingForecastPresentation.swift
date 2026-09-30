@@ -73,7 +73,8 @@ enum LoadTimingForecastPresentation {
         let explored = recommendation.exploredProfile(explicitID: explicitExploredID)
         guard let profile = explored?.profile else { return nil }
         let card: Card = recommendation.suggested?.profile.id == profile.id ? .recommendation : .explorer
-        return Placement(card: card, profile: profile)    }
+        return Placement(card: card, profile: profile)
+    }
 
     static let unavailableNotePrefix = "Solar forecast unavailable — using tariff and balance data."
     /// Deliberately does not reuse `unavailableNotePrefix`: the forecast is

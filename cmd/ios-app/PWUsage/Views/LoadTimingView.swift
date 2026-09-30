@@ -404,7 +404,6 @@ struct LoadTimingView: View {
             LoadRunDetailsSheet(snapshot: snapshot)
         }
         .onChange(of: profileStore.profiles) { _, profiles in
-            coordinator.loadProfileDidEdit()
             if let exploredProfileID, !profiles.contains(where: { $0.id == exploredProfileID }) {
                 self.exploredProfileID = nil
             }
