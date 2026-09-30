@@ -273,7 +273,7 @@ struct PWUsageAppModelTests {
         let api = ApplicationAPISpy(sites: [Self.site("site-2")], sitesSequence: [[Self.site("site-1")]])
         let forecast = AppForecastManagerSpy()
         await forecast.setHoldActivation(true)
-        let model = makeModel(api: api, forecast: forecast)
+        let model = try makeModel(api: api, forecast: forecast)
 
         let stale = Task { await model.bootstrap() }
         try await waitUntil { await forecast.activationIsParked }
