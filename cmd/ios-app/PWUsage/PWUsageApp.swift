@@ -8,8 +8,6 @@ protocol PWUsageApplicationAPI: MobileDashboardDataAPI, MobileLoadPlanningDataAP
     func fetchSites() async throws -> [MobileSite]
 }
 
-extension PWUsageAPI: PWUsageApplicationAPI {}
-
 @main
 struct PWUsageApp: App {
     /// Resolved once, at launch. Either a model to run or a build misconfiguration

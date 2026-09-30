@@ -1,7 +1,7 @@
 #if DEBUG
 import SwiftUI
 
-enum DashboardPreviewMode: String, CaseIterable {
+enum DashboardPreviewMode: String {
     case normal
     case empty
     case stale

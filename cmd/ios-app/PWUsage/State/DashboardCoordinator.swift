@@ -7,14 +7,10 @@ protocol MobileDashboardDataAPI: Sendable {
     func fetchBill(siteID: String) async throws -> MobileBillResponse
 }
 
-extension PWUsageAPI: MobileDashboardDataAPI {}
-
 @MainActor
 protocol MobileLoadPlanningDataAPI: Sendable {
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse
 }
-
-extension PWUsageAPI: MobileLoadPlanningDataAPI {}
 
 enum SolarForecastEnhancementState: Equatable {
     case basic

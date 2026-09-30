@@ -26,7 +26,6 @@ struct SolarForecastSettingsSheet: View {
                     SecureField("Solcast API key", text: $apiKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .onChange(of: apiKey) { coordinator.solarForecastSettingsDidEdit() }
                         .disabled(isWorking)
                     Button(isConnected ? "Replace key" : "Save key") {
                         Task { await saveKeyAndDiscover() }
@@ -100,12 +99,10 @@ struct SolarForecastSettingsSheet: View {
                         TextField("Solar System 1 ID", text: $manualResourceID1)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                            .onChange(of: manualResourceID1) { coordinator.solarForecastSettingsDidEdit() }
                             .disabled(isWorking)
                         TextField("Solar System 2 ID (optional)", text: $manualResourceID2)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                            .onChange(of: manualResourceID2) { coordinator.solarForecastSettingsDidEdit() }
                             .disabled(isWorking)
                         Button("Save manual IDs") {
                             let ids = [manualResourceID1, manualResourceID2]
@@ -119,7 +116,7 @@ struct SolarForecastSettingsSheet: View {
 
                 Section("Request usage") {
                     if let budget {
-                        Text("This device has made \(budget.totalAttempts) of 10 attempts today (\(budget.automaticAttempts) automatic).")
+                        Text("This device has made \(budget.totalAttempts) of \(SolarForecastStore.totalAttemptsPerUTCDay) attempts today (\(budget.automaticAttempts) automatic).")
                     } else {
                         Text("Usage on this device will appear after a key is saved.")
                     }
@@ -178,7 +175,6 @@ struct SolarForecastSettingsSheet: View {
                 } else {
                     selectedResourceIDs.remove(resourceID)
                 }
-                coordinator.solarForecastSettingsDidEdit()
             }
         )
     }
