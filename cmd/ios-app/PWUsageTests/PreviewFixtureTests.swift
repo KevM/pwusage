@@ -7,6 +7,17 @@ import Testing
 @Suite("Preview Fixture Tests")
 @MainActor
 struct PreviewFixtureTests {
+    /// A preview payload that cannot decode must fail the one call that needed it,
+    /// with the error attached, and not take the test binary down with it. This file
+    /// used to decode in its initializer with `try!`, so a bad fixture was a
+    /// `SIGTRAP` in the middle of an unrelated suite.
+    @Test("A preview payload that cannot decode throws from the fetch, not the process")
+    func undecodablePreviewPayloadThrowsFromTheFetch() async throws {
+        let api = DashboardPreviewAPI(mode: .normal, liveJSON: #"{"version":1}"#, billJSON: #"{}"#)
+        await #expect(throws: (any Error).self) { try await api.fetchLive(siteID: "preview-home") }
+        await #expect(throws: (any Error).self) { try await api.fetchBill(siteID: "preview-home") }
+    }
+
     @Test("Preview tariff data contrasts on-peak against off-peak")
     func previewTariffHasRateContrast() async throws {
         let response = try await DashboardPreviewAPI(mode: .normal).fetchBill(siteID: "preview-home")
