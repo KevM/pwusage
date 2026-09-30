@@ -6,13 +6,13 @@
 
 *`FIXED (PR pending)` is the form every entry on this branch uses: the finding is fixed and verified in-tree, but the PR number and commit are stamped once the branch merges. Once merged, replace it with `FIXED (PR #N, commit <sha>)`. Do not mix the two forms in one file.*
 
-**Progress:** 73 findings tracked. 16 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
+**Progress:** 73 findings tracked. 17 fixed. First batch in flight on `fix/ios-audit-high-findings` — the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`).
 
 | Status | Count | Findings |
 | --- | --- | --- |
-| OPEN | 57 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2, §7.1, §7.7 |
+| OPEN | 56 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.10, §5.11, §6.1, §6.2, §7.1, §7.7 |
 | IN PROGRESS | 0 | — |
-| FIXED | 16 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.11, §6.1, §6.2, §7.1, §7.7 (§4.6 is a recorded negative result, not a finding) |
+| FIXED | 17 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §5.1, §5.2, §5.3, §5.4, §5.9, §5.10, §5.11, §6.1, §6.2, §7.1, §7.7 (§4.6 is a recorded negative result, not a finding) |
 
 ---
 
@@ -333,13 +333,14 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Fix:** `stateOfCharge` is validated during decode for finiteness and the inclusive 0–100 range, mapping failures to `nil`. The four live power values are checked for **finiteness only** (`MobileLiveResponse.Live.finiteOrZero`, non-finite → `0`) — no range check, because negative grid and battery readings are legitimate and both `batterySymbol` and `batteryDirection` handle zero cleanly. `150` therefore decodes to `nil` rather than rendering a "150%" label and a full-battery glyph. Note that the **finiteness** half is defence-in-depth against a non-JSON source and is unreachable from the wire: `JSONDecoder` rejects `1e400`/`1e999` as "not representable in Swift", and `NaN`/`Infinity` are not valid JSON, so only the 0–100 range check has real test coverage (`MobileContractsTests` exercises `finiteOrZero` directly and says so in a comment).
 
 ### 5.10 Errors swallowed or replaced with generic copy
-- **Location:** `PWUsage/Views/LoadProfilesSheet.swift:65`, `:82`, `:102`, `:164-166`
+- **Location:** `PWUsage/Views/LoadProfilesSheet.swift:64-70` (delete dialog), `:85-91` (reset dialog), `:110-114` (select), `:175-179` (save `catch`), `:183-189` (`message(for:)`); `PWUsage/Models/LoadProfile.swift:35-55` (`LoadProfileError.errorDescription`); `PWUsageTests/LoadProfileStoreTests.swift:157-168`
 - **What:** `try?` discards delete/reset/select failures entirely, and the save `catch` throws away the underlying error in favour of "Enter valid profile settings and try again."
-- **Why:** A persistence failure is reported to the user as a validation problem, sending them to edit values that were already fine.
+- **Why:** A persistence failure is reported to the user as a validation problem, sending them to edit values that were already fine. A failed deletion was worse: it cleared `pendingDeletion`, closing the confirmation dialog while leaving the row in the list with no explanation at all.
 - **Action:** Let the thrown errors surface in `validationMessage`; reserve `try?` for genuinely ignorable failures.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** High
+- **Fix:** All four call sites now use `do`/`catch` and write the caught error into `validationMessage`. `pendingDeletion` / `pendingReset` are cleared **only on success**, so a failed delete or reset leaves its confirmation dialog presented while the alert explains why nothing changed. `LoadProfileError` gained `LocalizedError` conformance with an `errorDescription` per case, and the sheet's `message(for:)` helper reads it (falling back to the old generic string for any non-`LoadProfileError`), so a newly added case explains itself instead of falling through. No view-test coverage was added — the store's throwing contract is already asserted in `LoadProfileStoreTests`, and the new user-facing strings are covered directly. The alert title is now "Couldn’t update load profiles" rather than "Couldn’t save profile", since delete/reset/select failures now share it.
 
 ### 5.11 Silent fallback to the production origin on configuration failure
 - **Location:** `PWUsage/PWUsageApp.swift:16`; `PWUsage/Configuration/AppConfiguration.swift:8-11`, `:20-29`

@@ -62,8 +62,12 @@ struct LoadProfilesSheet: View {
             ) {
                 Button("Delete Custom Load", role: .destructive) {
                     guard let profile = pendingDeletion else { return }
-                    try? store.deleteCustomProfile(id: profile.id)
-                    pendingDeletion = nil
+                    do {
+                        try store.deleteCustomProfile(id: profile.id)
+                        pendingDeletion = nil
+                    } catch {
+                        validationMessage = message(for: error)
+                    }
                 }
                 Button("Cancel", role: .cancel) { pendingDeletion = nil }
             } message: {
@@ -79,12 +83,16 @@ struct LoadProfilesSheet: View {
             ) {
                 Button("Reset to Defaults", role: .destructive) {
                     guard let profile = pendingReset else { return }
-                    try? store.resetBuiltInProfile(id: profile.id)
-                    pendingReset = nil
+                    do {
+                        try store.resetBuiltInProfile(id: profile.id)
+                        pendingReset = nil
+                    } catch {
+                        validationMessage = message(for: error)
+                    }
                 }
                 Button("Cancel", role: .cancel) { pendingReset = nil }
             }
-            .alert("Couldn’t save profile", isPresented: Binding(
+            .alert("Couldn’t update load profiles", isPresented: Binding(
                 get: { validationMessage != nil },
                 set: { if !$0 { validationMessage = nil } }
             )) {
@@ -99,7 +107,11 @@ struct LoadProfilesSheet: View {
     private func profileRow(_ profile: LoadProfile) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Button {
-                try? store.selectProfile(id: profile.id)
+                do {
+                    try store.selectProfile(id: profile.id)
+                } catch {
+                    validationMessage = message(for: error)
+                }
             } label: {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: store.selectedProfileID == profile.id ? "checkmark.circle.fill" : "circle")
@@ -162,8 +174,18 @@ struct LoadProfilesSheet: View {
             try store.selectProfile(id: saved.id)
             self.draft = nil
         } catch {
-            validationMessage = "Enter valid profile settings and try again."
+            validationMessage = message(for: error)
         }
+    }
+
+    /// Surfaces the store's own reason for the failure, so a new `LoadProfileError`
+    /// case explains itself instead of falling back to a generic string.
+    private func message(for error: Error) -> String {
+        if let loadProfileError = error as? LoadProfileError,
+           let description = loadProfileError.errorDescription {
+            return description
+        }
+        return "Check the profile values and try again."
     }
 
     private func profileSummary(_ profile: LoadProfile) -> String {
