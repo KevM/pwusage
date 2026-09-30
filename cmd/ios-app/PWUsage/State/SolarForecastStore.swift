@@ -229,8 +229,22 @@ actor SolarForecastStore {
             throw Self.discoveryError(for: outcome, ordinaryError: .budgetExhausted)
         }
         do { try await persist() } catch {
-            let outcome = await persistFailureState(scope: scope, credential: credential, description: "Forecast request budget could not be saved")
-            throw Self.discoveryError(for: outcome, ordinaryError: .persistenceFailed)
+            // A disk failure is not a forecast failure, and it is emphatically not
+            // a bad credential: discovery has not run yet, and the key in the
+            // Keychain is the one the user just typed. Escalating to
+            // `persistFailureState` would reach `quarantineCredential`, whose
+            // second failing write deletes that key — on the *first-run* path, where
+            // the user has no other copy of it. That is the same defect class §5.5
+            // fixed on the post-fetch persist, so it gets the same shape: describe
+            // it and stop.
+            //
+            // The scope is marked failed for the same reason as the matching save
+            // in `performRefresh`, and for the same asymmetric reason: the budget
+            // is what enforces the daily request allowance, so an unpersisted one
+            // fails closed until a later successful refresh clears it.
+            state.failedScopes.insert(scope)
+            lastErrorDescription = "Forecast request budget could not be saved"
+            throw StoreError.persistenceFailed
         }
         guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID,
               state.credentials[scope]?.credentialID == credential.credentialID else { throw StoreError.cancelled }
@@ -407,8 +421,22 @@ actor SolarForecastStore {
             return Self.refreshResult(for: outcome, ordinaryResult: .budgetExhausted)
         }
         do { try await persist() } catch {
-            let outcome = await persistFailureState(scope: scope, credential: credential, description: "Forecast request budget could not be saved")
-            return Self.refreshResult(for: outcome, ordinaryResult: .failed(.requestFailed))
+            // A disk failure is not a forecast failure, and the forecast has not
+            // been fetched yet, so there is nothing about this credential to
+            // distrust. Escalating to `persistFailureState` would reach
+            // `quarantineCredential`, whose own failing write deletes a key that
+            // has just been proven to work. Same shape and same reasoning as the
+            // budget save in `discoverSites` and the post-fetch save below.
+            //
+            // The scope is still marked failed, unlike the post-fetch save, and
+            // that asymmetry is deliberate: an unpersisted budget is a rate limit
+            // this device cannot enforce across a relaunch, so failing closed is
+            // the honest direction. It is not a claim about the data, which is why
+            // the marking is confined here and does not quarantine. A later
+            // successful refresh clears it.
+            state.failedScopes.insert(scope)
+            lastErrorDescription = "Forecast request budget could not be saved"
+            return .failed(.requestFailed)
         }
         guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID,
               state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
