@@ -3,8 +3,10 @@
 ALTER TABLE "User"
     ADD COLUMN history_retention_days INTEGER NOT NULL DEFAULT 90,
     ADD COLUMN history_retention_grace_until TIMESTAMPTZ,
-    ADD COLUMN history_retention_transition_pending BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN history_retention_transition_pending BOOLEAN NOT NULL DEFAULT TRUE,
     ADD CONSTRAINT user_history_retention_days_check CHECK (history_retention_days IN (90, 365));
 
 UPDATE "User" SET history_retention_transition_pending = TRUE;
+-- Safe default bridges old-code signups between migration and deployment.
+-- New auth code explicitly sets pending=false only after policy disclosure.
 -- Existing table RLS and grants are unchanged; there are no new tables.

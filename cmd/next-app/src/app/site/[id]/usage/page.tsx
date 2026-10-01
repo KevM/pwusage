@@ -2,10 +2,13 @@ import { Temporal } from '@js-temporal/polyfill';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
-import { getSiteLocalDate, addMonthsInSiteTimezone } from '@/lib/date-utils';
+import { getSiteLocalDate, addMonthsInSiteTimezone, addDaysInSiteTimezone, formatSiteDate } from '@/lib/date-utils';
 import { redirect } from 'next/navigation';
 import { verifySiteAccess, getCurrentUser } from '@/lib/auth-checks';
 
+import { UserRepo } from '@/lib/user-repo';
+import { retainedHistoryRange } from '@/lib/history-retention';
+import { HistoryAvailabilityNotice } from '@/components/history-availability-notice';
 import { BillSummary } from '@/components/BillSummary';
 import { BillDateNav } from '@/components/BillDateNav';
 import { DataSyncer } from '@/components/DataSyncer';
@@ -73,7 +76,7 @@ export default async function UsagePage({ params, searchParams }: {
         // If user picks "Dec 11" as end date, they mean "Include Dec 11".
         // So we set end to Dec 12 00:00 UTC.
         end = getSiteLocalDate(ey, em, ed, site.timezone);
-        end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+        end = addDaysInSiteTimezone(end, 1, site.timezone);
 
         isCustomRange = true;
     } else if (queryDate) {
@@ -105,7 +108,12 @@ export default async function UsagePage({ params, searchParams }: {
         currencySymbol = '€';
     }
 
-    const usage = await repo.getUsageByTOU(id, start, end);
+    if (!site.user_id) throw new Error('History retention requires site ownership');
+    const policy = await new UserRepo().getHistoryRetention(site.user_id);
+    const retained = retainedHistoryRange(policy, site.timezone, start, end, new Date());
+    const cutoff = new Date(retained.historyAvailability.availableFrom);
+    const earliestCycle = getCurrentCycleStart(site.billing_start_day || 1, cutoff, site.timezone);
+    const usage = retained.historyAvailability.status === 'unavailable' ? [] : await repo.getUsageByTOU(id, retained.start, end);
 
     // Convert UTC instant to site-local date components for display
     const getSiteLocalComponents = (utcDate: Date) => {
@@ -126,8 +134,7 @@ export default async function UsagePage({ params, searchParams }: {
 
     // Recalculate end display date (inclusive) for UI label
     // If end is Dec 12 00:00, we want to display Dec 11.
-    const displayEnd = new Date(end);
-    displayEnd.setDate(displayEnd.getDate() - 1);
+    const displayEnd = addDaysInSiteTimezone(end, -1, site.timezone);
 
     // Previous and Next month links (only relevant for non-custom)
     // Use timezone-aware month arithmetic to handle sites east of UTC correctly
@@ -172,6 +179,9 @@ export default async function UsagePage({ params, searchParams }: {
                     density="compact"
                     actions={(
                         <BillDateNav
+                        earliestDate={formatSiteDate(cutoff, site.timezone)}
+                        earliestMonth={formatSiteDate(earliestCycle, site.timezone).slice(0, 7)}
+                        canGoPrevious={start > cutoff}
                         siteId={id}
                         billingDay={site.billing_start_day || 1}
                         prevDateStr={fmtDate(prevDate)}
@@ -187,9 +197,10 @@ export default async function UsagePage({ params, searchParams }: {
                     )}
                 />
 
-                <DataSyncer siteId={id} start={start} end={end} viewDate={start} />
+                {retained.historyAvailability.status !== 'unavailable' && <DataSyncer siteId={id} start={retained.start} end={end} viewDate={retained.start} />}
+                <HistoryAvailabilityNotice availability={retained.historyAvailability} timezone={site.timezone} />
 
-                <BillSummary usage={usage} currencySymbol={currencySymbol} />
+                {retained.historyAvailability.status !== 'unavailable' && <BillSummary usage={usage} currencySymbol={currencySymbol} />}
             </div>
         </PageShell>
     );

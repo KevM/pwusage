@@ -58,7 +58,7 @@ export function changeHistoryRetention(policy: HistoryRetentionPolicy, days: num
     };
 }
 
-/** Pending is set only for the migration's existing cohort; new accounts cannot be enrolled accidentally. */
+/** Only pending accounts are enrolled; post-announcement accounts are excluded. */
 export function bootstrapHistoryRetention(policy: HistoryRetentionPolicy, noticeAt: Date): ValidHistoryRetentionPolicy {
     validDate(noticeAt);
     const current = validateHistoryRetention(policy);
@@ -69,4 +69,26 @@ export function bootstrapHistoryRetention(policy: HistoryRetentionPolicy, notice
         history_retention_transition_pending: false,
         history_retention_grace_until: current.history_retention_grace_until && current.history_retention_grace_until > expiry ? current.history_retention_grace_until : expiry,
     };
+}
+
+export interface HistoryAvailability {
+    status: 'available' | 'partial' | 'unavailable';
+    availableFrom: string;
+    effectiveDays: HistoryRetentionDays;
+}
+
+/** Half-open request range: callers must skip reads/sync when unavailable. */
+export function retainedHistoryRange(policy: HistoryRetentionPolicy, timezone: string, start: Date, end: Date, now: Date) {
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) throw new Error('Invalid history range');
+    const { cutoff, effectiveDays } = resolveHistoryRetention(policy, timezone, now);
+    const status: HistoryAvailability['status'] = end <= cutoff ? 'unavailable' : start < cutoff ? 'partial' : 'available';
+    return { start: start < cutoff ? cutoff : start, end, historyAvailability: { status, availableFrom: cutoff.toISOString(), effectiveDays } };
+}
+
+/** No disclosed policy start means new signups still receive the legacy transition. */
+export function newAccountTransitionPending(policyStartAt: string | undefined, now: Date): boolean {
+    validDate(now);
+    if (!policyStartAt) return true;
+    if (!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(policyStartAt)) throw new Error('History policy start requires a zoned ISO timestamp');
+    return now < validDate(new Date(policyStartAt));
 }

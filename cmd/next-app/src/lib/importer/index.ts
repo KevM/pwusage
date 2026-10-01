@@ -10,7 +10,7 @@ import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer'
 import { planImport, splitAtSiteMidnight, auditDays } from './import-planner';
 import { getSiteMidnight } from '../date-utils';
 import { withImportLock } from '../import-lock';
-import { resolveHistoryRetention, type ValidHistoryRetentionPolicy } from '../history-retention';
+import { resolveHistoryRetention, retainedHistoryRange, type ValidHistoryRetentionPolicy } from '../history-retention';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -47,9 +47,7 @@ export class Importer {
             policy = this.userRepo.getHistoryRetention(site.user_id);
             this.retentionPolicies.set(site.user_id, policy);
         }
-        const { cutoff, effectiveDays } = resolveHistoryRetention(await policy, site.timezone, new Date());
-        const status: 'available' | 'partial' | 'unavailable' = end <= cutoff ? 'unavailable' : start < cutoff ? 'partial' : 'available';
-        return { start: start < cutoff ? cutoff : start, end, historyAvailability: { status, availableFrom: cutoff.toISOString(), effectiveDays } };
+        return retainedHistoryRange(await policy, site.timezone, start, end, new Date());
     }
 
 

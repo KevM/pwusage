@@ -26,6 +26,7 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `JWT_EXPIRY_DAYS`: Session duration in days (default: `7`).
 - `JWT_REFRESH_THRESHOLD_HOURS`: Refresh token if expiration is within this many hours (default: `24`).
 - `CRON_SECRET`: Secret key used to authorize Vercel Cron Job requests.
+- `HISTORY_RETENTION_POLICY_START_AT`: Explicit zoned ISO timestamp when the 90-day policy is announced and disclosed to new accounts. Until this is set and reached, newly authenticated accounts remain transition-pending with 365-day access. Login does not change an existing account’s entitlement.
 - `RETENTION_CLEANUP_ENABLED`: Set to exactly `true` only after migration, notice delivery, existing-account grace bootstrap, recoverable backup, and preview approval. Defaults to disabled. `DATA_RETENTION_DAYS` is no longer used.
 - `SPARKLINE_SCALE_WINDOW_HOURS`: Header sparkline y-axis clamp window in hours (default: `12`, minimum effective value: `4`).
 
@@ -62,7 +63,7 @@ ngrok http 5173
 ```
 
 
-### Internal history retention controls (implementation in progress)
+### Internal history retention controls
 
 The entitlement migration and internal maintenance tool support a 90-day default,
 manually granted 365-day history, and a 30-day grace after removing extended history.
@@ -72,8 +73,10 @@ All tariff versions, seasons, and schedules must remain permanent.
 
 The migration marks existing accounts `history_retention_transition_pending=true`;
 they keep an effective 365-day window until their notice/grace is initialized.
-New accounts default to 90 days with no pending transition. Installing the migration
-never deletes history. Apply the migration before using these controls.
+The schema defaults to 90 configured days and pending=true, protecting old-code
+signups between migration and deployment. The authentication upsert marks pre-announcement
+new accounts pending too; post-announcement accounts start at 90 days without grace.
+Installing the migration never deletes history. Apply the migration before using these controls.
 
 Run from `cmd/next-app` in the implementation worktree, with `DATABASE_URL` explicitly
 pointing to the requested environment. The tool loads `.env` first and refuses a
@@ -88,7 +91,7 @@ npx tsx scripts/set-history-retention.ts --env dev --cohort <cohort.json> --noti
 Commands preview by default. The cohort file is an explicit JSON array of existing
 account IDs. After actual notice delivery, apply bootstrap with `--apply --notice-delivered`.
 The recorded notice timestamp must already have occurred. Bootstrap preserves 365-day
-exceptions and later grace, excludes new accounts, and does not extend grace on reruns.
+exceptions and later grace, excludes post-announcement new accounts, and does not extend grace on reruns.
 The tool sends no notices and deletes no data. Each account update is transactional;
 a multi-account run may partially complete on an operational failure and is safe to retry.
 
@@ -109,6 +112,8 @@ Rollback-only dev validation:
 
 ```bash
 npx tsx scripts/verify-history-retention.ts --env dev
+# Exact migration against an unmigrated dev/local schema, always rolled back:
+npx tsx scripts/verify-history-retention-migration.ts --env dev
 ```
 
 This exercises the actual preview, locked batch deletes, rollback, activation guard,
@@ -116,3 +121,15 @@ This exercises the actual preview, locked batch deletes, rollback, activation gu
 It compares every fixture tariff/version/season/schedule and User/Site value before
 and after, including unused tariffs. It refuses production targets and never modifies
 public tables. Production-backup migration CI still validates the actual public schema.
+
+Web history and bill queries use the same site-local boundary as imports. Expired
+requests stop without Tesla calls; partial totals are explicitly labeled and exclude
+expired samples. Navigation retains the oldest partial billing cycle. The native
+bill endpoint serves only the current cycle (at most 31 days), so its response and
+query counts remain unchanged. Site switching resets the web history state.
+
+See [the rollout report](../../docs/plans/2026-10-01-history-retention-rollout.md)
+for the production read-only snapshot, announcement draft, backup/restore rehearsal,
+and separate cleanup activation steps. Count queries in activated cleanup have
+remaining-budget statement/lock timeouts; final counts are skipped or timed out
+conservatively as `workRemaining=true`.

@@ -9,13 +9,15 @@ Branch: `codex/history-retention`, based on freshly fetched `origin/main`
 - [x] Task 2: Atomic internal assignments, preview-first maintenance script, explicit environment targeting, idempotent notice/cohort bootstrap.
 - [x] Task 3: Bound coverage, Tesla imports, and every energy persistence path; preserve daily coverage egress reduction.
 - [x] Task 4: Preview and bounded cleanup, tariff-preservation integration fixture, cleanup activation gate.
-- [ ] Task 5: Explicit history availability in responses and clients.
-- [ ] Task 6: Capacity preview, rollout/backup documentation, migration CI and final full verification.
+- [x] Task 5: Shared availability, bounded web bill reads/navigation, partial/unavailable notices, expired analysis stops before Tesla, site-switch state reset.
+- [x] Task 6 preparation: Read-only production capacity preview, rollout/notice/backup/recovery instructions, independent review, final local verification.
+- [ ] Task 6 remote verification: Pushed draft PR and production-backup migration CI; restored-schema FK validation before rollout.
 
 Additional rollout safeguard: migration adds `history_retention_transition_pending`.
-It marks only accounts already present during migration; their effective retention
-remains 365 days until notice/bootstrap. New accounts default to 90 and pending=false.
-This closes the gap where default=90 could restrict existing users before notice.
+It marks existing accounts and safely defaults old-code signups to pending; their effective retention
+remains 365 days until notice/bootstrap. The database defaults pending=true to protect old-code signups during deployment.
+New auth code explicitly starts post-announcement accounts at 90 with pending=false.
+This closes the gap where default=90 could restrict pre-announcement users before notice.
 Granting 365 clears pending; a repeat 90 assignment cannot bypass pending notice.
 Bootstrap clears pending and sets grace to notice+30 days, preserving later grace.
 No entitlement cache was introduced; callers must evaluate expiry with a fresh clock.
@@ -42,11 +44,35 @@ Read-only audit tool uses a READ ONLY transaction and reports grace, cutoffs,
 eligible rows, skipped sites, and approximate retained allocation. No compaction
 or actual database size reduction is claimed. Live audits require the migration.
 
-Next batch: history-boundary presentation and rollout preparation. Review the
-new-account cutover sequence: new 90-day enforcement must begin only after the
-policy is announced/disclosed, and accounts created between schema migration
-and announcement must not lose the promised transition. Keep production cleanup
-inactive through concrete backup/preview review and initial rollout authorization.
+Final implementation checks: 1,029 tests passed, 1 skipped; lint and production
+build passed (final run after cutover fixes). The opt-in read-only mobile route
+trace separately passed again (six route passes, cold web/mobile summary parity).
+Trace refresh mocks intentionally exclude background imports. No native code changed.
+
+Independent review found and resolved two P2 issues: unrestricted cleanup count
+queries and pre-announcement signups between migration/deployment. Activated cleanup
+reads now use remaining-budget statement/lock timeouts; final counts are skipped or
+time out conservatively as workRemaining=true. The exact migration now defaults
+pending=true so old code cannot create unprotected accounts. New auth code explicitly
+sets pending=false only at/after HISTORY_RETENTION_POLICY_START_AT; existing login
+entitlements are unchanged. The separate rollback-only exact-migration script passed
+against dev, including CHECK rejection, existing/new defaults, RLS/grants unchanged,
+full tariff value hashes unchanged, and columns absent after rollback. Updated
+cleanup temporary FK fixture passed with its bounded-read savepoint adapter.
+
+Production read-only snapshot: 289.7 MB database, 265.4 MB energy (165.0 MB indexes),
+837,803 energy rows; hypothetical uniform 90-day policy retains 445,106 and makes
+392,697 eligible, plus five LoadTags. 22 users updated in the last seven days.
+No exceptions assigned. Estimates, notice draft, explicit cutover and recovery steps:
+docs/plans/2026-10-01-history-retention-rollout.md. These counts precede the migration;
+run the entitlement-aware audit after notice/bootstrap and again before activation.
+
+Outstanding operational evidence: production-backup migration CI requires a pushed
+PR and replaces dev data; no persistent schema migration or dev public history trim
+was done here. A fresh pre-trim backup and successful restore rehearsal, actual notice
+and cohort bootstrap, approved exception IDs, final activation preview and first-trim
+approval remain rollout gates. Code deployment does not activate cleanup. No remote
+push, PR, user notices, entitlement applications or production deletion yet.
 
 Import-enforcement verification: 994 tests passed, 1 skipped; lint and production
 build passed. Coverage SQL is unchanged; per-day query bounds and zero-query expired

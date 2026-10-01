@@ -16,24 +16,40 @@ export interface RetentionBatch { energy: number; tags: number }
 export class HistoryRetentionRepo {
     constructor(private database: RetentionDatabase = pool) {}
 
-    async listSites(): Promise<RetentionSite[]> {
-        const result = await this.database.query<SiteRow>(`
+    private async readQuery<Row extends QueryResultRow>(sql: string, params: unknown[], timeoutMs?: number): Promise<QueryResult<Row>> {
+        if (timeoutMs === undefined) return this.database.query<Row>(sql, params);
+        if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new Error('Retention read budget exhausted');
+        const client = await this.database.connect();
+        try {
+            await client.query('BEGIN READ ONLY');
+            await client.query("SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $1, true)", [String(timeoutMs)]);
+            const result = await client.query<Row>(sql, params);
+            await client.query('COMMIT');
+            return result;
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally { client.release(); }
+    }
+
+    async listSites(timeoutMs?: number): Promise<RetentionSite[]> {
+        const result = await this.readQuery<SiteRow>(`
             SELECT s.id, s.user_id, s.timezone, u.history_retention_days,
                 u.history_retention_grace_until, u.history_retention_transition_pending
             FROM "Site" s LEFT JOIN "User" u ON u.id = s.user_id ORDER BY s.id
-        `);
+        `, [], timeoutMs);
         return result.rows.map(row => ({ siteId: row.id, userId: row.user_id, timezone: row.timezone,
             policy: row.user_id ? validateHistoryRetention(row) : null }));
     }
 
-    async preview(targets: Array<{ siteId: string; cutoff: string }>): Promise<RetentionCount[]> {
+    async preview(targets: Array<{ siteId: string; cutoff: string }>, timeoutMs?: number): Promise<RetentionCount[]> {
         if (!targets.length) return [];
-        const result = await this.database.query<{ site_id: string; energy: number; tags: number }>(`
+        const result = await this.readQuery<{ site_id: string; energy: number; tags: number }>(`
             SELECT target.site_id,
                 (SELECT COUNT(*)::int FROM "EnergyData" e WHERE e.site_id = target.site_id AND e.timestamp < target.cutoff) AS energy,
                 (SELECT COUNT(*)::int FROM "LoadTag" t WHERE t.site_id = target.site_id AND t.end_time < target.cutoff) AS tags
             FROM jsonb_to_recordset($1::jsonb) AS target(site_id text, cutoff timestamptz)
-        `, [JSON.stringify(targets.map(target => ({ site_id: target.siteId, cutoff: target.cutoff })))]);
+        `, [JSON.stringify(targets.map(target => ({ site_id: target.siteId, cutoff: target.cutoff })))], timeoutMs);
         return result.rows.map(row => ({ siteId: row.site_id, energy: row.energy, tags: row.tags }));
     }
 

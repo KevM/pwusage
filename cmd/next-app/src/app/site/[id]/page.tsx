@@ -3,6 +3,7 @@ import { SiteService } from '@/lib/site-service';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
 
+import { HistoryAvailabilityNotice } from '@/components/history-availability-notice';
 import { BillSummary } from '@/components/BillSummary';
 import { DataSyncer } from '@/components/DataSyncer';
 import { redirect } from 'next/navigation';
@@ -107,7 +108,8 @@ export default async function SitePage({ params, searchParams }: {
         dateStr,
         start,
         end,
-        refDate
+        refDate,
+        historyAvailability, earliestDate, earliestMonth, canGoPrevious
     } = result;
 
     return (
@@ -117,7 +119,7 @@ export default async function SitePage({ params, searchParams }: {
                 description="Monitor history, billing, and settings for this site."
                 className="mb-4"
             />
-            <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />
+            {historyAvailability.status !== 'unavailable' && <DataSyncer siteId={id} start={new Date(Math.max(start.getTime(), new Date(historyAvailability.availableFrom).getTime()))} end={end} viewDate={refDate} />}
 
             <SiteTabs
                 historySlot={
@@ -125,6 +127,8 @@ export default async function SitePage({ params, searchParams }: {
                         chartNavSlot={null}
                         analysisSlot={
                             <LoadAnalysisClientPage
+                                key={id}
+                                availableFrom={historyAvailability.availableFrom}
                                 siteId={id}
                                 siteName={site.name}
                                 defaultDate={dateStr}
@@ -139,6 +143,9 @@ export default async function SitePage({ params, searchParams }: {
                         billNavSlot={
                             <BillDateNav
                                 siteId={id}
+                                earliestDate={earliestDate}
+                                earliestMonth={earliestMonth}
+                                canGoPrevious={canGoPrevious}
                                 billingDay={billingDay}
                                 prevDateStr={prevDateStr}
                                 nextDateStr={nextDateStr}
@@ -149,7 +156,10 @@ export default async function SitePage({ params, searchParams }: {
                             />
                         }
                         billSummarySlot={
-                            <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} currencySymbol={currencySymbol} />
+                            <>
+                            <HistoryAvailabilityNotice availability={historyAvailability} timezone={site.timezone} />
+                            {historyAvailability.status !== 'unavailable' && <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} currencySymbol={currencySymbol} />}
+                            </>
                         }
                     />
                 }

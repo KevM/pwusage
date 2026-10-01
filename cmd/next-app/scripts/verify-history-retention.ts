@@ -49,7 +49,7 @@ async function run(): Promise<void> {
         assert(guard.rows[0].safe, 'Fixture shadow-table guard failed');
         // Translate nested batch transactions to savepoints so the outer fixture always rolls back.
         const query: RetentionQueryable['query'] = async <Row extends QueryResultRow>(sql: string, params?: unknown[]) => {
-            if (sql === 'BEGIN') return client.query<Row>('SAVEPOINT retention_batch');
+            if (sql === 'BEGIN' || sql === 'BEGIN READ ONLY') return client.query<Row>('SAVEPOINT retention_batch');
             if (sql === 'COMMIT') return client.query<Row>('RELEASE SAVEPOINT retention_batch');
             if (sql === 'ROLLBACK') { await client.query('ROLLBACK TO SAVEPOINT retention_batch'); return client.query<Row>('RELEASE SAVEPOINT retention_batch'); }
             return client.query<Row>(sql, params);

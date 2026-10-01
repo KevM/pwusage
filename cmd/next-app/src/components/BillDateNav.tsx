@@ -8,6 +8,9 @@ import { Button } from './ui/Button';
 import { Input, Label } from './ui/Form';
 
 interface BillDateNavProps {
+    earliestDate?: string;
+    earliestMonth?: string;
+    canGoPrevious?: boolean;
     siteId: string;
     billingDay: number;
     prevDateStr: string;
@@ -22,6 +25,9 @@ interface BillDateNavProps {
 }
 
 export function BillDateNav({
+    earliestDate,
+    earliestMonth,
+    canGoPrevious = true,
     siteId,
     // startDate, // REMOVED
     // endDate,   // REMOVED
@@ -59,7 +65,7 @@ export function BillDateNav({
 
     const handleMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const value = e.target.value; // YYYY-MM
-        if (value) {
+        if (value && (!earliestMonth || value >= earliestMonth)) {
             // Construct date using the billing day
             const [year, month] = value.split('-');
             // Create target date: YYYY-MM-{billingDay}
@@ -69,7 +75,7 @@ export function BillDateNav({
     };
 
     const applyCustomRange = () => {
-        if (startDate && endDate) {
+        if (startDate && endDate && startDate <= endDate && (!earliestDate || startDate >= earliestDate)) {
             router.push(`/site/${siteId}/usage?start=${startDate}&end=${endDate}`);
             setShowCustomPicker(false);
         }
@@ -91,7 +97,7 @@ export function BillDateNav({
             {/* Centered Date Navigation Pill */}
             <DateNavigator isCustom={isCustomRange}>
                 {!isCustomRange && (
-                    <DateNavigatorButton href={`/site/${siteId}/usage?date=${prevDateStr}`} direction="prev" />
+                    <DateNavigatorButton href={`/site/${siteId}/usage?date=${prevDateStr}`} direction="prev" disabled={!canGoPrevious} />
                 )}
 
                 <DateNavigatorContent>
@@ -105,6 +111,7 @@ export function BillDateNav({
                     {/* Month Picker Overlay (Standard Mode Only) */}
                     {!isCustomRange && !showCustomPicker && (
                         <select
+                            aria-label="Billing period"
                             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 appearance-none"
                             onChange={handleMonthChange}
                             value={currentMonthVal}
@@ -112,6 +119,7 @@ export function BillDateNav({
                             {Array.from({ length: 24 }).map((_, i) => {
                                 const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
                                 const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                                if (earliestMonth && val < earliestMonth) return null;
                                 return (
                                     <option key={val} value={val}>
                                         {d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
@@ -140,6 +148,7 @@ export function BillDateNav({
                             <Label className="block text-xs text-slate-500 mb-1">Start Date</Label>
                             <Input
                                 type="date"
+                                min={earliestDate}
                                 value={startDate || ''}
                                 onChange={(e) => setStartDate(e.target.value)}
                                 className="w-full h-9 text-sm bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
@@ -149,6 +158,7 @@ export function BillDateNav({
                             <Label className="block text-xs text-slate-500 mb-1">End Date</Label>
                             <Input
                                 type="date"
+                                min={earliestDate}
                                 value={endDate || ''}
                                 onChange={(e) => setEndDate(e.target.value)}
                                 className="w-full h-9 text-sm bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
@@ -157,7 +167,7 @@ export function BillDateNav({
                         <div className="flex gap-2 pt-2">
                             <Button
                                 onClick={applyCustomRange}
-                                disabled={!startDate || !endDate}
+                                disabled={!startDate || !endDate || startDate > endDate || (!!earliestDate && startDate < earliestDate)}
                                 className="flex-1"
                             >
                                 Apply

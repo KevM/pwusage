@@ -2,11 +2,12 @@ import { Site, SiteWithTariffs, TrmnlInstallation } from './db';
 import { TeslaClient, TeslaClientConfig, isTeslaAuthError } from './tesla-client';
 import { SiteRepo } from './site-repo';
 import { verifySiteToken } from './auth-jwt';
-import { isUserActive as defaultIsUserActive } from './user-repo';
+import { UserRepo, isUserActive as defaultIsUserActive } from './user-repo';
 import { EnergyRepo, UsageData } from './energy-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { TrmnlService } from './trmnl-service';
 import { Importer } from './importer';
+import { retainedHistoryRange, HistoryAvailability, HistoryRetentionPolicy } from './history-retention';
 import { Schedule } from './schedule';
 import { getCurrentCycleStart, getNextCycleStart } from './billing-cycle';
 import {
@@ -23,6 +24,7 @@ export interface SiteServiceDeps {
     siteAuthToken?: string;
     // Revocation check. Defaults to the real (React-cached) isUserActive; injectable for tests.
     isUserActive?: (userId: string) => Promise<boolean>;
+    getHistoryRetention?: (userId: string) => Promise<HistoryRetentionPolicy>;
     energyRepo?: Pick<EnergyRepo, 'hasData' | 'getUsageByTOU'>;
     teslaTokenRepo?: Pick<TeslaTokenRepo, 'getLockedRefreshHandler'>;
     trmnlService?: Pick<TrmnlService, 'getInstallationBySiteId'>;
@@ -54,6 +56,10 @@ export type SitePageDataResult =
         start: Date;
         end: Date;
         refDate: Date;
+        historyAvailability: HistoryAvailability;
+        earliestDate: string;
+        earliestMonth: string;
+        canGoPrevious: boolean;
       };
 
 interface AuthorizedSitesOptions {
@@ -217,7 +223,12 @@ export class SiteService {
         const start = getCurrentCycleStart(billingDay, refDate, finalSite.timezone);
         const end = getNextCycleStart(billingDay, start, finalSite.timezone);
 
-        const usage = await energyRepo.getUsageByTOU(siteId, start, end);
+        if (!finalSite.user_id) throw new Error('History retention requires site ownership');
+        const policy = await (this.deps.getHistoryRetention || ((id: string) => new UserRepo().getHistoryRetention(id)))(finalSite.user_id);
+        const retained = retainedHistoryRange(policy, finalSite.timezone, start, end, new Date());
+        const cutoff = new Date(retained.historyAvailability.availableFrom);
+        const earliestCycle = getCurrentCycleStart(billingDay, cutoff, finalSite.timezone);
+        const usage = retained.historyAvailability.status === 'unavailable' ? [] : await energyRepo.getUsageByTOU(siteId, retained.start, end);
 
         let activeTariffId: number | undefined;
         let activeTouName: string | undefined;
@@ -268,7 +279,11 @@ export class SiteService {
             dateStr,
             start,
             end,
-            refDate
+            refDate,
+            historyAvailability: retained.historyAvailability,
+            earliestDate: formatSiteDate(cutoff, finalSite.timezone),
+            earliestMonth: formatSiteDate(earliestCycle, finalSite.timezone).slice(0, 7),
+            canGoPrevious: start > cutoff,
         };
     }
 

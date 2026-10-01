@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveHistoryRetention, changeHistoryRetention, bootstrapHistoryRetention } from './history-retention';
+import { resolveHistoryRetention, changeHistoryRetention, bootstrapHistoryRetention, newAccountTransitionPending } from './history-retention';
 
 const now = new Date('2026-10-01T18:00:00Z');
 const standard = { history_retention_days: 90, history_retention_grace_until: null, history_retention_transition_pending: false };
@@ -63,5 +63,19 @@ describe('retention transitions', () => {
         const extended = { ...standard, history_retention_days: 365 };
         expect(bootstrapHistoryRetention(extended, now)).toEqual(extended);
         expect(bootstrapHistoryRetention(standard, now)).toEqual(standard);
+    });
+});
+
+describe('new-account policy cutover', () => {
+    it('keeps pre-announcement accounts pending, including when no cutover is configured', () => {
+        expect(newAccountTransitionPending(undefined, now)).toBe(true);
+        expect(newAccountTransitionPending('2026-10-02T00:00:00Z', now)).toBe(true);
+    });
+    it('starts new accounts at 90 days exactly at the disclosed policy start', () => {
+        expect(newAccountTransitionPending(now.toISOString(), now)).toBe(false);
+        expect(newAccountTransitionPending('2026-09-01T00:00:00Z', now)).toBe(false);
+    });
+    it('rejects ambiguous or malformed cutovers instead of silently reducing history', () => {
+        for (const value of ['bad', '2026-10-01', '2026-10-01T00:00:00']) expect(() => newAccountTransitionPending(value, now)).toThrow();
     });
 });

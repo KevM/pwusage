@@ -7,8 +7,8 @@ const site: RetentionSite = { siteId: 's1', userId: 'u1', timezone: 'UTC', polic
 const dummyDb = { query: vi.fn() };
 function setup(sites: RetentionSite[] = [site]) {
     const repo = {
-        listSites: vi.fn().mockResolvedValue(sites),
-        preview: vi.fn().mockResolvedValue([{ siteId: 's1', energy: 4, tags: 2 }]),
+        listSites: vi.fn<(timeoutMs?: number) => Promise<RetentionSite[]>>().mockResolvedValue(sites),
+        preview: vi.fn<(targets: Array<{ siteId: string; cutoff: string }>, timeoutMs?: number) => Promise<Array<{ siteId: string; energy: number; tags: number }>>>().mockResolvedValue([{ siteId: 's1', energy: 4, tags: 2 }]),
         withLockedSite: vi.fn(async <T>(_id: string, callback: (locked: RetentionSite, db: typeof dummyDb) => Promise<T>): Promise<T> => callback(sites.find(site => site.siteId === _id) ?? sites[0], dummyDb)),
     };
     const energy = { deleteExpiredBatch: vi.fn().mockResolvedValue(2) };
@@ -69,6 +69,27 @@ describe('retention cleanup service', () => {
         repo.preview.mockResolvedValue([{ siteId: 's1', energy: 1, tags: 0 }, { siteId: 's2', energy: 1000, tags: 0 }]);
         await service.run({ apply: true, now, maxBatches: 1 });
         expect(repo.withLockedSite.mock.calls[0][0]).toBe('s2');
+    });
+    it('bounds initial reads and skips the final count after the deadline', async () => {
+        let wallClock = 1000;
+        const clock = vi.spyOn(Date, 'now').mockImplementation(() => wallClock);
+        try {
+            const { service, repo, tags } = setup();
+            tags.deleteExpiredBatch.mockImplementation(async () => { wallClock = 1011; return 1; });
+            const report = await service.run({ apply: true, now, maxTimeMs: 10 });
+            expect(repo.listSites).toHaveBeenCalledWith(10);
+            expect(repo.preview).toHaveBeenCalledTimes(1);
+            expect(repo.preview.mock.calls[0][1]).toBe(10);
+            expect(report.workRemaining).toBe(true);
+            expect(report.deleted).toEqual({ energy: 2, tags: 1 });
+        } finally { clock.mockRestore(); }
+    });
+    it('returns committed progress when the final count reaches its timeout', async () => {
+        const { service, repo } = setup();
+        repo.preview.mockResolvedValueOnce([{ siteId: 's1', energy: 4, tags: 2 }]).mockRejectedValueOnce({ code: '57014' });
+        const report = await service.run({ apply: true, now, maxBatches: 1 });
+        expect(report.deleted).toEqual({ energy: 2, tags: 1 });
+        expect(report.workRemaining).toBe(true);
     });
     it('rejects invalid batch budgets before reading or deleting', async () => {
         const { service, repo } = setup();

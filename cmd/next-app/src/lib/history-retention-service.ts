@@ -39,7 +39,13 @@ export class HistoryRetentionService {
         const maxTimeMs = options.maxTimeMs ?? 35000;
         if (!Number.isFinite(now.getTime()) || !Number.isInteger(batchSize) || batchSize < 1 || batchSize > 5000 || !Number.isInteger(maxBatches) || maxBatches < 1 || maxBatches > 1000 || !Number.isFinite(maxTimeMs) || maxTimeMs < 1 || maxTimeMs > 45000) throw new Error('Invalid retention cleanup budget');
         const deadline = Date.now() + maxTimeMs;
-        const allSites = await this.deps.repo.listSites();
+        const readBudget = () => {
+            if (!options.apply) return undefined;
+            const remaining = deadline - Date.now();
+            if (remaining < 1) throw new Error('Retention read budget exhausted');
+            return Math.min(5000, remaining);
+        };
+        const allSites = await this.deps.repo.listSites(readBudget());
         // Validate the entire cohort before counting or deleting anything.
         const sites: CleanupSite[] = [];
         const skippedSites: string[] = [];
@@ -47,7 +53,7 @@ export class HistoryRetentionService {
             const target = this.target(site, now);
             if (target) sites.push(target); else skippedSites.push(site.siteId);
         }
-        const counts = await this.deps.repo.preview(sites);
+        const counts = await this.deps.repo.preview(sites, readBudget());
         const byId = new Map(counts.map(count => [count.siteId, count]));
         for (const site of sites) {
             const count = byId.get(site.siteId);
@@ -85,8 +91,16 @@ export class HistoryRetentionService {
             if (batch.energy + batch.tags > 0 && candidate.energy + candidate.tags > 0) queue.push(candidate);
         }
         // Use the final cutoffs, including any concurrent entitlement changes.
-        const remaining = await this.deps.repo.preview(sites.filter(site => !skippedSites.includes(site.siteId)));
-        report.workRemaining = remaining.some(count => count.energy + count.tags > 0);
+        // Never spend an exhausted deletion budget on a final count. Conservatively
+        // retry later; a subsequent run can establish that no work remains.
+        if (Date.now() >= deadline) { report.workRemaining = true; return report; }
+        try {
+            const remaining = await this.deps.repo.preview(sites.filter(site => !skippedSites.includes(site.siteId)), readBudget());
+            report.workRemaining = remaining.some(count => count.energy + count.tags > 0);
+        } catch (error) {
+            if (error && typeof error === 'object' && 'code' in error && (error.code === '57014' || error.code === '55P03')) report.workRemaining = true;
+            else throw error;
+        }
         return report;
     }
 }

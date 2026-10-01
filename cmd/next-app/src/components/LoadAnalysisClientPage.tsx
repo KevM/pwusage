@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import type { HistoryAvailability } from '@/lib/history-retention';
+import { HistoryAvailabilityNotice } from './history-availability-notice';
 import NILMChart from '@/components/NILMChart';
 import { PowerData } from '@/lib/nilm/types';
 import { LoadEvent } from '@/lib/nilm/load-detection';
@@ -17,6 +19,7 @@ import { todayDateStrInTimeZone } from '@/lib/format-utils';
 import TagModal from '@/components/TagModal';
 
 interface LoadAnalysisClientPageProps {
+    availableFrom?: string;
     siteId: string;
     siteName: string;
     defaultDate?: string;
@@ -24,7 +27,7 @@ interface LoadAnalysisClientPageProps {
     displayMode: 'SITE' | 'BROWSER';
 }
 
-export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezone, displayMode }: LoadAnalysisClientPageProps) {
+export default function LoadAnalysisClientPage({ availableFrom, siteId, defaultDate, siteTimezone, displayMode }: LoadAnalysisClientPageProps) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -61,6 +64,11 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
     // The requirement was: "Analysis button next to the date selection...". 
     // If I select a date there and click Analysis, it opens this page with that date. 
     // That's satisfied by initialization.
+
+    const [historyAvailability, setHistoryAvailability] = useState<HistoryAvailability | undefined>();
+    const targetTimezone = displayMode === 'BROWSER' ? Intl.DateTimeFormat().resolvedOptions().timeZone : siteTimezone;
+    const boundary = historyAvailability?.availableFrom || availableFrom;
+    const earliestDate = boundary ? new Intl.DateTimeFormat('en-CA', { timeZone: targetTimezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(boundary)) : undefined;
 
     const [loading, setLoading] = useState(true);
     const [data, setData] = useState<PowerData[]>([]);
@@ -147,6 +155,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
             const res = await fetch(`/api/site/${siteId}/analysis?date=${date}&tz=${targetTz}`);
             if (!res.ok) throw new Error('Failed to fetch data');
             const json = await res.json();
+            setHistoryAvailability(json.historyAvailability);
             setData(json.data);
             setEvents(json.events || []);
             setTariffMap(json.tariffs || {});
@@ -168,6 +177,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
             })
             .then((json) => {
                 if (cancelled) return;
+                setHistoryAvailability(json.historyAvailability);
                 setData(json.data);
                 setEvents(json.events || []);
                 setTariffMap(json.tariffs || {});
@@ -238,6 +248,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
         const newDate = `${y}-${m}-${day}`;
+        if (earliestDate && newDate < earliestDate) return;
         setDate(newDate);
         updateUrl(newDate);
     };
@@ -268,7 +279,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                             <DateNavigatorButton
                                 onClick={() => changeDate(-1)}
                                 direction="prev"
-                                disabled={loading}
+                                disabled={loading || (!!earliestDate && date <= earliestDate)}
                             />
 
                             <DateNavigatorContent>
@@ -287,11 +298,14 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                                     {isToday && ' (Today)'}
                                 </DateNavigatorLabel>
                                 <input
+                                    aria-label="History date"
                                     ref={dateInputRef}
                                     type="date"
                                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                    min={earliestDate}
                                     value={date}
                                     onChange={(e) => {
+                                        if (earliestDate && e.target.value < earliestDate) return;
                                         setDate(e.target.value);
                                         updateUrl(e.target.value);
                                     }}
@@ -312,6 +326,8 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                     </div>
                 </CardHeader>
 
+                {historyAvailability && <HistoryAvailabilityNotice availability={historyAvailability} timezone={siteTimezone} />}
+
                 {/* Chart Body */}
                 <CardContent className="p-4 pt-4">
                     {loading ? (
@@ -321,7 +337,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                                 <span>Loading High-Fidelity Data...</span>
                             </div>
                         </div>
-                    ) : (
+                    ) : historyAvailability?.status === 'unavailable' ? null : (
                         <NILMChart
                             data={data}
                             events={events}
@@ -349,7 +365,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                             <div className="col-span-full">
                                 <EmptyState
                                     title="No significant load events"
-                                    description="No significant load events were detected for this day."
+                                    description={historyAvailability?.status === 'unavailable' ? "This day is outside your retained history." : "No significant load events were detected for this day."}
                                 />
                             </div>
                         ) : (

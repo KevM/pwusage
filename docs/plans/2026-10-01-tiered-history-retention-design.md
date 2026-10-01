@@ -33,7 +33,9 @@ and monetization; the first version uses internal settings only. This is a desig
 Store history_retention_days (90 or 365), downgrade-grace expiry, and
 history_retention_transition_pending on User. The migration marks only existing
 accounts pending; while pending, their effective window remains 365 days. New
-accounts default to pending=false. Notice bootstrap clears pending and seeds
+accounts inserted by old code also default to pending=true, bridging the
+migration-to-deployment interval. New auth code explicitly sets pending=false
+only after HISTORY_RETENTION_POLICY_START_AT has been disclosed and reached. Notice bootstrap clears pending and seeds
 grace; granting 365 clears pending as an explicit exception. This protects
 existing users before notice/bootstrap even though their configured default is 90.
 Default existing and new accounts to 90; grant known exceptions before enabling

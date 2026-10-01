@@ -43,7 +43,9 @@ src/lib/db-types.ts and src/lib/user-repo.ts; generate a migration.
    User.history_retention_grace_until TIMESTAMPTZ NULL. Add
    User.history_retention_transition_pending BOOLEAN NOT NULL DEFAULT FALSE and
    mark existing rows TRUE in this migration. Pending accounts have an effective
-   365-day window until notice bootstrap; new accounts are not pending.
+   365-day window until notice bootstrap. The database defaults pending=true
+   for old-code signups during deployment; new auth code explicitly sets false
+   only after the disclosed policy start timestamp.
    No new tables, no tariff
    deletes, and no cleanup embedded in this migration.
 4. Add typed fields to User and account lookups without exposing token columns.

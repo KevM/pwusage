@@ -73,6 +73,8 @@ Append-only makes tariff IDs stable forever, so history never dangles. Validated
 against the production corpus (PG 17.6): 0 constraint conflicts.
 
 **Guardrails — do not "simplify" by:**
+- Deleting any tariff version, season, or schedule during history retention,
+  even if unused or no retained energy references it. All versions are permanent.
 - Reintroducing delete/replace of `Tariff` rows, or adding `ON DELETE CASCADE`
   from `EnergyData` → `Tariff`. History must survive tariff edits.
 - Adding an `is_current` filter to the billing name/rate resolution. Historical
@@ -148,9 +150,11 @@ and non-accumulating (self-corrects after one charge/discharge cycle).
 **Guardrails — do not "simplify" or "improve" by:**
 - Re-adding SOC-based cost basis / genesis seeding to "make provenance more
   accurate." It looks like a gap; it's a deliberate no-op removal. If true
-  startup attribution is ever genuinely wanted, raw 5-minute `EnergyData` is kept
-  forever, so SOE for just the genesis window can be re-fetched — do that, don't
-  resurrect the old anchor.
+  startup attribution is ever wanted, raw 5-minute `EnergyData` is limited to
+  the account’s retained window (90 days by default, 365 for an internal extended
+  grant or an unexpired transition). Expired history cannot be re-fetched or
+  persisted. Any future attribution work must operate within that retained
+  window and preserve relative flow accounting; do not resurrect the old anchor.
 - Feeding `battery_soc` into the tank as if it were reliable. It's frequently
   NULL on backfilled rows.
 

@@ -173,7 +173,8 @@ describe('UserRepo new commands', () => {
         });
         expect(queryMock.mock.calls[0][0]).toContain('INSERT INTO "User"');
         expect(queryMock.mock.calls[0][0]).toContain('ON CONFLICT (id) DO UPDATE');
-        expect(queryMock.mock.calls[0][1]).toEqual(['u1', 'a@b.c', 'at', 'rt', expiresAt]);
+        expect(queryMock.mock.calls[0][0].split('ON CONFLICT')[1]).not.toContain('history_retention');
+        expect(queryMock.mock.calls[0][1]).toEqual(['u1', 'a@b.c', 'at', 'rt', expiresAt, true]);
     });
 
     it('updateTokens updates access and refresh tokens', async () => {

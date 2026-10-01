@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
+import { UserRepo } from '@/lib/user-repo';
+import { retainedHistoryRange } from '@/lib/history-retention';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { LoadTagRepo } from '@/lib/load-tag-repo';
@@ -71,6 +73,14 @@ export async function GET(
             return NextResponse.json({ error: 'Invalid date' }, { status: 400 });
         }
 
+        if (!site.user_id) throw new Error('History retention requires site ownership');
+        const policy = await new UserRepo().getHistoryRetention(site.user_id);
+        // The account cutoff always uses the site's timezone, even in browser display mode.
+        const retained = retainedHistoryRange(policy, site.timezone, start, queryEnd, new Date());
+        if (retained.historyAvailability.status === 'unavailable') {
+            return NextResponse.json({ siteId, date: start.toISOString(), data: [], events: [], tariffs: {}, audit: [], historyAvailability: retained.historyAvailability });
+        }
+
         // 0. Auto-Heal / Sync Check
         let importer: Importer | null = null;
         const teslaClient = await createTeslaClientForSite(siteId);
@@ -80,7 +90,7 @@ export async function GET(
             importer = new Importer(teslaClient);
             console.error(`[Analysis] Calling ensureDataForRange for ${siteId}, force=${force}`);
             try {
-                await importer.ensureDataForRange(siteId, start, queryEnd, (msg) => {
+                await importer.ensureDataForRange(siteId, retained.start, queryEnd, (msg) => {
                     console.error(`[Analysis Progress] ${msg}`);
                 }, { force });
             } catch (err) {
@@ -92,7 +102,7 @@ export async function GET(
         }
 
         // 1. Fetch Raw Data (Potential re-fetch if sync happened inside ensureDataForRange)
-        const rawData = await repo.getRawEnergyData(siteId, start, queryEnd);
+        const rawData = await repo.getRawEnergyData(siteId, retained.start, queryEnd);
 
         // 2. Fetch Tariff Definitions & Schedule
         let schedule: Schedule | null = null;
@@ -133,7 +143,7 @@ export async function GET(
         const detectedEvents = detectLoads(powerData, 1000);
 
         // 6. Fetch Persisted Tags
-        const tagsRes = await tagRepo.getLoadTags(siteId, start, end);
+        const tagsRes = await tagRepo.getLoadTags(siteId, retained.start, end);
 
         // 7. Enrich Events with Tags (System & Manual)
         const enrichedEvents = detectedEvents.map(event => {
@@ -171,7 +181,7 @@ export async function GET(
             return { ...event, tags };
         });
 
-        const audit = await importer.auditRange(siteId, start, queryEnd);
+        const audit = await importer.auditRange(siteId, retained.start, queryEnd);
 
         return NextResponse.json({
             siteId,
@@ -179,7 +189,8 @@ export async function GET(
             data: powerData,
             events: enrichedEvents,
             tariffs: tariffMap,
-            audit
+            audit,
+            historyAvailability: retained.historyAvailability
         });
 
         } catch (error) {

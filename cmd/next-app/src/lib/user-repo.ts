@@ -1,5 +1,5 @@
 import { cache } from 'react';
-import { bootstrapHistoryRetention, changeHistoryRetention, validateHistoryRetention, validateRetentionDays, type HistoryRetentionPolicy, type ValidHistoryRetentionPolicy } from './history-retention';
+import { bootstrapHistoryRetention, changeHistoryRetention, newAccountTransitionPending, validateHistoryRetention, validateRetentionDays, type HistoryRetentionPolicy, type ValidHistoryRetentionPolicy } from './history-retention';
 import { pool, User, Site } from './db';
 import { TeslaClient, isTeslaAuthError } from './tesla-client';
 
@@ -177,15 +177,15 @@ export class UserRepo {
         tokenExpiresAt: number;
     }): Promise<void> {
         await pool.query(`
-            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active)
-            VALUES ($1, $2, $3, $4, $5, 'active', true)
+            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active, history_retention_transition_pending)
+            VALUES ($1, $2, $3, $4, $5, 'active', true, $6)
             ON CONFLICT (id) DO UPDATE SET
                 access_token = EXCLUDED.access_token,
                 refresh_token = EXCLUDED.refresh_token,
                 email = COALESCE(EXCLUDED.email, "User".email),
                 auth_status = 'active',
                 is_active = true
-        `, [params.userId, params.email, params.accessToken, params.refreshToken, params.tokenExpiresAt]);
+        `, [params.userId, params.email, params.accessToken, params.refreshToken, params.tokenExpiresAt, newAccountTransitionPending(process.env.HISTORY_RETENTION_POLICY_START_AT, new Date())]);
     }
 
     async updateTokens(userId: string, accessToken: string, refreshToken: string): Promise<void> {
