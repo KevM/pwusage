@@ -8,7 +8,7 @@ Branch: `codex/history-retention`, based on freshly fetched `origin/main`
 - [x] Task 1: Pure 90/365 policy, local-midnight/DST cutoffs, exact grace expiry, generated entitlement migration and compact validated reads.
 - [x] Task 2: Atomic internal assignments, preview-first maintenance script, explicit environment targeting, idempotent notice/cohort bootstrap.
 - [x] Task 3: Bound coverage, Tesla imports, and every energy persistence path; preserve daily coverage egress reduction.
-- [ ] Task 4: Preview and bounded cleanup, tariff-preservation integration fixture, cleanup activation gate.
+- [x] Task 4: Preview and bounded cleanup, tariff-preservation integration fixture, cleanup activation gate.
 - [ ] Task 5: Explicit history availability in responses and clients.
 - [ ] Task 6: Capacity preview, rollout/backup documentation, migration CI and final full verification.
 
@@ -20,10 +20,38 @@ Granting 365 clears pending; a repeat 90 assignment cannot bypass pending notice
 Bootstrap clears pending and sets grace to notice+30 days, preserving later grace.
 No entitlement cache was introduced; callers must evaluate expiry with a fresh clock.
 
+Cleanup verification: 1,007 full-suite tests passed, 1 skipped; lint and production
+build passed. The opt-in read-only mobile route egress trace also passed against dev
+Harrison (site 2252268092126997) at 2026-10-01T18:00Z, with all six route passes and
+cold web/mobile query-summary parity. Its refresh mocks deliberately exclude the
+background importer; compact importer entitlement overhead is pinned separately.
+
+`verify-history-retention.ts --env dev` passed using actual repository/service code
+and temporary session-local User/Site/EnergyData/LoadTag/Tariff/Season/Schedule
+fixtures with FKs. Preview matched three energy and three tag deletions; exact
+cutoffs, 365/grace/pending, orphan skipping, failed-batch rollback, idempotence,
+and all tariff/parent values were verified. No public rows or schema changed.
+This fixture models relationships; production-backup CI validation remains pending.
+
+Cleanup defaults off (`RETENTION_CLEANUP_ENABLED` must be exactly `true`), and any
+pending existing-account transition blocks activation. Each short batch re-reads
+and locks ownership and policy; only EnergyData and LoadTag can be deleted.
+At most 50 batches, 1,000 rows/table/batch, and 35 seconds by default; larger
+backlogs get priority so a fixed budget cannot permanently starve later sites.
+Read-only audit tool uses a READ ONLY transaction and reports grace, cutoffs,
+eligible rows, skipped sites, and approximate retained allocation. No compaction
+or actual database size reduction is claimed. Live audits require the migration.
+
+Next batch: history-boundary presentation and rollout preparation. Review the
+new-account cutover sequence: new 90-day enforcement must begin only after the
+policy is announced/disclosed, and accounts created between schema migration
+and announcement must not lose the promised transition. Keep production cleanup
+inactive through concrete backup/preview review and initial rollout authorization.
+
 Import-enforcement verification: 994 tests passed, 1 skipped; lint and production
 build passed. Coverage SQL is unchanged; per-day query bounds and zero-query expired
-requests are pinned. The mobile-route egress trace test remains skipped by its
-existing opt-in gate, so no live mobile egress comparison is claimed yet.
+requests are pinned. The mobile-route egress trace was skipped in the full-suite run by its
+existing opt-in gate; the separate opt-in cleanup-batch run is recorded above.
 The generated persistence query passed a rollback-only dev fixture using temporary
 shadow tables: standard cutoff exactness, 365, pending notice, unexpired/expired
 grace, and unowned sites. The reproducible fixture is
@@ -90,8 +118,8 @@ installed dev-job-history-cleanup at 03:07 UTC daily, with command
 TRUNCATE TABLE cron.job_run_details. Executed the same cleanup successfully.
 This clears history and releases its table allocation every day; it does not
 disable recording or erase log-ingestion usage already counted.
-Premium/default energy retention and dev data filtering remain separate,
-unimplemented planning work.
+At planning time, premium/default retention and dev filtering were unimplemented.
+Retention implementation progress is tracked above; dev filtering remains separate.
 
 Planning verification: lint passed; 942 unit tests passed with one skipped;
 production build passed. No retention application code or migrations were changed.

@@ -1,3 +1,4 @@
+import type { RetentionQueryable } from './history-retention-repo';
 import { pool, Tariff, EnergyData, TariffSchedule } from './db';
 import { wattsToKilowatts } from './energy-utils';
 import { getSiteMidnight, getValidTimezone } from './date-utils';
@@ -614,15 +615,16 @@ ORDER BY local_day`,
         `, params);
     }
 
-    async cleanupOldEnergyData(cutoffDate: Date): Promise<{ energyDeleted: number }> {
-
-        const energyRes = await pool.query(`
-            DELETE FROM "EnergyData"
-            WHERE timestamp < $1
-        `, [cutoffDate]);
-
-        return {
-            energyDeleted: energyRes.rowCount || 0
-        };
+    async deleteExpiredBatch(siteId: string, cutoff: Date, limit: number, db: RetentionQueryable = pool): Promise<number> {
+        if (!Number.isInteger(limit) || limit < 1 || limit > 5000) throw new Error('Invalid retention batch size');
+        const result = await db.query(`
+            WITH candidates AS (
+                SELECT id FROM "EnergyData" WHERE site_id = $1 AND timestamp < $2
+                ORDER BY timestamp, id LIMIT $3 FOR UPDATE SKIP LOCKED
+            )
+            DELETE FROM "EnergyData" target USING candidates WHERE target.id = candidates.id
+        `, [siteId, cutoff, limit]);
+        return result.rowCount ?? 0;
     }
+
 }

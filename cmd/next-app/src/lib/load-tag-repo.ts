@@ -1,3 +1,4 @@
+import type { RetentionQueryable } from './history-retention-repo';
 import { pool } from './db';
 import { LoadTag } from './db';
 
@@ -41,14 +42,16 @@ export class LoadTagRepo {
         `, [siteId, start, end, tag]);
     }
 
-    async cleanupOldTags(cutoffDate: Date): Promise<{ tagsDeleted: number }> {
-        const tagsRes = await pool.query(`
-            DELETE FROM "LoadTag"
-            WHERE end_time < $1
-        `, [cutoffDate]);
-
-        return {
-            tagsDeleted: tagsRes.rowCount || 0
-        };
+    async deleteExpiredBatch(siteId: string, cutoff: Date, limit: number, db: RetentionQueryable = pool): Promise<number> {
+        if (!Number.isInteger(limit) || limit < 1 || limit > 5000) throw new Error('Invalid retention batch size');
+        const result = await db.query(`
+            WITH candidates AS (
+                SELECT id FROM "LoadTag" WHERE site_id = $1 AND end_time < $2
+                ORDER BY end_time, id LIMIT $3 FOR UPDATE SKIP LOCKED
+            )
+            DELETE FROM "LoadTag" target USING candidates WHERE target.id = candidates.id
+        `, [siteId, cutoff, limit]);
+        return result.rowCount ?? 0;
     }
+
 }

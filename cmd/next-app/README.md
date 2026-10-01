@@ -26,7 +26,7 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `JWT_EXPIRY_DAYS`: Session duration in days (default: `7`).
 - `JWT_REFRESH_THRESHOLD_HOURS`: Refresh token if expiration is within this many hours (default: `24`).
 - `CRON_SECRET`: Secret key used to authorize Vercel Cron Job requests.
-- `DATA_RETENTION_DAYS`: Number of days to keep energy data before cleanup (default: `365`).
+- `RETENTION_CLEANUP_ENABLED`: Set to exactly `true` only after migration, notice delivery, existing-account grace bootstrap, recoverable backup, and preview approval. Defaults to disabled. `DATA_RETENTION_DAYS` is no longer used.
 - `SPARKLINE_SCALE_WINDOW_HOURS`: Header sparkline y-axis clamp window in hours (default: `12`, minimum effective value: `4`).
 
 ### Deployment & CI (GitHub Actions Secrets)
@@ -45,7 +45,7 @@ These variables are set as Secrets in your GitHub repository for automated deplo
 The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for background maintenance. These are configured in `vercel.json`:
 
 - **User Status Check** (`/api/cron/check-users`): Runs daily at 08:00 UTC. Verifies Tesla Fleet API credentials for all users to ensure tokens are valid and active. Updates `last_checked_at` and `auth_status`.
-- **Data Cleanup** (`/api/cron/cleanup`): Runs daily at 09:00 UTC. Automatically removes historical `EnergyData` and `LoadTag` records older than `DATA_RETENTION_DAYS` to manage database growth.
+- **Data Cleanup** (`/api/cron/cleanup`): Runs daily at 09:00 UTC. When explicitly activated, removes expired `EnergyData` and `LoadTag` in bounded batches using each account’s 90/365-day policy and grace. Pending transitions block deletion. All tariff versions remain permanent.
 
 ## Getting Started
 
@@ -67,7 +67,7 @@ ngrok http 5173
 The entitlement migration and internal maintenance tool support a 90-day default,
 manually granted 365-day history, and a 30-day grace after removing extended history.
 Imports, coverage audits, and the shared energy writer now enforce this policy after the migration is installed.
-The existing cron still uses its previous policy until the later cleanup change lands.
+Cleanup is disabled by default and requires explicit rollout activation. Each run is limited to 50 site batches of at most 1,000 energy rows and 1,000 tags each, with a 35-second execution budget. Larger backlogs receive priority; remaining work resumes on later runs.
 All tariff versions, seasons, and schedules must remain permanent.
 
 The migration marks existing accounts `history_retention_transition_pending=true`;
@@ -91,3 +91,28 @@ The recorded notice timestamp must already have occurred. Bootstrap preserves 36
 exceptions and later grace, excludes new accounts, and does not extend grace on reruns.
 The tool sends no notices and deletes no data. Each account update is transactional;
 a multi-account run may partially complete on an operational failure and is safe to retry.
+
+
+Read-only capacity preview (after installing the migration):
+
+```bash
+npx tsx scripts/audit-history-retention.ts --env dev
+npx tsx scripts/audit-history-retention.ts --env prod --as-of <ISO-instant>
+```
+
+The audit runs in a database read-only transaction and reports per-site entitlements,
+grace, cutoffs, eligible counts, skipped ownership, and approximate retained allocation.
+An `--as-of` preview does not change any account or advance its grace deadline.
+Deleting rows alone need not shrink allocated files; compaction is a separate operation.
+
+Rollback-only dev validation:
+
+```bash
+npx tsx scripts/verify-history-retention.ts --env dev
+```
+
+This exercises the actual preview, locked batch deletes, rollback, activation guard,
+90/365-day and grace boundaries, and idempotence against temporary session tables.
+It compares every fixture tariff/version/season/schedule and User/Site value before
+and after, including unused tariffs. It refuses production targets and never modifies
+public tables. Production-backup migration CI still validates the actual public schema.

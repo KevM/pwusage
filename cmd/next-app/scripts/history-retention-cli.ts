@@ -56,3 +56,15 @@ export function assertRetentionTarget(environment: RetentionEnvironment, databas
         (url.hostname.endsWith('.pooler.supabase.com') && decodeURIComponent(url.username) === `postgres.${ref}`);
     if (!matches) throw new Error('DATABASE_URL does not match the explicit environment');
 }
+
+
+export function parseRetentionAuditArgs(argv: string[]): { environment: RetentionEnvironment; asOf?: Date } {
+    if (argv.length !== 2 && argv.length !== 4) throw new Error('Usage: --env local|dev|prod [--as-of ISO-instant]');
+    if (argv[0] !== '--env' || !['local', 'dev', 'prod'].includes(argv[1])) throw new Error('Explicit environment is required');
+    const environment = argv[1] as RetentionEnvironment;
+    if (argv.length === 2) return { environment };
+    if (argv[2] !== '--as-of' || !/T.*(Z|[+-]\d{2}:\d{2})$/.test(argv[3])) throw new Error('Invalid audit arguments');
+    const asOf = new Date(argv[3]);
+    if (!Number.isFinite(asOf.getTime())) throw new Error('Invalid audit date');
+    return { environment, asOf };
+}
