@@ -381,8 +381,8 @@ struct LoadTimingView: View {
             .frame(maxWidth: .infinity)
         }
         .refreshable { await coordinator.loadTimingDetailRefreshed() }
-        .background(Color(uiColor: .systemGroupedBackground))
-        .navigationTitle("Load timing")
+        .background { SectionTheme.loadTiming.screenBackground }
+        .navigationTitle("Load Timing")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -856,7 +856,7 @@ private struct LoadRunDetailsSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("Load run details")
+            .navigationTitle("Load Run Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

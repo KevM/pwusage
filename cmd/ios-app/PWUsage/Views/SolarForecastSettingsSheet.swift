@@ -148,7 +148,7 @@ struct SolarForecastSettingsSheet: View {
                     }
                 }
             }
-            .navigationTitle("Solar forecast")
+            .navigationTitle("Solar Forecast")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

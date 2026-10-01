@@ -59,8 +59,8 @@ struct DashboardView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("Switch site", systemImage: "arrow.left.arrow.right", action: onChooseSite)
-                        Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive, action: onSignOut)
+                        Button("Switch Site", systemImage: "arrow.left.arrow.right", action: onChooseSite)
+                        Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive, action: onSignOut)
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -197,16 +197,15 @@ struct DashboardView: View {
 
     private var billNavigation: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Current bill", subtitle: bill.map { "Calculated · \(DashboardPresentation.freshness($0.sources.calculatedAt, staleAfter: 60 * 60).replacingOccurrences(of: "Updated ", with: ""))" } ?? "Waiting for estimate")
+            sectionHeading("Current Bill", subtitle: bill.map { "Calculated · \(DashboardPresentation.freshness($0.sources.calculatedAt, staleAfter: 60 * 60).replacingOccurrences(of: "Updated ", with: ""))" } ?? "Waiting for estimate")
             if let bill {
                 NavigationLink(value: BillDestination.current) {
-                    StatusCard {
+                    StatusCard(theme: .bill) {
                         HStack(spacing: 16) {
-                            Image(systemName: "doc.text")
+                            Image(systemName: "dollarsign.circle.fill")
                                 .font(.title2.weight(.semibold))
                                 .foregroundStyle(.indigo)
                                 .frame(width: 48, height: 48)
-                                .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(DashboardPresentation.currency(bill.currentBill.estimatedCost, code: bill.currentBill.currency))
@@ -231,7 +230,7 @@ struct DashboardView: View {
                 .buttonStyle(.plain)
                 .hoverEffect()
             } else {
-                StatusCard {
+                StatusCard(theme: .bill) {
                     HStack(spacing: 12) {
                         Image(systemName: "doc.text.magnifyingglass")
                             .foregroundStyle(.secondary)
@@ -247,7 +246,7 @@ struct DashboardView: View {
 
     private var loadTimingNavigation: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Load timing", subtitle: live.map {
+            sectionHeading("Load Timing", subtitle: live.map {
                 "Live summary · \(DashboardPresentation.freshness($0.activeLoadTiming?.energyDataThrough ?? $0.sources.energyDataThrough, staleAfter: 30 * 60).replacingOccurrences(of: "Updated ", with: ""))"
             } ?? "Waiting for active tariff")
             let summarySource = live?.activeLoadTiming?.energyDataThrough ?? live?.sources.energyDataThrough
@@ -259,13 +258,12 @@ struct DashboardView: View {
                 currencyCode: bill?.currentBill.currency
             )
             NavigationLink(value: LoadTimingDestination.current) {
-                StatusCard {
+                StatusCard(theme: .loadTiming) {
                     HStack(spacing: 14) {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.title2.weight(.semibold))
                             .foregroundStyle(.teal)
                             .frame(width: 48, height: 48)
-                            .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(summary.title)
@@ -341,11 +339,21 @@ private struct BillDestination: Hashable { static let current = Self() }
 private struct LoadTimingDestination: Hashable { static let current = Self() }
 
 private struct StatusCard<Content: View>: View {
+    var theme: SectionTheme? = nil
     @ViewBuilder let content: Content
     var body: some View {
         content
             .padding(16)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background {
+                Group {
+                    if let theme {
+                        theme.cardBackground
+                    } else {
+                        Color(uiColor: .secondarySystemGroupedBackground)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            }
             .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.045), lineWidth: 1))
     }
 }

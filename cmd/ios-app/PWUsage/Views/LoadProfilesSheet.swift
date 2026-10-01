@@ -13,7 +13,7 @@ struct LoadProfilesSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Load profiles") {
+                Section("Load Profiles") {
                     ForEach(store.profiles) { profile in
                         profileRow(profile)
                     }
@@ -35,7 +35,7 @@ struct LoadProfilesSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .navigationTitle("Load profiles")
+            .navigationTitle("Load Profiles")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -294,7 +294,7 @@ private struct ProfileEditorSheet: View {
                     }
                 }
             }
-            .navigationTitle(draft.id == nil ? "New custom load" : "Edit profile")
+            .navigationTitle(draft.id == nil ? "New Custom Load" : "Edit Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -38,8 +38,8 @@ struct BillView: View {
         .refreshable {
             await coordinator.refreshBill(trigger: .userGesture)
         }
-        .background(Color(uiColor: .systemGroupedBackground))
-        .navigationTitle("Current bill")
+        .background { SectionTheme.bill.screenBackground }
+        .navigationTitle("Current Bill")
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -62,7 +62,7 @@ struct BillView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(LinearGradient(colors: [Color.indigo.opacity(0.13), Color.teal.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 

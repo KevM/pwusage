@@ -33,7 +33,7 @@ struct SitePickerView: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(site.id == selectedSiteID ? .isSelected : [])
             }
-            .navigationTitle("Choose a site")
+            .navigationTitle("Choose a Site")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
