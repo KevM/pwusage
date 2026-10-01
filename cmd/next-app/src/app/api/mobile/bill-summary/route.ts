@@ -47,12 +47,22 @@ export async function GET(request: Request) {
             const estimatedCost = usage.length > 0
                 ? usage.reduce((sum, item) => sum + (item.cost ?? 0), 0)
                 : null;
-            const periods: MobileBillPeriod[] = usage.map((item) => ({
-                tariffName: item.tariff?.name || 'Unknown',
-                periodName: item.touName || 'Unknown',
-                netGridKwh: wattsToKilowatts(item.gridUsage),
-                cost: item.cost ?? 0,
-            }));
+            // Match the web bill's grouping across seasonal rates and tariff
+            // versions. Sum already-priced costs so historical rates survive.
+            const periodGroups = new Map<string, MobileBillPeriod>();
+            for (const item of usage) {
+                const tariffName = item.tariff?.name || 'Unknown';
+                const periodName = item.touName || 'Unknown';
+                const key = JSON.stringify([tariffName, periodName]);
+                let period = periodGroups.get(key);
+                if (!period) {
+                    period = { tariffName, periodName, netGridKwh: 0, cost: 0 };
+                    periodGroups.set(key, period);
+                }
+                period.netGridKwh += wattsToKilowatts(item.gridUsage);
+                period.cost += item.cost ?? 0;
+            }
+            const periods = Array.from(periodGroups.values());
             const schedule = new Schedule(site.tariffs, site.timezone);
             const active = schedule.getTariffPeriod(now);
             const buyRate = active ? active.schedule.buy_rate ?? active.season.buy_rate : null;
