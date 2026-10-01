@@ -12,7 +12,7 @@ const VALID_TIMEZONE_CACHE = new Set<string>(['UTC']);
  * Logs an error to console on invalid timezone configuration.
  * Memoized to avoid per-call validation overhead.
  */
-function getValidTimezone(tz: string): string {
+export function getValidTimezone(tz: string): string {
     if (!tz) {
         return 'UTC';
     }

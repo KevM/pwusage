@@ -239,6 +239,64 @@ describe('EnergyRepo.getCycleAggregates', () => {
     });
 });
 
+describe('EnergyRepo.getDailyCoverage', () => {
+    const start = new Date('2026-03-08T06:00:00Z');
+    const end   = new Date('2026-03-09T05:00:00Z');
+
+    beforeEach(() => {
+        queryMock.mockReset();
+    });
+
+    it('maps pg numeric strings to numbers and gap seconds to ms', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{
+                local_day_key: '2026-03-08',
+                count: '288',
+                first: new Date('2026-03-08T06:00:00Z'),
+                last: new Date('2026-03-09T04:55:00Z'),
+                max_gap_sec: '300',
+            }]
+        });
+
+        const repo = new EnergyRepo();
+        const result = await repo.getDailyCoverage('site-1', start, end, 'America/Chicago');
+
+        expect(result).toEqual([{
+            localDayKey: '2026-03-08',
+            count: 288,
+            first: new Date('2026-03-08T06:00:00Z'),
+            last: new Date('2026-03-09T04:55:00Z'),
+            maxInteriorGapMs: 300000,
+        }]);
+    });
+
+    it('buckets days explicitly by site timezone with LAG and GROUP BY local_day', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+
+        const repo = new EnergyRepo();
+        await repo.getDailyCoverage('site-1', start, end, 'America/Chicago');
+
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('date_trunc(\'day\', timestamp AT TIME ZONE $4::text)');
+        expect(sql).toContain('LAG(timestamp) OVER');
+        expect(sql).toContain('GROUP BY local_day');
+        expect(sql).toContain('to_char(local_day, \'YYYY-MM-DD\')');
+        expect(params).toEqual(['site-1', start.toISOString(), end.toISOString(), 'America/Chicago']);
+    });
+
+    it('falls back to UTC for an invalid timezone instead of throwing', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+
+        const repo = new EnergyRepo();
+        await expect(
+            repo.getDailyCoverage('site-1', start, end, 'Not/AZone')
+        ).resolves.toEqual([]);
+
+        const params = queryMock.mock.calls[0][1] as unknown[];
+        expect(params[3]).toBe('UTC');
+    });
+});
+
 describe('EnergyRepo getRawEnergyData column projection', () => {
     beforeEach(() => {
         queryMock.mockReset();
