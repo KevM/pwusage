@@ -112,6 +112,14 @@ export async function postToTeslaTokenEndpoint(
         // a worse failure than the one this guards.
         if (response.status < 500) {
             discardBody(response);
+            // Logged because this is the one failure mode whose cause is invisible
+            // from the outside: a Tesla-side redirect surfaces to the user as an
+            // unexplained login failure, and the thrown message alone only reaches
+            // the logs if the framework happens to report an unhandled route error.
+            console.warn(
+                `[TeslaTokenEndpoint] ${host} returned unexpected ${response.status}; `
+                + 'not falling through to the next host'
+            );
             throw new TeslaTokenEndpointError(
                 `Unexpected ${response.status} from ${host}`,
                 response.status
@@ -128,19 +136,4 @@ export async function postToTeslaTokenEndpoint(
         `All Tesla token endpoints failed. Last failure: ${lastFailure ?? 'unknown'}`,
         lastStatus
     );
-}
-
-/**
- * Read a required environment variable, failing loudly by name.
- *
- * Guards against silently substituting a placeholder credential — the previous
- * refresh implementation defaulted client_id to the literal 'ownerapi', which
- * would have presented our client_secret to the first-party Owner API.
- */
-export function requireEnv(name: string): string {
-    const value = process.env[name]?.trim();
-    if (!value) {
-        throw new Error(`Missing required environment variable: ${name}`);
-    }
-    return value;
 }

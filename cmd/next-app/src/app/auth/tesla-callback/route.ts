@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { TeslaAuthService } from '@/lib/tesla-auth-service';
 import { getAppBaseUrl } from '@/lib/url-utils';
 import { createMobileLoginHandoff } from '@/lib/mobile-login-handoff';
+import { mobileCallbackResponse } from '@/lib/mobile-login-callback';
 import { isValidAppState, isValidMobileLoginParameters } from '@/lib/mobile-login-validation';
 
 export const maxDuration = 60; // Allow up to 60 seconds on Vercel to avoid timeouts during slow Tesla API / JWKS calls
@@ -179,12 +180,3 @@ function clearAuthAttemptCookies(cookieStore: Awaited<ReturnType<typeof cookies>
     cookieStore.delete('auth_mobile_state');
 }
 
-function mobileCallbackResponse(params: Record<string, string>): NextResponse {
-    const callback = new URL('pwusage://auth/callback');
-    for (const [key, value] of Object.entries(params)) callback.searchParams.set(key, value);
-    const response = NextResponse.redirect(callback);
-    response.headers.set('Cache-Control', 'no-store');
-    response.headers.set('Pragma', 'no-cache');
-    response.headers.set('Referrer-Policy', 'no-referrer');
-    return response;
-}

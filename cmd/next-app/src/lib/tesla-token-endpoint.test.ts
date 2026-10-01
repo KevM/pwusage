@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     TeslaTokenEndpointError,
     postToTeslaTokenEndpoint,
-    requireEnv,
 } from './tesla-token-endpoint';
 
 const FLEET_AUTH = 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token';
@@ -99,6 +98,26 @@ describe('postToTeslaTokenEndpoint', () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
+    // A Tesla-side redirect reaches the user as an unexplained login failure, and
+    // the thrown message only lands in the logs if the framework reports an
+    // unhandled route error. Without this the status and host are never recorded.
+    it('logs the status and host when the response is an unexpected non-2xx/4xx/5xx', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const fetchImpl = vi
+            .fn()
+            .mockResolvedValue({ ok: false, status: 307 } as unknown as Response);
+
+        try {
+            await expect(postToTeslaTokenEndpoint({ code: 'x' }, fetchImpl))
+                .rejects.toBeInstanceOf(TeslaTokenEndpointError);
+
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining('307'));
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining(FLEET_AUTH.replace('/oauth2/v3/token', '')));
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
     // A mocked fetchImpl cannot follow or refuse a redirect — it is handed
     // whatever Response the test invents — so this asserts the *request option*
     // that makes undici surface a 3xx instead of re-POSTing the body to the
@@ -181,25 +200,5 @@ describe('postToTeslaTokenEndpoint', () => {
 
         await expect(postToTeslaTokenEndpoint({ code: 'x' }, fetchImpl))
             .rejects.toMatchObject({ status: null });
-    });
-});
-
-describe('requireEnv', () => {
-    it('returns the value when present', () => {
-        process.env.PWUSAGE_TEST_ENV = 'present';
-        expect(requireEnv('PWUSAGE_TEST_ENV')).toBe('present');
-        delete process.env.PWUSAGE_TEST_ENV;
-    });
-
-    it('throws by name instead of silently defaulting', () => {
-        expect(() => requireEnv('PWUSAGE_DEFINITELY_UNSET_VAR')).toThrow(
-            /PWUSAGE_DEFINITELY_UNSET_VAR/
-        );
-    });
-
-    it('treats a whitespace-only value as missing', () => {
-        process.env.PWUSAGE_BLANK_ENV = '   ';
-        expect(() => requireEnv('PWUSAGE_BLANK_ENV')).toThrow(/PWUSAGE_BLANK_ENV/);
-        delete process.env.PWUSAGE_BLANK_ENV;
     });
 });
