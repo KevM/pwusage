@@ -32,14 +32,64 @@ Candidates that remain, in rough value order:
   Aggregating per-day stats (count, first, last, max interior gap via `lag()`)
   in SQL would cut it ~300×, but must reproduce `auditDays`' site-timezone day
   windows (DST days are pinned by `import-planner.test.ts`) — do it carefully.
+  **(2026-10-01, in flight on `perf/sync-daily-coverage-aggregation`)** — design
+  and implementation plan written, no code yet.
 - **Live-status cache churn:** `claimLiveRefresh`/`updateLiveStatusCache`
   invalidate the in-memory site cache roughly every 14–16 min per site, so the
   15-min site cache rarely survives. Consider a narrow update that doesn't
   nuke the whole cached site, or a short-TTL request-scoped reread.
+  **Correction (2026-10-01):** this does *not* affect the TRMNL markup path —
+  `getSitesWithTariffs` bypasses the cache entirely when `includeTokens` is set
+  (`site-repo.ts:43-47`), and the markup route always sets it. The value is in
+  the web/dashboard/iOS paths. Cheapest of these items (~5 lines), but not a
+  hot-path win. A third invalidator exists that this item omits:
+  `releaseLiveRefreshClaim` (`site-repo.ts:364-371`).
 - **All tariff versions fetched per markup poll** (`getTariffsForSite` /
   `getSchedulesForSite`, intentionally unfiltered for historical name
   resolution). Version count grows monotonically (append-only); if it gets
   large, resolve names via a slimmer projection or cache the version list.
+  **Sized 2026-10-01:** 1–2 tariff rows and 6–48 schedule rows per site, and
+  `addTariffVersion` only inserts when `tariffContentHash` differs, so a stable
+  tariff never grows the table. Lowest value of the candidates; skip unless a
+  site's version count actually climbs.
+- **`getCycleAggregates` is the top compute cost, not egress** — re-added
+  2026-10-01; it was in the 2026-07-19 postmortem but never made it onto this
+  list. `energy-repo.ts:422` still re-aggregates the whole cycle per 15-min poll.
+  Live `pg_stat_statements` on production: **327 calls, 849 ms mean, 278 s
+  total** — the heaviest non-`net.http_get` statement measured. The postmortem
+  claimed the `(site_id, timestamp)` index "already exists, so the only lever is
+  a pre-aggregated daily rollup". **That claim is wrong.** `EXPLAIN (ANALYZE,
+  BUFFERS)` shows the planner *ignoring* `idx_energy_site_ts` in favour of the
+  single-column `idx_energy_timestamp`, discarding ~120k rows per call on the
+  `site_id` filter (~61k buffers, ~120–180 ms) to return ~43 rows. Same
+  predicate via `count(*)` uses the composite index for 464 buffers / 10 ms, so
+  the composite path is both available and far cheaper.
+  **Change:** establish why the planner rejects `idx_energy_site_ts` (planner
+  GUCs, `site_id` selectivity/correlation, or an index-only-scan opportunity via
+  a covering index) *before* building a rollup table. Only escalate to
+  `EnergyDailyAggregate` if the plan cannot be fixed.
+- **`getRawEnergyData` is the top egress line** — re-added 2026-10-01, same
+  origin. `energy-repo.ts:454` still ships every 5-min row in the window. The
+  original postmortem framing ("sum in SQL") is wrong: the markup route uses
+  today's raw rows for three things, and **per-TOU bill pricing walks each row
+  through `schedule.getTariffPeriod(ts)`**, so a scalar `SUM` cannot replace it.
+  The realistic reduction is a `GROUP BY tariff_schedule_id` partial aggregate —
+  the same shape `getCycleAggregates` returns — which could serve both the bill
+  split and `sumTodayRows`, and is only safe when `showEnergyChart` is false.
+  **Sized 2026-10-01:** `showEnergyChart` defaults to **true**, so the gate only
+  fires for users who explicitly disabled the chart. Check how many TRMNL
+  installs have it off before sizing this.
+- **No egress signal exists (re-added 2026-10-01).** The postmortem called this
+  its highest-leverage prevention action and nothing was done. There is no
+  `EXPLAIN` harness in the repo, and both sanctioned harnesses are dead:
+  `scripts/measure-mobile-egress.ts` requires `DEV_DATABASE_URL` *and*
+  `EGRESS_SITE_ID` (neither is set) and refuses production, and
+  `scripts/mobile-route-egress-trace.test.ts` shares that guard and only traces
+  `site-live-data` and `mobile/bill-summary` — **not** the TRMNL markup route,
+  which is the hot path. This is how a 10× regression ran for a month before
+  Supabase's free-tier notice surfaced it. A weekly `pg_stat_statements` check
+  ordered by rows, and/or a Supabase egress alert at ~50% of tier, would catch
+  the next one in days.
 
 ## TRMNL: Loose Pending Installation Flow Note
 
@@ -50,11 +100,38 @@ Candidates that remain, in rough value order:
 
 The Go tree (`cmd/pwrtool`, `internal/`, `go.mod`/`go.sum`) and the legacy Svelte app (`cmd/web-app`) predate the Next.js app and are kept only as reference for how things used to work. Delete them when convenient — nothing depends on them.
 
-## Remove Temporal polyfill after Node.js 26 LTS
+## Remove Temporal polyfill after Vercel supports Node 26 (2026-10-01: blocked on Vercel, not on Node)
 
-`src/lib/billing-cycle.ts` now uses `@js-temporal/polyfill` for timezone-aware date arithmetic. Once Node.js 26 reaches LTS (~mid-2026), remove the polyfill dependency and use native `Temporal` from the runtime instead.
+`src/lib/billing-cycle.ts` and five other modules use `@js-temporal/polyfill` for
+timezone-aware date arithmetic. Native `Temporal` would let us drop the dependency
+and the import cost. It is **not** actionable yet, and the blocker is Vercel rather
+than Node's release schedule — the older framing of this item ("once Node.js 26
+reaches LTS") was wrong on both counts.
 
-**Change:** Replace `import { Temporal } from '@js-temporal/polyfill'` with `import { Temporal } from 'temporal'` (or native global if available) and remove `@js-temporal/polyfill` from `package.json`.
+**Verified 2026-10-01 by running each interpreter, not by reading docs:**
+
+| Node | `'Temporal' in globalThis` |
+| --- | --- |
+| 24.21.0 (Vercel Functions default) | **false** — only under `--harmony-temporal` |
+| 25.9.0 | **false** |
+| 26.10.0 | true |
+
+- Temporal was unflagged by default in **Node 26 only** (V8 14.6). Node 24 and 25
+  require `--harmony-temporal`, which is not a production option.
+- **Vercel Functions offer only 24.x / 22.x / 20.x.** Node 26 is available on
+  Vercel *Sandboxes*, which is a different product and does not affect this app.
+- `cmd/next-app/package.json` declares `engines.node: ">=24.0.0"`, which Vercel's
+  own mapping table resolves to the latest **24.x**.
+
+**Change, once Vercel lists 26.x for Functions:** bump `engines.node`, replace
+`import { Temporal } from '@js-temporal/polyfill'` with the global (all six call
+sites are server-side — no `'use client'` — so there is no browser-polyfill
+concern), then remove the dependency. Re-run the billing-cycle and
+load-planning-context tests: `date_trunc`-style DST behavior is the risk, not the
+API surface.
+
+Do not "unblock" this with `NODE_OPTIONS=--harmony-temporal`; that would put
+billing-window date math on a V8 experimental flag.
 
 ## Upgrade ESLint to v10 (blocked upstream)
 
@@ -63,61 +140,39 @@ The Go tree (`cmd/pwrtool`, `internal/`, `go.mod`/`go.sum`) and the legacy Svelt
 **Change:** Once `eslint-plugin-react` (and `eslint-config-next`) declare eslint 10 support, bump `eslint` to `^10` and re-run `npm run lint`.
 
 
-## Tesla OAuth: consolidate the three credential paths (2026-09-30, PR #118)
+## Tesla OAuth: stop interpolating upstream bodies into classified errors (2026-10-01)
 
-`/login` and `/refresh` call `requireEnv`, which **throws** on a missing variable.
-/`auth/tesla-callback` deliberately intercepts instead, and its own comment says the
-interception exists "to turn that loud throw into the clean response below instead of a
-raw 500". The two-of-three split is user-visible on iOS: a mobile client hitting `/login`
-with the client id unset gets an opaque 500 sheet instead of `AuthError.serverRejectedLogin`.
+**This item replaces an earlier, partly-stale framing.** The old text claimed the
+callback reports `invalid-id-token` when both token-endpoint hosts fail. That is
+already fixed: `tesla-auth-service.ts:477-485` catches `TeslaTokenEndpointError`
+and returns `token-exchange-failed` with the upstream status (pinned by four
+tests). The real remaining defect is the second half, and
+`DesignDecisions.md:346-381` already names both sites under "Known remaining
+violations", states *"**Neither is fixed here**"*, and calls it a doc/code
+contradiction. So this is a **known bug awaiting a fix**, not a new finding.
 
-Fix: have `/login` intercept the same way. That requires exporting the callback route's
-module-private `mobileCallbackResponse`. In the same change:
+`isTeslaAuthError` (`tesla-client.ts:154-169`) classifies **by substring**. Two
+paths build messages that classifier inspects out of upstream-controlled text:
 
-1. Relocate `requireEnv` out of `src/lib/tesla-token-endpoint.ts` into something like
-   `src/lib/env.ts`. A token-endpoint module exporting a generic env accessor is the wrong
-   home now that a *login route* depends on it.
-2. Move `buildTeslaAuthorizeUrl` to `src/lib/tesla-authorize-url.ts`, where the rest of the
-   Tesla wire-format logic already lives.
+1. `tesla-auth.ts:67-77` — the refresh fallthrough throws
+   `` `Failed to refresh token: ${response.status} ${body}` `` with the **raw
+   body** interpolated, while its own 401/400 condition does *not* classify as
+   terminal. A 403 body containing `login_required`, or a 400 containing
+   `invalid authentication`, is "retry later" to one classifier and "revoke this
+   user" to the other. `tesla-token-repo.ts:72` feeds that into an atomic
+   `auth_status='revoked', is_active=false` write.
+2. `tesla-token-endpoint.ts:25-31` — `describeError` folds `err.cause.message`
+   in verbatim, so a proxy/TLS cause string containing a trigger substring makes
+   a `TeslaTokenEndpointError` classify as terminal.
 
-**Change:** export `mobileCallbackResponse`, intercept in `/login` before the cookie
-writes, relocate `requireEnv`, move the URL builder.
-
-## Tesla OAuth: consider `require_requested_scopes` (2026-09-30, PR #118)
-
-`prompt_missing_scopes=true` (set in PR #118) prompts for scopes the user has not granted
-but **cannot** silently grant them. The sibling `require_requested_scopes` ("user must
-authorize all requested scopes to proceed") is not set.
-
-Latent today because the scope set is static. **If a scope is ever added**, a user who
-*declines* still completes login with a partial grant, and the app fails later at
-point-of-use instead of at login. Decide the policy before the first scope addition.
-
-**Change:** set `require_requested_scopes` alongside `prompt_missing_scopes`, or document
-why a partial grant is acceptable.
-
-## Tesla OAuth: unexpected 3xx from the token endpoint (2026-09-30, PR #118)
-
-`src/lib/tesla-token-endpoint.ts` handles 4xx and 5xx explicitly, and an unexpected
-1xx/2xx/3xx throws `TeslaTokenEndpointError`. That is correct — a 307/308 would re-POST
-`client_secret` to whatever origin the redirect named, which is why `redirect: 'manual'`
-is set — but nothing **logs** it, so a Tesla-side redirect would look like an unexplained
-authentication failure.
-
-**Change:** log the status and host on the unexpected-status throw path.
-
-## Tesla OAuth: restore leaked OAuth test env vars at the source (2026-09-30, PR #118)
-
-Several suites `vi.stubEnv` the `PUBLIC_TESLA_OAUTH_*` and `TESLA_OAUTH_SECRET` variables
-and never unstub them. Harmless in a fixed file order, but Vitest may run files in any
-order, so a neighbouring suite can inherit them. Reproduce with
-`npx vitest run --sequence.shuffle`.
-
-`route.test.ts` was fixed at the file level with `afterEach(vi.unstubAllEnvs)`; the rest
-of the suites were not.
-
-**Change:** either set `unstubEnvs: true` in `vitest.config.ts`, or add a file-scope
-`afterEach(() => vi.unstubAllEnvs())` to each suite that stubs these vars.
+**Change:** stop putting upstream bodies into messages on paths whose errors are
+inspected by `isTeslaAuthError` — classify from the parsed error code or a typed
+error field instead. Preserve the substring list itself: `DesignDecisions.md:311-326`
+records it as load-bearing and pins it with `tesla-token-repo.test.ts`, and the
+guardrail assertions in `tesla-auth.test.ts` (`not.toMatch(/login_required|invalid_grant/)`)
+must survive. A separate, still-open question: transport/5xx failures on the
+**JWKS** leg still surface as `invalid-id-token` (`tesla-auth-service.ts:526-539`),
+which is the outage-vs-invalid-login conflation in its current form.
 
 ## Tesla OAuth: issuer-keyed JWKS client, and re-resolve after the discovery TTL (2026-09-30, PR #118)
 
@@ -125,37 +180,48 @@ Raised by review on PR #118. Both are pre-existing and unchanged by that branch,
 against base commit `092b727`.
 
 **1. One module-level client, keyed only by the previous issuer.**
-`getOrCreateJwksClient` (`src/lib/tesla-auth-service.ts`) assigns `teslaJwksClient` *after*
-`await getTeslaJwksUri(issuer)`. Two concurrent cold-start verifications carrying different
-`iss` values both enter the branch, and the loser verifies against the wrong issuer's key
-set — takes a genuine `SigningKeyNotFoundError`, lands in the degraded path. Latent (Tesla
-issues only `/nts`) and pre-existing. The same code also thrashes the key cache on issuer
-alternation. This is the one path into the signature bypass that is *not* a key-set miss.
+`getOrCreateJwksClient` (`src/lib/tesla-auth-service.ts`) holds a single
+`teslaJwksClient` + `lastIssuer` pair, and sets `lastIssuer` *before* awaiting
+`getTeslaJwksUri(issuer)`. The racing caller does not lose immediately — each
+continuation assigns and returns in one microtask, so it gets the client built for
+its own issuer. The damage is **desynced module state**: a warm `/nts` client, a
+`/v3` request in flight, then an `/nts` login, then the `/v3` await landing, leaves
+`teslaJwksClient` holding the `/v3` key set while `lastIssuer` says `/nts`. The
+**next** `/nts` login takes the false branch and verifies an `/nts` token against
+the base `/v3` keys → genuine `SigningKeyNotFoundError` → `KidNotFoundError` →
+the degraded path that **skips ID-token signature verification**
+(`tesla-auth-service.ts:533-539`). This is the one path into that bypass which is
+*not* a key-set miss. The same code also thrashes the client on issuer alternation.
 
 **2. The 1-hour discovery TTL is never applied in the single-issuer flow.**
-Once a client exists for the issuer Tesla actually uses, `issuer !== lastIssuer` is false
-forever, so `getTeslaJwksUri` is never called again. Base behaved identically: its removed
-`fetchFreshJwks(jwksUri)` took the *already-resolved* URI as a parameter and did not
-re-resolve. So if Tesla ever changes an issuer's `jwks_uri`, verification keeps querying
-the old endpoint for the life of the instance. Rarely observable on serverless, where
-instances are short-lived.
+Once a client exists for the issuer Tesla actually uses, `issuer !== lastIssuer` is
+false forever, so `getTeslaJwksUri` is never called again. Base behaved identically:
+its removed `fetchFreshJwks(jwksUri)` took the *already-resolved* URI and did not
+re-resolve. So if Tesla ever changes an issuer's `jwks_uri`, verification keeps
+querying the old endpoint for the life of the instance. The TTL itself works
+correctly when consulted (`tesla-auth-service.ts:96-98`) — the trigger is missing.
+Rarely observable on serverless, where instances are short-lived.
 
-**Change:** key clients by issuer in a `Map<string, client>`, and rebuild the client when
-the discovery entry has passed `DISCOVERY_CACHE_TTL_MS` so `getTeslaJwksUri` is called
-again. Fixes both.
+**Change:** key clients by issuer in a `Map<string, client>` (the sibling
+`discoveryCache` and `FALLBACK_JWKS_URIS` are already Maps, and
+`__resetJwksClientForTests` is the single reset site to update), and rebuild the
+client when the discovery entry has passed `DISCOVERY_CACHE_TTL_MS` so
+`getTeslaJwksUri` is called again. Fixes both.
 
-## Tesla OAuth: distinguish Tesla outages from invalid login (2026-09-30, PR #118)
+## Tesla OAuth: consider `require_requested_scopes` (2026-09-30, PR #118)
 
-When both token-endpoint hosts fail on transport error or 5xx, the callback reports
-`invalid-id-token`. That conflates "Tesla is down or slow" with "this token is bad", so an
-operator debugging an outage reads an auth-config error. `DesignDecisions.md` §5 records
-the related terminal-vs-transient split: `isTeslaAuthError` classifies by **substring**, so
-an upstream body interpolated into a non-terminal message (`tesla-auth.ts`) can trigger a
-user revocation. That path is now reachable for the first time, since PR #118 made the
-refresh request actually succeed.
+`prompt_missing_scopes=true` (set in PR #118) prompts for scopes the user has not granted
+but **cannot** silently grant them. The sibling `require_requested_scopes` ("user must
+authorize all requested scopes to proceed") is not set.
 
-**Change:** give transport/5xx failures their own status, and classify from the parsed
-error code rather than a substring of the message.
+Latent today because the scope set is static (`tesla-authorize-url.ts`, hardcoded
+`openid energy_device_data offline_access user_data energy_cmds`). **If a scope is
+ever added**, a user who *declines* still completes login with a partial grant, and
+the app fails later at point-of-use instead of at login. Decide the policy before the
+first scope addition.
+
+**Change:** set `require_requested_scopes` alongside `prompt_missing_scopes`, or document
+why a partial grant is acceptable.
 
 ## Tesla: bound the unbounded network calls in the Tesla callback path (2026-09-30, PR #118)
 
