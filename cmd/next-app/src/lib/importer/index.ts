@@ -139,15 +139,16 @@ export class Importer {
                     logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
 
                     const auditStartTime = getSiteMidnight(start, site.timezone);
-                    const existingTimestamps = await this.repo.getExistingTimestamps(
+                    const existingCoverage = await this.repo.getDailyCoverage(
                         siteId,
                         auditStartTime,
-                        end
+                        end,
+                        site.timezone
                     );
 
                     const windows = planImport({
                         requestedRange: { start: auditStartTime, end },
-                        existingTimestamps,
+                        existingCoverage,
                         timezone: site.timezone,
                         installationDate: new Date(site.installed),
                         forceRefetch: force,
@@ -482,12 +483,12 @@ export class Importer {
         const site = await this.siteRepo.getSite(siteId);
         if (!site) return { error: 'Site not found' };
 
-        const existingTimestamps = await this.repo.getExistingTimestamps(siteId, start, end);
+        const existingCoverage = await this.repo.getDailyCoverage(siteId, start, end, site.timezone);
         const now = new Date();
 
         const days = auditDays({
             requestedRange: { start, end },
-            existingTimestamps,
+            existingCoverage,
             timezone: site.timezone,
             now,
         });

@@ -137,24 +137,6 @@ export class EnergyRepo {
         return ts ? new Date(ts) : null;
     }
 
-    async getExistingTimestamps(siteId: string, start: Date, end: Date): Promise<number[]> {
-        const res = await pool.query(
-            `SELECT EXTRACT(EPOCH FROM timestamp) as timestamp
-            FROM "EnergyData"
-            WHERE site_id = $1
-            AND timestamp >= $2
-            AND timestamp < $3
-            ORDER BY timestamp ASC`,
-            [siteId, start.toISOString(), end.toISOString()]
-        );
-        return res.rows.map((r: { timestamp: string | number | Date }) => {
-            const ts = r.timestamp;
-            if (typeof ts === 'number') return ts * 1000; // seconds to ms
-            if (typeof ts === 'string') return Number(ts) * 1000; // parse epoch string to ms
-            return (ts as Date).getTime();
-        });
-    }
-
     /**
      * Summarize existing 5-minute rows in [start, end) as one row per
      * site-local day. Day boundaries are computed server-side with an explicit

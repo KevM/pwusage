@@ -278,6 +278,11 @@ describe('EnergyRepo.getDailyCoverage', () => {
 
         const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
         expect(sql).toContain('date_trunc(\'day\', timestamp AT TIME ZONE $4::text)');
+        // The LAG window must be partitioned by the *same* site-local day
+        // expression as the projection above. A session-timezone form (or no
+        // partitioning at all) would compute the interior gap across the wrong
+        // grouping, which no other assertion here would catch.
+        expect(sql).toContain('PARTITION BY date_trunc(\'day\', timestamp AT TIME ZONE $4::text)');
         expect(sql).toContain('LAG(timestamp) OVER');
         expect(sql).toContain('GROUP BY local_day');
         expect(sql).toContain('to_char(local_day, \'YYYY-MM-DD\')');
