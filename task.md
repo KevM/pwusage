@@ -60,6 +60,13 @@ loops. Add compact request-reused entitlement reads, coverage/query-count tests,
 and the real-Postgres differential gate if coverage SQL changes. SQL aggregation
 reduces returned data, not the stored EnergyData footprint.
 
+Initial rollout clarified and approved: existing users currently have 365-day
+retention and must receive notice plus 30 days before trimming to 90. New users
+start at 90 days. Explicitly initialize existing-account grace; a migration that
+defaults their setting to 90 must not bypass the transition. Manual 365-day
+exceptions remain. Notification delivery and destructive production rollout
+require their own concrete review/authorization; neither has happened here.
+
 # iOS Solcast load timing
 
 - [x] Restart from `origin/main` with configurable load profiles/tariff timeline from PR #115.

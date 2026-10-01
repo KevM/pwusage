@@ -64,6 +64,12 @@ scripts/set-history-retention.ts. No admin UI or premium-facing routes.
    explicit apply flag. Show the actual change and grace expiry without credentials.
 5. Verify preview does not mutate data, apply targets only the requested account,
    and repeated changes behave correctly. Commit `feat: manage extended history internally`.
+6. Add an explicit rollout-bootstrap mode for existing 365-day accounts moving
+   to the 90-day default, even though their newly added retention field defaults
+   to 90. Given an explicit existing-account cohort and notice timestamp, seed
+   grace expiry 30 days later; preserve manually granted 365-day exceptions.
+   Test idempotent bootstrap, new-account exclusion, and preservation of a later
+   legitimate grace expiry. This bootstrap does not send user notifications.
 
 ## Task 3: Prevent expired-history imports
 
@@ -150,6 +156,13 @@ add a rollout report under docs/plans with dry-run counts and capacity estimates
 2. Prepare a production read-only dry-run and identify extended-history exceptions before
    cleanup activation. Do not automatically delete inactive users or filter dev in
    this change; those remain separate plans.
+   Treat the first rollout as a retention-policy transition for existing users,
+   not a paid downgrade. Keep destructive cleanup disabled until the notice and
+   the existing-account grace bootstrap are complete. Check the default migration
+   cannot accidentally cause immediate deletion. Test existing users retain
+   365-day access throughout the 30-day transition and new users begin at 90 days.
+   Prepare the notice and its channel for review; do not send messages without
+   explicit user authorization.
 3. Run `npm run lint`, `npm run test -- --run`, and `npm run build` from cmd/next-app.
    For native edits, also run the prescribed iOS test script and simulator build.
    Verify the migration with the production-to-dev workflow and full FK relationships.
@@ -169,3 +182,5 @@ Internal manual retention assignments work; 90/365-day policy and 30-day grace a
 imports and cleanup; all tariff records are untouched; partial history is explicit;
 tests/lint/build pass; preview and recovery instructions are ready. Production
 deletion is a subsequent reviewed operation, not a side effect of installing schema.
+Existing users receive notice and a recorded 30-day transition before first
+trimming; new users start at 90 days. Initial defaults must not bypass that grace.

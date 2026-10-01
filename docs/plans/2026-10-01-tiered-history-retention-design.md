@@ -7,6 +7,11 @@ and monetization; the first version uses internal settings only. This is a desig
 ## Policy
 
 - Default accounts retain 90 days of five-minute energy readings.
+- Existing accounts currently receive 365-day retention. The first rollout must
+  give them notice and a 30-day transition window before trimming to 90 days.
+  New accounts after the announced policy starts receive 90 days immediately,
+  with that limit disclosed. A database default alone does not grant existing
+  users a transition window; bootstrap their grace expiry explicitly.
 - Accounts explicitly granted extended history retain 365 days. Assignment is
   manual through an internal database setting or maintenance script.
 - The account retention setting applies to all sites owned by that account.
@@ -103,6 +108,17 @@ deletion behavior in dev, then activate production cleanup. Re-measure actual
 database/table/index sizes after cleanup; deletion alone does not guarantee an
 immediate reduction in allocated files. Any blocking compaction is a separately
 planned operation, with disk headroom and downtime assessed first.
+
+Before enabling the new cleanup policy, establish the existing-account cohort,
+assign manual 365-day exceptions, publish the retention notice, and initialize
+each remaining existing account's grace expiry to 30 days after its notice.
+Reuse the same effective 365-day window during this transition for imports,
+history availability, and cleanup. Make bootstrap idempotent: rerunning it must
+not extend expiry, and it must not shorten a later legitimate grace period.
+Keep cleanup disabled until all affected accounts have a recorded transition
+window and the notice has been delivered. Notice delivery is separate work;
+this plan does not authorize sending messages to users. After expiry, only old
+energy readings and associated expired tags are eligible for deletion.
 
 Dev's obsolete rollup/history jobs have already been removed and their history
 cleared. Because Supabase rejects the cron.log_run configuration override, a
