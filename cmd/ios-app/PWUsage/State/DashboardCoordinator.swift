@@ -103,11 +103,13 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
     fileprivate(set) var response: Response?
     fileprivate(set) var lastAttempt: Date?
     fileprivate(set) var lastSuccess: Date?
+    fileprivate(set) var isRestored = false
     fileprivate(set) var isUnavailable = false
     fileprivate(set) var unavailableStatusCode: Int?
 
     fileprivate mutating func reset() {
         response = nil
+        isRestored = false
         lastAttempt = nil
         lastSuccess = nil
         isUnavailable = false
@@ -159,6 +161,9 @@ final class DashboardCoordinator: ObservableObject {
     private let planningAPI: (any MobileLoadPlanningDataAPI)?
     private let forecastStore: (any SolarForecastManaging)?
     private let accountScopeID: String?
+    private var cache: DashboardCache?
+    private var sessionVerified = true
+    private var canRequestAccountData: Bool { sessionVerified && !requiresSignIn }
     private let now: () -> Date
     private let timerInterval: Duration?
     private var sceneIsActive = false
@@ -196,7 +201,8 @@ final class DashboardCoordinator: ObservableObject {
         forecastStore: (any SolarForecastManaging)? = nil,
         accountScopeID: String? = nil,
         now: @escaping () -> Date = Date.init,
-        timerInterval: Duration? = .seconds(30)
+        timerInterval: Duration? = .seconds(30),
+        cache: DashboardCache? = nil
     ) {
         selectedSiteID = siteID
         self.api = api
@@ -205,6 +211,8 @@ final class DashboardCoordinator: ObservableObject {
         self.accountScopeID = accountScopeID
         self.now = now
         self.timerInterval = timerInterval
+        self.cache = cache
+        restoreCachedReadings()
     }
 
     /// Stops the polling timer. That cancel is the only one with any effect: the
@@ -220,10 +228,33 @@ final class DashboardCoordinator: ObservableObject {
         timerTask?.cancel()
     }
 
+    /// Attach the app-owned snapshot even when a custom coordinator factory is used.
+    /// Saved presentation does not authorize account requests; the app must verify
+    /// site access before enabling polling, detail refreshes, or forecast setup.
+    func restoreLaunchCache(_ cache: DashboardCache?, sessionVerified: Bool = true) {
+        self.sessionVerified = sessionVerified
+        self.cache = cache
+        restoreCachedReadings()
+    }
+
+    private func restoreCachedReadings() {
+        if let reading = cache?.snapshot.live[selectedSiteID], reading.response.site.id == selectedSiteID {
+            live.response = reading.response
+            live.lastSuccess = reading.savedAt
+            live.isRestored = true
+        }
+        if let reading = cache?.snapshot.bill[selectedSiteID], reading.response.site.id == selectedSiteID {
+            bill.response = reading.response
+            bill.lastSuccess = reading.savedAt
+            bill.isRestored = true
+        }
+        // Attempts stay nil: every launch/site switch still refreshes immediately.
+    }
+
     func scenePhaseChanged(isActive: Bool) {
         if isActive {
             sceneIsActive = true
-            guard !requiresSignIn else { return }
+            guard canRequestAccountData else { return }
             guard !isForeground else { return }
             isForeground = true
             startTimer()
@@ -235,9 +266,10 @@ final class DashboardCoordinator: ObservableObject {
         }
     }
 
-    /// Call after MobileAuthService completes a successful sign-in exchange.
+    /// Call after the app verifies both the session and authorized site access.
     func authenticationRestored() {
-        guard requiresSignIn else { return }
+        guard !canRequestAccountData else { return }
+        sessionVerified = true
         requiresSignIn = false
         live.lastAttempt = nil
         bill.lastAttempt = nil
@@ -252,9 +284,15 @@ final class DashboardCoordinator: ObservableObject {
     /// still on the wire. Without this a response that lands after sign-out
     /// repopulates a coordinator the user has already left.
     func authenticationInvalidated() {
+        sessionVerified = false
         forecastGeneration += 1
         siteGeneration += 1
         cancelInFlightRequests()
+        live.response = nil
+        live.isRestored = false
+        bill.response = nil
+        bill.isRestored = false
+        requiresSignIn = true
         resetForecastEnhancement(state: .basic, connection: .notConnected)
     }
 
@@ -266,8 +304,9 @@ final class DashboardCoordinator: ObservableObject {
         cancelInFlightRequests()
         live.reset()
         bill.reset()
+        restoreCachedReadings()
         resetForecastEnhancement(state: .basic, connection: .notConnected)
-        guard isForeground, !requiresSignIn else { return }
+        guard isForeground, canRequestAccountData else { return }
         Task { await refreshDue() }
         // The destination view is not re-inserted on a site switch, so re-run the
         // optional enhancement here or the new site stays on the basic estimate.
@@ -281,7 +320,7 @@ final class DashboardCoordinator: ObservableObject {
 
     /// Refreshes live power readings followed by bill estimates.
     func refreshAll(trigger: RefreshTrigger) async {
-        guard !requiresSignIn else { return }
+        guard canRequestAccountData else { return }
         if trigger == .scheduled {
             guard isForeground else { return }
         }
@@ -299,7 +338,7 @@ final class DashboardCoordinator: ObservableObject {
         // The live endpoint may first import stale energy history. Wait for it
         // before asking the bill endpoint to calculate from that history.
         await liveTask?.value
-        guard !requiresSignIn, generation == siteGeneration else { return }
+        guard canRequestAccountData, generation == siteGeneration else { return }
         if trigger == .scheduled {
             guard isForeground else { return }
         }
@@ -311,7 +350,7 @@ final class DashboardCoordinator: ObservableObject {
 
     /// Refreshes the bill estimate, subject to the trigger's cadence.
     func refreshBill(trigger: RefreshTrigger) async {
-        guard !requiresSignIn else { return }
+        guard canRequestAccountData else { return }
         if trigger == .scheduled {
             guard isForeground else { return }
         }
@@ -326,6 +365,7 @@ final class DashboardCoordinator: ObservableObject {
     /// Starts the optional enhancement only when a local credential and array
     /// selection exist. This path refreshes bill/context data but never live data.
     func loadTimingDetailAppeared() async {
+        guard canRequestAccountData else { return }
         let operation = beginForecastOperation()
         guard let forecastStore, let planningAPI, let accountScopeID else {
             solarForecastState = .basic
@@ -350,7 +390,7 @@ final class DashboardCoordinator: ObservableObject {
             loadPlanningContext = nil
             return
         }
-        guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
+        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
         solarForecastState = .loadingWithBasic
         solarForecastConnection = .ready
         solarForecastUnavailableCause = nil
@@ -363,7 +403,7 @@ final class DashboardCoordinator: ObservableObject {
         let context = outcome.context
         await billRefresh
 
-        guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
+        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
         solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
         // A save failure is not an unavailable forecast, on this path exactly as
         // on `refreshSolarForecast`. The batch is fresh and in memory — the store
@@ -413,6 +453,7 @@ final class DashboardCoordinator: ObservableObject {
     }
 
     func refreshSolarForecast(manual: Bool) async {
+        guard canRequestAccountData else { return }
         let operation = beginForecastOperation()
         guard let forecastStore, let accountScopeID else {
             solarForecastState = .basic
@@ -425,10 +466,11 @@ final class DashboardCoordinator: ObservableObject {
             solarForecastConnection = .notConnected
             return
         }
+        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
         solarForecastConnection = credential.resourceIDs.isEmpty ? .awaitingArraySelection : .ready
         solarForecastState = .loadingWithBasic
         let refresh = await forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: manual)
-        guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
+        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
         if loadPlanningContext == nil {
             solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
             solarForecastBatch = nil
@@ -466,6 +508,7 @@ final class DashboardCoordinator: ObservableObject {
 
     @discardableResult
     func connectSolarForecast(apiKey: String) async throws -> String {
+        guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
         let operation = beginForecastOperation()
         guard let forecastStore, let accountScopeID else { throw SolarForecastStore.StoreError.invalidConfiguration }
         let siteID = selectedSiteID
@@ -482,6 +525,7 @@ final class DashboardCoordinator: ObservableObject {
     }
 
     func discoverSolarSites(manual: Bool = true) async throws -> [SolcastSite] {
+        guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
         _ = beginForecastOperation()
         guard let forecastStore, let accountScopeID else { throw SolarForecastStore.StoreError.invalidConfiguration }
         return try await forecastStore.discoverSites(
@@ -492,6 +536,7 @@ final class DashboardCoordinator: ObservableObject {
     }
 
     func selectSolarArrays(_ resourceIDs: [String]) async throws {
+        guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
         let operation = beginForecastOperation()
         guard let forecastStore, let accountScopeID else { throw SolarForecastStore.StoreError.invalidConfiguration }
         let siteID = selectedSiteID
@@ -601,6 +646,7 @@ final class DashboardCoordinator: ObservableObject {
     /// can ask for a new forecast, so it must genuinely do that rather than
     /// refreshing bill data alone.
     func loadTimingDetailRefreshed() async {
+        guard canRequestAccountData else { return }
         await refreshBill(trigger: .userGesture)
         if solarForecastConnection != .notConnected {
             await refreshSolarForecast(manual: true)
@@ -695,9 +741,12 @@ final class DashboardCoordinator: ObservableObject {
         }
         do {
             let response = try await api.fetchLive(siteID: siteID)
-            guard generation == siteGeneration, !requiresSignIn else { return }
+            guard generation == siteGeneration, canRequestAccountData else { return }
             live.response = response
-            live.lastSuccess = now()
+            let successTime = now()
+            live.lastSuccess = successTime
+            live.isRestored = false
+            cache?.storeLive(response, at: successTime)
             live.isUnavailable = false
             live.unavailableStatusCode = nil
         } catch {
@@ -711,10 +760,13 @@ final class DashboardCoordinator: ObservableObject {
         }
         do {
             let response = try await api.fetchBill(siteID: siteID)
-            guard generation == siteGeneration, !requiresSignIn else { return }
+            guard generation == siteGeneration, canRequestAccountData else { return }
             bill.response = response
             billSuccessGeneration += 1
-            bill.lastSuccess = now()
+            let successTime = now()
+            bill.lastSuccess = successTime
+            bill.isRestored = false
+            cache?.storeBill(response, at: successTime)
             bill.isUnavailable = false
             bill.unavailableStatusCode = nil
         } catch {
@@ -757,7 +809,7 @@ final class DashboardCoordinator: ObservableObject {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: timerInterval) }
                 catch { return }
-                guard let self, self.isForeground, !self.requiresSignIn else { return }
+                guard let self, self.isForeground, self.canRequestAccountData else { return }
                 await self.refreshDue()
             }
         }

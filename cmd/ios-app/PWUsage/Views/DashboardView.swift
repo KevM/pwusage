@@ -4,6 +4,7 @@ struct DashboardView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
     let onChooseSite: () -> Void
+    var onRefresh: (() async -> Void)? = nil
     let onSignOut: () -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -16,6 +17,9 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    if coordinator.live.isRestored || coordinator.bill.isRestored {
+                        AvailabilityBanner(message: "Showing saved data from your last visit.", symbol: "clock.arrow.circlepath")
+                    }
                     if coordinator.live.isUnavailable {
                         AvailabilityBanner(message: "Live data is temporarily unavailable. Showing the last successful reading with its original source time.", symbol: "wifi.exclamationmark")
                     }
@@ -34,7 +38,8 @@ struct DashboardView: View {
                 .frame(maxWidth: .infinity)
             }
             .refreshable {
-                await coordinator.refreshAll(trigger: .userGesture)
+                if let onRefresh { await onRefresh() }
+                else { await coordinator.refreshAll(trigger: .userGesture) }
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle(site.name)
@@ -139,7 +144,7 @@ struct DashboardView: View {
 
     private var todaySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Today so far", subtitle: live.map { DashboardPresentation.freshness($0.sources.energyDataThrough, staleAfter: 30 * 60) } ?? "Waiting for energy data")
+            sectionHeading(coordinator.live.isRestored ? "Energy · \(live?.site.localDate ?? "Last visit")" : "Today so far", subtitle: live.map { DashboardPresentation.freshness($0.sources.energyDataThrough, staleAfter: 30 * 60) } ?? "Waiting for energy data")
             if let live, live.sources.energyDataThrough == nil {
                 EmptyCard(symbol: "chart.bar", title: "No energy data yet", message: "Today’s totals will appear after the first energy sample is recorded.")
             } else if let today = live?.today {

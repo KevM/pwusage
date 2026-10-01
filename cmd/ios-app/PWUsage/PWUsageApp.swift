@@ -25,7 +25,8 @@ struct PWUsageApp: App {
             launch = .ready(
                 PWUsageAppModel(
                     configuration: configuration,
-                    api: PWUsageAPI(configuration: configuration)
+                    api: PWUsageAPI(configuration: configuration),
+                    cache: .persistent(apiOrigin: configuration.apiOrigin)
                 )
             )
         } catch let error as AppConfiguration.ValidationError {
@@ -79,7 +80,7 @@ private struct PWUsageCommands: Commands {
         CommandMenu("View") {
             Button("Refresh") {
                 Task {
-                    await model.coordinator?.refreshDue()
+                    await model.refreshDashboard(trigger: .scheduled)
                 }
             }
             .keyboardShortcut("r", modifiers: .command)
@@ -131,6 +132,10 @@ final class PWUsageAppModel: ObservableObject {
     let authService: MobileAuthService
     private let api: any PWUsageApplicationAPI
     private let userDefaults: UserDefaults
+    private let cache: DashboardCache?
+    private var sessionVerified = false
+    private var hasBootstrapAttempted = false
+    private var siteRequestCount = 0
     private let forecastStore: any SolarForecastManaging
     private let coordinatorFactory: CoordinatorFactory
     private var coordinatorAuthSubscription: AnyCancellable?
@@ -146,10 +151,12 @@ final class PWUsageAppModel: ObservableObject {
         api: any PWUsageApplicationAPI,
         userDefaults: UserDefaults = .standard,
         forecastStore: any SolarForecastManaging = SolarForecastStore.shared,
-        coordinatorFactory: CoordinatorFactory? = nil
+        coordinatorFactory: CoordinatorFactory? = nil,
+        cache: DashboardCache? = nil
     ) {
         self.api = api
         self.userDefaults = userDefaults
+        self.cache = cache
         self.forecastStore = forecastStore
         if let coordinatorFactory {
             self.coordinatorFactory = coordinatorFactory
@@ -169,6 +176,14 @@ final class PWUsageAppModel: ObservableObject {
             api: api,
             forecastCleanup: SolarForecastStoreSessionCleanup(store: forecastStore)
         )
+        if let cachedSites = cache?.snapshot.sites, !cachedSites.isEmpty {
+            sites = cachedSites
+            let savedID = userDefaults.string(forKey: Self.selectedSiteDefaultsKey)
+            let chosen = cachedSites.first(where: { $0.id == savedID }) ?? cachedSites[0]
+            selectedSiteID = chosen.id
+            installCoordinator(siteID: chosen.id, accountScopeID: ensureAccountScopeID())
+            screenState = .signedIn
+        }
     }
 
     /// Retries until a terminal state is reached. The `.task` that drives this is
@@ -178,10 +193,14 @@ final class PWUsageAppModel: ObservableObject {
     /// instead: a retry is free to run alongside the attempt it supersedes, and
     /// the older one cannot publish.
     func bootstrap() async {
+        hasBootstrapAttempted = true
         switch screenState {
-        case .signedIn, .signedOut, .unavailable: return
+        case .signedIn: if sessionVerified { return }
+        case .signedOut, .unavailable: return
         case .bootstrapping, .noSites: break
         }
+        siteRequestCount += 1
+        defer { siteRequestCount -= 1 }
         let generation = claimSiteInstall()
         do {
             let availableSites = try await api.fetchSites()
@@ -191,17 +210,21 @@ final class PWUsageAppModel: ObservableObject {
             if error == .signInRequired {
                 await invalidateSession(message: nil)
             } else {
-                screenState = .unavailable
+                if coordinator == nil { screenState = .unavailable }
             }
         } catch {
             guard generation == siteInstallGeneration else { return }
-            screenState = .unavailable
+            if coordinator == nil { screenState = .unavailable }
         }
     }
 
     func scenePhaseChanged(isActive: Bool) {
         sceneIsActive = isActive
-        coordinator?.scenePhaseChanged(isActive: isActive)
+        if sessionVerified {
+            coordinator?.scenePhaseChanged(isActive: isActive)
+        } else if isActive, hasBootstrapAttempted, coordinator != nil, siteRequestCount == 0 {
+            Task { await reloadSitesAfterSignIn() }
+        }
     }
 
     func signIn() async {
@@ -209,6 +232,8 @@ final class PWUsageAppModel: ObservableObject {
         isSigningIn = true
         signInMessage = nil
         defer { isSigningIn = false }
+        siteRequestCount += 1
+        defer { siteRequestCount -= 1 }
         let generation = claimSiteInstall()
         do {
             try await authService.signIn()
@@ -235,6 +260,8 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func reloadSitesAfterSignIn() async {
+        siteRequestCount += 1
+        defer { siteRequestCount -= 1 }
         let generation = claimSiteInstall()
         do {
             let availableSites = try await api.fetchSites()
@@ -244,7 +271,15 @@ final class PWUsageAppModel: ObservableObject {
             await invalidateSession(message: "Your session expired. Sign in to continue.")
         } catch {
             guard generation == siteInstallGeneration else { return }
-            screenState = authService.isAuthenticated ? .unavailable : .signedOut
+            if coordinator == nil { screenState = authService.isAuthenticated ? .unavailable : .signedOut }
+        }
+    }
+
+    func refreshDashboard(trigger: DashboardCoordinator.RefreshTrigger = .userGesture) async {
+        if sessionVerified {
+            await coordinator?.refreshAll(trigger: trigger)
+        } else {
+            await reloadSitesAfterSignIn()
         }
     }
 
@@ -304,6 +339,10 @@ final class PWUsageAppModel: ObservableObject {
     /// polling timer, which otherwise keeps a strong reference and keeps asking
     /// for authenticated data after the user has signed out.
     private func teardownCoordinator() {
+        siteInstallGeneration += 1
+        sessionVerified = false
+        cache?.clear()
+        coordinatorAuthSubscription = nil
         coordinator?.authenticationInvalidated()
         coordinator?.scenePhaseChanged(isActive: false)
     }
@@ -339,7 +378,12 @@ final class PWUsageAppModel: ObservableObject {
         let accountScopeID = ensureAccountScopeID()
         await forecastStore.activateAccountScope(accountScopeID)
         guard generation == siteInstallGeneration else { return }
+        cache?.storeSites(availableSites)
+        sessionVerified = true
         guard !availableSites.isEmpty else {
+            coordinatorAuthSubscription = nil
+            coordinator?.authenticationInvalidated()
+            coordinator?.scenePhaseChanged(isActive: false)
             coordinator = nil
             selectedSiteID = nil
             screenState = .noSites
@@ -355,17 +399,25 @@ final class PWUsageAppModel: ObservableObject {
             coordinator.authenticationRestored()
             coordinator.scenePhaseChanged(isActive: sceneIsActive)
         } else {
-            let nextCoordinator = coordinatorFactory(chosen.id, accountScopeID)
-            coordinator = nextCoordinator
-            coordinatorAuthSubscription = nextCoordinator.$requiresSignIn
-                .removeDuplicates()
-                .sink { [weak self] required in
-                    guard required else { return }
-                    Task { @MainActor in await self?.sessionExpired() }
-                }
-            nextCoordinator.scenePhaseChanged(isActive: sceneIsActive)
+            coordinatorAuthSubscription = nil
+            coordinator?.authenticationInvalidated()
+            coordinator?.scenePhaseChanged(isActive: false)
+            installCoordinator(siteID: chosen.id, accountScopeID: accountScopeID)
+            coordinator?.scenePhaseChanged(isActive: sceneIsActive)
         }
         screenState = .signedIn
+    }
+
+    private func installCoordinator(siteID: String, accountScopeID: String) {
+        let nextCoordinator = coordinatorFactory(siteID, accountScopeID)
+        nextCoordinator.restoreLaunchCache(cache, sessionVerified: sessionVerified)
+        coordinator = nextCoordinator
+        coordinatorAuthSubscription = nextCoordinator.$requiresSignIn
+            .removeDuplicates()
+            .sink { [weak self] required in
+                guard required else { return }
+                Task { @MainActor in await self?.sessionExpired() }
+            }
     }
 
     static let selectedSiteDefaultsKey = "pwusage.selectedSiteID"
@@ -415,7 +467,7 @@ private struct PWUsageRootView: View {
                             Task { await model.signIn() }
                         }
                     } else {
-                        DashboardView(coordinator: coordinator, site: site, onChooseSite: { model.openSitePicker() }) {
+                        DashboardView(coordinator: coordinator, site: site, onChooseSite: { model.openSitePicker() }, onRefresh: { await model.refreshDashboard() }) {
                             Task { await model.signOut() }
                         }
                         .sheet(isPresented: $model.isSitePickerPresented) {

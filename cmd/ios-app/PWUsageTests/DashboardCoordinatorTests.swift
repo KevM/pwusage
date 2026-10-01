@@ -5,6 +5,71 @@ import Testing
 @MainActor
 @Suite("Dashboard Coordinator Tests", .serialized)
 struct DashboardCoordinatorTests {
+    @Test("Disk snapshots preserve timestamps and restore only the selected site")
+    func diskSnapshotsRestorePerSite() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let cache = DashboardCache(fileURL: fileURL)
+        cache.storeSites([MobileSite(id: "site-1", name: "Home", utility: "Utility"), MobileSite(id: "site-2", name: "Other", utility: "Utility")])
+        let api = DashboardAPISpy()
+        let savedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = DashboardCoordinator(siteID: "site-1", api: api, now: { savedAt }, timerInterval: nil, cache: cache)
+        await first.refreshAll(trigger: .userGesture)
+        let reloadedCache = DashboardCache(fileURL: fileURL)
+        let restored = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil, cache: reloadedCache)
+        #expect(restored.live.response == first.live.response)
+        #expect(restored.bill.response == first.bill.response)
+        #expect(restored.live.lastSuccess == savedAt)
+        #expect(restored.bill.lastSuccess == savedAt)
+        #expect(restored.live.lastAttempt == nil)
+        #expect(restored.live.isRestored)
+        #expect(restored.bill.isRestored)
+
+        restored.selectSite("site-2")
+        #expect(restored.live.response == nil)
+        #expect(restored.bill.response == nil)
+        restored.selectSite("site-1")
+        #expect(restored.live.response == first.live.response)
+        api.liveError = URLError(.notConnectedToInternet)
+        api.billError = URLError(.notConnectedToInternet)
+        await restored.refreshAll(trigger: .userGesture)
+        #expect(restored.live.response == first.live.response)
+        #expect(restored.bill.response == first.bill.response)
+        #expect(restored.live.isUnavailable)
+        #expect(restored.live.isRestored)
+        api.liveError = nil
+        api.billError = nil
+        await restored.refreshAll(trigger: .userGesture)
+        #expect(!restored.live.isRestored)
+        #expect(!restored.bill.isRestored)
+
+        reloadedCache.storeSites([])
+        #expect(DashboardCache(fileURL: fileURL).snapshot.live.isEmpty)
+        #expect(DashboardCache(fileURL: fileURL).snapshot.bill.isEmpty)
+    }
+
+    @Test("Discarding a session ignores an in-flight response and cannot refill cache")
+    func discardedSessionCannotRefillCache() async {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let cache = DashboardCache(fileURL: fileURL)
+        cache.storeSites([MobileSite(id: "site-1", name: "Home", utility: "Utility")])
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil, cache: cache)
+        let refresh = Task { await coordinator.refreshAll(trigger: .userGesture) }
+        await api.waitUntilLiveRequestStarts()
+        coordinator.authenticationInvalidated()
+        coordinator.scenePhaseChanged(isActive: false)
+        cache.clear()
+        api.resumeRequests()
+        await refresh.value
+        #expect(coordinator.live.response == nil)
+        #expect(cache.snapshot.live.isEmpty)
+        #expect(DashboardCache(fileURL: fileURL).snapshot.sites.isEmpty)
+        #expect(api.billSiteIDs.isEmpty)
+    }
+
     @Test("Initial foreground load and exact sixty minute request counts")
     func initialForegroundLoadAndExactSixtyMinuteRequestCounts() async throws {
         let clock = TestClock()
@@ -466,38 +531,51 @@ struct DashboardCoordinatorTests {
         await liveCall.value
     }
 
-    @Test("Concurrent refreshAll and refreshBill coalesce in-flight requests")
-    func concurrentRefreshesCoalesceInFlightRequests() async {
+    @Test("Concurrent refresh calls coalesce each endpoint while its request is in flight")
+    func concurrentRefreshesCoalesceInFlightRequests() async throws {
         let api = DashboardAPISpy()
         api.holdLive = true
-        api.holdBill = true
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { Date(timeIntervalSince1970: 0) }, timerInterval: nil)
-        coordinator.scenePhaseChanged(isActive: true)
 
         let first = Task { await coordinator.refreshAll(trigger: .userGesture) }
         await api.waitUntilLiveRequestStarts()
-        let second = Task { await coordinator.refreshAll(trigger: .userGesture) }
-
+        var second: Task<Void, Never>?
+        await withCheckedContinuation { started in
+            second = Task { @MainActor in
+                started.resume()
+                // The actor cannot resume the test until this reaches its
+                // suspension on the held live request.
+                await coordinator.refreshAll(trigger: .userGesture)
+            }
+        }
+        let secondRefresh = try #require(second)
         #expect(api.liveSiteIDs.count == 1)
-        #expect(api.billSiteIDs.count == 0)
-
+        #expect(api.billSiteIDs.isEmpty)
         api.resumeRequests()
         await first.value
-        await second.value
-
+        await secondRefresh.value
         #expect(api.liveSiteIDs.count == 1)
-        #expect(api.billSiteIDs.count == 1)
+        // Bill responses are immediate in this phase. A caller that reaches the
+        // bill after it completes may legitimately start a new explicit refresh.
 
-        api.holdBill = true
-        let bill1 = Task { await coordinator.refreshBill(trigger: .userGesture) }
-        await api.waitUntilBillRequestStarts(targetCount: 2)
-        let bill2 = Task { await coordinator.refreshBill(trigger: .userGesture) }
-
-        api.resumeRequests()
+        let billAPI = DashboardAPISpy()
+        billAPI.holdBill = true
+        let billCoordinator = DashboardCoordinator(siteID: "site-1", api: billAPI, timerInterval: nil)
+        let bill1 = Task { await billCoordinator.refreshBill(trigger: .userGesture) }
+        await billAPI.waitUntilBillRequestStarts()
+        var bill2: Task<Void, Never>?
+        await withCheckedContinuation { started in
+            bill2 = Task { @MainActor in
+                started.resume()
+                await billCoordinator.refreshBill(trigger: .userGesture)
+            }
+        }
+        let secondBillRefresh = try #require(bill2)
+        #expect(billAPI.billSiteIDs.count == 1)
+        billAPI.resumeRequests()
         await bill1.value
-        await bill2.value
-
-        #expect(api.billSiteIDs.count == 2)
+        await secondBillRefresh.value
+        #expect(billAPI.billSiteIDs.count == 1)
     }
 
     @Test("refreshAll and refreshBill early return when requiresSignIn is true")

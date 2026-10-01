@@ -216,6 +216,7 @@ describe('mobile bill summary route', () => {
         ]));
         expect(body.loadTiming.nextCheaper).toBeNull();
         expect(usageMock).toHaveBeenCalledTimes(1);
+        vi.useRealTimers();
     });
 
     it('uses required season rates when active schedule overrides are absent', async () => {

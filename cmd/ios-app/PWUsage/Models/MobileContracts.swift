@@ -6,7 +6,7 @@ struct MobileSite: Codable, Equatable, Identifiable {
     let utility: String
 }
 
-struct MobileLiveResponse: Decodable, Equatable {
+struct MobileLiveResponse: Codable, Equatable {
     /// A battery charge reading older than this is unknown, never "fresh". Mirrors the server
     /// rule in `buildMobileDashboardContract` — change one and you must change both: the server
     /// constant is `MOBILE_SOC_MAX_AGE_MS` in
@@ -26,14 +26,14 @@ struct MobileLiveResponse: Decodable, Equatable {
     let currentBill: Bill?
     let sources: Sources
 
-    struct Site: Decodable, Equatable {
+    struct Site: Codable, Equatable {
         let id: String
         let name: String
         let timezone: String
         let localDate: String
     }
 
-    struct Live: Decodable, Equatable {
+    struct Live: Codable, Equatable {
         let solarPower: Double
         let loadPower: Double
         let batteryPower: Double
@@ -60,14 +60,14 @@ struct MobileLiveResponse: Decodable, Equatable {
         }
     }
 
-    struct Today: Decodable, Equatable {
+    struct Today: Codable, Equatable {
         let homeKwh: Double
         let solarKwh: Double
         let gridNetKwh: Double
         let batteryNetKwh: Double
     }
 
-    struct Bill: Decodable, Equatable {
+    struct Bill: Codable, Equatable {
         let estimatedCost: Double?
         let currency: String
         let cycleStart: Date
@@ -75,7 +75,7 @@ struct MobileLiveResponse: Decodable, Equatable {
         let periods: [Period]
     }
 
-    struct Sources: Decodable, Equatable {
+    struct Sources: Codable, Equatable {
         let liveStatusAt: Date?
         let energyDataThrough: Date?
         let stateOfChargeAt: Date?
@@ -121,20 +121,20 @@ struct MobileLiveResponse: Decodable, Equatable {
     }
 }
 
-struct MobileBillResponse: Decodable, Equatable {
+struct MobileBillResponse: Codable, Equatable {
     let version: Int
     let site: Site
     let currentBill: Bill
     let loadTiming: LoadTiming?
     let sources: Sources
 
-    struct Site: Decodable, Equatable {
+    struct Site: Codable, Equatable {
         let id: String
         let name: String
         let timezone: String
     }
 
-    struct Bill: Decodable, Equatable {
+    struct Bill: Codable, Equatable {
         let estimatedCost: Double?
         let currency: String
         let cycleStart: Date
@@ -142,7 +142,7 @@ struct MobileBillResponse: Decodable, Equatable {
         let periods: [Period]
     }
 
-    struct Sources: Decodable, Equatable {
+    struct Sources: Codable, Equatable {
         let calculatedAt: Date
         let energyDataThrough: Date?
     }
@@ -281,7 +281,7 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
     }
 }
 
-struct ActiveLoadTiming: Decodable, Equatable {
+struct ActiveLoadTiming: Codable, Equatable {
     let periodName: String
     let buyRate: Double
     let sellRate: Double
@@ -291,7 +291,7 @@ struct ActiveLoadTiming: Decodable, Equatable {
     let energyDataThrough: Date?
 }
 
-struct LoadTiming: Decodable, Equatable {
+struct LoadTiming: Codable, Equatable {
     let hasTariff: Bool
     let hasCycleData: Bool
     let activeIsCheapest: Bool
@@ -343,7 +343,7 @@ struct LoadTiming: Decodable, Equatable {
     }
 }
 
-struct LoadTimingTariffSegment: Decodable, Equatable {
+struct LoadTimingTariffSegment: Codable, Equatable {
     let start: Date
     let end: Date
     let periodKey: String
@@ -352,7 +352,7 @@ struct LoadTimingTariffSegment: Decodable, Equatable {
     let sellRate: Double
 }
 
-struct LoadTimingPeriod: Decodable, Equatable {
+struct LoadTimingPeriod: Codable, Equatable {
     let name: String
     let marginalCost: Double?
     let basis: String
@@ -363,13 +363,13 @@ struct LoadTimingPeriod: Decodable, Equatable {
     let sellRate: Double
 }
 
-struct NextCheaperPeriod: Decodable, Equatable {
+struct NextCheaperPeriod: Codable, Equatable {
     let name: String
     let marginalCost: Double
     let phrase: String
 }
 
-struct Period: Decodable, Equatable {
+struct Period: Codable, Equatable {
     let tariffName: String
     let periodName: String
     let netGridKwh: Double

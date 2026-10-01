@@ -291,6 +291,162 @@ struct PWUsageAppModelTests {
         #expect(model.coordinator?.selectedSiteID == "site-2", "The stale attempt must not replace the newer coordinator.")
     }
 
+    @Test("Relaunch immediately restores the last dashboard before network requests")
+    func relaunchRestoresDashboard() async throws {
+        let defaults = makeDefaults()
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let cacheURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
+        defer { try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent()) }
+        let first = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: defaults, cache: DashboardCache(fileURL: cacheURL))
+        first.scenePhaseChanged(isActive: true)
+        await first.bootstrap()
+        try await waitUntil { first.coordinator?.bill.response != nil }
+        first.scenePhaseChanged(isActive: false)
+
+        let offlineAPI = ApplicationAPISpy(sites: [], sitesError: URLError(.notConnectedToInternet))
+        let relaunched = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: offlineAPI, userDefaults: defaults, cache: DashboardCache(fileURL: cacheURL))
+        #expect(relaunched.screenState == .signedIn)
+        #expect(relaunched.sites == first.sites)
+        #expect(relaunched.coordinator?.live.response == first.coordinator?.live.response)
+        #expect(relaunched.coordinator?.bill.response == first.coordinator?.bill.response)
+        #expect(offlineAPI.siteFetchCount == 0)
+        relaunched.scenePhaseChanged(isActive: true)
+        await relaunched.bootstrap()
+        #expect(relaunched.screenState == .signedIn)
+        #expect(!relaunched.authService.isAuthenticated, "Saved presentation cannot authorize a session.")
+        #expect(offlineAPI.liveSiteIDs.isEmpty, "Poll only after sites have been authorized.")
+        #expect(relaunched.coordinator?.live.lastAttempt == nil)
+        #expect(relaunched.coordinator?.live.isRestored == true)
+        offlineAPI.sitesError = nil
+        offlineAPI.sites = first.sites
+        await relaunched.refreshDashboard()
+        try await waitUntil { relaunched.coordinator?.bill.isRestored == false }
+        #expect(relaunched.authService.isAuthenticated)
+        #expect(!offlineAPI.liveSiteIDs.isEmpty)
+        relaunched.scenePhaseChanged(isActive: false)
+
+        offlineAPI.sitesError = PWUsageAPIError.signInRequired
+        await relaunched.reloadSitesAfterSignIn()
+        #expect(relaunched.screenState == .signedOut)
+        #expect(relaunched.coordinator == nil)
+        #expect(DashboardCache(fileURL: cacheURL).snapshot.sites.isEmpty)
+
+    }
+
+    @Test("Restored detail actions wait for site authorization, including offline and pending launches")
+    func restoredDetailActionsWaitForAuthorization() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let cache = DashboardCache(fileURL: fileURL)
+        cache.storeSites([Self.site("site-1"), Self.site("site-2")])
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")], sitesError: URLError(.notConnectedToInternet))
+        let forecast = AppForecastManagerSpy(configured: true)
+        let model = PWUsageAppModel(
+            configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults(),
+            forecastStore: forecast, cache: cache
+        )
+        let coordinator = try #require(model.coordinator)
+
+        func attemptDetailActions() async {
+            await coordinator.refreshAll(trigger: .userGesture)
+            await coordinator.refreshBill(trigger: .screenAppearance)
+            await coordinator.loadTimingDetailAppeared()
+            await coordinator.loadTimingDetailRefreshed()
+            await coordinator.refreshSolarForecast(manual: true)
+            await #expect(throws: PWUsageAPIError.signInRequired) {
+                _ = try await coordinator.connectSolarForecast(apiKey: "fixture")
+            }
+            await #expect(throws: PWUsageAPIError.signInRequired) {
+                _ = try await coordinator.discoverSolarSites()
+            }
+            await #expect(throws: PWUsageAPIError.signInRequired) {
+                try await coordinator.selectSolarArrays(["east"])
+            }
+        }
+
+        await attemptDetailActions()
+        await model.bootstrap()
+        model.selectSite(Self.site("site-2"))
+        await attemptDetailActions()
+        api.sitesError = nil
+        api.holdSites = true
+        let retry = Task { await model.reloadSitesAfterSignIn() }
+        try await waitUntil { api.siteFetchCount == 2 }
+        await attemptDetailActions()
+
+        #expect(model.screenState == .signedIn)
+        #expect(!coordinator.requiresSignIn, "Unverified saved presentation should not force sign-in.")
+        #expect(api.liveSiteIDs.isEmpty)
+        #expect(api.billSiteIDs.isEmpty)
+        #expect(api.contextSiteIDs.isEmpty)
+        #expect(await forecast.refreshCount == 0)
+        #expect(!coordinator.pollingTimerIsActive)
+        #expect(coordinator.live.lastAttempt == nil)
+        #expect(coordinator.bill.lastAttempt == nil)
+
+        api.resumeSites()
+        await retry.value
+        #expect(model.coordinator === coordinator)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(api.billSiteIDs == ["site-2"])
+        #expect(api.contextSiteIDs == ["site-2"])
+        #expect(await forecast.refreshCount == 1)
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(api.liveSiteIDs == ["site-2"])
+    }
+
+    @Test("Sign-out removes the launch snapshot and stops retained coordinator requests")
+    func signOutClearsSnapshot() async throws {
+        let cacheURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
+        defer { try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent()) }
+        let cache = DashboardCache(fileURL: cacheURL)
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults(), cache: cache)
+        model.scenePhaseChanged(isActive: true)
+        await model.bootstrap()
+        try await waitUntil { model.coordinator?.bill.response != nil }
+        let coordinator = try #require(model.coordinator)
+        await model.signOut()
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(model.screenState == .signedOut)
+        #expect(cache.snapshot.sites.isEmpty)
+        #expect(DashboardCache(fileURL: cacheURL).snapshot.live.isEmpty)
+        #expect(!coordinator.pollingTimerIsActive)
+        #expect(coordinator.live.response == nil)
+        #expect(api.liveSiteIDs.count == 1)
+    }
+
+    @Test("Malformed launch snapshot falls back to normal bootstrap")
+    func malformedSnapshotFallsBack() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        try Data("broken snapshot".utf8).write(to: fileURL)
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: ApplicationAPISpy(sites: [Self.site("site-1")]), userDefaults: makeDefaults(), cache: DashboardCache(fileURL: fileURL))
+        #expect(model.screenState == .bootstrapping)
+        await model.bootstrap()
+        #expect(model.screenState == .signedIn)
+    }
+
+    @Test("A site request finishing after sign-out cannot restore the session")
+    func pendingBootstrapCannotUndoSignOut() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let cache = DashboardCache(fileURL: fileURL)
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        api.holdSites = true
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults(), cache: cache)
+        let bootstrap = Task { await model.bootstrap() }
+        try await waitUntil { api.siteFetchCount == 1 }
+        await model.signOut()
+        api.resumeSites()
+        await bootstrap.value
+        #expect(model.screenState == .signedOut)
+        #expect(model.coordinator == nil)
+        #expect(!model.authService.isAuthenticated)
+        #expect(cache.snapshot.sites.isEmpty)
+        #expect(DashboardCache(fileURL: fileURL).snapshot.sites.isEmpty)
+    }
+
     // `pwusage.test` is a stub host, so the allowlist opt-out is explicit. Built by
     // a throwing helper rather than a force-unwrapped `static let`, so a rejected origin fails
     // the one test that used it instead of trapping the whole binary.
@@ -360,15 +516,18 @@ private final class AppTestClock {
 
 @MainActor
 private final class ApplicationAPISpy: PWUsageApplicationAPI {
-    let sites: [MobileSite]
+    var sites: [MobileSite]
     /// Consumed one entry per `fetchSites` before `sites` is used, so a test can
     /// hand successive attempts different site lists.
     var sitesSequence: [[MobileSite]] = []
     var sitesError: Error?
+    var holdSites = false
+    private var sitesContinuation: CheckedContinuation<[MobileSite], Error>?
     var holdLive = false
     private(set) var siteFetchCount = 0
     private(set) var liveSiteIDs: [String] = []
     private(set) var billSiteIDs: [String] = []
+    private(set) var contextSiteIDs: [String] = []
     private(set) var cookieClearCount = 0
     private var liveContinuations: [(String, CheckedContinuation<MobileLiveResponse, Error>)] = []
 
@@ -380,9 +539,16 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI {
 
     func fetchSites() async throws -> [MobileSite] {
         siteFetchCount += 1
+        if holdSites { return try await withCheckedThrowingContinuation { sitesContinuation = $0 } }
         if let sitesError { throw sitesError }
         if sitesSequence.isEmpty { return sites }
         return sitesSequence.removeFirst()
+    }
+
+    func resumeSites() {
+        holdSites = false
+        sitesContinuation?.resume(returning: sites)
+        sitesContinuation = nil
     }
 
     func fetchLive(siteID: String) async throws -> MobileLiveResponse {
@@ -414,6 +580,7 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI {
     }
 
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
+        contextSiteIDs.append(siteID)
         throw PWUsageAPIError.invalidResponse
     }
 
@@ -436,6 +603,11 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI {
 }
 
 private actor AppForecastManagerSpy: SolarForecastManaging {
+    private let configured: Bool
+    private(set) var refreshCount = 0
+
+    init(configured: Bool = false) { self.configured = configured }
+
     private(set) var activations: [String?] = []
     private(set) var signOutCount = 0
     private var signOutError: SolarForecastStore.StoreError?
@@ -461,13 +633,19 @@ private actor AppForecastManagerSpy: SolarForecastManaging {
         signOutCount += 1
         if let signOutError { throw signOutError }
     }
-    func credential(accountScopeID: String, siteID: String) -> SolarForecastCredential? { nil }
+    func credential(accountScopeID: String, siteID: String) -> SolarForecastCredential? {
+        guard configured else { return nil }
+        return SolarForecastCredential(accountScopeID: accountScopeID, siteID: siteID, credentialID: "fixture", resourceIDs: ["east"])
+    }
     func connect(apiKey: String, accountScopeID: String, siteID: String, resourceIDs: [String]?) throws -> String {
         throw SolarForecastStore.StoreError.invalidConfiguration
     }
     func discoverSites(accountScopeID: String, siteID: String, manual: Bool) throws -> [SolcastSite] { [] }
     func selectArrays(_ resourceIDs: [String], accountScopeID: String, siteID: String) throws {}
-    func refresh(accountScopeID: String, siteID: String, manual: Bool) -> SolarForecastRefreshResult { .notConfigured }
+    func refresh(accountScopeID: String, siteID: String, manual: Bool) -> SolarForecastRefreshResult {
+        refreshCount += 1
+        return .notConfigured
+    }
     func cachedBatch(accountScopeID: String, siteID: String) -> SolarForecastBatch? { nil }
     func isRecommendationUsable(accountScopeID: String, siteID: String) -> Bool { false }
     func budget(for accountScopeID: String, siteID: String) -> SolarForecastBudget {
