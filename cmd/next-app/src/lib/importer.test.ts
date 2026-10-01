@@ -339,10 +339,12 @@ describe('Importer Sync Logic', () => {
             },
         ];
 
+        const getDailyCoverageMock = vi.fn().mockResolvedValue(existingCoverage);
+
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getDailyCoverage: vi.fn().mockResolvedValue(existingCoverage),
+            getDailyCoverage: getDailyCoverageMock,
             insertEnergyDataBatch: vi.fn()
         };
 
@@ -350,9 +352,14 @@ describe('Importer Sync Logic', () => {
 
         await importer.ensureDataForRange('site-123', start, end);
 
-        // The whole day is summarized by one coverage row, covering the
-        // site-midnight start rather than the non-midnight start (14:30)
-        expect(existingCoverage).toHaveLength(1);
+        // Coverage is audited from site midnight (00:00), not the caller's
+        // non-midnight start (14:30), and it is bucketed by the site's timezone
+        expect(getDailyCoverageMock).toHaveBeenCalledWith(
+            'site-123',
+            new Date('2026-01-10T00:00:00Z'),
+            new Date('2026-01-11T00:00:00Z'),
+            'America/Chicago'
+        );
 
         // Verify we don't import when full-day coverage exists
         expect(importSpy).not.toHaveBeenCalled();
