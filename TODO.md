@@ -24,16 +24,10 @@ The July 2026 Supabase egress spike was traced to site queries duplicating wide
 columns (Site.json, Tesla tokens, live_status_cache) across the tariff join
 fan-out on the TRMNL markup hot path; that and the markup route's duplicate
 usage-by-TOU fetch were fixed (2026-07-18, branch `claude/db-egress-spike-eie52j`).
+Per-poll cost on this path is amplified: `DataSyncer` retries up to 15× per stage,
+2 stages, re-running hourly.
 Candidates that remain, in rough value order:
 
-- **`getExistingTimestamps` returns every 5-min timestamp** in the audited
-  range (~8.5k rows per billing cycle) on each `/api/sync` step, and
-  `DataSyncer` retries up to 15× per stage, 2 stages, re-running hourly.
-  Aggregating per-day stats (count, first, last, max interior gap via `lag()`)
-  in SQL would cut it ~300×, but must reproduce `auditDays`' site-timezone day
-  windows (DST days are pinned by `import-planner.test.ts`) — do it carefully.
-  **(2026-10-01, in flight on `perf/sync-daily-coverage-aggregation`)** — design
-  and implementation plan written, no code yet.
 - **Live-status cache churn:** `claimLiveRefresh`/`updateLiveStatusCache`
   invalidate the in-memory site cache roughly every 14–16 min per site, so the
   15-min site cache rarely survives. Consider a narrow update that doesn't
