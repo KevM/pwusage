@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { verifyAccessMock, siteMock, currencyMock, usageMock, latestMock } = vi.hoisted(() => ({
     verifyAccessMock: vi.fn(), siteMock: vi.fn(), currencyMock: vi.fn(), usageMock: vi.fn(), latestMock: vi.fn(),
@@ -37,6 +37,10 @@ function tariff(name = 'Seasonal utility') {
 }
 
 describe('mobile bill summary route', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     beforeEach(() => {
         vi.clearAllMocks();
         verifyAccessMock.mockResolvedValue(true);
@@ -193,6 +197,8 @@ describe('mobile bill summary route', () => {
     });
 
     it('includes configured pricing periods when the cycle has no observations', async () => {
+        // The configured periods below belong to the summer tariff fixture.
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
         siteMock.mockResolvedValue({
             id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
             tariffs: [tariff()],

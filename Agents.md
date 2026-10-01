@@ -90,4 +90,5 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - **Task Management**: Use `task.md` to track huge chunks of work.
 - **Verification**: Always verify builds, lint, and run tests before finishing tasks.
 - **Git Commits**: Automatically commit verified changes at the end of completed tasks using clear, conventional commit messages.
+- **Pull Requests**: Create pull requests as drafts initially unless the user requests otherwise. iOS CI runs when a PR is marked ready for review and on subsequent updates while it is ready; draft PRs skip automatic iOS tests. Manual iOS workflow runs remain available.
 - **Persona**: Helpful, competent software engineer pair programmer.

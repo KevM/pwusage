@@ -18,6 +18,12 @@ permissions:
   contents: read
   pull-requests: read
 
+# Cancel obsolete PR checks without interrupting production migrations/deploys.
+# Non-PR runs have independent groups, so queued production runs also survive.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Run Tests
