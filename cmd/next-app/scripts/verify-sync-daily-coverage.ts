@@ -7,15 +7,21 @@
  * real rows, across real DST transitions. Re-run it by hand before merging any
  * change to `getDailyCoverage`.
  *
- * READ-ONLY BY CONSTRUCTION. Every statement this script issues is a SELECT.
- * It additionally pins each pooled connection to a read-only transaction, so
- * even a future edit that added DML here could not write. Nothing in production
- * depends on this file.
+ * READ-ONLY. No statement this script issues mutates data: the coverage and
+ * reference queries are SELECTs, the only non-SELECT is one session-level
+ * `SET default_transaction_read_only = on`, and that is read-only itself. The
+ * enforcement is not a claim about this file's text but a runtime check: every
+ * pooled connection is pinned to a read-only transaction and the script aborts
+ * unless `SHOW default_transaction_read_only` reports `on`. So even a future
+ * edit that added DML here could not write. Nothing in production depends on
+ * this file.
  *
  * Usage (from cmd/next-app):
  *   npx tsx scripts/verify-sync-daily-coverage.ts
  *
  * Overrides (all optional):
+ *   VERIFY_SYNC_COVERAGE_DATABASE_URL connection string; takes precedence over
+ *                                    DEV_DATABASE_URL and DATABASE_URL
  *   VERIFY_SYNC_COVERAGE_SITE_ID     site to check (default: the Chicago DST site)
  *   VERIFY_SYNC_COVERAGE_TIMEZONE    site timezone override (default: read from "Site")
  *   VERIFY_SYNC_COVERAGE_START       range start, inclusive (ISO 8601)
@@ -27,6 +33,7 @@
  */
 import dotenv from 'dotenv';
 import type { Pool, PoolClient } from 'pg';
+import type { DailyCoverageStat } from '../src/lib/energy-repo';
 import path from 'node:path';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env'), quiet: true });
@@ -68,8 +75,6 @@ interface ReferenceStat {
     firstEpochMs: number;
     lastEpochMs: number;
     maxInteriorGapMs: number;
-    windowStartEpochMs: number;
-    windowEndEpochMs: number;
 }
 
 interface DayComparison {
@@ -90,12 +95,30 @@ interface CaseResult {
     onlyInSql: string[];
     onlyInReference: string[];
     daysInRangeWithNoRows: string[];
+    duplicateSqlDayKeys: string[];
     maxGapDeltaMs: number;
 }
 
 function fail(message: string): void {
     console.error(message);
     process.exitCode = 1;
+}
+
+/**
+ * Render a driver/unknown error without echoing it verbatim.
+ *
+ * A `pg` auth or connection error routinely embeds the username and host
+ * ("password authentication failed for user \"postgres\" at host ..."), and this
+ * script runs against a production pooler whose stdout may be pasted into a
+ * ticket. So we print only the first line, cap its length, and point at the
+ * driver for the full text. The full message is deliberately never written
+ * anywhere, including a log file.
+ */
+function describeError(error: unknown, maxLength = 200): string {
+    const message = error instanceof Error ? error.message : String(error);
+    const firstLine = message.split('\n')[0]?.trim() ?? '(no message)';
+    const truncated = firstLine.length > maxLength ? `${firstLine.slice(0, maxLength)}... [truncated]` : firstLine;
+    return `${truncated} | full driver message withheld in case it contains credentials or connection details`;
 }
 
 /**
@@ -118,16 +141,23 @@ function resolveDatabaseUrl(): string | null {
 }
 
 function isLocalHost(hostname: string): boolean {
-    const host = hostname.toLowerCase();
-    return LOCAL_HOSTS.has(host) || host === 'localhost';
+    return LOCAL_HOSTS.has(hostname.toLowerCase());
 }
 
-/** Guard: only SELECT-family statements may be issued by this script. */
+/**
+ * Coarse first-token check on the statements this script issues directly. It is
+ * a lint against a careless edit, NOT the security boundary: it reads only the
+ * first token, so a `WITH x AS (DELETE ...)` would pass. The real enforcement
+ * is the read-only transaction pinned in `pinConnectionsReadOnly` and verified
+ * with `SHOW default_transaction_read_only`, which the server applies to every
+ * statement no matter what this function allows. Keep both; neither replaces
+ * the other.
+ */
 function assertReadOnlyStatement(sql: string): void {
     const verb = sql.trimStart().split(/\s+/)[0]?.toUpperCase() ?? '';
     const allowed = new Set(['SELECT', 'WITH', 'SHOW', 'SET']);
     if (!allowed.has(verb)) {
-        throw new Error(`Refusing to issue a non-read-only statement starting with "${verb}".`);
+        throw new Error(`Refusing to issue a statement whose first token is "${verb}".`);
     }
 }
 
@@ -215,7 +245,7 @@ async function main(): Promise<void> {
         const energyRepo = new EnergyRepo();
 
         console.log('SQL path: EnergyRepo.getDailyCoverage (the shipped production query, not a copy).');
-        let sqlStats;
+        let sqlStats: DailyCoverageStat[];
         try {
             sqlStats = await energyRepo.getDailyCoverage(target.siteId, target.start, target.end, target.timezone);
         } catch (error) {
@@ -251,32 +281,61 @@ async function main(): Promise<void> {
         printNotableCases(result);
         printEgress(result, referenceRowCount);
 
-        console.log('UNVERIFIED CASE: 25-hour fall-back day (a local day with ~300 samples).');
+        console.log('UNVERIFIED CASE: 25-hour fall-back day (a local day with ~300 samples at 5-minute sampling).');
         console.log('  The brief asks for America/Chicago 2026-11-01. No rows exist after 2026-10-01, so that day');
         console.log('  cannot be tested against production data. A southern-hemisphere analog');
-        console.log('  (Australia/Melbourne 2026-04-05) has zero rows, and a scan of every site-local day in the');
-        console.log('  database found no local day with more than 288 samples, so no genuine 25-hour day exists');
-        console.log('  anywhere in this data. This residue is acceptable to ship because:');
-        console.log('    1. The SQL groups by date_trunc(\'day\', timestamp AT TIME ZONE tz), whose key is the local');
-        console.log('       calendar date and contains no day-length-specific logic. A 23-hour and a 25-hour day');
-        console.log('       differ only in how many samples land in the same key.');
+        console.log('  (Australia/Melbourne 2026-04-05) has zero rows.');
+        console.log('  Corroborating scan, not proof: grouping every row in the database by site-local day found no');
+        console.log('  day with more than 288 samples, which is consistent with no 25-hour day being populated. That');
+        console.log('  is only evidence, not a proof -- a site sampling sparser than every 5 minutes could hold a');
+        console.log('  25-hour day under 288 samples. The argument that actually carries this is #1 below.');
+        console.log('  The residue is acceptable to ship because:');
+        console.log('    1. PRIMARY REASON: the SQL groups by date_trunc(\'day\', timestamp AT TIME ZONE tz), whose');
+        console.log('       key is the local calendar date and contains no day-length-specific logic. A 23-hour and');
+        console.log('       a 25-hour day differ only in how many samples land under the same key, not in how that');
+        console.log('       key is computed.');
         console.log('    2. The 23-hour day above exercises a mid-day UTC-offset change against real rows.');
         console.log('    3. generateDayWindows\' 25-hour window math is covered by synthetic unit tests.');
         console.log('  The narrow unverified residue is SQL day-bucketing on a 25-hour day. Not fabricated, not dropped.');
 
-        const ok =
-            result.keySetEqual &&
-            result.comparisons.every(comparison => comparison.matched) &&
-            result.daysInRangeWithNoRows.length >= 0;
-        if (!ok) fail('DIFFERENTIAL CHECK FAILED. See the mismatches above.');
-        else console.log('\nRESULT: PASS. SQL and reference agree on every day key, count, first, last, and maxInteriorGapMs.');
+        // The pass condition. Each entry is a real, independently-evaluated check.
+        //
+        // `bothSidesNonEmpty` is load-bearing, not belt-and-braces: `keySetEqual`
+        // is derived from set *difference*, so two empty sets compare equal, and
+        // `[].every(...)` is vacuously true. Without this, a range with no rows on
+        // either side would print RESULT: PASS and exit 0, which for a gate whose
+        // entire purpose is proving SQL == reference is worse than a failure --
+        // it is a silent green light that proved nothing.
+        const bothSidesNonEmpty = result.sqlRowCount > 0 && result.referenceRowCount > 0;
+        const allDaysMatched = result.comparisons.every(comparison => comparison.matched);
+        const noDuplicateSqlDayKeys = result.duplicateSqlDayKeys.length === 0;
+        const ok = bothSidesNonEmpty && result.keySetEqual && allDaysMatched && noDuplicateSqlDayKeys;
+
+        if (!bothSidesNonEmpty) {
+            console.log('');
+            console.log('RESULT: FAIL. At least one side returned zero day keys, so this run compared nothing.');
+            console.log(`  getDailyCoverage day keys: ${result.sqlRowCount}`);
+            console.log(`  reference day keys:       ${result.referenceRowCount}`);
+            console.log('  Two empty sets are equal, so a key-set-only verdict would read as a pass. It is not one.');
+            console.log('  Widen the range or pick a site that has EnergyData rows in it.');
+            fail('DIFFERENTIAL CHECK FAILED. Nothing was compared, which is not a pass.');
+        } else if (!ok) {
+            const reasons = [
+                result.keySetEqual ? null : 'day-key sets differ',
+                allDaysMatched ? null : 'one or more days mismatched',
+                noDuplicateSqlDayKeys ? null : `duplicate SQL day keys: ${result.duplicateSqlDayKeys.join(', ')}`,
+            ].filter((reason): reason is string => reason !== null);
+            fail(`DIFFERENTIAL CHECK FAILED (${reasons.join('; ')}). See the mismatches above.`);
+        } else {
+            console.log('\nRESULT: PASS. SQL and reference agree on every day key, count, first, last, and maxInteriorGapMs.');
+        }
     } catch (error) {
-        fail(`Verification failed: ${error instanceof Error ? error.message : String(error)}`);
+        fail(`Verification failed: ${describeError(error)}`);
     } finally {
         try {
             await pool.end();
         } catch (error) {
-            console.error(`Failed to close the database pool: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`Failed to close the database pool: ${describeError(error)}`);
             process.exitCode = 1;
         }
     }
@@ -302,7 +361,7 @@ async function pinConnectionsReadOnly(pool: Pool): Promise<void> {
     assertReadOnlyStatement(statement);
     pool.on('connect', (client: PoolClient) => {
         client.query(statement).catch((error: unknown) => {
-            console.error(`Failed to pin a pooled connection read-only: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`Failed to pin a pooled connection read-only: ${describeError(error)}`);
             process.exitCode = 1;
         });
     });
@@ -338,7 +397,7 @@ async function probeTimezoneSupport(pool: Pool, probe: string): Promise<void> {
     const known = await pool.query<{ name: string }>(sql, [probe]).then(
         result => result.rows.length > 0,
         (error: unknown) => {
-            console.log(`Timezone probe: pg_timezone_names lookup for "${probe}" raised: ${error instanceof Error ? error.message : String(error)}`);
+            console.log(`Timezone probe: pg_timezone_names lookup for "${probe}" raised: ${describeError(error)}`);
             return false;
         }
     );
@@ -361,9 +420,9 @@ function reportTimezoneFailure(error: unknown, timezone: string): void {
         console.error('  getValidTimezone validated this zone against Temporal/ICU tzdata, but Postgres resolves');
         console.error('  `AT TIME ZONE` against its own pg_timezone_names. A zone ICU accepts but the server');
         console.error('  lacks raises here. This is a real production risk, not a script bug.');
-        console.error(`  Driver message: ${message.split('\n')[0]}`);
+        console.error(`  Driver message: ${describeError(error)}`);
     } else {
-        console.error(`getDailyCoverage raised: ${message.split('\n')[0]}`);
+        console.error(`getDailyCoverage raised: ${describeError(error)}`);
     }
 }
 
@@ -397,13 +456,14 @@ function buildReference(
         }
         const firstEpochMs = samples[0];
         const lastEpochMs = samples[samples.length - 1];
-        // Every local day in this database is between 23 and 25 hours long, so
-        // adding 36 hours to a local midnight always lands inside the next
-        // local day. That derives the exclusive window end from getSiteMidnight
-        // rather than assuming a fixed 24 hours, which would be wrong on a DST
-        // boundary.
         const first = firstEpochMs;
         const last = lastEpochMs;
+        // Every local day is between 23 and 25 hours long, so adding 36 hours to a
+        // local midnight always lands inside the next local day. That derives the
+        // exclusive window end from getSiteMidnight rather than assuming a fixed 24
+        // hours, which would be wrong on a DST boundary. Both the derived window
+        // and the membership of every sample in it are asserted below, so a
+        // wrong window fails loudly instead of silently mis-bucketing.
         const windowStart = getSiteMidnight(new Date(first), timezone);
         const windowEnd = getSiteMidnight(new Date(windowStart.getTime() + 36 * 60 * 60 * 1000), timezone);
         if (formatSiteDate(windowEnd, timezone) !== nextLocalDayKey(key)) {
@@ -418,11 +478,9 @@ function buildReference(
         stats.set(key, {
             localDayKey: key,
             count: samples.length,
-            firstEpochMs: first,
-            lastEpochMs: last,
+            firstEpochMs: firstEpochMs,
+            lastEpochMs: lastEpochMs,
             maxInteriorGapMs,
-            windowStartEpochMs: windowStart.getTime(),
-            windowEndEpochMs: windowEnd.getTime(),
         });
     }
     return stats;
@@ -458,6 +516,16 @@ function compare(
     const sqlByKey = new Map(sqlStats.map(stat => [stat.localDayKey, stat]));
     const comparisons: DayComparison[] = [];
     let maxGapDeltaMs = 0;
+
+    // `new Map(...)` above keeps only the LAST row for a repeated key, so a
+    // `GROUP BY` regression emitting two rows for one local day would silently
+    // drop the earlier stat and the comparison would still pass. Surface the
+    // duplicates instead of collapsing them.
+    const duplicateSqlDayKeys = [...new Set(
+        sqlStats
+            .map(stat => stat.localDayKey)
+            .filter((key, index, all) => all.indexOf(key) !== index)
+    )].sort();
 
     const keys = [...new Set([...sqlByKey.keys(), ...referenceStats.keys()])].sort();
     for (const key of keys) {
@@ -508,12 +576,9 @@ function compare(
         onlyInSql,
         onlyInReference,
         daysInRangeWithNoRows,
+        duplicateSqlDayKeys,
         maxGapDeltaMs,
     };
-}
-
-function formatEpochMs(epochMs: number): string {
-    return new Date(epochMs).toISOString();
 }
 
 function printComparisons(result: CaseResult): void {
@@ -552,8 +617,10 @@ function printKeySetCheck(result: CaseResult): void {
     console.log(`  Reference day keys:${String(result.referenceRowCount).padStart(4)}`);
     console.log(`  only in SQL:       ${result.onlyInSql.length === 0 ? '(none)' : result.onlyInSql.join(', ')}`);
     console.log(`  only in reference: ${result.onlyInReference.length === 0 ? '(none)' : result.onlyInReference.join(', ')}`);
+    console.log(`  duplicate SQL day keys: ${result.duplicateSqlDayKeys.length === 0 ? '(none)' : result.duplicateSqlDayKeys.join(', ')}`);
     if (result.sqlRowCount === 0 || result.referenceRowCount === 0) {
-        console.log('  WARNING: one side produced zero day keys. The key-set check would pass vacuously.');
+        console.log('  NOTE: one side produced zero day keys. The key-set check would be vacuous here, so the');
+        console.log('  pass condition below requires both sides to be non-empty. This run cannot pass.');
     }
     console.log(`  local days in range with no rows in either side: ${result.daysInRangeWithNoRows.length === 0 ? '(none)' : result.daysInRangeWithNoRows.join(', ')}`);
     console.log(`  key sets identical: ${result.keySetEqual ? 'YES' : 'NO'}`);
@@ -570,9 +637,11 @@ function printNotableCases(result: CaseResult): void {
         console.log(`  23-hour spring-forward day ${DST_LOCAL_DAY}: present on ${dst.presence} side only -- NOT VERIFIED.`);
     } else {
         const count = dst.fields.find(f => f.name === 'count')?.reference;
+        const agreesWithKnownSampleCount = Number(count) === DST_EXPECTED_SAMPLES;
         console.log(
-            `  23-hour spring-forward day ${DST_LOCAL_DAY}: ${count} samples vs ${NORMAL_DAY_SAMPLES} on a normal day -- ` +
-            `${dst.matched ? 'MATCHED' : 'MISMATCHED'}`
+            `  23-hour spring-forward day ${DST_LOCAL_DAY}: ${count} samples (known value ${DST_EXPECTED_SAMPLES}, ` +
+            `vs ${NORMAL_DAY_SAMPLES} on a normal day) -- ${dst.matched ? 'MATCHED' : 'MISMATCHED'}` +
+            `${agreesWithKnownSampleCount ? '' : ' [WARNING: sample count differs from the reconfirmed value]'}`
         );
     }
 
