@@ -13,10 +13,12 @@ xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination 'generic/plat
 
 Run the native tests with `./run-tests.sh`. Tests use Swift Testing (`import Testing`). It selects an available iPhone simulator and stops the run after 10 minutes if Xcode hangs. Run all tests with `./run-tests.sh`, or target specific suites/tests (e.g. `./run-tests.sh AppConfigurationTests` or `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin`). Use `PWUSAGE_SIMULATOR_ID=<simulator-udid> ./run-tests.sh` to choose a device or `PWUSAGE_TEST_TIMEOUT_SECONDS=<seconds> ./run-tests.sh` to adjust the deadline. Failed runs retain the result bundle and build files at the printed path.
 
-The app targets iOS 18 and uses `fm.rodeo.pwusage` as a provisional bundle identifier. The project has no signing team configured. For a device build, set `DEVELOPMENT_TEAM` in your local shell (do not commit it) and pass it explicitly as an Xcode build setting:
+The app targets iOS 18 and uses `fm.rodeo.pwusage` as a provisional bundle identifier. The project intentionally configures `DEVELOPMENT_TEAM: 6HQGHHRK87` in `project.yml` for device deployment. Preserve this setting unless the user explicitly asks to change or remove it. Regenerate the project with `./generate.sh`, select your connected device in Xcode, and run. Simulator CI disables signing with `CODE_SIGNING_ALLOWED=NO`.
+
+To build for a device from the command line:
 
 ```sh
-xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination 'generic/platform=iOS' DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" build
+xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination 'generic/platform=iOS' build
 ```
 
 ## API origin
@@ -65,3 +67,7 @@ cd cmd/next-app && npx tsx scripts/load-planning-context-capture.ts <siteId>
 ```
 
 This runs the same query and the same profile builder as the route and prints the diagnostics the route hides: row counts, per-day coverage against the 90 percent gate, off-grid timestamps, and non-finite values. It prints no site name, no credentials, and no per-interval values, so it is safe against production data.
+
+## Tariff sheet
+
+The tariff sheet reads saved seasons, periods, rates, and current activity with `GET /api/site/[id]/refresh-tariffs`. This shares the web app’s existing tariff endpoint; `POST` explicitly refreshes rates from Tesla. GET does not call Tesla. The server must include GET support before testing this app build on a device.

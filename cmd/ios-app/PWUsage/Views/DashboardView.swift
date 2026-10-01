@@ -7,6 +7,8 @@ struct DashboardView: View {
     var onRefresh: (() async -> Void)? = nil
     let onSignOut: () -> Void
 
+    @State private var isTariffSheetPresented = false
+
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -44,7 +46,17 @@ struct DashboardView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle(site.name)
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $isTariffSheetPresented) {
+                TariffSheet(site: site, load: { try await coordinator.fetchTariffs() })
+                    .id(site.id)
+            }
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Tariffs", systemImage: "tag") {
+                        isTariffSheetPresented = true
+                    }
+                    .accessibilityHint("View tariff seasons, periods, and rates")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("Switch site", systemImage: "arrow.left.arrow.right", action: onChooseSite)

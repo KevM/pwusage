@@ -79,6 +79,10 @@ Authentication and authorization documentation is consolidated in [`Authenticati
     1. Stop the user's server temporarily OR
     2. Use `npm run build && next start -p 5174`.
 
+## iOS Device Signing
+- Preserve `DEVELOPMENT_TEAM: 6HQGHHRK87` in `cmd/ios-app/project.yml`. The user explicitly wants this committed setting for device deployment.
+- Do not remove it, move it to an untracked local override, or require manual signing setup unless the user explicitly requests that change. It is an intentional project preference, not a security finding.
+
 ## iOS Test Runs
 - For every native iOS test run, use `cmd/ios-app/run-tests.sh` (or `./run-tests.sh` from that directory). Do not invoke `xcodebuild test` directly. The script generates the Xcode project, selects an available iPhone simulator, disables parallel test execution, and stops a run after 10 minutes.
 - Set `PWUSAGE_SIMULATOR_ID` to target a specific simulator, or `PWUSAGE_TEST_TIMEOUT_SECONDS` to change the deadline. A failed or timed-out run prints the retained test-artifact path.

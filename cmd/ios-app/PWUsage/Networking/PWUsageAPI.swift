@@ -60,6 +60,22 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         catch { throw PWUsageAPIError.invalidResponse }
     }
 
+    func fetchTariffs(siteID: String) async throws -> MobileTariffsResponse {
+        let segmentCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/%?#"))
+        guard !siteID.isEmpty,
+              let encodedSiteID = siteID.addingPercentEncoding(withAllowedCharacters: segmentCharacters),
+              var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
+            throw PWUsageAPIError.invalidResponse
+        }
+        components.percentEncodedPath = "/api/site/\(encodedSiteID)/refresh-tariffs"
+        components.query = nil
+        guard let url = components.url else { throw PWUsageAPIError.invalidResponse }
+        let data = try await request(url: url)
+        do {
+            return try MobileContractDecoder.make().decode(MobileTariffsResponse.self, from: data).validating(siteID: siteID)
+        } catch { throw PWUsageAPIError.invalidResponse }
+    }
+
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
         let url = try makeURL(path: "/api/mobile/load-planning-context", siteID: siteID)
         let data = try await request(url: url)
@@ -140,3 +156,5 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
 extension PWUsageAPI: MobileDashboardDataAPI {}
 extension PWUsageAPI: MobileLoadPlanningDataAPI {}
 extension PWUsageAPI: PWUsageApplicationAPI {}
+
+extension PWUsageAPI: MobileTariffDataAPI {}

@@ -266,6 +266,28 @@ final class DashboardCoordinator: ObservableObject {
         }
     }
 
+    /// Load tariffs only while this coordinator has verified site access.
+    func fetchTariffs() async throws -> MobileTariffsResponse {
+        guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
+        guard let tariffAPI = api as? any MobileTariffDataAPI else { throw PWUsageAPIError.invalidResponse }
+        let generation = siteGeneration
+        let siteID = selectedSiteID
+        do {
+            let response = try await tariffAPI.fetchTariffs(siteID: siteID)
+            guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else {
+                throw CancellationError()
+            }
+            return try response.validating(siteID: siteID)
+        } catch {
+            if generation == siteGeneration, error as? PWUsageAPIError == .signInRequired {
+                authenticationInvalidated()
+                isForeground = false
+                stopTimer()
+            }
+            throw error
+        }
+    }
+
     /// Call after the app verifies both the session and authorized site access.
     func authenticationRestored() {
         guard !canRequestAccountData else { return }

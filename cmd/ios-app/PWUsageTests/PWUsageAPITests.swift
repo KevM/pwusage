@@ -34,6 +34,49 @@ final class PWUsageAPITests {
         StubURLProtocol.cookieStorage = nil
     }
 
+    @Test("Tariff request is site-scoped and validates response identity")
+    func tariffRequestIsSiteScoped() async throws {
+        var recordedURL: URL?
+        StubURLProtocol.requestHandler = { request in
+            let url = try #require(request.url)
+            recordedURL = url
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+            return (response, Data(TariffSheetTests.fixture.utf8))
+        }
+        let tariffs = try await api.fetchTariffs(siteID: "a")
+        #expect(recordedURL?.path == "/api/site/a/refresh-tariffs")
+        let url = try #require(recordedURL)
+        #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems == nil)
+        #expect(tariffs.tariffs[0].seasons[0].periods[0].isActive)
+        StubURLProtocol.requestHandler = { request in
+            let url = try #require(request.url)
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+            return (response, Data(TariffSheetTests.fixture.replacingOccurrences(of: "\"id\":\"a\"", with: "\"id\":\"other\"").utf8))
+        }
+        await #expect(throws: PWUsageAPIError.invalidResponse) { try await api.fetchTariffs(siteID: "a") }
+    }
+
+    @Test("Tariff site ID stays in one encoded path segment")
+    func tariffSiteIDIsEncoded() async throws {
+        let siteID = "a/b ?#%"
+        let body = Data(TariffSheetTests.fixture.replacingOccurrences(of: "\"id\":\"a\"", with: "\"id\":\"a/b ?#%\"").utf8)
+        var recordedURL: URL?
+        StubURLProtocol.requestHandler = { request in
+            recordedURL = request.url
+            guard let url = request.url,
+                  let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil) else {
+                throw URLError(.badServerResponse)
+            }
+            return (response, body)
+        }
+        _ = try await api.fetchTariffs(siteID: siteID)
+        let url = try #require(recordedURL)
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        #expect(components.percentEncodedPath == "/api/site/a%2Fb%20%3F%23%25/refresh-tariffs")
+        #expect(components.query == nil)
+        #expect(components.fragment == nil)
+    }
+
     @Test("Exchange cookie is sent on later API request")
     func exchangeCookieIsSentOnLaterAPIRequest() async throws {
         var recordedRequests: [(URLRequest, Data)] = []
