@@ -28,17 +28,24 @@ export interface DayAuditResult {
     hasInteriorGap: boolean;
 }
 
-export function auditDays(options: PlanOptions): DayAuditResult[] {
-    const {
-        requestedRange,
-        existingTimestamps,
-        timezone,
-        installationDate,
-        gapThresholdMs = 30 * 60 * 1000,
-        now = new Date(),
-    } = options;
+export interface GenerateDayWindowsOptions {
+    requestedRange: DateWindow;
+    timezone: string;
+    installationDate?: Date;
+    now?: Date;
+}
 
-    const results: DayAuditResult[] = [];
+export interface DayWindow {
+    windowStart: Date;
+    windowEnd: Date;
+    effectiveWindowEnd: Date;
+    isToday: boolean;
+}
+
+export function generateDayWindows(options: GenerateDayWindowsOptions): DayWindow[] {
+    const { requestedRange, timezone, installationDate, now = new Date() } = options;
+
+    const windows: DayWindow[] = [];
     let cursor = getSiteMidnight(requestedRange.start, timezone);
 
     if (installationDate) {
@@ -51,7 +58,6 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
     // Clamp the end of our audit range to the current time to avoid importing the future.
     const auditEnd = requestedRange.end.getTime() > now.getTime() ? now : requestedRange.end;
     const todayStart = getSiteMidnight(now, timezone);
-    let tsIndex = 0;
 
     while (cursor.getTime() < auditEnd.getTime()) {
         const windowStart = cursor.getTime();
@@ -59,8 +65,39 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             new Date(windowStart + 30 * 60 * 60 * 1000),
             timezone
         );
-        const windowEnd = nextDay.getTime();
         const isToday = cursor.getTime() === todayStart.getTime();
+        const effectiveWindowEnd = isToday && nextDay.getTime() > now.getTime() ? now : nextDay;
+
+        windows.push({
+            windowStart: cursor,
+            windowEnd: nextDay,
+            effectiveWindowEnd,
+            isToday,
+        });
+
+        cursor = nextDay;
+    }
+
+    return windows;
+}
+
+export function auditDays(options: PlanOptions): DayAuditResult[] {
+    const {
+        requestedRange,
+        existingTimestamps,
+        timezone,
+        installationDate,
+        gapThresholdMs = 30 * 60 * 1000,
+        now = new Date(),
+    } = options;
+
+    const results: DayAuditResult[] = [];
+    let tsIndex = 0;
+
+    for (const day of generateDayWindows({ requestedRange, timezone, installationDate, now })) {
+        const windowStart = day.windowStart.getTime();
+        const windowEnd = day.windowEnd.getTime();
+        const effectiveWindowEnd = day.effectiveWindowEnd;
 
         while (tsIndex < existingTimestamps.length && existingTimestamps[tsIndex] < windowStart) {
             tsIndex++;
@@ -85,13 +122,11 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             tempIdx++;
         }
 
-        const effectiveWindowEnd = isToday && nextDay.getTime() > now.getTime() ? now : nextDay;
-
         results.push({
-            windowStart: cursor,
-            windowEnd: nextDay,
+            windowStart: day.windowStart,
+            windowEnd: day.windowEnd,
             effectiveWindowEnd,
-            isToday,
+            isToday: day.isToday,
             count,
             firstInWindow,
             lastInWindow,
@@ -99,8 +134,6 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             missingEnd: lastInWindow !== null && (effectiveWindowEnd.getTime() - lastInWindow > gapThresholdMs),
             hasInteriorGap,
         });
-
-        cursor = nextDay;
     }
 
     return results;

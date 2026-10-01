@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planImport, splitAtSiteMidnight, auditDays } from './import-planner';
+import { planImport, splitAtSiteMidnight, auditDays, generateDayWindows } from './import-planner';
 
 // America/Chicago is UTC-6 in winter, so site midnight = 06:00 UTC
 const TZ = 'America/Chicago';
@@ -262,6 +262,82 @@ describe('auditDays / planImport — DST transition days (America/Chicago)', () 
             now: new Date('2026-11-15T12:00:00Z'),
         });
         expect(windows).toEqual([]);
+    });
+});
+
+describe('generateDayWindows', () => {
+    it('spring forward: one 23-hour window between true local midnights', () => {
+        // Mar 8 2026: CST midnight = 06:00Z; Mar 9 CDT midnight = 05:00Z.
+        const windows = generateDayWindows({
+            requestedRange: { start: new Date('2026-03-08T06:00:00Z'), end: new Date('2026-03-09T05:00:00Z') },
+            timezone: TZ,
+            now: new Date('2026-03-20T00:00:00Z'),
+        });
+        expect(windows).toHaveLength(1);
+        const [w] = windows;
+        expect(w.windowStart.toISOString()).toBe('2026-03-08T06:00:00.000Z');
+        expect(w.windowEnd.toISOString()).toBe('2026-03-09T05:00:00.000Z');
+        expect(w.windowEnd.getTime() - w.windowStart.getTime()).toBe(23 * 60 * 60 * 1000);
+    });
+
+    it('fall back: one 25-hour window whose effective end equals window end once past', () => {
+        // Nov 1 2026: CDT midnight = 05:00Z; Nov 2 CST midnight = 06:00Z.
+        const windows = generateDayWindows({
+            requestedRange: { start: new Date('2026-11-01T05:00:00Z'), end: new Date('2026-11-02T06:00:00Z') },
+            timezone: TZ,
+            now: new Date('2026-11-20T00:00:00Z'),
+        });
+        expect(windows).toHaveLength(1);
+        const [w] = windows;
+        expect(w.windowStart.toISOString()).toBe('2026-11-01T05:00:00.000Z');
+        expect(w.windowEnd.toISOString()).toBe('2026-11-02T06:00:00.000Z');
+        expect(w.windowEnd.getTime() - w.windowStart.getTime()).toBe(25 * 60 * 60 * 1000);
+        expect(w.effectiveWindowEnd.toISOString()).toBe('2026-11-02T06:00:00.000Z');
+        expect(w.isToday).toBe(false);
+    });
+
+    it('floors the first window start at the installation day', () => {
+        const windows = generateDayWindows({
+            requestedRange: { start: new Date('2026-01-01T06:00:00Z'), end: DAY1_END },
+            timezone: TZ,
+            installationDate: new Date('2026-01-10T15:00:00Z'), // mid-day install
+            now: FUTURE,
+        });
+        expect(windows[0].windowStart.toISOString()).toBe(DAY1_START.toISOString());
+    });
+
+    it('emits one window per day, ascending, for a multi-day range', () => {
+        const DAY2_END = new Date('2026-01-12T06:00:00.000Z');
+        const windows = generateDayWindows({
+            requestedRange: { start: DAY1_START, end: DAY2_END },
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(windows.map(w => w.windowStart.toISOString())).toEqual([
+            '2026-01-10T06:00:00.000Z',
+            '2026-01-11T06:00:00.000Z',
+        ]);
+        expect(windows.map(w => w.windowEnd.toISOString())).toEqual([
+            '2026-01-11T06:00:00.000Z',
+            '2026-01-12T06:00:00.000Z',
+        ]);
+        expect(windows.every(w => w.windowStart.getTime() < w.windowEnd.getTime())).toBe(true);
+    });
+
+    it('clamps the final effective end to now and emits no window beyond now', () => {
+        const now = new Date('2026-01-11T14:00:00.000Z'); // mid-day Jan 11 Chicago
+        const windows = generateDayWindows({
+            requestedRange: { start: DAY1_START, end: new Date('2026-01-20T00:00:00.000Z') },
+            timezone: TZ,
+            now,
+        });
+        expect(windows).toHaveLength(2);
+        const last = windows[windows.length - 1];
+        expect(last.windowStart.toISOString()).toBe('2026-01-11T06:00:00.000Z');
+        expect(last.isToday).toBe(true);
+        expect(last.effectiveWindowEnd.getTime()).toBe(now.getTime());
+        expect(last.windowEnd.toISOString()).toBe('2026-01-12T06:00:00.000Z');
+        expect(windows.every(w => w.windowStart.getTime() <= now.getTime())).toBe(true);
     });
 });
 
