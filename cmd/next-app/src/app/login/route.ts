@@ -1,10 +1,11 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getAppBaseUrl } from '@/lib/url-utils';
-import { isValidMobileLoginParameters } from '@/lib/mobile-login-validation';
-import { requireEnv } from '@/lib/tesla-token-endpoint';
+import { mobileCallbackResponse } from '@/lib/mobile-login-callback';
+import { isValidAppState, isValidMobileLoginParameters } from '@/lib/mobile-login-validation';
+import { buildTeslaAuthorizeUrl } from '@/lib/tesla-authorize-url';
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -15,6 +16,33 @@ export async function GET(request: NextRequest) {
   const isMobileLogin = mobileChallenge !== null || mobileState !== null;
   if (isMobileLogin && (!mobileChallenge || !mobileState || !isValidMobileLoginParameters(mobileChallenge, mobileState))) {
     return new Response('Invalid mobile login request', { status: 400 });
+  }
+
+  // Intercept a missing client id rather than letting requireEnv throw, matching
+  // what /auth/tesla-callback already does. A throw here is user-visible on iOS:
+  // no pwusage://auth/callback is ever produced, so the app reports
+  // `invalidCallback` and presents a raw Next.js 500 page instead of
+  // `AuthError.serverRejectedLogin`.
+  //
+  // Normalized the same way requireEnv normalizes, so this guard agrees with it
+  // on what "missing" means; raw truthiness would let a whitespace-only value
+  // through to fail later as a confusing authorize-URL rejection.
+  //
+  // Deliberately positioned before the cookie writes so a misconfigured deploy
+  // emits no Set-Cookie headers at all.
+  const clientId = process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID?.trim();
+  if (!clientId) {
+    console.error('[Login] Missing required Tesla OAuth environment variables', {
+      missing: 'PUBLIC_TESLA_OAUTH_CLIENT_ID',
+      isMobileLogin,
+    });
+    // Nothing downstream will clear these: we never redirect to Tesla, so the
+    // callback route that normally does it is never reached.
+    clearAuthAttemptCookies(await cookies());
+    if (mobileState && isValidAppState(mobileState)) {
+      return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
+    }
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
   const state = crypto.randomBytes(16).toString('hex');
@@ -42,48 +70,20 @@ export async function GET(request: NextRequest) {
 
   const redirectBaseUrl = getAppBaseUrl(request);
   const callbackUrl = `${redirectBaseUrl}/auth/tesla-callback`;
-  // Third Tesla credential path to read this through requireEnv, alongside
-  // tesla-auth.ts and tesla-auth-service.ts, so a missing variable fails loudly
-  // at the point of use.
-  // Deliberately positioned after the cookie writes: Next.js discards the pending
-  // cookie buffer on a throw, so this order means a missing client id produces no
-  // Set-Cookie headers at all.
-  const clientId = requireEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID');
 
   redirect(buildTeslaAuthorizeUrl({ state, nonce, callbackUrl, clientId }));
 }
 
-const TESLA_AUTHORIZE_ENDPOINT = 'https://auth.tesla.com/oauth2/v3/authorize';
-
-export interface TeslaAuthorizeUrlParams {
-  state: string;
-  nonce: string;
-  callbackUrl: string;
-  clientId: string;
-}
-
-export function buildTeslaAuthorizeUrl(params: TeslaAuthorizeUrlParams): string {
-  const query = [
-    ['locale', 'en-US'],
-    ['response_type', 'code'],
-    // Passed as a single space-separated value and encoded below, so the
-    // separators become %20 exactly as before.
-    ['scope', 'openid energy_device_data offline_access user_data energy_cmds'],
-    ['state', params.state],
-    ['redirect_uri', params.callbackUrl],
-    ['client_id', params.clientId],
-    ['nonce', params.nonce],
-    // Purpose-built replacement for prompt=login. Tesla documents this for
-    // picking up newly-granted scopes; prompt=login additionally forces a full
-    // re-authentication on every login.
-    ['prompt_missing_scopes', 'true'],
-  ]
-    // encodeURIComponent rather than URLSearchParams: toString() encodes spaces as
-    // "+", and production already emits %20 today with login working, so keeping
-    // %20 preserves known-working behavior. Every value is encoded here, which
-    // the previous template literal skipped for redirect_uri, state and nonce.
-    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
-    .join('&');
-
-  return `${TESLA_AUTHORIZE_ENDPOINT}?${query}`;
+/**
+ * The six cookies a login attempt owns. Mirrors `clearAuthAttemptCookies` in
+ * /auth/tesla-callback, which clears the same set on every one of its own
+ * failure paths.
+ */
+function clearAuthAttemptCookies(cookieStore: Awaited<ReturnType<typeof cookies>>): void {
+  cookieStore.delete('auth_state');
+  cookieStore.delete('auth_nonce');
+  cookieStore.delete('auth_callback');
+  cookieStore.delete('auth_mobile_attempt');
+  cookieStore.delete('auth_mobile_challenge');
+  cookieStore.delete('auth_mobile_state');
 }

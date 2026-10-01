@@ -6,10 +6,10 @@ import { UserRepo } from './user-repo';
 import { TeslaClient, TeslaClientConfig } from './tesla-client';
 import { Importer } from './importer';
 import { isUniqueViolation } from './db';
+import { requireEnv } from './env';
 import {
     TeslaTokenEndpointError,
     postToTeslaTokenEndpoint,
-    requireEnv,
 } from './tesla-token-endpoint';
 import { parseRefreshedTokens } from './tesla-auth';
 

@@ -1,5 +1,6 @@
 import { TeslaAuthError } from './tesla-client';
-import { postToTeslaTokenEndpoint, requireEnv } from './tesla-token-endpoint';
+import { requireEnv } from './env';
+import { postToTeslaTokenEndpoint } from './tesla-token-endpoint';
 
 // Tesla requires `audience` on token requests and documents form encoding for
 // server-to-server calls. The previous implementation sent JSON, omitted
