@@ -550,3 +550,25 @@ describe('EnergyRepo.getUsageByTOU range clamping', () => {
         expect(rawSpy).toHaveBeenCalledWith('site-1', start, end);
     });
 });
+
+
+describe('EnergyRepo persistence retention guard', () => {
+    beforeEach(() => queryMock.mockReset());
+    it('checks the current entitlement in the insert statement for every distinct site', async () => {
+        queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+        await new EnergyRepo().insertEnergyDataBatch([makeEnergyRow({ site_id: 's1' }), makeEnergyRow({ site_id: 's1' }), makeEnergyRow({ site_id: 's2' })]);
+        expect(queryMock).toHaveBeenCalledTimes(1);
+        const [sql, params] = queryMock.mock.calls[0];
+        expect(sql).toContain('history_policies AS MATERIALIZED');
+        expect(sql).toContain('statement_timestamp()');
+        expect(sql).toContain('history_retention_grace_until');
+        expect(sql).toContain('history_retention_transition_pending');
+        expect(sql).toContain('incoming.timestamp >= policy.cutoff');
+        expect(sql).not.toContain('access_token');
+        expect(params.at(-1)).toEqual(['s1', 's2']);
+    });
+    it('does not query at all for an empty batch', async () => {
+        await new EnergyRepo().insertEnergyDataBatch([]);
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+});

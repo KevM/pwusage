@@ -578,7 +578,7 @@ ORDER BY local_day`,
         const params: unknown[] = [];
         let p = 1;
         for (const r of rows) {
-            valuePlaceholders.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
+            valuePlaceholders.push(`($${p++}::text, $${p++}::bigint, $${p++}::timestamptz, $${p++}::double precision, $${p++}::double precision, $${p++}::double precision, $${p++}::double precision, $${p++}::double precision, $${p++}::bigint)`);
             params.push(
                 r.site_id, r.tariff_id, r.timestamp,
                 r.load_power, r.solar_power, r.grid_power, r.battery_power,
@@ -586,9 +586,23 @@ ORDER BY local_day`,
             );
         }
 
+        params.push([...new Set(rows.map(row => row.site_id))]);
         await pool.query(`
+            WITH history_policies AS MATERIALIZED (
+                SELECT s.id,
+                    (date_trunc('day', statement_timestamp() AT TIME ZONE COALESCE(NULLIF(s.timezone, ''), 'UTC'))
+                        - make_interval(days => CASE
+                            WHEN u.history_retention_days = 365 OR u.history_retention_transition_pending
+                                OR u.history_retention_grace_until > statement_timestamp() THEN 365
+                            ELSE 90 END)) AT TIME ZONE COALESCE(NULLIF(s.timezone, ''), 'UTC') AS cutoff
+                FROM "Site" s JOIN "User" u ON u.id = s.user_id
+                WHERE s.id = ANY($${p}::text[]) AND u.history_retention_days IN (90, 365)
+            ), incoming(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, tariff_schedule_id) AS (
+                VALUES ${valuePlaceholders.join(', ')}
+            )
             INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, tariff_schedule_id)
-            VALUES ${valuePlaceholders.join(', ')}
+            SELECT incoming.* FROM incoming JOIN history_policies policy ON policy.id = incoming.site_id
+            WHERE incoming.timestamp >= policy.cutoff
             ON CONFLICT(timestamp, site_id) DO UPDATE SET
                 tariff_id = EXCLUDED.tariff_id,
                 load_power = EXCLUDED.load_power,

@@ -7,7 +7,7 @@ Branch: `codex/history-retention`, based on freshly fetched `origin/main`
 - [x] Fresh isolated worktree, ignored local environment, locked dependencies, baseline (957 tests passed, 1 skipped).
 - [x] Task 1: Pure 90/365 policy, local-midnight/DST cutoffs, exact grace expiry, generated entitlement migration and compact validated reads.
 - [x] Task 2: Atomic internal assignments, preview-first maintenance script, explicit environment targeting, idempotent notice/cohort bootstrap.
-- [ ] Task 3: Bound coverage, Tesla imports, and every energy persistence path; preserve daily coverage egress reduction.
+- [x] Task 3: Bound coverage, Tesla imports, and every energy persistence path; preserve daily coverage egress reduction.
 - [ ] Task 4: Preview and bounded cleanup, tariff-preservation integration fixture, cleanup activation gate.
 - [ ] Task 5: Explicit history availability in responses and clients.
 - [ ] Task 6: Capacity preview, rollout/backup documentation, migration CI and final full verification.
@@ -20,7 +20,20 @@ Granting 365 clears pending; a repeat 90 assignment cannot bypass pending notice
 Bootstrap clears pending and sets grace to notice+30 days, preserving later grace.
 No entitlement cache was introduced; callers must evaluate expiry with a fresh clock.
 
-Batch verification: 978 tests passed, 1 skipped; lint and production build passed.
+Import-enforcement verification: 994 tests passed, 1 skipped; lint and production
+build passed. Coverage SQL is unchanged; per-day query bounds and zero-query expired
+requests are pinned. The mobile-route egress trace test remains skipped by its
+existing opt-in gate, so no live mobile egress comparison is claimed yet.
+The generated persistence query passed a rollback-only dev fixture using temporary
+shadow tables: standard cutoff exactness, 365, pending notice, unexpired/expired
+grace, and unowned sites. The reproducible fixture is
+`cmd/next-app/scripts/fixtures/history-retention-write.sql`; public-schema FK
+integration remains part of the later dev validation. No permanent dev changes.
+Import assignment uses one compact entitlement row per account per importer;
+effective grace is recomputed, and the persistence SQL rechecks current database
+policy in the insert itself. No per-sample queries or raw coverage enumeration.
+
+Foundation-batch verification: 978 tests passed, 1 skipped; lint and production build passed.
 Migration exercised against dev in a rollback-only transaction: existing/new defaults,
 90/365 CHECK, unchanged User RLS/grants. Rollback confirmed the new columns were absent.
 Neither dev nor production has a persisted migration or entitlement change from this batch.

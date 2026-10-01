@@ -90,6 +90,19 @@ describe('GET /api/sync', () => {
         expect(streamText).toContain('{"status":"complete"}');
     });
 
+    it('terminates unavailable history with a compatible complete frame', async () => {
+        mocks.getAuthorizedSiteIds.mockResolvedValue(['site-1']);
+        mocks.createTeslaClientForSite.mockResolvedValue({ siteId: 'site-1' });
+        mocks.ensureDataForRange.mockResolvedValue({ complete: true, processedWindows: 0, totalWindows: 0,
+            historyAvailability: { status: 'unavailable', availableFrom: '2026-07-03T00:00:00.000Z', effectiveDays: 90 } });
+        const res = await GET(new Request('http://localhost/api/sync?siteId=site-1&start=2026-05-01&end=2026-05-02'));
+        const text = await readStream(res.body!);
+        expect(text).toContain('"status":"complete"');
+        expect(text).toContain('"historyAvailability":{"status":"unavailable"');
+        expect(text).not.toContain('"status":"partial"');
+        expect(mocks.ensureDataForRange).toHaveBeenCalledTimes(1);
+    });
+
     it('emits partial SSE frame when importer hits time budget', async () => {
         mocks.getAuthorizedSiteIds.mockResolvedValue(['site-1']);
         mocks.createTeslaClientForSite.mockResolvedValue({ siteId: 'site-1' });

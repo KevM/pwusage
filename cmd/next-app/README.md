@@ -66,7 +66,7 @@ ngrok http 5173
 
 The entitlement migration and internal maintenance tool support a 90-day default,
 manually granted 365-day history, and a 30-day grace after removing extended history.
-The new policy is not yet connected to imports or cleanup in this implementation batch.
+Imports, coverage audits, and the shared energy writer now enforce this policy after the migration is installed.
 The existing cron still uses its previous policy until the later cleanup change lands.
 All tariff versions, seasons, and schedules must remain permanent.
 

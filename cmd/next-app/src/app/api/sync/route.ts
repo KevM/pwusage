@@ -61,7 +61,7 @@ export async function GET(request: Request) {
                     );
 
                     if (result.complete) {
-                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: "complete" })}\n\n`));
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: "complete", historyAvailability: result.historyAvailability })}\n\n`));
                     } else {
                         const message = result.processedWindows > 0
                             ? `Synced ${result.processedWindows} days, continuing...`
@@ -70,7 +70,8 @@ export async function GET(request: Request) {
                             status: "partial",
                             message,
                             processedWindows: result.processedWindows,
-                            totalWindows: result.totalWindows
+                            totalWindows: result.totalWindows,
+                            historyAvailability: result.historyAvailability,
                         })}\n\n`));
                     }
                     controller.close();

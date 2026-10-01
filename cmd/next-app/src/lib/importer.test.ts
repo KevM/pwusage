@@ -1,5 +1,5 @@
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Importer } from './importer';
 import { EnergyHistoryEntry, TeslaClient } from './tesla-client';
 import { EnergyRepo } from './energy-repo';
@@ -56,7 +56,8 @@ vi.mock('./db');
 // `getSiteMidnight` is stubbed to floor UTC hours, so day windows in these tests
 // are UTC days. `formatSiteDate` must agree with it, otherwise the coverage keys
 // the planner looks up would never match the mocked coverage rows.
-vi.mock('./date-utils', () => ({
+vi.mock('./date-utils', async (importOriginal) => ({
+    ...await importOriginal<typeof import('./date-utils')>(),
     getSiteMidnight: vi.fn((d: Date) => {
         const date = new Date(d);
         date.setUTCHours(0, 0, 0, 0);
@@ -91,6 +92,7 @@ vi.mock('./site-repo', () => {
 });
 vi.mock('./user-repo', () => {
     class UserRepo {
+        getHistoryRetention = vi.fn().mockResolvedValue({ history_retention_days: 365, history_retention_grace_until: null, history_retention_transition_pending: false });
         updateLastChecked = vi.fn();
         updateUserStatus = vi.fn();
     }
@@ -107,6 +109,8 @@ describe('Importer Sync Logic', () => {
     let mockRepo: MockSiteRepo;
 
     beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime('2026-10-01T18:00:00Z');
         vi.clearAllMocks();
         mockClient = new TeslaClient({ accessToken: 'test' });
         importer = new Importer(mockClient);
@@ -115,6 +119,7 @@ describe('Importer Sync Logic', () => {
         mockRepo = {
             getSite: vi.fn().mockResolvedValue({
                 id: 'site-123',
+                user_id: 'u1',
                 timezone: 'America/Chicago',
                 installed: new Date('2025-01-01T00:00:00Z'),
                 tariffs: []
@@ -134,6 +139,8 @@ describe('Importer Sync Logic', () => {
         };
         (importer as unknown as { repo: unknown }).repo = energyRepoMock;
     });
+
+    afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
     it('should trigger import when data is missing', async () => {
         // Mock repo methods
@@ -168,6 +175,7 @@ describe('Importer Sync Logic', () => {
             rows: [],
             processedWindows: 0,
             totalWindows: 0,
+            historyAvailability: { status: 'available', effectiveDays: 365, availableFrom: '2025-10-01T00:00:00.000Z' },
         });
         expect(importSpy).not.toHaveBeenCalled();
     });

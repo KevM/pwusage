@@ -10,6 +10,7 @@ import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer'
 import { planImport, splitAtSiteMidnight, auditDays } from './import-planner';
 import { getSiteMidnight } from '../date-utils';
 import { withImportLock } from '../import-lock';
+import { resolveHistoryRetention, type ValidHistoryRetentionPolicy } from '../history-retention';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -26,6 +27,7 @@ export interface EnsureDataResult {
     rows: EnergyDataRow[];
     processedWindows: number;
     totalWindows: number;
+    historyAvailability?: { status: 'available' | 'partial' | 'unavailable'; availableFrom: string; effectiveDays: 90 | 365 };
 }
 
 export class Importer {
@@ -34,6 +36,21 @@ export class Importer {
     private siteRepo: SiteRepo;
     private userRepo: UserRepo;
     private tariffRepo: TariffRepo;
+    // Configured policy only, scoped to this importer/request. Grace is evaluated afresh.
+    private retentionPolicies = new Map<string, Promise<ValidHistoryRetentionPolicy>>();
+
+    private async retainedRange(site: SiteWithTariffs, start: Date, end: Date) {
+        if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) throw new Error('Invalid history range');
+        if (!site.user_id) throw new Error('History retention requires site ownership');
+        let policy = this.retentionPolicies.get(site.user_id);
+        if (!policy) {
+            policy = this.userRepo.getHistoryRetention(site.user_id);
+            this.retentionPolicies.set(site.user_id, policy);
+        }
+        const { cutoff, effectiveDays } = resolveHistoryRetention(await policy, site.timezone, new Date());
+        const status: 'available' | 'partial' | 'unavailable' = end <= cutoff ? 'unavailable' : start < cutoff ? 'partial' : 'available';
+        return { start: start < cutoff ? cutoff : start, end, historyAvailability: { status, availableFrom: cutoff.toISOString(), effectiveDays } };
+    }
 
 
     // Prevent multiple simultaneous syncs (persist across HMR in dev)
@@ -73,10 +90,13 @@ export class Importer {
 
         // Surgical Filter: only insert rows around or newer than what we have.
         // We allow a 10-minute overlap to catch any points that might have changed or were synthetic.
-        let filteredRows = rows;
+        if (!site.user_id) throw new Error('History retention requires site ownership');
+        const policy = await this.userRepo.getHistoryRetention(site.user_id);
+        const { cutoff } = resolveHistoryRetention(policy, site.timezone, new Date());
+        let filteredRows = rows.filter(row => row.site_id === siteId && row.timestamp >= cutoff);
         if (latestTimestamp) {
             const threshold = latestTimestamp.getTime() - 10 * 60 * 1000;
-            filteredRows = rows.filter(r => r.timestamp.getTime() >= threshold);
+            filteredRows = filteredRows.filter(r => r.timestamp.getTime() >= threshold);
         }
 
         if (filteredRows.length === 0) {
@@ -111,9 +131,17 @@ export class Importer {
         const force = options?.force ?? false;
         const maxTimeMs = options?.maxTimeMs;
 
+        const site = await this.siteRepo.getSite(siteId);
+        if (!site) throw new Error(`Site ${siteId} not found in database`);
+        const retained = await this.retainedRange(site, start, end);
+        if (retained.historyAvailability.status === 'unavailable') {
+            return { complete: true, rows: [], processedWindows: 0, totalWindows: 0, historyAvailability: retained.historyAvailability };
+        }
+        start = retained.start;
+
         if (Importer.pendingSyncs.has(siteId) && !force) {
             logSync(`Skip: Data for range already being synced for site ${siteId}`);
-            return { complete: false, rows: [], processedWindows: 0, totalWindows: 0 };
+            return { complete: false, rows: [], processedWindows: 0, totalWindows: 0, historyAvailability: retained.historyAvailability };
         }
 
         let inMemoryAdded = false;
@@ -124,9 +152,6 @@ export class Importer {
 
         try {
             if (onProgress) onProgress(`Checking data coverage...`);
-            const site = await this.siteRepo.getSite(siteId);
-            if (!site) throw new Error(`Site ${siteId} not found in database`);
-
             const lockResult = await withImportLock(
                 this.siteRepo,
                 {
@@ -197,14 +222,15 @@ export class Importer {
                         complete: isComplete,
                         rows: allRows,
                         processedWindows: successCount,
-                        totalWindows: windows.length
+                        totalWindows: windows.length,
+                        historyAvailability: retained.historyAvailability,
                     };
                 }
             );
 
             if (lockResult.status === 'not-acquired') {
                 logSync(`Skip: DB lock busy for site ${siteId}`);
-                return { complete: false, rows: [], processedWindows: 0, totalWindows: 0 };
+                return { complete: false, rows: [], processedWindows: 0, totalWindows: 0, historyAvailability: retained.historyAvailability };
             }
 
             return lockResult.value;
@@ -223,7 +249,9 @@ export class Importer {
             throw new Error(`Site ${siteId} not found in database`);
         }
 
-        for (const chunk of splitAtSiteMidnight({ start, end }, site.timezone)) {
+        const retained = await this.retainedRange(site, start, end);
+        if (retained.historyAvailability.status === 'unavailable') return [];
+        for (const chunk of splitAtSiteMidnight({ start: retained.start, end }, site.timezone)) {
             if (onProgress) onProgress(chunk.start);
             const rows = await this.loadInterval(site, chunk.start, chunk.end, period);
             allRows.push(...rows);
@@ -233,12 +261,13 @@ export class Importer {
 
     async fetchRange(site: SiteWithTariffs, start: Date, end: Date, period: string = "day"): Promise<EnergyDataRow[]> {
         const allRows: EnergyDataRow[] = [];
-        let cursor = new Date(start);
-        const chunkMs = 24 * 60 * 60 * 1000;
-
-        while (cursor < end) {
-            const next = new Date(Math.min(cursor.getTime() + chunkMs, end.getTime()));
-
+        const retained = await this.retainedRange(site, start, end);
+        if (retained.historyAvailability.status === 'unavailable') return [];
+        for (const chunk of splitAtSiteMidnight({ start: retained.start, end }, site.timezone)) {
+            const current = await this.retainedRange(site, chunk.start, chunk.end);
+            if (current.historyAvailability.status === 'unavailable') continue;
+            const cursor = current.start;
+            const next = chunk.end;
             const [history, soeHistory] = await Promise.all([
                 this.client.getEnergyHistory(site.id, cursor, next, period, site.timezone),
                 this.client.getSoeHistory(site.id, cursor, next, period, site.timezone)
@@ -250,9 +279,9 @@ export class Importer {
 
             if (history && history.length > 0) {
                 const rows = await this.processHistory(site, history, soeHistory);
-                allRows.push(...rows);
+                const afterFetch = await this.retainedRange(site, cursor, next);
+                allRows.push(...rows.filter(row => row.timestamp >= afterFetch.start && row.timestamp < next));
             }
-            cursor = next;
         }
         return allRows;
     }
@@ -331,6 +360,9 @@ export class Importer {
     }
 
     private async loadInterval(site: SiteWithTariffs, start: Date, end: Date, period: string): Promise<EnergyDataRow[]> {
+        const allowed = await this.retainedRange(site, start, end);
+        if (allowed.historyAvailability.status === 'unavailable') return [];
+        start = allowed.start;
         let actualEnd = new Date(end);
 
         if (period === 'day' || period === 'hour') {
@@ -384,8 +416,9 @@ export class Importer {
 
             // Surgical Filter: Tesla often returns more data than requested (e.g., the whole day).
             // We only want to write the rows that fall within our requested window.
+            const retained = await this.retainedRange(site, start, end);
             const filteredDatas = energyDatas.filter(d =>
-                d.timestamp.getTime() >= start.getTime() &&
+                d.timestamp.getTime() >= retained.start.getTime() &&
                 d.timestamp.getTime() <= actualEnd.getTime()
             );
 
@@ -403,7 +436,7 @@ export class Importer {
                 battery_power: row.battery_power,
                 battery_soc: row.battery_soc,
             })));
-            return energyDatas;
+            return filteredDatas;
         }
     }
 
@@ -483,6 +516,9 @@ export class Importer {
         const site = await this.siteRepo.getSite(siteId);
         if (!site) return { error: 'Site not found' };
 
+        const retained = await this.retainedRange(site, start, end);
+        if (retained.historyAvailability.status === 'unavailable') return [];
+        start = retained.start;
         const existingCoverage = await this.repo.getDailyCoverage(siteId, start, end, site.timezone);
         const now = new Date();
 
