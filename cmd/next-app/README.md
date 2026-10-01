@@ -60,3 +60,34 @@ Open [http://localhost:5173](http://localhost:5173) with your browser to see the
 ```bash 
 ngrok http 5173
 ```
+
+
+### Internal history retention controls (implementation in progress)
+
+The entitlement migration and internal maintenance tool support a 90-day default,
+manually granted 365-day history, and a 30-day grace after removing extended history.
+The new policy is not yet connected to imports or cleanup in this implementation batch.
+The existing cron still uses its previous policy until the later cleanup change lands.
+All tariff versions, seasons, and schedules must remain permanent.
+
+The migration marks existing accounts `history_retention_transition_pending=true`;
+they keep an effective 365-day window until their notice/grace is initialized.
+New accounts default to 90 days with no pending transition. Installing the migration
+never deletes history. Apply the migration before using these controls.
+
+Run from `cmd/next-app` in the implementation worktree, with `DATABASE_URL` explicitly
+pointing to the requested environment. The tool loads `.env` first and refuses a
+mismatched database target. `--env` validates the target; it does not select a URL.
+
+```bash
+npx tsx scripts/set-history-retention.ts --env dev --user <account-id> --days 365
+npx tsx scripts/set-history-retention.ts --env dev --user <account-id> --days 365 --apply
+npx tsx scripts/set-history-retention.ts --env dev --cohort <cohort.json> --notice-at <ISO-instant>
+```
+
+Commands preview by default. The cohort file is an explicit JSON array of existing
+account IDs. After actual notice delivery, apply bootstrap with `--apply --notice-delivered`.
+The recorded notice timestamp must already have occurred. Bootstrap preserves 365-day
+exceptions and later grace, excludes new accounts, and does not extend grace on reruns.
+The tool sends no notices and deletes no data. Each account update is transactional;
+a multi-account run may partially complete on an operational failure and is safe to retry.

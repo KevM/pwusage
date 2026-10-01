@@ -1,4 +1,5 @@
 import { cache } from 'react';
+import { bootstrapHistoryRetention, changeHistoryRetention, validateHistoryRetention, validateRetentionDays, type HistoryRetentionPolicy, type ValidHistoryRetentionPolicy } from './history-retention';
 import { pool, User, Site } from './db';
 import { TeslaClient, isTeslaAuthError } from './tesla-client';
 
@@ -57,7 +58,7 @@ export class UserRepo {
         const tokenCols = options.includeTokens ? ', u.access_token, u.refresh_token' : '';
         // Fetch users and check for Trmnl integration in a single query using subquery (efficiently handles the join logic)
         const userRes = await pool.query(`
-            SELECT u.id, u.email, u.roles, u.is_active, u.auth_status, u.last_checked_at, u.created_at${tokenCols}, 
+            SELECT u.id, u.email, u.roles, u.is_active, u.auth_status, u.last_checked_at, u.created_at, u.history_retention_days, u.history_retention_grace_until, u.history_retention_transition_pending${tokenCols},
             EXISTS (
                 SELECT 1 
                 FROM "TrmnlInstallation" ti 
@@ -97,6 +98,56 @@ export class UserRepo {
     async getUserEmail(userId: string): Promise<string | null> {
         const res = await pool.query('SELECT email FROM "User" WHERE id = $1', [userId]);
         return res.rows.length > 0 ? res.rows[0].email : null;
+    }
+
+    // Compact, uncached entitlement reads: never cache an effective grace decision.
+    async getHistoryRetention(userId: string): Promise<ValidHistoryRetentionPolicy> {
+        const result = await pool.query<HistoryRetentionPolicy>(`
+            SELECT history_retention_days, history_retention_grace_until, history_retention_transition_pending
+            FROM "User" WHERE id = $1
+        `, [userId]);
+        if (!result.rows[0]) throw new Error('Retention account not found');
+        return validateHistoryRetention(result.rows[0]);
+    }
+
+    async setHistoryRetention(userId: string, days: number, options: { apply?: boolean; now?: Date } = {}) {
+        validateRetentionDays(days);
+        return this.updateHistoryRetention(userId, options.apply === true, policy => changeHistoryRetention(policy, days, options.now ?? new Date()));
+    }
+
+    async bootstrapHistoryRetention(userId: string, noticeAt: Date, options: { apply?: boolean } = {}) {
+        if (!Number.isFinite(noticeAt.getTime())) throw new Error('Invalid notice date');
+        return this.updateHistoryRetention(userId, options.apply === true, policy => bootstrapHistoryRetention(policy, noticeAt));
+    }
+
+    private async updateHistoryRetention(userId: string, apply: boolean, transition: (policy: ValidHistoryRetentionPolicy) => ValidHistoryRetentionPolicy) {
+        if (!userId.trim()) throw new Error('Account ID is required');
+        if (!apply) {
+            const before = await this.getHistoryRetention(userId);
+            return { userId, before, after: transition(before), applied: false };
+        }
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const result = await client.query<HistoryRetentionPolicy>(`
+                SELECT history_retention_days, history_retention_grace_until, history_retention_transition_pending
+                FROM "User" WHERE id = $1 FOR UPDATE
+            `, [userId]);
+            if (!result.rows[0]) throw new Error('Retention account not found');
+            const before = validateHistoryRetention(result.rows[0]);
+            const after = transition(before);
+            await client.query(`
+                UPDATE "User" SET history_retention_days = $1, history_retention_grace_until = $2,
+                    history_retention_transition_pending = $3 WHERE id = $4
+            `, [after.history_retention_days, after.history_retention_grace_until, after.history_retention_transition_pending, userId]);
+            await client.query('COMMIT');
+            return { userId, before, after, applied: true };
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
     }
 
     // === Commands ===

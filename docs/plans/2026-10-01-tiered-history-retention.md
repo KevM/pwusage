@@ -40,7 +40,11 @@ src/lib/db-types.ts and src/lib/user-repo.ts; generate a migration.
 3. Run `npm run db:migration:create add_history_retention_tier` from cmd/next-app.
    Edit the generated path; never invent a filename. Add User.history_retention_days INTEGER
    NOT NULL DEFAULT 90, a CHECK restricting it to 90/365, and
-   User.history_retention_grace_until TIMESTAMPTZ NULL. No new tables, no tariff
+   User.history_retention_grace_until TIMESTAMPTZ NULL. Add
+   User.history_retention_transition_pending BOOLEAN NOT NULL DEFAULT FALSE and
+   mark existing rows TRUE in this migration. Pending accounts have an effective
+   365-day window until notice bootstrap; new accounts are not pending.
+   No new tables, no tariff
    deletes, and no cleanup embedded in this migration.
 4. Add typed fields to User and account lookups without exposing token columns.
    Verify existing rows default correctly and existing User RLS/grants remain intact.

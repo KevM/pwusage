@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { queryMock } = vi.hoisted(() => ({
-    queryMock: vi.fn()
+const { queryMock, connectMock, clientQueryMock, releaseMock } = vi.hoisted(() => ({
+    queryMock: vi.fn(),
+    connectMock: vi.fn(),
+    clientQueryMock: vi.fn(),
+    releaseMock: vi.fn()
 }));
 
 vi.mock('./db', () => ({
     pool: {
-        query: queryMock
+        query: queryMock,
+        connect: connectMock
     }
 }));
 
@@ -245,3 +249,63 @@ describe('UserRepo.verifyUserStatus', () => {
     });
 });
 
+
+
+describe('UserRepo history retention assignments', () => {
+    const base = { history_retention_days: 365, history_retention_grace_until: null, history_retention_transition_pending: false };
+    const now = new Date('2026-10-01T18:00:00Z');
+    beforeEach(() => {
+        queryMock.mockReset();
+        connectMock.mockReset();
+        clientQueryMock.mockReset();
+        releaseMock.mockReset();
+        connectMock.mockResolvedValue({ query: clientQueryMock, release: releaseMock });
+        clientQueryMock.mockImplementation(async (sql: string) => ({ rows: sql.includes('SELECT') ? [base] : [] }));
+    });
+    it('previews without connecting for a write transaction', async () => {
+        queryMock.mockResolvedValue({ rows: [base] });
+        const result = await new UserRepo().setHistoryRetention('u1', 90, { now });
+        expect(result.after.history_retention_grace_until).toEqual(new Date('2026-10-31T18:00:00Z'));
+        expect(connectMock).not.toHaveBeenCalled();
+        expect(queryMock).toHaveBeenCalledTimes(1);
+        expect(queryMock.mock.calls[0][0]).not.toContain('access_token');
+    });
+    it('locks and updates only the requested account in one transaction', async () => {
+        const result = await new UserRepo().setHistoryRetention('u1', 90, { apply: true, now });
+        expect(result.after.history_retention_days).toBe(90);
+        expect(clientQueryMock.mock.calls[0][0]).toBe('BEGIN');
+        expect(clientQueryMock.mock.calls[1][0]).toContain('FOR UPDATE');
+        expect(clientQueryMock.mock.calls[2][1]).toEqual([90, new Date('2026-10-31T18:00:00Z'), false, 'u1']);
+        expect(clientQueryMock.mock.calls[3][0]).toBe('COMMIT');
+        expect(releaseMock).toHaveBeenCalledOnce();
+    });
+    it('rejects a missing account and rolls back before releasing', async () => {
+        clientQueryMock.mockResolvedValue({ rows: [] });
+        await expect(new UserRepo().setHistoryRetention('missing', 90, { apply: true, now })).rejects.toThrow('not found');
+        expect(clientQueryMock.mock.calls.map(call => call[0])).not.toContain('COMMIT');
+        expect(clientQueryMock.mock.calls.at(-1)?.[0]).toBe('ROLLBACK');
+        expect(releaseMock).toHaveBeenCalledOnce();
+    });
+    it('rejects invalid days before any database access', async () => {
+        await expect(new UserRepo().setHistoryRetention('u1', 180, { apply: true, now })).rejects.toThrow();
+        expect(connectMock).not.toHaveBeenCalled();
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+    it('rolls back an update failure and releases the lock', async () => {
+        clientQueryMock.mockImplementation(async (sql: string) => {
+            if (sql.includes('UPDATE "User"')) throw new Error('write failed');
+            return { rows: sql.includes('SELECT') ? [base] : [] };
+        });
+        await expect(new UserRepo().setHistoryRetention('u1', 90, { apply: true, now })).rejects.toThrow('write failed');
+        expect(clientQueryMock.mock.calls.at(-1)?.[0]).toBe('ROLLBACK');
+        expect(releaseMock).toHaveBeenCalledOnce();
+    });
+    it('bootstraps only a pending existing account and leaves a new one unchanged', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ ...base, history_retention_days: 90, history_retention_transition_pending: true }] });
+        const repo = new UserRepo();
+        const preview = await repo.bootstrapHistoryRetention('u1', now);
+        expect(preview.after.history_retention_grace_until).toEqual(new Date('2026-10-31T18:00:00Z'));
+        queryMock.mockResolvedValueOnce({ rows: [{ ...base, history_retention_days: 90 }] });
+        expect((await repo.bootstrapHistoryRetention('new', now)).after.history_retention_grace_until).toBeNull();
+    });
+});

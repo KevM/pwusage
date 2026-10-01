@@ -1,4 +1,7 @@
 export interface User {
+  history_retention_days?: 90 | 365;
+  history_retention_grace_until?: Date | string | null;
+  history_retention_transition_pending?: boolean;
   id: string; // Tesla User ID or Email
   email?: string;
   access_token: string | null;

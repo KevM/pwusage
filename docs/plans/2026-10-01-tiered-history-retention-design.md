@@ -30,7 +30,12 @@ and monetization; the first version uses internal settings only. This is a desig
 
 ## Architecture
 
-Store history_retention_days (90 or 365) and downgrade-grace expiry on User.
+Store history_retention_days (90 or 365), downgrade-grace expiry, and
+history_retention_transition_pending on User. The migration marks only existing
+accounts pending; while pending, their effective window remains 365 days. New
+accounts default to pending=false. Notice bootstrap clears pending and seeds
+grace; granting 365 clears pending as an explicit exception. This protects
+existing users before notice/bootstrap even though their configured default is 90.
 Default existing and new accounts to 90; grant known exceptions before enabling
 deletion. No new admin screen, tier-selection API, payment integration, upgrade
 prompt, or premium-facing interface is included.

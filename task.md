@@ -1,3 +1,35 @@
+# History retention implementation (2026-10-01)
+
+Worktree: `/Users/kevm/.codex/worktrees/history-retention/pwusage`.
+Branch: `codex/history-retention`, based on freshly fetched `origin/main`
+(`e9ca3f24`, including PR #125). Approved planning commits copied onto this branch.
+
+- [x] Fresh isolated worktree, ignored local environment, locked dependencies, baseline (957 tests passed, 1 skipped).
+- [x] Task 1: Pure 90/365 policy, local-midnight/DST cutoffs, exact grace expiry, generated entitlement migration and compact validated reads.
+- [x] Task 2: Atomic internal assignments, preview-first maintenance script, explicit environment targeting, idempotent notice/cohort bootstrap.
+- [ ] Task 3: Bound coverage, Tesla imports, and every energy persistence path; preserve daily coverage egress reduction.
+- [ ] Task 4: Preview and bounded cleanup, tariff-preservation integration fixture, cleanup activation gate.
+- [ ] Task 5: Explicit history availability in responses and clients.
+- [ ] Task 6: Capacity preview, rollout/backup documentation, migration CI and final full verification.
+
+Additional rollout safeguard: migration adds `history_retention_transition_pending`.
+It marks only accounts already present during migration; their effective retention
+remains 365 days until notice/bootstrap. New accounts default to 90 and pending=false.
+This closes the gap where default=90 could restrict existing users before notice.
+Granting 365 clears pending; a repeat 90 assignment cannot bypass pending notice.
+Bootstrap clears pending and sets grace to notice+30 days, preserving later grace.
+No entitlement cache was introduced; callers must evaluate expiry with a fresh clock.
+
+Batch verification: 978 tests passed, 1 skipped; lint and production build passed.
+Migration exercised against dev in a rollback-only transaction: existing/new defaults,
+90/365 CHECK, unchanged User RLS/grants. Rollback confirmed the new columns were absent.
+Neither dev nor production has a persisted migration or entitlement change from this batch.
+No energy/tag/tariff deletion, user notice, deployment, PR, or remote push performed.
+Existing cleanup still follows its previous 365-day policy; the new policy is not yet enforced.
+Maintenance CLI argument/target checks, preview-only repository behavior, transactional
+rollback/release, and policy transitions are covered by tests. Live script execution
+against migrated schema and production-to-dev CI remain rollout verification work.
+
 # Database reduction planning (2026-10-01)
 
 - [x] Inspect retention, inactive-user handling, production-to-dev restore, and relevant design decisions.
