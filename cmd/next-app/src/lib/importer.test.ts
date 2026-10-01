@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Importer } from './importer';
 import { EnergyHistoryEntry, TeslaClient } from './tesla-client';
 import { EnergyRepo } from './energy-repo';
+import type { DailyCoverageStat } from './energy-repo';
 import type { ImportLockOptions, ImportLockResult } from './import-lock';
 
 interface ImportLockTestRepo {
@@ -52,18 +53,22 @@ const importLockMock = vi.hoisted(() => ({
 
 // Mock dependencies
 vi.mock('./db');
+// `getSiteMidnight` is stubbed to floor UTC hours, so day windows in these tests
+// are UTC days. `formatSiteDate` must agree with it, otherwise the coverage keys
+// the planner looks up would never match the mocked coverage rows.
 vi.mock('./date-utils', () => ({
     getSiteMidnight: vi.fn((d: Date) => {
         const date = new Date(d);
         date.setUTCHours(0, 0, 0, 0);
         return date;
     }),
+    formatSiteDate: vi.fn((d: Date) => new Date(d).toISOString().slice(0, 10)),
 }));
 vi.mock('./energy-repo', () => {
     class EnergyRepo {
         getRawEnergyData = vi.fn();
         getLatestEnergyData = vi.fn();
-        getExistingTimestamps = vi.fn();
+        getDailyCoverage = vi.fn();
         getLatestTimestamp = vi.fn();
         insertEnergyDataBatch = vi.fn();
         static getSiteMidnight = vi.fn((d: Date) => {
@@ -124,7 +129,7 @@ describe('Importer Sync Logic', () => {
         const energyRepoMock = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn(),
-            getExistingTimestamps: vi.fn(),
+            getDailyCoverage: vi.fn(),
             insertEnergyDataBatch: vi.fn()
         };
         (importer as unknown as { repo: unknown }).repo = energyRepoMock;
@@ -135,7 +140,7 @@ describe('Importer Sync Logic', () => {
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
             insertEnergyDataBatch: vi.fn()
         };
         
@@ -171,7 +176,7 @@ describe('Importer Sync Logic', () => {
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
             insertEnergyDataBatch: vi.fn()
         };
         vi.spyOn(importer, 'importRange').mockRejectedValue(new Error('Tesla API Offline'));
@@ -187,7 +192,7 @@ describe('Importer Sync Logic', () => {
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
             insertEnergyDataBatch: vi.fn()
         };
         vi.spyOn(importer, 'importRange').mockResolvedValue([]);
@@ -215,7 +220,7 @@ describe('Importer Sync Logic', () => {
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
             insertEnergyDataBatch: vi.fn()
         };
         
@@ -229,27 +234,33 @@ describe('Importer Sync Logic', () => {
     });
 
     it('should NOT trigger import when data exists', async () => {
-        // Mock repo methods with data
-        const rows = [];
-        const start = new Date('2026-01-10T00:00:00Z').getTime();
-        for (let i = 0; i < 24; i++) {
-            rows.push({ timestamp: new Date(start + i * 3600 * 1000).toISOString() });
-        }
-        const existingTimestamps = rows.map((r: { timestamp: string | Date }) => new Date(r.timestamp).getTime());
-        
+        // One fully covered site-local day, as `getDailyCoverage` summarizes it:
+        // 5-minute rows from the first minute of the day to the last.
+        const existingCoverage: DailyCoverageStat[] = [
+            {
+                localDayKey: '2026-01-10',
+                count: 288,
+                first: new Date('2026-01-10T00:00:00Z'),
+                last: new Date('2026-01-10T23:55:00Z'),
+                maxInteriorGapMs: 5 * 60 * 1000,
+            },
+        ];
+
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getExistingTimestamps: vi.fn().mockResolvedValue(existingTimestamps),
+            getDailyCoverage: vi.fn().mockResolvedValue(existingCoverage),
             insertEnergyDataBatch: vi.fn()
         };
 
-        vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
 
         const s = new Date('2026-01-10T00:00:00Z');
         const e = new Date('2026-01-10T23:59:59Z');
 
         await importer.ensureDataForRange('site-123', s, e);
+
+        expect(importSpy).not.toHaveBeenCalled();
     });
 
 
@@ -311,22 +322,29 @@ describe('Importer Sync Logic', () => {
 
     it('audits coverage using site midnight when start is non-midnight', async () => {
         // Simulate the bug: caller passes autoBackfillLimit at 14:30, which has full-day data
-        // Without the fix, early-day rows are omitted from existingTimestamps, falsely triggering re-import
+        // Without the fix, the early part of the day is not covered by the audit range, falsely triggering re-import
         const start = new Date('2026-01-10T14:30:00Z'); // non-midnight start
         const end = new Date('2026-01-11T00:00:00Z');
 
-        // Mock data exists for the full day (00:00 to 23:30 in 30-min intervals)
-        const rows = [];
-        const dayStart = new Date('2026-01-10T00:00:00Z').getTime();
-        for (let i = 0; i < 48; i++) { // 00:00 to 23:30 in 30-min intervals
-            rows.push({ timestamp: new Date(dayStart + i * 30 * 60 * 1000).toISOString() });
-        }
-        const existingTimestamps = rows.map((r: { timestamp: string | Date }) => new Date(r.timestamp).getTime());
+        // Full-day coverage (00:00 to 23:30 in 30-min intervals) collapses to a
+        // single per-day row: no interior gap exceeds the 30-minute threshold and
+        // neither open edge of the day is more than 30 minutes away.
+        const existingCoverage: DailyCoverageStat[] = [
+            {
+                localDayKey: '2026-01-10',
+                count: 48,
+                first: new Date('2026-01-10T00:00:00Z'),
+                last: new Date('2026-01-10T23:30:00Z'),
+                maxInteriorGapMs: 30 * 60 * 1000,
+            },
+        ];
+
+        const getDailyCoverageMock = vi.fn().mockResolvedValue(existingCoverage);
 
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getExistingTimestamps: vi.fn().mockResolvedValue(existingTimestamps),
+            getDailyCoverage: getDailyCoverageMock,
             insertEnergyDataBatch: vi.fn()
         };
 
@@ -334,8 +352,14 @@ describe('Importer Sync Logic', () => {
 
         await importer.ensureDataForRange('site-123', start, end);
 
-        // Verify getExistingTimestamps was called with site midnight (00:00), not the non-midnight start (14:30)
-        expect(existingTimestamps.length).toBe(48);
+        // Coverage is audited from site midnight (00:00), not the caller's
+        // non-midnight start (14:30), and it is bucketed by the site's timezone
+        expect(getDailyCoverageMock).toHaveBeenCalledWith(
+            'site-123',
+            new Date('2026-01-10T00:00:00Z'),
+            new Date('2026-01-11T00:00:00Z'),
+            'America/Chicago'
+        );
 
         // Verify we don't import when full-day coverage exists
         expect(importSpy).not.toHaveBeenCalled();
@@ -345,7 +369,7 @@ describe('Importer Sync Logic', () => {
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
             insertEnergyDataBatch: vi.fn()
         };
 
@@ -373,7 +397,7 @@ describe('Importer Sync Logic', () => {
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getExistingTimestamps: vi.fn().mockResolvedValue([]),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
             insertEnergyDataBatch: vi.fn()
         };
         // First window imports, every later window fails.

@@ -1,11 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { planImport, splitAtSiteMidnight, auditDays } from './import-planner';
+import { planImport, splitAtSiteMidnight, auditDays, generateDayWindows } from './import-planner';
+import { formatSiteDate } from '../date-utils';
+import type { DailyCoverageStat } from '../energy-repo';
 
 // America/Chicago is UTC-6 in winter, so site midnight = 06:00 UTC
 const TZ = 'America/Chicago';
 const DAY1_START = new Date('2026-01-10T06:00:00.000Z'); // midnight Chicago
 const DAY1_END = new Date('2026-01-11T06:00:00.000Z');   // midnight next day
 const FUTURE = new Date('2026-01-12T12:00:00.000Z');
+const DAY1_KEY = '2026-01-10';
+const THIRTY_MIN = 30 * 60 * 1000;
 
 function fiveMinTicks(from: Date, to: Date): number[] {
     const ticks: number[] = [];
@@ -17,11 +21,63 @@ function fiveMinTicks(from: Date, to: Date): number[] {
     return ticks;
 }
 
+/**
+ * Test-side mirror of `EnergyRepo.getDailyCoverage`: buckets epoch-ms ticks by
+ * their site-local day and reports the same per-day scalars the SQL computes.
+ * `maxInteriorGapMs` is the largest delta between consecutive samples of that
+ * day, threshold-independently — matching the SQL, where each day's first row
+ * contributes a zero-second gap via `COALESCE(prev_ts, timestamp)` and so can
+ * never win the `MAX`. A single-tick day therefore yields 0, not NaN.
+ */
+function coverageFromTicks(ticks: number[], tz: string): DailyCoverageStat[] {
+    const byDay = new Map<string, number[]>();
+    for (const t of [...ticks].sort((a, b) => a - b)) {
+        const key = formatSiteDate(new Date(t), tz);
+        const bucket = byDay.get(key);
+        if (bucket) {
+            bucket.push(t);
+        } else {
+            byDay.set(key, [t]);
+        }
+    }
+
+    return [...byDay.entries()].map(([localDayKey, dayTicks]) => {
+        let maxInteriorGapMs = 0;
+        for (let i = 1; i < dayTicks.length; i++) {
+            maxInteriorGapMs = Math.max(maxInteriorGapMs, dayTicks[i] - dayTicks[i - 1]);
+        }
+        return {
+            localDayKey,
+            count: dayTicks.length,
+            first: new Date(dayTicks[0]),
+            last: new Date(dayTicks[dayTicks.length - 1]),
+            maxInteriorGapMs,
+        };
+    });
+}
+
+/**
+ * A hand-written fully covered day for the threshold cases, where only one
+ * scalar should vary. `count` is a plausible dense-day value and is not what
+ * these cases exercise — the audit only reads it to detect an entirely empty
+ * day, which the "no stored coverage" cases below cover instead.
+ */
+function coveredDay(overrides: Partial<DailyCoverageStat> = {}): DailyCoverageStat {
+    return {
+        localDayKey: DAY1_KEY,
+        count: 288,
+        first: DAY1_START,
+        last: new Date(DAY1_END.getTime() - 5 * 60 * 1000),
+        maxInteriorGapMs: 5 * 60 * 1000,
+        ...overrides,
+    };
+}
+
 describe('planImport', () => {
     it('returns a window for a day with no existing data', () => {
         const result = planImport({
             requestedRange: { start: DAY1_START, end: DAY1_END },
-            existingTimestamps: [],
+            existingCoverage: [],
             timezone: TZ,
             now: FUTURE,
         });
@@ -31,7 +87,7 @@ describe('planImport', () => {
     it('returns no windows when day is fully covered', () => {
         const result = planImport({
             requestedRange: { start: DAY1_START, end: DAY1_END },
-            existingTimestamps: fiveMinTicks(DAY1_START, DAY1_END),
+            existingCoverage: coverageFromTicks(fiveMinTicks(DAY1_START, DAY1_END), TZ),
             timezone: TZ,
             now: FUTURE,
         });
@@ -42,7 +98,7 @@ describe('planImport', () => {
         // Only one point, 1 hour into the day — gap at start
         const result = planImport({
             requestedRange: { start: DAY1_START, end: DAY1_END },
-            existingTimestamps: [DAY1_START.getTime() + 60 * 60 * 1000],
+            existingCoverage: coverageFromTicks([DAY1_START.getTime() + 60 * 60 * 1000], TZ),
             timezone: TZ,
             now: FUTURE,
         });
@@ -53,7 +109,7 @@ describe('planImport', () => {
         // Only one point, 1 hour before end of day — gap at end
         const result = planImport({
             requestedRange: { start: DAY1_START, end: DAY1_END },
-            existingTimestamps: [DAY1_END.getTime() - 60 * 60 * 1000],
+            existingCoverage: coverageFromTicks([DAY1_END.getTime() - 60 * 60 * 1000], TZ),
             timezone: TZ,
             now: FUTURE,
         });
@@ -62,13 +118,13 @@ describe('planImport', () => {
 
     it('returns a window when there is an interior gap', () => {
         // Points at start and end of day, but a huge gap in the middle
-        const existingTimestamps = [
+        const ticks = [
             DAY1_START.getTime() + 5 * 60 * 1000,
             DAY1_END.getTime() - 5 * 60 * 1000,
         ];
         const result = planImport({
             requestedRange: { start: DAY1_START, end: DAY1_END },
-            existingTimestamps,
+            existingCoverage: coverageFromTicks(ticks, TZ),
             timezone: TZ,
             now: FUTURE,
         });
@@ -78,7 +134,7 @@ describe('planImport', () => {
     it('returns window even when fully covered if forceRefetch is true', () => {
         const result = planImport({
             requestedRange: { start: DAY1_START, end: DAY1_END },
-            existingTimestamps: fiveMinTicks(DAY1_START, DAY1_END),
+            existingCoverage: coverageFromTicks(fiveMinTicks(DAY1_START, DAY1_END), TZ),
             timezone: TZ,
             forceRefetch: true,
             now: FUTURE,
@@ -89,25 +145,130 @@ describe('planImport', () => {
     it('clamps start to installationDate', () => {
         const result = planImport({
             requestedRange: { start: new Date('2026-01-01T06:00:00.000Z'), end: DAY1_END },
-            existingTimestamps: [],
+            existingCoverage: [],
             timezone: TZ,
             installationDate: DAY1_START,
             now: FUTURE,
         });
-        result.forEach(w => {
-            expect(w.start.getTime()).toBeGreaterThanOrEqual(DAY1_START.getTime());
-        });
+        expect(result.map(w => w.start.getTime())).toEqual([DAY1_START.getTime()]);
     });
 
     it('returns two windows for two days each missing data', () => {
         const DAY2_END = new Date('2026-01-12T06:00:00.000Z');
         const result = planImport({
             requestedRange: { start: DAY1_START, end: DAY2_END },
-            existingTimestamps: [],
+            existingCoverage: [],
             timezone: TZ,
             now: FUTURE,
         });
         expect(result).toHaveLength(2);
+    });
+});
+
+describe('planImport — days with no stored coverage', () => {
+    const EXPECTED = [{ start: DAY1_START, end: DAY1_END }];
+
+    it('re-fetches a day with no entry in existingCoverage', () => {
+        const result = planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [],
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(result).toEqual(EXPECTED);
+    });
+
+    it('re-fetches a day with an explicit zero-count entry', () => {
+        // The SQL emits no row for a day with zero samples, so this shape is
+        // defensive — but it must behave identically to a missing entry.
+        const result = planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [{
+                localDayKey: DAY1_KEY,
+                count: 0,
+                first: null,
+                last: null,
+                maxInteriorGapMs: 0,
+            }],
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(result).toEqual(EXPECTED);
+    });
+});
+
+describe('planImport — interior gap threshold', () => {
+    it('plans no re-import for a 29-minute max interior gap', () => {
+        const result = planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [coveredDay({ maxInteriorGapMs: THIRTY_MIN - 60 * 1000 })],
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(result).toEqual([]);
+    });
+
+    it('plans a re-import for a 31-minute max interior gap', () => {
+        const result = planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [coveredDay({ maxInteriorGapMs: THIRTY_MIN + 60 * 1000 })],
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(result).toEqual([{ start: DAY1_START, end: DAY1_END }]);
+    });
+});
+
+describe('planImport — a gap exactly equal to the threshold is not a gap', () => {
+    it('does not flag missingStart for a first sample exactly 30 minutes late', () => {
+        const coverage = [coveredDay({ first: new Date(DAY1_START.getTime() + THIRTY_MIN) })];
+        const days = auditDays({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: coverage,
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(days[0].missingStart).toBe(false);
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: coverage,
+            timezone: TZ,
+            now: FUTURE,
+        })).toEqual([]);
+    });
+
+    it('does not flag missingEnd for a last sample exactly 30 minutes early', () => {
+        const coverage = [coveredDay({ last: new Date(DAY1_END.getTime() - THIRTY_MIN) })];
+        const days = auditDays({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: coverage,
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(days[0].missingEnd).toBe(false);
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: coverage,
+            timezone: TZ,
+            now: FUTURE,
+        })).toEqual([]);
+    });
+
+    it('does not flag hasInteriorGap for a max interior gap of exactly 30 minutes', () => {
+        const coverage = [coveredDay({ maxInteriorGapMs: THIRTY_MIN })];
+        const days = auditDays({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: coverage,
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(days[0].hasInteriorGap).toBe(false);
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: coverage,
+            timezone: TZ,
+            now: FUTURE,
+        })).toEqual([]);
     });
 });
 
@@ -153,7 +314,7 @@ describe('auditDays', () => {
         const DAY2_END = new Date('2026-01-12T06:00:00.000Z');
         const results = auditDays({
             requestedRange: { start: DAY1_START, end: DAY2_END },
-            existingTimestamps: [],
+            existingCoverage: [],
             timezone: TZ,
             now: FUTURE,
         });
@@ -164,12 +325,13 @@ describe('auditDays', () => {
         const ticks = fiveMinTicks(DAY1_START, DAY1_END);
         const results = auditDays({
             requestedRange: { start: DAY1_START, end: DAY1_END },
-            existingTimestamps: ticks,
+            existingCoverage: coverageFromTicks(ticks, TZ),
             timezone: TZ,
             now: FUTURE,
         });
         expect(results[0].count).toBe(ticks.length);
         expect(results[0].firstInWindow).toBe(DAY1_START.getTime());
+        expect(results[0].lastInWindow).toBe(DAY1_END.getTime() - 5 * 60 * 1000);
         expect(results[0].missingStart).toBe(false);
         expect(results[0].missingEnd).toBe(false);
         expect(results[0].hasInteriorGap).toBe(false);
@@ -178,7 +340,7 @@ describe('auditDays', () => {
     it('flags missingStart when gap at beginning exceeds threshold', () => {
         const results = auditDays({
             requestedRange: { start: DAY1_START, end: DAY1_END },
-            existingTimestamps: [DAY1_START.getTime() + 60 * 60 * 1000],
+            existingCoverage: coverageFromTicks([DAY1_START.getTime() + 60 * 60 * 1000], TZ),
             timezone: TZ,
             now: FUTURE,
         });
@@ -190,11 +352,11 @@ describe('auditDays', () => {
     it('flags hasInteriorGap when mid-day gap exists', () => {
         const results = auditDays({
             requestedRange: { start: DAY1_START, end: DAY1_END },
-            existingTimestamps: [
+            existingCoverage: coverageFromTicks([
                 DAY1_START.getTime() + 5 * 60 * 1000,
                 DAY1_START.getTime() + 10 * 60 * 1000,
                 DAY1_START.getTime() + 70 * 60 * 1000, // 60 min gap (>30m threshold)
-            ],
+            ], TZ),
             timezone: TZ,
             now: FUTURE,
         });
@@ -204,7 +366,7 @@ describe('auditDays', () => {
     it('clamps planned windows to now (avoids future days)', () => {
         const results = auditDays({
             requestedRange: { start: DAY1_START, end: new Date('2026-01-20T00:00:00.000Z') },
-            existingTimestamps: [],
+            existingCoverage: [],
             timezone: TZ,
             now: DAY1_END, // only Jan 10 is past or present, Jan 11 is in the future
         });
@@ -216,7 +378,7 @@ describe('auditDays', () => {
     it('returns empty array for range with no days', () => {
         const results = auditDays({
             requestedRange: { start: DAY1_START, end: DAY1_START },
-            existingTimestamps: [],
+            existingCoverage: [],
             timezone: TZ,
             now: FUTURE,
         });
@@ -240,7 +402,7 @@ describe('auditDays / planImport — DST transition days (America/Chicago)', () 
         const end = new Date('2026-03-09T05:00:00Z');
         const results = auditDays({
             requestedRange: { start, end },
-            existingTimestamps: [],
+            existingCoverage: [],
             timezone: TZ,
             now: new Date('2026-03-15T12:00:00Z'),
         });
@@ -257,7 +419,7 @@ describe('auditDays / planImport — DST transition days (America/Chicago)', () 
         expect(existing).toHaveLength(25 * 12);
         const windows = planImport({
             requestedRange: { start, end },
-            existingTimestamps: existing,
+            existingCoverage: coverageFromTicks(existing, TZ),
             timezone: TZ,
             now: new Date('2026-11-15T12:00:00Z'),
         });
@@ -265,3 +427,78 @@ describe('auditDays / planImport — DST transition days (America/Chicago)', () 
     });
 });
 
+describe('generateDayWindows', () => {
+    it('spring forward: one 23-hour window between true local midnights', () => {
+        // Mar 8 2026: CST midnight = 06:00Z; Mar 9 CDT midnight = 05:00Z.
+        const windows = generateDayWindows({
+            requestedRange: { start: new Date('2026-03-08T06:00:00Z'), end: new Date('2026-03-09T05:00:00Z') },
+            timezone: TZ,
+            now: new Date('2026-03-20T00:00:00Z'),
+        });
+        expect(windows).toHaveLength(1);
+        const [w] = windows;
+        expect(w.windowStart.toISOString()).toBe('2026-03-08T06:00:00.000Z');
+        expect(w.windowEnd.toISOString()).toBe('2026-03-09T05:00:00.000Z');
+        expect(w.windowEnd.getTime() - w.windowStart.getTime()).toBe(23 * 60 * 60 * 1000);
+    });
+
+    it('fall back: one 25-hour window whose effective end equals window end once past', () => {
+        // Nov 1 2026: CDT midnight = 05:00Z; Nov 2 CST midnight = 06:00Z.
+        const windows = generateDayWindows({
+            requestedRange: { start: new Date('2026-11-01T05:00:00Z'), end: new Date('2026-11-02T06:00:00Z') },
+            timezone: TZ,
+            now: new Date('2026-11-20T00:00:00Z'),
+        });
+        expect(windows).toHaveLength(1);
+        const [w] = windows;
+        expect(w.windowStart.toISOString()).toBe('2026-11-01T05:00:00.000Z');
+        expect(w.windowEnd.toISOString()).toBe('2026-11-02T06:00:00.000Z');
+        expect(w.windowEnd.getTime() - w.windowStart.getTime()).toBe(25 * 60 * 60 * 1000);
+        expect(w.effectiveWindowEnd.toISOString()).toBe('2026-11-02T06:00:00.000Z');
+        expect(w.isToday).toBe(false);
+    });
+
+    it('floors the first window start at the installation day', () => {
+        const windows = generateDayWindows({
+            requestedRange: { start: new Date('2026-01-01T06:00:00Z'), end: DAY1_END },
+            timezone: TZ,
+            installationDate: new Date('2026-01-10T15:00:00Z'), // mid-day install
+            now: FUTURE,
+        });
+        expect(windows[0].windowStart.toISOString()).toBe(DAY1_START.toISOString());
+    });
+
+    it('emits one window per day, ascending, for a multi-day range', () => {
+        const DAY2_END = new Date('2026-01-12T06:00:00.000Z');
+        const windows = generateDayWindows({
+            requestedRange: { start: DAY1_START, end: DAY2_END },
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(windows.map(w => w.windowStart.toISOString())).toEqual([
+            '2026-01-10T06:00:00.000Z',
+            '2026-01-11T06:00:00.000Z',
+        ]);
+        expect(windows.map(w => w.windowEnd.toISOString())).toEqual([
+            '2026-01-11T06:00:00.000Z',
+            '2026-01-12T06:00:00.000Z',
+        ]);
+        expect(windows.every(w => w.windowStart.getTime() < w.windowEnd.getTime())).toBe(true);
+    });
+
+    it('clamps the final effective end to now and emits no window beyond now', () => {
+        const now = new Date('2026-01-11T14:00:00.000Z'); // mid-day Jan 11 Chicago
+        const windows = generateDayWindows({
+            requestedRange: { start: DAY1_START, end: new Date('2026-01-20T00:00:00.000Z') },
+            timezone: TZ,
+            now,
+        });
+        expect(windows).toHaveLength(2);
+        const last = windows[windows.length - 1];
+        expect(last.windowStart.toISOString()).toBe('2026-01-11T06:00:00.000Z');
+        expect(last.isToday).toBe(true);
+        expect(last.effectiveWindowEnd.getTime()).toBe(now.getTime());
+        expect(last.windowEnd.toISOString()).toBe('2026-01-12T06:00:00.000Z');
+        expect(windows.every(w => w.windowStart.getTime() <= now.getTime())).toBe(true);
+    });
+});

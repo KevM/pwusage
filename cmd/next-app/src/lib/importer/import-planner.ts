@@ -1,4 +1,5 @@
-import { getSiteMidnight } from '../date-utils';
+import { formatSiteDate, getSiteMidnight } from '../date-utils';
+import type { DailyCoverageStat } from '../energy-repo';
 
 export interface DateWindow {
     start: Date;
@@ -7,7 +8,7 @@ export interface DateWindow {
 
 export interface PlanOptions {
     requestedRange: DateWindow;
-    existingTimestamps: number[];
+    existingCoverage: DailyCoverageStat[];
     timezone: string;
     installationDate?: Date;
     forceRefetch?: boolean;
@@ -15,11 +16,7 @@ export interface PlanOptions {
     now?: Date;
 }
 
-export interface DayAuditResult {
-    windowStart: Date;
-    windowEnd: Date;
-    effectiveWindowEnd: Date;
-    isToday: boolean;
+export interface DayAuditResult extends DayWindow {
     count: number;
     firstInWindow: number | null;
     lastInWindow: number | null;
@@ -28,17 +25,29 @@ export interface DayAuditResult {
     hasInteriorGap: boolean;
 }
 
-export function auditDays(options: PlanOptions): DayAuditResult[] {
-    const {
-        requestedRange,
-        existingTimestamps,
-        timezone,
-        installationDate,
-        gapThresholdMs = 30 * 60 * 1000,
-        now = new Date(),
-    } = options;
+export interface GenerateDayWindowsOptions {
+    requestedRange: DateWindow;
+    timezone: string;
+    installationDate?: Date;
+    now?: Date;
+}
 
-    const results: DayAuditResult[] = [];
+/**
+ * One site-local day of the audit range, as produced by `generateDayWindows`.
+ * Distinct from `DateWindow` above, which is a plain `{ start, end }` span used
+ * to describe ranges handed to and returned from `planImport`.
+ */
+export interface DayWindow {
+    windowStart: Date;
+    windowEnd: Date;
+    effectiveWindowEnd: Date;
+    isToday: boolean;
+}
+
+export function generateDayWindows(options: GenerateDayWindowsOptions): DayWindow[] {
+    const { requestedRange, timezone, installationDate, now = new Date() } = options;
+
+    const windows: DayWindow[] = [];
     let cursor = getSiteMidnight(requestedRange.start, timezone);
 
     if (installationDate) {
@@ -51,7 +60,6 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
     // Clamp the end of our audit range to the current time to avoid importing the future.
     const auditEnd = requestedRange.end.getTime() > now.getTime() ? now : requestedRange.end;
     const todayStart = getSiteMidnight(now, timezone);
-    let tsIndex = 0;
 
     while (cursor.getTime() < auditEnd.getTime()) {
         const windowStart = cursor.getTime();
@@ -59,48 +67,65 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             new Date(windowStart + 30 * 60 * 60 * 1000),
             timezone
         );
-        const windowEnd = nextDay.getTime();
         const isToday = cursor.getTime() === todayStart.getTime();
-
-        while (tsIndex < existingTimestamps.length && existingTimestamps[tsIndex] < windowStart) {
-            tsIndex++;
-        }
-
-        let firstInWindow: number | null = null;
-        let lastInWindow: number | null = null;
-        let count = 0;
-        let tempIdx = tsIndex;
-        let hasInteriorGap = false;
-        let lastTs: number | null = null;
-
-        while (tempIdx < existingTimestamps.length && existingTimestamps[tempIdx] < windowEnd) {
-            const currentTs = existingTimestamps[tempIdx];
-            if (firstInWindow === null) firstInWindow = currentTs;
-            if (lastTs !== null && (currentTs - lastTs > gapThresholdMs)) {
-                hasInteriorGap = true;
-            }
-            lastTs = currentTs;
-            lastInWindow = currentTs;
-            count++;
-            tempIdx++;
-        }
-
         const effectiveWindowEnd = isToday && nextDay.getTime() > now.getTime() ? now : nextDay;
 
-        results.push({
+        windows.push({
             windowStart: cursor,
             windowEnd: nextDay,
             effectiveWindowEnd,
             isToday,
-            count,
-            firstInWindow,
-            lastInWindow,
-            missingStart: firstInWindow !== null && (firstInWindow - windowStart > gapThresholdMs),
-            missingEnd: lastInWindow !== null && (effectiveWindowEnd.getTime() - lastInWindow > gapThresholdMs),
-            hasInteriorGap,
         });
 
         cursor = nextDay;
+    }
+
+    return windows;
+}
+
+export function auditDays(options: PlanOptions): DayAuditResult[] {
+    const {
+        requestedRange,
+        existingCoverage,
+        timezone,
+        installationDate,
+        gapThresholdMs = 30 * 60 * 1000,
+        now = new Date(),
+    } = options;
+
+    const coverageByDay = new Map<string, DailyCoverageStat>(
+        existingCoverage.map(stat => [stat.localDayKey, stat])
+    );
+
+    const results: DayAuditResult[] = [];
+
+    for (const day of generateDayWindows({ requestedRange, timezone, installationDate, now })) {
+        // `generateDayWindows` emits exactly one window per site-local day, so
+        // the window start's local date identifies the day the SQL aggregate
+        // grouped by. A day with no stored samples has no entry at all.
+        const key = formatSiteDate(day.windowStart, timezone);
+        const stat = coverageByDay.get(key) ?? {
+            localDayKey: key,
+            count: 0,
+            first: null,
+            last: null,
+            maxInteriorGapMs: 0,
+        };
+        const firstInWindow = stat.first === null ? null : stat.first.getTime();
+        const lastInWindow = stat.last === null ? null : stat.last.getTime();
+
+        results.push({
+            windowStart: day.windowStart,
+            windowEnd: day.windowEnd,
+            effectiveWindowEnd: day.effectiveWindowEnd,
+            isToday: day.isToday,
+            count: stat.count,
+            firstInWindow,
+            lastInWindow,
+            missingStart: firstInWindow !== null && (firstInWindow - day.windowStart.getTime() > gapThresholdMs),
+            missingEnd: lastInWindow !== null && (day.effectiveWindowEnd.getTime() - lastInWindow > gapThresholdMs),
+            hasInteriorGap: stat.maxInteriorGapMs > gapThresholdMs,
+        });
     }
 
     return results;

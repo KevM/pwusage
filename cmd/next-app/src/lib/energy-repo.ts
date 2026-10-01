@@ -1,6 +1,6 @@
 import { pool, Tariff, EnergyData, TariffSchedule } from './db';
 import { wattsToKilowatts } from './energy-utils';
-import { getSiteMidnight } from './date-utils';
+import { getSiteMidnight, getValidTimezone } from './date-utils';
 
 import { Schedule } from './schedule';
 import { SiteRepo } from './site-repo';
@@ -17,6 +17,19 @@ export interface UsageData {
     cost?: number;
     buyRate?: number;
     sellRate?: number;
+}
+
+/**
+ * Per-site-local-day coverage summary of the 5-minute `EnergyData` rows that
+ * already exist in a window. Replaces shipping every raw timestamp to the
+ * client: one row per local day carries enough to reconstruct coverage.
+ */
+export interface DailyCoverageStat {
+    localDayKey: string;
+    count: number;
+    first: Date | null;
+    last: Date | null;
+    maxInteriorGapMs: number;
 }
 
 export interface CycleAggregateRow {
@@ -124,22 +137,48 @@ export class EnergyRepo {
         return ts ? new Date(ts) : null;
     }
 
-    async getExistingTimestamps(siteId: string, start: Date, end: Date): Promise<number[]> {
+    /**
+     * Summarize existing 5-minute rows in [start, end) as one row per
+     * site-local day. Day boundaries are computed server-side with an explicit
+     * `AT TIME ZONE`, so they never depend on the session timezone. `count`,
+     * `first` and `last` describe what is already stored; `maxInteriorGapMs` is
+     * the largest gap *between* consecutive rows of that local day, used to
+     * detect real holes rather than the expected open edges of a day.
+     */
+    async getDailyCoverage(siteId: string, start: Date, end: Date, timezone: string): Promise<DailyCoverageStat[]> {
+        const tz = getValidTimezone(timezone);
         const res = await pool.query(
-            `SELECT EXTRACT(EPOCH FROM timestamp) as timestamp
-            FROM "EnergyData"
-            WHERE site_id = $1
-            AND timestamp >= $2
-            AND timestamp < $3
-            ORDER BY timestamp ASC`,
-            [siteId, start.toISOString(), end.toISOString()]
+            `WITH s AS (
+    SELECT
+        timestamp,
+        date_trunc('day', timestamp AT TIME ZONE $4::text) AS local_day,
+        LAG(timestamp) OVER (
+            PARTITION BY date_trunc('day', timestamp AT TIME ZONE $4::text)
+            ORDER BY timestamp
+        ) AS prev_ts
+    FROM "EnergyData"
+    WHERE site_id = $1
+      AND timestamp >= $2
+      AND timestamp < $3
+)
+SELECT
+    to_char(local_day, 'YYYY-MM-DD') AS local_day_key,
+    COUNT(*)::int AS count,
+    MIN(timestamp) AS first,
+    MAX(timestamp) AS last,
+    COALESCE(MAX(EXTRACT(EPOCH FROM (timestamp - COALESCE(prev_ts, timestamp)))), 0) AS max_gap_sec
+FROM s
+GROUP BY local_day
+ORDER BY local_day`,
+            [siteId, start.toISOString(), end.toISOString(), tz]
         );
-        return res.rows.map((r: { timestamp: string | number | Date }) => {
-            const ts = r.timestamp;
-            if (typeof ts === 'number') return ts * 1000; // seconds to ms
-            if (typeof ts === 'string') return Number(ts) * 1000; // parse epoch string to ms
-            return (ts as Date).getTime();
-        });
+        return res.rows.map((r: { local_day_key: string; count: string | number; first: string | Date | null; last: string | Date | null; max_gap_sec: string | number }) => ({
+            localDayKey: r.local_day_key,
+            count: Number(r.count),
+            first: r.first ? new Date(r.first) : null,
+            last: r.last ? new Date(r.last) : null,
+            maxInteriorGapMs: Number(r.max_gap_sec) * 1000,
+        }));
     }
 
     async getUsageByTOU(siteId: string, start: Date, end: Date): Promise<UsageData[]> {
