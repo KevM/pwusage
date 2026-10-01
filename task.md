@@ -1,3 +1,56 @@
+# Database reduction planning (2026-10-01)
+
+- [x] Inspect retention, inactive-user handling, production-to-dev restore, and relevant design decisions.
+- [x] Run read-only production and dev size, row-count, index, and job-history audits.
+- [x] Agree on retained history and downgrade grace; inactive-user cleanup is separate.
+- [x] Compare approaches; choose 90/365-day detailed history without summaries in the first version.
+- [ ] Identify the provider and billing window for reported 50% log-ingestion usage; include source breakdown, growth forecast, and alert thresholds in the capacity plan.
+- [x] Review and approve the design; save the agreed design in docs/plans.
+- [x] Prepare the implementation plan after design approval.
+
+Retention decisions from the user: default accounts retain 90 days of detailed
+energy history; premium accounts retain one year. Extended history is assigned manually through an internal setting/script. The
+user deferred premium-tier UX and monetization, including new admin screens.
+The 30-day downgrade grace and design are approved; all tariff versions, seasons,
+and schedules must remain permanent. Design and implementation plan are saved
+under docs/plans/2026-10-01-tiered-history-retention*.md. Retention must be enforced on historical imports as
+well as cleanup; current sync/import/analysis routes can request older windows.
+
+Audit snapshot (decimal MB, current database only): production 289.1 MB;
+dev 535.5 MB. Production EnergyData is 264.9 MB, including 164.7 MB of
+indexes, with 836,586 rows. Revoked users own 69,146 of those rows.
+There are 22 users with readings in the last seven days (user's estimate: 18).
+Dev cron.job_run_details occupies 253.6 MB and contains 171,613 rows;
+dev EnergyData occupies 251.9 MB. Two sites are named Harrison, but only
+site 2252268092126997 has readings (52,167). Existing cleanup defaults to
+365 days; the prod-to-dev workflow copies all production data.
+Measurements are a moving snapshot, not reclaimed-size guarantees.
+No application changes or database mutations were made during this audit.
+
+Follow-up scheduled-job comparison: prod has only restore-reserve-trigger
+(every 15 minutes). Dev also has rollup-trigger (hourly) and
+index-history-trigger (every minute). Both projects have cron.log_run and
+cron.log_statement enabled. Dev's current index-history job accounts for
+150,961 runs, including 132,372 failures, and about 111.3 MB of repeated
+command text. Production has 12,194 history records for its sole job.
+
+Approved dev cleanup executed on 2026-10-01: unscheduled rollup-trigger
+and index-history-trigger, then truncated cron.job_run_details. Dev database
+fell from 535,547,027 to 281,947,283 bytes; job-history allocation fell to
+16,384 bytes. restore-reserve-trigger remains active every 15 minutes.
+No production data or jobs were changed. After CLI authentication, Supabase's
+configuration API rejected cron.log_run as an unrecognized key. Recording
+therefore remains enabled. To prevent renewed buildup without restarting dev,
+installed dev-job-history-cleanup at 03:07 UTC daily, with command
+TRUNCATE TABLE cron.job_run_details. Executed the same cleanup successfully.
+This clears history and releases its table allocation every day; it does not
+disable recording or erase log-ingestion usage already counted.
+Premium/default energy retention and dev data filtering remain separate,
+unimplemented planning work.
+
+Planning verification: lint passed; 942 unit tests passed with one skipped;
+production build passed. No retention application code or migrations were changed.
+
 # iOS Solcast load timing
 
 - [x] Restart from `origin/main` with configurable load profiles/tariff timeline from PR #115.
