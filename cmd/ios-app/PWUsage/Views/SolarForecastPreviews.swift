@@ -5,11 +5,11 @@ import SwiftUI
 /// The preview site's timezone. The bill fixture, the planning context, and the
 /// synthetic solar curve must all agree: the coordinator rejects the enhancement
 /// when the bill's site timezone and the planning context's differ.
-let SitePreviewTimeZone = "America/Chicago"
+let SITE_PREVIEW_TIME_ZONE = "America/Chicago"
 
 /// Synthetic, offline forecast fixtures for Load timing previews. No Solcast key
 /// or account data is present anywhere in this file.
-enum ForecastPreviewMode: String, CaseIterable {
+enum ForecastPreviewMode: String {
     /// Two selected arrays (east + west) summed into one batch.
     case combinedArrays
     /// A run that crosses a tariff transition.
@@ -55,7 +55,7 @@ actor PreviewForecastStore: SolarForecastManaging {
         let step: TimeInterval = 30 * 60
         let start = now.addingTimeInterval(-30 * 60)
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: SitePreviewTimeZone) ?? .current
+        calendar.timeZone = TimeZone(identifier: SITE_PREVIEW_TIME_ZONE) ?? .current
         return (0..<48).map { index in
             let periodStart = start.addingTimeInterval(TimeInterval(index) * step)
             let hour = calendar.component(.hour, from: periodStart)
@@ -149,7 +149,7 @@ final class PreviewPlanningAPI: MobileLoadPlanningDataAPI {
         }
         response = MobileLoadPlanningContextResponse(
             version: 1,
-            site: .init(id: "preview-home", timezone: SitePreviewTimeZone),
+            site: .init(id: "preview-home", timezone: SITE_PREVIEW_TIME_ZONE),
             units: .init(power: "kW", localMinute: "minute-of-day"),
             asOf: now,
             availability: mode == .missingContext ? .unavailable : .available,

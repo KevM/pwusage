@@ -1,7 +1,7 @@
 #if DEBUG
 import SwiftUI
 
-enum DashboardPreviewMode: String, CaseIterable {
+enum DashboardPreviewMode: String {
     case normal
     case empty
     case stale
@@ -18,10 +18,19 @@ enum DashboardPreviewMode: String, CaseIterable {
 @MainActor
 final class DashboardPreviewAPI: MobileDashboardDataAPI {
     let mode: DashboardPreviewMode
-    private let liveResponse: MobileLiveResponse
-    private let billResponse: MobileBillResponse
+    // Held as JSON and decoded on demand rather than decoded once in `init`.
+    // This file is an app-target `#if DEBUG` file that the test target also
+    // compiles, so a fixture that cannot decode used to be a `try!` in an
+    // initializer: a `DecodingError` became `_assertionFailure` -> `SIGTRAP` and
+    // took the whole test binary down, which is the exact mechanism §5.12 removed
+    // from the test fixtures and which survived here because the greps that check
+    // for it only looked in `PWUsageTests/`. Decoding inside the two `fetch`
+    // methods, which already throw, puts the failure on the one call that needed
+    // the value and hands the caller the error that explains it.
+    private let liveJSON: String
+    private let billJSON: String
 
-    init(mode: DashboardPreviewMode) {
+    init(mode: DashboardPreviewMode, liveJSON: String? = nil, billJSON: String? = nil) {
         self.mode = mode
         // The stale mode is 2h01m old rather than exactly 2h: a charge reading is suppressed only
         // once it is *older* than two hours, and fixture construction and decoding happen at
@@ -88,7 +97,7 @@ final class DashboardPreviewAPI: MobileDashboardDataAPI {
         // the wrong reason. Every mode reports a charge of 72. The stale mode deliberately reports
         // one anyway, against a source two hours and a minute old, so the `--` it shows is caused
         // by the client-side freshness rule rather than by the fixture withholding the value.
-        let liveJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago","localDate":"2026-09-23"},"live":{"solarPower":4180,"loadPower":1260,"batteryPower":-2920,"gridPower":0},"stateOfCharge":72,"activeTariff":\#(tariffJSON),"activeLoadTiming":\#(activeLoadTiming),"today":{"homeKwh":18.4,"solarKwh":14.8,"gridNetKwh":3.6,"batteryNetKwh":-2.1},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"\#(sourceTime)","energyDataThrough":\#(hasData ? #""\#(sourceTime)""# : "null"),"stateOfChargeAt":"\#(sourceTime)"}}"#
+        let builtLiveJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago","localDate":"2026-09-23"},"live":{"solarPower":4180,"loadPower":1260,"batteryPower":-2920,"gridPower":0},"stateOfCharge":72,"activeTariff":\#(tariffJSON),"activeLoadTiming":\#(activeLoadTiming),"today":{"homeKwh":18.4,"solarKwh":14.8,"gridNetKwh":3.6,"batteryNetKwh":-2.1},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"\#(sourceTime)","energyDataThrough":\#(hasData ? #""\#(sourceTime)""# : "null"),"stateOfChargeAt":"\#(sourceTime)"}}"#
         let observedPeriods: String
         if !hasData {
             observedPeriods = "[]"
@@ -98,19 +107,19 @@ final class DashboardPreviewAPI: MobileDashboardDataAPI {
             observedPeriods = #"[{"name":"Peak","marginalCost":\#(peakBalance > 0 ? "0.12" : "0.48"),"basis":\#(peakBalance > 0 ? #""sell""# : #""buy""#),"cycleNetExportKwh":\#(peakBalance),"isActive":true,"nextStartPhrase":"in 3 hours","buyRate":0.48,"sellRate":0.12},{"name":"Off peak","marginalCost":0.12,"basis":"sell","cycleNetExportKwh":\#(offPeakBalance),"isActive":false,"nextStartPhrase":"tomorrow at 12:00 AM","buyRate":0.22,"sellRate":0.12}]"#
         }
         let loadTimingJSON = #"{"hasTariff":true,"hasCycleData":\#(hasData ? "true" : "false"),"activeIsCheapest":false,"periods":\#(observedPeriods),"pricingPeriods":[{"name":"Off peak","marginalCost":\#(hasData ? "0.12" : "null"),"basis":\#(hasData ? #""sell""# : #""unobserved""#),"cycleNetExportKwh":\#(hasData ? String(offPeakBalance) : "0"),"isActive":false,"nextStartPhrase":"tomorrow at 12:00 AM","buyRate":0.22,"sellRate":0.12},{"name":"Peak","marginalCost":\#(hasData ? (peakBalance > 0 ? "0.12" : "0.48") : "null"),"basis":\#(hasData ? (peakBalance > 0 ? #""sell""# : #""buy""#) : #""unobserved""#),"cycleNetExportKwh":\#(hasData ? String(peakBalance) : "0"),"isActive":true,"nextStartPhrase":"in 3 hours","buyRate":0.48,"sellRate":0.12},{"name":"Shoulder","marginalCost":null,"basis":"unobserved","cycleNetExportKwh":0,"isActive":false,"nextStartPhrase":"tomorrow at 10:00 PM","buyRate":0.30,"sellRate":0.08}],"tariffTimeline":[\#(tariffTimelineJSON)],"nextCheaper":\#(hasData ? #"{"name":"Off peak","marginalCost":0.12,"phrase":"in 3 hours"}"# : "null"),"nextCheaperPhrase":\#(hasData ? #""Wait until Off peak in 3 hours""# : "null"),"nextStartPhraseByKey":{"Peak":"in 3 hours","Off peak":"tomorrow at 12:00 AM","Shoulder":"tomorrow at 10:00 PM"}}"#
-        let billJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago"},"currentBill":{"estimatedCost":146.82,"currency":"USD","cycleStart":"\#(cycleStartText)","cycleEnd":"\#(cycleEndText)","periods":[{"tariffName":"Residential · Time of use","periodName":"Off peak","netGridKwh":214.6,"cost":26.83},{"tariffName":"Residential · Time of use","periodName":"Peak","netGridKwh":142.8,"cost":87.75},{"tariffName":"Residential · Time of use","periodName":"Solar credit","netGridKwh":-94.2,"cost":-8.72}]},"loadTiming":\#(hasTariff ? loadTimingJSON : "null"),"sources":{"calculatedAt":"\#(calculatedTime)","energyDataThrough":"\#(sourceTime)"}}"#
-        liveResponse = try! MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(liveJSON.utf8))
-        billResponse = try! MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(billJSON.utf8))
+        let builtBillJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago"},"currentBill":{"estimatedCost":146.82,"currency":"USD","cycleStart":"\#(cycleStartText)","cycleEnd":"\#(cycleEndText)","periods":[{"tariffName":"Residential · Time of use","periodName":"Off peak","netGridKwh":214.6,"cost":26.83},{"tariffName":"Residential · Time of use","periodName":"Peak","netGridKwh":142.8,"cost":87.75},{"tariffName":"Residential · Time of use","periodName":"Solar credit","netGridKwh":-94.2,"cost":-8.72}]},"loadTiming":\#(hasTariff ? loadTimingJSON : "null"),"sources":{"calculatedAt":"\#(calculatedTime)","energyDataThrough":"\#(sourceTime)"}}"#
+        self.liveJSON = liveJSON ?? builtLiveJSON
+        self.billJSON = billJSON ?? builtBillJSON
     }
 
     func fetchLive(siteID: String) async throws -> MobileLiveResponse {
         if mode == .error { throw URLError(.notConnectedToInternet) }
-        return liveResponse
+        return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(liveJSON.utf8))
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
         if mode == .error { throw PWUsageAPIError.recoverableServerError(statusCode: 503) }
-        return billResponse
+        return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(billJSON.utf8))
     }
 }
 

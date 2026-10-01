@@ -25,6 +25,22 @@ struct DashboardCoordinatorTests {
         #expect(api.billSiteIDs.count == 2, "Bill is fetched at t=0,30 in [0,60m).")
     }
 
+    @Test("A clock moved backwards does not stall the poll")
+    func backwardsClockDoesNotStallThePoll() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        #expect(api.liveSiteIDs == ["site-1"])
+
+        // The user's clock jumps back an hour.
+        clock.advance(minutes: -60)
+        await coordinator.refreshDue()
+        #expect(api.liveSiteIDs == ["site-1", "site-1"])
+    }
+
     @Test("Background suspends polling and foreground return makes one due request")
     func backgroundSuspendsPollingAndForegroundReturnMakesOneDueRequest() async {
         let clock = TestClock()
@@ -203,7 +219,7 @@ struct DashboardCoordinatorTests {
         // the base revision unchanged. It is kept only because it now guards the
         // invariant `deinit` depends on — a strongly-capturing timer task added
         // later would silently make the whole `deinit` unreachable.
-        weak var released = coordinator
+        weak let released = coordinator
         coordinator = nil
         for _ in 0..<200 where released != nil {
             try await Task.sleep(for: .milliseconds(10))
@@ -326,6 +342,71 @@ struct DashboardCoordinatorTests {
         #expect(api.contextSiteIDs == ["site-1"],
                 "Only a manual refresh may re-fetch the household profile.")
         #expect(coordinator.solarForecastState == .failedWithBasic)
+    }
+
+    /// The cache self-heals: an entry the device clock has carried past the
+    /// context's own 24h bound is refetched and replaced, so a bad entry never
+    /// sticks. `revalidationFailureInsideTheLifetimeRefetchesAndReplaces` isolates
+    /// the *re-validation* half of the same fall-through, which needs a different
+    /// construction; this one covers the far more common lifetime expiry.
+    @Test("A cached entry that has aged out is replaced by the next fetch")
+    func poisonedCacheEntryIsReplacedOnNextFetch() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
+        api.contextAsOf = clock.now.addingTimeInterval(-60)
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+        )
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.loadPlanningContext != nil)
+        let fetchesAfterFirstLoad = api.contextSiteIDs.count
+
+        // Age past the context's own 24h bound and let a valid response arrive.
+        clock.advance(minutes: 24 * 60)
+        api.contextAsOf = clock.now
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastUnavailableReason == nil)
+        #expect(coordinator.loadPlanningContext != nil)
+        #expect(api.contextSiteIDs.count > fetchesAfterFirstLoad)
+    }
+
+    /// The same fall-through, reached through *re-validation* rather than the
+    /// entry's own 24h lifetime. `sourceAge` is `requestTime - asOf`, so an entry
+    /// cached at the exact `maximumAge` edge is the only one that can be inside
+    /// `planningContextLifetime` and still fail re-validation a moment later: every
+    /// other entry is either comfortably inside `maximumAge` or has already tripped
+    /// the lifetime guard first. This is where the audit's "re-rejects the same bad
+    /// entry on every read rather than refetching" claim has to be true or false.
+    @Test("A cached entry that fails re-validation while still in its lifetime is refetched and replaced")
+    func revalidationFailureInsideTheLifetimeRefetchesAndReplaces() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
+        // Exactly at the 24h `maximumAge` edge, which `validating` accepts (`<=`).
+        api.contextAsOf = clock.now.addingTimeInterval(-24 * 60 * 60)
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+        )
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.loadPlanningContext != nil)
+        let fetchesAfterFirstLoad = api.contextSiteIDs.count
+
+        // One minute on: the entry is a minute inside its lifetime, but its own
+        // age is now a minute past `maximumAge`, so re-validation must fail.
+        clock.advance(minutes: 1)
+        api.contextAsOf = clock.now
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastUnavailableReason == nil)
+        #expect(coordinator.loadPlanningContext != nil)
+        #expect(api.contextSiteIDs.count > fetchesAfterFirstLoad,
+                "A cached entry that fails re-validation must still be refetched.")
     }
 
     @Test("A user-gesture refreshAll bypasses interval checks and fetches both live and bill")
@@ -473,7 +554,7 @@ private final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningD
             return try await withCheckedThrowingContinuation { liveContinuations.append((siteID, $0)) }
         }
         if let liveError { throw liveError }
-        return Self.liveResponse(siteID: siteID)
+        return try Self.liveResponse(siteID: siteID)
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
@@ -490,7 +571,7 @@ private final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningD
             return try await withCheckedThrowingContinuation { billContinuations.append((siteID, $0)) }
         }
         if let billError { throw billError }
-        return Self.billResponse(siteID: siteID)
+        return try Self.billResponse(siteID: siteID)
     }
 
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
@@ -514,23 +595,37 @@ private final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningD
         holdBill = false
         let livePending = liveContinuations
         liveContinuations.removeAll()
-        livePending.forEach { siteID, continuation in continuation.resume(returning: Self.liveResponse(siteID: siteID)) }
+        for (siteID, continuation) in livePending {
+            do {
+                continuation.resume(returning: try Self.liveResponse(siteID: siteID))
+            } catch {
+                // A broken fixture fails the one test awaiting this continuation,
+                // with the decode error attached, instead of trapping the binary.
+                continuation.resume(throwing: error)
+            }
+        }
         let billPending = billContinuations
         billContinuations.removeAll()
-        billPending.forEach { siteID, continuation in continuation.resume(returning: Self.billResponse(siteID: siteID)) }
+        for (siteID, continuation) in billPending {
+            do {
+                continuation.resume(returning: try Self.billResponse(siteID: siteID))
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
     }
 
-    private static func liveResponse(siteID: String) -> MobileLiveResponse {
+    private static func liveResponse(siteID: String) throws -> MobileLiveResponse {
         // A charge reading older than two hours decodes as unknown, so date it now rather than
         // reusing the deliberately stale `liveStatusAt` above.
         let chargeAt = ISO8601DateFormatter().string(from: Date())
         let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC","localDate":"2026-09-23"},"live":{"solarPower":1,"loadPower":2,"batteryPower":3,"gridPower":4},"stateOfCharge":50,"activeTariff":"Peak","today":{"homeKwh":1,"solarKwh":2,"gridNetKwh":3,"batteryNetKwh":4},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"2026-09-23T12:00:00Z","energyDataThrough":null,"stateOfChargeAt":"\#(chargeAt)"}}"#
-        return try! MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(json.utf8))
+        return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(json.utf8))
     }
 
-    private static func billResponse(siteID: String) -> MobileBillResponse {
+    private static func billResponse(siteID: String) throws -> MobileBillResponse {
         let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC"},"currentBill":{"estimatedCost":42,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"sources":{"calculatedAt":"2026-09-23T12:00:00Z","energyDataThrough":null}}"#
-        return try! MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
+        return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
     }
 
     private static func planningContextResponse(

@@ -182,9 +182,381 @@ the next sign-out.
   §6.1 now says this explicitly. Cost if wrong: the identifier stays readable in
   tracked files.
 
+## iOS audit correctness tail (`fix/ios-audit-correctness-tail`)
+
+Ten commits, against the seven the plan and spec tabulate. The spec's table counts this
+ledger commit; it therefore predicted **six** code commits and the branch has **nine**.
+
+- [x] `395c15b` fix(ios): stop discarding a working Solcast key on a save failure — §5.5.
+- [x] `a3d3f3b` fix(ios): draw an unknown battery charge as blank, not full — §8.18.
+- [x] `3589ac2` test(ios): contain fixture failures to one test — §5.12.
+- [x] `8c44dc9` test(ios): clear three pre-existing test-target warnings — *(not in the
+  spec's table; see the commit-count ruling below).*
+- [x] `3a7a98d` fix(ios): tolerate a fast device clock on the planning context — §5.8.
+  **The subject says "fast" and is wrong** — §5.8 rescues a device whose clock is *behind* the
+  server, not one running fast (see §5.8's `Why:`). A commit subject cannot be corrected without
+  rewriting the branch, which would invalidate every reference to this SHA, so the error is
+  recorded here instead. The direction is corrected everywhere it is editable: this ledger, the
+  code comment, the test name, and both the plan and the design.
+- [x] `089e3b0` fix(ios): stop a backwards clock stalling polls and faking freshness —
+  §5.7 parts (a) and (b).
+- [x] `3a367bb` fix(ios): stop blaming a stale forecast for a backwards clock — *(not in
+  the spec's table; see the commit-count ruling below).*
+- [x] `fcabe56` refactor(ios): take the audit's self-contained quick wins — §2 items 1
+  and 3-9.
+- [x] `03c41d5` refactor(ios): remove the no-op do/catch in the API transport — §2 item
+  2, which the spec struck (see D7 below).
+- [x] This commit — `docs(ios): reconcile the audit ledger with the correctness tail`.
+  Counts 75 tracked / 52 OPEN / 22 FIXED / 1 WON'T FIX.
+
+- **Branch gate, re-run at the final commit** *(not a task, and deliberately not a checkbox —
+  the ten `- [x]` lines above are one per commit and counting them should yield ten)*. The
+  branch's rule is that the gate is checked after every task, and this is the last one:
+  `cd cmd/ios-app && ./run-tests.sh` exits **0**, **380 tests in 21 suites** passing.
+  `./generate.sh && xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination
+  'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` prints **BUILD SUCCEEDED**
+  with `grep -c "warning:"` = **1** on a clean build. The single hit is the
+  `appintentsmetadataprocessor` "Metadata extraction skipped" toolchain line that
+  `CODE_AUDIT.md`'s header documents as the sole permitted exemption. An
+  incremental build may report **0** because the metadata processor does not
+  re-run; that is a DerivedData artifact, not a stricter result, and both figures
+  have been measured on this branch.
+  `generate.sh` left no
+  tracked change. The §5.12 `373 tests in 21 suites` figures are time-scoped to that commit
+  and have since grown with the tests later commits added.
+
+- D1: Ruling: §8.18's product decision is a **blank** battery (`battery.0percent`, no
+  `.bolt`, `.secondary` tint) rather than a one-line guard, and the precedent is the
+  TRMNL renderer rather than taste. All three of `components.ts`'s battery renderers
+  compute `level = soc == null ? 0` and then `fillWidth = (level / 100) * 18`, so an
+  e-ink dashboard already renders `--` beside an *empty* battery and never a full one.
+  That also dissolves the standing objection that a 0% glyph asserts a value: the blank
+  fill says *no fill* and the adjacent text carries the meaning, which is how TRMNL
+  distinguishes `0` from `--`. A provenance enum was considered and rejected —
+  `validatedStateOfCharge` collapses four distinct no-reading reasons into one `nil`, and
+  a new wire type would exist only to separate cases the display treats identically. The
+  Action's suggestion to pass the discharging-with-unknown-charge distinction in as a
+  separate input was declined: a second glyph for "no reading while discharging"
+  re-introduces the same ambiguity in the other direction. Cost if wrong: an unknown
+  charge draws a blank battery where a reader expected something more legible, and the
+  rendered spacing beside the `--` is still unverified on screen (the device check
+  §8.18 records as owed could not be discharged without a real sign-in).
+- D2: Ruling: §5.6 is `WON'T FIX`, not fixed. The mechanism is real — each array is a
+  separate sequential request, so the key sets come from different wall-clock times and
+  can differ — but the audit's own confidence note says the divergence is inferred from
+  Solcast's contract and **never observed**, the requests are seconds apart on a fixed
+  epoch grid, and the `Action` lands in the energy and cost math. Speculative
+  re-weighting logic written against an unobserved trigger is worse than a known sharp
+  edge. Recorded with a reopen condition: a device observed returning
+  `incompleteCoverage` for a reason other than a genuinely empty array re-opens it. Cost
+  if wrong: on a device that *does* hit the trigger, a whole day's forecast renders as
+  "An array returned no usable forecast" until someone reads this ruling and writes the
+  fix.
+- D3: Ruling: §5.7 splits rather than landing as one commit. Part (a), a backwards clock
+  silently stopping *all* polling, is a one-line boolean and lands here. Part (b), a
+  backwards clock making any forecast age look fresh, is a missing bound and lands here.
+  Part (c), anchoring cadence to `ContinuousClock`, is structural and is **re-filed as a
+  new §3.16** rather than deferred as a note, because the no-renumbering rule makes
+  `§5.7` the stable handle for "device-clock trust" and part (c) would otherwise be lost
+  behind a `FIXED` status on a partially-fixed finding. (c) is the same `lastAttempt`
+  bookkeeping as §3.7, and the two belong together: a monotonic clock is what makes
+  §3.7's "stamp after the request" rule meaningful. Cost if wrong: a user who moves the
+  clock still causes one spurious poll per interval, and the cadence model stays on
+  `Date` — a latent defect, not a visible one, until the clock is moved again.
+- D4: Ruling: §5.5's `Action` was self-defeating and is not followed literally. It says
+  "on a persist failure, keep the in-memory cache, **mark the scope failed**, and surface
+  a distinct 'could not save' state" — but `isRecommendationUsable` gates on
+  `!state.failedScopes.contains(scope)`, so marking the scope failed hides the very cache
+  the same sentence says to keep, dropping the enhancement back to `failedWithBasic`: the
+  bug's visible outcome, reached by a different route. A save failure is therefore not an
+  unavailability; the forecast stays on screen with its own note, and a new
+  `SolarForecastRefreshFailure.saveFailed` keeps it out of `SolarForecastUnavailableCause`
+  (whose every message is prefixed "Solar forecast unavailable — using tariff and balance
+  data", false here). The audit's instruction to mark the scope failed is recorded as
+  wrong. Cost if wrong: a save failure is visible to the user but the in-memory batch is
+  served without quarantine ever being consulted, so a genuinely bad credential that also
+  cannot be written to disk would be retried rather than disabled.
+- D5: Ruling: §5.8 needs **no** counter and — re-derived before any code was written —
+  needs **no eviction either**. The audit's "evict the cache entry and refetch once"
+  implies a failure counter, which `validating` cannot hold because it is a pure function;
+  no counter is needed, because a re-validation failure is part of the cache-hit
+  *condition*, so control flow falls through to the fetch and a successful refetch
+  overwrites the entry. The experiment (`revalidationFailureInsideTheLifetimeRefetchesAndReplaces`)
+  was run first, unmodified, and it passed, so the eviction was skipped and the experiment
+  kept as a regression test. The audit's second instruction, to widen the allowance "to
+  match the live contract's tolerance", is corrected: the live contract has **zero**
+  negative tolerance, which is stricter, not more lenient. The two cases are not
+  comparable — a future-stamped SoC *reading* is suspect data, while `asOf` is a *server*
+  timestamp whose "future" is a statement about the local clock — so `asOf` gets its own
+  named `maximumNegativeAgeSkew` of one hour, deliberately asymmetric with the 24h
+  positive bound. Cost if wrong: a device whose clock is behind the server gets up to an hour of
+  mis-measured `asOf` freshness instead of a permanently broken feature that blames the
+  server; and if the cache ever stops self-healing, the retained test fails loudly rather
+  than silently.
+- D6: Ruling: §2 quick win #1 and §9.4 are wrong as audited, so only the **view** call
+  sites were deleted and both methods and all three tests were kept. The audit and §9.4
+  both propose deleting `solarForecastSettingsDidEdit()` and `loadProfileDidEdit()` as
+  dead code. `SolarForecastCoordinatorTests` calls them **mid-flight** as a
+  synchronization seam, in three tests named for the invariant they protect; the
+  emptiness *is* the contract under test, and deleting the methods deletes three
+  regression tests. Five view call sites go (four in the settings sheet, one in
+  `LoadTimingView`); three of those were whole `.onChange` bodies, so the wrappers went
+  with them and the modifier lists stayed intact. §9.4 stays `OPEN` for the method half
+  only and carries a note so this is not filed a third time. Cost if wrong: a future edit
+  that gave these methods real invalidation work would land without the three tripwire
+  tests noticing, and this branch's own earlier reasoning had already shown how easy that
+  is to get wrong.
+- D7: Ruling: **the spec was wrong, and item 2 was implemented rather than struck.** D7
+  claimed the no-op `do { … } catch { throw error }` in `perform(_:)` was "already fixed
+  by §6.2", on two premises, both false. (i) It was not already fixed: the wrapper was
+  still in `perform(_:)` at `PWUsage/Networking/PWUsageAPI.swift:109-110` at the start of
+  this branch, so the audit's citation was exactly right and only the reasoning written
+  around it was wrong. (ii) No prior finding could have removed it: `perform(_:)` had not
+  been edited since the Solcast commit `c05947b`, and this branch's own preceding commit
+  `fcabe56` edited the same file only for `fetchSites` and the consolidated conformances.
+  The `catch let error as …ContractError` / `catch { throw …invalidResponse }` pairs
+  D7's reasoning pointed at are the `fetchLive` (`:50-51`) and `fetchBill` (`:59-60`)
+  decodes: real error mapping, not this item, and predating the branch. `03c41d5` removes
+  the wrapper, collapsing the declaration to a single `session.data(for:)` call. A
+  rethrow is the identity, so no behaviour changed and **no test was added** —
+  `PWUsageAPITests` covers the request path, and a test distinguishing a `rethrow` from
+  no `rethrow` could only assert the compiler. Cost if wrong: two lines of dead code
+  survive in the transport, and the standing risk was never the code — it was the
+  precedent, because a design document had already recorded a specific line number as
+  fixed when it was not, and a later reader inheriting that document would have skipped
+  the item a second time.
+- Commit count: Ruling: the branch carries **ten** commits, not the seven the spec's table
+  lists, and the three extra ones each have a reason recorded here rather than being left
+  as unexplained count drift. `8c44dc9` (three pre-existing test-target warnings) was added
+  because the branch's own ground rule is zero warnings but the gate the plan measures
+  builds the app target only, so every test run reported a non-pristine build; two of the
+  three were dead code and were deleted, and the third was live intent whose binding is now
+  read. `3a367bb` was split out of `089e3b0` because §5.7(b) suppressed the forecast panel
+  but left the panel's own accurate string "Source time is in the future" replaced by the
+  generic "too old or incomplete" fallback — two false claims shown to the user, which the
+  a+b commit did not notice and which needed its own test. `03c41d5` is §2 item 2, which the
+  spec struck and D7 above reinstates. Cost if wrong: a reader reconciling the branch
+  against the spec's seven-commit table finds three commits with no entry, which is the
+  failure mode this ledger exists to prevent; the reverse error, folding them into their
+  neighbours, would hide that a test-target warning was a behavioural trap rather than
+  dead code, and that a user-visible string was wrong.
+
+## Whole-branch review pass (`6ddea83`..HEAD)
+
+Seven findings, all of them the same shape: a fix or a claim that was correct
+in isolation and wrong in company. Ten task-scoped reviews each had no reason
+to look for them, because each lives in the seam between two correct commits.
+
+- [x] `672dec4` fix(ios): close the two destructive save-failure paths 5.5 left open
+- [x] `aa88d26` fix(ios): keep the promise the save-failure note makes
+- [x] `e64c052` test(ios): remove the last two try! from the preview fixtures
+- [x] `cb5e5f7` fix(ios): close the load-timing staleness site 5.7's survey missed
+- [x] docs(ios): correct the ledger, the plan and the design after the review — the second review pass's citation and claim corrections
+- [x] fix(ios): report a failed budget write as a save failure, not a network one — the second review pass's Finding 1
+- [x] docs(ios): re-derive the citations the budget fix moved and make the warning gate durable
+- The three commits above are **named by subject and not by SHA**, where every other entry in this list carries one. They were rewritten after they landed, so a SHA recorded here would be dead on arrival — and the repo's own rule already says to subject-identify a commit rather than cite it, precisely because forward references break on every amend. The rewrite was not cosmetic: the commit carrying the §5.5 behaviour change did not carry its own reversal. `CODE_AUDIT.md` and this file went on asserting, for one commit, that the two budget saves still mark the scope failed and that `reservationPersistenceFailureDisablesCache` pins it, while the code in the same commit had already stopped marking it and had renamed the test. That is the exact defect `CODE_AUDIT.md:3` exists to prevent — a ledger correction batched into a later commit instead of made alongside the fix — and it was invisible precisely because the three commits were the branch tip. Nothing was pushed, so the rewrite was free; after it, no commit in the branch asserts a behaviour its own code contradicts.
+- One of the three had its **commit message rebuilt in place** before the rewrite, after it was found to claim a re-record of the zero-warning figure that its own diff did not contain — the same shape as the spec's struck item 2. It now names the omission and points at the commit that fixed it. All three were then rewritten together so that the §5.5 reversal rides with the commit that made it necessary.
+- **Two of those three commit messages carry claims their own diffs do not, and they are now immutable.**
+  They would need another rebase of the tip to correct, so — for the same reason and in the same
+  spirit as `3a7a98d`'s subject above — they are recorded here rather than left for the next reader
+  to discover. Neither is a behavioural defect; both are the D7 shape (a message asserting a
+  correction its diff does not contain), and neither was caught by the round-3 re-review.
+  - **`1efd8c8` (`docs(ios): correct the ledger, the plan and the design after the review`).** Its
+    message says *"Three of its five ranges ended on the wrong line and a fourth was off by one"*,
+    about §9.8's ranges. **False in both readings, and both readings are checkable.** At its *own*
+    tree — where `SolarForecastStore.swift` is 740 lines and byte-identical to its parent's — three
+    of the five ranges are **exact** (`82-683`, `687-732`, `735-740`) and only the two function
+    ranges in `Why:` are wrong, ending at `:267` where `discoverSites` ends at `:281` (off by
+    **14**) and at `:487` where `performRefresh` ends at `:507` (off by **20**). At its *parent*
+    `cb5e5f7` all **five** ranges existed and **all five ends** were wrong — by 80, 80, 80, 25 and
+    67 lines — and **none** was off by one. The "three and a fourth" reading matches neither. The
+    same message then says the heading *"had been softened from '660-line' to '600+-line'";* its own
+    diff did the **opposite**, replacing the parent's `660-line actor` with `740-line file whose
+    602-line actor`. The `600+` heading it describes existed only in the pre-rebase chain, and the
+    rebase substituted the value underneath a narrative it carried forward — §9.8's `Why:` is
+    corrected on that point, and the ledger's claim that the tree it sits in was ever vaguer is
+    withdrawn.
+  - **`05f9ceb` (`docs(ios): re-derive the citations the budget fix moved and make the warning gate
+    durable`).** Its message says *"9.8's Location pointed at the actor's conformance extension
+    rather than the actor."* **False.** `82-683` starts exactly at `actor SolarForecastStore` and
+    ends **24 lines inside** it: the actor runs to `:707`, and the conformance extension is at
+    `:709`, which the range never touches. Its companion claim — that `Why:` pointed into two
+    functions rather than their ends — is **correct**: `223-267` and `425-487` both fall inside
+    `discoverSites` (`226-284`) and `performRefresh` (`428-521`). One of a message's two claims is
+    enough to mislead a reader checking the other, which is why both are recorded rather than only
+    the one that reads well.
+- Review: Ruling: §5.5's fix is **complete only once both refresh paths agree**, and they did not
+  until this pass. `refreshSolarForecast(manual:)` learned that a save failure is not an
+  unavailability; `loadTimingDetailAppeared` never did, so it failed its guard, niled the batch
+  and rendered "The forecast was too old or incomplete to use" after a *successful* fetch of a
+  brand-new forecast — the exact symptom the finding exists to remove, through the door the first
+  fix left unlocked, and on the *dominant* path rather than the exception. Both budget saves also
+  escalated a write failure to `persistFailureState`, whose own failing write deletes the
+  Keychain item; the one in `discoverSites` is the first-run path, so two failed writes destroyed
+  the key the user had just typed. Cost if wrong: a working Solcast key is still destroyable by a
+  disk failure, which is the one outcome §5.5 exists to make impossible, and the false "too old"
+  note is back on every screen open.
+- Review: Ruling: on the two budget saves the scope is still marked failed, unlike the post-fetch
+  save, and that asymmetry is deliberate. An unpersisted *budget* means the daily request
+  allowance cannot be enforced across a relaunch, so failing closed is the honest direction;
+  `reservationPersistenceFailureDisablesCache` pins it and passes unmodified. Dropping the
+  escalation while rewriting that test was available and was rejected: widening quarantine is not
+  the point, and a tripwire rewrite is exactly what §5.12 warns against. Cost if wrong: a device
+  with a transient disk fault shows no forecast recommendation until the next successful refresh
+  clears the marking — conservative, visible, and self-healing.
+  **REVERSED in the branch's second review pass — this ruling was wrong on the merits, and the
+  test it leaned on turned out to encode the wrong behaviour rather than guard a right one.** The
+  argument's premise was its own undoing: the disk that would have recorded the budget is the
+  disk that just failed, so `failedScopes` is not persisted either and the marking is
+  session-only. It delivered none of the cross-relaunch protection it was cited for, while
+  `isRecommendationUsable` gating on it hid a good forecast for the rest of the session, and a
+  disk fault surfaced to the user as "Solcast could not be reached". Both budget saves now
+  return `.failed(.saveFailed)` and mark nothing, and the test was rewritten to pin that.
+  The tripwire rule was misapplied the first time and correctly *not* applied the second: it
+  protects correct behaviour, and that assertion was the behaviour under review. Cost if wrong:
+  on a device whose disk is failing, the on-disk request counter can drift by every reservation
+  made since the last successful write — bounded and self-correcting, and the same class of
+  staleness as losing the whole cache — against which a working forecast is always shown.
+- Review: Ruling: the save-failure note's promise is **kept, not withdrawn**. The alternative —
+  delete "It will be retried on the next refresh" — was rejected because the promise was the
+  honest description of what the user should expect, and the defect was that nothing implemented
+  it. A `dirtyScopes` set now records a write left pending and the `.alreadyFresh` short-circuit
+  attempts it, returning `.refreshed` on success and `.failed(.saveFailed)` on failure. The retry
+  is a file write only: no request is charged, no Solcast call is made, and it cannot spin,
+  because a failed retry returns without refetching so the cache is not re-stamped. Cost if wrong:
+  a permanently failing disk is written to once per refresh call instead of not at all — a small,
+  bounded cost against a warning that would otherwise lie.
+- Review: Ruling: the preview fixtures' `try!` pair is fixed by **decoding inside the two
+  `fetch` methods rather than by making `init` throwing**. Both were available. A throwing `init`
+  would have forced `try` into all nine construction sites — four of them inside `#Preview` bodies
+  with nowhere sensible to handle it — and would have made a preview that cannot be constructed
+  fail to render at all. Decoding in the already-`throws` fetches puts the failure on the one call
+  that needed the value and hands the caller the `DecodingError`. Cost if wrong: the JSON is held
+  rather than the decoded value, so each `fetch` re-decodes — irrelevant for a preview, and the
+  trade is invisible if the API is ever used in a hot path.
+- Review: Ruling: §5.7's title says "**All** cadence and staleness decisions", which is a
+  completeness claim, so the survey is written into the finding and is checkable rather than
+  asserted. Eleven sites make an age decision and all eleven now handle a negative age. Verifying
+  it turned up two things the review that prompted it had wrong: the estimator's balance guard is
+  split across two lines (so grepping the staleness line for `>= 0` finds nothing and the site
+  reads as unguarded), and `chargeAgeLabel` has the same upper-bound-only shape and is provably
+  *not* a defect — a negative age returns `nil`, which is correct, and widening it would
+  *introduce* the bug. Cost if wrong: a future reader trusts the survey instead of redoing it,
+  and either opens a non-bug or misses the next one; the survey is a floor, not a substitute for
+  looking.
+- Review: Ruling: §5.8's skew direction was **wrong in the wrong direction to be harmless**.
+  `sourceAge` compares the server's `asOf` to the *device's* clock, so `asOf` looks future-dated
+  only when the device is **behind**; a fast clock was never in the affected population. The
+  reasoning and the code were always right, and the error is inherited from the pre-branch audit.
+  Corrected in this ledger, the code comment, the test name, and both the plan and the design
+  after a claim-grep found eight further instances the review had not listed. Cost if wrong: a
+  user with a fast clock reads §5.8, sees their own symptom described as fixed, and never learns
+  the real cause is the opposite one — the most expensive kind of wrong prose, because it is
+  indistinguishable from being helped. The landed commit subject still says "fast" and cannot be
+  corrected without rewriting the branch; that is recorded rather than silently left.
+- Review: Ruling: §8.18's `Fix:` bullet is corrected on **what the precedent does**, and the
+  product decision is not reversed. The blank fill matches all three TRMNL renderers and the web
+  tile; the direction glyph does not — TRMNL picks `CHARGING_ICON`/`DISCHARGING_ICON` from the
+  `status` argument alone and emits it regardless of `soc`, and the web tile does the same, while
+  iOS folds direction into the glyph name. The previous wording claimed TRMNL "is always neutral"
+  and that a bolt "asserts flow the blank fill denies", conflating level with direction. Cost if
+  wrong: a reader deciding this later is misled about the precedent, which is the one input the
+  decision actually rests on; the choice itself survives either way, and the tint change does not
+  depend on the precedent at all.
+
 ## Notes
 
 - Sol coordinates; Luna implements one bounded task at a time.
 - Native tests run only through `cmd/ios-app/run-tests.sh`, sequentially.
 - No live Solcast quota use in automated verification.
 - Solcast keys/resource IDs/forecasts remain device-local.
+
+## Rebase onto `main` (PR #117 landed first)
+
+`main` moved two commits while this branch was open — most importantly **PR #117, "close the 17
+highest-severity audit findings"**, which is the **squash of this branch's own first 13 commits**.
+So a plain `git rebase origin/main` tried to replay 31 commits and conflicted on files it was
+re-adding. The correct target was `git rebase --onto origin/main 19ce8bf`: replay only the 18
+correctness-tail commits, since #117 already delivered the 13 below them.
+
+Two real conflicts, and one collision that no tool could resolve:
+
+1. **`PWUsageAppModelTests.swift`** — #117 added `supersededBootstrapAttemptCannotOverwriteNewerState`
+   *and* a `try!` config stub; this branch had already converted that stub to a throwing factory for
+   §5.12. Resolved by keeping #117's test and this branch's helper. That left the new call site
+   missing `try`, caught by `./run-tests.sh` and fixed in its own commit.
+2. **`CODE_AUDIT.md` §3.15** — **both branches independently filed §3.15 for different findings.**
+   `main`'s is overlapping-bootstrap ordering (`FIXED`, from #117); this branch's was
+   `ContinuousClock` cadence anchoring (`OPEN`, re-filed from §5.7 part (c)). The ledger forbids
+   renumbering, so the collision is real. Resolved by renumbering **this branch's** finding to
+   **§3.16**, because `main`'s is already merged and cited by other documents while ours had never
+   left the branch — which is exactly the case the no-renumbering rule protects. An HTML comment
+   above §3.16 records the provenance, and all 13 references in the plan, spec and this file were
+   updated.
+
+One of the discarded conflict sides also carried a round-3 citation fix
+(`LoadTimingForecastPresentation.swift:83-89` → `:95-102`) that was **not** re-applied automatically.
+Caught by spot-checking rather than by a test, which is the fourth time on this branch that a
+mechanical merge step dropped a correction that no assertion covered.
+
+**Merged state:** 77 findings (76 from `main` + §3.16), 52 `OPEN` / 24 `FIXED` / 1 `WON'T FIX`.
+Suite is **394 tests in 21 suites** (390 here + 4 from #117), clean build with the one permitted
+`appintentsmetadataprocessor` warning, 0 crash reports. Every cited SHA resolves.
+
+## Second merge: PR #119 landed mid-PR
+
+`main` moved again while PR #120 was open — **PR #119, "show live power supply and receive roles"**,
+which relocates `batterySymbol` from `DashboardView` into `DashboardPresentation` and replaces the
+four-tile `adaptiveGrid` with `LivePowerFlowCards`. Rather than rebase (which would replay 18 commits
+and force the §3.15 collision to be resolved a second time), this was a **merge**, so the 20 already-pushed
+SHAs and PR #120's history stayed valid and the conflict was resolved once in its final state.
+
+One file conflicted, `DashboardView.swift`, in three hunks, and the two sides were **both** needed:
+
+- The hero `Image(systemName:)` call — took #119's `livePowerIsCurrent` guard, which stops a stale power
+  value from producing a wrong direction glyph, routed through **this** branch's §8.18
+  `DashboardPresentation.batterySymbol` (the `guard let stateOfCharge else { return "battery.0percent" }`).
+- The tile grid — #119's `LivePowerFlowCards` won; the old `adaptiveGrid` is gone.
+- The two private helpers — **both became dead**. `batterySymbol` had moved to `DashboardPresentation`
+  in §8.18's fix, and `gridDirection`'s only caller was a `MetricTile` in the grid #119 replaced. Both
+  deleted rather than kept, since keeping unreachable code is what §9.8 is about.
+
+### What the merge staled, and one error it exposed that predates it
+
+PR #119 shifted line numbers in `DashboardView.swift`, so the citations this branch had re-derived
+four times went stale *again*. Caught by re-deriving rather than by any test — the fifth time on this
+branch that a mechanical step has dropped something no assertion covered. Fixed: §8.18's `Location`
+and `Confidence`, §5.7's survey, §5.4's hero block, §5.9's `Location`.
+
+§5.9's was a **pre-existing error the merge made visible**: it cited
+`DashboardView.swift:306-319 (batterySymbol)`, but that range held `gridDirection` even *before* #119 —
+`batterySymbol` had already moved to `DashboardPresentation` when §8.18's fix relocated it. A citation
+that survived four rounds of review because nobody re-read it against a tree that had shifted under a
+*different* commit than the one that broke it.
+
+**Merged state:** 402 tests in 22 suites (394 + 8 from #119, including its new `LivePowerFlowLayoutTests`
+suite), clean build with the one permitted `appintestsmetadataprocessor` warning, 0 crash reports.
+
+## PR #120 review: clock advice shown for errors no clock can fix
+
+One `P2` comment on `LoadTimingForecastPresentation.swift:268`, and it was correct.
+
+§5.8's fix had made the `.contextInvalid` note point at the device's own date and time, which is
+the right advice for `asOf` skew. But nothing enforced that the failure *was* skew: `validating`
+checked the age bounds inside the same large `invalidSource` guard as units, timezone, history
+bounds and slot validity, and the coordinator mapped every `ContractError` to `.contextInvalid`. So
+an unsupported version, a site mismatch, wrong units or malformed history all produced "check this
+device's date and time" — advice that cannot possibly help, for a cause the evidence does not
+support. A user's fix attempt would fail, and the next failure would be further from the truth.
+
+Split into `ContractError.timestampSkew` versus `invalidSource`, mapped to `.contextInvalid` versus a
+new `.contextMalformed`, whose note says only that the payload could not be read and to retry.
+
+Two notes on how this was verified. The new tests were checked against a reverted one-line
+discrimination and three assertions fail, so they pin behaviour rather than the existence of a new
+enum case — a review pattern that has already earned its place on this branch (the `try` lost in a
+conflict, a discarded rebase side). And `contractRejectionIsReportedDistinctly` was retargeted to
+`.contextMalformed` instead of deleted: its purpose was "distinct from a missing profile", which
+still holds, and keeping it preserves the malformed-payload coverage this PR had before the split.
+
+**Gates:** 405 tests in 22 suites (402 + 3), clean build with the one permitted warning, 0 crashes.

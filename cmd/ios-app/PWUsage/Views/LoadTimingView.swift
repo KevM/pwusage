@@ -266,6 +266,7 @@ struct LoadTimingView: View {
             enhancement: enhancedState,
             connection: coordinator.solarForecastConnection,
             cause: coordinator.solarForecastUnavailableCause,
+            saveFailed: coordinator.solarForecastSaveFailure,
             enhancementReason: coordinator.solarForecastUnavailableReason,
             result: result,
             forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
@@ -403,7 +404,6 @@ struct LoadTimingView: View {
             LoadRunDetailsSheet(snapshot: snapshot)
         }
         .onChange(of: profileStore.profiles) { _, profiles in
-            coordinator.loadProfileDidEdit()
             if let exploredProfileID, !profiles.contains(where: { $0.id == exploredProfileID }) {
                 self.exploredProfileID = nil
             }

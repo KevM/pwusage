@@ -73,9 +73,33 @@ enum LoadTimingForecastPresentation {
         let explored = recommendation.exploredProfile(explicitID: explicitExploredID)
         guard let profile = explored?.profile else { return nil }
         let card: Card = recommendation.suggested?.profile.id == profile.id ? .recommendation : .explorer
-        return Placement(card: card, profile: profile)    }
+        return Placement(card: card, profile: profile)
+    }
 
     static let unavailableNotePrefix = "Solar forecast unavailable — using tariff and balance data."
+    /// Deliberately does not reuse `unavailableNotePrefix`: the forecast is
+    /// available here, it just did not reach the disk.
+    /// Shown when the device could not write its forecast state, which has two sites:
+    /// the post-fetch persist (a forecast was fetched and could not be written) and
+    /// the pre-fetch budget reservation (no request was made, and the request
+    /// counter could not be written). The wording covers both — it says what failed
+    /// and what the consequence is, not which of the two happened.
+    ///
+    /// The promise in the last sentence is load-bearing and is kept:
+    /// `SolarForecastStore.dirtyScopes` records a write left pending by a failed
+    /// persist, and the `.alreadyFresh` short-circuit attempts it before reporting
+    /// the cache fresh. Do not "correct" this copy by removing the promise — the
+    /// defect was never the wording, it was that nothing retried the write for three
+    /// hours while the note said it would.
+    static let saveFailureNote = "Forecast data could not be saved to this device, so it may not update. It will be retried on the next refresh."
+    /// Deliberately does not reuse the "too old or incomplete" fallback, and does
+    /// not use `unavailableNotePrefix` either: the forecast is present, and its age
+    /// is unverifiable rather than too old. The batch is stamped with this device's
+    /// own clock at fetch time (`SolarForecastStore.swift:503`), so a future-dated
+    /// stamp means the clock has since moved backwards, not that the server sent
+    /// the wrong time. Point at the clock, which the user can fix, the same way
+    /// `contextInvalid` does for `asOf`.
+    static let futureDatedForecastNote = "This solar forecast is timestamped later than this device's clock, so its age cannot be checked and it is not being used for now. Check this device's date and time, then pull down to refresh."
     /// Matches `SolarForecastStore.recommendationFreshness`. Data older than this
     /// may be shown as stale, but must not produce a new recommendation.
     static let maximumForecastAge: TimeInterval = 6 * 60 * 60
@@ -84,6 +108,7 @@ enum LoadTimingForecastPresentation {
         enhancement: SolarForecastEnhancementState,
         connection: SolarForecastConnectionState,
         cause: SolarForecastUnavailableCause?,
+        saveFailed: Bool = false,
         enhancementReason: SolarForecastEnhancementUnavailableReason? = nil,
         result: LoadTimingForecastEstimator.Result,
         forecastFetchedAt: Date?,
@@ -92,8 +117,10 @@ enum LoadTimingForecastPresentation {
         timeZone: String,
         now: Date
     ) -> Overlay {
+        let forecastAge = forecastFetchedAt.map { now.timeIntervalSince($0) }
         if enhancement == .enhanced, connection == .ready, let comparison = result.comparison,
-           let fetchedAt = forecastFetchedAt, now.timeIntervalSince(fetchedAt) <= maximumForecastAge,
+           let fetchedAt = forecastFetchedAt, let forecastAge,
+           forecastAge >= 0, forecastAge <= maximumForecastAge,
            comparison.costNow.isFinite, comparison.recommendedCost.isFinite,
            comparison.savings.isFinite, comparison.estimatedSolarContribution.isFinite {
             return Overlay(
@@ -101,16 +128,24 @@ enum LoadTimingForecastPresentation {
                 enhanced: enhancedSection(comparison, forecastFetchedAt: fetchedAt,
                                           contextAsOf: contextAsOf, currencyCode: currencyCode,
                                           timeZone: timeZone, now: now),
-                note: nil,
+                note: saveFailed ? saveFailureNote : nil,
                 detail: "This estimate assumes typical household and battery behavior from your history. "
                     + "Your final bill cost may differ from this estimate."
             )
         }
+        // A negative age means the batch's stamp is ahead of this device's clock:
+        // the stamp is this device's own clock as of fetch time, so the clock has
+        // moved backwards since — see `futureDatedForecastNote`. The forecast is
+        // present, so only the generic age fallback would misdescribe it — a
+        // specific cause or reason below still names the real blocker, and is left
+        // to do so.
+        let forecastIsFutureDated = forecastAge.map { $0 < 0 } ?? false
         return Overlay(
             isForecastAware: false,
             enhanced: nil,
             note: note(enhancement: enhancement, connection: connection,
-                       cause: cause, enhancementReason: enhancementReason, result: result),
+                       cause: cause, enhancementReason: enhancementReason, result: result,
+                       forecastIsFutureDated: forecastIsFutureDated),
             detail: ""
         )
     }
@@ -173,7 +208,8 @@ enum LoadTimingForecastPresentation {
         connection: SolarForecastConnectionState,
         cause: SolarForecastUnavailableCause?,
         enhancementReason: SolarForecastEnhancementUnavailableReason?,
-        result: LoadTimingForecastEstimator.Result
+        result: LoadTimingForecastEstimator.Result,
+        forecastIsFutureDated: Bool
     ) -> String? {
         // No key on this device means there is nothing to explain.
         switch connection {
@@ -212,7 +248,7 @@ enum LoadTimingForecastPresentation {
             // device's own request bookkeeping is the better explanation.
             break
         }
-        return causeNote(cause)
+        return causeNote(cause, forecastIsFutureDated: forecastIsFutureDated)
     }
 
     private static func enhancementNote(_ reason: SolarForecastEnhancementUnavailableReason) -> String {
@@ -224,8 +260,18 @@ enum LoadTimingForecastPresentation {
             return "\(unavailableNotePrefix) This app build is newer than the server it is talking to, "
                 + "so household data cannot be loaded yet. Nothing is wrong with your data."
         case .contextInvalid:
-            return "\(unavailableNotePrefix) The server sent household data this app could not read. "
-                + "Please report this so it can be investigated."
+            // `asOf` is a server timestamp read against this device's clock, so a
+            // mis-set device clock lands here. Blaming the server would send the
+            // user to file a bug that does not exist, and there is no in-app way to
+            // file one anyway — so point at the clock, which the user can fix.
+            return "\(unavailableNotePrefix) This device could not use your household profile, which is "
+                + "timestamped by your server. Check this device's date and time, then pull down to retry."
+        case .contextMalformed:
+            // The payload is unusable no matter what the clock says, so this must
+            // not send someone to adjust their date. Say what is actually true
+            // without inventing a fix or inviting a bug report about the server.
+            return "\(unavailableNotePrefix) The household profile your server sent could not be read by this "
+                + "app version, so start times cannot be compared right now. Pull down to retry."
         case .contextUnavailable:
             return "\(unavailableNotePrefix) This device could not read your household profile, so no start "
                 + "time can be compared. It fills in as more energy data arrives."
@@ -249,7 +295,10 @@ enum LoadTimingForecastPresentation {
         }
     }
 
-    private static func causeNote(_ cause: SolarForecastUnavailableCause?) -> String {
+    private static func causeNote(
+        _ cause: SolarForecastUnavailableCause?,
+        forecastIsFutureDated: Bool
+    ) -> String {
         switch cause {
         case .unauthorized:
             return "\(unavailableNotePrefix) Solcast rejected the saved key. Retry from Solar forecast settings."
@@ -269,7 +318,12 @@ enum LoadTimingForecastPresentation {
         case .deferred:
             return "\(unavailableNotePrefix) Requests are paused until the daily limit resets. Retry tomorrow."
         case nil:
-            return "\(unavailableNotePrefix) The forecast was too old or incomplete to use. Pull down to refresh it."
+            // A future-dated forecast reaches the fallback only because its age
+            // cannot be checked, so it needs its own note rather than the
+            // "too old or incomplete" wording, which is false here.
+            return forecastIsFutureDated
+                ? futureDatedForecastNote
+                : "\(unavailableNotePrefix) The forecast was too old or incomplete to use. Pull down to refresh it."
         }
     }
 }

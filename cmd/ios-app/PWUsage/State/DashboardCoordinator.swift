@@ -7,14 +7,10 @@ protocol MobileDashboardDataAPI: Sendable {
     func fetchBill(siteID: String) async throws -> MobileBillResponse
 }
 
-extension PWUsageAPI: MobileDashboardDataAPI {}
-
 @MainActor
 protocol MobileLoadPlanningDataAPI: Sendable {
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse
 }
-
-extension PWUsageAPI: MobileLoadPlanningDataAPI {}
 
 enum SolarForecastEnhancementState: Equatable {
     case basic
@@ -47,7 +43,11 @@ enum SolarForecastUnavailableCause: Equatable {
     case budgetExhausted
     case deferred
 
-    init(_ failure: SolarForecastRefreshFailure) {
+    /// `nil` when the failure does not make the forecast unavailable. A save
+    /// failure is deliberately `nil`: the forecast is available in memory, so
+    /// `causeNote`'s "Solar forecast unavailable" prefix would be false. It is
+    /// surfaced by `DashboardCoordinator.solarForecastSaveFailure` instead.
+    init?(_ failure: SolarForecastRefreshFailure) {
         switch failure {
         case .unauthorized: self = .unauthorized
         case .rateLimited: self = .rateLimited
@@ -56,13 +56,16 @@ enum SolarForecastUnavailableCause: Equatable {
         case .invalidForecast: self = .invalidForecast
         case .storageFailure: self = .storageFailure
         case .cleanupFailure: self = .cleanupFailure
+        case .saveFailed: return nil
         }
     }
 
     /// `nil` when the attempt succeeded or was never a provider failure.
     init?(_ result: SolarForecastRefreshResult) {
         switch result {
-        case .failed(let failure): self = SolarForecastUnavailableCause(failure)
+        case .failed(let failure):
+            guard let cause = SolarForecastUnavailableCause(failure) else { return nil }
+            self = cause
         case .budgetExhausted: self = .budgetExhausted
         case .deferred: self = .deferred
         case .refreshed, .alreadyFresh, .notConfigured, .cancelled: return nil
@@ -83,8 +86,12 @@ enum SolarForecastEnhancementUnavailableReason: Equatable {
     case timestampMisaligned
     /// The request itself was rejected, so nothing is known about the profile.
     case requestFailed
-    /// The server answered, but the payload failed contract validation.
+    /// This device's clock put the server's timestamp outside the age window, so
+    /// the payload reads as stale or future-dated. Fixable on the device.
     case contextInvalid
+    /// The server answered, but the payload failed contract validation for a reason
+    /// no clock change can fix — wrong units, unknown timezone, bad history bounds.
+    case contextMalformed
     /// The server does not have this route, so it predates the app build.
     case serverOutdated
     case forecastNotUsable
@@ -131,6 +138,17 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
     @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
     @Published private(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
+    /// This device could not write its forecast state. Not a cause: the forecast
+    /// on screen is usable, so it must not claim to be unavailable.
+    ///
+    /// Re-derived on every path that reaches a refresh *result* — both refresh
+    /// paths set it from the result, and set it back to `false` when they fall
+    /// back to basic. The early returns that never reach a refresh (no store, no
+    /// credential, no array selection) deliberately leave it alone, and that is
+    /// inert rather than merely untidy: the overlay reads this only on the
+    /// enhanced-and-ready branch, and every one of those returns sets the state to
+    /// `.basic` or `.awaitingArraySelection`, which cannot reach it.
+    @Published private(set) var solarForecastSaveFailure = false
     @Published private(set) var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
     @Published private(set) var solarForecastBatch: SolarForecastBatch?
     @Published private(set) var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
@@ -347,7 +365,15 @@ final class DashboardCoordinator: ObservableObject {
 
         guard operation == forecastGeneration, siteID == selectedSiteID, !requiresSignIn else { return }
         solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
-        let refreshSucceeded = refresh == .refreshed || refresh == .alreadyFresh
+        // A save failure is not an unavailable forecast, on this path exactly as
+        // on `refreshSolarForecast`. The batch is fresh and in memory — the store
+        // kept it deliberately — so tearing the enhancement down here would show
+        // "The forecast was too old or incomplete to use. Pull down to refresh it"
+        // after a *successful* fetch of a brand-new forecast, which is the symptom
+        // §5.5 was filed to remove. This path is the dominant one (pull-to-refresh
+        // is the exception), so the omission is the more visible half of the bug.
+        let saveFailed = refresh == .failed(.saveFailed)
+        let refreshSucceeded = saveFailed || refresh == .refreshed || refresh == .alreadyFresh
         // The appearance-driven bill refresh is floored, so a bill fetched
         // moments ago by an earlier appearance, a site switch, or a pull is
         // already fresh. Requiring a brand new success here would drop the
@@ -376,12 +402,14 @@ final class DashboardCoordinator: ObservableObject {
             solarForecastBatch = nil
             loadPlanningContext = nil
             solarForecastState = .failedWithBasic
+            solarForecastSaveFailure = false
             return
         }
         solarForecastBatch = batch
         loadPlanningContext = context
         solarForecastUnavailableReason = nil
         solarForecastState = .enhanced
+        solarForecastSaveFailure = saveFailed
     }
 
     func refreshSolarForecast(manual: Bool) async {
@@ -417,17 +445,23 @@ final class DashboardCoordinator: ObservableObject {
             solarForecastState = .failedWithBasic
             return
         }
-        guard refresh == .refreshed || refresh == .alreadyFresh,
+        // A save failure is not an unavailable forecast: the batch is fresh and in
+        // memory, so the enhancement stays up behind its own note rather than being
+        // torn down behind a "Solar forecast unavailable" sentence.
+        let saveFailed = refresh == .failed(.saveFailed)
+        guard saveFailed || refresh == .refreshed || refresh == .alreadyFresh,
               await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
               let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID) else {
             solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
             solarForecastBatch = nil
             solarForecastState = .failedWithBasic
+            solarForecastSaveFailure = false
             return
         }
         solarForecastBatch = batch
         solarForecastUnavailableCause = nil
         solarForecastState = .enhanced
+        solarForecastSaveFailure = saveFailed
     }
 
     @discardableResult
@@ -548,8 +582,11 @@ final class DashboardCoordinator: ObservableObject {
             // Reporting it as an unreadable profile would be a guess, and the
             // user is already frustrated by guesses.
             let reason: SolarForecastEnhancementUnavailableReason
-            if error is MobileLoadPlanningContextResponse.ContractError {
-                reason = .contextInvalid
+            if let contractError = error as? MobileLoadPlanningContextResponse.ContractError {
+                // Only skew is the device's fault, so only skew earns clock advice.
+                // Every other contract failure would keep failing with a perfect
+                // clock, and telling someone to fix their date is then a dead end.
+                reason = contractError == .timestampSkew ? .contextInvalid : .contextMalformed
             } else if let rejected = error as? PWUsageAPIError,
                 case .requestRejected(let statusCode, _) = rejected, statusCode == 404 {
                 reason = .serverOutdated
@@ -615,6 +652,7 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastConnection = connection
         solarForecastUnavailableCause = nil
         solarForecastUnavailableReason = nil
+        solarForecastSaveFailure = false
     }
 
     private func launchBillTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int) {
@@ -635,7 +673,13 @@ final class DashboardCoordinator: ObservableObject {
 
     private func isDue(lastAttempt: Date?, interval: TimeInterval, at date: Date) -> Bool {
         guard let lastAttempt else { return true }
-        return date.timeIntervalSince(lastAttempt) >= interval
+        let elapsed = date.timeIntervalSince(lastAttempt)
+        // A negative elapsed time means the device clock moved backwards, so real
+        // elapsed time is unknown. Treat it as due: a spurious poll costs one
+        // request, while stalling freezes live and bill data indefinitely with no
+        // error and nothing on screen to explain it.
+        guard elapsed.isFinite else { return true }
+        return elapsed < 0 || elapsed >= interval
     }
 
     /// Whether the bill response on hand was fetched inside the appearance floor.

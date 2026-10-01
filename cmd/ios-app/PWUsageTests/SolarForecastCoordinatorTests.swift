@@ -72,6 +72,71 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastState == .enhanced)
     }
 
+    @Test("A save failure leaves the enhancement up and claims no unavailability cause")
+    func saveFailureLeavesEnhancementUp() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        await coordinator.loadTimingDetailAppeared()
+        await forecast.setRefreshResults([.failed(.saveFailed)])
+
+        await coordinator.refreshSolarForecast(manual: true)
+
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.solarForecastBatch != nil)
+        #expect(coordinator.solarForecastUnavailableCause == nil)
+        #expect(coordinator.solarForecastSaveFailure)
+    }
+
+    @Test("A save failure on the appearance path leaves the enhancement up too")
+    func appearancePathSaveFailureLeavesEnhancementUp() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        // Armed before the first appearance, so the appearance path itself is the
+        // one that sees the save failure. This is the dominant path — pull to
+        // refresh is the exception — and it is the one that has to agree with
+        // refreshSolarForecast about what a save failure means.
+        await forecast.setRefreshResults([.failed(.saveFailed)])
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.solarForecastBatch != nil)
+        #expect(coordinator.solarForecastUnavailableCause == nil)
+        #expect(coordinator.solarForecastSaveFailure)
+    }
+
+    @Test("A later failure on the appearance path clears an earlier save-failure note")
+    func appearancePathFailureAfterSaveFailureClearsTheNote() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        await forecast.setRefreshResults([.failed(.saveFailed), .failed(.requestFailed)])
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastSaveFailure)
+
+        await coordinator.loadTimingDetailAppeared()
+
+        // The save-failure note describes a forecast that is on screen and usable.
+        // Once the enhancement has actually been torn down, leaving it set would be
+        // a claim about a state that no longer exists.
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastSaveFailure == false)
+    }
+
     @Test("Fresh validated context is reused for twenty four hours")
     func contextIsCachedForTwentyFourHours() async {
         let clock = ForecastTestClock()
@@ -126,7 +191,7 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.loadPlanningContext == nil)
     }
 
-    @Test("Planning context is validated at receive time and permits five minutes of source clock skew")
+    @Test("Planning context is validated at receive time and permits an hour of source clock skew")
     func contextUsesReceiveTimeForValidation() async {
         let clock = ForecastTestClock()
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
@@ -144,11 +209,11 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastState == .enhanced)
     }
 
-    @Test("Planning context more than five minutes in the future is rejected")
+    @Test("Planning context more than an hour in the future is rejected")
     func contextRejectsExcessiveFutureSkew() async {
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
         let api = ForecastDashboardAPISpy()
-        api.contextAsOf = api.now.addingTimeInterval(5 * 60 + 1)
+        api.contextAsOf = api.now.addingTimeInterval(60 * 60 + 1)
         let coordinator = DashboardCoordinator(
             siteID: "site-a", api: api, planningAPI: api,
             forecastStore: forecast, accountScopeID: "local-account",
@@ -404,7 +469,36 @@ struct SolarForecastCoordinatorTests {
         await coordinator.loadTimingDetailAppeared()
 
         #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastUnavailableReason == .contextMalformed)
+    }
+
+    /// A clock the server and device disagree about is the one failure the person
+    /// holding the phone can fix, so it is the only one allowed to become advice
+    /// about their date and time. Everything else would keep failing unchanged.
+    @Test("Only a skewed clock is reported as fixable on this device")
+    func onlyClockSkewIsReportedAsContextInvalid() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        api.contextError = MobileLoadPlanningContextResponse.ContractError.timestampSkew
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
         #expect(coordinator.solarForecastUnavailableReason == .contextInvalid)
+
+        api.contextError = MobileLoadPlanningContextResponse.ContractError.invalidSource
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastUnavailableReason == .contextMalformed,
+                "A payload no clock change can fix must not be reported as a clock problem")
+
+        api.contextError = MobileLoadPlanningContextResponse.ContractError.siteMismatch(expected: "site-a", actual: "site-b")
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastUnavailableReason == .contextMalformed,
+                "A site mismatch is not something the device clock can repair")
     }
 
     @Test("A missing route is reported as a server that is out of date")

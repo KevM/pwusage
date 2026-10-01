@@ -500,6 +500,61 @@ struct LoadTimingForecastPresentationTests {
                 "The copy must not promise an action that does not exist")
     }
 
+    /// `contextInvalid` is what a mis-set *device* clock produces: `asOf` is stamped
+    /// by the server and read against the local clock. The note used to say "The
+    /// server sent household data this app could not read. Please report this", which
+    /// sends the user to file a server bug that does not exist.
+    @Test("An unreadable household profile points at this device's clock, not at a server bug")
+    func contextInvalidNoteBlamesTheDeviceClock() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .failedWithBasic,
+            connection: .ready,
+            cause: nil,
+            enhancementReason: .contextInvalid,
+            result: Self.unavailable(.incompleteCoverage),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(!note.lowercased().contains("report"),
+                "The device must not be told to report a server bug that is really its own clock")
+        #expect(note.lowercased().contains("date and time"),
+                "The note should name the device's own date and time as the thing to check")
+        #expect(note.contains("using tariff and balance data"),
+                "The note must still carry the shared prefix about what keeps working")
+    }
+
+    /// Regression: the clock advice used to be shown for *every* contract
+    /// rejection, including payloads that will never parse however the clock is
+    /// set. Sending someone to fix their date for a bad payload is a dead end.
+    @Test("A payload the app cannot parse is not blamed on the device clock")
+    func contextMalformedNoteDoesNotBlameTheDeviceClock() throws {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .failedWithBasic,
+            connection: .ready,
+            cause: nil,
+            enhancementReason: .contextMalformed,
+            result: Self.unavailable(.incompleteCoverage),
+            forecastFetchedAt: nil,
+            contextAsOf: nil,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        let note = try #require(overlay.note)
+
+        #expect(!note.lowercased().contains("date and time"),
+                "Nothing here is fixed by adjusting the clock, so do not tell the user to try")
+        #expect(!note.lowercased().contains("report"),
+                "Still must not invite a server bug report")
+        #expect(note.contains("using tariff and balance data"),
+                "The note must still carry the shared prefix about what keeps working")
+    }
+
     @Test("Every unavailable note tells the user something they can actually do")
     func unavailableNotesAreActionable() {
         let reasons: [SolarForecastEnhancementUnavailableReason] = [
@@ -808,7 +863,7 @@ struct LoadTimingForecastPresentationTests {
     /// the device's currency symbol or decimal separator (§9.13). The production
     /// entry point takes no locale, so pinning one here would be wrong.
     private static func money(_ amount: Double) -> String {
-        DashboardPresentation.currency(amount, code: "USD", locale: .current) ?? "\(amount)"
+        DashboardPresentation.currency(amount, code: "USD", locale: .current)
     }
 
     @Test("A spent daily allowance is not mistaken for a stale forecast")
@@ -890,6 +945,47 @@ struct LoadTimingForecastPresentationTests {
         #expect(overlay.enhanced == nil)
         #expect(!overlay.isForecastAware)
         #expect(overlay.note?.contains("too old") == true)
+    }
+
+    @Test("A forecast stamped in the future cannot produce a recommendation")
+    func futureDatedForecastCannotProduceARecommendation() {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            cause: nil,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: Self.now.addingTimeInterval(600),
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+
+        #expect(overlay.enhanced == nil)
+        #expect(!overlay.isForecastAware)
+        #expect(overlay.note == LoadTimingForecastPresentation.futureDatedForecastNote)
+        #expect(overlay.note?.contains("unavailable") == false)
+        #expect(overlay.note?.contains("too old") == false,
+                "A future-dated forecast is not stale; folding this case back into the stale note must fail")
+    }
+
+    @Test("A save failure keeps the forecast and is not reported as unavailable")
+    func saveFailureKeepsForecastAndIsNotReportedAsUnavailable() {
+        let overlay = LoadTimingForecastPresentation.overlay(
+            enhancement: .enhanced,
+            connection: .ready,
+            cause: nil,
+            saveFailed: true,
+            result: Self.enhanced(Self.waitingComparison()),
+            forecastFetchedAt: Self.now.addingTimeInterval(-60),
+            contextAsOf: Self.now,
+            currencyCode: "USD",
+            timeZone: "UTC",
+            now: Self.now
+        )
+        #expect(overlay.isForecastAware)
+        #expect(overlay.note == LoadTimingForecastPresentation.saveFailureNote)
+        #expect(overlay.note?.contains("unavailable") == false)
     }
 
     @Test("A forecast inside the recommendation window still produces a recommendation")

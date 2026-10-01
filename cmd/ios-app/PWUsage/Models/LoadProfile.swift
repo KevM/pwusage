@@ -28,8 +28,6 @@ struct LoadProfile: Codable, Equatable, Identifiable {
     var energyKwh: Double
     var durationHours: Double
     var carSettings: CarLoadSettings?
-
-    var isBuiltIn: Bool { UUID(uuidString: id) == nil && id != "custom-example" }
 }
 
 enum LoadProfileError: Error, Equatable, LocalizedError {

@@ -176,6 +176,17 @@ struct MobileBillResponse: Decodable, Equatable {
 struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
     static let maximumAge: TimeInterval = 24 * 60 * 60
 
+    /// `asOf` is stamped by the *server* and compared against the *device* clock, so a
+    /// device whose clock is *behind* the server sees it in the future even though the
+    /// data is fine. A device running fast is the opposite: it makes `asOf` look older,
+    /// which the positive bound below already accepted. This
+    /// bound is deliberately asymmetric with the positive one: leniency here costs a
+    /// bounded amount of mis-measured freshness, while strictness makes a mis-set
+    /// device clock reject every response forever and blame the server for it.
+    /// This is NOT the live contract's rule — `stateOfChargeMaximumAge` is about a
+    /// suspect *reading* and requires `age >= 0`, which is stricter, not comparable.
+    static let maximumNegativeAgeSkew: TimeInterval = 60 * 60
+
     let version: Int
     let site: Site
     let units: Units
@@ -213,6 +224,10 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
     enum ContractError: Error, Equatable {
         case unsupportedVersion(Int)
         case siteMismatch(expected: String, actual: String)
+        /// `asOf` read against this device's clock falls outside the age window.
+        /// Deliberately distinct from `invalidSource`: this is the one failure the
+        /// person holding the phone can fix, so the UI may tell them to.
+        case timestampSkew
         case invalidSource
     }
 
@@ -220,6 +235,11 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
         let sourceAge = now.timeIntervalSince(asOf)
         guard version == 1 else { throw ContractError.unsupportedVersion(version) }
         guard site.id == siteID else { throw ContractError.siteMismatch(expected: siteID, actual: site.id) }
+        // Checked apart from the structural checks below: a skewed clock and a
+        // malformed payload both land here, but only one is fixable on the device,
+        // so they must not share an error the UI turns into advice.
+        guard sourceAge >= -Self.maximumNegativeAgeSkew,
+              sourceAge <= Self.maximumAge else { throw ContractError.timestampSkew }
         guard units.power == "kW", units.localMinute == "minute-of-day",
               TimeZone(identifier: site.timezone) != nil,
               asOf.timeIntervalSince1970.isFinite,
@@ -227,8 +247,6 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
               historyEnd.timeIntervalSince1970.isFinite,
               historyStart < historyEnd,
               historyEnd <= asOf,
-              sourceAge >= -(5 * 60),
-              sourceAge <= Self.maximumAge,
               slots.count == 48,
               slots.enumerated().allSatisfy({ index, slot in
                   slot.localMinute == index * 30

@@ -342,15 +342,20 @@ struct SolarForecastStoreTests {
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .budgetExhausted)
     }
 
-    @Test("A reservation persistence failure marks retained cache unusable")
-    func reservationPersistenceFailureDisablesCache() async throws {
+    /// This test used to assert the opposite of the last line, and used to expect
+    /// `.failed(.requestFailed)`. Both were wrong, not merely outdated. The write
+    /// failure is a save failure, and marking the scope failed hid a good forecast —
+    /// see the comment on the budget save in `performRefresh` for why the marking
+    /// delivered none of the protection it was justified by.
+    @Test("A reservation persistence failure keeps the retained cache usable")
+    func reservationPersistenceFailureKeepsCacheUsable() async throws {
         let h = Harness()
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
         await h.files.failNextSave()
-        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.requestFailed))
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.saveFailed))
         #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a") != nil)
-        #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
+        #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
     }
 
     @Test("A failed key replacement restores the matching prior credential after restart")
@@ -590,6 +595,147 @@ struct SolarForecastStoreTests {
         #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
     }
 
+    @Test("A write left pending by a save failure is retried on the next refresh")
+    func pendingWriteIsRetriedOnTheNextRefresh() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+        let firstFetch = h.clock.now()
+        h.clock.advance(by: 1800)
+
+        // One save is let through so the post-fetch write is the one that fails.
+        await h.files.failNextSaveAfter(successfulSaves: 1)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.saveFailed))
+        let secondFetch = h.clock.now()
+
+        // The batch is still fresh in memory, so the .alreadyFresh short-circuit is
+        // the one that runs here. It has to attempt the write before reporting the
+        // cache fresh, or the note's promise to retry is kept by nothing.
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        // Asserted on the stamp, not on existence: a stale batch from the first
+        // refresh is still on disk either way, so merely finding a cache after a
+        // restart would pass against the unfixed code and prove nothing. The retry
+        // is what makes the *newer* batch the one that survives.
+        let restarted = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
+        await restarted.activateAccountScope("account-a")
+        #expect(await restarted.cachedBatch(accountScopeID: "account-a", siteID: "site-a")?.fetchedAt == secondFetch)
+        #expect(secondFetch > firstFetch)
+    }
+
+    @Test("A write that keeps failing is reported as a save failure, not as a fresh cache")
+    func persistentlyFailingWriteKeepsReportingSaveFailure() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        // Budget save let through, then the post-fetch write fails, then the retry on
+        // the next refresh fails too. Reporting .alreadyFresh while the write is
+        // still outstanding would clear the note the user needs.
+        await h.files.failSaves(2, afterSuccessfulSaves: 1)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.saveFailed))
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .failed(.saveFailed))
+        // The retry must not become a new route to quarantine.
+        #expect(await h.keychain.count == 1)
+    }
+
+    @Test("A budget-save failure is reported as a save failure, not a network failure")
+    func budgetSaveFailureIsNotReportedAsARequestFailure() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        // One save is let through so the pre-fetch budget write is the one that
+        // fails. Reported as `.requestFailed` this read as "Solcast could not be
+        // reached. Retry when you have a connection" -- a network remedy for a
+        // full disk -- and `SolarForecastUnavailableCause` mapped it to a cause,
+        // so the card said "Solar forecast unavailable".
+        await h.files.failNextSaveAfter(successfulSaves: 0)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.saveFailed))
+        #expect(SolarForecastUnavailableCause(SolarForecastRefreshResult.failed(.saveFailed)) == nil)
+        #expect(SolarForecastUnavailableCause(SolarForecastRefreshResult.failed(.requestFailed)) != nil)
+    }
+
+    @Test("A budget-save failure leaves the request counter to be written on the next refresh")
+    func budgetSaveFailureRetriesTheCounterWrite() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        // The reservation was made in memory and the write failed, so memory and
+        // disk now disagree and nothing records that a write is still owed. The
+        // cache is still fresh, so the next refresh takes the .alreadyFresh path,
+        // which reaches neither budget save; without dirtyScopes the divergence
+        // would sit there for the whole freshness window.
+        //
+        // Note what the pending write carries. The reservation is made before the
+        // fetch, and this attempt returns without fetching, so it charges for a
+        // request that never happened. Joining dirtyScopes does not avoid that
+        // phantom -- the first real fetch at the end of the window persists the
+        // same in-memory counter -- it only decides *when* memory and disk
+        // converge rather than leaving them apart. The alternative leaves them
+        // divergent and reaches the same over-count later.
+        await h.files.failNextSaveAfter(successfulSaves: 0)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.saveFailed))
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        let attemptsBefore = await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts
+        let restarted = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
+        await restarted.activateAccountScope("account-a")
+        #expect(await restarted.budget(for: "account-a", siteID: "site-a").totalAttempts == attemptsBefore)
+    }
+
+    @Test("A save failure on the budget reservation never quarantines the credential")
+    func budgetReservationSaveFailureNeverQuarantines() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        // Two consecutive write failures with nothing allowed through first, so
+        // the FIRST save performRefresh makes — the pre-fetch budget reservation —
+        // is the one that fails. Escalating that to persistFailureState would then
+        // hit its own failing write and delete a credential that was just proven
+        // to work: the request never even reached Solcast. The result is a save
+        // failure, not a request failure -- see the budget save in performRefresh.
+        await h.files.failSaves(2, afterSuccessfulSaves: 0)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.saveFailed))
+        #expect(await h.keychain.count == 1)
+    }
+
+    @Test("A save failure on the discovery budget never destroys a just-typed key")
+    func discoveryBudgetSaveFailureKeepsJustTypedKey() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: [])
+
+        // Same two consecutive failures, aimed at the budget save in
+        // discoverSites. This is the first-run path — saveKeyAndDiscover connects
+        // and discovers back to back — so the key at risk is the one the user has
+        // just typed and has no other copy of. Nothing has been fetched yet, so
+        // there is no evidence against the credential at all.
+        await h.files.failSaves(2, afterSuccessfulSaves: 0)
+        await #expect(throws: SolarForecastStore.StoreError.persistenceFailed) {
+            try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a")
+        }
+        #expect(await h.keychain.count == 1)
+    }
+
+    @Test("A save failure after a successful fetch never quarantines the credential")
+    func saveFailureAfterSuccessfulFetchNeverQuarantines() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+
+        // Two consecutive save failures: the post-fetch write, then the fallback
+        // write that persistFailureState attempts. That pair is the exact shape
+        // that used to reach quarantineCredential and delete the key. The budget
+        // save performRefresh makes before fetching is let through.
+        await h.files.failSaves(2, afterSuccessfulSaves: 1)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.saveFailed))
+        #expect(await h.keychain.count == 1)
+        #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a") != nil)
+        #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
+    }
+
     @Test("Refresh budget exhaustion disables retained cache across restart")
     func refreshBudgetExhaustionDisablesCache() async throws {
         let h = Harness()
@@ -761,6 +907,8 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
     private var payload = Data()
     private var shouldFailNextSave = false
     private var successfulSavesBeforeFailure: Int?
+    private var consecutiveSavesToFail = 0
+    private var successfulSavesBeforeConsecutiveFailure = 0
     private var shouldHoldNextSave = false
     private var heldSave: CheckedContinuation<Void, Never>?
     func loadState() async throws -> SolarForecastPersistedState { state }
@@ -768,6 +916,12 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
         if shouldHoldNextSave {
             shouldHoldNextSave = false
             await withCheckedContinuation { heldSave = $0 }
+        }
+        if successfulSavesBeforeConsecutiveFailure > 0 {
+            successfulSavesBeforeConsecutiveFailure -= 1
+        } else if consecutiveSavesToFail > 0 {
+            consecutiveSavesToFail -= 1
+            throw TestFileError.failedWrite
         }
         if let remaining = successfulSavesBeforeFailure {
             if remaining == 0 { successfulSavesBeforeFailure = nil; throw TestFileError.failedWrite }
@@ -779,6 +933,14 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
     }
     func failNextSave() { shouldFailNextSave = true }
     func failNextSaveAfter(successfulSaves: Int) { successfulSavesBeforeFailure = successfulSaves }
+    /// Fails `count` saves in a row. `afterSuccessfulSaves` lets those through
+    /// first, so the run of failures can start at a chosen point in a refresh —
+    /// `performRefresh` saves once for the request budget before it fetches, so
+    /// a test targeting the post-fetch write has to allow that one save through.
+    func failSaves(_ count: Int, afterSuccessfulSaves: Int = 0) {
+        consecutiveSavesToFail = count
+        successfulSavesBeforeConsecutiveFailure = afterSuccessfulSaves
+    }
     func holdNextSave() { shouldHoldNextSave = true }
     func waitUntilSaveIsHeld() async { while heldSave == nil { await Task.yield() } }
     func resumeHeldSave() { heldSave?.resume(); heldSave = nil }

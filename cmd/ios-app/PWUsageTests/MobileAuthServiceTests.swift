@@ -61,7 +61,7 @@ final class MobileAuthServiceTests {
             try MobileAuthService.parseCallback(serverError, expectedState: "expected")
         }
 
-        let service = makeService()
+        let service = try makeService()
         let task = Task { try await service.signIn() }
         await Task.yield()
         fakeSession.complete(error: ASWebAuthenticationSessionError(.canceledLogin))
@@ -73,7 +73,7 @@ final class MobileAuthServiceTests {
 
     @Test("Sign-in builds expected login URL and exchanges only opaque code")
     func signInBuildsExpectedLoginURLAndExchangesOnlyOpaqueCode() async throws {
-        let service = makeService()
+        let service = try makeService()
         let task = Task { try await service.signIn() }
         try #require(await waitUpTo { fakeSession.startCount == 1 })
 
@@ -101,8 +101,8 @@ final class MobileAuthServiceTests {
     }
 
     @Test("Sign-in rejects malformed callback without exchanging session")
-    func signInRejectsMalformedCallbackWithoutExchangingSession() async {
-        let service = makeService()
+    func signInRejectsMalformedCallbackWithoutExchangingSession() async throws {
+        let service = try makeService()
         let task = Task { try await service.signIn() }
         await Task.yield()
         fakeSession.complete(url: URL(string: "pwusage://wrong/callback?code=opaque&attempt=\(Self.attemptID)&state=wrong"))
@@ -116,7 +116,7 @@ final class MobileAuthServiceTests {
 
     @Test("Second sign-in is rejected until the first session exchange finishes")
     func secondSignInIsRejectedUntilTheFirstSessionExchangeFinishes() async throws {
-        let service = makeService()
+        let service = try makeService()
         fakeAPI.holdExchange = true
 
         let firstSignIn = Task { try await service.signIn() }
@@ -142,7 +142,7 @@ final class MobileAuthServiceTests {
 
     @Test("Cancelling sign-in resumes once and clears the pending continuation")
     func cancellingSignInResumesOnceAndClearsPending() async throws {
-        let service = makeService()
+        let service = try makeService()
         let task = Task { try await service.signIn() }
         try #require(await waitUpTo { service.pendingContinuationForTesting })
 
@@ -173,7 +173,7 @@ final class MobileAuthServiceTests {
 
     @Test("A superseded attempt's session callback is applied to no one")
     func staleSessionCallbackIsAppliedToNoOne() async throws {
-        let service = makeService()
+        let service = try makeService()
 
         // A presents its session, and its completion is captured before the cancellation.
         // The fake never delivers a completion from `cancel()`, matching the real session
@@ -218,7 +218,7 @@ final class MobileAuthServiceTests {
 
     @Test("A session that reports start failure after delivering a result does not resume twice")
     func failedStartAfterResultDoesNotResumeTwice() async throws {
-        let service = makeService(startResult: false)
+        let service = try makeService(startResult: false)
         fakeSession.completionBeforeStartResult = ASWebAuthenticationSessionError(.canceledLogin)
 
         // The completion wins the race, so it supplies the resume value. The start-failure
@@ -233,7 +233,7 @@ final class MobileAuthServiceTests {
     func cancellingDuringStalledExchangeDoesNotAuthenticate() async throws {
         let api = FakeMobileAuthAPI()
         api.holdExchange = true
-        let service = makeService(api: api)
+        let service = try makeService(api: api)
 
         let task = Task { try await service.signIn() }
         try #require(await waitUpTo { fakeSession.startCount == 1 })
@@ -258,7 +258,7 @@ final class MobileAuthServiceTests {
     func lateFailedExchangeCannotSignOutNewerSuccessfulSignIn() async throws {
         let api = FakeMobileAuthAPI()
         api.holdExchange = true
-        let service = makeService(api: api)
+        let service = try makeService(api: api)
 
         // The first sign-in's exchange is detached from `signIn()`, so cancelling the
         // sign-in does not stop it: it can still report a failure after the user has
@@ -293,7 +293,7 @@ final class MobileAuthServiceTests {
     func lateFailedExchangeCannotDisturbNewerPendingSignIn() async throws {
         let api = FakeMobileAuthAPI()
         api.holdExchange = true
-        let service = makeService(api: api)
+        let service = try makeService(api: api)
 
         // Sign-in A reaches its token exchange and stalls there.
         let first = Task { try await service.signIn() }
@@ -329,12 +329,13 @@ final class MobileAuthServiceTests {
         fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=second&attempt=\(Self.attemptID)&state=\(secondState)")!)
         try #require(await waitUpTo { service.isAuthenticated })
         #expect(!service.pendingContinuationForTesting)
+        _ = try? await Self.boundedValue(of: second)
     }
 
     @Test("Exchange sign-in required leaves authentication false")
     func exchangeSignInRequiredLeavesAuthenticationFalse() async throws {
         fakeAPI.exchangeError = PWUsageAPIError.signInRequired
-        let service = makeService()
+        let service = try makeService()
         let task = Task { try await service.signIn() }
         await Task.yield()
         let sessionURL = try #require(fakeSession.url)
@@ -348,9 +349,9 @@ final class MobileAuthServiceTests {
     }
 
     @Test("Logout clears cookie even when server request fails")
-    func logoutClearsCookieEvenWhenServerRequestFails() async {
+    func logoutClearsCookieEvenWhenServerRequestFails() async throws {
         fakeAPI.logoutError = PWUsageAPIError.recoverableServerError(statusCode: 503)
-        let service = makeService(isAuthenticated: true)
+        let service = try makeService(isAuthenticated: true)
 
         await #expect(throws: PWUsageAPIError.recoverableServerError(statusCode: 503)) {
             try await service.logout()
@@ -363,7 +364,7 @@ final class MobileAuthServiceTests {
 
     @Test("Logout success also clears cookie")
     func logoutSuccessAlsoClearsCookie() async throws {
-        let service = makeService(isAuthenticated: true)
+        let service = try makeService(isAuthenticated: true)
         try await service.logout()
         #expect(fakeAPI.logoutCount == 1)
         #expect(fakeAPI.cookieClearCount == 1)
@@ -372,9 +373,9 @@ final class MobileAuthServiceTests {
     }
 
     @Test("Logout reports local forecast cleanup failure after clearing authentication")
-    func logoutReportsForecastCleanupFailure() async {
+    func logoutReportsForecastCleanupFailure() async throws {
         fakeForecastCleanup.shouldFail = true
-        let service = makeService(isAuthenticated: true)
+        let service = try makeService(isAuthenticated: true)
 
         await #expect(throws: MobileAuthService.AuthError.forecastCleanupFailed) {
             try await service.logout()
@@ -386,7 +387,7 @@ final class MobileAuthServiceTests {
 
     @Test("Restored session marks authenticated only after caller validates cookie")
     func restoredSessionMarksAuthenticatedOnlyAfterCallerValidatesCookie() async throws {
-        let service = makeService()
+        let service = try makeService()
         #expect(!service.isAuthenticated)
 
         service.restoreAuthenticatedSession()
@@ -432,9 +433,9 @@ final class MobileAuthServiceTests {
         startResult: Bool = true,
         api: FakeMobileAuthAPI? = nil,
         sessionFactory: MobileAuthService.SessionFactory? = nil
-    ) -> MobileAuthService {
+    ) throws -> MobileAuthService {
         // `pwusage.test` is a stub host, so the allowlist opt-out is explicit.
-        let apiConfiguration = try! AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true)
+        let apiConfiguration = try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true)
         fakeSession.startResult = startResult
         fakeSession.completionBeforeStartResult = nil
         return MobileAuthService(

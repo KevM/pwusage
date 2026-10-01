@@ -39,7 +39,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
 
     func fetchSites() async throws -> [MobileSite] {
         let data = try await request(path: "/api/sites")
-        do { return try JSONDecoder().decode([MobileSite].self, from: data) }
+        do { return try MobileContractDecoder.make().decode([MobileSite].self, from: data) }
         catch { throw PWUsageAPIError.invalidResponse }
     }
 
@@ -105,9 +105,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {
-        let (data, response): (Data, URLResponse)
-        do { (data, response) = try await session.data(for: request) }
-        catch { throw error }
+        let (data, response): (Data, URLResponse) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw PWUsageAPIError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw PWUsageAPIError.signInRequired }
@@ -135,3 +133,10 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     private struct SessionResponse: Decodable { let ok: Bool }
     private struct ErrorResponse: Decodable { let error: String? }
 }
+
+// Every retroactive conformance this type has, in one place. Each protocol is
+// declared next to the type that consumes it, which is why these used to be one
+// line each in three files.
+extension PWUsageAPI: MobileDashboardDataAPI {}
+extension PWUsageAPI: MobileLoadPlanningDataAPI {}
+extension PWUsageAPI: PWUsageApplicationAPI {}

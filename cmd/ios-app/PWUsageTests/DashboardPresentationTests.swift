@@ -121,6 +121,30 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.batteryDirection(powerWatts: 51) == .discharging)
     }
 
+    @Test("An unknown battery charge draws a blank battery, never a full one")
+    func unknownChargeDrawsBlankBattery() {
+        // A reading we cannot vouch for: no fill, and no bolt asserting flow the
+        // blank fill denies. Matches the TRMNL renderer at fillWidth 0.
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 900, stateOfCharge: nil) == "battery.0percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: -900, stateOfCharge: nil) == "battery.0percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: nil) == "battery.0percent")
+    }
+
+    @Test("A known charge keeps its band and its charging bolt")
+    func knownChargeKeepsBandAndBolt() {
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 0) == "battery.0percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 12) == "battery.0percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 13) == "battery.25percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 37) == "battery.25percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 38) == "battery.50percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 62) == "battery.50percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 63) == "battery.75percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 87) == "battery.75percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 88) == "battery.100percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: -900, stateOfCharge: 50) == "battery.50percent.bolt")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: 900, stateOfCharge: 50) == "battery.50percent")
+    }
+
     @Test("Battery header describes charge and direction without repeating power")
     func batteryHeaderDescribesChargeAndDirectionWithoutRepeatingPower() {
         #expect(DashboardPresentation.batteryDescription(stateOfCharge: nil, powerWatts: -250) == "Battery --, Charging")
@@ -221,6 +245,21 @@ struct DashboardPresentationTests {
                 == "Stale · updated 16 min ago"
         )
         #expect(DashboardPresentation.liveFreshnessNotice(nil, now: now) == "Source time unavailable")
+    }
+
+    @Test("A future-dated load timing source is stale, not current")
+    func futureDatedLoadTimingSourceIsStale() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        // The heading for this card is built by `freshness`, which says "Source
+        // time is in the future" for a source ahead of the clock. Reporting the
+        // summary as current underneath it is the §8.18 shape: the two halves of
+        // one card disagreeing about the same timestamp.
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(30 * 60), now: now))
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(1), now: now))
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(-31 * 60), now: now))
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(-30 * 60), now: now) == false)
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(-5 * 60), now: now) == false)
+        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: nil, now: now) == false)
     }
 
     @Test("Older charge is clearly dated")

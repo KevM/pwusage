@@ -193,6 +193,82 @@ struct MobileContractsTests {
             try response.validating(siteID: "site-1")
         }
     }
+
+    @Test("A planning context stamped ahead of a slow device clock still validates")
+    func planningContextToleratesClockBehindServer() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        // Thirty minutes ahead of this device. `asOf` is the server's stamp, so an
+        // `asOf` in the device's future means the *device* is behind -- a fast clock
+        // would make `asOf` look older, which the positive bound already accepted.
+        let response = Self.makePlanningContext(siteID: "site-a", asOf: now.addingTimeInterval(30 * 60))
+        #expect(throws: Never.self) { try response.validating(siteID: "site-a", now: now) }
+    }
+
+    @Test("A planning context stamped absurdly ahead is still rejected")
+    func planningContextRejectsAbsurdFutureAsOf() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let response = Self.makePlanningContext(siteID: "site-a", asOf: now.addingTimeInterval(365 * 24 * 60 * 60))
+        #expect(throws: MobileLoadPlanningContextResponse.ContractError.timestampSkew) {
+            try response.validating(siteID: "site-a", now: now)
+        }
+    }
+
+    /// Skew and a malformed payload used to share `invalidSource`, so the UI could
+    /// not tell "fix your clock" from "this will never parse". Only the first is
+    /// something the person holding the phone can act on, so they must not share
+    /// an error that becomes advice.
+    @Test("A stale timestamp is clock skew, not a malformed payload")
+    func planningContextSeparatesStalenessFromMalformedPayload() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let stale = Self.makePlanningContext(siteID: "site-a", asOf: now.addingTimeInterval(-48 * 60 * 60))
+        #expect(throws: MobileLoadPlanningContextResponse.ContractError.timestampSkew) {
+            try stale.validating(siteID: "site-a", now: now)
+        }
+
+        let badUnits = Self.makePlanningContext(
+            siteID: "site-a",
+            asOf: now.addingTimeInterval(-60),
+            power: "W"
+        )
+        #expect(throws: MobileLoadPlanningContextResponse.ContractError.invalidSource) {
+            try badUnits.validating(siteID: "site-a", now: now)
+        }
+
+        let badZone = Self.makePlanningContext(
+            siteID: "site-a",
+            asOf: now.addingTimeInterval(-60),
+            timeZone: "Not/AZone"
+        )
+        #expect(throws: MobileLoadPlanningContextResponse.ContractError.invalidSource) {
+            try badZone.validating(siteID: "site-a", now: now)
+        }
+    }
+
+    /// Satisfies every clause of `validating`, so a test can vary `asOf` alone.
+    /// `DashboardCoordinatorTests` needs the same fixture but keeps its own copy.
+    private static func makePlanningContext(
+        siteID: String,
+        asOf: Date,
+        power: String = "kW",
+        timeZone: String = "UTC"
+    ) -> MobileLoadPlanningContextResponse {
+        MobileLoadPlanningContextResponse(
+            version: 1,
+            site: .init(id: siteID, timezone: timeZone),
+            units: .init(power: power, localMinute: "minute-of-day"),
+            asOf: asOf,
+            availability: .available,
+            unavailableReason: nil,
+            usableDayCount: 14,
+            historyStart: asOf.addingTimeInterval(-14 * 24 * 60 * 60),
+            historyEnd: asOf.addingTimeInterval(-60),
+            slots: (0..<48).map { index in
+                MobileLoadPlanningContextResponse.Slot(
+                    localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: 14, coverage: 1
+                )
+            }
+        )
+    }
 }
 
 private enum LiveFixture {

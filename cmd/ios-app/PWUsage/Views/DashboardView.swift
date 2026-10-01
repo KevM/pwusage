@@ -85,9 +85,11 @@ struct DashboardView: View {
                                     .contentTransition(reduceMotion ? .identity : .numericText())
                                     .accessibilityLabel(live.stateOfCharge.map { "Battery charge \(Int($0.rounded())) percent" } ?? "Battery charge unknown")
                                 HStack(alignment: .center, spacing: 4) {
-                                    Image(systemName: batterySymbol(livePowerIsCurrent ? live.live.batteryPower : 0, stateOfCharge: live.stateOfCharge))
+                                    Image(systemName: DashboardPresentation.batterySymbol(
+                                        powerWatts: livePowerIsCurrent ? live.live.batteryPower : 0,
+                                        stateOfCharge: live.stateOfCharge))
                                         .font(.system(size: 44, weight: .bold))
-                                        .foregroundStyle(.green)
+                                        .foregroundStyle(live.stateOfCharge == nil ? Color.secondary : Color.green)
                                         .accessibilityHidden(true)
                                     if livePowerIsCurrent && DashboardPresentation.batteryDirection(powerWatts: live.live.batteryPower) == .discharging {
                                         DischargeSymbol()
@@ -232,7 +234,7 @@ struct DashboardView: View {
                 "Live summary · \(DashboardPresentation.freshness($0.activeLoadTiming?.energyDataThrough ?? $0.sources.energyDataThrough, staleAfter: 30 * 60).replacingOccurrences(of: "Updated ", with: ""))"
             } ?? "Waiting for active tariff")
             let summarySource = live?.activeLoadTiming?.energyDataThrough ?? live?.sources.energyDataThrough
-            let summaryIsStale = coordinator.live.isUnavailable || (summarySource.map { Date.now.timeIntervalSince($0) > 30 * 60 } ?? false)
+            let summaryIsStale = coordinator.live.isUnavailable || DashboardPresentation.loadTimingSummaryIsStale(source: summarySource)
             let summary = DashboardPresentation.loadTimingSummary(
                 live?.activeLoadTiming,
                 hasTariff: DashboardPresentation.hasActiveTariff(label: live?.activeTariff),
@@ -315,24 +317,6 @@ struct DashboardView: View {
                 .foregroundStyle(.secondary)
         }
     }
-
-    private func batterySymbol(_ watts: Double, stateOfCharge: Double? = nil) -> String {
-        let isCharging = DashboardPresentation.batteryDirection(powerWatts: watts) == .charging
-        let level: String
-        if let stateOfCharge {
-            switch Int(stateOfCharge.rounded()) {
-            case ..<13: level = "0percent"
-            case 13..<38: level = "25percent"
-            case 38..<63: level = "50percent"
-            case 63..<88: level = "75percent"
-            default: level = "100percent"
-            }
-        } else {
-            level = "100percent"
-        }
-        return isCharging ? "battery.\(level).bolt" : "battery.\(level)"
-    }
-
 
 }
 
