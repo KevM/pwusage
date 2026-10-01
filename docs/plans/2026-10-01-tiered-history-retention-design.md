@@ -43,6 +43,33 @@ until ownership is resolved. No inactivity-based deletion is included here.
 
 ## Enforcement
 
+### Compatibility with landed sync-egress work
+
+PR #125 (e9ca3f241aecbf362a666c7e8fe96f6851bfbf3c), merged 2026-10-01,
+replaces getExistingTimestamps with getDailyCoverage: the SQL query returns one
+coverage summary per site-local day, and auditDays/planImport consume those
+summaries. This is query-time aggregation, not a persisted rollup table, and
+does not itself reduce stored EnergyData. Start implementation from a revision
+containing that change; the checkout used for the initial plan predates it.
+
+Clamp the retained range before BOTH getDailyCoverage call sites:
+ensureDataForRange and auditRange. Apply the identical clamped range to
+planImport/auditDays/generateDayWindows so deliberately expired days never become
+empty-day repair candidates. Return an explicit terminal retention result for
+fully expired requests; callers must not repeatedly retry them as busy/partial
+imports. Preserve the strict >30-minute hole threshold, site-local keys,
+installation-date clipping, effective end-of-today, and 23/25-hour DST windows.
+Never reintroduce raw timestamp enumeration for coverage or retention metadata.
+
+Read compact retention fields alongside existing authorized account/site reads
+where practical, with request-level reuse. Do not fetch full User rows, tokens,
+or the tariff tree just to decide retention. Account-setting mutations must
+invalidate any entitlement caches; grace expiry is evaluated with the current
+clock. Pin query counts and returned row counts for repeated sync attempts,
+including expired and cutoff-crossing requests, and preserve existing live/bill
+egress baselines. Re-run the real-Postgres differential gate if the coverage SQL
+changes; a mocked unit test cannot verify that SQL.
+
 Daily cleanup deletes only eligible EnergyData and LoadTag rows in bounded batches.
 Historical sync and import paths clamp their requests to the same cutoff before
 planning Tesla calls. All persistence paths apply the cutoff again, including

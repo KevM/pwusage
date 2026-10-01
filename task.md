@@ -51,6 +51,15 @@ unimplemented planning work.
 Planning verification: lint passed; 942 unit tests passed with one skipped;
 production build passed. No retention application code or migrations were changed.
 
+Egress intersection reviewed after user notice: PR #125 landed as e9ca3f24
+on 2026-10-01 and is present in origin/main, but not this planning checkout.
+Plans now require that base and preserve getDailyCoverage's per-day summaries.
+Retention clamps must precede both ensureDataForRange and auditRange coverage
+queries/planning; expired windows must terminate rather than trigger repair/retry
+loops. Add compact request-reused entitlement reads, coverage/query-count tests,
+and the real-Postgres differential gate if coverage SQL changes. SQL aggregation
+reduces returned data, not the stored EnergyData footprint.
+
 # iOS Solcast load timing
 
 - [x] Restart from `origin/main` with configurable load profiles/tariff timeline from PR #115.

@@ -20,6 +20,13 @@ sections 1, 2, and 4 first. Work in cmd/next-app, preserve unrelated changes, an
 use a codex/ branch. No production history deletion is authorized by this planning
 commit; prepare and review the dry-run and backup before destructive rollout.
 
+**Required base:** include landed PR #125, merge commit
+e9ca3f241aecbf362a666c7e8fe96f6851bfbf3c. The planning checkout is behind that
+change. Rebase/merge onto the latest main in the implementation branch before
+editing importer/repository files. Preserve getDailyCoverage and its per-day
+coverage contract; do not restore getExistingTimestamps. Read PR #125's design,
+implementation plan, and scripts/verify-sync-daily-coverage.ts at that base.
+
 ## Task 1: Shared policy and entitlement schema
 
 **Files:** create src/lib/history-retention.ts and its Vitest test; modify
@@ -50,6 +57,8 @@ scripts/set-history-retention.ts. No admin UI or premium-facing routes.
 2. Run focused Vitest files and confirm RED.
 3. Implement an atomic account update under a row lock. Grace is created only
    on a real 365-to-90 transition. Keep auth roles separate from retention days.
+   Invalidate any cached entitlement after assignment; use request-scoped reuse
+   and evaluate grace expiry with a fresh clock rather than caching its outcome.
 4. Add an internal maintenance script that loads dotenv first, accepts an explicit
    environment, account ID, and 90/365 days, defaults to preview, and requires an
    explicit apply flag. Show the actual change and grace expiry without credentials.
@@ -60,20 +69,33 @@ scripts/set-history-retention.ts. No admin UI or premium-facing routes.
 
 **Files:** modify src/lib/importer/index.ts, src/lib/importer/import-planner.ts,
 src/lib/energy-repo.ts, src/app/api/sync/route.ts and relevant tests;
-inspect src/app/api/import/route.ts and src/app/api/site/[id]/analysis/route.ts.
+inspect src/app/api/import/route.ts and src/app/api/site/[id]/analysis/route.ts;
+add auditRange argument/retention tests to src/lib/importer.test.ts.
 
 1. Write failing tests for wholly expired windows, windows crossing the cutoff,
    forced sync, re-import after cleanup, and rows returned outside the requested
    day. Assert zero Tesla calls for wholly expired history, not just zero inserts.
+   Pin getDailyCoverage arguments for BOTH ensureDataForRange and auditRange.
+   Test expired requests end without busy/partial retry loops; allowed requests
+   retain per-day results, exact 30-minute thresholds, and 23/25-hour DST behavior.
 2. Run `npm run test -- --run src/lib/importer.test.ts src/lib/importer/import-planner.test.ts src/app/api/sync/route.test.ts`.
 3. Resolve the account policy after site authorization and before planning imports.
-   Clamp start to cutoff; explicitly return unavailable for wholly expired ranges.
+   Clamp start BEFORE getDailyCoverage, using the same range in planImport and
+   auditDays/generateDayWindows; explicitly return unavailable for wholly expired ranges.
    Keep day-sized Tesla calls, locks, throttles, and time budgets intact.
+   Add only compact retention fields to existing account/site projections when
+   feasible; do not add per-sample/per-day account lookups or full User/tariff reads.
 4. Filter rows before persistence and recheck the effective cutoff at write time
    for imports running across expiry. Ensure all callers of importRange/fetchRange
    and all EnergyData writers are covered, including operational scripts.
 5. Prove repeated requests cannot refill deleted history; verify extended-history requests
    remain allowed within 365 days. Run focused tests and commit `fix: bound history imports by account retention`.
+6. Pin query counts/returned-row counts during repeated DataSyncer attempts.
+   Coverage remains one row per local day; retention must not enumerate timestamps.
+   If getDailyCoverage SQL changes, run the landed real-Postgres differential
+   script against an explicit dev target with populated DST/boundary fixtures,
+   following its --help and acknowledgement requirements. Do not accept an empty
+   fixture or mocked SQL as evidence of correctness.
 
 ## Task 4: Dry-run and bounded cleanup with permanent tariffs
 
@@ -131,6 +153,9 @@ add a rollout report under docs/plans with dry-run counts and capacity estimates
 3. Run `npm run lint`, `npm run test -- --run`, and `npm run build` from cmd/next-app.
    For native edits, also run the prescribed iOS test script and simulator build.
    Verify the migration with the production-to-dev workflow and full FK relationships.
+   Run scripts/mobile-route-egress-trace.test.ts and compare live/bill query counts
+   against the landed baseline. Record intentional compact entitlement-read overhead,
+   and ensure expired-history requests cannot multiply sync retries or Tesla calls.
 4. Measure database/table/index size and eligible/retained row counts before and
    after dev cleanup. Recheck zero changes to all tariff tables. Do not claim a
    size reduction solely from rows deleted or run blocking compaction unreviewed.
