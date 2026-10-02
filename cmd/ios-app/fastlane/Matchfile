@@ -1,0 +1,6 @@
+git_url(ENV["MATCH_GIT_URL"])
+storage_mode("git")
+git_branch("master")
+type("appstore")
+app_identifier(["fm.rodeo.pwusage"])
+team_id("6HQGHHRK87")

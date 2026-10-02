@@ -1,0 +1,76 @@
+name: iOS Release to TestFlight
+
+on:
+  push:
+    tags: ['ios-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight-release
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: Test, archive and upload
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: cmd/ios-app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
+        with:
+          xcode-version: latest-stable
+      - name: Install XcodeGen
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install xcodegen
+      - name: Set up Ruby and Fastlane
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: cmd/ios-app
+      - name: Validate tagged version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          ruby -ryaml -e '
+            version = YAML.load_file("project.yml").fetch("settings").fetch("base").fetch("MARKETING_VERSION")
+            abort "Tag must equal ios-v#{version}" unless ENV.fetch("GITHUB_REF_NAME") == "ios-v#{version}"
+          '
+      - name: Run native tests
+        run: ./run-tests.sh
+        env:
+          TMPDIR: /tmp
+      - name: Trust GitHub signing repository host
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          gh api meta --jq '.ssh_keys[] | "github.com " + .' >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Archive and upload to TestFlight
+        run: bundle exec fastlane ios beta
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_PRIVATE_KEY: ${{ secrets.MATCH_GIT_PRIVATE_KEY }}
+      - name: Retain release artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwusage-ios-release-${{ github.run_number }}
+          path: |
+            cmd/ios-app/build/*.ipa
+            cmd/ios-app/build/*.app.dSYM.zip
+            cmd/ios-app/build/logs/**
+            /tmp/pwusage-ios-tests.*/TestResults.xcresult
+          retention-days: 14
+          if-no-files-found: ignore

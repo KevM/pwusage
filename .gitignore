@@ -12,6 +12,11 @@ cmd/ios-app/**/Info.plist
 # Xcode build products
 cmd/ios-app/build/
 cmd/ios-app/DerivedData/
+cmd/ios-app/.bundle/
+cmd/ios-app/vendor/bundle/
+cmd/ios-app/fastlane/report.xml
+cmd/ios-app/fastlane/README.md
+cmd/ios-app/fastlane/.env*
 # Brainstorming visual companion scratch dir
 .superpowers/
 # Redacted Solcast captures produced by scripts/solcast-forecast-capture.ts.

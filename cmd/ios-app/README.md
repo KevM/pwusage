@@ -13,13 +13,57 @@ xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination 'generic/plat
 
 Run the native tests with `./run-tests.sh`. Tests use Swift Testing (`import Testing`). It selects an available iPhone simulator and stops the run after 10 minutes if Xcode hangs. Run all tests with `./run-tests.sh`, or target specific suites/tests (e.g. `./run-tests.sh AppConfigurationTests` or `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin`). Use `PWUSAGE_SIMULATOR_ID=<simulator-udid> ./run-tests.sh` to choose a device or `PWUSAGE_TEST_TIMEOUT_SECONDS=<seconds> ./run-tests.sh` to adjust the deadline. Failed runs retain the result bundle and build files at the printed path.
 
-The app targets iOS 18 and uses `fm.rodeo.pwusage` as a provisional bundle identifier. The project intentionally configures `DEVELOPMENT_TEAM: 6HQGHHRK87` in `project.yml` for device deployment. Preserve this setting unless the user explicitly asks to change or remove it. Regenerate the project with `./generate.sh`, select your connected device in Xcode, and run. Simulator CI disables signing with `CODE_SIGNING_ALLOWED=NO`.
+The app targets iOS 18 and uses `fm.rodeo.pwusage` as its bundle identifier. The project intentionally configures `DEVELOPMENT_TEAM: 6HQGHHRK87` in `project.yml` for device deployment. Preserve this setting unless the user explicitly asks to change or remove it. Regenerate the project with `./generate.sh`, select your connected device in Xcode, and run. Simulator CI disables signing with `CODE_SIGNING_ALLOWED=NO`.
 
 To build for a device from the command line:
 
 ```sh
 xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination 'generic/platform=iOS' build
 ```
+
+## TestFlight releases
+
+Fastlane follows SleepDaddy's shared `match` signing setup. Run commands below from `cmd/ios-app` with Ruby 3.3 and Bundler:
+
+```sh
+bundle install
+bundle check
+bundle exec fastlane lanes
+```
+
+### One-time Apple setup
+
+1. Register the explicit App ID `fm.rodeo.pwusage` under team `6HQGHHRK87` in Apple Developer. No HealthKit capability is needed.
+2. The iOS app is registered as [pwusage, Apple ID 6818639504](https://appstoreconnect.apple.com/apps/6818639504/) with bundle ID `fm.rodeo.pwusage`. Ensure the release API key has access to this app and Certificates, Identifiers & Profiles.
+3. Provide `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT` (base64-encoded `.p8`), `MATCH_GIT_URL`, and `MATCH_PASSWORD`. Git authentication uses either `MATCH_GIT_BASIC_AUTHORIZATION` (base64-encoded Git credentials, for HTTPS) or `MATCH_GIT_PRIVATE_KEY` (SSH key path/content, for an SSH URL), never both. Keep credentials in a private environment or ignored `fastlane/.env` file. Do not commit credentials. The team ID is intentionally checked in; no team secret is required. Televista's existing credentials were verified for this app; SleepDaddy's local API-key copy was not valid.
+4. From an authorized local machine, run `bundle exec fastlane ios prepare_signing` once to add pwusage's App Store profile to the shared signing repository. This lane can create signing assets; the release lane uses `match` in readonly mode.
+5. CI is configured with `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT`, `MATCH_PASSWORD`, `MATCH_GIT_URL=git@github.com:KevM/20four7-certs.git`, and `MATCH_GIT_PRIVATE_KEY`. The deploy key on `KevM/20four7-certs` is read-only and dedicated to pwusage. Signing assets live on its `master` branch. Local signing preparation needs write access; the CI deploy key cannot create or update profiles.
+6. Deploy the website's public pages and use `https://pwusage.fm.rodeo/privacy` for the App Store privacy-policy URL and `https://pwusage.fm.rodeo/support` for its support URL. The policy describes server account/energy data and optional device-local Solcast credentials; review it when data handling changes.
+
+Privacy and support links are also available on the native sign-in screen and dashboard menu.
+
+### Upload a build
+
+Run the **iOS Release to TestFlight** GitHub workflow manually, or tag the checked-in marketing version using the iOS-specific tag namespace:
+
+```sh
+git tag ios-v1.0.0
+git push origin ios-v1.0.0
+```
+
+The tag must match `MARKETING_VERSION` in `project.yml`. The workflow runs native tests before archiving and retains the IPA, debug symbols and build logs for 14 days. Local uploads use `./run-tests.sh` followed by `bundle exec fastlane ios beta`. To verify signing/export without an upload, use `bundle exec fastlane ios archive`; the IPA is written to `build/PWUsage.ipa`.
+
+The lane queries TestFlight for the latest build of the marketing version and uses the larger of the checked-in build number or that number plus one. It applies this only to the archive, keeping `project.yml` as the version source. Avoid simultaneous local and CI releases; the workflow serializes its own uploads. After archive/export, it regenerates the development project to restore automatic signing.
+
+Uploads use the **Release production API**, `https://pwusage.fm.rodeo`, and skip beta submission and processing waits. Assign processed builds to internal testers in App Store Connect. External testing requires Apple's beta review and completed test information. Uploading does not publish to the App Store or automatically distribute to external groups. See the [Fastlane TestFlight guide](https://docs.fastlane.tools/getting-started/ios/beta-deployment/).
+
+### Release checks
+
+- Verify a signed archive/export and App Store upload with valid release credentials. An unsigned local archive proves compilation and bundle configuration, not distribution signing.
+- Verify the 1024-pixel app icon has no alpha channel. The current icon is flattened onto white and stored as RGB PNG. The app includes `PrivacyInfo.xcprivacy` for its app-private UserDefaults usage, using Apple's approved `CA92.1` reason, and declares account email, user identifiers and other service data used for app functionality.
+- Confirm production contains the mobile sign-in migration and routes described below. On a real device, verify sign-in, session renewal, sign-out, dashboard, and the optional forecast flow. Check Battery Hold only with an intentional, confirmed device command.
+- Complete App Store Connect's app privacy answers for the service's actual data collection, review the public privacy policy, and supply beta review contact details and a usable review account or review instructions.
+- Before a public App Store submission, assess and implement Apple's in-app account-deletion requirement for the Tesla-linked service account. The support page's deletion-request instructions do not replace an in-app deletion flow.
 
 ## API origin
 
