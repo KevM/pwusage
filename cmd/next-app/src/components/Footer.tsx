@@ -20,6 +20,12 @@ export function Footer() {
                         <Link href="/about" className="hover:text-white transition-colors">
                             About
                         </Link>
+                        <Link href="/support" className="hover:text-white transition-colors">
+                            Support
+                        </Link>
+                        <Link href="/privacy" className="hover:text-white transition-colors">
+                            Privacy Policy
+                        </Link>
                         <a href="https://discord.gg/KCweVtVNAB" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
                             Discord
                         </a>

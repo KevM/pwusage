@@ -7,7 +7,7 @@ import { getAppBaseUrl } from '@/lib/url-utils';
 //   /help     — has no page; the real help page lives at /help/trmnl
 // Auth-gated areas (/site, /admin, /profile) and /api are also excluded and
 // disallowed in robots.ts.
-const PUBLIC_PATHS = ['', '/about', '/news', '/help/trmnl'];
+const PUBLIC_PATHS = ['', '/about', '/news', '/help/trmnl', '/privacy', '/support'];
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = getAppBaseUrl();
