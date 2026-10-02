@@ -105,4 +105,11 @@ describe('battery-hold route', () => {
     const res = await POST(req({ action: 'nope' }) as never, ctx as never);
     expect(res.status).toBe(400);
   });
+  it('returns a recoverable conflict while Tesla reserve settings settle', async () => {
+    parkMock.mockResolvedValue({ status: 'reserve_sync_pending' });
+    const res = await POST(req({ action: 'park' }) as never, ctx as never);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'reserve_sync_pending' });
+  });
+
 });

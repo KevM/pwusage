@@ -3,6 +3,7 @@ import { BatteryHoldRepo } from './battery-hold-repo';
 import { createTeslaClientForSite } from './tesla-client-factory';
 import type { BatteryHold } from './db';
 
+const START_RESERVE_SETTLE_MS = 60 * 1000;
 export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
 
 import { computeTargetReserve, planReserve } from './battery-hold-rules';
@@ -15,6 +16,7 @@ export type ParkResult =
   | { status: 'ok'; hold: BatteryHold }
   | { status: 'already_active'; hold: BatteryHold }
   | { status: 'no_soc' }
+  | { status: 'reserve_sync_pending' }
   | { status: 'needs_choice'; options: [80, 100] }
   | { status: 'needs_reauth' }
   | { status: 'error'; message: string };
@@ -40,10 +42,27 @@ export async function parkBattery(
 
   let live: { percentage_charged: number; load_power: number };
   let info: { backup_reserve_percent: number };
+  let lastRestored: BatteryHold | null;
   try {
-    [live, info] = await Promise.all([client.getLiveStatus(siteId), client.getEnergySiteInfo(siteId)]);
+    [live, info, lastRestored] = await Promise.all([
+      client.getLiveStatus(siteId), client.getEnergySiteInfo(siteId), repo.getLatestRestoredHold(siteId),
+    ]);
   } catch (e) {
     return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+  }
+
+  const originalReserve = info?.backup_reserve_percent;
+  if (typeof originalReserve !== 'number' || !Number.isInteger(originalReserve)
+      || originalReserve < 0 || originalReserve > 100) {
+    return { status: 'error', message: 'Tesla did not return a valid backup reserve. No hold was started.' };
+  }
+  // A successful restore command can precede Tesla's cached site_info update.
+  // Do not mistake the just-stopped hold target for a new original reserve.
+  if (lastRestored?.restored_at
+      && now.getTime() - lastRestored.restored_at.getTime() < START_RESERVE_SETTLE_MS
+      && lastRestored.original_reserve !== lastRestored.target_reserve
+      && originalReserve === lastRestored.target_reserve) {
+    return { status: 'reserve_sync_pending' };
   }
 
   const soc = live?.percentage_charged;
@@ -79,7 +98,7 @@ export async function parkBattery(
   try {
     hold = await repo.createHold({
       siteId,
-      originalReserve: info.backup_reserve_percent,
+      originalReserve,
       targetReserve: target,
       parkedSoc: soc,
       baselineLoadW: loadPower,
@@ -87,9 +106,9 @@ export async function parkBattery(
       mode,
     });
   } catch (dbError) {
-    console.error(`[BatteryHold] Failed to write hold to database for site ${siteId}. Attempting compensating restore to ${info.backup_reserve_percent}%...`, dbError);
+    console.error(`[BatteryHold] Failed to write hold to database for site ${siteId}. Attempting compensating restore to ${originalReserve}%...`, dbError);
     try {
-      await client.setBackupReserve(siteId, info.backup_reserve_percent);
+      await client.setBackupReserve(siteId, originalReserve);
     } catch (restoreError) {
       console.error(`[BatteryHold] Compensating restore failed for site ${siteId}:`, restoreError);
     }

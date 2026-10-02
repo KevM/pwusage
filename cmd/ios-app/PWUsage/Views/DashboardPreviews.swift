@@ -36,7 +36,9 @@ final class DashboardPreviewAPI: MobileDashboardDataAPI {
         // once it is *older* than two hours, and fixture construction and decoding happen at
         // slightly different instants, so the exact edge would be decided by clock jitter.
         let sourceOffset: TimeInterval = mode == .stale ? -(2 * 60 * 60 + 60) : 0
-        let previewNow = Date.now
+        // Round down once so serialization cannot move a charge reading into
+        // the future. Keep all forecast/balance timestamps on that same instant.
+        let previewNow = Date(timeIntervalSince1970: floor(Date.now.timeIntervalSince1970))
         // Production serializes both the energy observation time and the tariff
         // timeline with fractional seconds, and starts the timeline at the
         // observation time. Match that exactly: if the timeline begins even a

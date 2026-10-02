@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 import Testing
 @testable import PWUsage
@@ -447,6 +448,101 @@ struct PWUsageAppModelTests {
         #expect(DashboardCache(fileURL: fileURL).snapshot.sites.isEmpty)
     }
 
+    @Test("Reconnect cancellation and web failures preserve the signed-in dashboard", arguments: [
+        ASWebAuthenticationSessionError.Code.canceledLogin,
+        .presentationContextInvalid
+    ])
+    func reconnectFailurePreservesSession(code: ASWebAuthenticationSessionError.Code) async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let session = AppAuthWebSession()
+        let model = PWUsageAppModel(
+            configuration: try Self.makeConfiguration(),
+            api: api,
+            userDefaults: makeDefaults(),
+            forecastStore: AppForecastManagerSpy(),
+            authService: MobileAuthService(
+                configuration: try Self.makeConfiguration(),
+                api: api,
+                sessionFactory: { _, _, completion in
+                    session.completion = completion
+                    return session
+                }
+            )
+        )
+        await model.bootstrap()
+        let coordinator = try #require(model.coordinator)
+        let accountScope = model.accountScopeID
+        let reconnect = Task { await model.reconnectTesla() }
+        try await waitUntil { session.completion != nil }
+        session.completion?(nil, ASWebAuthenticationSessionError(code))
+        await reconnect.value
+
+        #expect(model.screenState == .signedIn)
+        #expect(model.authService.isAuthenticated)
+        #expect(model.coordinator === coordinator)
+        #expect(!coordinator.requiresSignIn)
+        #expect(model.selectedSiteID == "site-1")
+        #expect(model.accountScopeID == accountScope)
+        #expect(api.cookieClearCount == 0)
+        #expect(api.siteFetchCount == 1)
+        #expect(!model.isSigningIn)
+    }
+
+    @Test("Reconnect handles exchange, site reload and confirmed expiry", arguments: [
+        "exchangeFailure", "siteFailure", "success", "expired"
+    ])
+    func reconnectCompletion(outcome: String) async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let session = AppAuthWebSession()
+        let model = PWUsageAppModel(
+            configuration: try Self.makeConfiguration(),
+            api: api,
+            userDefaults: makeDefaults(),
+            forecastStore: AppForecastManagerSpy(),
+            authService: MobileAuthService(
+                configuration: try Self.makeConfiguration(),
+                api: api,
+                sessionFactory: { url, _, completion in
+                    session.loginURL = url
+                    session.completion = completion
+                    return session
+                }
+            )
+        )
+        await model.bootstrap()
+        let coordinator = try #require(model.coordinator)
+        let accountScope = model.accountScopeID
+        if outcome == "exchangeFailure" { api.exchangeError = URLError(.notConnectedToInternet) }
+        if outcome == "siteFailure" { api.sitesError = PWUsageAPIError.invalidResponse }
+        if outcome == "expired" { api.sitesError = PWUsageAPIError.signInRequired }
+        if outcome == "success" { api.sites = [Self.site("site-1"), Self.site("site-2")] }
+
+        let reconnect = Task { await model.reconnectTesla() }
+        try await waitUntil { session.completion != nil }
+        let url = try #require(session.loginURL)
+        let state = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "mobile_state" })?.value)
+        let callback = try #require(URL(string: "pwusage://auth/callback?code=opaque&attempt=9b47b05a-3f0b-498e-b604-9e43fa7df015&state=\(state)"))
+        session.completion?(callback, nil)
+        await reconnect.value
+
+        if outcome == "expired" {
+            #expect(model.screenState == .signedOut)
+            #expect(!model.authService.isAuthenticated)
+            #expect(model.coordinator == nil)
+            #expect(api.cookieClearCount == 1)
+        } else {
+            #expect(model.screenState == .signedIn)
+            #expect(model.authService.isAuthenticated)
+            #expect(model.coordinator === coordinator)
+            #expect(model.selectedSiteID == "site-1")
+            #expect(model.accountScopeID == accountScope)
+            #expect(api.cookieClearCount == 0)
+            #expect(model.sites.count == (outcome == "success" ? 2 : 1))
+        }
+        #expect(!model.isSigningIn)
+    }
+
     // `pwusage.test` is a stub host, so the allowlist opt-out is explicit. Built by
     // a throwing helper rather than a force-unwrapped `static let`, so a rejected origin fails
     // the one test that used it instead of trapping the whole binary.
@@ -584,7 +680,10 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI {
         throw PWUsageAPIError.invalidResponse
     }
 
-    func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
+    var exchangeError: Error?
+    func exchangeSession(_ exchange: MobileSessionExchange) async throws {
+        if let exchangeError { throw exchangeError }
+    }
     func logout() async throws {}
     func clearSiteAuthCookie() async { cookieClearCount += 1 }
 
@@ -652,4 +751,14 @@ private actor AppForecastManagerSpy: SolarForecastManaging {
         SolarForecastBudget(utcDay: Date(timeIntervalSince1970: 0), totalAttempts: 0, automaticAttempts: 0, deferredUntil: nil)
     }
     func disconnect(accountScopeID: String, siteID: String) throws {}
+}
+
+@MainActor
+private final class AppAuthWebSession: MobileAuthWebSession {
+    var prefersEphemeralWebBrowserSession = false
+    var presentationContextProvider: (any ASWebAuthenticationPresentationContextProviding)?
+    var loginURL: URL?
+    var completion: MobileAuthService.SessionCompletion?
+    func start() -> Bool { true }
+    func cancel() {}
 }

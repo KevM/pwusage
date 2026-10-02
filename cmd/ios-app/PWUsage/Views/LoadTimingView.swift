@@ -216,6 +216,7 @@ struct LoadTimingView: View {
     @StateObject private var profileStore: LoadProfileStore
     @State private var isProfileSheetPresented = false
     @State private var isSolarForecastSheetPresented = false
+    @State private var isBatteryHoldSheetPresented = false
     @State private var runDetailsSnapshot: LoadRunDetailsSnapshot?
     @State private var exploredProfileID: String?
 
@@ -380,7 +381,10 @@ struct LoadTimingView: View {
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
-        .refreshable { await coordinator.loadTimingDetailRefreshed() }
+        .refreshable {
+            await coordinator.loadTimingDetailRefreshed()
+            await coordinator.refreshBatteryHold()
+        }
         .background { SectionTheme.loadTiming.screenBackground }
         .navigationTitle("Load Timing")
         .navigationBarTitleDisplayMode(.inline)
@@ -389,7 +393,14 @@ struct LoadTimingView: View {
                 Button { isSolarForecastSheetPresented = true } label: { Image(systemName: "sun.max") }
                     .accessibilityLabel("Solar forecast settings")
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    isBatteryHoldSheetPresented = true
+                } label: {
+                    BatteryHoldToolbarLabel(state: coordinator.batteryHold, now: .now)
+                }
+                .accessibilityLabel(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: .now))
+                .accessibilityIdentifier("battery-hold-toolbar")
                 Button { isProfileSheetPresented = true } label: { Image(systemName: "gearshape") }
                     .accessibilityLabel("Manage load profiles")
             }
@@ -400,6 +411,9 @@ struct LoadTimingView: View {
         .sheet(isPresented: $isSolarForecastSheetPresented) {
             SolarForecastSettingsSheet(coordinator: coordinator)
         }
+        .sheet(isPresented: $isBatteryHoldSheetPresented) {
+            BatteryHoldSheet(coordinator: coordinator, site: site)
+        }
         .sheet(item: $runDetailsSnapshot) { snapshot in
             LoadRunDetailsSheet(snapshot: snapshot)
         }
@@ -409,9 +423,22 @@ struct LoadTimingView: View {
             }
         }
         .task { await coordinator.loadTimingDetailAppeared() }
+        .task(id: "\(coordinator.selectedSiteID):\(coordinator.isForeground)") {
+            await refreshBatteryHoldWhileVisible()
+        }
         .onChange(of: coordinator.isForeground) { _, isForeground in
             guard isForeground else { return }
             Task { await coordinator.loadTimingDetailAppeared() }
+        }
+    }
+
+    private func refreshBatteryHoldWhileVisible() async {
+        guard coordinator.isForeground else { return }
+        var force = true
+        while !Task.isCancelled {
+            await coordinator.refreshBatteryHold(force: force)
+            force = false
+            do { try await Task.sleep(for: .seconds(60)) } catch { return }
         }
     }
 

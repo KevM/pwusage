@@ -34,6 +34,61 @@ final class PWUsageAPITests {
         StubURLProtocol.cookieStorage = nil
     }
 
+    @Test("Battery hold reads and commands use an encoded site path and typed JSON")
+    func batteryHoldTransport() async throws {
+        var requests: [(URLRequest, Data)] = []
+        StubURLProtocol.requestHandler = { request in
+            requests.append((request, (try? Self.bodyData(from: request)) ?? Data()))
+            let body = request.httpMethod == "POST"
+                ? #"{"status":"reserve_changed","current":45}"#
+                : #"{"hold":null,"notice":null}"#
+            return (try Self.response(request, status: 200), Data(body.utf8))
+        }
+        #expect(try await api.fetchBatteryHold(siteID: "a/b ?#%").hold == nil)
+        let result = try await api.sendBatteryHoldCommand(siteID: "a/b ?#%", command: .restore)
+        #expect(result.status == .reserveChanged)
+        #expect(result.current == 45)
+        #expect(requests.count == 2)
+        let url = try #require(requests.first?.0.url)
+        #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath == "/api/site/a%2Fb%20%3F%23%25/battery-hold")
+        let post = requests[1]
+        #expect(post.0.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        let body = try #require(JSONSerialization.jsonObject(with: post.1) as? [String: NSObject])
+        #expect(body["action"] == "restore" as NSString)
+        #expect(body["durationHours"] == nil)
+    }
+
+    @Test("Battery command permission errors remain actionable")
+    func batteryHoldPermissionError() async {
+        StubURLProtocol.requestHandler = { request in
+            (try Self.response(request, status: 409), Data(#"{"error":"needs_reauth"}"#.utf8))
+        }
+        await #expect(throws: PWUsageAPIError.requestRejected(statusCode: 409, message: "needs_reauth")) {
+            try await api.sendBatteryHoldCommand(siteID: "site-1", command: .restore)
+        }
+    }
+
+    @Test("Starting a hold sends the selected timer and reserve with the session cookie")
+    func batteryHoldStartPayload() async throws {
+        let cookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "test-session"]))
+        cookieStorage.setCookie(cookie)
+        var recordedRequest: URLRequest?
+        var recordedBody = Data()
+        StubURLProtocol.requestHandler = { request in
+            recordedRequest = request
+            recordedBody = try Self.bodyData(from: request)
+            return (try Self.response(request, status: 200), Data("{\"status\":\"ok\",\"hold\":\(BatteryHoldTests.holdJSON)}".utf8))
+        }
+        let result = try await api.sendBatteryHoldCommand(siteID: "site-1", command: .park(.init(mode: .timer, durationHours: 6, reserveChoice: 80)))
+        #expect(result.hold?.siteID == "site-1")
+        #expect(recordedRequest?.value(forHTTPHeaderField: "Cookie") == "site_auth=test-session")
+        let body = try #require(JSONSerialization.jsonObject(with: recordedBody) as? [String: NSObject])
+        #expect(body["action"] == "park" as NSString)
+        #expect(body["mode"] == "timer" as NSString)
+        #expect(body["durationHours"] == 6 as NSNumber)
+        #expect(body["reserveChoice"] == 80 as NSNumber)
+    }
+
     @Test("Tariff request is site-scoped and validates response identity")
     func tariffRequestIsSiteScoped() async throws {
         var recordedURL: URL?

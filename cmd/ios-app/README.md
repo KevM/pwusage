@@ -48,7 +48,7 @@ The Solcast enhancement is split this way: the Solcast forecast itself is device
 - One app-owned coordinator requests live data at most every five minutes and the bill on three tiers: at most every 30 minutes on the foreground timer, at most every five minutes when the Load timing screen opens, and always on an explicit pull to refresh. It stops timers in the background, and before the coordinator is dropped on sign-out, and makes a due bill request after the live request, so a stale-history refresh is reflected in the bill.
 - When the stored energy sample is over 30 minutes old, the mobile live endpoint asks the server to refresh it before responding. A per-site import lock limits these attempts to once every 30 minutes, and only a successful import rereads the energy buckets. Normal polls add no database read.
 - A recent last-known battery charge may be shown with its source age; values older than two hours remain unknown (`--`). Source timestamps stay attached to readings. Missing energy data, expired sessions, and temporary server/network failures have separate states.
-- The app is read-only. It has no battery controls, background refresh, widgets, or notifications.
+- The Load Timing toolbar includes native battery hold controls. Automatic holds restore when charging ends, with an eight-hour safety limit; fixed holds run for 1–24 hours. Starting a hold and restoring the original reserve require explicit confirmation. Stop the Battery Hold resets the original reserve, including changes made in Tesla. Automatic restoration uses the server's reserve-change safeguard and shows a dismissible cancellation notice when that safeguard cancels a hold. There is no background refresh, widget, or notification support.
 
 SwiftUI previews under `PWUsage/Views/DashboardPreviews.swift` use fixed, local sample payloads for normal readings, no energy samples, stale source timestamps, an unavailable server, sign-in, and bill detail. The previews do not contact pwusage or a database.
 
@@ -71,3 +71,41 @@ This runs the same query and the same profile builder as the route and prints th
 ## Tariff sheet
 
 The tariff sheet reads saved seasons, periods, rates, and current activity with `GET /api/site/[id]/refresh-tariffs`. This shares the web app’s existing tariff endpoint; `POST` explicitly refreshes rates from Tesla. GET does not call Tesla. The server must include GET support before testing this app build on a device.
+
+## Battery hold sheet
+
+The battery button beside the Load Timing gear opens a native sheet using the
+existing `GET` and `POST /api/site/[id]/battery-hold` endpoint and authenticated
+cookie transport. Hold status refreshes once per minute while Load Timing or the
+sheet is visible, and on foregrounding. GET reads saved state and does not call
+Tesla. Only explicit hold/stop commands invoke Tesla controls. The toolbar uses
+an unaccented battery glyph while idle, and an accented battery with the
+confirmed hold reserve while active (not live battery charge). The accessibility label identifies the
+Battery Hold controls and their state; failed or stale refreshes disable controls
+until status is confirmed again. An active hold can be restored even when charge
+or tariff data is unavailable. Reconnecting uses the app's existing Tesla login
+flow to grant Energy Product Commands permission.
+
+Local-only previews in `PWUsage/Views/battery-hold-previews.swift` cover idle,
+reserve choice, active timer, monitored automatic and cancelled holds. The preview tests render the
+native sheet at standard and accessibility text sizes without contacting Tesla.
+Live Tesla commands still require a device check against a deployed server.
+
+Automatic holds show the last cron evaluation, estimated power above starting
+home usage, usage reading time, and a countdown to the next quarter-hour check.
+Overdue checks and stale readings are shown explicitly. Monitoring is optional
+for compatibility with older servers. Deploy the battery_hold_monitoring
+migration and updated restore-reserve route before checking this status on beta;
+an existing hold receives monitoring after its next scheduled check.
+
+The permanent refresh button has been removed. Missing charge data is refreshed
+on sheet entry before starting a hold. Try Again appears when charge or hold
+status needs recovery; pull-to-refresh remains available. Stopping a hold does
+not require charge data and explicitly confirms resetting the original reserve.
+
+Starting a hold validates Tesla's current backup reserve before sending any
+command. During the first minute after stopping a prior hold, a reading
+that still matches that prior hold's target is treated as pending synchronization
+and starting is refused with a recovery message. This prevents a cached hold
+target from becoming the next original reserve. This guard does not guarantee
+upstream cache freshness once that window expires.

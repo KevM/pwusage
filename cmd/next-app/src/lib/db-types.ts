@@ -111,6 +111,7 @@ export interface LoadTag {
 }
 
 export interface BatteryHold {
+  monitoring?: import('./battery-hold-monitoring').BatteryHoldMonitoring | null;
   id: number;
   site_id: string;
   status: 'active' | 'restored' | 'cancelled';
