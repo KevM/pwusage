@@ -79,6 +79,15 @@ jobs:
         with:
           version: latest
 
+      - name: Check private backup credentials
+        env:
+          BACKUP_BLOB_READ_WRITE_TOKEN: ${{ secrets.BACKUP_BLOB_READ_WRITE_TOKEN }}
+        run: |
+          if [ -z "$BACKUP_BLOB_READ_WRITE_TOKEN" ]; then
+            echo "::error::Configure BACKUP_BLOB_READ_WRITE_TOKEN for a private Vercel Blob store before running migrations."
+            exit 1
+          fi
+
       - name: Create DB Backup
         id: create_backup
         env:
@@ -98,12 +107,19 @@ jobs:
           
           echo "filename=${ZIP_FILENAME}" >> $GITHUB_OUTPUT
 
-      - name: Upload to Vercel Blob
-        uses: dartilesm/vercel-blob-action@v2
+      - name: Set up Node for private backup upload
+        uses: actions/setup-node@v7.0.0
         with:
-          source: "./cmd/next-app/${{ steps.create_backup.outputs.filename }}"
-          destination: "db-backup/${{ steps.create_backup.outputs.filename }}"
-          read-write-token: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: cmd/next-app/package-lock.json
+      - name: Install private backup dependencies
+        run: npm ci
+      - name: Upload private database backup
+        env:
+          BACKUP_BLOB_READ_WRITE_TOKEN: ${{ secrets.BACKUP_BLOB_READ_WRITE_TOKEN }}
+          BACKUP_FILENAME: ${{ steps.create_backup.outputs.filename }}
+        run: npx tsx scripts/upload-db-backup.ts "$BACKUP_FILENAME"
 
   migrate:
     name: Run Migrations
