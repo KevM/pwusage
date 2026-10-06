@@ -37,9 +37,8 @@ describe('database configuration', () => {
 
   it('reuses a single Pool across queries in production instead of leaking one per query', async () => {
     vi.resetModules();
-    const originalNodeEnv = process.env.NODE_ENV;
     // Reproduce the Vercel runtime: NODE_ENV=production with a remote-looking URL.
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     process.env.DATABASE_URL = 'postgresql://localhost:5432/test';
 
     let constructed = 0;
@@ -71,7 +70,7 @@ describe('database configuration', () => {
       // which is what exhausts Postgres (EMAXCONN, limit 200).
       expect(constructed).toBe(1);
     } finally {
-      process.env.NODE_ENV = originalNodeEnv;
+      vi.unstubAllEnvs();
       vi.doUnmock('pg');
     }
   });

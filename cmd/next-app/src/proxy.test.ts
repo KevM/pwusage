@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     checkRefreshNeeded: vi.fn(),
@@ -12,12 +12,12 @@ vi.mock('./lib/auth-jwt', () => ({
 import { proxy } from './proxy';
 import { NextRequest } from 'next/server';
 
-describe('proxy middleware', () => {
-    const origEnv = process.env.NODE_ENV;
+afterEach(() => { vi.unstubAllEnvs(); });
 
+describe('proxy middleware', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        process.env.NODE_ENV = 'development';
+        vi.stubEnv('NODE_ENV', 'development');
     });
 
     it('leaves response untouched when no site_auth cookie is present', async () => {
@@ -41,7 +41,7 @@ describe('proxy middleware', () => {
     });
 
     it('refreshes site_auth cookie with httpOnly, sameSite=lax, maxAge, and secure in production', async () => {
-        process.env.NODE_ENV = 'production';
+        vi.stubEnv('NODE_ENV', 'production');
         mocks.checkRefreshNeeded.mockResolvedValue('refreshed-token-xyz');
 
         const req = new NextRequest('http://localhost/dashboard', {
@@ -56,7 +56,5 @@ describe('proxy middleware', () => {
         expect(setCookie?.sameSite).toBe('lax');
         expect(setCookie?.maxAge).toBe(86400);
         expect(setCookie?.secure).toBe(true);
-
-        process.env.NODE_ENV = origEnv;
     });
 });

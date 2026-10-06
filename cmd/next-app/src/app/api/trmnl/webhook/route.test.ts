@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     verifyTrmnlToken: vi.fn(),
-    safeTimingSafeEqual: vi.fn((a: string, b: string) => a === b),
+    safeTimingSafeEqual: vi.fn((a: string | null | undefined, b: string | null | undefined) => a === b),
     getInstallationByUuid: vi.fn(),
     getInstallationByPendingPluginId: vi.fn(),
     getLatestLoosePendingInstallation: vi.fn(),
