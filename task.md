@@ -672,3 +672,12 @@ conflict, a discarded rebase side). And `contractRejectionIsReportedDistinctly` 
 still holds, and keeping it preserves the malformed-payload coverage this PR had before the split.
 
 **Gates:** 405 tests in 22 suites (402 + 3), clean build with the one permitted warning, 0 crashes.
+
+
+# Bill calculation seasonal netting
+
+- [x] Reproduce Harrison's surplus/charge discrepancy with failing calculation tests.
+- [x] User confirmed seasonal boundaries do not settle the billing energy bucket.
+- [x] Fix cycle-wide netting consistently for web, mobile, and TRMNL.
+- [x] Review billing tests and add meaningful edge-case coverage; record remaining configuration gap.
+- [x] Tests: 1008 passed, one existing skipped; lint and production build passed. Diff reviewed; commit verified changes.

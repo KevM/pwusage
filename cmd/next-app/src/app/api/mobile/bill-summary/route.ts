@@ -48,7 +48,7 @@ export async function GET(request: Request) {
                 ? usage.reduce((sum, item) => sum + (item.cost ?? 0), 0)
                 : null;
             // Match the web bill's grouping across seasonal rates and tariff
-            // versions. Sum already-priced costs so historical rates survive.
+            // versions. Sum the canonical netted costs so historical rates survive.
             const periodGroups = new Map<string, MobileBillPeriod>();
             for (const item of usage) {
                 const tariffName = item.tariff?.name || 'Unknown';
