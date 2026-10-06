@@ -10,7 +10,7 @@ import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer'
 import { planImport, splitAtSiteMidnight, auditDays } from './import-planner';
 import { getSiteMidnight } from '../date-utils';
 import { withImportLock } from '../import-lock';
-import { resolveHistoryRetention, retainedHistoryRange, type ValidHistoryRetentionPolicy } from '../history-retention';
+import { resolveHistoryRetention, retainedHistoryRange } from '../history-retention';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -36,18 +36,13 @@ export class Importer {
     private siteRepo: SiteRepo;
     private userRepo: UserRepo;
     private tariffRepo: TariffRepo;
-    // Configured policy only, scoped to this importer/request. Grace is evaluated afresh.
-    private retentionPolicies = new Map<string, Promise<ValidHistoryRetentionPolicy>>();
-
     private async retainedRange(site: SiteWithTariffs, start: Date, end: Date) {
         if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) throw new Error('Invalid history range');
         if (!site.user_id) throw new Error('History retention requires site ownership');
-        let policy = this.retentionPolicies.get(site.user_id);
-        if (!policy) {
-            policy = this.userRepo.getHistoryRetention(site.user_id);
-            this.retentionPolicies.set(site.user_id, policy);
-        }
-        return retainedHistoryRange(await policy, site.timezone, start, end, new Date());
+        // Long imports can span entitlement changes. Read the current policy
+        // before each chunk and again before returning or persisting its rows.
+        const policy = await this.userRepo.getHistoryRetention(site.user_id);
+        return retainedHistoryRange(policy, site.timezone, start, end, new Date());
     }
 
 

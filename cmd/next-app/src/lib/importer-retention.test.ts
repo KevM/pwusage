@@ -45,14 +45,33 @@ describe('Importer retention enforcement', () => {
         expect(mocks.coverage).not.toHaveBeenCalled(); expect(mocks.energy).not.toHaveBeenCalled();
         expect(mocks.policy).toHaveBeenCalledTimes(15);
     });
-    it('reuses compact configured policy within one importer while evaluating grace with a fresh clock', async () => {
+    it('evaluates grace with a fresh clock on later requests', async () => {
         const expiry = new Date('2026-10-02T18:00:00Z');
         mocks.policy.mockResolvedValue({ ...policy, history_retention_grace_until: expiry });
         const instance = importer();
         await instance.auditRange('s1', new Date('2026-06-01'), new Date('2026-06-02'));
         vi.setSystemTime(expiry);
         expect(await instance.auditRange('s1', new Date('2026-06-01'), new Date('2026-06-02'))).toEqual([]);
-        expect(mocks.policy).toHaveBeenCalledTimes(1); expect(mocks.coverage).toHaveBeenCalledTimes(1);
+        expect(mocks.coverage).toHaveBeenCalledTimes(1);
+    });
+    it.each(['forced ensureDataForRange', 'importRange', 'fetchRange'] as const)('stops expired daily chunks after an entitlement downgrade during %s', async (operation) => {
+        mocks.policy.mockResolvedValue({ ...policy, history_retention_days: 365 });
+        mocks.energy.mockImplementation(async () => {
+            mocks.policy.mockResolvedValue(policy);
+            return [{ timestamp: '2026-06-01T05:05:00Z', consumer_energy_imported_from_grid: 100 }];
+        });
+        const instance = importer();
+        const start = new Date('2026-06-01T05:00:00Z');
+        const end = new Date('2026-06-04T05:00:00Z');
+        const result = operation === 'forced ensureDataForRange'
+            ? (await instance.ensureDataForRange('s1', start, end, undefined, { force: true })).rows
+            : operation === 'importRange'
+                ? await instance.importRange('s1', start, end)
+                : await instance.fetchRange(site, start, end);
+        expect(result).toEqual([]);
+        expect(mocks.energy).toHaveBeenCalledTimes(1);
+        expect(mocks.soe).toHaveBeenCalledTimes(1);
+        expect(mocks.insert.mock.calls.flatMap(([rows]) => rows)).toEqual([]);
     });
     it('drops rows if grace expires while Tesla is responding', async () => {
         const expiry = new Date('2026-10-01T18:00:01Z');
@@ -79,7 +98,7 @@ describe('Importer retention enforcement', () => {
         expect(await importer().fetchRange(site, new Date('2026-06-01T05:00:00Z'), new Date('2026-06-03T05:00:00Z'))).toEqual([]);
         expect(mocks.energy).toHaveBeenCalledTimes(1);
     });
-    it('splits direct fetches on 23/25-hour local days and keeps policy reads bounded', async () => {
+    it('splits direct fetches on 23/25-hour local days', async () => {
         mocks.policy.mockResolvedValue({ ...policy, history_retention_days: 365 });
         const instance = importer();
         await instance.fetchRange(site, new Date('2026-03-08T06:00:00Z'), new Date('2026-03-09T05:00:00Z'));
@@ -87,7 +106,6 @@ describe('Importer retention enforcement', () => {
         mocks.energy.mockClear();
         await instance.fetchRange(site, new Date('2026-11-01T05:00:00Z'), new Date('2026-11-02T06:00:00Z'));
         expect(mocks.energy).toHaveBeenCalledExactlyOnceWith('s1', new Date('2026-11-01T05:00:00Z'), new Date('2026-11-02T06:00:00Z'), 'day', site.timezone);
-        expect(mocks.policy).toHaveBeenCalledTimes(1);
     });
     it('allows extended history within 365 days', async () => {
         mocks.policy.mockResolvedValue({ ...policy, history_retention_days: 365 });
