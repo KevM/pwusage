@@ -170,7 +170,9 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           MIGRATION_DB_URL=$(echo "$DATABASE_URL" | sed 's/:6543/:5432/')
-          supabase migration up --db-url "$MIGRATION_DB_URL"
+          # Branches may merge after newer migrations have already been applied.
+          # Apply every migration missing from history, including earlier timestamps.
+          supabase migration up --include-all --db-url "$MIGRATION_DB_URL"
 
   deploy:
     name: Deploy to Vercel
@@ -294,7 +296,9 @@ jobs:
           DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
         run: |
           MIGRATION_DB_URL=$(echo "$DEV_DATABASE_URL" | sed 's/:6543/:5432/')
-          supabase migration up --db-url "$MIGRATION_DB_URL"
+          # Branches may merge after newer migrations have already been applied.
+          # Apply every migration missing from history, including earlier timestamps.
+          supabase migration up --include-all --db-url "$MIGRATION_DB_URL"
 
   deploy-preview:
     name: Deploy to Vercel (Preview)
