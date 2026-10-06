@@ -11,7 +11,7 @@ async function run(): Promise<void> {
     const argv = process.argv.slice(2);
     if (argv.length !== 2 || argv[0] !== '--env' || (argv[1] !== 'dev' && argv[1] !== 'local')) throw new Error('Explicit dev/local target required');
     assertRetentionTarget(argv[1], process.env.DATABASE_URL);
-    const sql = await readFile(new URL('../db-migrations/20261001105930_add_history_retention_tier.sql', import.meta.url), 'utf8');
+    const sql = await readFile(new URL('../db-migrations/20261006080956_add_history_retention_tier.sql', import.meta.url), 'utf8');
     const { pool } = await import('../src/lib/db');
     const client = await pool.connect();
     const assert = (value: boolean): void => { if (!value) throw new Error('Migration assertion failed'); };
