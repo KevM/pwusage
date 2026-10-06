@@ -15,10 +15,15 @@ vi.mock('@/lib/energy-repo', async (importOriginal) => {
 });
 
 import { GET } from './route';
+import type { Tariff, TariffSeason, TariffSchedule } from '@/lib/db';
 import { calculate } from '@/lib/test-support/bill-fixture';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
 
-function tariff(name = 'Seasonal utility') {
+type TariffFixture = Omit<Tariff, 'seasons'> & {
+    seasons: (Omit<TariffSeason, 'schedules'> & { schedules: TariffSchedule[] })[];
+};
+
+function tariff(name = 'Seasonal utility'): TariffFixture {
     return {
         id: 1, site_id: 'site-a', name, updated: new Date('2026-01-01'),
         seasons: [

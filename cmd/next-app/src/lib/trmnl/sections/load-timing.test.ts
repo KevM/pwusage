@@ -15,14 +15,16 @@ function layout(overrides?: Partial<LayoutState>): LayoutState {
 }
 
 function view(overrides?: Partial<LoadTimingView>): LoadTimingView {
+    const periods: LoadTimingView['periods'] = [
+        { name: 'OFF_PEAK', marginalCost: 0.20, buyRate: 0.2, sellRate: 0.04, basis: 'buy', cycleNetExportKwh: -12, isActive: true, nextStartPhrase: null },
+        { name: 'ON_PEAK', marginalCost: 0.08, buyRate: 0.4, sellRate: 0.08, basis: 'sell', cycleNetExportKwh: 9, isActive: false, nextStartPhrase: 'today at 4 PM' }
+    ];
     return {
         hasTariff: true,
         hasCycleData: true,
         activeIsCheapest: false,
-        periods: [
-            { name: 'OFF_PEAK', marginalCost: 0.20, basis: 'buy', cycleNetExportKwh: -12, isActive: true, nextStartPhrase: null },
-            { name: 'ON_PEAK', marginalCost: 0.08, basis: 'sell', cycleNetExportKwh: 9, isActive: false, nextStartPhrase: 'today at 4 PM' }
-        ],
+        periods,
+        pricingPeriods: periods,
         nextCheaper: { name: 'ON_PEAK', marginalCost: 0.08, phrase: 'today at 4 PM' },
         nextCheaperPhrase: 'today at 4 PM',
         nextStartPhraseByKey: {},

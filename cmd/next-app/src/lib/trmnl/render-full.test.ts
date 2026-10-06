@@ -3,6 +3,7 @@ import { TrmnlRenderer } from '../trmnl-renderer';
 import type { RenderContext } from './types';
 import type { TrmnlComponentConfig } from '../trmnl-component-config';
 import type { EnergyData } from '../db';
+import type { LoadTimingView } from '../load-timing';
 
 function makeSeries(): EnergyData[] {
     const base = new Date('2026-05-19T07:00:00Z').getTime();
@@ -34,12 +35,14 @@ function makeCfg(overrides?: Partial<TrmnlComponentConfig>): TrmnlComponentConfi
 }
 
 function makeCtx(cfg: TrmnlComponentConfig): RenderContext {
-    const loadTiming = cfg.showLoadTiming ? {
+    const periods: LoadTimingView['periods'] = [
+        { name: 'OFF_PEAK', marginalCost: 0.2, buyRate: 0.2, sellRate: 0.04, basis: 'buy' as const, cycleNetExportKwh: -12, isActive: true, nextStartPhrase: null },
+        { name: 'ON_PEAK', marginalCost: 0.08, buyRate: 0.4, sellRate: 0.08, basis: 'sell' as const, cycleNetExportKwh: 9, isActive: false, nextStartPhrase: 'today at 4 PM' }
+    ];
+    const loadTiming: LoadTimingView | undefined = cfg.showLoadTiming ? {
         hasTariff: true, hasCycleData: true, activeIsCheapest: false,
-        periods: [
-            { name: 'OFF_PEAK', marginalCost: 0.2, basis: 'buy' as const, cycleNetExportKwh: -12, isActive: true, nextStartPhrase: null },
-            { name: 'ON_PEAK', marginalCost: 0.08, basis: 'sell' as const, cycleNetExportKwh: 9, isActive: false, nextStartPhrase: 'today at 4 PM' }
-        ],
+        periods,
+        pricingPeriods: periods,
         nextCheaper: { name: 'ON_PEAK', marginalCost: 0.08, phrase: 'today at 4 PM' },
         nextCheaperPhrase: 'today at 4 PM', nextStartPhraseByKey: {}
     } : undefined;
