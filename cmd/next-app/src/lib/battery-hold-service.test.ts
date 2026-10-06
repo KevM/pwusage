@@ -5,6 +5,7 @@ import type { BatteryHold } from './db';
 function fakeRepo(active: BatteryHold | null) {
   return {
     getActiveHold: vi.fn().mockResolvedValue(active),
+    getLatestRestoredHold: vi.fn().mockResolvedValue(null),
     createHold: vi.fn(async (p) => ({
       id: 1, site_id: p.siteId, status: 'active',
       original_reserve: p.originalReserve, target_reserve: p.targetReserve,

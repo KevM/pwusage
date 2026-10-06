@@ -97,6 +97,49 @@ Maintenance CLI argument/target checks, preview-only repository behavior, transa
 rollback/release, and policy transitions are covered by tests. Live script execution
 against migrated schema and production-to-dev CI remain rollout verification work.
 
+# Reserve synchronization on hold start (2026-10-02)
+
+- [x] Trace start reads and reproduce a recently restored hold's stale Tesla reserve in regression tests.
+- [x] Validate the original reserve before commands and guard a one-minute start settling window, as requested.
+- [x] Expose a recoverable reserve-sync message in native and web controls.
+- [x] Review the guard and document its bounded cache-freshness limitation.
+- [x] Verify web tests (978 passed, one existing skip), lint and build.
+- [x] Verify full native tests (448 passed), including preview scene startup, and commit/push the draft PR update.
+
+# Compact Battery Hold control and beta deployment (2026-10-02)
+
+- [x] Replace toolbar text with a battery/lock badge and confirmed hold-reserve percentage.
+- [x] Keep an explicit accessible Battery Hold controls label; hide stale percentages.
+- [x] Resolve the main-branch conflict preventing PR workflows from running.
+- [x] Verify merged web tests (964 passed, one existing skip), lint and production build.
+- [x] Verify native tests (447 passed) and toolbar renders.
+- [ ] Push the draft update and verify beta deployment.
+
+# Battery hold clarity and monitoring (2026-10-02)
+
+- [x] Finish approved toolbar and stop-action wording; remove permanent refresh button.
+- [x] Automatically recover missing charge data on sheet entry and retain Try Again/pull-to-refresh.
+- [x] Persist actual cron monitoring with estimated excess kW, reading age and next scheduled check.
+- [x] Add optional native monitoring decoding, status copy and countdown/overdue behavior.
+- [x] Validate migration and monitoring round trip in an isolated local PostgreSQL database.
+- [x] Verify web tests (949 passed, one existing skip), lint and production build.
+- [x] Verify full native suite (445 tests), review final previews and commit.
+
+Deployment note: server migration and deployment are needed for beta monitoring;
+rebuild the native app for toolbar/sheet wording. Existing holds receive telemetry
+at their next cron check. No real Tesla commands were sent during verification.
+
+# Native iOS battery hold (2026-10-02)
+
+- [x] Review the website flow and approve the native toolbar/sheet design.
+- [x] Record the design and implementation plan.
+- [x] Implement typed hold contracts and authenticated GET/POST transport.
+- [x] Add coordinator state, stale-status guards and site/session invalidation.
+- [x] Build native hold controls, restore confirmation, notices and reconnect.
+- [x] Verify previews, the full native suite, and web lint/build/tests (443 native tests; 942 web tests, one existing skip).
+- [x] Review the implementation and correct the manual-restore confirmation.
+- [x] Commit the verified implementation.
+
 # Database reduction planning (2026-10-01)
 
 - [x] Inspect retention, inactive-user handling, production-to-dev restore, and relevant design decisions.
@@ -728,3 +771,12 @@ conflict, a discarded rebase side). And `contractRejectionIsReportedDistinctly` 
 still holds, and keeping it preserves the malformed-payload coverage this PR had before the split.
 
 **Gates:** 405 tests in 22 suites (402 + 3), clean build with the one permitted warning, 0 crashes.
+
+
+# Bill calculation seasonal netting
+
+- [x] Reproduce Harrison's surplus/charge discrepancy with failing calculation tests.
+- [x] User confirmed seasonal boundaries do not settle the billing energy bucket.
+- [x] Fix cycle-wide netting consistently for web, mobile, and TRMNL.
+- [x] Review billing tests and add meaningful edge-case coverage; record remaining configuration gap.
+- [x] Tests: 1008 passed, one existing skipped; lint and production build passed. Diff reviewed; commit verified changes.

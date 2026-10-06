@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
@@ -25,6 +25,8 @@ const payload = {
   state: 'c'.repeat(32),
 };
 
+afterEach(() => { vi.unstubAllEnvs(); });
+
 describe('POST /api/mobile/session', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -34,7 +36,7 @@ describe('POST /api/mobile/session', () => {
   });
 
   it('sets the existing site_auth cookie for URLSession with production protections', async () => {
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     const response = await POST(new NextRequest('https://pwusage.test/api/mobile/session', {
       method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' },
     }));

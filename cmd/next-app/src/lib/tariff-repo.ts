@@ -13,7 +13,9 @@ export class TariffRepo {
 
     async getSchedulesForSite(siteId: string): Promise<TariffSchedule[]> {
         const res = await pool.query(
-            `SELECT ts.*
+            `SELECT ts.*,
+                    COALESCE(ts.buy_rate, s.buy_rate) AS buy_rate,
+                    COALESCE(ts.sell_rate, s.sell_rate) AS sell_rate
              FROM "TariffSchedule" ts
              JOIN "TariffSeason" s ON ts.season_id = s.id
              JOIN "Tariff" t ON s.tariff_id = t.id

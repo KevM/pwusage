@@ -390,3 +390,29 @@ they are not.
 boilerplate and contains claims that don't match the codebase. It carries a
 supersession banner. **Verify any claim there against current code before acting
 on it.**
+
+## 6. Billing balances span seasonal rate changes
+
+**Decision:** A bill's energy bucket is keyed by tariff name and TOU period name
+for the entire requested billing window. Seasonal boundaries and append-only
+versions with the same tariff name do not settle that energy bucket. Different
+TOU periods and different tariff names remain separate.
+
+**Why it exists:** Harrison's September–October cycle had 27.471 kWh of summer
+On-Peak surplus and 18.243 kWh of winter On-Peak deficit. Pricing those seasonal
+balances independently produced $4.55649 owed despite a 9.228 kWh surplus. The
+same 4¢ sell rate in both seasons makes the cycle credit $0.36912.
+
+**Rate attribution:** Keep measured energy and historical buy/sell rates in their
+original aggregation buckets. Offset opposing bucket balances proportionally;
+price only the residual importing or exporting energy at those historical
+rates. If several contributing rate buckets remain, this gives their
+energy-weighted rate and is independent of input ordering. All-import or
+all-export periods retain their original seasonal prices. This is the app's
+estimate policy, not a model of additional utility fees or taxes.
+
+**Guardrails:** Both `EnergyRepo.aggregateUsageByTOU` (web/mobile) and
+`aggregateUsage` (TRMNL) call `priceBillUsage`. Do not reintroduce separate
+seasonal settlement or reprice the entire cycle using today's configured rate.
+Keep historical lookup maps across all tariff versions. Presentation layers sum
+already-netted costs; they must not price raw seasonal balances themselves.

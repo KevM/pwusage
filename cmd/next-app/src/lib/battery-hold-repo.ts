@@ -1,7 +1,9 @@
 import { pool } from './db';
+import type { BatteryHoldMonitoring } from './battery-hold-monitoring';
 import { BatteryHold } from './db';
 
 function mapRow(row: {
+  monitoring?: BatteryHoldMonitoring | null;
   id: number; site_id: string | number; status: string; mode: string | null;
   original_reserve: number; target_reserve: number;
   parked_soc: number | string; baseline_load_w: number | string;
@@ -11,6 +13,7 @@ function mapRow(row: {
   cancelled_observed_reserve: number | string | null;
 }): BatteryHold {
   return {
+    monitoring: row.monitoring ?? null,
     id: Number(row.id),
     site_id: row.site_id.toString(),
     status: row.status as BatteryHold['status'],
@@ -39,6 +42,16 @@ export class BatteryHoldRepo {
     return rows.length ? mapRow(rows[0]) : null;
   }
 
+  async getLatestRestoredHold(siteId: string): Promise<BatteryHold | null> {
+    const { rows } = await pool.query(`
+      SELECT * FROM "BatteryHold"
+      WHERE site_id = $1 AND status = 'restored' AND restored_at IS NOT NULL
+      ORDER BY restored_at DESC, id DESC
+      LIMIT 1
+    `, [siteId]);
+    return rows.length ? mapRow(rows[0]) : null;
+  }
+
   async getAllActiveHolds(): Promise<BatteryHold[]> {
     const { rows } = await pool.query(`
       SELECT * FROM "BatteryHold" WHERE status = 'active' ORDER BY created_at ASC
@@ -62,6 +75,13 @@ export class BatteryHoldRepo {
       params.mode ?? 'auto',
     ]);
     return mapRow(rows[0]);
+  }
+
+  async recordMonitoring(id: number, monitoring: BatteryHoldMonitoring): Promise<void> {
+    await pool.query(`UPDATE "BatteryHold" SET monitoring = $2::jsonb
+      WHERE id = $1 AND status = 'active'
+        AND (monitoring IS NULL OR monitoring->>'checked_at' <= $3)`,
+    [id, JSON.stringify(monitoring), monitoring.checked_at]);
   }
 
   async markRestored(id: number, reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed'): Promise<void> {

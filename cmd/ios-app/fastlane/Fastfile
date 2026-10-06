@@ -1,0 +1,93 @@
+require "yaml"
+
+default_platform(:ios)
+
+PWUSAGE_BUNDLE_ID = "fm.rodeo.pwusage"
+PWUSAGE_TEAM_ID = "6HQGHHRK87"
+PWUSAGE_PROFILE = "match AppStore #{PWUSAGE_BUNDLE_ID}"
+PWUSAGE_ROOT = File.expand_path("..", __dir__)
+
+platform :ios do
+  private_lane :connect_key do
+    app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_CONTENT"),
+      is_key_content_base64: true,
+      duration: 1200,
+      in_house: false,
+    )
+  end
+
+  desc "Create or renew pwusage's App Store signing profile (local setup only)"
+  lane :prepare_signing do
+    UI.user_error!("Run signing preparation locally, not on CI") if is_ci
+    match(type: "appstore", readonly: false, api_key: connect_key)
+  end
+
+  desc "Archive and export a signed production IPA without uploading"
+  lane :archive do
+    setup_ci if is_ci
+    api_key = connect_key
+    spec = YAML.load_file(File.join(PWUSAGE_ROOT, "project.yml"))
+    version = spec.fetch("settings").fetch("base").fetch("MARKETING_VERSION").to_s
+    checked_in_build = Integer(spec.fetch("settings").fetch("base").fetch("CURRENT_PROJECT_VERSION"))
+    latest_build = latest_testflight_build_number(
+      api_key: api_key,
+      app_identifier: PWUSAGE_BUNDLE_ID,
+      version: version,
+      initial_build_number: 0,
+    )
+    build_number = [checked_in_build, latest_build + 1].max
+
+    match(type: "appstore", readonly: true, api_key: api_key)
+    sh(File.join(PWUSAGE_ROOT, "generate.sh"))
+
+    begin
+      update_code_signing_settings(
+        use_automatic_signing: false,
+        path: File.join(PWUSAGE_ROOT, "PWUsage.xcodeproj"),
+        targets: ["PWUsage"],
+        build_configurations: ["Release"],
+        team_id: PWUSAGE_TEAM_ID,
+        bundle_identifier: PWUSAGE_BUNDLE_ID,
+        code_sign_identity: "Apple Distribution",
+        profile_name: PWUSAGE_PROFILE,
+      )
+      build_app(
+        project: File.join(PWUSAGE_ROOT, "PWUsage.xcodeproj"),
+        scheme: "PWUsage",
+        configuration: "Release",
+        clean: true,
+        export_method: "app-store",
+        export_team_id: PWUSAGE_TEAM_ID,
+        xcargs: "CURRENT_PROJECT_VERSION=#{build_number}",
+        output_directory: File.join(PWUSAGE_ROOT, "build"),
+        output_name: "PWUsage.ipa",
+        archive_path: File.join(PWUSAGE_ROOT, "build", "PWUsage.xcarchive"),
+        buildlog_path: File.join(PWUSAGE_ROOT, "build", "logs"),
+        export_options: {
+          signingStyle: "manual",
+          provisioningProfiles: { PWUSAGE_BUNDLE_ID => PWUSAGE_PROFILE },
+        },
+      )
+    ensure
+      # Release signing changes only the generated project; restore device development.
+      sh(File.join(PWUSAGE_ROOT, "generate.sh"))
+    end
+
+    File.join(PWUSAGE_ROOT, "build", "PWUsage.ipa")
+  end
+
+  desc "Archive a production build and upload it to TestFlight"
+  lane :beta do
+    ipa = archive
+    upload_to_testflight(
+      api_key: connect_key,
+      app_identifier: PWUSAGE_BUNDLE_ID,
+      ipa: ipa,
+      skip_submission: true,
+      skip_waiting_for_build_processing: true,
+    )
+  end
+end

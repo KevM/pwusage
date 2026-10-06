@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { connectMock, clientQueryMock, releaseMock } = vi.hoisted(() => ({
+const { connectMock, clientQueryMock, releaseMock, queryMock } = vi.hoisted(() => ({
+    queryMock: vi.fn(),
     connectMock: vi.fn(),
     clientQueryMock: vi.fn(),
     releaseMock: vi.fn(),
@@ -9,7 +10,7 @@ const { connectMock, clientQueryMock, releaseMock } = vi.hoisted(() => ({
 vi.mock('./db', () => ({
     pool: {
         connect: connectMock,
-        query: vi.fn(),
+        query: queryMock,
     },
 }));
 
@@ -67,4 +68,14 @@ describe('TariffRepo.addTariffVersion', () => {
         expect(sqls.some((s) => s.includes('INSERT INTO "Tariff"'))).toBe(false);
         expect(sqls.some((s) => s.includes('UPDATE "Tariff" SET is_current = false'))).toBe(false);
     });
+});
+
+
+it('resolves inherited rates in historical schedules without filtering out old tariff versions', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    await new TariffRepo().getSchedulesForSite('site');
+    const sql = String(queryMock.mock.calls.at(-1)?.[0]);
+    expect(sql).toContain('COALESCE(ts.buy_rate, s.buy_rate) AS buy_rate');
+    expect(sql).toContain('COALESCE(ts.sell_rate, s.sell_rate) AS sell_rate');
+    expect(sql).not.toContain('is_current');
 });

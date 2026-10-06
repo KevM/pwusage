@@ -152,7 +152,8 @@ final class PWUsageAppModel: ObservableObject {
         userDefaults: UserDefaults = .standard,
         forecastStore: any SolarForecastManaging = SolarForecastStore.shared,
         coordinatorFactory: CoordinatorFactory? = nil,
-        cache: DashboardCache? = nil
+        cache: DashboardCache? = nil,
+        authService: MobileAuthService? = nil
     ) {
         self.api = api
         self.userDefaults = userDefaults
@@ -171,7 +172,7 @@ final class PWUsageAppModel: ObservableObject {
                 )
             }
         }
-        authService = MobileAuthService(
+        self.authService = authService ?? MobileAuthService(
             configuration: configuration,
             api: api,
             forecastCleanup: SolarForecastStoreSessionCleanup(store: forecastStore)
@@ -257,6 +258,32 @@ final class PWUsageAppModel: ObservableObject {
             screenState = .signedOut
             signInMessage = "Could not connect to pwusage. Please try again."
         }
+    }
+
+    /// Reauthorization is optional while the dashboard session is still valid.
+    /// Only an authorized API rejecting that session should send the user out.
+    func reconnectTesla() async {
+        guard screenState == .signedIn, !isSigningIn else { return }
+        isSigningIn = true
+        signInMessage = nil
+        defer { isSigningIn = false }
+        siteRequestCount += 1
+        defer { siteRequestCount -= 1 }
+        let generation = claimSiteInstall()
+        let wasAuthenticated = authService.isAuthenticated
+        do {
+            try await authService.signIn()
+        } catch {
+            guard generation == siteInstallGeneration else { return }
+            // A failed handoff exchange clears the service's local auth flag,
+            // even though it does not clear the existing dashboard cookie.
+            if wasAuthenticated { authService.restoreAuthenticatedSession() }
+            signInMessage = (error as? MobileAuthService.AuthError) == .cancelled
+                ? nil : "Could not reconnect Tesla. Please try again."
+            return
+        }
+        guard generation == siteInstallGeneration else { return }
+        await reloadSitesAfterSignIn()
     }
 
     func reloadSitesAfterSignIn() async {
@@ -470,6 +497,7 @@ private struct PWUsageRootView: View {
                         DashboardView(coordinator: coordinator, site: site, onChooseSite: { model.openSitePicker() }, onRefresh: { await model.refreshDashboard() }) {
                             Task { await model.signOut() }
                         }
+                        .environment(\.reconnectTesla, TeslaReconnectAction(owner: model) { await model.reconnectTesla() })
                         .sheet(isPresented: $model.isSitePickerPresented) {
                             SitePickerView(sites: model.sites, selectedSiteID: site.id) { selected in
                                 model.selectSite(selected)

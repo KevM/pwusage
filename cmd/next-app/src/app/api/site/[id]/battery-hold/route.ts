@@ -69,6 +69,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ status: result.status, hold: 'hold' in result ? result.hold : null });
     case 'reserve_changed':
       return NextResponse.json({ status: 'reserve_changed', current: result.current });
+    case 'reserve_sync_pending':
+      return NextResponse.json({ error: 'reserve_sync_pending' }, { status: 409 });
     case 'needs_choice':
       return NextResponse.json({ error: 'needs_choice', options: result.options }, { status: 422 });
     case 'no_active_hold':

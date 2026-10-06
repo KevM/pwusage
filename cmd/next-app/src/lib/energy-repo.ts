@@ -1,6 +1,7 @@
 import type { RetentionQueryable } from './history-retention-repo';
 import { pool, Tariff, EnergyData, TariffSchedule } from './db';
 import { wattsToKilowatts } from './energy-utils';
+import { priceBillUsage } from './bill-pricing';
 import { getSiteMidnight, getValidTimezone } from './date-utils';
 
 import { Schedule } from './schedule';
@@ -190,7 +191,7 @@ ORDER BY local_day`,
 
         // Name-resolution map must cover ALL tariff versions: historical EnergyData
         // rows keep an older version's tariff_id and would otherwise show 'Unknown'.
-        // (Pricing still uses site.tariffs — current only — via the Schedule below.)
+        // Historical aggregates retain their resolved rates; today uses Schedule.
         const tariffRepo = new TariffRepo();
         const [allVersions, allSchedules] = await Promise.all([
             tariffRepo.getTariffsForSite(siteId),
@@ -247,7 +248,8 @@ ORDER BY local_day`,
 
     /**
      * Pure aggregation core of getUsageByTOU: groups cycle aggregates and
-     * today's raw rows by (tariff, TOU period, rates) and prices the result.
+     * today's raw rows by (tariff, TOU period, rates), then nets costs across
+     * rate buckets within each tariff/TOU name for the requested bill window.
      * Exposed so callers that already fetched the inputs (the TRMNL markup
      * route) can aggregate without re-running the same queries.
      */
@@ -265,16 +267,17 @@ ORDER BY local_day`,
                 const sched = scheduleMap.get(row.tariff_schedule_id);
                 if (sched) {
                     touName = sched.name || 'Standard';
-                    buyRate = sched.buy_rate || 0;
-                    sellRate = sched.sell_rate || 0;
+                    const season = tariffMap.get(row.tariff_id)?.seasons?.find(s => s.id === sched.season_id);
+                    buyRate = sched.buy_rate ?? season?.buy_rate ?? 0;
+                    sellRate = sched.sell_rate ?? season?.sell_rate ?? 0;
                 }
             } else {
                 const midpoint = new Date(row.day.getTime() + 12 * 60 * 60 * 1000);
                 const tp = schedule.getTariffPeriod(midpoint);
                 if (tp) {
                     touName = tp.schedule.name || 'Standard';
-                    buyRate = tp.schedule.buy_rate || 0;
-                    sellRate = tp.schedule.sell_rate || 0;
+                    buyRate = tp.schedule.buy_rate ?? tp.season.buy_rate ?? 0;
+                    sellRate = tp.schedule.sell_rate ?? tp.season.sell_rate ?? 0;
                 }
             }
 
@@ -285,7 +288,7 @@ ORDER BY local_day`,
                 updated: new Date()
             };
             const tariffName = tariff.name || 'Unknown';
-            const key = `${tariffName}|${touName}|${buyRate}|${sellRate}`;
+            const key = JSON.stringify([tariffName, touName, buyRate, sellRate]);
 
             let data = aggregation.get(key);
             if (!data) {
@@ -324,8 +327,8 @@ ORDER BY local_day`,
             if (tp) {
                 touName = tp.schedule.name || 'Standard';
                 tariffName = tp.tariff.name || 'Unknown';
-                buyRate = tp.schedule.buy_rate || 0;
-                sellRate = tp.schedule.sell_rate || 0;
+                buyRate = tp.schedule.buy_rate ?? tp.season.buy_rate ?? 0;
+                sellRate = tp.schedule.sell_rate ?? tp.season.sell_rate ?? 0;
                 currentTariff = tp.tariff;
             } else {
                 const t = tariffMap.get(row.tariff_id) || {
@@ -338,7 +341,7 @@ ORDER BY local_day`,
                 currentTariff = t;
             }
 
-            const key = `${tariffName}|${touName}|${buyRate}|${sellRate}`;
+            const key = JSON.stringify([tariffName, touName, buyRate, sellRate]);
 
             let data = aggregation.get(key);
             if (!data) {
@@ -363,19 +366,8 @@ ORDER BY local_day`,
             data.batteryChange += row.battery_power;
         }
 
-        // Calculate costs
-        for (const [key, data] of aggregation) {
-            const [, , buyRateStr, sellRateStr] = key.split('|');
-            const buyRate = parseFloat(buyRateStr);
-            const sellRate = parseFloat(sellRateStr);
-
-            const gridKwh = wattsToKilowatts(data.gridUsage);
-            if (gridKwh >= 0) {
-                data.cost = gridKwh * buyRate;
-            } else {
-                data.cost = -Math.abs(gridKwh) * Math.abs(sellRate);
-            }
-        }
+        // The billing balance spans seasonal and version rate changes.
+        priceBillUsage(Array.from(aggregation.values()));
 
         return Array.from(aggregation.values());
     }

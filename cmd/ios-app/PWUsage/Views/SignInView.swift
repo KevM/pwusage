@@ -48,8 +48,13 @@ struct SignInView: View {
             .disabled(isWorking)
             .hoverEffect()
             .accessibilityHint("Opens the pwusage secure sign-in page")
+            HStack(spacing: 24) {
+                Link("Privacy Policy", destination: AppConfiguration.defaultAPIOrigin.appendingPathComponent("privacy"))
+                Link("Support", destination: AppConfiguration.defaultAPIOrigin.appendingPathComponent("support"))
+            }
+            .font(.footnote)
             Spacer()
-            Text("Your password stays with pwusage. This app uses a secure sign-in session.")
+            Text("Your Tesla password stays with Tesla. This app uses a secure sign-in session.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)

@@ -114,4 +114,28 @@ describe('BatteryHoldRepo', () => {
     const holds = await new BatteryHoldRepo().getAllActiveHolds();
     expect(holds.map(h => h.id)).toEqual([1, 2]);
   });
+  it('persists monitoring only for the active hold and maps it back', async () => {
+    const monitoring = { phase: 'load_running' as const, checked_at: '2026-10-02T10:16:00.000Z', next_check_at: '2026-10-02T10:30:00.000Z', sampled_at: '2026-10-02T10:15:00.000Z', estimated_load_w: 9000 };
+    queryMock.mockResolvedValue({ rows: [] });
+    await new BatteryHoldRepo().recordMonitoring(1, monitoring);
+    const [sql, args] = queryMock.mock.calls[0];
+    expect(sql).toContain("status = 'active'");
+    expect(sql).toContain("monitoring->>'checked_at'");
+    expect(args).toEqual([1, JSON.stringify(monitoring), monitoring.checked_at]);
+    queryMock.mockResolvedValue({ rows: [dbRow({ monitoring })] });
+    expect((await new BatteryHoldRepo().getActiveHold('site-1'))?.monitoring).toEqual(monitoring);
+  });
+
+  it('finds the most recently restored hold for this site, excluding cancellations', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [dbRow({ status: 'restored', restored_at: new Date('2026-10-02T20:00:00Z') })] });
+    const hold = await new BatteryHoldRepo().getLatestRestoredHold('site-1');
+    expect(hold?.restored_at).toEqual(new Date('2026-10-02T20:00:00Z'));
+    const [sql, args] = queryMock.mock.calls[0];
+    expect(sql).toContain("status = 'restored'");
+    expect(sql).toContain('ORDER BY restored_at DESC, id DESC');
+    expect(args).toEqual(['site-1']);
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    expect(await new BatteryHoldRepo().getLatestRestoredHold('no-history')).toBeNull();
+  });
+
 });

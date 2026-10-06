@@ -12,6 +12,12 @@ protocol MobileLoadPlanningDataAPI: Sendable {
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse
 }
 
+@MainActor
+protocol MobileBatteryHoldDataAPI: Sendable {
+    func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse
+    func sendBatteryHoldCommand(siteID: String, command: BatteryHoldCommand) async throws -> BatteryHoldCommandResult
+}
+
 enum SolarForecastEnhancementState: Equatable {
     case basic
     case loadingWithBasic
@@ -137,6 +143,7 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var bill = DashboardEndpointState<MobileBillResponse>()
     @Published private(set) var isForeground = false
     @Published private(set) var requiresSignIn = false
+    @Published private(set) var batteryHold = BatteryHoldState()
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
     @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
     @Published private(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
@@ -262,6 +269,7 @@ final class DashboardCoordinator: ObservableObject {
         } else {
             sceneIsActive = false
             isForeground = false
+            batteryHold.isCurrent = false
             stopTimer()
         }
     }
@@ -288,6 +296,100 @@ final class DashboardCoordinator: ObservableObject {
         }
     }
 
+    /// Reads database-backed hold status without making a Tesla request.
+    func refreshBatteryHold(force: Bool = true) async {
+        guard canRequestAccountData, !Task.isCancelled, !batteryHold.isBusy,
+              let holdAPI = api as? any MobileBatteryHoldDataAPI else { return }
+        if !force, batteryHold.isCurrent, let fetchedAt = batteryHold.fetchedAt,
+           (0..<60).contains(now().timeIntervalSince(fetchedAt)) { return }
+        let generation = siteGeneration
+        let siteID = selectedSiteID
+        batteryHold.isRefreshing = true
+        defer { if generation == siteGeneration { batteryHold.isRefreshing = false } }
+        do {
+            let response = try await holdAPI.fetchBatteryHold(siteID: siteID).validating(siteID: siteID)
+            guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return }
+            batteryHold.response = response
+            batteryHold.isCurrent = true
+            batteryHold.fetchedAt = now()
+            // A DB read cannot tell whether the Tesla token has command permission.
+            if batteryHold.failure != .needsReauthentication && batteryHold.failure != .needsChoice {
+                batteryHold.failure = nil
+            }
+        } catch {
+            guard generation == siteGeneration, !Task.isCancelled else { return }
+            batteryHold.isCurrent = false
+            handleBatteryHoldError(error)
+        }
+    }
+
+    func sendBatteryHoldCommand(_ command: BatteryHoldCommand) async {
+        guard canRequestAccountData, !Task.isCancelled, !batteryHold.isBusy,
+              batteryHold.statusIsCurrent(at: now()),
+              let holdAPI = api as? any MobileBatteryHoldDataAPI else { return }
+        if case .park(let choice) = command, !choice.isValid { return }
+        let generation = siteGeneration
+        let siteID = selectedSiteID
+        batteryHold.isSubmitting = true
+        batteryHold.failure = nil
+        defer { if generation == siteGeneration { batteryHold.isSubmitting = false } }
+        do {
+            let result = try await holdAPI.sendBatteryHoldCommand(siteID: siteID, command: command)
+                .validating(siteID: siteID, command: command)
+            guard generation == siteGeneration, canRequestAccountData else { return }
+            batteryHold.requiresReserveChoice = false
+            // Once a command succeeds, the old snapshot is no longer authoritative.
+            // Reconcile from the DB while keeping duplicate commands disabled.
+            batteryHold.isCurrent = false
+            if case .park = command {
+                batteryHold.response = .init(hold: result.hold, notice: batteryHold.response?.notice)
+            } else if case .restore = command {
+                batteryHold.response = .init(hold: nil, notice: batteryHold.response?.notice)
+            }
+            let response = try await holdAPI.fetchBatteryHold(siteID: siteID).validating(siteID: siteID)
+            guard generation == siteGeneration, canRequestAccountData else { return }
+            batteryHold.response = response
+            batteryHold.isCurrent = true
+            batteryHold.fetchedAt = now()
+        } catch {
+            guard generation == siteGeneration else { return }
+            handleBatteryHoldError(error)
+        }
+    }
+
+    func batteryHoldStateOfCharge(at date: Date) -> Double? {
+        guard !live.isUnavailable, let response = live.response,
+              response.site.id == selectedSiteID else { return nil }
+        return MobileLiveResponse.validatedStateOfCharge(response.stateOfCharge, takenAt: response.sources.stateOfChargeAt, now: date)
+    }
+
+    private func handleBatteryHoldError(_ error: any Error) {
+        if error as? PWUsageAPIError == .signInRequired {
+            authenticationInvalidated()
+            isForeground = false
+            stopTimer()
+            return
+        }
+        switch error as? PWUsageAPIError {
+        case .requestRejected(_, "needs_reauth"):
+            batteryHold.failure = .needsReauthentication
+        case .requestRejected(_, "reserve_sync_pending"):
+            batteryHold.failure = .reserveSyncPending
+        case .requestRejected(_, "needs_choice"):
+            batteryHold.requiresReserveChoice = true
+            batteryHold.failure = .needsChoice
+        case .requestRejected(_, "no_soc"):
+            batteryHold.failure = .noStateOfCharge
+        case .requestRejected(_, "no_active_hold"):
+            batteryHold.isCurrent = false
+            batteryHold.failure = .noActiveHold
+        default:
+            // A failed command may have reached Tesla. Never blindly retry it.
+            batteryHold.isCurrent = false
+            batteryHold.failure = .unavailable
+        }
+    }
+
     /// Call after the app verifies both the session and authorized site access.
     func authenticationRestored() {
         guard !canRequestAccountData else { return }
@@ -310,6 +412,7 @@ final class DashboardCoordinator: ObservableObject {
         forecastGeneration += 1
         siteGeneration += 1
         cancelInFlightRequests()
+        batteryHold = BatteryHoldState()
         live.response = nil
         live.isRestored = false
         bill.response = nil
@@ -324,6 +427,7 @@ final class DashboardCoordinator: ObservableObject {
         siteGeneration += 1
         forecastGeneration += 1
         cancelInFlightRequests()
+        batteryHold = BatteryHoldState()
         live.reset()
         bill.reset()
         restoreCachedReadings()

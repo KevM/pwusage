@@ -32,9 +32,9 @@ jobs:
       run:
         working-directory: ./cmd/next-app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Use Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.0.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -50,9 +50,9 @@ jobs:
       run:
         working-directory: ./cmd/next-app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Use Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.0.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -72,12 +72,21 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@v3.0.1
         with:
           version: latest
+
+      - name: Check private backup credentials
+        env:
+          BACKUP_BLOB_READ_WRITE_TOKEN: ${{ secrets.BACKUP_BLOB_READ_WRITE_TOKEN }}
+        run: |
+          if [ -z "$BACKUP_BLOB_READ_WRITE_TOKEN" ]; then
+            echo "::error::Configure BACKUP_BLOB_READ_WRITE_TOKEN for a private Vercel Blob store before running migrations."
+            exit 1
+          fi
 
       - name: Create DB Backup
         id: create_backup
@@ -98,12 +107,19 @@ jobs:
           
           echo "filename=${ZIP_FILENAME}" >> $GITHUB_OUTPUT
 
-      - name: Upload to Vercel Blob
-        uses: dartilesm/vercel-blob-action@v2
+      - name: Set up Node for private backup upload
+        uses: actions/setup-node@v7.0.0
         with:
-          source: "./cmd/next-app/${{ steps.create_backup.outputs.filename }}"
-          destination: "db-backup/${{ steps.create_backup.outputs.filename }}"
-          read-write-token: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: cmd/next-app/package-lock.json
+      - name: Install private backup dependencies
+        run: npm ci
+      - name: Upload private database backup
+        env:
+          BACKUP_BLOB_READ_WRITE_TOKEN: ${{ secrets.BACKUP_BLOB_READ_WRITE_TOKEN }}
+          BACKUP_FILENAME: ${{ steps.create_backup.outputs.filename }}
+        run: npx tsx scripts/upload-db-backup.ts "$BACKUP_FILENAME"
 
   migrate:
     name: Run Migrations
@@ -114,9 +130,9 @@ jobs:
       run:
         working-directory: ./cmd/next-app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@v3.0.1
         with:
           version: latest
       
@@ -167,9 +183,9 @@ jobs:
     needs: [test, build, migrate]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
+        uses: amondnet/vercel-action@v42.3.0
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
@@ -183,8 +199,8 @@ jobs:
     outputs:
       migrations: ${{ steps.filter.outputs.migrations }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v2
+      - uses: actions/checkout@v7.0.1
+      - uses: dorny/paths-filter@v4.0.3
         id: filter
         with:
           filters: |
@@ -201,10 +217,10 @@ jobs:
       run:
         working-directory: ./cmd/next-app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@v3.0.1
         with:
           version: latest
 
@@ -291,16 +307,33 @@ jobs:
       (needs.verify-db.result == 'success' || needs.verify-db.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
+      - name: Use Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
       - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
+        id: deploy_preview
+        uses: amondnet/vercel-action@v42.3.0
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-version: 'latest'
           vercel-args: '--env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }} --build-env DATABASE_URL=${{ secrets.DEV_DATABASE_URL }} --env NEXT_PUBLIC_APP_URL=https://pwusagebeta.fm.rodeo --build-env NEXT_PUBLIC_APP_URL=https://pwusagebeta.fm.rodeo'
-          alias-domains: 'pwusagebeta.fm.rodeo'
+      # Keep preview-url as the deployment URL; the action swallows alias errors.
+      - name: Assign beta hostname
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy_preview.outputs.preview-url }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+        run: |
+          if [ -z "$DEPLOYMENT_URL" ]; then
+            echo "::error::Vercel did not return a deployment URL"
+            exit 1
+          fi
+          npx --yes vercel@latest alias set "$DEPLOYMENT_URL" pwusagebeta.fm.rodeo \
+            --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN"
 
   notify:
     name: Discord Notification

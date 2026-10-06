@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HistoryRetentionService } from './history-retention-service';
-import type { RetentionSite } from './history-retention-repo';
+import type { HistoryRetentionRepo, RetentionSite } from './history-retention-repo';
 
 const now = new Date('2026-10-01T18:00:00Z');
 const site: RetentionSite = { siteId: 's1', userId: 'u1', timezone: 'UTC', policy: { history_retention_days: 90, history_retention_grace_until: null, history_retention_transition_pending: false } };
@@ -9,7 +9,7 @@ function setup(sites: RetentionSite[] = [site]) {
     const repo = {
         listSites: vi.fn<(timeoutMs?: number) => Promise<RetentionSite[]>>().mockResolvedValue(sites),
         preview: vi.fn<(targets: Array<{ siteId: string; cutoff: string }>, timeoutMs?: number) => Promise<Array<{ siteId: string; energy: number; tags: number }>>>().mockResolvedValue([{ siteId: 's1', energy: 4, tags: 2 }]),
-        withLockedSite: vi.fn(async <T>(_id: string, callback: (locked: RetentionSite, db: typeof dummyDb) => Promise<T>): Promise<T> => callback(sites.find(site => site.siteId === _id) ?? sites[0], dummyDb)),
+        withLockedSite: vi.fn<HistoryRetentionRepo['withLockedSite']>(async (_id, callback) => callback(sites.find(site => site.siteId === _id) ?? sites[0], dummyDb)),
     };
     const energy = { deleteExpiredBatch: vi.fn().mockResolvedValue(2) };
     const tags = { deleteExpiredBatch: vi.fn().mockResolvedValue(1) };

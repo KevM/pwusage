@@ -25,7 +25,7 @@
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^4.1.0",
     "marked": "^18.0.5",
-    "next": "^16.2.6",
+    "next": "^16.3.8",
     "pg": "^8.16.3",
     "qrcode": "^1.5.4",
     "react": "^19.2.1",
@@ -41,21 +41,24 @@
     "@types/react-dom": "^19",
     "dotenv": "^17.2.3",
     "eslint": "^9",
-    "eslint-config-next": "^16.2.2",
+    "eslint-config-next": "^16.3.8",
     "tailwindcss": "^4.2.2",
     "tsx": "^4.20.6",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "next": {
-      "postcss": "^8.5.10"
+      "postcss": "^8.5.29"
+    },
+    "@tailwindcss/typography": {
+      "postcss-selector-parser": "^7.1.6"
     }
   },
   "allowScripts": {
     "esbuild@0.28.1": true,
-    "sharp@0.34.5": true,
     "fsevents@2.3.3": true,
-    "unrs-resolver@1.12.2": true
+    "unrs-resolver@1.12.2": true,
+    "sharp@0.35.5": true
   }
 }

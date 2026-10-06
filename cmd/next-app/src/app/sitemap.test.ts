@@ -15,7 +15,7 @@ describe('sitemap', () => {
   it('includes only genuinely public, crawlable pages as absolute URLs', () => {
     const urls = sitemap().map((e) => e.url);
     expect(urls).toContain('https://pwusage.fm.rodeo');
-    for (const path of ['/about', '/news', '/help/trmnl']) {
+    for (const path of ['/about', '/news', '/help/trmnl', '/privacy', '/support']) {
       expect(urls).toContain(`https://pwusage.fm.rodeo${path}`);
     }
   });

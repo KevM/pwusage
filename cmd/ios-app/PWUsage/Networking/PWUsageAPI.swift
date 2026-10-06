@@ -76,6 +76,39 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         } catch { throw PWUsageAPIError.invalidResponse }
     }
 
+    func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse {
+        let data = try await request(url: makeSiteURL(siteID: siteID, suffix: "battery-hold"))
+        do {
+            return try MobileContractDecoder.make().decode(BatteryHoldResponse.self, from: data).validating(siteID: siteID)
+        } catch { throw PWUsageAPIError.invalidResponse }
+    }
+
+    func sendBatteryHoldCommand(siteID: String, command: BatteryHoldCommand) async throws -> BatteryHoldCommandResult {
+        if case .park(let choice) = command, !choice.isValid { throw PWUsageAPIError.invalidResponse }
+        var request = URLRequest(url: try makeSiteURL(siteID: siteID, suffix: "battery-hold"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(command)
+        let data = try await perform(request)
+        do {
+            return try MobileContractDecoder.make().decode(BatteryHoldCommandResult.self, from: data)
+                .validating(siteID: siteID, command: command)
+        } catch { throw PWUsageAPIError.invalidResponse }
+    }
+
+    private func makeSiteURL(siteID: String, suffix: String) throws -> URL {
+        let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/%?#"))
+        guard !siteID.isEmpty, let encodedID = siteID.addingPercentEncoding(withAllowedCharacters: allowed),
+              var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
+            throw PWUsageAPIError.invalidResponse
+        }
+        components.percentEncodedPath = "/api/site/\(encodedID)/\(suffix)"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url else { throw PWUsageAPIError.invalidResponse }
+        return url
+    }
+
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
         let url = try makeURL(path: "/api/mobile/load-planning-context", siteID: siteID)
         let data = try await request(url: url)
@@ -158,3 +191,4 @@ extension PWUsageAPI: MobileLoadPlanningDataAPI {}
 extension PWUsageAPI: PWUsageApplicationAPI {}
 
 extension PWUsageAPI: MobileTariffDataAPI {}
+extension PWUsageAPI: MobileBatteryHoldDataAPI {}
