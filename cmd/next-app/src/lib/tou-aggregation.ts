@@ -1,7 +1,7 @@
 import { SiteWithTariffs, EnergyData, Tariff, TariffSchedule } from './db';
 import { CycleAggregateRow } from './energy-repo';
 import { Schedule } from './schedule';
-import { wattsToKilowatts } from './energy-utils';
+import { priceBillUsage } from './bill-pricing';
 
 export interface TouAggregationResult {
     tariffGroups: {
@@ -108,8 +108,9 @@ export function aggregateUsage(
             const sched = scheduleMap.get(row.tariff_schedule_id);
             if (sched) {
                 touName = sched.name || 'Standard';
-                buyRate = sched.buy_rate || 0;
-                sellRate = sched.sell_rate || 0;
+                const season = tariffMap.get(row.tariff_id)?.seasons?.find(s => s.id === sched.season_id);
+                buyRate = sched.buy_rate ?? season?.buy_rate ?? 0;
+                sellRate = sched.sell_rate ?? season?.sell_rate ?? 0;
             }
         } else {
             // Fallback: tariff_schedule_id is null.
@@ -118,8 +119,8 @@ export function aggregateUsage(
             const tp = schedule.getTariffPeriod(midpoint);
             if (tp) {
                 touName = tp.schedule.name || 'Standard';
-                buyRate = tp.schedule.buy_rate || 0;
-                sellRate = tp.schedule.sell_rate || 0;
+                buyRate = tp.schedule.buy_rate ?? tp.season.buy_rate ?? 0;
+                sellRate = tp.schedule.sell_rate ?? tp.season.sell_rate ?? 0;
             }
         }
         const t = tariffMap.get(row.tariff_id);
@@ -173,8 +174,8 @@ export function aggregateUsage(
         if (tp) {
             touName = tp.schedule.name || 'Standard';
             tariffName = tp.tariff.name || 'Unknown';
-            buyRate = tp.schedule.buy_rate || 0;
-            sellRate = tp.schedule.sell_rate || 0;
+            buyRate = tp.schedule.buy_rate ?? tp.season.buy_rate ?? 0;
+            sellRate = tp.schedule.sell_rate ?? tp.season.sell_rate ?? 0;
             currentTariff = tp.tariff;
             const scheduleObj = tp.schedule as unknown as object;
             const cachedKey = scheduleKeyCache.get(scheduleObj);
@@ -223,15 +224,8 @@ export function aggregateUsage(
         data.batteryChange += row.battery_power;
     }
 
-    // Compute cost/credit per period from net grid usage
-    for (const data of aggregation.values()) {
-        const gridKwh = wattsToKilowatts(data.gridUsage);
-        if (gridKwh >= 0) {
-            data.cost = gridKwh * Math.abs(data.buyRate);
-        } else {
-            data.cost = -Math.abs(gridKwh) * Math.abs(data.sellRate);
-        }
-    }
+    // Share cycle-wide netting with web/mobile while retaining rate buckets.
+    priceBillUsage(Array.from(aggregation.values()));
 
     // Group periods by tariff
     const tariffGroupsMap = new Map<string, {

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { BillSummary } from './BillSummary';
 import { UsageData } from '@/lib/energy-repo';
+import { calculate } from '@/lib/test-support/bill-fixture';
 
 describe('BillSummary', () => {
     it('groups and merges duplicate TOU period names into a single block with summed usage/cost', () => {
@@ -70,4 +71,15 @@ describe('BillSummary', () => {
         // On-Peak Cost: 15.00 + 7.50 = 22.50
         expect(html).toContain('$22.50');
     });
+});
+
+
+it('renders the real seasonal netting credit in both web layouts', () => {
+    const { usage } = calculate([-27.471, 18.243]);
+    const html = renderToStaticMarkup(<BillSummary usage={usage} currencySymbol="$" />);
+    expect(html).toContain('-9.23 kWh');
+    expect(html).toContain('-$0.37');
+    expect(html).toContain('Est. Credit');
+    expect(html).not.toContain('$4.56');
+    expect((html.match(/On-Peak/g) ?? []).length).toBe(2);
 });

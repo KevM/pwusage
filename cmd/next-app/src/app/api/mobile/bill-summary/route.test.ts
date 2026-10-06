@@ -6,11 +6,16 @@ const { verifyAccessMock, siteMock, currencyMock, usageMock, latestMock } = vi.h
 
 vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock }));
 vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = siteMock; getSiteCurrencyCode = currencyMock; } }));
-vi.mock('@/lib/energy-repo', () => ({
-    EnergyRepo: class { getUsageByTOU = usageMock; getLatestTimestamp = latestMock; },
-}));
+vi.mock('@/lib/energy-repo', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/lib/energy-repo')>();
+    return { ...actual, EnergyRepo: class extends actual.EnergyRepo {
+        getUsageByTOU = usageMock;
+        getLatestTimestamp = latestMock;
+    } };
+});
 
 import { GET } from './route';
+import { calculate } from '@/lib/test-support/bill-fixture';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
 
 function tariff(name = 'Seasonal utility') {
@@ -83,27 +88,21 @@ describe('mobile bill summary route', () => {
         vi.useRealTimers();
     });
 
-    it('blends matching bill periods across seasonal rates and tariff versions without repricing', async () => {
-        usageMock.mockResolvedValue([
-            { cost: 29.36, gridUsage: 293610, tariff: { id: 1, name: 'We energies' }, touName: 'Off-Peak', buyRate: 0.1, sellRate: 0.04 },
-            { cost: -1.1, gridUsage: -27500, tariff: { id: 1, name: 'We energies' }, touName: 'On-Peak', buyRate: 0.2, sellRate: 0.04 },
-            { cost: 0.12, gridUsage: 410, tariff: { id: 2, name: 'We energies' }, touName: 'On-Peak', buyRate: 0.3, sellRate: 0.04 },
-        ]);
+    it('returns the real cycle-wide seasonal credit and matching total for iOS', async () => {
+        const { usage } = calculate([-27.471, 18.243], [0.3, 0.31], [0.04, 0.04], { versions: true });
+        usageMock.mockResolvedValue(usage);
 
         const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
         const body = await response.json();
 
         expect(response.status).toBe(200);
-        expect(body.currentBill.periods).toHaveLength(2);
-        expect(body.currentBill.periods[0]).toEqual({
-            tariffName: 'We energies', periodName: 'Off-Peak', netGridKwh: 293.61, cost: 29.36,
+        expect(body.currentBill.periods).toHaveLength(1);
+        expect(body.currentBill.periods[0]).toMatchObject({
+            tariffName: 'We energies', periodName: 'ON_PEAK',
         });
-        expect(body.currentBill.periods[1]).toMatchObject({ tariffName: 'We energies', periodName: 'On-Peak' });
-        expect(body.currentBill.periods[1].netGridKwh).toBeCloseTo(-27.09);
-        expect(body.currentBill.periods[1].cost).toBeCloseTo(-0.98);
-        expect(body.currentBill.estimatedCost).toBeCloseTo(28.38);
-        expect(body.currentBill.periods.reduce((sum: number, period: { cost: number }) => sum + period.cost, 0))
-            .toBeCloseTo(body.currentBill.estimatedCost);
+        expect(body.currentBill.periods[0].netGridKwh).toBeCloseTo(-9.228, 8);
+        expect(body.currentBill.periods[0].cost).toBeCloseTo(-0.36912, 8);
+        expect(body.currentBill.estimatedCost).toBeCloseTo(-0.36912, 8);
         expect(usageMock).toHaveBeenCalledTimes(1);
     });
 
