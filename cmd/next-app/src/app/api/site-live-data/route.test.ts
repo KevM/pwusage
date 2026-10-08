@@ -54,6 +54,9 @@ function makeCurrentTariffs(
 describe('site-live-data mobile response', () => {
     afterEach(() => vi.useRealTimers());
     beforeEach(() => {
+        // Keep relative fixture samples in today's UTC window, even when CI runs just after midnight.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-09-24T12:00:00.000Z'));
         vi.clearAllMocks();
         clearCycleRollupCache();
         const now = new Date();
