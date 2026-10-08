@@ -8,6 +8,7 @@ struct DashboardView: View {
     let onSignOut: () -> Void
 
     @State private var isTariffSheetPresented = false
+    @State private var isAboutSheetPresented = false
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -50,6 +51,9 @@ struct DashboardView: View {
                 TariffSheet(site: site, load: { try await coordinator.fetchTariffs() })
                     .id(site.id)
             }
+            .sheet(isPresented: $isAboutSheetPresented) {
+                AboutSheet()
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Tariffs", systemImage: "tag") {
@@ -60,8 +64,9 @@ struct DashboardView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("Switch Site", systemImage: "arrow.left.arrow.right", action: onChooseSite)
-                        Link("Support", destination: AppConfiguration.defaultAPIOrigin.appendingPathComponent("support"))
-                        Link("Privacy Policy", destination: AppConfiguration.defaultAPIOrigin.appendingPathComponent("privacy"))
+                        Button("About", systemImage: "info.circle") {
+                            isAboutSheetPresented = true
+                        }
                         Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive, action: onSignOut)
                     } label: {
                         Image(systemName: "ellipsis.circle")

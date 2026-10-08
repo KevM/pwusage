@@ -40,7 +40,7 @@ bundle exec fastlane lanes
 5. CI is configured with `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT`, `MATCH_PASSWORD`, `MATCH_GIT_URL=git@github.com:KevM/20four7-certs.git`, and `MATCH_GIT_PRIVATE_KEY`. The deploy key on `KevM/20four7-certs` is read-only and dedicated to pwusage. Signing assets live on its `master` branch. Local signing preparation needs write access; the CI deploy key cannot create or update profiles.
 6. Deploy the website's public pages and use `https://pwusage.fm.rodeo/privacy` for the App Store privacy-policy URL and `https://pwusage.fm.rodeo/support` for its support URL. The policy describes server account/energy data and optional device-local Solcast credentials; review it when data handling changes.
 
-Privacy and support links are also available on the native sign-in screen and dashboard menu.
+Privacy and support links are also available on the native sign-in screen and the About sheet, opened from the dashboard’s More menu.
 
 ### Upload a build
 
