@@ -681,3 +681,127 @@ still holds, and keeping it preserves the malformed-payload coverage this PR had
 - [x] Fix cycle-wide netting consistently for web, mobile, and TRMNL.
 - [x] Review billing tests and add meaningful edge-case coverage; record remaining configuration gap.
 - [x] Tests: 1008 passed, one existing skipped; lint and production build passed. Diff reviewed; commit verified changes.
+
+## Compact energy prototype — 2026-10-07
+
+- [x] Record agreed design and implementation plan.
+- [x] Add lossless archive, DST/gap/irregular-time and rollup tests.
+- [x] Implement bounded Float64 archive codecs and tariff-period rollups.
+- [x] Benchmark bounded read-only development samples and synthetic fixtures.
+- [x] Record findings and production follow-up work.
+- [x] Verify full tests, lint, build; commit.
+
+## Broader sampling and isolated storage validation
+
+- [x] Historical tariff attribution tests and audit.
+- [x] Broader bounded read-only sample.
+- [x] Private local PostgreSQL storage fixtures and roundtrip validation.
+- [x] Record measured storage and investigate anomalies.
+- [x] Full tests, lint, build; commit.
+
+## Compact historical reader integration
+
+- [x] Test mixed history, range boundaries, integrity failures and missing data.
+- [x] Implement coherent snapshot reader and optional repository dependency.
+- [x] Verify downstream billing, chart and analysis parity.
+- [x] Record limitations; full tests, lint, build; commit.
+
+## Compact archive persistence and finalization
+
+- [x] Generated migration with RLS and mutation invalidation.
+- [x] Local integration tests for finalization, revisions, rollback and concurrency.
+- [x] Snapshot store and raw-retaining finalizer.
+- [x] Local migration/role verification, review, full checks and commit.
+
+## Compact coverage and summary billing
+
+- [x] Coverage/gap-planner tests and opt-in repository delegates.
+- [x] Generated metadata migration and finalizer digest.
+- [x] Verified summary-only billing with partial-day fallback.
+- [x] Local integration tests, review, full checks and commit.
+
+## Database egress activation gates
+
+- [x] Record limited database egress as an explicit design requirement.
+- [x] Remove archive/raw dual reads from normal detailed history queries.
+- [ ] Reuse coherent request snapshots and tariff metadata; avoid duplicate range reads.
+- [ ] Measure returned database bytes/query counts for charts, bills, coverage, freshness and maintenance.
+- [ ] Review transfer costs before activating archive readers in application callers.
+
+## Egress-efficient archive reads
+
+- [x] Separate normal one-source detail reads from explicit verification reads.
+- [x] Avoid partial-day raw/archive duplication; preserve mutation consistency.
+- [x] Reuse a request snapshot for billing and coverage.
+- [x] Measure database response bytes/query counts on the local production archive.
+- [x] Review, full checks and remove temporary restored data.
+- [x] Commit verified egress checkpoint.
+
+Egress checkpoint: five sites / 150 days / 42,605 samples. Daily/monthly chart response bytes fell 79.4% / 83.4%; monthly coverage/billing were within 1% / 3.5% of scalar baselines. Partial-day bill boundaries cost 142% more and remain explicitly documented. Database-native metadata verification avoids transferring full summaries for coverage; independent mandatory verification rejects missing summaries. Review found no remaining actionable issues. Request-scoped tariff reuse, freshness/maintenance measurements and hosted-budget review remain open before activation.
+
+Validation: 1,078 tests passed / one skipped; lint and production build passed. Function execution grants confirmed anon/authenticated denied and service_role allowed. Temporary restored PostgreSQL cluster and extracted data removed; supplied backup zip retained.
+
+## Compact freshness and request reuse
+
+- [x] Scalar latest timestamp across raw and archived sources, legacy fallback and integrity tests.
+- [x] Share site/tariff/today inputs for cycle and today totals without changing netting.
+- [x] Local transfer bound, review, full checks and cleanup.
+- [x] Commit staged freshness and caller integration.
+
+Staged opt-in factory wired into web usage, mobile billing and importer coverage audits. Exact `COMPACT_HISTORY_READS_ENABLED=true` is required; it has not been configured. Disabled/default and injected repository behavior covered. Complete archived coverage plans zero paid imports; corruption stops before any import. Synthetic archived-only freshness transfers under 1,500 backend protocol bytes / two SELECTs even when the selected chart payload exceeds 1,500 bytes. Modern metadata is verified; legacy freshness decodes only its selected day. Cycle/today shares site, historical tariff lookups and raw samples, with independent netting; historical/future/identical/reversed range parity verified.
+
+Validation: 1,094 tests passed / one skipped; lint, type check and production build passed. Independent review found no blocking issues. Disposable synthetic PostgreSQL cluster removed. Live/TRMNL/analysis/setup reader mapping, coverage windows exceeding 366 days, maintenance measurements, bounded repair and verified trimming still gate activation. No PR opened or environment switch enabled.
+
+## Remaining compact history consumers
+
+- [x] Bounded multi-year scalar reads with site-local window boundaries.
+- [x] Remaining site reader wiring, retaining disabled default and authorization.
+- [x] Historical navigation avoids implicit paid recovery when archive reads are enabled.
+- [x] Review, full checks and commit.
+
+Consumer checkpoint: site setup/has-data and usage service, live page, live-data API, TRMNL, analysis and mobile planning now use the site-scoped opt-in factory. Disabled live-data requests preserve parallel query behavior. Multi-year coverage/billing/combined reads use contiguous local-midnight partitions, each <=360 local days, capped at 32 windows before reading; detail remains limited to 366 days. Each window is coherent independently, not one snapshot across all years. Historical/future analysis navigation skips Tesla-client creation and implicit import when enabled; current-day overlap and explicit force preserve existing behavior. Authorization checked before reads.
+
+Validation: 1,111 tests passed / one skipped, including real PostgreSQL multi-year parity; lint and production build passed. Independent review found no blocking issues. Synthetic cluster removed. No switch configured, PR opened, Tesla requests made or production changes performed. Remaining gates: stale latest-power/SOC behavior at archive/buffer boundaries, replacement of legacy destructive cleanup (including preserving useful LoadTags), bounded maintenance/repair cost, verified trimming, backup/restore and activation review.
+
+## Compact boundary freshness and cleanup safety
+
+- [x] Checksummed latest sample / SOC projection and generated migration.
+- [x] Repository delegates, archive/raw selection, as-of/null/staleness and corruption tests.
+- [x] Scalar transfer bounds and finalization retry integrity.
+- [x] Legacy cleanup skips destructive energy/tag removal in compact mode or once archives exist, with first-finalization race protection.
+- [x] Review, full checks, local cleanup and commit.
+
+Boundary checkpoint: latest power/last-known charge projections have independent CEL1 integrity checks and preserve original freshness timestamps. Modern power/charge reads stay below 3,000 synthetic backend protocol bytes (two/three SELECTs); legacy charge projections require rebuild before activation. As-of regression rejects reliance on unverified coverage timestamps. Cleanup uses an exclusive maintenance claim across archive detection and atomic energy/tag deletion; finalization takes the matching shared claim before its site claim. Busy claims skip safely, archive presence prevents cleanup after read-switch rollback, and empty-history legacy behavior remains covered.
+
+Validation: 1,127 tests passed / one skipped; lint and production build passed. Independent review found no remaining actionable issues after fixing the as-of filter and first-finalization race. Synthetic cluster removed; supplied production backup zip retained. No PR, switch activation, deployment, production connection or Tesla request. Remaining gates: bounded rollup/repair runner, maintenance egress and updated storage measurement, archive-preserving trim protocol, historical tag policy, recovery rehearsal and activation review.
+
+## Compact staged PR readiness
+
+- [x] Bounded site-scoped scalar maintenance preview and raw-retaining apply/rebuild.
+- [x] Existing gap audit reuse, strict limits, editable buffer and resumable reports.
+- [x] Maintenance transfer and updated allocation on local production archive.
+- [x] Whole-branch independent review and resolve findings.
+- [x] Full tests/lint/build, fixture removal and commit.
+- [x] Local draft PR description and concrete rollout gates; no PR opened.
+
+Readiness: bounded site/date CLI previews scalar coverage, verifies compressed payload plus metadata inside PostgreSQL, finalizes at most seven days per invocation and reports resulting billing attribution and remaining dates. Two recent completed days are held; a 45-second soft budget is checked between days. Explicit rebuild uses retained raw data; no Tesla repair, automatic cron, raw pruning or tag removal is activated.
+
+All five migrations applied to an isolated October 2 backup fixture. Three-site/90-day maintenance sample: 3,359 response bytes per initial 30-day preview, 4,800 per completed repeat, about 32.2 KB/day first rollup; current archive+summary allocation projects 2.19 MB/site/year. Separate 30-site parity validation recovered 20,256 samples across 77 days exactly; one attribution-incomplete day stayed explicit. Raw counts retained. Reports and limitations are in the maintenance operating guide.
+
+Validation: 1,148 tests passed / one existing skip, lint and build passed. Whole-branch independent reviews found no blockers; fetched origin/main is already included. Disposable source fixture removed and backup zip retained. Local draft PR description prepared; no PR opened. Ready for a raw-retaining staged draft PR. Operational storage reclamation still requires correction-safe trimming/recovery, recent raw-only consumer coverage, paid repair budgets, fresh backup/restore rehearsal and explicit first-trim approval.
+
+## Compact trim and recovery primitives
+
+- [x] Generated pruning marker and database write/timezone guards.
+- [x] Reviewed-revision trim with full parity/integrity and recent-day buffer checks.
+- [x] Lossless bounded restoration and atomic partial late writes.
+- [x] Finalization and maintenance preserve authoritative pruned sources.
+- [x] Opt-in repository delegation with default behavior retained.
+- [x] Integrity/concurrency/rollback/egress tests, independent review and full checks.
+- [x] Document remaining operator/rollback/backup gates, remove fixtures and commit.
+
+Validation: 1,166 tests passed / one existing skip; lint and production build passed. Independent persistence review found no blockers after the partial-source finalization fix and scalar parity optimization. All six migrations applied to the isolated source-table backup fixture. Ten selected days / 2,859 samples passed exact trim/read/restoration and partial-correction checks; response transfer averaged 6.8 KB/day for trim and restore. Disposable fixture removed, backup zip retained. No PR, production connection, Tesla request, deployment or activation. Ready for a staged draft PR; remaining production gates include an operator trim workflow, recent raw-only consumer review, paid repair budgets, fresh recoverable backup/full restore rehearsal and explicit first-trim approval.
+
+## Compact flag-on Dev timeout repair
+
+Harrison's site and live-data requests hit Dev's 10-second runtime limit after enabling compact reads. A mixed monthly read performed 31,684 timezone conversions for 6,336 raw samples; projected overlap checks recomputed local midnight per sample and summary. Precompute validated scalar/coverage day bounds and reuse sorted sample day boundaries during rollup. Regression retains exact totals and bounds conversions below 100. All 1,167 tests passed / one existing skip, lint and build passed; independent reader review found no blockers. Dev billing read measured about 0.8 seconds after the change versus about 5 seconds before. Flag remains scoped to this PR preview; raw samples retained. Deployment/page verification follows.

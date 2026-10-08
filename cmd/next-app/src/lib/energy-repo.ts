@@ -6,6 +6,10 @@ import { getSiteMidnight, getValidTimezone } from './date-utils';
 import { Schedule } from './schedule';
 import { SiteRepo } from './site-repo';
 import { TariffRepo } from './tariff-repo';
+import {CompactHistoryStore} from './prototypes/compact-history-store';
+
+export interface LatestEnergySnapshot {timestamp:Date;batterySoc:number|null;batteryPower:number;solarPower:number;gridPower:number;loadPower:number}
+export interface LatestBatterySoc {timestamp:Date;value:number}
 
 export interface UsageData {
     start: Date;
@@ -120,7 +124,23 @@ export function sumTodayRows(rows: EnergyData[]): TodayTotals {
 }
 
 
+/** Optional read backend. Production keeps SQL until an archive store is explicitly supplied. */
+export interface CycleAggregatesAndCoverage { aggregates:CycleAggregateRow[];coverage:DailyCoverageStat[] }
+export interface EnergyHistoryReader {
+    getLatestEnergyData?(siteId:string,asOf?:Date):Promise<LatestEnergySnapshot|null>;
+    getLatestBatterySoc?(siteId:string,since:Date):Promise<LatestBatterySoc|null>;
+    getLatestTimestamp?(siteId:string):Promise<Date|null>;
+    getCycleAggregatesAndCoverage?(siteId:string,start:Date,end:Date,timezone:string):Promise<CycleAggregatesAndCoverage>;
+    getDailyCoverage?(siteId: string, start: Date, end: Date, timezone: string): Promise<DailyCoverageStat[]>;
+    hasData?(siteId: string): Promise<boolean>;
+    getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]>;
+    getCycleAggregates(siteId: string, start: Date, end: Date): Promise<CycleAggregateRow[]>;
+    getBucketedEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]>;
+}
+
 export class EnergyRepo {
+    constructor(private readonly historyReader?: EnergyHistoryReader) {}
+
     /**
      * Helper to get site-timezone midnight as a global Date object (UTC timestamp)
      */
@@ -129,7 +149,14 @@ export class EnergyRepo {
     }
 
 // === Queries ===
+    async getCycleAggregatesAndCoverage(siteId:string,start:Date,end:Date,timezone:string):Promise<CycleAggregatesAndCoverage> {
+        if (this.historyReader?.getCycleAggregatesAndCoverage) return this.historyReader.getCycleAggregatesAndCoverage(siteId,start,end,timezone);
+        const [aggregates,coverage]=await Promise.all([this.getCycleAggregates(siteId,start,end),this.getDailyCoverage(siteId,start,end,timezone)]);
+        return {aggregates,coverage};
+    }
+
     async getLatestTimestamp(siteId: string): Promise<Date | null> {
+        if(this.historyReader?.getLatestTimestamp) return this.historyReader.getLatestTimestamp(siteId);
         const res = await pool.query(
             'SELECT MAX(timestamp) as timestamp FROM "EnergyData" WHERE site_id = $1 AND timestamp <= NOW() at time zone \'UTC\'',
             [siteId]
@@ -147,6 +174,7 @@ export class EnergyRepo {
      * detect real holes rather than the expected open edges of a day.
      */
     async getDailyCoverage(siteId: string, start: Date, end: Date, timezone: string): Promise<DailyCoverageStat[]> {
+        if (this.historyReader?.getDailyCoverage) return this.historyReader.getDailyCoverage(siteId,start,end,timezone);
         const tz = getValidTimezone(timezone);
         const res = await pool.query(
             `WITH s AS (
@@ -182,11 +210,11 @@ ORDER BY local_day`,
         }));
     }
 
-    async getUsageByTOU(siteId: string, start: Date, end: Date): Promise<UsageData[]> {
+    private async usageContext(siteId:string) {
 
         const siteRepo = new SiteRepo();
         const site = await siteRepo.getSite(siteId);
-        if (!site) return [];
+        if (!site) return null;
 
         // Name-resolution map must cover ALL tariff versions: historical EnergyData
         // rows keep an older version's tariff_id and would otherwise show 'Unknown'.
@@ -199,12 +227,18 @@ ORDER BY local_day`,
         const { tariffMap, scheduleMap } = EnergyRepo.buildTariffLookupMaps(site.tariffs, allVersions, allSchedules);
         const schedule = new Schedule(site.tariffs, site.timezone);
 
+        return {siteId,timezone:site.timezone,schedule,tariffMap,scheduleMap};
+    }
+
+    async getUsageByTOU(siteId: string, start: Date, end: Date): Promise<UsageData[]> {
+        const context=await this.usageContext(siteId);
+        if(!context)return [];
         // Calculate site-local "today" boundary and split point, clamped to
         // [start, end]. Without the lower clamp, a request for a cycle that
         // starts in the future fetches raw rows from today's midnight up to
         // `end` — rows that precede the requested range.
         const now = new Date();
-        const todayStart = EnergyRepo.getSiteMidnight(now, site.timezone);
+        const todayStart = EnergyRepo.getSiteMidnight(now, context.timezone);
         const splitPoint = new Date(
             Math.max(start.getTime(), Math.min(todayStart.getTime(), end.getTime()))
         );
@@ -216,7 +250,7 @@ ORDER BY local_day`,
         ]);
 
         return EnergyRepo.aggregateUsageByTOU({
-            siteId, start, priorAggregates, todayRaw, schedule, tariffMap, scheduleMap
+            ...context,start,priorAggregates,todayRaw
         });
     }
 
@@ -382,11 +416,23 @@ ORDER BY local_day`,
         todayStart: Date,
         end: Date
     ): Promise<{ cycle: UsageData[]; today: UsageData[] }> {
-        const [cycle, today] = await Promise.all([
-            this.getUsageByTOU(siteId, cycleStart, end),
-            this.getUsageByTOU(siteId, todayStart, end)
-        ]);
-        return { cycle, today };
+        const context=await this.usageContext(siteId);
+        if(!context)return {cycle:[],today:[]};
+        const midnight=EnergyRepo.getSiteMidnight(new Date(),context.timezone);
+        const split=(start:Date)=>new Date(Math.max(+start,Math.min(+midnight,+end)));
+        const cycleSplit=split(cycleStart),todaySplit=split(todayStart);
+        const cyclePrior=cycleStart<cycleSplit?this.getCycleAggregates(siteId,cycleStart,cycleSplit):Promise.resolve([]);
+        const todayPrior=+todayStart===+cycleStart?cyclePrior:todayStart<todaySplit?this.getCycleAggregates(siteId,todayStart,todaySplit):Promise.resolve([]);
+        const rawStart=new Date(Math.min(+cycleSplit,+todaySplit));
+        const [cycleAggregates,todayAggregates,raw]=await Promise.all([cyclePrior,todayPrior,
+            rawStart<end?this.getRawEnergyData(siteId,rawStart,end):Promise.resolve([])]);
+        // Net the cycle and today independently; a cycle credit cannot price today's usage.
+        return {
+            cycle:EnergyRepo.aggregateUsageByTOU({...context,start:cycleStart,priorAggregates:cycleAggregates,
+                todayRaw:raw.filter(r=>r.timestamp>=cycleSplit && r.timestamp<end)}),
+            today:EnergyRepo.aggregateUsageByTOU({...context,start:todayStart,priorAggregates:todayAggregates,
+                todayRaw:raw.filter(r=>r.timestamp>=todaySplit && r.timestamp<end)})
+        };
     }
 
     /**
@@ -401,18 +447,13 @@ ORDER BY local_day`,
     }
 
     async hasData(siteId: string): Promise<boolean> {
+        if (this.historyReader?.hasData) return this.historyReader.hasData(siteId);
         const { rows } = await pool.query('SELECT 1 FROM "EnergyData" WHERE site_id = $1 LIMIT 1', [siteId]);
         return rows.length > 0;
     }
 
-    async getLatestEnergyData(siteId: string, asOf?: Date): Promise<{
-        timestamp: Date;
-        batterySoc: number | null;
-        batteryPower: number;
-        solarPower: number;
-        gridPower: number;
-        loadPower: number;
-    } | null> {
+    async getLatestEnergyData(siteId:string,asOf?:Date):Promise<LatestEnergySnapshot|null> {
+        if(this.historyReader?.getLatestEnergyData)return this.historyReader.getLatestEnergyData(siteId,asOf);
         const timestampLimit = asOf ? 'AND timestamp <= $2' : '';
         const params = asOf ? [siteId, asOf] : [siteId];
         const { rows } = await pool.query(`
@@ -438,7 +479,8 @@ ORDER BY local_day`,
     }
 
     /** One indexed row, only used when live status has no usable charge value. */
-    async getLatestBatterySoc(siteId: string, since: Date): Promise<{ value: number; timestamp: Date } | null> {
+    async getLatestBatterySoc(siteId: string, since: Date): Promise<LatestBatterySoc | null> {
+        if(this.historyReader?.getLatestBatterySoc)return this.historyReader.getLatestBatterySoc(siteId,since);
         const { rows } = await pool.query(`
             SELECT timestamp, battery_soc
             FROM "EnergyData"
@@ -453,6 +495,7 @@ ORDER BY local_day`,
     async getCycleAggregates(
         siteId: string, start: Date, end: Date
     ): Promise<CycleAggregateRow[]> {
+        if (this.historyReader) return this.historyReader.getCycleAggregates(siteId, start, end);
         const queryStart = Date.now();
         const res = await pool.query(`
             SELECT
@@ -483,6 +526,7 @@ ORDER BY local_day`,
     }
 
     async getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
+        if (this.historyReader) return this.historyReader.getRawEnergyData(siteId, start, end);
         if (start.getTime() >= end.getTime()) return [];
         const queryStart = Date.now();
         const res = await pool.query(`
@@ -510,6 +554,7 @@ ORDER BY local_day`,
     }
 
     async getBucketedEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
+        if (this.historyReader) return this.historyReader.getBucketedEnergyData(siteId, start, end);
         const queryStart = Date.now();
         const res = await pool.query(`
             SELECT
@@ -565,6 +610,10 @@ ORDER BY local_day`,
         battery_soc: number | null;
     }>): Promise<void> {
         if (rows.length === 0) return;
+        if(process.env.COMPACT_HISTORY_READS_ENABLED==='true') {
+            await new CompactHistoryStore(pool).writeEnergyDataBatch(rows);
+            return;
+        }
 
         const valuePlaceholders: string[] = [];
         const params: unknown[] = [];

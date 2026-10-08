@@ -1,4 +1,5 @@
 import { after, NextResponse } from 'next/server';
+import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { Schedule } from '@/lib/schedule';
@@ -42,7 +43,6 @@ export async function GET(request: Request) {
         let installation: import('@/lib/db').TrmnlInstallation | null = null;
         let site: import('@/lib/db').SiteWithTariffs | null = null;
         const siteRepo = new SiteRepo();
-        const repo = new EnergyRepo();
         let componentConfig = { ...DEFAULT_TRMNL_COMPONENT_CONFIG };
 
         if (componentConfigParam) {
@@ -133,6 +133,7 @@ export async function GET(request: Request) {
         let renderMs = 0;
 
         const tz = site.timezone || 'UTC';
+        const repo = createEnergyRepo(tz);
         const todayStart = EnergyRepo.getSiteMidnight(now, tz);
 
         const dbLatestPromise = (async () => {

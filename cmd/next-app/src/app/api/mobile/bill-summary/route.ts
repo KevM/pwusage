@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { SiteRepo } from '@/lib/site-repo';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
             const billingDay = site.billing_start_day || 1;
             const cycleStart = getCurrentCycleStart(billingDay, now, site.timezone);
             const cycleEnd = getNextCycleStart(billingDay, cycleStart, site.timezone);
-            const energyRepo = new EnergyRepo();
+            const energyRepo = createEnergyRepo(site.timezone);
             const [usage, currencyCode, energyDataThrough] = await Promise.all([
                 energyRepo.getUsageByTOU(siteId, cycleStart, cycleEnd),
                 siteRepo.getSiteCurrencyCode(siteId),

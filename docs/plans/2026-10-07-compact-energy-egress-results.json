@@ -1,0 +1,122 @@
+{
+  "source": "isolated restore of production energy/tariff backup dated 2026-10-02",
+  "sites": 5,
+  "finalizedDays": 150,
+  "emptyDayWindows": 0,
+  "samples": 42605,
+  "rawRowCountPreserved": true,
+  "exactChartParity": true,
+  "coverageParity": true,
+  "billingInputParityTolerance": 1e-9,
+  "incompleteBillWindows": 0,
+  "method": "Measured PostgreSQL backend protocol bytes on a private local Unix-socket proxy, warmed connection and serialized operations; no packet/SQL logging",
+  "groups": [
+    {
+      "kind": "daily_chart",
+      "windows": 5,
+      "raw": {
+        "bytes": 27752.6,
+        "rows": 286.2,
+        "requests": 1,
+        "selectRequests": 1
+      },
+      "archived": {
+        "bytes": 5704.2,
+        "rows": 4.6,
+        "requests": 6,
+        "selectRequests": 3
+      },
+      "responseReductionPercent": 79.44625008107349
+    },
+    {
+      "kind": "monthly_chart",
+      "windows": 5,
+      "raw": {
+        "bytes": 817861.6,
+        "rows": 8521,
+        "requests": 1,
+        "selectRequests": 1
+      },
+      "archived": {
+        "bytes": 135735.4,
+        "rows": 113,
+        "requests": 6,
+        "selectRequests": 3
+      },
+      "responseReductionPercent": 83.40362232436392
+    },
+    {
+      "kind": "monthly_coverage",
+      "windows": 5,
+      "raw": {
+        "bytes": 3062.8,
+        "rows": 30,
+        "requests": 1,
+        "selectRequests": 1
+      },
+      "archived": {
+        "bytes": 3093,
+        "rows": 31,
+        "requests": 5,
+        "selectRequests": 2
+      },
+      "responseReductionPercent": -0.9860258586913861
+    },
+    {
+      "kind": "monthly_bill_inputs",
+      "windows": 5,
+      "raw": {
+        "bytes": 6831.8,
+        "rows": 83,
+        "requests": 1,
+        "selectRequests": 1
+      },
+      "archived": {
+        "bytes": 7072,
+        "rows": 84,
+        "requests": 5,
+        "selectRequests": 2
+      },
+      "responseReductionPercent": -3.515910887321061
+    },
+    {
+      "kind": "partial_month_bill_inputs",
+      "windows": 5,
+      "raw": {
+        "bytes": 6831.8,
+        "rows": 83,
+        "requests": 1,
+        "selectRequests": 1
+      },
+      "archived": {
+        "bytes": 16542,
+        "rows": 86,
+        "requests": 7,
+        "selectRequests": 4
+      },
+      "responseReductionPercent": -142.13238092450013
+    }
+  ],
+  "combinedBillCoverage": {
+    "windows": 5,
+    "separate": {
+      "bytes": 10165,
+      "rows": 115,
+      "requests": 10,
+      "selectRequests": 4
+    },
+    "combined": {
+      "bytes": 9924.8,
+      "rows": 114,
+      "requests": 6,
+      "selectRequests": 3
+    }
+  },
+  "existingAllVersionTariffLookup": {
+    "bytes": 2053.8,
+    "rows": 16.4,
+    "requests": 2,
+    "selectRequests": 2
+  },
+  "limitations": "Local plaintext response bytes exclude TLS/TCP and provider accounting. Includes transaction/control framing. Site/auth/endpoint reads and app-to-browser transfer excluded. Raw bill baseline uses matching local-day groups; not byte-identical to existing UTC-day SQL. Pricing tariff lookup reported separately; no premium/retention policy."
+}

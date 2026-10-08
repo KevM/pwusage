@@ -2,6 +2,7 @@ import { SiteWithTariffs, TariffSeason, TariffSchedule } from '../db';
 import { Schedule } from '../schedule';
 import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry, isTeslaAuthError } from '../tesla-client';
 import { EnergyRepo } from '../energy-repo';
+import { createEnergyRepo } from '../energy-repo-factory';
 import { SiteRepo } from '../site-repo';
 import { UserRepo } from '../user-repo';
 import { TariffRepo } from '../tariff-repo';
@@ -139,7 +140,7 @@ export class Importer {
                     logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
 
                     const auditStartTime = getSiteMidnight(start, site.timezone);
-                    const existingCoverage = await this.repo.getDailyCoverage(
+                    const existingCoverage = await createEnergyRepo(site.timezone,this.repo).getDailyCoverage(
                         siteId,
                         auditStartTime,
                         end,
@@ -483,7 +484,7 @@ export class Importer {
         const site = await this.siteRepo.getSite(siteId);
         if (!site) return { error: 'Site not found' };
 
-        const existingCoverage = await this.repo.getDailyCoverage(siteId, start, end, site.timezone);
+        const existingCoverage = await createEnergyRepo(site.timezone,this.repo).getDailyCoverage(siteId, start, end, site.timezone);
         const now = new Date();
 
         const days = auditDays({

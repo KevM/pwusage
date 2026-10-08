@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-import { EnergyRepo } from '@/lib/energy-repo';
+import { createEnergyRepo,compactHistoryReadsEnabled } from '@/lib/energy-repo-factory';
+import { shouldSyncAnalysisHistory } from '@/lib/compact-analysis-sync-policy';
 import { SiteRepo } from '@/lib/site-repo';
 import { LoadTagRepo } from '@/lib/load-tag-repo';
 import { adaptTeslaData } from '@/lib/nilm/tesla-adapter';
@@ -15,7 +16,6 @@ import { Importer } from '@/lib/importer';
 import { withRequestContext } from '@/lib/request-context';
 import { getSiteTodayMidnight, safeParseSiteLocalDateToMidnight, addDaysInSiteTimezone } from '@/lib/date-utils';
 
-const repo = new EnergyRepo();
 const siteRepo = new SiteRepo();
 const tagRepo = new LoadTagRepo();
 
@@ -51,6 +51,7 @@ export async function GET(
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });
         }
 
+        const repo = createEnergyRepo(site.timezone);
         const tz = tzParam || site.timezone;
         let start: Date;
 
@@ -73,10 +74,12 @@ export async function GET(
 
         // 0. Auto-Heal / Sync Check
         let importer: Importer | null = null;
-        const teslaClient = await createTeslaClientForSite(siteId);
+        const force = searchParams.get('force') === 'true';
+        const syncAllowed=shouldSyncAnalysisHistory({archiveReads:compactHistoryReadsEnabled(),force,start,end:queryEnd,
+            todayStart:getSiteTodayMidnight(site.timezone),todayEnd:addDaysInSiteTimezone(getSiteTodayMidnight(site.timezone),1,site.timezone)});
+        const teslaClient = syncAllowed?await createTeslaClientForSite(siteId):null;
 
         if (teslaClient) {
-            const force = searchParams.get('force') === 'true';
             importer = new Importer(teslaClient);
             console.error(`[Analysis] Calling ensureDataForRange for ${siteId}, force=${force}`);
             try {

@@ -1,8 +1,9 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { EnergyRepo } from '@/lib/energy-repo';
-import { LoadTagRepo } from '@/lib/load-tag-repo';
+import { pool } from '@/lib/db';
+import { CompactHistoryStore } from '@/lib/prototypes/compact-history-store';
+import { compactHistoryReadsEnabled } from '@/lib/energy-repo-factory';
 
 export async function GET(request: NextRequest) {
     try {
@@ -12,19 +13,19 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
+        if(compactHistoryReadsEnabled()) {
+            return NextResponse.json({success:true,skipped:true,reason:'compact-history-maintenance-required'});
+        }
+
         const retentionDays = parseInt(process.env.DATA_RETENTION_DAYS || '365', 10);
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - retentionDays);
 
-        const energyRepo = new EnergyRepo();
-        const tagRepo = new LoadTagRepo();
-        const energyResult = await energyRepo.cleanupOldEnergyData(cutoff);
-        const tagResult = await tagRepo.cleanupOldTags(cutoff);
-        
-        const result = {
-            energyDeleted: energyResult.energyDeleted,
-            tagsDeleted: tagResult.tagsDeleted
-        };
+        const cleanup = await new CompactHistoryStore(pool).cleanupLegacyHistory(cutoff);
+        if(cleanup.skipped) {
+            return NextResponse.json({success:true,skipped:true,reason:'compact-history-maintenance-required'});
+        }
+        const result = {energyDeleted:cleanup.energyDeleted,tagsDeleted:cleanup.tagsDeleted};
 
         console.log(`[CRON] Cleanup completed. Cutoff: ${cutoff.toISOString()}. Deleted: ${JSON.stringify(result)}`);
 

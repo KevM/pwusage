@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Temporal } from '@js-temporal/polyfill';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { SiteRepo } from '@/lib/site-repo';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
@@ -36,7 +36,7 @@ export async function GET(request: Request): Promise<NextResponse> {
             const historyEnd = new Date(historyEndDate.toZonedDateTime({ timeZone: site.timezone }).epochMilliseconds);
             const historyStart = new Date(historyStartDate.toZonedDateTime({ timeZone: site.timezone }).epochMilliseconds);
 
-            const rows = await new EnergyRepo().getRawEnergyData(siteId, historyStart, historyEnd);
+            const rows = await createEnergyRepo(site.timezone).getRawEnergyData(siteId, historyStart, historyEnd);
             const context = buildLoadPlanningContext(rows, site.timezone, asOf);
             return json({
                 version: 1,

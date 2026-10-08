@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
 import { BatteryHoldRepo } from '@/lib/battery-hold-repo';
 import { SiteRepo } from '@/lib/site-repo';
@@ -56,7 +57,6 @@ export default async function SiteLivePage({
     }
 
     const siteRepo = new SiteRepo();
-    const repo = new EnergyRepo();
     const holdRepo = new BatteryHoldRepo();
     const site = await siteRepo.getSite(id);
 
@@ -68,6 +68,7 @@ export default async function SiteLivePage({
         );
     }
 
+    const repo = createEnergyRepo(site.timezone);
     const now = new Date();
     const cycleStart = getCurrentCycleStart(site.billing_start_day, now, site.timezone);
     const todayStart = EnergyRepo.getSiteMidnight(now, site.timezone);

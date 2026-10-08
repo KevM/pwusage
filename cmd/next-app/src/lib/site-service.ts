@@ -3,6 +3,7 @@ import { TeslaClient, TeslaClientConfig, isTeslaAuthError } from './tesla-client
 import { SiteRepo } from './site-repo';
 import { verifySiteToken } from './auth-jwt';
 import { isUserActive as defaultIsUserActive } from './user-repo';
+import { createEnergyRepo } from './energy-repo-factory';
 import { EnergyRepo, UsageData } from './energy-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { TrmnlService } from './trmnl-service';
@@ -113,11 +114,11 @@ export class SiteService {
         }
 
         const siteRepo = this.deps.siteRepo;
-        const energyRepo = this.deps.energyRepo || new EnergyRepo();
         const teslaTokenRepo = this.deps.teslaTokenRepo || new TeslaTokenRepo(siteRepo);
         const trmnlService = this.deps.trmnlService || new TrmnlService();
 
         let site = await siteRepo.getSite(siteId, { includeTokens: true });
+        const energyRepo = this.deps.energyRepo || createEnergyRepo(site?.timezone??'UTC');
 
         const accessToken = site?.access_token;
         const refreshToken = site?.refresh_token;
@@ -217,7 +218,7 @@ export class SiteService {
         const start = getCurrentCycleStart(billingDay, refDate, finalSite.timezone);
         const end = getNextCycleStart(billingDay, start, finalSite.timezone);
 
-        const usage = await energyRepo.getUsageByTOU(siteId, start, end);
+        const usage = await (this.deps.energyRepo || createEnergyRepo(finalSite.timezone)).getUsageByTOU(siteId, start, end);
 
         let activeTariffId: number | undefined;
         let activeTouName: string | undefined;

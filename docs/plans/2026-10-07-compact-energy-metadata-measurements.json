@@ -1,0 +1,35 @@
+{
+  "source": "isolated energy/site/tariff restore of production backup dated 2026-10-02",
+  "server": "18.6 (Homebrew)",
+  "sites": 30,
+  "finalizedDays": 77,
+  "samples": 20256,
+  "emptyDayWindows": 73,
+  "incompleteAttributionDays": 1,
+  "unchangedRetries": 77,
+  "rawRowCountPreserved": true,
+  "exactArchiveRecovery": true,
+  "exactRollupRecovery": true,
+  "exactCoverageRecovery": true,
+  "completeDayReadsExcludeDetail": true,
+  "payloadBytes": {
+    "min": 582,
+    "max": 2390,
+    "mean": 1696.4025974025974
+  },
+  "finalizationMs": {
+    "mean": 1.6684302400000053,
+    "max": 16.15466699999999
+  },
+  "allocatedBytes": [
+    {
+      "table": "EnergyDayArchive",
+      "bytes": 270336
+    },
+    {
+      "table": "EnergyDaySummary",
+      "bytes": 139264
+    }
+  ],
+  "limitation": "bounded non-random sample; no live reader activation or raw deletion; attribution may remain incomplete"
+}

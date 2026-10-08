@@ -1,5 +1,5 @@
 import { Temporal } from '@js-temporal/polyfill';
-import { EnergyRepo } from '@/lib/energy-repo';
+import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { SiteRepo } from '@/lib/site-repo';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
 import { getSiteLocalDate, addMonthsInSiteTimezone } from '@/lib/date-utils';
@@ -41,7 +41,7 @@ export default async function UsagePage({ params, searchParams }: {
     }
 
     const siteRepo = new SiteRepo();
-    const repo = new EnergyRepo();
+
 
 
     const site = await siteRepo.getSite(id);
@@ -55,6 +55,8 @@ export default async function UsagePage({ params, searchParams }: {
             </PageShell>
         );
     }
+
+    const repo = createEnergyRepo(site.timezone);
 
     // Determine start/end dates
     let start: Date;

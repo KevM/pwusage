@@ -10,7 +10,7 @@ vi.mock('./db', () => ({
     }
 }));
 
-import { EnergyRepo, sumTodayRows, type UsageData } from './energy-repo';
+import { EnergyRepo, sumTodayRows } from './energy-repo';
 import type { EnergyData } from './db';
 import { SiteRepo } from './site-repo';
 import { TariffRepo } from './tariff-repo';
@@ -386,49 +386,47 @@ describe('EnergyRepo getRawEnergyData column projection', () => {
 });
 
 describe('EnergyRepo.getCycleAndTodayTotals', () => {
-    it('calls getUsageByTOU once for the cycle window and once for today', async () => {
-        const repo = new EnergyRepo();
-        const cycleResult = [
-            { start: new Date(), homeUsage: 100, gridUsage: -50, solarProduction: 200, batteryChange: 0,
-              tariff: { id: 1, site_id: 's', updated: new Date(), name: 'On-Peak' }, touName: 'On-Peak',
-              buyRate: 0.3, sellRate: 0.03, cost: 0 } as UsageData
-        ];
-        const todayResult = [
-            { start: new Date(), homeUsage: 10, gridUsage: -5, solarProduction: 20, batteryChange: 0,
-              tariff: { id: 1, site_id: 's', updated: new Date(), name: 'On-Peak' }, touName: 'On-Peak',
-              buyRate: 0.3, sellRate: 0.03, cost: 0 } as UsageData
-        ];
-
-        const spy = vi.spyOn(repo, 'getUsageByTOU')
-            .mockResolvedValueOnce(cycleResult)
-            .mockResolvedValueOnce(todayResult);
-
-        const cycleStart = new Date(2026, 2, 1);
-        const todayStart = new Date(2026, 2, 10);
-        const end = new Date(2026, 2, 10, 18, 0, 0);
-
-        const result = await repo.getCycleAndTodayTotals('site-1', cycleStart, todayStart, end);
-
-        expect(spy).toHaveBeenCalledTimes(2);
-        expect(spy).toHaveBeenNthCalledWith(1, 'site-1', cycleStart, end);
-        expect(spy).toHaveBeenNthCalledWith(2, 'site-1', todayStart, end);
-        expect(result.cycle).toEqual(cycleResult);
-        expect(result.today).toEqual(todayResult);
+    afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();});
+    it('shares request inputs while preserving independent cycle and today netting',async()=>{
+        vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-07T15:00:00Z'));
+        const repo=new EnergyRepo();
+        const todayStart=new Date('2026-10-07T05:00:00Z'),cycleStart=new Date('2026-10-01T05:00:00Z'),end=new Date('2026-10-07T15:00:00Z');
+        const schedule={id:10,season_id:1,name:'Standard',buy_rate:.3,sell_rate:.04,from_day_of_week:0,to_day_of_week:6,from_hour:0,to_hour:24,from_minute:0,to_minute:0};
+        const tariff={id:1,site_id:'site-1',name:'Utility',updated:new Date(),seasons:[{id:1,tariff_id:1,name:'All',from_month:1,from_day:1,to_month:12,to_day:31,buy_rate:.3,sell_rate:.04,schedules:[schedule]}]};
+        const site=vi.spyOn(SiteRepo.prototype,'getSite').mockResolvedValue({id:'site-1',timezone:'America/Chicago',tariffs:[tariff]} as never);
+        const versions=vi.spyOn(TariffRepo.prototype,'getTariffsForSite').mockResolvedValue([tariff]);
+        const schedules=vi.spyOn(TariffRepo.prototype,'getSchedulesForSite').mockResolvedValue([schedule]);
+        const aggregate=vi.spyOn(repo,'getCycleAggregates').mockImplementation(async(_site,start,end)=>start<end?[{day:cycleStart,tariff_id:1,tariff_schedule_id:10,load_power:2000,solar_power:0,grid_power:2000,battery_power:0}]:[]);
+        const raw=vi.spyOn(repo,'getRawEnergyData').mockResolvedValue([makeEnergyRow({timestamp:new Date('2026-10-07T10:00:00Z'),grid_power:-1000,tariff_schedule_id:10})]);
+        const expected={cycle:await repo.getUsageByTOU('site-1',cycleStart,end),today:await repo.getUsageByTOU('site-1',todayStart,end)};
+        expect(expected.cycle[0].cost).toBeCloseTo(.3);expect(expected.today[0].cost).toBeCloseTo(-.04);
+        for(const spy of [site,versions,schedules,aggregate,raw])spy.mockClear();
+        expect(await repo.getCycleAndTodayTotals('site-1',cycleStart,todayStart,end)).toEqual(expected);
+        for(const spy of [site,versions,schedules,aggregate,raw])expect(spy).toHaveBeenCalledTimes(1);
     });
-
-    it('returns empty arrays when the site has no data', async () => {
-        const repo = new EnergyRepo();
-        vi.spyOn(repo, 'getUsageByTOU').mockResolvedValue([]);
-
-        const result = await repo.getCycleAndTodayTotals(
-            'site-1',
-            new Date(2026, 2, 1),
-            new Date(2026, 2, 10),
-            new Date(2026, 2, 10, 18, 0, 0)
-        );
-
-        expect(result.cycle).toEqual([]);
-        expect(result.today).toEqual([]);
+    it.each([
+        ['historical','2026-10-01','2026-10-03','2026-10-04'],
+        ['future cycle','2026-10-09','2026-10-07','2026-10-10'],
+        ['same start','2026-10-01','2026-10-01','2026-10-04'],
+        ['reversed cycle','2026-10-09','2026-10-01','2026-10-04'],
+    ])('preserves independent results for %s ranges',async(_label,cycle,today,until)=>{
+        vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-07T15:00:00Z'));
+        const repo=new EnergyRepo();const cycleStart=new Date(cycle),todayStart=new Date(today),end=new Date(until);
+        const tariff={id:1,site_id:'site-1',name:'Utility',updated:new Date(),seasons:[]};
+        vi.spyOn(SiteRepo.prototype,'getSite').mockResolvedValue({id:'site-1',timezone:'UTC',tariffs:[tariff]} as never);
+        vi.spyOn(TariffRepo.prototype,'getTariffsForSite').mockResolvedValue([tariff]);
+        vi.spyOn(TariffRepo.prototype,'getSchedulesForSite').mockResolvedValue([]);
+        const samples=['2026-10-01','2026-10-03','2026-10-07','2026-10-09'].map((day,i)=>makeEnergyRow({timestamp:new Date(day+'T10:00:00Z'),grid_power:i%2?-1000:2000,tariff_schedule_id:null}));
+        vi.spyOn(repo,'getRawEnergyData').mockImplementation(async(_id,start,end)=>samples.filter(r=>r.timestamp>=start&&r.timestamp<end));
+        vi.spyOn(repo,'getCycleAggregates').mockImplementation(async(_id,start,end)=>samples.filter(r=>r.timestamp>=start&&r.timestamp<end).map(r=>({day:new Date(r.timestamp.toISOString().slice(0,10)),tariff_id:r.tariff_id,tariff_schedule_id:r.tariff_schedule_id??null,load_power:r.load_power,solar_power:r.solar_power,grid_power:r.grid_power,battery_power:r.battery_power})));
+        const expected={cycle:await repo.getUsageByTOU('site-1',cycleStart,end),today:await repo.getUsageByTOU('site-1',todayStart,end)};
+        expect(await repo.getCycleAndTodayTotals('site-1',cycleStart,todayStart,end)).toEqual(expected);
+    });
+    it('returns empty arrays for a missing site without tariff or energy reads',async()=>{
+        const repo=new EnergyRepo();const site=vi.spyOn(SiteRepo.prototype,'getSite').mockResolvedValue(undefined);
+        const raw=vi.spyOn(repo,'getRawEnergyData');
+        expect(await repo.getCycleAndTodayTotals('site-1',new Date(0),new Date(1000),new Date(2000))).toEqual({cycle:[],today:[]});
+        expect(site).toHaveBeenCalledTimes(1);expect(raw).not.toHaveBeenCalled();
     });
 });
 

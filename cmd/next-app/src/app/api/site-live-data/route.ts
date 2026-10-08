@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { isTeslaAuthError } from '@/lib/tesla-client';
+import { createEnergyRepo,compactHistoryReadsEnabled } from '@/lib/energy-repo-factory';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { Schedule, getCurrentTariffLabel } from '@/lib/schedule';
@@ -38,17 +39,20 @@ export async function GET(request: Request) {
             }
 
             const siteRepo = new SiteRepo();
-            const repo = new EnergyRepo();
 
             const now = new Date();
             const scaleWindowHours = parseScaleWindowHours(process.env.SPARKLINE_SCALE_WINDOW_HOURS);
             const sparklineWindowStart = new Date(now.getTime() - (SPARKLINE_DISPLAY_WINDOW_HOURS * 60 * 60 * 1000));
             const sparklineScaleStart = new Date(now.getTime() - (scaleWindowHours * 60 * 60 * 1000));
 
-            const [liveResult, site, initialHistoryRows] = await Promise.all([
+            const sitePromise=siteRepo.getSite(siteId);
+            const repoPromise=compactHistoryReadsEnabled()?sitePromise.then(site=>createEnergyRepo(site?.timezone??'UTC')):
+                Promise.resolve(createEnergyRepo('UTC'));
+            const [liveResult, site, repo, initialHistoryRows] = await Promise.all([
                 refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000 }),
-                siteRepo.getSite(siteId),
-                repo.getBucketedEnergyData(siteId, sparklineScaleStart, now)
+                sitePromise,
+                repoPromise,
+                repoPromise.then(repo=>repo.getBucketedEnergyData(siteId, sparklineScaleStart, now))
             ]);
 
             if (liveResult.status === 'no-tokens' || liveResult.status === 'site-not-found') {
