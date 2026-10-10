@@ -45,7 +45,7 @@ These variables are set as Secrets in your GitHub repository for automated deplo
 The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for background maintenance. These are configured in `vercel.json`:
 
 - **User Status Check** (`/api/cron/check-users`): Runs daily at 08:00 UTC. Verifies Tesla Fleet API credentials for all users to ensure tokens are valid and active. Updates `last_checked_at` and `auth_status`.
-- **Data Cleanup** (`/api/cron/cleanup`): Runs daily at 09:00 UTC. Automatically removes historical `EnergyData` and `LoadTag` records older than `DATA_RETENTION_DAYS` to manage database growth.
+- **History Archive** (`/api/cron/cleanup`): Runs daily at 09:00 UTC. Legacy energy and tag deletion is retired. The replacement is disabled unless `HISTORY_ARCHIVE_JOB_ENABLED=true` and the database control is unpaused with an explicit site cohort. Archive-only preserves raw data; separately selected trim mode removes verified archived raw days. `DATA_RETENTION_DAYS` controls raw-day eligibility, not automatic history expiry. Until archival/trim is activated with sufficient throughput, raw storage continues growing. Tags and historical tariffs remain permanent. See [archive operations](../../docs/plans/2026-10-07-daily-history-archive-operations.md) for activation, capacity and recovery.
 
 ## Getting Started
 

@@ -1,3 +1,4 @@
+import {readBillingAvailability} from '@/lib/billing-availability';
 import { NextResponse } from 'next/server';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { SiteRepo } from '@/lib/site-repo';
@@ -39,11 +40,12 @@ export async function GET(request: Request) {
             const cycleStart = getCurrentCycleStart(billingDay, now, site.timezone);
             const cycleEnd = getNextCycleStart(billingDay, cycleStart, site.timezone);
             const energyRepo = createEnergyRepo(site.timezone);
-            const [usage, currencyCode, energyDataThrough] = await Promise.all([
-                energyRepo.getUsageByTOU(siteId, cycleStart, cycleEnd),
+            const [billing, currencyCode, energyDataThrough] = await Promise.all([
+                readBillingAvailability(()=>energyRepo.getUsageByTOU(siteId, cycleStart, cycleEnd),[]),
                 siteRepo.getSiteCurrencyCode(siteId),
                 energyRepo.getLatestTimestamp(siteId),
             ]);
+            const usage=billing.value;
             const estimatedCost = usage.length > 0
                 ? usage.reduce((sum, item) => sum + (item.cost ?? 0), 0)
                 : null;
@@ -77,7 +79,7 @@ export async function GET(request: Request) {
             const activePeriod = active && hasResolvableActiveRates ? {
                 name: active.schedule.name || 'Standard', buyRate, sellRate,
             } : null;
-            const loadTiming = site.tariffs.length > 0 && activePeriod
+            const loadTiming = billing.status==='complete' && site.tariffs.length > 0 && activePeriod
                 ? computeLoadTiming(schedule, usage, now, site.timezone, activePeriod)
                 : null;
             // Start the timeline at the balance snapshot the app will project
@@ -102,6 +104,7 @@ export async function GET(request: Request) {
                 version: MOBILE_DASHBOARD_CONTRACT_VERSION,
                 site: { id: site.id, name: site.name, timezone: site.timezone },
                 currentBill: {
+                    status:billing.status,
                     estimatedCost,
                     currency: currencyCode || 'USD',
                     cycleStart: cycleStart.toISOString(),

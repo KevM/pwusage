@@ -22,6 +22,8 @@ export interface LiveDetailViewProps {
     gridPower: number;
     loadPower: number;
     today: UsageData[];
+    todayPricingUnavailable?: boolean;
+    cyclePricingUnavailable?: boolean;
     todayTotals: TodayTotals;
     todayChartRows: EnergyData[];
     todayStart: Date;
@@ -38,7 +40,7 @@ export function LiveDetailView({
     siteId, siteName, siteTimezone,
     batterySoC, batteryPower,
     solarPower, gridPower, loadPower,
-    today, todayTotals,
+    today, todayTotals, todayPricingUnavailable, cyclePricingUnavailable,
     todayChartRows, todayStart, now,
     hasTariff,
     loadTiming,
@@ -59,7 +61,7 @@ export function LiveDetailView({
                     batteryPower={batteryPower}
                     affordance={affordance}
                 />
-                <DailyByPeriodTable today={today} />
+                {todayPricingUnavailable ? <p role="status" className="text-sm text-gray-500 dark:text-gray-400">Pricing is unavailable for part of today. Energy totals and charts remain available.</p> : <DailyByPeriodTable today={today} />}
                 <HalfHourRefresh />
             </SectionCard>
 
@@ -79,11 +81,11 @@ export function LiveDetailView({
             </SectionCard>
 
             <SectionCard title="Load timing this cycle" density="compact" bodyClassName="space-y-3">
-                <PeriodCardRow
+                {cyclePricingUnavailable ? <p role="status" className="text-sm text-gray-500 dark:text-gray-400">Historical pricing is incomplete for this cycle. Load timing is unavailable until pricing is resolved.</p> : <PeriodCardRow
                     siteId={siteId}
                     hasTariff={hasTariff}
                     loadTiming={loadTiming}
-                />
+                />}
             </SectionCard>
 
             {sankeySnapshotSvg && sankeyCumulativeSvg && (

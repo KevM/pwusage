@@ -6,7 +6,8 @@ const { queryMock } = vi.hoisted(() => ({
 
 vi.mock('./db', () => ({
     pool: {
-        query: queryMock
+        query: queryMock,
+        connect: async()=>({query:queryMock,release:vi.fn()})
     }
 }));
 
@@ -432,13 +433,14 @@ describe('EnergyRepo.getCycleAndTodayTotals', () => {
 
 describe('EnergyRepo.insertEnergyDataBatch conflict target', () => {
     it('upserts on (timestamp, site_id) and refreshes tariff_id', async () => {
+        queryMock.mockResolvedValue({rows:[]});
         queryMock.mockResolvedValueOnce({ rows: [] });
         await new EnergyRepo().insertEnergyDataBatch([{
             site_id: 'site-1', tariff_id: 2, tariff_schedule_id: 20,
             timestamp: new Date('2026-05-11T07:00:00Z'),
             load_power: 1, solar_power: 2, grid_power: 3, battery_power: 4, battery_soc: 50,
         }]);
-        const sql = String(queryMock.mock.calls.at(-1)?.[0] ?? '');
+        const sql = String(queryMock.mock.calls.find(([sql])=>String(sql).includes('INSERT INTO'))?.[0] ?? '');
         expect(sql).toContain('ON CONFLICT(timestamp, site_id) DO UPDATE');
         expect(sql).toContain('tariff_id = EXCLUDED.tariff_id');
         expect(sql).not.toContain('ON CONFLICT(timestamp, site_id, tariff_id)');

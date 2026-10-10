@@ -29,6 +29,8 @@ export interface MobileDashboardContractInput {
 }
 
 export interface MobileCurrentBill {
+    /** Older clients already render null estimatedCost as unavailable. */
+    status?: 'complete' | 'incomplete-attribution';
     estimatedCost: number | null;
     currency: string;
     cycleStart: string;

@@ -48,7 +48,17 @@ export interface ArchiveMutationResult {status:'busy'|'trimmed'|'already-trimmed
 export interface FinalizationResult { status: 'busy' | 'empty' | 'finalized' | 'unchanged'; revision?: string;attributionComplete?:boolean }
 
 export class CompactHistoryStore implements HistorySnapshotStore {
-    constructor(private readonly pool: Pool) {}
+    constructor(private readonly pool: Pool,private readonly transactionTimeoutMs?:number,private readonly mutationGuard?:(client:PoolClient)=>Promise<void>) {
+        if(transactionTimeoutMs!==undefined&&(!Number.isInteger(transactionTimeoutMs)||transactionTimeoutMs<1||transactionTimeoutMs>15000))throw new Error('Invalid archive transaction budget');
+    }
+    private async boundTransaction(client:PoolClient):Promise<void> {
+        if(this.transactionTimeoutMs!==undefined) {
+            // A transaction timeout terminates the backend. Consume its asynchronous
+            // connection error as well as the query rejection; destroy on release.
+            client.on('error',()=>undefined);
+            await client.query("SELECT set_config('transaction_timeout',$1,true)",[`${this.transactionTimeoutMs}ms`]);
+        }
+    }
 
     async readSnapshot(siteId:string,start:Date,end:Date):Promise<HistorySnapshot> {
         return this.snapshot(siteId,start,end,false);
@@ -189,12 +199,14 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         const client=await this.pool.connect();
         try {
             await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+            await this.boundTransaction(client);
             await client.query("SET LOCAL statement_timeout='15s'");await client.query("SET LOCAL lock_timeout='3s'");
+            await this.mutationGuard?.(client);
             if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy',samples:0};}
             const archive=(await client.query<ArchiveRecord>('SELECT * FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2 FOR UPDATE',[siteId,start])).rows[0];
             if(!archive||archive.revision!==revision)throw new Error('Reviewed archive revision changed or is missing');
             const result=await action(client,archive);await client.query('COMMIT');return result;
-        } catch(error) {await client.query('ROLLBACK');throw error;} finally {client.release();}
+        } catch(error) {await client.query('ROLLBACK');throw error;} finally {client.release(this.transactionTimeoutMs!==undefined);}
     }
 
     /** Not exposed by any CLI/route. Requires explicit reviewed revision; production approval is a separate gate. */
@@ -401,15 +413,19 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         const client=await this.pool.connect();
         try {
             await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
-            const site=await client.query<{timezone:string;has_detail:boolean;has_raw:boolean;verified:boolean}>(`SELECT timezone,
+            const site=await client.query<{timezone:string;has_detail:boolean;has_raw:boolean;verified:boolean;attribution_complete:boolean}>(`SELECT timezone,
                 EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2
                     AND NOT(a.day_start >= $2 AND a.day_end <= $3 AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL)) AS has_detail,
                 EXISTS (SELECT 1 FROM "EnergyData" e WHERE e.site_id=$1 AND e.timestamp >= $2 AND e.timestamp < $3
                     AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end)) AS has_raw,
-                COALESCE((SELECT bool_and(public.verify_compact_day_metadata(a.site_id,a.day_start,$4::boolean))
+                COALESCE((SELECT bool_and(public.verify_compact_day_metadata(a.site_id,a.day_start,false))
                     FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
-                    AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL),true) AS verified
-                FROM "Site" WHERE id=$1`,[siteId,start,end,mode.billing]);
+                    AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL),true) AS verified,
+                COALESCE((SELECT bool_and(a.attribution_complete AND NOT EXISTS (
+                    SELECT 1 FROM "EnergyDaySummary" s WHERE s.site_id=a.site_id AND s.day_start=a.day_start AND s.revision=a.revision AND s.tariff_schedule_id IS NULL
+                )) FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
+                    AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL),true) AS attribution_complete
+                FROM "Site" WHERE id=$1`,[siteId,start,end]);
             if(site.rows[0] && !site.rows[0].verified) throw new Error('Day metadata mismatch');
             const timezone=site.rows[0]?.timezone??null;
             const aggregates:CycleAggregateRow[]=[];const coverage:DailyCoverageStat[]=[];
@@ -441,7 +457,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const days=partial.rows.map(a=>({siteId:a.site_id,start:new Date(a.day_start),end:new Date(a.day_end),attributionComplete:a.attribution_complete,
                 archive:{codec:a.codec,axis:a.axis,sha256:a.checksum,data:a.payload,expectedSlots:a.expected_slots},summaries:summaries.filter(s=>s.revision===a.revision).map(summary)}));
             if(partial.rows.some(a=>a.format_version!==1)) throw new Error('Unsupported archive version');
-            await client.query('COMMIT');return {timezone,aggregates,coverage,detail:{raw:rawRows.rows.map(raw),days}};
+            await client.query('COMMIT');return {attributionComplete:site.rows[0]?.attribution_complete??true,timezone,aggregates,coverage,detail:{raw:rawRows.rows.map(raw),days}};
         } catch(error) {await client.query('ROLLBACK');throw error;} finally {client.release();}
     }
 
@@ -449,8 +465,10 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+            await this.boundTransaction(client);
             await client.query("SET LOCAL statement_timeout = '15s'");
             await client.query("SET LOCAL lock_timeout = '3s'");
+            await this.mutationGuard?.(client);
             // Shared global claim first: cleanup cannot pass its empty-table guard during first finalization.
             const maintenance = await client.query<{acquired:boolean}>("SELECT pg_try_advisory_xact_lock_shared(hashtextextended('compact-energy-maintenance',0)) AS acquired");
             if(!maintenance.rows[0].acquired) {await client.query('ROLLBACK');return {status:'busy'};}
@@ -513,7 +531,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             await client.query('COMMIT');
             return { status:'finalized', revision,attributionComplete };
         } catch (error) { await client.query('ROLLBACK'); throw error; }
-        finally { client.release(); }
+        finally { client.release(this.transactionTimeoutMs!==undefined); }
     }
 
     private async tariffs(client: PoolClient,siteId: string): Promise<{ tariffs:Tariff[]; schedules:TariffSchedule[] }> {

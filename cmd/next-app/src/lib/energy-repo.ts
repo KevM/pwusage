@@ -1,3 +1,5 @@
+import {energyQueryExecutor,withRawEnergyAccess} from './energy-storage-access';
+import type {EnergyWrite} from './prototypes/compact-energy-recovery';
 import { pool, Tariff, EnergyData, TariffSchedule } from './db';
 import { wattsToKilowatts } from './energy-utils';
 import { priceBillUsage } from './bill-pricing';
@@ -157,7 +159,7 @@ export class EnergyRepo {
 
     async getLatestTimestamp(siteId: string): Promise<Date | null> {
         if(this.historyReader?.getLatestTimestamp) return this.historyReader.getLatestTimestamp(siteId);
-        const res = await pool.query(
+        const res = await energyQueryExecutor().query(
             'SELECT MAX(timestamp) as timestamp FROM "EnergyData" WHERE site_id = $1 AND timestamp <= NOW() at time zone \'UTC\'',
             [siteId]
         );
@@ -176,7 +178,7 @@ export class EnergyRepo {
     async getDailyCoverage(siteId: string, start: Date, end: Date, timezone: string): Promise<DailyCoverageStat[]> {
         if (this.historyReader?.getDailyCoverage) return this.historyReader.getDailyCoverage(siteId,start,end,timezone);
         const tz = getValidTimezone(timezone);
-        const res = await pool.query(
+        const res = await energyQueryExecutor().query(
             `WITH s AS (
     SELECT
         timestamp,
@@ -448,7 +450,7 @@ ORDER BY local_day`,
 
     async hasData(siteId: string): Promise<boolean> {
         if (this.historyReader?.hasData) return this.historyReader.hasData(siteId);
-        const { rows } = await pool.query('SELECT 1 FROM "EnergyData" WHERE site_id = $1 LIMIT 1', [siteId]);
+        const { rows } = await energyQueryExecutor().query('SELECT 1 FROM "EnergyData" WHERE site_id = $1 LIMIT 1', [siteId]);
         return rows.length > 0;
     }
 
@@ -456,7 +458,7 @@ ORDER BY local_day`,
         if(this.historyReader?.getLatestEnergyData)return this.historyReader.getLatestEnergyData(siteId,asOf);
         const timestampLimit = asOf ? 'AND timestamp <= $2' : '';
         const params = asOf ? [siteId, asOf] : [siteId];
-        const { rows } = await pool.query(`
+        const { rows } = await energyQueryExecutor().query(`
             SELECT timestamp, battery_soc, battery_power, solar_power, grid_power, load_power
             FROM "EnergyData"
             WHERE site_id = $1
@@ -481,7 +483,7 @@ ORDER BY local_day`,
     /** One indexed row, only used when live status has no usable charge value. */
     async getLatestBatterySoc(siteId: string, since: Date): Promise<LatestBatterySoc | null> {
         if(this.historyReader?.getLatestBatterySoc)return this.historyReader.getLatestBatterySoc(siteId,since);
-        const { rows } = await pool.query(`
+        const { rows } = await energyQueryExecutor().query(`
             SELECT timestamp, battery_soc
             FROM "EnergyData"
             WHERE site_id = $1 AND timestamp >= $2 AND battery_soc IS NOT NULL
@@ -497,7 +499,7 @@ ORDER BY local_day`,
     ): Promise<CycleAggregateRow[]> {
         if (this.historyReader) return this.historyReader.getCycleAggregates(siteId, start, end);
         const queryStart = Date.now();
-        const res = await pool.query(`
+        const res = await energyQueryExecutor().query(`
             SELECT
                 date_trunc('day', timestamp) AS day,
                 tariff_id,
@@ -529,7 +531,7 @@ ORDER BY local_day`,
         if (this.historyReader) return this.historyReader.getRawEnergyData(siteId, start, end);
         if (start.getTime() >= end.getTime()) return [];
         const queryStart = Date.now();
-        const res = await pool.query(`
+        const res = await energyQueryExecutor().query(`
             SELECT site_id, timestamp, tariff_id, tariff_schedule_id, load_power, solar_power, grid_power, battery_power, battery_soc
             FROM "EnergyData"
             WHERE site_id = $1
@@ -556,7 +558,7 @@ ORDER BY local_day`,
     async getBucketedEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
         if (this.historyReader) return this.historyReader.getBucketedEnergyData(siteId, start, end);
         const queryStart = Date.now();
-        const res = await pool.query(`
+        const res = await energyQueryExecutor().query(`
             SELECT
                 date_bin('15 minutes', timestamp, TIMESTAMPTZ '2000-01-01') as timestamp,
                 MAX(timestamp) as sample_timestamp,
@@ -598,23 +600,18 @@ ORDER BY local_day`,
 
 
     // === Commands ===
-    async insertEnergyDataBatch(rows: Array<{
-        site_id: string;
-        tariff_id: number;
-        tariff_schedule_id?: number | null;
-        timestamp: Date;
-        load_power: number;
-        solar_power: number;
-        grid_power: number;
-        battery_power: number;
-        battery_soc: number | null;
-    }>): Promise<void> {
-        if (rows.length === 0) return;
-        if(process.env.COMPACT_HISTORY_READS_ENABLED==='true') {
-            await new CompactHistoryStore(pool).writeEnergyDataBatch(rows);
-            return;
+    async insertEnergyDataBatch(rows:EnergyWrite[]):Promise<void> {
+        if(!rows.length)return;
+        if(process.env.COMPACT_HISTORY_READS_ENABLED!=='true') {
+            const result=await withRawEnergyAccess([...new Set(rows.map(row=>row.site_id))],'write',()=>this.insertRawEnergyDataBatch(rows));
+            if(result.kind==='raw')return;
         }
+        // Release the selection transaction before taking the archive writer's
+        // exclusive locks and restoring full touched days.
+        await new CompactHistoryStore(pool).writeEnergyDataBatch(rows);
+    }
 
+    private async insertRawEnergyDataBatch(rows:EnergyWrite[]):Promise<void> {
         const valuePlaceholders: string[] = [];
         const params: unknown[] = [];
         let p = 1;
@@ -627,7 +624,7 @@ ORDER BY local_day`,
             );
         }
 
-        await pool.query(`
+        await energyQueryExecutor().query(`
             INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, tariff_schedule_id)
             VALUES ${valuePlaceholders.join(', ')}
             ON CONFLICT(timestamp, site_id) DO UPDATE SET
@@ -643,7 +640,7 @@ ORDER BY local_day`,
 
     async cleanupOldEnergyData(cutoffDate: Date): Promise<{ energyDeleted: number }> {
 
-        const energyRes = await pool.query(`
+        const energyRes = await energyQueryExecutor().query(`
             DELETE FROM "EnergyData"
             WHERE timestamp < $1
         `, [cutoffDate]);

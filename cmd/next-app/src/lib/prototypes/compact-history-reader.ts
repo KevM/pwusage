@@ -1,3 +1,4 @@
+import {IncompleteTariffAttributionError} from '../billing-availability';
 /** Opt-in integration prototype; no remote storage, Tesla calls or default activation. */
 import type { EnergyData } from '../db-types';
 import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow, CycleAggregatesAndCoverage, DailyCoverageStat, EnergyHistoryReader } from '../energy-repo';
@@ -16,7 +17,7 @@ export interface FinalizedHistoryDay {
 }
 export interface HistorySnapshot { raw: EnergyData[]; days: FinalizedHistoryDay[] }
 export interface AggregateHistorySnapshot { timezone:string|null; fullDays:SummarizedHistoryDay[]; detail:HistorySnapshot }
-export interface ScalarHistorySnapshot {timezone:string|null;aggregates:CycleAggregateRow[];coverage:DailyCoverageStat[];detail:HistorySnapshot}
+export interface ScalarHistorySnapshot {attributionComplete?:boolean;timezone:string|null;aggregates:CycleAggregateRow[];coverage:DailyCoverageStat[];detail:HistorySnapshot}
 export interface HistorySnapshotStore {
     getLatestEnergyData?(siteId:string,asOf?:Date):Promise<LatestEnergySnapshot|null>;
     getLatestBatterySoc?(siteId:string,since:Date):Promise<LatestBatterySoc|null>;
@@ -114,7 +115,7 @@ export class CompactHistoryReader implements EnergyHistoryReader {
         for(const row of snapshot.aggregates) {
             const key=JSON.stringify([+row.day,row.tariff_id,row.tariff_schedule_id]);
             if(ids.has(key) || +row.day!==+getSiteMidnight(row.day,this.timezone) || row.day<start || addDaysInSiteTimezone(row.day,1,this.timezone)>end
-                || !Number.isSafeInteger(row.tariff_id) || row.tariff_schedule_id===null || !Number.isSafeInteger(row.tariff_schedule_id)
+                || !Number.isSafeInteger(row.tariff_id) || (row.tariff_schedule_id===null ? snapshot.attributionComplete!==false : !Number.isSafeInteger(row.tariff_schedule_id))
                 || measurements.some(field=>!Number.isFinite(row[field]))) throw new Error('Invalid scalar history');
             ids.add(key);
         }
@@ -137,6 +138,7 @@ export class CompactHistoryReader implements EnergyHistoryReader {
         const excludedWindows=[...scalarWindows,...coveredWindows];
         if(detail.days.some(d=>scalarStarts.has(+d.start)||coverageKeys.has(formatSiteDate(d.start,this.timezone)))
             || detail.rows.some(r=>excludedWindows.some(w=>+r.timestamp>=w.start&&+r.timestamp<w.end))) throw new Error('Conflicting finalized data');
+        if(mode.billing&&snapshot.attributionComplete===false)throw new IncompleteTariffAttributionError();
         const aggregate={fullDays:[],detail};
         const aggregates=mode.billing?[...snapshot.aggregates,...this.cycleFromSnapshot(aggregate,start,end)]:[];
         const coverage=mode.coverage?[...snapshot.coverage,...this.coverageFromSnapshot(aggregate,this.timezone)]:[];
@@ -223,8 +225,8 @@ export class CompactHistoryReader implements EnergyHistoryReader {
 
     private cycleFromSnapshot(aggregate:ValidatedAggregateSnapshot,start:Date,end:Date):CycleAggregateRow[] {
         const { rows, days } = aggregate.detail;
-        if (days.some(d => d.attributionComplete !== true && rows.some(r => r.timestamp >= d.start && r.timestamp < d.end))) throw new Error('Incomplete tariff attribution');
-        if (aggregate.fullDays.some(d=>!d.attributionComplete)) throw new Error('Incomplete tariff attribution');
+        if (days.some(d => d.attributionComplete !== true && rows.some(r => r.timestamp >= d.start && r.timestamp < d.end))) throw new IncompleteTariffAttributionError();
+        if (aggregate.fullDays.some(d=>!d.attributionComplete)) throw new IncompleteTariffAttributionError();
         const fullDays = days.filter(d => d.start >= start && d.end <= end);
         const summaries = [...aggregate.fullDays.flatMap(d=>d.summaries),...fullDays.flatMap(d => d.summaries)];
         const remaining = rows.filter(r => !fullDays.some(d => r.timestamp >= d.start && r.timestamp < d.end));
@@ -241,7 +243,7 @@ export class CompactHistoryReader implements EnergyHistoryReader {
             group.push(sample); groups.set(day, group);
         }
         for (const [day, samples] of groups) summaries.push(...rollupDay(samples, new Date(day)));
-        if (summaries.some(s => s.tariff_schedule_id === null)) throw new Error('Incomplete tariff attribution');
+        if (summaries.some(s => s.tariff_schedule_id === null)) throw new IncompleteTariffAttributionError();
         return summaries.map(s => ({ day: s.day, tariff_id: s.tariff_id, tariff_schedule_id: s.tariff_schedule_id,
             load_power: s.load_power, solar_power: s.solar_power, grid_power: s.grid_power, battery_power: s.battery_power }))
             .sort((a, b) => +a.day - +b.day || a.tariff_id - b.tariff_id || (a.tariff_schedule_id ?? 0) - (b.tariff_schedule_id ?? 0));

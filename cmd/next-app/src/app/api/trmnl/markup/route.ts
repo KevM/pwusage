@@ -1,3 +1,4 @@
+import {readBillingAvailability} from '@/lib/billing-availability';
 import { after, NextResponse } from 'next/server';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
@@ -146,7 +147,7 @@ export async function GET(request: Request) {
 
         const dbCyclePromise = (async () => {
             const startMs = Date.now();
-            const res = await repo.getCycleAggregates(site!.id, start, todayStart);
+            const res = await readBillingAvailability(()=>repo.getCycleAggregates(site!.id, start, todayStart),[]);
             dbCycleMs = Date.now() - startMs;
             console.log(`[TrmnlMarkup] DB Cycle Aggregates Fetch: ${dbCycleMs}ms`);
             return res;
@@ -161,7 +162,7 @@ export async function GET(request: Request) {
         })();
 
         const tariffRepo = new TariffRepo();
-        const [latestData, priorAggregates, todayRaw, allTariffVersions, allScheduleVersions, currencyCode] = await Promise.all([
+        const [latestData, billing, todayRaw, allTariffVersions, allScheduleVersions, currencyCode] = await Promise.all([
             dbLatestPromise,
             dbCyclePromise,
             dbTodayPromise,
@@ -169,6 +170,8 @@ export async function GET(request: Request) {
             tariffRepo.getSchedulesForSite(site!.id),
             siteRepo.getSiteCurrencyCode(site!.id),
         ]);
+        const priorAggregates=billing.value;
+        const billingAvailable=billing.status==='complete';
         const latestTimestamp = latestData?.timestamp ?? null;
 
         const schedule = new Schedule(site.tariffs, tz);
@@ -176,7 +179,7 @@ export async function GET(request: Request) {
         // Load timing needs the per-TOU cycle UsageData. The rows and tariff
         // versions are already fetched above, so this aggregates in memory
         // instead of re-running the same queries via getUsageByTOU.
-        const loadTimingCycle = componentConfig.showLoadTiming
+        const loadTimingCycle = componentConfig.showLoadTiming && billingAvailable
             ? EnergyRepo.aggregateUsageByTOU({
                 siteId: site.id,
                 start,
@@ -283,8 +286,8 @@ export async function GET(request: Request) {
 
         const costStr = totalBillCost.toFixed(2);
         const isCredit = totalBillCost < 0;
-        const displayCost = isCredit ? `+${currency}${Math.abs(totalBillCost).toFixed(2)}` : `${currency}${costStr}`;
-        const costLabel = isCredit ? 'Total Credit' : 'Total Cost';
+        const displayCost = !billingAvailable ? '--' : isCredit ? `+${currency}${Math.abs(totalBillCost).toFixed(2)}` : `${currency}${costStr}`;
+        const costLabel = !billingAvailable ? 'Pricing unavailable' : isCredit ? 'Total Credit' : 'Total Cost';
 
         // Check for active period (needed for highlighting current TOU)
         const currentPeriod = schedule.getTariffPeriod(new Date());
@@ -297,7 +300,7 @@ export async function GET(request: Request) {
                 sellRate: currentPeriod.schedule.sell_rate ?? 0
             }
             : null;
-        const loadTimingView = componentConfig.showLoadTiming
+        const loadTimingView = componentConfig.showLoadTiming && billingAvailable
             ? computeLoadTiming(schedule, loadTimingCycle, now, tz, loadTimingActive)
             : undefined;
 
@@ -353,8 +356,9 @@ export async function GET(request: Request) {
         const renderCtx = {
             siteName: displayName,
             dateRange: `${start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: tz })} - ${cycleEnd.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: tz })}`,
-            tariffGroups: tariffGroups,
+            tariffGroups: billingAvailable ? tariffGroups : [],
             totalCost: totalBillCost,
+            billingUnavailable: !billingAvailable,
             costLabel: costLabel,
             displayCost: displayCost,
             currency: currency,
@@ -426,6 +430,7 @@ export async function GET(request: Request) {
                 'Server-Timing': serverTiming,
                 'X-Debug-Live-Status': fetchStatus,
                 'X-Debug-Battery-SOC': batterySoc !== null ? String(batterySoc) : 'null',
+                'X-Billing-Status': billing.status,
                 'X-Data-Age-Minutes': dataAgeMinutes,
                 'X-SOC-Age-Minutes': socAgeHeader,
                 'X-Component-Config': componentDebug
