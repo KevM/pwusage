@@ -71,7 +71,7 @@ private func entry(_ snapshot: TodayEnergySnapshot? = TodayEnergyPreviewFixtures
 }
 #Preview("Small device · Medium") {
     TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(), date: TodayEnergyPreviewFixtures.date, compact: true)
-        .padding(10).frame(width: 292, height: 141)
+        .padding(TodayEnergyWidgetLayout.mediumInsets).frame(width: 292, height: 141)
         .background(Color(uiColor: .secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 22))
 }

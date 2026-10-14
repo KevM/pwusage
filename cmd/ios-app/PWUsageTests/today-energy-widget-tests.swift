@@ -163,7 +163,7 @@ struct TodayEnergyWidgetTests {
         ]
         let smallView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
                                                date: TodayEnergyPreviewFixtures.date, compact: true)
-            .padding(10).frame(width: 292, height: 141)
+            .padding(TodayEnergyWidgetLayout.mediumInsets).frame(width: 292, height: 141)
             .background(Color(uiColor: .secondarySystemGroupedBackground))
             .environment(\.colorScheme, .light)
         let smallRenderer = ImageRenderer(content: smallView)
@@ -174,7 +174,7 @@ struct TodayEnergyWidgetTests {
         print("Today widget render: \(smallOutput.path)")
         let largerTextView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
                                                       date: TodayEnergyPreviewFixtures.date, compact: true)
-            .padding(10).frame(width: 338, height: 158)
+            .padding(TodayEnergyWidgetLayout.mediumInsets).frame(width: 338, height: 158)
             .background(Color(uiColor: .secondarySystemGroupedBackground))
             .environment(\.colorScheme, .light).environment(\.dynamicTypeSize, .xxxLarge)
         let largerTextRenderer = ImageRenderer(content: largerTextView)
@@ -187,7 +187,7 @@ struct TodayEnergyWidgetTests {
             for dark in [false, true] {
                 for (name, snapshot) in fixtures {
                     let view = TodayEnergyWidgetContent(snapshot: snapshot, date: TodayEnergyPreviewFixtures.date, compact: compact)
-                        .padding(compact ? 10 : 16)
+                        .padding(compact ? TodayEnergyWidgetLayout.mediumInsets : TodayEnergyWidgetLayout.largeInsets)
                         .frame(width: 338, height: compact ? 158 : 354)
                         .background(Color(uiColor: .secondarySystemGroupedBackground))
                         .environment(\.colorScheme, dark ? .dark : .light)

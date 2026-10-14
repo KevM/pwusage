@@ -54,7 +54,7 @@ struct TodayEnergyWidgetContent: View {
     var compact = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 3 : 12) {
+        VStack(alignment: .leading, spacing: compact ? 6 : 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(compact ? "Today" : "Today so far").font((compact ? Font.footnote : .title3).weight(.bold))
                     .lineLimit(1).layoutPriority(1)
