@@ -12,6 +12,21 @@ struct TodayEnergy: Codable, Equatable, Sendable {
     var energyDataThrough: Date?
 }
 
+/// Canonical daily tariff/TOU netted amounts, calculated by the server.
+struct TodayEnergyCost: Codable, Equatable, Sendable {
+    var netCost: Double
+    var importCharges: Double
+    var exportCredits: Double
+    var currency: String
+
+    var isValid: Bool {
+        [netCost, importCharges, exportCredits].allSatisfy(\.isFinite)
+            && importCharges >= 0 && exportCredits >= 0
+            && abs(netCost - (importCharges - exportCredits)) < 0.000001
+            && currency.count == 3 && currency.utf8.allSatisfy { (65...90).contains($0) }
+    }
+}
+
 struct TodayEnergySnapshot: Codable, Equatable, Sendable {
     static let widgetKind = "TodayEnergy"
     static let metricWidgetKind = "TodayEnergyMetric"
@@ -22,6 +37,7 @@ struct TodayEnergySnapshot: Codable, Equatable, Sendable {
     let timezone: String
     let fetchedAt: Date
     var energy: TodayEnergy
+    var todayCost: TodayEnergyCost? = nil
     var batteryStateOfCharge: Double? = nil
     var batteryStateOfChargeAt: Date? = nil
 

@@ -167,13 +167,19 @@ Unknown charge uses the empty outline and an explicit unknown accessibility labe
 Medium widgets use a short “Today” headline with the update time inline and center the labels and values in equal-height tiles. They keep direction arrows and omit repeated net-direction captions; VoiceOver still reads the full details. Medium text growth is capped at X Large to fit its fixed height, while large widgets retain the full text-size range. Large widgets also show the active tariff and missing-interval notice. Both sizes show
 the site and last energy update time. Tap the widget to open pwusage.
 
-The widget uses the app's existing `MobileLiveResponse.today` and source timestamps.
-It needs no additional endpoint or server deployment, makes no network requests, and
-adds no Tesla requests or daily cost calculations. Estimated cost is deferred. Today
-energy is **net** for Grid/Battery, with the same arrows and sign conventions as the
-app; it does not infer gross import/export from net values.
+The widget uses `MobileLiveResponse.today`, optional `todayCost`, and source timestamps.
+The Large widget adds **Today's Cost**: prominent estimated net cost with smaller import
+charges and export credits in the site's currency. These are daily tariff/TOU netted
+charges and credits from the existing `getUsageByTOU` calculation, not gross energy
+flows or billing-cycle totals. Missing pricing shows “Cost unavailable”; older server
+responses and snapshots remain readable. Small and Medium layouts are unchanged.
 
-The app writes only presentation totals and timestamped SOC to an atomic, versioned
+Deploy the additive `todayCost` field in `/api/site-live-data?view=mobile` to populate
+real costs. Mobile refreshes add a daily tariff usage query and currency lookup, while
+the widget itself makes no network requests and adds no Tesla requests. Today energy
+is **net** for Grid/Battery, with the app's arrows and sign conventions.
+
+The app writes only presentation totals, daily cost and timestamped SOC to an atomic, versioned
 JSON file in its App Group, with protection until the device's first unlock. No cookies,
 account credentials, Solcast keys, or battery commands enter this container. The
 extension only reads it. Debug and Release use separate groups. App-private caches and

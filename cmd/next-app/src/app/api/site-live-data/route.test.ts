@@ -13,7 +13,7 @@ const { verifyAccessMock, refreshMock, refreshTodayMock, siteMock, bucketedMock,
 
 vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock }));
 vi.mock('@/lib/today-refresh', () => ({ refreshLiveStatus: refreshMock, refreshTodayData: refreshTodayMock }));
-vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = siteMock; } }));
+vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = siteMock; getSiteCurrencyCode = async () => 'EUR'; } }));
 vi.mock('@/lib/energy-repo', () => ({
     sumTodayRows: () => ({
         homeKwh: 0, solarKwh: 0, gridNetKwh: 0, importKwh: 0, exportKwh: 0,
@@ -57,7 +57,7 @@ describe('site-live-data mobile response', () => {
         // Keep relative fixture samples in today's UTC window, even when CI runs just after midnight.
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date('2026-09-24T12:00:00.000Z'));
-        vi.clearAllMocks();
+        vi.resetAllMocks();
         clearCycleRollupCache();
         const now = new Date();
         verifyAccessMock.mockResolvedValue(true);
@@ -77,6 +77,37 @@ describe('site-live-data mobile response', () => {
         latestSocMock.mockResolvedValue(null);
     });
 
+    it('publishes daily canonical tariff charges and credits in the site currency', async () => {
+        usageMock.mockImplementation(async (_site, start) => start.toISOString() === '2026-09-24T00:00:00.000Z'
+            ? [{ cost: 3.12, touName: 'Peak' }, { cost: -0.65, touName: 'Off peak' }] : []);
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect((await response.json()).todayCost).toEqual({ netCost: 2.47, importCharges: 3.12, exportCredits: 0.65, currency: 'EUR' });
+        expect(usageMock).toHaveBeenCalledWith('site-a', new Date('2026-09-24T00:00:00Z'), new Date());
+    });
+
+    it('keeps energy available when daily pricing fails', async () => {
+        usageMock.mockRejectedValue(new Error('pricing unavailable'));
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect(response.status).toBe(200);
+        expect((await response.json()).todayCost).toBeNull();
+    });
+
+    it('does not display zero cost for absent or unresolved daily pricing', async () => {
+        for (const rows of [[], [{ cost: 0, touName: 'Unknown' }], [{ cost: NaN, touName: 'Peak' }]]) {
+            usageMock.mockResolvedValue(rows);
+            const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+            expect((await response.json()).todayCost).toBeNull();
+        }
+    });
+
+    it('preserves a net credit and a legitimate zero-cost day', async () => {
+        for (const cost of [-2.5, 0]) {
+            usageMock.mockResolvedValue([{ cost, touName: 'Off peak' }]);
+            const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+            expect((await response.json()).todayCost).toEqual({ netCost: cost, importCharges: 0, exportCredits: Math.max(-cost, 0), currency: 'EUR' });
+        }
+    });
+
     it('returns the compact mobile contract with last-known SoC without raw-day reads', async () => {
         const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
         const body = await response.json();
@@ -92,7 +123,7 @@ describe('site-live-data mobile response', () => {
             marginalCost: 0.2, basis: 'unobserved', balanceKwh: null, energyDataThrough: null,
         });
         expect(bucketedMock).toHaveBeenCalledTimes(1);
-        expect(usageMock).toHaveBeenCalledTimes(1);
+        expect(usageMock).toHaveBeenCalledTimes(2);
         const [, , rollupEnd] = usageMock.mock.calls[0] as [string, Date, Date];
         expect(rollupEnd.getTime()).toBeLessThan(Date.now());
         expect(rawMock).not.toHaveBeenCalled();
@@ -135,7 +166,7 @@ describe('site-live-data mobile response', () => {
         const body = await response.json();
 
         expect(body.activeLoadTiming).toBeNull();
-        expect(usageMock).not.toHaveBeenCalled();
+        expect(usageMock).toHaveBeenCalledTimes(1);
     });
 
     it('uses one narrow stored SoC lookup when Tesla omits the charge value', async () => {
@@ -242,7 +273,7 @@ describe('site-live-data mobile response', () => {
         expect(body.sources.energyDataThrough).not.toBe(bucketStart.toISOString());
     });
 
-    it('does not add a cycle or raw-day read for the mobile representation', async () => {
+    it('adds only daily tariff pricing for mobile and keeps web queries unchanged', async () => {
         const webResponse = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a'));
         expect(webResponse.status).toBe(200);
         expect(usageMock).toHaveBeenCalledTimes(1);
@@ -254,7 +285,7 @@ describe('site-live-data mobile response', () => {
         rawMock.mockClear();
         const mobileResponse = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
         expect(mobileResponse.status).toBe(200);
-        expect(usageMock).toHaveBeenCalledTimes(1);
+        expect(usageMock).toHaveBeenCalledTimes(2);
         expect(bucketedMock).toHaveBeenCalledTimes(1);
         expect(rawMock).not.toHaveBeenCalled();
     });

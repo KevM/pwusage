@@ -54,7 +54,7 @@ struct TodayEnergyWidgetContent: View {
     var compact = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 3 : 12) {
+        VStack(alignment: .leading, spacing: compact ? 3 : 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(compact ? "Today" : "Today so far").font((compact ? Font.footnote : .title3).weight(.bold))
                     .lineLimit(1).layoutPriority(1)
@@ -79,7 +79,11 @@ struct TodayEnergyWidgetContent: View {
                     homeKwh: snapshot.energy.homeKwh, solarKwh: snapshot.energy.solarKwh,
                     gridNetKwh: snapshot.energy.gridNetKwh, batteryNetKwh: snapshot.energy.batteryNetKwh,
                     compact: compact, showsStateOfCharge: true, stateOfCharge: snapshot.stateOfCharge(at: date)
-                )
+                ).map { original in
+                    var tile = original
+                    tile.reducedPadding = !compact
+                    return tile
+                }
                 if compact {
                     VStack(spacing: 6) {
                         HStack(spacing: 6) { tiles[0]; tiles[1] }
@@ -92,6 +96,7 @@ struct TodayEnergyWidgetContent: View {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                         ForEach(tiles.indices, id: \.self) { tiles[$0] }
                     }
+                    todayCost(snapshot)
                     Spacer(minLength: 0)
                     HStack(spacing: 4) {
                         if let source = snapshot.energy.energyDataThrough {
@@ -122,6 +127,36 @@ struct TodayEnergyWidgetContent: View {
         }
         // The medium widget has fixed height; bound text growth while preserving VoiceOver details.
         .dynamicTypeSize(.xSmall...(compact ? .xLarge : .accessibility5))
+    }
+
+    private func todayCost(_ snapshot: TodayEnergySnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Today's Cost").font(.subheadline.weight(.semibold))
+                Spacer(minLength: 4)
+                Text("Estimated").font(.caption2).foregroundStyle(.secondary)
+            }
+            if let cost = snapshot.todayCost, cost.isValid {
+                Text(money(cost.netCost, currency: cost.currency))
+                    .font(.title2.weight(.bold)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                    .accessibilityLabel("Net cost \(money(cost.netCost, currency: cost.currency))")
+                Text("Import \(money(cost.importCharges, currency: cost.currency)) · Export \(money(-cost.exportCredits, currency: cost.currency))")
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.65)
+                    .accessibilityLabel("Import charges \(money(cost.importCharges, currency: cost.currency)). Export credits \(money(cost.exportCredits, currency: cost.currency)). Netted by tariff period.")
+            } else {
+                Text("Cost unavailable").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func money(_ amount: Double, currency: String) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currency
+        return formatter.string(from: NSNumber(value: amount == 0 ? 0 : amount)) ?? "—"
     }
 
     @ViewBuilder

@@ -10,12 +10,14 @@ enum TodayEnergyPreviewFixtures {
                          gridNetKwh: Double = -2.4, batteryNetKwh: Double = -1.8,
                          stateOfCharge: Double? = 78, sourceAge: TimeInterval = 5 * 60,
                          chargeAge: TimeInterval = 5 * 60, complete: Bool = true,
-                         siteName: String = "Home") -> TodayEnergySnapshot {
+                         siteName: String = "Home",
+                         todayCost: TodayEnergyCost? = TodayEnergyCost(netCost: 2.47, importCharges: 3.12, exportCredits: 0.65, currency: "USD")) -> TodayEnergySnapshot {
         TodayEnergySnapshot(siteID: "preview-home", siteName: siteName, timezone: timezone, fetchedAt: date,
             energy: TodayEnergy(localDate: TodayEnergySnapshot.localDate(date, timezone: timezone),
                                 homeKwh: homeKwh, solarKwh: solarKwh, gridNetKwh: gridNetKwh,
                                 batteryNetKwh: batteryNetKwh, activeTariff: "Off peak", todayComplete: complete,
                                 energyDataThrough: date.addingTimeInterval(-sourceAge)),
+            todayCost: todayCost,
             batteryStateOfCharge: stateOfCharge, batteryStateOfChargeAt: date.addingTimeInterval(-chargeAge))
     }
 }

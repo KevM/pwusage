@@ -62,6 +62,7 @@ final class DashboardCache {
                                      todayComplete: response.todayComplete, energyDataThrough: response.sources.energyDataThrough)
             let value = TodayEnergySnapshot(siteID: siteID, siteName: site.name, timezone: site.timezone,
                                             fetchedAt: reading.savedAt, energy: energy,
+                                            todayCost: response.todayCost,
                                             batteryStateOfCharge: response.stateOfCharge,
                                             batteryStateOfChargeAt: response.sources.stateOfChargeAt)
             do { try widgetStore.save(value) }

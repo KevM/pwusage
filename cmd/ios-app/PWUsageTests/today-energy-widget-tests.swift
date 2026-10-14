@@ -54,6 +54,7 @@ struct TodayEnergyWidgetTests {
          "live":{"solarPower":1000,"loadPower":2000,"batteryPower":500,"gridPower":500},
          "today":{"homeKwh":12,"solarKwh":18,"gridNetKwh":-6,"batteryNetKwh":-2},"todayComplete":true,
          "activeTariff":"Off peak","stateOfCharge":78,
+         "todayCost":{"netCost":2.47,"importCharges":3.12,"exportCredits":0.65,"currency":"EUR"},
          "sources":{"liveStatusAt":"2026-10-14T19:55:00Z","energyDataThrough":"2026-10-14T19:55:00Z","stateOfChargeAt":"2026-10-14T19:55:00Z"}}
         """
         let live = try decoder.decode(MobileLiveResponse.self, from: Data(json.utf8))
@@ -66,6 +67,11 @@ struct TodayEnergyWidgetTests {
         #expect(store.load()?.energy.gridNetKwh == -6)
         #expect(store.load()?.energy.batteryNetKwh == -2)
         #expect(store.load()?.stateOfCharge(at: now) == 78)
+        let encoded = try JSONEncoder().encode(#require(store.load()))
+        let payload = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let cost = try #require(payload["todayCost"] as? [String: Any])
+        #expect(cost["netCost"] as? Double == 2.47)
+        #expect(cost["currency"] as? String == "EUR")
         cache.selectWidgetSite("other")
         #expect(store.load() == nil)
         cache.selectWidgetSite("home")
@@ -76,6 +82,17 @@ struct TodayEnergyWidgetTests {
         #expect(store.load() == nil)
         cache.clear()
         #expect(store.load() == nil)
+    }
+
+    @Test func optionalCostSurvivesLegacySnapshotsAndRejectsInvalidAmounts() throws {
+        let legacy = try JSONEncoder().encode(snapshot())
+        #expect(try JSONDecoder().decode(TodayEnergySnapshot.self, from: legacy).todayCost == nil)
+        var cost = TodayEnergyCost(netCost: -2.5, importCharges: 0, exportCredits: 2.5, currency: "EUR")
+        #expect(cost.isValid)
+        cost.netCost = 2.5
+        #expect(!cost.isValid)
+        cost.netCost = -.infinity
+        #expect(!cost.isValid)
     }
 
     @Test func daylightSavingMidnightUsesSiteTimezone() throws {
@@ -140,6 +157,8 @@ struct TodayEnergyWidgetTests {
             ("partial", TodayEnergyPreviewFixtures.snapshot(complete: false)),
             ("long-name", TodayEnergyPreviewFixtures.snapshot(homeKwh: 1234.5, solarKwh: 456.7, gridNetKwh: 987.6,
                 batteryNetKwh: -209.8, siteName: "Our family's home with a long site name")),
+            ("no-cost", TodayEnergyPreviewFixtures.snapshot(todayCost: nil)),
+            ("net-credit", TodayEnergyPreviewFixtures.snapshot(todayCost: TodayEnergyCost(netCost: -2.5, importCharges: 0, exportCredits: 2.5, currency: "EUR"))),
             ("missing", nil)
         ]
         let smallView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),

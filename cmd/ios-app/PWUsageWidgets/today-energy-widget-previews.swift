@@ -19,6 +19,14 @@ private func entry(_ snapshot: TodayEnergySnapshot? = TodayEnergyPreviewFixtures
     entry(TodayEnergyPreviewFixtures.snapshot(solarKwh: 4, gridNetKwh: 12, batteryNetKwh: 2.4, stateOfCharge: 20))
 }
 
+#Preview("Net credit · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
+    entry(TodayEnergyPreviewFixtures.snapshot(todayCost: TodayEnergyCost(netCost: -2.5, importCharges: 0, exportCredits: 2.5, currency: "EUR")))
+}
+
+#Preview("Cost unavailable · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
+    entry(TodayEnergyPreviewFixtures.snapshot(todayCost: nil))
+}
+
 #Preview("Full battery · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
     entry(TodayEnergyPreviewFixtures.snapshot(stateOfCharge: 100))
 }
