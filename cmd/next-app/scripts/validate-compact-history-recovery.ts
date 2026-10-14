@@ -17,7 +17,11 @@ async function run():Promise<void> {
     const costs:{trim:TransferMetrics[];restore:TransferMetrics[]}={trim:[],restore:[]};
     let testedDays=0,samples=0,incompleteSkipped=0,emptySkipped=0;
     try {
-        await pool.query('SELECT 1');const store=new CompactHistoryStore(pool);
+        await pool.query('SELECT 1');const store=new CompactHistoryStore(pool,undefined,async client=>{
+            // This fixture has no operator job to serialize against. The guard is a
+            // deliberate, explicit acknowledgement that trim/restore is unreviewed here.
+            await client.query('SELECT 1');
+        });
         const before=(await pool.query<{n:string}>('SELECT count(*) AS n FROM "EnergyData"')).rows[0].n;
         const sites=(await pool.query<{id:string;timezone:string;latest:Date}>(`SELECT s.id,s.timezone,max(e.timestamp) AS latest FROM "Site" s
             JOIN "EnergyData" e ON s.id=e.site_id GROUP BY s.id,s.timezone ORDER BY count(*) DESC,s.id LIMIT 5`)).rows;

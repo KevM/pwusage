@@ -196,12 +196,16 @@ export class CompactHistoryStore implements HistorySnapshotStore {
 
     private async reviewedMutation(siteId:string,start:Date,revision:string,action:(client:PoolClient,archive:ArchiveRecord)=>Promise<ArchiveMutationResult>):Promise<ArchiveMutationResult> {
         if(!siteId?.trim()||siteId.length>200||!Number.isSafeInteger(+start)||!revision||!/^[-0-9a-f]{36}$/.test(revision))throw new Error('Invalid reviewed revision');
+        // This is the only path that deletes raw samples or reinserts them, so it
+        // must be serialized against control edits. A guard is required here rather
+        // than optional: silently skipping it would let an unpaused run trim.
+        if(!this.mutationGuard)throw new Error('A mutation guard is required to trim or restore an archive');
         const client=await this.pool.connect();
         try {
             await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
             await this.boundTransaction(client);
             await client.query("SET LOCAL statement_timeout='15s'");await client.query("SET LOCAL lock_timeout='3s'");
-            await this.mutationGuard?.(client);
+            await this.mutationGuard(client);
             if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy',samples:0};}
             const archive=(await client.query<ArchiveRecord>('SELECT * FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2 FOR UPDATE',[siteId,start])).rows[0];
             if(!archive||archive.revision!==revision)throw new Error('Reviewed archive revision changed or is missing');

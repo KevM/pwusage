@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
@@ -39,6 +39,7 @@ function getScreenLabel(index: number): string {
 }
 
 function ManageContent() {
+    const router = useRouter();
     const searchParams = useSearchParams();
     const uuid = searchParams.get('uuid');
     const token = searchParams.get('token') || searchParams.get('jwt');
@@ -98,7 +99,7 @@ function ManageContent() {
                     const siteToken = token || searchParams.get('jwt') || searchParams.get('token');
                     const tokenParam = siteToken ? `&jwt=${encodeURIComponent(siteToken)}` : '';
                     const callbackUrl = encodeURIComponent(`/trmnl/manage?uuid=${uuid}${tokenParam}`);
-                    window.location.href = `/login?callback=${callbackUrl}`;
+                    router.push(`/login?callback=${callbackUrl}`);
                     return;
                 }
 
@@ -138,7 +139,7 @@ function ManageContent() {
         };
 
         fetchData();
-    }, [uuid, token, searchParams, pluginSettingIdParam]);
+    }, [uuid, token, searchParams, pluginSettingIdParam, router]);
 
     useEffect(() => {
         if (!selectedSite) return;

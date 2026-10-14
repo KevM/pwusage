@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
@@ -13,6 +13,7 @@ import { PageShell } from '@/components/ui/PageShell';
 import { SectionCard } from '@/components/ui/SectionCard';
 
 function InstallContent() {
+    const router = useRouter();
     const searchParams = useSearchParams();
     const code = searchParams.get('code');
     const installationCallbackUrl = searchParams.get('installation_callback_url');
@@ -84,7 +85,7 @@ function InstallContent() {
                     // Construct callback URL with all current parameters
                     const currentSearch = window.location.search;
                     const callbackUrl = encodeURIComponent(`/trmnl/install${currentSearch}`);
-                    window.location.href = `/login?callback=${callbackUrl}`;
+                    router.push(`/login?callback=${callbackUrl}`);
                     return null;
                 }
                 return res.json();
@@ -118,7 +119,7 @@ function InstallContent() {
                 setError('Failed to load sites');
                 setLoading(false);
             });
-    }, [code, installationCallbackUrl, installationUuid]); // Only run once on mount (with code)
+    }, [code, installationCallbackUrl, installationUuid, router]); // Only run once on mount (with code)
 
     const handleSetup = () => {
         // Extract plugin_setting_id from callback URL if possible for robust linking

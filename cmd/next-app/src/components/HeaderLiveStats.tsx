@@ -330,6 +330,7 @@ export function HeaderMetricsStrip({
 }
 
 export function HeaderLiveStats({ siteId }: { siteId: string }) {
+    const router = useRouter();
     const [stats, setStats] = useState<SiteLiveData | null>(null);
     const [loading, setLoading] = useState(isValidSiteId(siteId));
     const [redirectedToLogin, setRedirectedToLogin] = useState(false);
@@ -373,7 +374,7 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
                 if (!redirectedToLogin) {
                     setRedirectedToLogin(true);
                     console.warn('[HeaderLiveStats] Unauthorized. Redirecting to login...');
-                    window.location.href = '/login';
+                    router.push('/login');
                 }
                 return;
             }

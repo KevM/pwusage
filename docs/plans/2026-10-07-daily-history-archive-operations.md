@@ -64,7 +64,19 @@ admitted phase and final progress reporting finish; the route allows 60s to fit
 the project's current Hobby deployment limit. The 30s admission budget leaves
 room for an admitted 15s transaction and progress reporting. Pool
 connection/network delays remain outside a guaranteed wall-clock deadline.
-This requires PostgreSQL 17+ (both hosted Dev and Prod report 17.6).
+This requires PostgreSQL 17+. Verify per environment rather than assuming; the
+preflight below also confirms `transaction_timeout` is actually settable through
+the pooler, which a version check alone does not prove:
+
+```sh
+npx tsx scripts/check-archive-preflight.ts
+DATABASE_URL='<prod-url>' npx tsx scripts/check-archive-preflight.ts
+```
+
+It is read-only and checks the server version, that `SET LOCAL transaction_timeout`
+applies inside a real transaction, that `pg_try_advisory_xact_lock` survives
+Supavisor transaction pooling, that the archive tables and control row exist, and
+how many days are already pruned. It exits non-zero if any check fails.
 See [transaction timeout documentation](https://www.postgresql.org/docs/17/runtime-config-client.html).
 
 Transfer is a conservative **admission estimate**, not a provider-network hard

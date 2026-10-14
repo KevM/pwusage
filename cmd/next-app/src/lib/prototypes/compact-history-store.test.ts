@@ -56,7 +56,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007144600_compact_energy_trim_recovery.sql',import.meta.url),'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007190945_history_archive_job.sql',import.meta.url),'utf8'));
         await pool.query("ALTER TABLE \"Site\" ADD COLUMN user_id text DEFAULT 'owner'");
-        store = new CompactHistoryStore(pool);
+        store = new CompactHistoryStore(pool,15000,async client=>{await client.query('SELECT 1');});
     });
     beforeEach(async () => {
         await pool.query('TRUNCATE "EnergyData", "LoadTag", "EnergyDayArchive", "HistoryArchiveRetry" CASCADE');
@@ -103,6 +103,18 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             await expect(repo.trim(day,finalized.revision!,jobOptions.now,reviewed)).rejects.toThrow('Archive control changed');
             expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(2);
         } finally {await repo.release();}
+    });
+    it('refuses to trim or restore without a mutation guard',async()=>{
+        const before=(await pool.query('SELECT count(*)::int AS n FROM "EnergyData" WHERE site_id=$1',['site'])).rows[0].n;
+        const unguarded=new CompactHistoryStore(pool,15000);
+        const finalized=await store.finalizeDay('site',start,jobOptions.now);
+        await expect(unguarded.trimDay('site',start,finalized.revision!,new Date('2026-01-05')))
+            .rejects.toThrow('mutation guard is required');
+        await expect(unguarded.restoreDay('site',start,finalized.revision!))
+            .rejects.toThrow('mutation guard is required');
+        // Nothing was deleted or restored: raw is untouched and the archive is intact.
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData" WHERE site_id=$1',['site'])).rows[0].n).toBe(before);
+        expect((await pool.query('SELECT raw_pruned FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',['site',start])).rows[0]?.raw_pruned).toBe(false);
     });
     it('restores a pruned day before adding a late sample and can trim the rebuilt day',async()=>{
         const original=(await store.readVerificationSnapshot('site',start,end)).raw;
@@ -407,7 +419,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         const meter=new PostgresTransferMeter(socket!);await meter.start();
         const meteredPool=new Pool({host:meter.host,port:55439,database,user:process.env.USER,max:1});
         try {
-            await meteredPool.query('SELECT 1');const meteredStore=new CompactHistoryStore(meteredPool);
+            await meteredPool.query('SELECT 1');const meteredStore=new CompactHistoryStore(meteredPool,undefined,async client=>{await client.query('SELECT 1');});
             const trimmed=await meter.measure(()=>meteredStore.trimDay('site',start,built.revision!,new Date('2026-01-05')));
             expect(trimmed.value.status).toBe('trimmed');expect(trimmed.transfer.bytes).toBeLessThan(35000);
             const restored=await meter.measure(()=>meteredStore.restoreDay('site',start,built.revision!));

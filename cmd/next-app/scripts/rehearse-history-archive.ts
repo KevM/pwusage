@@ -23,7 +23,12 @@ async function run():Promise<void> {
     if(!site)throw new Error('Owned Dev site required');
     const start=parseSiteLocalDateToMidnight(from,site.timezone);const end=parseSiteLocalDateToMidnight(before,site.timezone);
     if(+end!==+addDaysInSiteTimezone(start,1,site.timezone))throw new Error('Rehearsal is limited to one local day');
-    const store=new CompactHistoryStore(pool,15000);const reader=new CompactHistoryReader(store,site.timezone);
+    const store=new CompactHistoryStore(pool,15000,async client=>{
+        // Re-check pause inside the mutation transaction so a resume cannot race a
+        // rehearsal trim, matching the reviewed production guard.
+        const result=await client.query<{paused:boolean}>('SELECT paused FROM "HistoryArchiveControl" WHERE id=true FOR SHARE');
+        if(result.rows[0]?.paused!==true)throw new Error('Pause the archive job before rehearsing');
+    });const reader=new CompactHistoryReader(store,site.timezone);
     const original=(await store.readVerificationSnapshot(siteId,start,end)).raw;
     if(!original.length)throw new Error('Retained raw samples required');
     const beforeRevision=(await pool.query<{revision:string;raw_pruned:boolean}>('SELECT revision,raw_pruned FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start])).rows[0];

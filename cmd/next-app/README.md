@@ -26,7 +26,7 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `JWT_EXPIRY_DAYS`: Session duration in days (default: `7`).
 - `JWT_REFRESH_THRESHOLD_HOURS`: Refresh token if expiration is within this many hours (default: `24`).
 - `CRON_SECRET`: Secret key used to authorize Vercel Cron Job requests.
-- `DATA_RETENTION_DAYS`: Number of days to keep energy data before cleanup (default: `365`).
+- `DATA_RETENTION_DAYS`: Number of days of raw energy data kept before it becomes eligible for archival (default: `365`). It controls archive/trim eligibility, not automatic deletion.
 - `SPARKLINE_SCALE_WINDOW_HOURS`: Header sparkline y-axis clamp window in hours (default: `12`, minimum effective value: `4`).
 
 ### Deployment & CI (GitHub Actions Secrets)
