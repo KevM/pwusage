@@ -4,6 +4,8 @@ const { verifyAccessMock, siteMock, currencyMock, usageMock, latestMock } = vi.h
     verifyAccessMock: vi.fn(), siteMock: vi.fn(), currencyMock: vi.fn(), usageMock: vi.fn(), latestMock: vi.fn(),
 }));
 
+vi.mock('@/lib/mobile-today-energy', () => ({ mobileTodayEnergy: vi.fn().mockResolvedValue(null) }));
+
 vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock }));
 vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = siteMock; getSiteCurrencyCode = currencyMock; } }));
 vi.mock('@/lib/energy-repo', async (importOriginal) => {
@@ -15,6 +17,7 @@ vi.mock('@/lib/energy-repo', async (importOriginal) => {
 });
 
 import { GET } from './route';
+import { mobileTodayEnergy } from '@/lib/mobile-today-energy';
 import type { Tariff, TariffSeason, TariffSchedule } from '@/lib/db';
 import { calculate } from '@/lib/test-support/bill-fixture';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
@@ -53,6 +56,7 @@ describe('mobile bill summary route', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.mocked(mobileTodayEnergy).mockResolvedValue(null as unknown as Awaited<ReturnType<typeof mobileTodayEnergy>>);
         verifyAccessMock.mockResolvedValue(true);
         siteMock.mockResolvedValue({
             id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
@@ -64,6 +68,25 @@ describe('mobile bill summary route', () => {
             { cost: -0.1, gridUsage: -2000, tariff: { name: 'Current utility' }, touName: 'Off peak' },
         ]);
         latestMock.mockResolvedValue(new Date('2026-09-19T01:55:00Z'));
+    });
+
+    it('returns an optional independently dated daily summary and tolerates its failure', async () => {
+        vi.setSystemTime(new Date('2026-10-14T20:00:00Z'));
+        const summary = { localDate: '2026-10-14', homeKwh: 12, importKwh: 4, exportKwh: 2,
+            estimatedCost: -0.5, currency: 'EUR', energyDataThrough: '2026-10-14T19:55:00Z' };
+        vi.mocked(mobileTodayEnergy).mockResolvedValueOnce(summary);
+        const request = new Request('https://example.test/api/mobile/bill-summary?siteId=site-a');
+        expect((await (await GET(request)).json()).todayEnergy).toEqual(summary);
+        vi.mocked(mobileTodayEnergy).mockRejectedValueOnce(new Error('optional query unavailable'));
+        const response = await GET(request);
+        expect(response.status).toBe(200);
+        expect((await response.json()).todayEnergy).toBeNull();
+    });
+
+    it('never reads daily energy without site authorization', async () => {
+        verifyAccessMock.mockResolvedValue(false);
+        expect((await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'))).status).toBe(401);
+        expect(mobileTodayEnergy).not.toHaveBeenCalled();
     });
 
     it('uses the canonical billing-cycle aggregator and returns only a compact summary', async () => {

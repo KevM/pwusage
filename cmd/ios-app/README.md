@@ -92,7 +92,7 @@ The Solcast enhancement is split this way: the Solcast forecast itself is device
 - One app-owned coordinator requests live data at most every five minutes and the bill on three tiers: at most every 30 minutes on the foreground timer, at most every five minutes when the Load timing screen opens, and always on an explicit pull to refresh. It stops timers in the background, and before the coordinator is dropped on sign-out, and makes a due bill request after the live request, so a stale-history refresh is reflected in the bill.
 - When the stored energy sample is over 30 minutes old, the mobile live endpoint asks the server to refresh it before responding. A per-site import lock limits these attempts to once every 30 minutes, and only a successful import rereads the energy buckets. Normal polls add no database read.
 - A recent last-known battery charge may be shown with its source age; values older than two hours remain unknown (`--`). Source timestamps stay attached to readings. Missing energy data, expired sessions, and temporary server/network failures have separate states.
-- The Load Timing toolbar includes native battery hold controls. Automatic holds restore when charging ends, with an eight-hour safety limit; fixed holds run for 1–24 hours. Starting a hold and restoring the original reserve require explicit confirmation. Stop the Battery Hold resets the original reserve, including changes made in Tesla. Automatic restoration uses the server's reserve-change safeguard and shows a dismissible cancellation notice when that safeguard cancels a hold. There is no background refresh, widget, or notification support.
+- The Load Timing toolbar includes native battery hold controls. Automatic holds restore when charging ends, with an eight-hour safety limit; fixed holds run for 1–24 hours. Starting a hold and restoring the original reserve require explicit confirmation. Stop the Battery Hold resets the original reserve, including changes made in Tesla. Automatic restoration uses the server's reserve-change safeguard and shows a dismissible cancellation notice when that safeguard cancels a hold. There is no background refresh or notification support for Battery Hold.
 
 SwiftUI previews under `PWUsage/Views/DashboardPreviews.swift` use fixed, local sample payloads for normal readings, no energy samples, stale source timestamps, an unavailable server, sign-in, and bill detail. The previews do not contact pwusage or a database.
 
@@ -153,3 +153,63 @@ that still matches that prior hold's target is treated as pending synchronizatio
 and starting is refused with a recovery message. This prevents a cached hold
 target from becoming the next original reserve. This guard does not guarantee
 upstream cache freshness once that window expires.
+
+
+## Today's Energy widget
+
+The embedded `PWUsageWidgets` extension supports medium and large Home Screen widgets.
+It shows consumption, gross grid import/export, estimated net electricity cost (including
+negative credits), the selected site, and the energy sample's update time in the site's
+local timezone. Tap it to open pwusage. Values are today so far; cost uses the existing
+TOU billing calculation netted independently for the local day, excludes fixed charges,
+and is not the billing-cycle estimate.
+
+Deploy the additive `todayEnergy` response in `/api/mobile/bill-summary` with this app.
+The server reuses `sumTodayRows` over raw five-minute samples for gross import/export
+(15-minute net averages lose opposing flows) and `getUsageByTOU` for daily pricing.
+This adds raw-today and daily-pricing queries to the bill endpoint, at the app's existing bill cadence;
+there are no additional Tesla requests. Older servers still work with the app, but the
+widget displays unavailable until this summary is deployed. Optional summary failures
+leave the existing bill response intact.
+
+The app writes only presentation totals to an atomic, versioned JSON file in its App
+Group, with protection until the device's first unlock. No cookies, account credentials,
+Solcast keys, or battery commands enter this container. The extension only reads it.
+Debug and Release use separate groups, preventing beta snapshots appearing in a
+production widget. App-private caches and polling behavior are preserved. Site changes,
+revoked access, logout and session expiry clear or replace shared data and request a
+WidgetKit reload; an in-flight invalidated app request cannot repopulate it. WidgetKit
+may retain a previously rendered view until it honors the reload request.
+
+The app publishes after normal successful bill refreshes (normally 30 minutes while
+foregrounded, or an explicit refresh). The widget does not independently authenticate
+or fetch data. It asks WidgetKit to reread the cache after 30 minutes and schedules stale
+and local-midnight entries. Data over one hour old is explicitly stale; previous-day,
+future-dated, corrupt, unsupported, or missing snapshots show unavailable. Open the app
+to refresh. WidgetKit refresh dates are requests, not guaranteed deadlines; the displayed
+source time makes delayed updates visible. There is no new background polling promise.
+See [Apple's refresh guidance](https://developer.apple.com/documentation/widgetkit/keeping-a-widget-up-to-date).
+
+### Apple and Xcode setup
+
+1. Register the extension App ID `fm.rodeo.pwusage.widgets` under team `6HQGHHRK87`.
+2. Register `group.fm.rodeo.pwusage` and `group.fm.rodeo.pwusage.debug` in Apple Developer,
+   and enable both App Groups for **both** the app and extension App IDs. The build
+   configuration selects the production or debug group through `PWUSAGE_APP_GROUP`.
+3. Run `./generate.sh`. XcodeGen configures the extension dependency/embedding,
+   entitlements, WidgetKit extension point and the shared sources. Both targets retain
+   automatic development signing and the committed team ID. Allow Xcode to refresh
+   development profiles after enabling capabilities.
+4. Run `bundle exec fastlane ios prepare_signing` on an authorized machine after the
+   capability changes. Match now includes both bundle IDs; regenerate the app profile
+   with App Groups and create the extension profile. The archive/export lane supplies
+   separate manual signing profiles for both targets. CI's read-only signing repository
+   must contain those refreshed profiles before another TestFlight release.
+5. On a device, launch and sign in, refresh the dashboard, then add Today's Energy from
+   the widget gallery. Check both sizes, site switching, locked-device behavior after
+   first unlock, sign-out, offline aging and site-local midnight. Simulator compilation
+   does not verify Apple provisioning or WidgetKit's real refresh budget.
+
+The shared `TodayEnergy` presentation model/store lives outside app UI and networking.
+Future Battery Hold Live Activities can add their own state contract and lifecycle without
+sharing authentication or command handling with this widget. ActivityKit is not added.

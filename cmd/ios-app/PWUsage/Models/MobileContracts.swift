@@ -125,6 +125,7 @@ struct MobileBillResponse: Codable, Equatable {
     let version: Int
     let site: Site
     let currentBill: Bill
+    let todayEnergy: TodayEnergy?
     let loadTiming: LoadTiming?
     let sources: Sources
 
@@ -152,7 +153,7 @@ struct MobileBillResponse: Codable, Equatable {
         case siteMismatch(expected: String, actual: String)
     }
 
-    private enum CodingKeys: String, CodingKey { case version, site, currentBill, loadTiming, sources }
+    private enum CodingKeys: String, CodingKey { case version, site, currentBill, todayEnergy, loadTiming, sources }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -161,6 +162,7 @@ struct MobileBillResponse: Codable, Equatable {
         self.version = version
         site = try container.decode(Site.self, forKey: .site)
         currentBill = try container.decode(Bill.self, forKey: .currentBill)
+        todayEnergy = try? container.decodeIfPresent(TodayEnergy.self, forKey: .todayEnergy)
         loadTiming = try container.decodeIfPresent(LoadTiming.self, forKey: .loadTiming)
         sources = try container.decode(Sources.self, forKey: .sources)
     }

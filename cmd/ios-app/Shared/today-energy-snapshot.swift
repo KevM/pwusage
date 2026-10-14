@@ -1,0 +1,80 @@
+import Foundation
+
+/// Presentation-only daily totals. No authentication or battery control state belongs here.
+struct TodayEnergy: Codable, Equatable, Sendable {
+    var localDate: String
+    var homeKwh: Double
+    var importKwh: Double
+    var exportKwh: Double
+    var estimatedCost: Double?
+    var currency: String
+    var energyDataThrough: Date?
+}
+
+struct TodayEnergySnapshot: Codable, Equatable, Sendable {
+    static let widgetKind = "TodayEnergy"
+    static let staleAfter: TimeInterval = 60 * 60
+    var version = 1
+    let siteID: String
+    let siteName: String
+    let timezone: String
+    let fetchedAt: Date
+    var energy: TodayEnergy
+
+    enum Availability { case current, stale, missing }
+
+    static func localDate(_ date: Date, timezone: String) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(identifier: timezone)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    func availability(at date: Date) -> Availability {
+        guard version == 1, TimeZone(identifier: timezone) != nil,
+              energy.localDate == Self.localDate(date, timezone: timezone),
+              let source = energy.energyDataThrough, source <= date, fetchedAt <= date,
+              Self.localDate(source, timezone: timezone) == energy.localDate,
+              [energy.homeKwh, energy.importKwh, energy.exportKwh].allSatisfy({ $0.isFinite && $0 >= 0 }),
+              energy.estimatedCost?.isFinite != false else { return .missing }
+        return date.timeIntervalSince(source) > Self.staleAfter ? .stale : .current
+    }
+
+    var nextMidnight: Date? {
+        guard let zone = TimeZone(identifier: timezone) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        return calendar.dateInterval(of: .day, for: fetchedAt)?.end
+    }
+}
+
+/// Single app writer, atomic replacement, read-only widget. Missing entitlement fails closed.
+struct TodayEnergySnapshotStore {
+    let fileURL: URL
+
+    static func shared() -> Self? {
+        guard let group = Bundle.main.object(forInfoDictionaryKey: "PWUSAGE_APP_GROUP") as? String,
+              let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
+        return Self(fileURL: directory.appendingPathComponent("today-energy-v1.json"))
+    }
+
+    func load() -> TodayEnergySnapshot? {
+        guard let data = try? Data(contentsOf: fileURL),
+              let value = try? JSONDecoder().decode(TodayEnergySnapshot.self, from: data),
+              value.version == 1 else { return nil }
+        return value
+    }
+
+    func save(_ value: TodayEnergySnapshot) throws {
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(value).write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+
+    func clear() {
+        // Write a tombstone atomically before removal, so a failed removal cannot expose old data.
+        try? Data("{}".utf8).write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+}
