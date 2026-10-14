@@ -40,7 +40,9 @@ enum TodayEnergyPresentation {
             MetricTile(title: "Battery", value: signedEnergy(batteryNetKwh),
                        detail: batteryNetKwh > 0 ? "Net discharge" : (batteryNetKwh < 0 ? "Net charge" : "Balanced"),
                        symbol: showsStateOfCharge ? batterySymbol(stateOfCharge) : "battery.100percent",
-                       tint: .green, compact: compact, spokenRole: chargeDescription)
+                       tint: .green, compact: compact,
+                       symbolPrefix: showsStateOfCharge ? stateOfCharge.map { "\(Int($0.rounded()))%" } : nil,
+                       spokenRole: chargeDescription)
         ]
     }
 }

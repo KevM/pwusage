@@ -8,6 +8,7 @@ struct MetricTile: View {
     let tint: Color
     var compact = false
     var prominentValue = false
+    var symbolPrefix: String? = nil
     var isMuted = false
     var numericValue: Double? = nil
     var spokenRole: String? = nil
@@ -15,8 +16,8 @@ struct MetricTile: View {
 
     var body: some View {
         VStack(alignment: compact ? .center : .leading, spacing: compact ? 2 : 8) {
-            Label(title, systemImage: symbol)
-                .font((compact && !prominentValue ? Font.caption2 : .subheadline).weight(.medium))
+            metricLabel
+                .font((compact ? (prominentValue ? (symbolPrefix == nil ? Font.subheadline : .caption) : .caption2) : .subheadline).weight(.medium))
                 .foregroundStyle(isMuted ? .secondary : tint)
                 .labelStyle(.titleAndIcon)
             Text(value)
@@ -40,5 +41,19 @@ struct MetricTile: View {
         .background(isMuted ? Color(uiColor: .tertiarySystemGroupedBackground) : tint.opacity(0.07), in: RoundedRectangle(cornerRadius: compact ? 10 : 16, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel([title, value, detail, spokenRole].compactMap { $0 }.joined(separator: ", "))
+    }
+
+    @ViewBuilder
+    private var metricLabel: some View {
+        if let symbolPrefix {
+            HStack(spacing: compact ? 4 : 6) {
+                Text(symbolPrefix).monospacedDigit().fixedSize(horizontal: true, vertical: false)
+                Image(systemName: symbol)
+                Text(title).lineLimit(1).minimumScaleFactor(0.65)
+            }
+            .lineLimit(1)
+        } else {
+            Label(title, systemImage: symbol)
+        }
     }
 }

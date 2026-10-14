@@ -114,12 +114,20 @@ struct TodayEnergyWidgetTests {
         #expect(tiles[3].value == DashboardPresentation.signedBatteryEnergy(-2))
         #expect(tiles[3].detail == "Net charge")
         #expect(tiles[3].spokenRole == "Battery charge 78 percent")
+        #expect(tiles[3].symbolPrefix == "78%")
         let unknown = TodayEnergyPresentation.tiles(homeKwh: 12, solarKwh: 18, gridNetKwh: 6, batteryNetKwh: 2,
                                                     showsStateOfCharge: true)
         #expect(unknown[2].detail == "Net import")
         #expect(unknown[3].detail == "Net discharge")
         #expect(unknown[3].symbol == "battery.0percent")
         #expect(unknown[3].spokenRole == "Battery charge unknown")
+        #expect(unknown[3].symbolPrefix == nil)
+        let appTiles = TodayEnergyPresentation.tiles(homeKwh: 12, solarKwh: 18, gridNetKwh: -6, batteryNetKwh: -2,
+                                                     stateOfCharge: 78)
+        #expect(appTiles[3].symbolPrefix == nil)
+        let expired = TodayEnergyPreviewFixtures.snapshot(chargeAge: 2 * 3600 + 1)
+        #expect(TodayEnergyPresentation.tile(for: .battery, snapshot: expired, at: TodayEnergyPreviewFixtures.date)?.symbolPrefix == nil)
+
     }
 
     @MainActor
@@ -225,6 +233,7 @@ struct TodayEnergyWidgetTests {
     @Test func renderSmallWidgetSelections() throws {
         let extras: [(String, TodayEnergyMetric, TodayEnergySnapshot?)] = [
             ("stale-grid", .grid, TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600)),
+            ("full-soc", .battery, TodayEnergyPreviewFixtures.snapshot(stateOfCharge: 100)),
             ("unknown-soc", .battery, TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
             ("large-number", .grid, TodayEnergyPreviewFixtures.snapshot(gridNetKwh: 1234.5)),
             ("missing", .solar, nil)

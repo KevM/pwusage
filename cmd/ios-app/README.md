@@ -161,7 +161,8 @@ The embedded `PWUsageWidgets` extension supports medium and large Today’s Ener
 It mirrors the app's **Today so far** section: Home, Solar, net Grid and net Battery
 energy, using the same shared metric tiles, tinted backgrounds, glyphs, numeric
 formatting and import/export/charge/discharge labels. The battery glyph's fill conveys
-state of charge using the app's charge bands; VoiceOver announces the exact percentage.
+state of charge using the app's charge bands, with the percentage immediately to its left.
+Unknown or expired SOC has no percentage; VoiceOver announces valid percentages or unknown charge.
 Unknown charge uses the empty outline and an explicit unknown accessibility label.
 Medium widgets use a short “Today” headline with the update time inline and center the labels and values in equal-height tiles. They keep direction arrows and omit repeated net-direction captions; VoiceOver still reads the full details. Medium text growth is capped at X Large to fit its fixed height, while large widgets retain the full text-size range. Large widgets also show the active tariff and missing-interval notice. Both sizes show
 the site and last energy update time. Tap the widget to open pwusage.
