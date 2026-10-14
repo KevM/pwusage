@@ -412,3 +412,41 @@ estimate policy, not a model of additional utility fees or taxes.
 seasonal settlement or reprice the entire cycle using today's configured rate.
 Keep historical lookup maps across all tariff versions. Presentation layers sum
 already-netted costs; they must not price raw seasonal balances themselves.
+
+---
+
+## Battery hold monitor claims and deadlines
+
+`BatteryHold` remains the only hold lifecycle. A processing owner and 120-second
+lease serialize monitor/manual restoration for a specific active hold id; Site
+import/live claims stay separate. Release and terminal transitions compare the
+owner, and restoration re-reads the active hold before touching Tesla. A stale
+monitor snapshot must never restore a replacement hold on the same site.
+
+Persist `restore_attempted_at` and the existing `restore_reason` before sending a
+restore command. A timeout is an uncertain outcome, even after an abort signal.
+Keep that hold active, reconcile the observed reserve on subsequent checks, and
+wait at least 15 minutes before a guarded resend when Tesla still reports the
+target. An observed user reserve change still cancels automatic restoration.
+Never clear uncertainty merely because the HTTP caller stopped waiting.
+An explicit typed 401/403 command rejection is different: clear the attempt under
+the current active owner so reauthentication permits an immediate retry. Keep
+transport failures after token refresh distinct from the original 401; a retry
+may have reached Tesla. Failed cleanup leaves the conservative marker intact.
+
+The three-worker monitor uses per-hold clocks and checks deadlines before
+history. Only recent valid history (latest sample within 20 minutes, excluding
+future samples) can drive an early load-end restoration. Timer/Auto deadline
+restoration and pending-command reconciliation do not depend on history.
+
+Request-local I/O deadlines reach Fleet fetch/body reads, token endpoint failover,
+refresh lock polling, rate-limit waits, and bounded database connections/queries.
+Database timeout scopes use a separate small pool so shorter monitor waits do not
+change ordinary queries. Guard connections arriving after cancellation before
+issuing SQL. Failure telemetry and lease cleanup each have isolated budgets and
+must never reject a worker or starve other sites. Token-refresh lock release and
+atomic revocation also get an independent one-second cleanup scope, explicitly
+without the aborted parent signal; if cleanup fails, lock expiry is the fallback.
+
+See `docs/battery-hold-monitor-operations.md` for verified runtime/scheduler
+configuration and the ten-site capacity measurements.

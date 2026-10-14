@@ -5,7 +5,8 @@ const { getAllMock, rawMock, evalMock, refreshMock, createClientMock, restoreMoc
   refreshMock: vi.fn(), createClientMock: vi.fn(), restoreMock: vi.fn(), recordMock: vi.fn(),
 }));
 
-vi.mock('@/lib/battery-hold-repo', () => ({ BatteryHoldRepo: class { getAllActiveHolds = getAllMock; recordMonitoring = recordMock; } }));
+vi.mock('@/lib/battery-hold-repo', () => ({ BatteryHoldRepo: class { getAllActiveHolds = getAllMock; recordMonitoring = recordMock;
+  claimHold = async () => true; releaseHold = async () => undefined; } }));
 vi.mock('@/lib/energy-repo', () => ({ EnergyRepo: class { getRawEnergyData = rawMock; } }));
 vi.mock('@/lib/battery-hold-detection', () => ({ evaluateHold: evalMock }));
 vi.mock('@/lib/today-refresh', () => ({ refreshTodayData: refreshMock }));
@@ -33,15 +34,15 @@ describe('restore-reserve cron', () => {
   });
 
   it('restores holds the detector flags', async () => {
-    getAllMock.mockResolvedValue([{ id: 1, site_id: 's1', created_at: new Date() }]);
-    evalMock.mockReturnValue({ restore: true, reason: 'load_ended' });
+    getAllMock.mockResolvedValue([{ id: 1, site_id: 's1', created_at: new Date(), safety_expires_at: new Date(Date.now() + 3600000) }]);
+    evalMock.mockReturnValueOnce(null).mockReturnValueOnce(null).mockReturnValue({ restore: true, reason: 'load_ended' });
     const res = await GET(req('Bearer secret') as never);
     expect(res.status).toBe(200);
     expect(restoreMock).toHaveBeenCalledWith(expect.objectContaining({ siteId: 's1', reason: 'load_ended' }));
   });
 
   it('leaves holds the detector keeps', async () => {
-    getAllMock.mockResolvedValue([{ id: 1, site_id: 's1', created_at: new Date() }]);
+    getAllMock.mockResolvedValue([{ id: 1, site_id: 's1', created_at: new Date(), safety_expires_at: new Date(Date.now() + 3600000) }]);
     evalMock.mockReturnValue(null);
     const res = await GET(req('Bearer secret') as never);
     expect(res.status).toBe(200);
@@ -58,14 +59,14 @@ describe('restore-reserve cron', () => {
     expect(restoreMock).toHaveBeenCalledWith(expect.objectContaining({ siteId: 's2', reason: 'timer_elapsed' }));
   });
   it('persists a check failure without exposing internal errors', async () => {
-    getAllMock.mockResolvedValue([{ id: 1, site_id: 's1', created_at: new Date() }]);
+    getAllMock.mockResolvedValue([{ id: 1, site_id: 's1', created_at: new Date(), safety_expires_at: new Date(Date.now() + 3600000) }]);
     rawMock.mockRejectedValue(new Error('private database error'));
     await GET(req('Bearer secret') as never);
     expect(recordMock).toHaveBeenCalledWith(1, expect.objectContaining({ phase: 'check_failed' }));
   });
   it('monitoring write errors never prevent restoration', async () => {
-    getAllMock.mockResolvedValue([{ id: 1, site_id: 's1', created_at: new Date() }]);
-    evalMock.mockReturnValue({ restore: true, reason: 'load_ended' });
+    getAllMock.mockResolvedValue([{ id: 1, site_id: 's1', created_at: new Date(), safety_expires_at: new Date(Date.now() + 3600000) }]);
+    evalMock.mockReturnValueOnce(null).mockReturnValueOnce(null).mockReturnValue({ restore: true, reason: 'load_ended' });
     recordMock.mockRejectedValue(new Error('write failed'));
     await GET(req('Bearer secret') as never);
     expect(restoreMock).toHaveBeenCalled();

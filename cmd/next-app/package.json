@@ -16,7 +16,9 @@
     "smoke:backup": "tsx scripts/set-backup-reserve.ts",
     "db:migration:create": "tsx scripts/create-migration.ts",
     "test:compact": "bash scripts/test-compact-history.sh",
-    "check:archive-preflight": "tsx scripts/check-archive-preflight.ts"
+    "check:archive-preflight": "tsx scripts/check-archive-preflight.ts",
+    "test:hold:postgres": "bash scripts/test-battery-hold.sh",
+    "test:hold:timing": "BATTERY_HOLD_TIMING_REALTIME=1 vitest --run src/lib/battery-hold-monitor-timing.test.ts"
   },
   "dependencies": {
     "@js-temporal/polyfill": "^0.5.1",

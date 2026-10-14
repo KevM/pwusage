@@ -41,7 +41,7 @@ describe('evaluateHold', () => {
     detectLoadsMock.mockReturnValue([
       { startTime: new Date(PARK.getTime() + 5 * 60 * 1000), endTime: new Date(PARK.getTime() + 60 * 60 * 1000) },
     ]);
-    const now = new Date(PARK.getTime() + 90 * 60 * 1000);
+    const now = new Date(PARK.getTime() + 15 * 60 * 1000);
     expect(evaluateHold(hold(), series([500, 8000, 8000, 500]), now)).toEqual({ restore: true, reason: 'load_ended' });
   });
 
@@ -82,5 +82,18 @@ describe('evaluateHold', () => {
     const now = new Date(PARK.getTime() + 60 * 60 * 1000); // 1h in
     expect(evaluateHold(h, series([500, 500]), now)).toBeNull();
     expect(detectLoadsMock).not.toHaveBeenCalled();
+  });
+});
+
+ describe('load decision freshness', () => {
+  it('does not restore from an old closed event after telemetry stops', () => {
+    detectLoadsMock.mockReturnValue([{ startTime: PARK, endTime: new Date(PARK.getTime() + 15 * 60000) }]);
+    expect(evaluateHold(hold(), series([500, 8000, 500]), new Date(PARK.getTime() + 60 * 60000))).toBeNull();
+  });
+  it('ignores future and non-finite samples before calling detection', () => {
+    detectLoadsMock.mockReturnValue([]);
+    const now = new Date(PARK.getTime() + 10 * 60000);
+    evaluateHold(hold(), [...series([500, 8000, 500, 0]), { timestamp: now.toISOString(), powerWatts: NaN }], now);
+    expect(detectLoadsMock.mock.lastCall?.[0]).toHaveLength(3);
   });
 });

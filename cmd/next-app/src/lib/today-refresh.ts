@@ -1,3 +1,4 @@
+import { withIoDeadline, ioSignal, checkIoDeadline } from './io-deadline';
 import { Importer } from './importer';
 import { type EnergySiteLiveStatus } from './tesla-client';
 import { SiteRepo } from './site-repo';
@@ -50,6 +51,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export interface RefreshTodayOptions {
+    signal?: AbortSignal;
     minIntervalMs?: number;
     timeoutMs?: number;
 }
@@ -102,10 +104,16 @@ export async function refreshTodayData(
     siteId: string,
     options: RefreshTodayOptions = {}
 ): Promise<RefreshTodayResult> {
+    return withIoDeadline(options.timeoutMs ?? TESLA_FETCH_TIMEOUT_MS,
+        () => refreshTodayDataWithinDeadline(siteId, options), options.signal ?? ioSignal())
+        .catch(error => ({ status: 'error' as const, errorMessage: error instanceof Error ? error.message : String(error) }));
+}
+
+async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTodayOptions): Promise<RefreshTodayResult> {
+    checkIoDeadline();
     const state = getState(siteId);
 
     const minIntervalMs = options.minIntervalMs ?? REFRESH_MIN_INTERVAL_MS;
-    const timeoutMs = options.timeoutMs ?? TESLA_FETCH_TIMEOUT_MS;
 
     if (state.inFlight) return { status: 'in-flight' };
     const now = Date.now();
@@ -137,9 +145,10 @@ export async function refreshTodayData(
 
                 const [latest, rows] = await Promise.all([
                     energyRepo.getLatestEnergyData(siteId),
-                    withTimeout(importer.getTodayData(siteId), timeoutMs, 'tesla_today')
+                    importer.getTodayData(siteId)
                 ]);
 
+                checkIoDeadline();
                 if (rows.length === 0) return { status: 'no-new-rows' };
 
                 const latestMs = latest?.timestamp?.getTime() ?? 0;

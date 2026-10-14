@@ -53,6 +53,10 @@ jobs:
         env:
           COMPACT_HISTORY_PG_BIN: /usr/lib/postgresql/17/bin
         run: npm run test:compact
+      - name: Test battery hold claims against isolated PostgreSQL
+        env:
+          BATTERY_HOLD_PG_BIN: /usr/lib/postgresql/17/bin
+        run: npm run test:hold:postgres
 
   build:
     name: Build App

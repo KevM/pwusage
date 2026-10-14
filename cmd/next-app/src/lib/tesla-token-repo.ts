@@ -1,3 +1,4 @@
+import { ioDelay, checkIoDeadline, withIoDeadline } from './io-deadline';
 import { pool } from './db';
 import { SiteRepo } from './site-repo';
 import { UserRepo } from './user-repo';
@@ -24,7 +25,7 @@ export class TeslaTokenRepo {
                 }
                 return { access_token: row.access_token || '', refresh_token: row.refresh_token || '' };
             }
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await ioDelay(1000);
         }
         throw new Error('Timeout waiting for token refresh lock');
     }
@@ -75,6 +76,7 @@ export class TeslaTokenRepo {
     getLockedRefreshHandler(siteId: string) {
         return {
             refreshHandler: async (refreshToken: string) => {
+                checkIoDeadline();
                 console.log(`[TokenLock] Attempting to acquire lock for site ${siteId}...`);
                 if (await this.acquireRefreshLock(siteId)) {
                     console.log(`[TokenLock] Lock acquired for site ${siteId}. Refreshing...`);
@@ -91,23 +93,31 @@ export class TeslaTokenRepo {
                         }
                         throw err;
                     } finally {
-                        if (terminalFailure) {
-                            // Atomically mark revoked AND release the lock in one write so
-                            // waiters polling after is_refreshing drops to 0 always see the
-                            // revoked status — prevents the race window described in the P2 bug.
-                            const site = await this.siteRepo.getSite(siteId);
-                            if (site && site.user_id) {
-                                console.warn(`[TokenLock] Terminal auth failure for site ${siteId} (User ${site.user_id}). Revoking and releasing lock atomically.`);
-                                await pool.query(
-                                    'UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0, auth_status = $1, is_active = $2 WHERE id = $3',
-                                    ['revoked', false, site.user_id]
-                                );
-                                this.siteRepo.invalidateCache(siteId);
-                            }
-                        } else {
-                            await this.releaseRefreshLock(siteId);
+                        try {
+                            // The refresh deadline may already be aborted. Cleanup
+                            // gets an independent short budget; expiry is the fallback.
+                            await withIoDeadline(1000, async () => {
+                                if (terminalFailure) {
+                                    // Atomically mark revoked AND release the lock in one write so
+                                    // waiters polling after is_refreshing drops to 0 always see the
+                                    // revoked status — prevents the race window described in the P2 bug.
+                                    const site = await this.siteRepo.getSite(siteId);
+                                    if (site && site.user_id) {
+                                        console.warn(`[TokenLock] Terminal auth failure for site ${siteId} (User ${site.user_id}). Revoking and releasing lock atomically.`);
+                                        await pool.query(
+                                            'UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0, auth_status = $1, is_active = $2 WHERE id = $3',
+                                            ['revoked', false, site.user_id]
+                                        );
+                                        this.siteRepo.invalidateCache(siteId);
+                                    }
+                                } else {
+                                    await this.releaseRefreshLock(siteId);
+                                }
+                                console.log(`[TokenLock] Lock released for site ${siteId}.`);
+                            }, null);
+                        } catch {
+                            console.warn(`[TokenLock] Cleanup deferred for site ${siteId}; lock will expire.`);
                         }
-                        console.log(`[TokenLock] Lock released for site ${siteId}.`);
                     }
                 } else {
                     console.log(`[TokenLock] Lock busy for site ${siteId}. Waiting...`);

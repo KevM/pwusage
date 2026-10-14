@@ -151,6 +151,24 @@ describe('refreshTodayData', () => {
         return import('./today-refresh');
     }
 
+    it('cancels the entire history attempt and prevents late persistence', async () => {
+        vi.useFakeTimers();
+        try {
+            let finish: ((rows: Array<{ timestamp: Date }>) => void) | undefined;
+            importerMock.getTodayData.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+            const { refreshTodayData } = await importRefreshTodayData();
+            const { ioSignal } = await import('./io-deadline');
+            let signal: AbortSignal | undefined;
+            energyRepoMock.getLatestEnergyData.mockImplementationOnce(async () => { signal = ioSignal(); return null; });
+            const pending = refreshTodayData('site-1', { timeoutMs: 100 });
+            await vi.advanceTimersByTimeAsync(100);
+            expect((await pending).status).toBe('error');
+            expect(signal?.aborted).toBe(true);
+            finish?.([{ timestamp: new Date() }]); await vi.runAllTimersAsync();
+            expect(importerMock.persistHistory).not.toHaveBeenCalled();
+        } finally { vi.useRealTimers(); }
+    });
+
     it('returns no-tokens without acquiring a DB lock when Tesla tokens are missing', async () => {
         userRepoMock.getTokensForSite.mockResolvedValue(null);
         const { refreshTodayData } = await importRefreshTodayData();

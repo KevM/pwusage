@@ -79,7 +79,7 @@ describe('BatteryHoldRepo', () => {
     expect(sql).toMatch(/status = 'cancelled'/);
     expect(sql).toMatch(/restored_at = now\(\)/);
     expect(sql).toMatch(/cancelled_observed_reserve = \$3/);
-    expect(params).toEqual([7, 'reserve_changed', 50]);
+    expect(params).toEqual([7, 'reserve_changed', 50, null]);
   });
 
   it('getLatestCancelledUnacked filters to unacked reserve_changed cancels', async () => {
@@ -106,7 +106,7 @@ describe('BatteryHoldRepo', () => {
     const [sql, params] = queryMock.mock.calls[0];
     expect(sql).toMatch(/status = 'restored'/);
     expect(sql).toMatch(/restored_at = now\(\)/);
-    expect(params).toEqual([7, 'load_ended']);
+    expect(params).toEqual([7, 'load_ended', null]);
   });
 
   it('getAllActiveHolds maps every row', async () => {

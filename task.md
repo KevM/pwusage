@@ -844,3 +844,48 @@ pause is checked/locked inside each restoration transaction. No migration,
 production/dev hosted mutation, flag activation, deployment or tariff deletion
 was performed. Hosted rehearsal, first-trim approval and demonstrated fleet
 capacity remain deployment gates documented in the operations guide.
+
+
+# Battery hold monitor hardening (PR 1)
+
+Scope: approved plan Tasks 1–2 only. No Apple delivery or iOS changes.
+
+- [x] Inspect Git and branch from current main; import approved plans only.
+- [x] Read design/auth constraints; baseline targeted tests (30 passed).
+- [x] Characterize ten-site scheduling, deadline priority, freshness, overlap and cancellation with failing tests.
+- [x] Implement bounded monitor and end-to-end I/O budgets, preserving Site claims.
+- [x] Coordinate manual/monitor restoration on BatteryHold; reconcile uncertain writes.
+- [x] Generate migrations and validate claims/races against isolated PostgreSQL.
+- [x] Verify installed pg_net/deployed runtime; document explicit compatible budgets.
+- [x] Timing harness, full web tests, lint, build and review.
+- [x] Commit, push and create/attach draft PR (#141).
+
+Read-only production inspection: pg_net 0.20.0; net.http_get(url text,
+params jsonb DEFAULT '{}', headers jsonb DEFAULT '{}', timeout_milliseconds
+integer DEFAULT 5000); restore trigger schedule */15 * * * *.
+
+Verification: full PostgreSQL-enabled web suite 1,269 passed / 7 skipped
+(six hold fixture cases run separately: all passed; one existing unrelated skip).
+Deterministic monitor suite: 8 passed. Wall-clock harness: 10/10 attempts,
+10 bounded failures, 0 claimed restorations, 40,005ms, peak three workers.
+Lint and TypeScript passed. Webpack production build passed; default Turbopack
+hit the local sandbox's worker port-binding restriction. Build output confirms
+/api/cron/restore-reserve maxDuration 60. Independent review found and rechecked
+the isolated failure-telemetry timeout fix; no remaining actionable findings.
+Production pg_net/runtime checks were read-only. No hosted migration/schedule,
+deployment, real Tesla command, Apple push work, or iOS change was performed.
+
+Draft PR: https://github.com/KevM/pwusage/pull/141. Implementation commit 8c8426d.
+
+
+# PR #141 review fixes (2026-10-14)
+
+- [x] Reproduce both findings and the related post-refresh transport misclassification.
+- [x] Clear explicitly rejected reserve attempts under the active claim owner; retain uncertainty for transport failures.
+- [x] Release refresh locks / revoke atomically with an independent one-second cleanup deadline.
+- [x] Verify immediate post-reauth retries and stale-owner rejection against isolated PostgreSQL.
+- [x] Run full web tests (1,276 passed / 8 skipped; seven hold integration cases passed separately), lint and webpack production build.
+
+New regressions failed before their fixes. The seven skipped hold integration
+cases run separately; the remaining skip is pre-existing and unrelated. No
+production migration, deployment, real Tesla command or iOS change was performed.

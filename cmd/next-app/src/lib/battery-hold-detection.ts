@@ -40,6 +40,12 @@ export function evaluateHold(hold: BatteryHold, recentPower: PowerData[], now: D
     return { restore: true, reason: 'safety_timeout' };
   }
 
+  // Telemetry can be stale even when a refresh returned successfully (or failed).
+  // Filter invalid/future samples before both NILM and fallback decisions.
+  recentPower = recentPower.filter(p => Number.isFinite(p.powerWatts) && Number.isFinite(ts(p)) && ts(p) <= now.getTime());
+  const latestMs = Math.max(...recentPower.map(ts));
+  if (!Number.isFinite(latestMs) || now.getTime() - latestMs > 20 * 60 * 1000) return null;
+
   const parkedAt = hold.created_at.getTime();
 
   // Primary: a closed event that started around when we parked.

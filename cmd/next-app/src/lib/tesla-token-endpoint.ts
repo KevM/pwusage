@@ -1,3 +1,4 @@
+import { ioSignal, checkIoDeadline, abortable } from './io-deadline';
 // Tesla's Fleet API documentation states that calls to /token must use the
 // fleet-auth host, because server-to-server calls carry different rate limits.
 // The OIDC discovery document still declares auth.tesla.com, so Tesla's own
@@ -62,7 +63,8 @@ export async function postToTeslaTokenEndpoint(
 
         let response: Response;
         try {
-            response = await fetchImpl(url, {
+            checkIoDeadline();
+            response = await abortable(fetchImpl(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body,
@@ -74,9 +76,10 @@ export async function postToTeslaTokenEndpoint(
                 // surfaced here, hits the unexpected-status branch below, and the
                 // target receives nothing.
                 redirect: 'manual',
-                signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
-            });
+                signal: ioSignal() ? AbortSignal.any([ioSignal()!, AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
+            }));
         } catch (err) {
+            checkIoDeadline();
             // A transport failure is not an HTTP status. Clear any 5xx seen on
             // an earlier host so `status` and the message cannot disagree, and
             // so Task 6 does not report 503 for what was a network failure.

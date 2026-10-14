@@ -4,6 +4,7 @@ import { BatteryHold } from './db';
 
 function mapRow(row: {
   monitoring?: BatteryHoldMonitoring | null;
+  restore_attempted_at?: Date | string | null;
   id: number; site_id: string | number; status: string; mode: string | null;
   original_reserve: number; target_reserve: number;
   parked_soc: number | string; baseline_load_w: number | string;
@@ -14,6 +15,7 @@ function mapRow(row: {
 }): BatteryHold {
   return {
     monitoring: row.monitoring ?? null,
+    restore_attempted_at: row.restore_attempted_at ? new Date(row.restore_attempted_at) : null,
     id: Number(row.id),
     site_id: row.site_id.toString(),
     status: row.status as BatteryHold['status'],
@@ -32,6 +34,40 @@ function mapRow(row: {
 }
 
 export class BatteryHoldRepo {
+  async clearRestoreAttempt(id: number, owner: string): Promise<boolean> {
+    const result = await pool.query(`UPDATE "BatteryHold" SET restore_attempted_at = NULL, restore_reason = NULL
+      WHERE id = $1 AND status = 'active' AND processing_owner = $2::uuid
+        AND processing_expires_at > clock_timestamp()`, [id, owner]);
+    return result.rowCount === 1;
+  }
+
+  async claimHold(id: number, owner: string): Promise<boolean> {
+    const result = await pool.query(`UPDATE "BatteryHold"
+      SET processing_owner = $2::uuid, processing_expires_at = clock_timestamp() + interval '120 seconds'
+      WHERE id = $1 AND status = 'active'
+        AND (processing_expires_at IS NULL OR processing_expires_at <= clock_timestamp())`, [id, owner]);
+    return result.rowCount === 1;
+  }
+
+  async releaseHold(id: number, owner: string): Promise<void> {
+    await pool.query(`UPDATE "BatteryHold" SET processing_owner = NULL, processing_expires_at = NULL
+      WHERE id = $1 AND processing_owner = $2::uuid`, [id, owner]);
+  }
+
+  async ownsHold(id: number, owner: string): Promise<boolean> {
+    const result = await pool.query(`SELECT id FROM "BatteryHold" WHERE id = $1 AND status = 'active'
+      AND processing_owner = $2::uuid AND processing_expires_at > clock_timestamp()`, [id, owner]);
+    return result.rows.length === 1;
+  }
+
+  async recordRestoreAttempt(id: number, owner: string, reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed'): Promise<boolean> {
+    const result = await pool.query(`UPDATE "BatteryHold" SET restore_attempted_at = clock_timestamp(), restore_reason = $3
+      WHERE id = $1 AND status = 'active' AND processing_owner = $2::uuid
+        AND processing_expires_at > clock_timestamp()
+        AND (restore_attempted_at IS NULL OR restore_attempted_at <= clock_timestamp() - interval '15 minutes')`, [id, owner, reason]);
+    return result.rowCount === 1;
+  }
+
   async getActiveHold(siteId: string): Promise<BatteryHold | null> {
     const { rows } = await pool.query(`
       SELECT * FROM "BatteryHold"
@@ -84,20 +120,24 @@ export class BatteryHoldRepo {
     [id, JSON.stringify(monitoring), monitoring.checked_at]);
   }
 
-  async markRestored(id: number, reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed'): Promise<void> {
-    await pool.query(`
+  async markRestored(id: number, reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed', owner?: string): Promise<boolean> {
+    const result = await pool.query(`
       UPDATE "BatteryHold"
       SET status = 'restored', restore_reason = $2, restored_at = now()
-      WHERE id = $1
-    `, [id, reason]);
+      WHERE id = $1 AND status = 'active'
+        AND ($3::uuid IS NULL OR (processing_owner = $3::uuid AND processing_expires_at > clock_timestamp()))
+    `, [id, reason, owner ?? null]);
+    return result.rowCount === 1;
   }
 
-  async markCancelled(id: number, reason: 'reserve_changed', observedReserve: number): Promise<void> {
-    await pool.query(`
+  async markCancelled(id: number, reason: 'reserve_changed', observedReserve: number, owner?: string): Promise<boolean> {
+    const result = await pool.query(`
       UPDATE "BatteryHold"
       SET status = 'cancelled', restore_reason = $2, restored_at = now(), cancelled_observed_reserve = $3
-      WHERE id = $1
-    `, [id, reason, observedReserve]);
+      WHERE id = $1 AND status = 'active'
+        AND ($4::uuid IS NULL OR (processing_owner = $4::uuid AND processing_expires_at > clock_timestamp()))
+    `, [id, reason, observedReserve, owner ?? null]);
+    return result.rowCount === 1;
   }
 
   async getLatestCancelledUnacked(siteId: string): Promise<BatteryHold | null> {

@@ -1,4 +1,5 @@
-import { Pool, PoolConfig } from 'pg';
+import { ioSignal, checkIoDeadline, abortable } from './io-deadline';
+import { Pool, PoolConfig, type PoolClient } from 'pg';
 import fs from 'fs';
 import path from 'path';
 
@@ -8,7 +9,7 @@ import path from 'path';
 
 const globalForDb = global as unknown as { pool: Pool };
 
-function createPool() {
+function createPool(bounded = false) {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     throw new Error('[DB] DATABASE_URL is required to initialize the database pool.');
@@ -88,9 +89,10 @@ function createPool() {
     // connection this pool holds open. Keep max small so many concurrent warm
     // serverless instances (instances * max) stay well under that cap; the
     // pooler multiplexes these onto its own Postgres-side pool.
-    max: 5,
+    max: bounded ? 3 : 5,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: bounded ? 1000 : 10000,
+    ...(bounded ? { statement_timeout: 1500, lock_timeout: 1000, query_timeout: 2000 } : {}),
   };
 
   const dbPool = new Pool(poolConfig);
@@ -109,12 +111,14 @@ function createPool() {
   // production it makes the Proxy's per-access getPool() reuse one pool per
   // warm instance instead of constructing (and leaking) a new Pool on every
   // query, which was exhausting Postgres connections (EMAXCONN, limit 200).
-  globalForDb.pool = dbPool;
+  if (!bounded) globalForDb.pool = dbPool;
 
   return dbPool;
 }
 
+let boundedPool: Pool | undefined;
 function getPool() {
+  if (ioSignal()) return boundedPool ??= createPool(true);
   if (globalForDb.pool) {
     return globalForDb.pool;
   }
@@ -122,9 +126,47 @@ function getPool() {
   return createPool();
 }
 
+async function connectWithinDeadline(dbPool: Pool, signal: AbortSignal): Promise<PoolClient> {
+  signal.throwIfAborted();
+  const acquiring = dbPool.connect().then(client => {
+    if (signal.aborted) { client.release(true); signal.throwIfAborted(); }
+    return client;
+  });
+  return abortable(acquiring, signal);
+}
+
 const pool = new Proxy({} as Pool, {
   get(_target, prop) {
+    checkIoDeadline();
     const dbPool = getPool();
+    if (prop === 'connect' && ioSignal()) {
+      return async () => {
+        checkIoDeadline();
+        const signal = ioSignal()!;
+        const client = await connectWithinDeadline(dbPool, signal);
+        return new Proxy(client, {
+          get(target, key) {
+            if (key === 'query') return (...args: unknown[]) => {
+              signal.throwIfAborted();
+              return abortable(Reflect.apply(target.query, target, args) as Promise<unknown>, signal);
+            };
+            if (key === 'release') return (destroy?: boolean) => target.release(destroy || signal.aborted);
+            const value = Reflect.get(target, key, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        }) as PoolClient;
+      };
+    }
+    if (prop === 'query' && ioSignal()) {
+      return async (...args: unknown[]) => {
+        const signal = ioSignal()!;
+        const client = await connectWithinDeadline(dbPool, signal);
+        try {
+          signal.throwIfAborted();
+          return await abortable(Reflect.apply(client.query, client, args) as Promise<unknown>, signal);
+        } finally { client.release(signal.aborted); }
+      };
+    }
     const value = Reflect.get(dbPool, prop, dbPool);
     return typeof value === 'function' ? value.bind(dbPool) : value;
   },

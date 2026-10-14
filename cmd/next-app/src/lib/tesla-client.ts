@@ -1,3 +1,4 @@
+import { ioSignal, checkIoDeadline, abortable, ioDelay } from './io-deadline';
 export interface FleetProduct {
     energy_site_id?: number;
     resource_type: string;
@@ -117,7 +118,7 @@ const RATE_LIMIT_MAX_RETRIES = 2;
 const RATE_LIMIT_DEFAULT_DELAY_MS = 1000;
 const RATE_LIMIT_MAX_DELAY_MS = 60_000;
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const sleep = ioDelay;
 
 /**
  * Parse an HTTP `Retry-After` header (delta-seconds or HTTP-date) into a delay
@@ -188,7 +189,8 @@ export class TeslaClient {
                 "Content-Type": "application/json",
                 ...options?.headers,
             };
-            return fetch(url, { ...options, headers });
+            checkIoDeadline();
+            return abortable(fetch(url, { ...options, headers, signal: ioSignal() ?? options?.signal }));
         };
 
         let response = await makeRequest(this.config.accessToken);
@@ -205,7 +207,7 @@ export class TeslaClient {
                 try {
                     let newTokens: { access_token: string; refresh_token: string };
                     if (this.config.tokenRefreshHandler) {
-                        newTokens = await this.config.tokenRefreshHandler(this.config.refreshToken);
+                        newTokens = await abortable(this.config.tokenRefreshHandler(this.config.refreshToken));
                     } else {
                         newTokens = await TeslaClient.refreshAccessToken(this.config.refreshToken);
                     }
@@ -215,11 +217,8 @@ export class TeslaClient {
                     if (this.config.onTokenUpdate) {
                         this.config.onTokenUpdate(newTokens.access_token, newTokens.refresh_token);
                     }
-
-                    // Retry with new token
-                    response = await makeRequest(this.config.accessToken);
-                    continue;
                 } catch (refreshError) {
+                    checkIoDeadline();
                     console.error('Token refresh failed:', refreshError);
                     if (this.config.onTokenError && refreshError instanceof Error) {
                         await this.config.onTokenError(refreshError);
@@ -227,6 +226,10 @@ export class TeslaClient {
                     // Fall through to original error
                     break;
                 }
+                // A retry can reach Tesla and then lose its response. Keep that
+                // transport failure distinct from the original rejected request.
+                response = await makeRequest(this.config.accessToken);
+                continue;
             }
 
             // Honor Tesla's rate limiting: back off on 429 and retry a bounded
@@ -244,7 +247,7 @@ export class TeslaClient {
         }
 
         if (!response.ok) {
-            const body = await response.text();
+            const body = await abortable(response.text());
             const shortBody = body.length > 200 ? body.substring(0, 200) + '...' : body;
             if (response.status === 401 || response.status === 403) {
                 throw new TeslaAuthError(`Tesla API Error: ${response.status} ${shortBody}`, response.status);
@@ -252,7 +255,7 @@ export class TeslaClient {
             throw new Error(`Tesla API Error: ${response.status} ${shortBody}`);
         }
 
-        return response.json();
+        return abortable(response.json());
     }
 
     async getProducts(): Promise<FleetProduct[]> {

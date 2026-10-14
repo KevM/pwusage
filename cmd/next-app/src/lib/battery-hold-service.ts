@@ -1,4 +1,6 @@
-import { TeslaClient, isTeslaAuthError } from './tesla-client';
+import { randomUUID } from 'node:crypto';
+import { withIoDeadline, checkIoDeadline, abortable } from './io-deadline';
+import { TeslaClient, TeslaAuthError, isTeslaAuthError } from './tesla-client';
 import { BatteryHoldRepo } from './battery-hold-repo';
 import { createTeslaClientForSite } from './tesla-client-factory';
 import type { BatteryHold } from './db';
@@ -127,38 +129,74 @@ export type RestoreResult =
 export interface RestoreDeps {
   client: TeslaClient; repo: BatteryHoldRepo; siteId: string;
   reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed';
+  expectedHoldId?: number;
+  leaseOwner?: string;
 }
 
-export async function restoreBattery({ client, repo, siteId, reason }: RestoreDeps): Promise<RestoreResult> {
-  const hold = await repo.getActiveHold(siteId);
-  if (!hold) return { status: 'no_active_hold' };
-
-  // Guard: never overwrite a reserve the user changed manually mid-hold.
-  // We bypass this guard (saving a Tesla API read) if:
-  // 1. The restore is requested manually by the user.
-  // 2. The hold was created very recently (within 5 minutes), where the Tesla API
-  //    cache is likely stale and still showing the pre-parked reserve.
-  const isRecent = Date.now() - new Date(hold.created_at).getTime() < 5 * 60 * 1000;
-  if (reason !== 'manual' && !isRecent) {
-    let current: number;
-    try {
-      const info = await client.getEnergySiteInfo(siteId);
-      current = info.backup_reserve_percent;
-    } catch (e) {
-      return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+export async function restoreBattery(deps: RestoreDeps): Promise<RestoreResult> {
+  if (deps.leaseOwner) return restoreClaimedBattery(deps);
+  // Manual stop uses the same claim as cron, bound to the hold observed here.
+  let claimedId: number | undefined;
+  const owner = randomUUID();
+  try {
+    return await withIoDeadline(10000, async () => {
+      const hold = await deps.repo.getActiveHold(deps.siteId);
+      if (!hold || (deps.expectedHoldId !== undefined && hold.id !== deps.expectedHoldId)) return { status: 'no_active_hold' };
+      claimedId = hold.id;
+      if (!await deps.repo.claimHold(hold.id, owner)) return { status: 'error', message: 'A hold check or restoration is already in progress. Try again shortly.' };
+      return restoreClaimedBattery({ ...deps, expectedHoldId: hold.id, leaseOwner: owner });
+    });
+  } catch (e) {
+    return { status: 'error', message: errMsg(e) };
+  } finally {
+    if (claimedId !== undefined) {
+      try { await withIoDeadline(1000, () => deps.repo.releaseHold(claimedId!, owner)); }
+      catch { console.warn(`[BatteryHold] Lease release deferred for hold ${claimedId}`); }
     }
+  }
+}
+
+async function restoreClaimedBattery({ client, repo, siteId, reason, expectedHoldId, leaseOwner }: RestoreDeps): Promise<RestoreResult> {
+  const hold = await repo.getActiveHold(siteId);
+  if (!hold || hold.id !== expectedHoldId || !leaseOwner || !await repo.ownsHold(hold.id, leaseOwner)) return { status: 'no_active_hold' };
+  const isRecent = Date.now() - hold.created_at.getTime() < 5 * 60 * 1000;
+  // Uncertain commands always reconcile via a read, including manual retries.
+  if (hold.restore_attempted_at || (reason !== 'manual' && !isRecent)) {
+    let current: number;
+    try { current = (await client.getEnergySiteInfo(siteId)).backup_reserve_percent; }
+    catch (e) { return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) }; }
+    if (!Number.isInteger(current) || current < 0 || current > 100) return { status: 'error', message: 'Tesla did not return a valid backup reserve.' };
     if (current !== hold.target_reserve && current !== hold.original_reserve) {
-      await repo.markCancelled(hold.id, 'reserve_changed', current);
+      checkIoDeadline();
+      if (!await repo.markCancelled(hold.id, 'reserve_changed', current, leaseOwner)) return { status: 'error', message: 'The hold claim expired.' };
       return { status: 'reserve_changed', current };
     }
+    if (hold.restore_attempted_at && current === hold.original_reserve) {
+      checkIoDeadline();
+      if (!await repo.markRestored(hold.id, reason, leaseOwner)) return { status: 'error', message: 'The hold claim expired.' };
+      return { status: 'ok' };
+    }
+    if (hold.restore_attempted_at && Date.now() - hold.restore_attempted_at.getTime() < 15 * 60000) {
+      return { status: 'error', message: 'Previous restoration outcome is pending. Waiting before another command.' };
+    }
   }
-
+  // Persist before sending: abort/transport failure is NOT proof no command ran.
+  // The owner/identity check must still win immediately before the external write.
+  if (!await repo.recordRestoreAttempt(hold.id, leaseOwner, reason)) return { status: 'error', message: 'Restoration is pending or the hold claim expired.' };
   try {
-    await client.setBackupReserve(siteId, hold.original_reserve);
+    checkIoDeadline();
+    await abortable(client.setBackupReserve(siteId, hold.original_reserve));
   } catch (e) {
-    return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+    // Only an explicit authentication rejection proves this command was not
+    // applied. Message-based auth detection alone cannot establish that.
+    if (e instanceof TeslaAuthError && (e.status === 401 || e.status === 403)) {
+      try { await repo.clearRestoreAttempt(hold.id, leaseOwner); }
+      catch { console.warn(`[BatteryHold] Rejected attempt cleanup deferred for hold ${hold.id}`); }
+    }
+    return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: 'Restoration outcome is uncertain; the next check will reconcile it.' };
   }
-  await repo.markRestored(hold.id, reason);
+  checkIoDeadline();
+  if (!await repo.markRestored(hold.id, reason, leaseOwner)) return { status: 'error', message: 'Restoration acknowledgement could not be saved; the next check will reconcile it.' };
   return { status: 'ok' };
 }
 

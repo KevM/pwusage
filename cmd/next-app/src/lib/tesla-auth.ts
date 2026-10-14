@@ -1,3 +1,4 @@
+import { abortable } from './io-deadline';
 import { TeslaAuthError } from './tesla-client';
 import { requireEnv } from './env';
 import { postToTeslaTokenEndpoint } from './tesla-token-endpoint';
@@ -66,7 +67,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<Refreshe
     });
 
     if (!response.ok) {
-        const body = await response.text();
+        const body = await abortable(response.text());
         const message = `Failed to refresh token: ${response.status} ${body}`;
         if (
             response.status === 401 ||
@@ -77,5 +78,5 @@ export async function refreshAccessToken(refreshToken: string): Promise<Refreshe
         throw new Error(message);
     }
 
-    return parseRefreshedTokens(await response.json());
+    return parseRefreshedTokens(await abortable(response.json()));
 }
