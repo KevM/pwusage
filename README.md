@@ -46,15 +46,16 @@ Your solar production is mostly _On-Peak_ and a single Tesla Powerwall 2 has 11.
 ### Running PWUsage Locally
 
 1. Clone repo
-2. Copy `./cmd/web-app/example.env` to `./cmd/web-app/.env` 
-   * You'll need to have a [Tesla Developer account](https://developer.tesla.com/dashboard) and have [requested API access](https://developer.tesla.com/request). Rename the `example.env` files and edit their contents for your developer account.
-3. Start the web application
-   * `cd ./cmd/web-app`
-   * `npm install`
-   * `npm run dev`
-4. Start the TUI 
-   * `cd ./cmd/pwrtool`
-   * `go run . tui`
+2. Set up environment variables:
+   * Copy `cmd/next-app/example.env` to `cmd/next-app/.env`
+   * You'll need a [Tesla Developer account](https://developer.tesla.com/dashboard) and [API access](https://developer.tesla.com/request). Edit `cmd/next-app/.env` with your developer credentials.
+3. Install dependencies and start the web app:
+   ```bash
+   cd cmd/next-app
+   npm install
+   npm run dev
+   ```
+4. For native iOS development, open `cmd/ios-app` (see `cmd/ios-app/README.md`).
 
 ### Setup
 

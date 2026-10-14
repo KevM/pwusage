@@ -53,7 +53,6 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - Primary active app under development is in `cmd/next-app` (App Router code is under `cmd/next-app/src`).
 - Do not assume a top-level `src/`.
 - If a task says “Next.js code”, start in `cmd/next-app` unless explicitly told otherwise.
-- Secondary legacy web project exists at `cmd/web-app` (only use when task references it).
 - Native iOS app and its tests are in `cmd/ios-app`.
 
 ## TRMNL + Tesla API Constraints
