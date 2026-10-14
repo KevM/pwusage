@@ -27,9 +27,8 @@ private struct SmallMetricPreviewCard: View {
     let metric: TodayEnergyMetric
 
     var body: some View {
-        TodayEnergySingleMetricContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
-                                       date: TodayEnergyPreviewFixtures.date, metric: metric)
-            .padding(10)
+        TodayEnergyWidgetFamilyContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                                      date: TodayEnergyPreviewFixtures.date, family: .systemSmall, metric: metric)
             .frame(width: 158, height: 158)
             .background(Color(uiColor: .secondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))

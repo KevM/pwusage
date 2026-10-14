@@ -226,8 +226,10 @@ Show the Xcode Canvas using a Debug configuration and an iPhone simulator destin
 The small file starts with an **All four small choices · Layout** board and an individual
 battery layout preview, which render the actual content without WidgetKit/App Intents
 preview hosting. Its **Small · Home/Solar/Grid/Battery** previews use `.systemSmall`
-and the configurable `TodayEnergyMetricWidget`. Do not select Small for a preview of
-`TodayEnergyWidget`: that separate widget intentionally supports medium and large only.
+and the configurable `TodayEnergyMetricWidget`. The `TodayEnergyWidget` gallery entry intentionally supports medium and large only.
+If Canvas overrides its family to Small, the shared family router now renders the Home
+single-metric layout instead of squeezing the large four-metric view into a small frame.
+Use `TodayEnergyMetricWidget` previews for the configurable small selections.
 Run `./generate.sh` and reopen the generated project if the new file is not in Xcode. Named previews cover both
 sizes, import/discharge and export/charge, full/low/unknown/stale SOC, stale energy,
 missing intervals/data, long names/large totals and a fresh-to-stale-to-next-day timeline.

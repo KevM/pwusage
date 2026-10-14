@@ -28,8 +28,7 @@ struct TodayEnergyWidgetView: View {
     let entry: TodayEnergyEntry
     @Environment(\.widgetFamily) private var family
     var body: some View {
-        TodayEnergyWidgetContent(snapshot: entry.snapshot, date: entry.date, compact: family == .systemMedium)
-            .padding(family == .systemMedium ? 10 : 16)
+        TodayEnergyWidgetFamilyContent(snapshot: entry.snapshot, date: entry.date, family: family)
             .widgetURL(URL(string: "pwusage://dashboard"))
             .privacySensitive()
             .containerBackground(Color(uiColor: .secondarySystemGroupedBackground), for: .widget)

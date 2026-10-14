@@ -62,8 +62,8 @@ struct TodayEnergyMetricWidget: Widget {
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: TodayEnergySnapshot.metricWidgetKind,
                                intent: TodayEnergyMetricConfiguration.self, provider: TodayEnergyMetricProvider()) { entry in
-            TodayEnergySingleMetricContent(snapshot: entry.snapshot, date: entry.date, metric: entry.metric)
-                .padding(10)
+            TodayEnergyWidgetFamilyContent(snapshot: entry.snapshot, date: entry.date,
+                                           family: .systemSmall, metric: entry.metric)
                 .widgetURL(URL(string: "pwusage://dashboard"))
                 .privacySensitive()
                 .containerBackground(Color(uiColor: .secondarySystemGroupedBackground), for: .widget)

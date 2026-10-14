@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import SwiftUI
+import WidgetKit
 @testable import PWUsage
 
 @Suite("Today's Energy Widget")
@@ -253,6 +254,30 @@ struct TodayEnergyWidgetTests {
                 try png.write(to: output)
                 print("Today widget render: \(output.path)")
             }
+        }
+    }
+
+    @Test func canvasSmallFamilyUsesSingleMetricInsteadOfFourMetricLayout() {
+        #expect(TodayEnergyWidgetLayout(family: .systemSmall) == .singleMetric(.home))
+        #expect(TodayEnergyWidgetLayout(family: .systemSmall, metric: .battery) == .singleMetric(.battery))
+        #expect(TodayEnergyWidgetLayout(family: .systemMedium) == .medium)
+        #expect(TodayEnergyWidgetLayout(family: .systemLarge) == .large)
+    }
+
+    @MainActor
+    @Test func renderActualFamilyRoutingForCanvasOverride() throws {
+        for metric in [TodayEnergyMetric.home, .battery] {
+            let view = TodayEnergyWidgetFamilyContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                date: TodayEnergyPreviewFixtures.date, family: .systemSmall, metric: metric)
+                .frame(width: 141, height: 141)
+                .background(Color(uiColor: .secondarySystemGroupedBackground))
+                .environment(\.colorScheme, .light)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            let png = try #require(renderer.uiImage?.pngData())
+            let output = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("today-widget-canvas-small-\(metric.rawValue).png")
+            try png.write(to: output)
+            print("Today widget render: \(output.path)")
         }
     }
 }
