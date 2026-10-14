@@ -157,7 +157,7 @@ upstream cache freshness once that window expires.
 
 ## Today's Energy widget
 
-The embedded `PWUsageWidgets` extension supports medium and large Home Screen widgets.
+The embedded `PWUsageWidgets` extension supports medium and large Today’s Energy widgets and a configurable small Today’s Metric widget.
 It mirrors the app's **Today so far** section: Home, Solar, net Grid and net Battery
 energy, using the same shared metric tiles, tinted backgrounds, glyphs, numeric
 formatting and import/export/charge/discharge labels. The battery glyph's fill conveys
@@ -226,3 +226,20 @@ missing intervals/data, long names/large totals and a fresh-to-stale-to-next-day
 Fixtures use a fixed clock and local data; no sign-in, App Group setup or server access
 is required. The native widget tests also render the actual shared widget content in
 both sizes and light/dark appearances for visual inspection.
+
+
+### Configurable small widget
+
+Add **Today's Metric** in the widget gallery for the small size. Home is the default.
+Long-press it, choose **Edit Widget**, and select **Metric → Home, Solar, Grid, or Battery**.
+Each small widget has its own selection, so you can add several with different metrics.
+Grid and Battery retain the same net-energy arrows as the app; Battery uses the SOC glyph.
+Small widgets use the same protected cache, selected site, staleness/SOC expiry and
+midnight schedule as the larger widgets, without additional network requests.
+
+This is a separate App Intents configuration and widget kind in the existing extension.
+Existing medium/large widget kinds and configuration remain intact; no new signing,
+App Group or server setup is required. Both kinds reload when the app saves or clears
+its snapshot. Xcode previews include all four small selections plus stale, unknown-SOC
+and unavailable states. Check **Edit Widget** selection and multiple independent widgets
+on a device; simulator builds verify App Intents metadata and layout, not the full picker UI.

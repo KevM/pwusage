@@ -14,6 +14,7 @@ struct TodayEnergy: Codable, Equatable, Sendable {
 
 struct TodayEnergySnapshot: Codable, Equatable, Sendable {
     static let widgetKind = "TodayEnergy"
+    static let metricWidgetKind = "TodayEnergyMetric"
     static let staleAfter: TimeInterval = 30 * 60
     var version = 2
     let siteID: String
@@ -52,6 +53,29 @@ struct TodayEnergySnapshot: Codable, Equatable, Sendable {
               [energy.homeKwh, energy.solarKwh].allSatisfy({ $0.isFinite && $0 >= 0 }),
               [energy.gridNetKwh, energy.batteryNetKwh].allSatisfy(\.isFinite) else { return .missing }
         return date.timeIntervalSince(source) > Self.staleAfter ? .stale : .current
+    }
+
+    /// Shared scheduling for both widget kinds. All dates come from the same cached sources.
+    static func timelineDates(for snapshot: Self?, at now: Date) -> [Date] {
+        var dates = [now]
+        if let source = snapshot?.energy.energyDataThrough {
+            let expiry = source.addingTimeInterval(staleAfter + 1)
+            if expiry > now { dates.append(expiry) }
+        }
+        if let source = snapshot?.batteryStateOfChargeAt {
+            let expiry = source.addingTimeInterval(2 * 3600 + 1)
+            if expiry > now { dates.append(expiry) }
+        }
+        if let midnight = snapshot?.nextMidnight, midnight > now { dates.append(midnight) }
+        return Array(Set(dates)).sorted()
+    }
+
+    static func sample(at now: Date) -> Self {
+        Self(siteID: "preview", siteName: "Home", timezone: "UTC", fetchedAt: now,
+             energy: TodayEnergy(localDate: localDate(now, timezone: "UTC"), homeKwh: 18.4,
+                                 solarKwh: 22.6, gridNetKwh: -4.2, batteryNetKwh: -1.8,
+                                 activeTariff: "Off peak", energyDataThrough: now),
+             batteryStateOfCharge: 78, batteryStateOfChargeAt: now)
     }
 
     var nextMidnight: Date? {

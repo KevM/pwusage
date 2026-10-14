@@ -7,6 +7,13 @@ enum TodayEnergyPresentation {
         return direction + energy(abs(kWh))
     }
 
+    static func tile(for metric: TodayEnergyMetric, snapshot: TodayEnergySnapshot?, at date: Date) -> MetricTile? {
+        guard let snapshot, snapshot.availability(at: date) != .missing else { return nil }
+        return tiles(homeKwh: snapshot.energy.homeKwh, solarKwh: snapshot.energy.solarKwh,
+                     gridNetKwh: snapshot.energy.gridNetKwh, batteryNetKwh: snapshot.energy.batteryNetKwh,
+                     compact: true, showsStateOfCharge: true, stateOfCharge: snapshot.stateOfCharge(at: date))[metric.index]
+    }
+
     /// Same charge bands as the app's battery glyph. Unknown has no filled segments.
     static func batterySymbol(_ charge: Double?) -> String {
         guard let charge else { return "battery.0percent" }

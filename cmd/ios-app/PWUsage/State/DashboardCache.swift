@@ -68,6 +68,7 @@ final class DashboardCache {
             widgetStore.clear()
         }
         WidgetCenter.shared.reloadTimelines(ofKind: TodayEnergySnapshot.widgetKind)
+        WidgetCenter.shared.reloadTimelines(ofKind: TodayEnergySnapshot.metricWidgetKind)
     }
 
     func storeLive(_ response: MobileLiveResponse, at date: Date) {

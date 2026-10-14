@@ -7,6 +7,7 @@ struct MetricTile: View {
     let symbol: String
     let tint: Color
     var compact = false
+    var prominentValue = false
     var isMuted = false
     var numericValue: Double? = nil
     var spokenRole: String? = nil
@@ -15,16 +16,16 @@ struct MetricTile: View {
     var body: some View {
         VStack(alignment: compact ? .center : .leading, spacing: compact ? 2 : 8) {
             Label(title, systemImage: symbol)
-                .font((compact ? Font.caption2 : .subheadline).weight(.medium))
+                .font((compact && !prominentValue ? Font.caption2 : .subheadline).weight(.medium))
                 .foregroundStyle(isMuted ? .secondary : tint)
                 .labelStyle(.titleAndIcon)
             Text(value)
                 .contentTransition(reduceMotion || numericValue == nil ? .identity : .numericText(value: numericValue ?? 0))
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: numericValue)
-                .font((compact ? Font.footnote : .title3).weight(.bold))
+                .font((compact ? (prominentValue ? Font.title2 : .footnote) : .title3).weight(.bold))
                 .monospacedDigit()
                 .foregroundStyle(isMuted ? .secondary : .primary)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(prominentValue ? 0.6 : 0.8)
                 .lineLimit(1)
             if let detail, !compact {
                 Text(detail)

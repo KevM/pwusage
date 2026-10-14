@@ -182,4 +182,68 @@ struct TodayEnergyWidgetTests {
         }
         #expect(TodayEnergyPresentation.batterySymbol(nil) == "battery.0percent")
     }
+
+    @MainActor
+    @Test func smallWidgetUsesTheSelectedMetric() throws {
+        let value = TodayEnergyPreviewFixtures.snapshot()
+        let titles = ["Home", "Solar", "Grid", "Battery"]
+        let values = ["18.4 kWh", "22.6 kWh", "↑ 2.4 kWh", "↑ 1.8 kWh"]
+        for (index, metric) in TodayEnergyMetric.allCases.enumerated() {
+            let tile = try #require(TodayEnergyPresentation.tile(for: metric, snapshot: value, at: TodayEnergyPreviewFixtures.date))
+            #expect(tile.title == titles[index])
+            #expect(tile.value == values[index])
+        }
+        let battery = try #require(TodayEnergyPresentation.tile(for: .battery, snapshot: value, at: TodayEnergyPreviewFixtures.date))
+        #expect(battery.symbol == "battery.75percent")
+        #expect(battery.spokenRole == "Battery charge 78 percent")
+    }
+
+    @MainActor
+    @Test func smallWidgetNeverShowsPriorDayOrMissingEnergy() {
+        let value = TodayEnergyPreviewFixtures.snapshot()
+        for metric in TodayEnergyMetric.allCases {
+            #expect(TodayEnergyPresentation.tile(for: metric, snapshot: nil, at: now) == nil)
+            #expect(TodayEnergyPresentation.tile(for: metric, snapshot: value,
+                    at: TodayEnergyPreviewFixtures.date.addingTimeInterval(86400)) == nil)
+        }
+    }
+
+    @Test func bothWidgetKindsUseSourceExpiryTimelineDates() throws {
+        let value = TodayEnergyPreviewFixtures.snapshot()
+        let dates = TodayEnergySnapshot.timelineDates(for: value, at: TodayEnergyPreviewFixtures.date)
+        #expect(dates.first == TodayEnergyPreviewFixtures.date)
+        let energySource = try #require(value.energy.energyDataThrough)
+        let chargeSource = try #require(value.batteryStateOfChargeAt)
+        let midnight = try #require(value.nextMidnight)
+        #expect(dates.contains(energySource.addingTimeInterval(TodayEnergySnapshot.staleAfter + 1)))
+        #expect(dates.contains(chargeSource.addingTimeInterval(2 * 3600 + 1)))
+        #expect(dates.contains(midnight))
+        #expect(TodayEnergySnapshot.timelineDates(for: nil, at: now) == [now])
+    }
+
+    @MainActor
+    @Test func renderSmallWidgetSelections() throws {
+        let extras: [(String, TodayEnergyMetric, TodayEnergySnapshot?)] = [
+            ("stale-grid", .grid, TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600)),
+            ("unknown-soc", .battery, TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
+            ("large-number", .grid, TodayEnergyPreviewFixtures.snapshot(gridNetKwh: 1234.5)),
+            ("missing", .solar, nil)
+        ]
+        let cases = TodayEnergyMetric.allCases.map { ($0.rawValue, $0, Optional(TodayEnergyPreviewFixtures.snapshot())) } + extras
+        for (name, metric, value) in cases {
+            for dark in [false, true] {
+                let view = TodayEnergySingleMetricContent(snapshot: value, date: TodayEnergyPreviewFixtures.date, metric: metric)
+                    .padding(10).frame(width: 141, height: 141)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground))
+                    .environment(\.colorScheme, dark ? .dark : .light)
+                    .environment(\.dynamicTypeSize, .xxxLarge)
+                let renderer = ImageRenderer(content: view)
+                renderer.scale = 2
+                let png = try #require(renderer.uiImage?.pngData())
+                let output = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("today-widget-small-\(name)-\(dark ? "dark" : "light").png")
+                try png.write(to: output)
+                print("Today widget render: \(output.path)")
+            }
+        }
+    }
 }
