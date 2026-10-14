@@ -280,4 +280,24 @@ struct TodayEnergyWidgetTests {
             print("Today widget render: \(output.path)")
         }
     }
+
+    @MainActor
+    @Test func emptyAuthorizationClearsOrphanedWidgetAfterPrivateCacheEviction() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TodayEnergySnapshotStore(fileURL: directory.appendingPathComponent("widget.json"))
+        let previousReading = TodayEnergyPreviewFixtures.snapshot()
+        try store.save(previousReading)
+        #expect(previousReading.availability(at: TodayEnergyPreviewFixtures.date) == .current)
+
+        // The App Group file survives, but the app-private cache is missing at cold launch.
+        let missingPrivateCache = directory.appendingPathComponent("evicted-dashboard.json")
+        #expect(!FileManager.default.fileExists(atPath: missingPrivateCache.path))
+        let cache = DashboardCache(fileURL: missingPrivateCache, widgetStore: store)
+        #expect(cache.snapshot.sites.isEmpty)
+        #expect(store.load() != nil)
+        cache.storeSites([])
+        #expect(store.load() == nil)
+        #expect(TodayEnergySnapshotStore(fileURL: store.fileURL).load() == nil)
+    }
 }

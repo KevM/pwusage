@@ -40,7 +40,9 @@ final class DashboardCache {
         let authorizedIDs = Set(sites.map(\.id))
         snapshot.live = snapshot.live.filter { authorizedIDs.contains($0.key) }
         snapshot.bill = snapshot.bill.filter { authorizedIDs.contains($0.key) }
-        if let widgetSiteID, !authorizedIDs.contains(widgetSiteID) { selectWidgetSite(nil) }
+        let selectedSiteWasRevoked = widgetSiteID.map { !authorizedIDs.contains($0) } ?? false
+        // The App Group file can outlive an evicted private cache and its in-memory selection.
+        if sites.isEmpty || selectedSiteWasRevoked { selectWidgetSite(nil) }
         persist()
     }
 
