@@ -2,72 +2,63 @@
 import SwiftUI
 import WidgetKit
 
-/// Fixed, local fixtures: previews never read the App Group or contact the server.
-private enum TodayEnergyWidgetPreview {
-    static let date = Date(timeIntervalSince1970: 1_792_008_000)
-    static let timezone = "America/Chicago"
-
-    static func entry(
-        cost: Double? = 2.18,
-        homeKwh: Double = 18.4,
-        importKwh: Double = 8.6,
-        exportKwh: Double = 2.1,
-        sourceAge: TimeInterval = 5 * 60,
-        siteName: String = "Home",
-        displayDate: Date = date
-    ) -> TodayEnergyEntry {
-        let source = date.addingTimeInterval(-sourceAge)
-        return TodayEnergyEntry(date: displayDate, snapshot: TodayEnergySnapshot(
-            siteID: "preview-home", siteName: siteName, timezone: timezone, fetchedAt: date,
-            energy: TodayEnergy(
-                localDate: TodayEnergySnapshot.localDate(date, timezone: timezone),
-                homeKwh: homeKwh, importKwh: importKwh, exportKwh: exportKwh,
-                estimatedCost: cost, currency: "USD", energyDataThrough: source
-            )
-        ))
-    }
+private func entry(_ snapshot: TodayEnergySnapshot? = TodayEnergyPreviewFixtures.snapshot(),
+                   at date: Date = TodayEnergyPreviewFixtures.date) -> TodayEnergyEntry {
+    TodayEnergyEntry(date: date, snapshot: snapshot)
 }
 
-#Preview("Current · Medium", as: .systemMedium) { TodayEnergyWidget() } timeline: {
-    TodayEnergyWidgetPreview.entry()
+#Preview("Today so far · Medium", as: .systemMedium) { TodayEnergyWidget() } timeline: {
+    entry()
 }
 
-#Preview("Current · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
-    TodayEnergyWidgetPreview.entry()
+#Preview("Today so far · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
+    entry()
 }
 
-#Preview("Export credit · Medium", as: .systemMedium) { TodayEnergyWidget() } timeline: {
-    TodayEnergyWidgetPreview.entry(cost: -0.42, importKwh: 5.2, exportKwh: 8.1)
+#Preview("Importing and discharging", as: .systemMedium) { TodayEnergyWidget() } timeline: {
+    entry(TodayEnergyPreviewFixtures.snapshot(solarKwh: 4, gridNetKwh: 12, batteryNetKwh: 2.4, stateOfCharge: 20))
 }
 
-#Preview("Stale · Medium", as: .systemMedium) { TodayEnergyWidget() } timeline: {
-    TodayEnergyWidgetPreview.entry(sourceAge: 2 * 60 * 60)
+#Preview("Full battery · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
+    entry(TodayEnergyPreviewFixtures.snapshot(stateOfCharge: 100))
 }
 
-#Preview("Stale · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
-    TodayEnergyWidgetPreview.entry(sourceAge: 2 * 60 * 60)
+#Preview("Unknown battery charge", as: .systemMedium) { TodayEnergyWidget() } timeline: {
+    entry(TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil))
 }
 
-#Preview("Cost unavailable · Medium", as: .systemMedium) { TodayEnergyWidget() } timeline: {
-    TodayEnergyWidgetPreview.entry(cost: nil)
+#Preview("Stale battery charge, current energy", as: .systemMedium) { TodayEnergyWidget() } timeline: {
+    entry(TodayEnergyPreviewFixtures.snapshot(chargeAge: 2 * 3600 + 1))
+}
+
+#Preview("Stale energy · Medium", as: .systemMedium) { TodayEnergyWidget() } timeline: {
+    entry(TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600))
+}
+
+#Preview("Stale energy · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
+    entry(TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600))
+}
+
+#Preview("Missing intervals · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
+    entry(TodayEnergyPreviewFixtures.snapshot(complete: false))
 }
 
 #Preview("No energy yet · Medium", as: .systemMedium) { TodayEnergyWidget() } timeline: {
-    TodayEnergyEntry(date: TodayEnergyWidgetPreview.date, snapshot: nil)
+    entry(nil)
 }
 
 #Preview("No energy yet · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
-    TodayEnergyEntry(date: TodayEnergyWidgetPreview.date, snapshot: nil)
+    entry(nil)
 }
 
-#Preview("Long name and totals · Medium", as: .systemMedium) { TodayEnergyWidget() } timeline: {
-    TodayEnergyWidgetPreview.entry(cost: 128.45, homeKwh: 1234.5, importKwh: 987.6, exportKwh: 456.7,
-                                   siteName: "Our family's home with a long site name")
+#Preview("Long name and large totals", as: .systemMedium) { TodayEnergyWidget() } timeline: {
+    entry(TodayEnergyPreviewFixtures.snapshot(homeKwh: 1234.5, solarKwh: 456.7, gridNetKwh: 987.6,
+                                            batteryNetKwh: -209.8, siteName: "Our family's home with a long site name"))
 }
 
 #Preview("Fresh → stale → next day", as: .systemMedium) { TodayEnergyWidget() } timeline: {
-    TodayEnergyWidgetPreview.entry()
-    TodayEnergyWidgetPreview.entry(displayDate: TodayEnergyWidgetPreview.date.addingTimeInterval(2 * 60 * 60))
-    TodayEnergyWidgetPreview.entry(displayDate: TodayEnergyWidgetPreview.date.addingTimeInterval(24 * 60 * 60))
+    entry()
+    entry(at: TodayEnergyPreviewFixtures.date.addingTimeInterval(2 * 3600))
+    entry(at: TodayEnergyPreviewFixtures.date.addingTimeInterval(24 * 3600))
 }
 #endif

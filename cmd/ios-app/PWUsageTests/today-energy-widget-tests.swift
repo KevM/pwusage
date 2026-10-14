@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import SwiftUI
 @testable import PWUsage
 
 @Suite("Today's Energy Widget")
@@ -7,7 +8,7 @@ struct TodayEnergyWidgetTests {
     let now = Date(timeIntervalSince1970: 1_792_008_000)
     func snapshot() -> TodayEnergySnapshot {
         TodayEnergySnapshot(siteID: "home", siteName: "Home", timezone: "America/Chicago", fetchedAt: now,
-            energy: TodayEnergy(localDate: TodayEnergySnapshot.localDate(now, timezone: "America/Chicago"), homeKwh: 12, importKwh: 4, exportKwh: 2, estimatedCost: -0.5, currency: "USD", energyDataThrough: now))
+            energy: TodayEnergy(localDate: TodayEnergySnapshot.localDate(now, timezone: "America/Chicago"), homeKwh: 12, solarKwh: 18, gridNetKwh: -4, batteryNetKwh: -2, energyDataThrough: now))
     }
     @Test func sourceAgeAndSiteMidnightControlAvailability() {
         let value = snapshot()
@@ -38,7 +39,7 @@ struct TodayEnergyWidgetTests {
     }
 
     @MainActor
-    @Test func widgetTracksSelectionAndClearsRevokedAccess() throws {
+    @Test func widgetTracksLiveTotalsSelectionAndRevokedAccess() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = TodayEnergySnapshotStore(fileURL: directory.appendingPathComponent("widget.json"))
@@ -46,25 +47,32 @@ struct TodayEnergyWidgetTests {
         cache.storeSites([MobileSite(id: "home", name: "Home", utility: "Utility")])
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+        if let key = CodingUserInfoKey.pwusageCurrentDate { decoder.userInfo[key] = now }
         let json = """
-        {"version":1,"site":{"id":"home","name":"Home","timezone":"America/Chicago"},
-         "currentBill":{"estimatedCost":100,"currency":"USD","cycleStart":"2026-10-01T00:00:00Z","cycleEnd":"2026-11-01T00:00:00Z","periods":[]},
-         "todayEnergy":{"localDate":"2026-10-14","homeKwh":12,"importKwh":4,"exportKwh":2,"estimatedCost":-0.5,"currency":"USD","energyDataThrough":"2026-10-14T12:00:00Z"},
-         "sources":{"calculatedAt":"2026-10-14T12:00:00Z","energyDataThrough":"2026-10-14T12:00:00Z"}}
+        {"version":1,"site":{"id":"home","name":"Home","timezone":"America/Chicago","localDate":"2026-10-14"},
+         "live":{"solarPower":1000,"loadPower":2000,"batteryPower":500,"gridPower":500},
+         "today":{"homeKwh":12,"solarKwh":18,"gridNetKwh":-6,"batteryNetKwh":-2},"todayComplete":true,
+         "activeTariff":"Off peak","stateOfCharge":78,
+         "sources":{"liveStatusAt":"2026-10-14T19:55:00Z","energyDataThrough":"2026-10-14T19:55:00Z","stateOfChargeAt":"2026-10-14T19:55:00Z"}}
         """
-        let bill = try decoder.decode(MobileBillResponse.self, from: Data(json.utf8))
-        cache.storeBill(bill, at: now)
-        #expect(store.load() == nil) // no selected verified site yet
+        let live = try decoder.decode(MobileLiveResponse.self, from: Data(json.utf8))
+        cache.storeLive(live, at: now)
+        #expect(store.load() == nil)
         cache.selectWidgetSite("home")
-        #expect(store.load()?.energy.estimatedCost == -0.5) // never the cycle's $100
+        #expect(store.load()?.siteID == "home")
+        #expect(store.load()?.energy.homeKwh == 12)
+        #expect(store.load()?.energy.solarKwh == 18)
+        #expect(store.load()?.energy.gridNetKwh == -6)
+        #expect(store.load()?.energy.batteryNetKwh == -2)
+        #expect(store.load()?.stateOfCharge(at: now) == 78)
         cache.selectWidgetSite("other")
         #expect(store.load() == nil)
         cache.selectWidgetSite("home")
         #expect(store.load() != nil)
         cache.storeSites([])
         #expect(store.load() == nil)
-        cache.storeBill(bill, at: now)
-        #expect(store.load() == nil) // late or unauthorized writes cannot repopulate
+        cache.storeLive(live, at: now)
+        #expect(store.load() == nil)
         cache.clear()
         #expect(store.load() == nil)
     }
@@ -73,10 +81,83 @@ struct TodayEnergyWidgetTests {
         let start = try #require(ISO8601DateFormatter().date(from: "2026-11-01T05:00:00Z"))
         let source = start.addingTimeInterval(24 * 3600)
         let value = TodayEnergySnapshot(siteID: "home", siteName: "Home", timezone: "America/Chicago", fetchedAt: start,
-            energy: TodayEnergy(localDate: "2026-11-01", homeKwh: 1, importKwh: 1, exportKwh: 0, estimatedCost: nil,
-                                currency: "USD", energyDataThrough: source))
+            energy: TodayEnergy(localDate: "2026-11-01", homeKwh: 1, solarKwh: 0, gridNetKwh: 1, batteryNetKwh: 0, energyDataThrough: source))
         #expect(value.nextMidnight == start.addingTimeInterval(25 * 3600))
         #expect(value.availability(at: source) == .current)
         #expect(value.availability(at: start.addingTimeInterval(25 * 3600)) == .missing)
+    }
+
+    @Test func batteryChargeUsesItsOwnSourceAndExpiresIndependently() {
+        var value = snapshot()
+        value.batteryStateOfCharge = 78
+        value.batteryStateOfChargeAt = now.addingTimeInterval(-2 * 3600)
+        #expect(value.stateOfCharge(at: now) == 78)
+        #expect(value.stateOfCharge(at: now.addingTimeInterval(1)) == nil)
+        #expect(value.availability(at: now.addingTimeInterval(1)) == .current)
+        value.batteryStateOfChargeAt = now.addingTimeInterval(1)
+        #expect(value.stateOfCharge(at: now) == nil)
+        value.batteryStateOfChargeAt = nil
+        #expect(value.stateOfCharge(at: now) == nil)
+        value.batteryStateOfChargeAt = now
+        value.batteryStateOfCharge = 101
+        #expect(value.stateOfCharge(at: now) == nil)
+    }
+
+    @MainActor
+    @Test func appAndWidgetShareEnergyGlyphsAndDirectionLabels() {
+        let tiles = TodayEnergyPresentation.tiles(homeKwh: 12, solarKwh: 18, gridNetKwh: -6, batteryNetKwh: -2,
+                                                  compact: true, showsStateOfCharge: true, stateOfCharge: 78)
+        #expect(tiles.map(\.title) == ["Home", "Solar", "Grid", "Battery"])
+        #expect(tiles.map(\.symbol) == ["house.fill", "sun.max.fill", "powerplug", "battery.75percent"])
+        #expect(tiles[2].value == DashboardPresentation.signedGridEnergy(-6))
+        #expect(tiles[2].detail == "Net export")
+        #expect(tiles[3].value == DashboardPresentation.signedBatteryEnergy(-2))
+        #expect(tiles[3].detail == "Net charge")
+        #expect(tiles[3].spokenRole == "Battery charge 78 percent")
+        let unknown = TodayEnergyPresentation.tiles(homeKwh: 12, solarKwh: 18, gridNetKwh: 6, batteryNetKwh: 2,
+                                                    showsStateOfCharge: true)
+        #expect(unknown[2].detail == "Net import")
+        #expect(unknown[3].detail == "Net discharge")
+        #expect(unknown[3].symbol == "battery.0percent")
+        #expect(unknown[3].spokenRole == "Battery charge unknown")
+    }
+
+    @MainActor
+    @Test func renderActualWidgetContentForVisualInspection() throws {
+        let fixtures: [(String, TodayEnergySnapshot?)] = [
+            ("current", TodayEnergyPreviewFixtures.snapshot()),
+            ("stale", TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600)),
+            ("unknown-charge", TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
+            ("partial", TodayEnergyPreviewFixtures.snapshot(complete: false)),
+            ("long-name", TodayEnergyPreviewFixtures.snapshot(homeKwh: 1234.5, solarKwh: 456.7, gridNetKwh: 987.6,
+                batteryNetKwh: -209.8, siteName: "Our family's home with a long site name")),
+            ("missing", nil)
+        ]
+        for compact in [true, false] {
+            for dark in [false, true] {
+                for (name, snapshot) in fixtures {
+                    let view = TodayEnergyWidgetContent(snapshot: snapshot, date: TodayEnergyPreviewFixtures.date, compact: compact)
+                        .padding(16)
+                        .frame(width: 338, height: compact ? 158 : 354)
+                        .background(Color(uiColor: .secondarySystemGroupedBackground))
+                        .environment(\.colorScheme, dark ? .dark : .light)
+                    let renderer = ImageRenderer(content: view)
+                    renderer.scale = 2
+                    let png = try #require(renderer.uiImage?.pngData())
+                    let output = URL(fileURLWithPath: NSTemporaryDirectory())
+                        .appendingPathComponent("today-widget-\(compact ? "medium" : "large")-\(dark ? "dark" : "light")-\(name).png")
+                    try png.write(to: output)
+                    print("Today widget render: \(output.path)")
+                }
+            }
+        }
+    }
+
+    @Test func batteryGlyphChargeBandsMatchApp() {
+        for charge in [0.0, 12, 13, 37, 38, 62, 63, 87, 88, 100] {
+            #expect(TodayEnergyPresentation.batterySymbol(charge)
+                    == DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: charge))
+        }
+        #expect(TodayEnergyPresentation.batterySymbol(nil) == "battery.0percent")
     }
 }

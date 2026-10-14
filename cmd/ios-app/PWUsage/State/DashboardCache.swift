@@ -51,11 +51,17 @@ final class DashboardCache {
 
     private func publishWidget() {
         guard let widgetStore else { return }
-        if let siteID = widgetSiteID, let reading = snapshot.bill[siteID],
-           let energy = reading.response.todayEnergy {
-            let site = reading.response.site
+        if let siteID = widgetSiteID, let reading = snapshot.live[siteID] {
+            let response = reading.response
+            let site = response.site
+            let energy = TodayEnergy(localDate: site.localDate, homeKwh: response.today.homeKwh,
+                                     solarKwh: response.today.solarKwh, gridNetKwh: response.today.gridNetKwh,
+                                     batteryNetKwh: response.today.batteryNetKwh, activeTariff: response.activeTariff,
+                                     todayComplete: response.todayComplete, energyDataThrough: response.sources.energyDataThrough)
             let value = TodayEnergySnapshot(siteID: siteID, siteName: site.name, timezone: site.timezone,
-                                            fetchedAt: reading.savedAt, energy: energy)
+                                            fetchedAt: reading.savedAt, energy: energy,
+                                            batteryStateOfCharge: response.stateOfCharge,
+                                            batteryStateOfChargeAt: response.sources.stateOfChargeAt)
             do { try widgetStore.save(value) }
             catch { widgetStore.clear() }
         } else {
@@ -67,13 +73,13 @@ final class DashboardCache {
     func storeLive(_ response: MobileLiveResponse, at date: Date) {
         guard snapshot.sites.contains(where: { $0.id == response.site.id }) else { return }
         snapshot.live[response.site.id] = Reading(response: response, savedAt: date)
+        if response.site.id == widgetSiteID { publishWidget() }
         persist()
     }
 
     func storeBill(_ response: MobileBillResponse, at date: Date) {
         guard snapshot.sites.contains(where: { $0.id == response.site.id }) else { return }
         snapshot.bill[response.site.id] = Reading(response: response, savedAt: date)
-        if response.site.id == widgetSiteID { publishWidget() }
         persist()
     }
 

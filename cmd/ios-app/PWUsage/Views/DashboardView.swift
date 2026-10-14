@@ -169,12 +169,10 @@ struct DashboardView: View {
             } else if let today = live?.today {
                 StatusCard {
                     VStack(alignment: .leading, spacing: 16) {
-                        adaptiveGrid([
-                            MetricTile(title: "Home", value: DashboardPresentation.energy(today.homeKwh), symbol: "house.fill", tint: .blue),
-                            MetricTile(title: "Solar", value: DashboardPresentation.energy(today.solarKwh), symbol: "sun.max.fill", tint: .orange),
-                            MetricTile(title: "Grid", value: DashboardPresentation.signedGridEnergy(today.gridNetKwh), detail: today.gridNetKwh > 0 ? "Net import" : (today.gridNetKwh < 0 ? "Net export" : "Balanced"), symbol: "powerplug", tint: .gray),
-                            MetricTile(title: "Battery", value: DashboardPresentation.signedBatteryEnergy(today.batteryNetKwh), detail: today.batteryNetKwh > 0 ? "Net discharge" : (today.batteryNetKwh < 0 ? "Net charge" : "Balanced"), symbol: "battery.100percent", tint: .green)
-                        ])
+                        adaptiveGrid(TodayEnergyPresentation.tiles(
+                            homeKwh: today.homeKwh, solarKwh: today.solarKwh,
+                            gridNetKwh: today.gridNetKwh, batteryNetKwh: today.batteryNetKwh
+                        ))
                         if live?.activeTariff == nil || live?.todayComplete == false {
                             Divider()
                             VStack(alignment: .leading, spacing: 6) {
@@ -362,45 +360,6 @@ private struct StatusCard<Content: View>: View {
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
             .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.045), lineWidth: 1))
-    }
-}
-
-private struct MetricTile: View {
-    let title: String
-    let value: String
-    var detail: String? = nil
-    let symbol: String
-    let tint: Color
-    var isMuted = false
-    var numericValue: Double? = nil
-    var spokenRole: String? = nil
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: symbol)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(isMuted ? .secondary : tint)
-                .labelStyle(.titleAndIcon)
-            Text(value)
-                .contentTransition(reduceMotion || numericValue == nil ? .identity : .numericText(value: numericValue ?? 0))
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: numericValue)
-                .font(.title3.weight(.bold))
-                .monospacedDigit()
-                .foregroundStyle(isMuted ? .secondary : .primary)
-                .minimumScaleFactor(0.8)
-                .lineLimit(1)
-            if let detail {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
-        .padding(12)
-        .background(isMuted ? Color(uiColor: .tertiarySystemGroupedBackground) : tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel([title, value, detail, spokenRole].compactMap { $0 }.joined(separator: ", "))
     }
 }
 

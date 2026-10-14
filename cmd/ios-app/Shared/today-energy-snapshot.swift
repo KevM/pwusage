@@ -4,22 +4,34 @@ import Foundation
 struct TodayEnergy: Codable, Equatable, Sendable {
     var localDate: String
     var homeKwh: Double
-    var importKwh: Double
-    var exportKwh: Double
-    var estimatedCost: Double?
-    var currency: String
+    var solarKwh: Double
+    var gridNetKwh: Double
+    var batteryNetKwh: Double
+    var activeTariff: String? = nil
+    var todayComplete = true
     var energyDataThrough: Date?
 }
 
 struct TodayEnergySnapshot: Codable, Equatable, Sendable {
     static let widgetKind = "TodayEnergy"
-    static let staleAfter: TimeInterval = 60 * 60
-    var version = 1
+    static let staleAfter: TimeInterval = 30 * 60
+    var version = 2
     let siteID: String
     let siteName: String
     let timezone: String
     let fetchedAt: Date
     var energy: TodayEnergy
+    var batteryStateOfCharge: Double? = nil
+    var batteryStateOfChargeAt: Date? = nil
+
+    /// SOC freshness is independent of the daily energy source. Match the app's two-hour rule.
+    func stateOfCharge(at date: Date) -> Double? {
+        guard let charge = batteryStateOfCharge, charge.isFinite, (0...100).contains(charge),
+              let source = batteryStateOfChargeAt else { return nil }
+        let age = date.timeIntervalSince(source)
+        return age >= 0 && age <= 2 * 3600 ? charge : nil
+    }
+
 
     enum Availability { case current, stale, missing }
 
@@ -33,12 +45,12 @@ struct TodayEnergySnapshot: Codable, Equatable, Sendable {
     }
 
     func availability(at date: Date) -> Availability {
-        guard version == 1, TimeZone(identifier: timezone) != nil,
+        guard version == 2, TimeZone(identifier: timezone) != nil,
               energy.localDate == Self.localDate(date, timezone: timezone),
               let source = energy.energyDataThrough, source <= date, fetchedAt <= date,
               Self.localDate(source, timezone: timezone) == energy.localDate,
-              [energy.homeKwh, energy.importKwh, energy.exportKwh].allSatisfy({ $0.isFinite && $0 >= 0 }),
-              energy.estimatedCost?.isFinite != false else { return .missing }
+              [energy.homeKwh, energy.solarKwh].allSatisfy({ $0.isFinite && $0 >= 0 }),
+              [energy.gridNetKwh, energy.batteryNetKwh].allSatisfy(\.isFinite) else { return .missing }
         return date.timeIntervalSince(source) > Self.staleAfter ? .stale : .current
     }
 
@@ -57,13 +69,13 @@ struct TodayEnergySnapshotStore {
     static func shared() -> Self? {
         guard let group = Bundle.main.object(forInfoDictionaryKey: "PWUSAGE_APP_GROUP") as? String,
               let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
-        return Self(fileURL: directory.appendingPathComponent("today-energy-v1.json"))
+        return Self(fileURL: directory.appendingPathComponent("today-energy-v2.json"))
     }
 
     func load() -> TodayEnergySnapshot? {
         guard let data = try? Data(contentsOf: fileURL),
               let value = try? JSONDecoder().decode(TodayEnergySnapshot.self, from: data),
-              value.version == 1 else { return nil }
+              value.version == 2 else { return nil }
         return value
     }
 

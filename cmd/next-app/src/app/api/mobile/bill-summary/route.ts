@@ -1,4 +1,3 @@
-import { mobileTodayEnergy } from '@/lib/mobile-today-energy';
 import { NextResponse } from 'next/server';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { SiteRepo } from '@/lib/site-repo';
@@ -99,11 +98,7 @@ export async function GET(request: Request) {
                 }
                 : null;
 
-            // Optional additive summary: failure must not change existing bill behavior.
-            const todayEnergy = await mobileTodayEnergy(energyRepo, siteId, site.timezone, currencyCode || 'USD', now)
-                .catch(() => null);
             return NextResponse.json({
-                todayEnergy,
                 version: MOBILE_DASHBOARD_CONTRACT_VERSION,
                 site: { id: site.id, name: site.name, timezone: site.timezone },
                 currentBill: {

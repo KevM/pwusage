@@ -170,12 +170,11 @@ enum DashboardPresentation {
     }
 
     static func energy(_ kWh: Double) -> String {
-        String(format: "%.1f kWh", kWh)
+        TodayEnergyPresentation.energy(kWh)
     }
 
     static func signedGridEnergy(_ kWh: Double) -> String {
-        let direction = kWh > 0 ? "↓ " : (kWh < 0 ? "↑ " : "")
-        return direction + energy(abs(kWh))
+        TodayEnergyPresentation.signedEnergy(kWh)
     }
 
     static func tariffBalance(_ netGridKwh: Double) -> String {
@@ -184,8 +183,7 @@ enum DashboardPresentation {
     }
 
     static func signedBatteryEnergy(_ kWh: Double) -> String {
-        let direction = kWh > 0 ? "↓ " : (kWh < 0 ? "↑ " : "")
-        return direction + energy(abs(kWh))
+        TodayEnergyPresentation.signedEnergy(kWh)
     }
 
     static func currency(_ amount: Double?, code: String, locale: Locale = .current) -> String {

@@ -158,36 +158,38 @@ upstream cache freshness once that window expires.
 ## Today's Energy widget
 
 The embedded `PWUsageWidgets` extension supports medium and large Home Screen widgets.
-It shows consumption, gross grid import/export, estimated net electricity cost (including
-negative credits), the selected site, and the energy sample's update time in the site's
-local timezone. Tap it to open pwusage. Values are today so far; cost uses the existing
-TOU billing calculation netted independently for the local day, excludes fixed charges,
-and is not the billing-cycle estimate.
+It mirrors the app's **Today so far** section: Home, Solar, net Grid and net Battery
+energy, using the same shared metric tiles, tinted backgrounds, glyphs, numeric
+formatting and import/export/charge/discharge labels. The battery glyph's fill conveys
+state of charge using the app's charge bands; VoiceOver announces the exact percentage.
+Unknown charge uses the empty outline and an explicit unknown accessibility label.
+Large widgets also show the active tariff and missing-interval notice. Both sizes show
+the site and last energy update time. Tap the widget to open pwusage.
 
-Deploy the additive `todayEnergy` response in `/api/mobile/bill-summary` with this app.
-The server reuses `sumTodayRows` over raw five-minute samples for gross import/export
-(15-minute net averages lose opposing flows) and `getUsageByTOU` for daily pricing.
-This adds raw-today and daily-pricing queries to the bill endpoint, at the app's existing bill cadence;
-there are no additional Tesla requests. Older servers still work with the app, but the
-widget displays unavailable until this summary is deployed. Optional summary failures
-leave the existing bill response intact.
+The widget uses the app's existing `MobileLiveResponse.today` and source timestamps.
+It needs no additional endpoint or server deployment, makes no network requests, and
+adds no Tesla requests or daily cost calculations. Estimated cost is deferred. Today
+energy is **net** for Grid/Battery, with the same arrows and sign conventions as the
+app; it does not infer gross import/export from net values.
 
-The app writes only presentation totals to an atomic, versioned JSON file in its App
-Group, with protection until the device's first unlock. No cookies, account credentials,
-Solcast keys, or battery commands enter this container. The extension only reads it.
-Debug and Release use separate groups, preventing beta snapshots appearing in a
-production widget. App-private caches and polling behavior are preserved. Site changes,
-revoked access, logout and session expiry clear or replace shared data and request a
-WidgetKit reload; an in-flight invalidated app request cannot repopulate it. WidgetKit
-may retain a previously rendered view until it honors the reload request.
+The app writes only presentation totals and timestamped SOC to an atomic, versioned
+JSON file in its App Group, with protection until the device's first unlock. No cookies,
+account credentials, Solcast keys, or battery commands enter this container. The
+extension only reads it. Debug and Release use separate groups. App-private caches and
+polling behavior are preserved. Site changes, revoked access, logout and session expiry
+clear or replace shared data and request a WidgetKit reload; an in-flight invalidated
+app request cannot repopulate it. WidgetKit may retain a previously rendered view until
+it honors the reload request.
 
-The app publishes after normal successful bill refreshes (normally 30 minutes while
-foregrounded, or an explicit refresh). The widget does not independently authenticate
-or fetch data. It asks WidgetKit to reread the cache after 30 minutes and schedules stale
-and local-midnight entries. Data over one hour old is explicitly stale; previous-day,
-future-dated, corrupt, unsupported, or missing snapshots show unavailable. Open the app
-to refresh. WidgetKit refresh dates are requests, not guaranteed deadlines; the displayed
-source time makes delayed updates visible. There is no new background polling promise.
+The app publishes after normal successful live refreshes (normally five minutes while
+foregrounded, or an explicit refresh). WidgetKit is asked to reread the cache after 30
+minutes, with scheduled entries for energy staleness, SOC expiry and site-local midnight.
+Energy older than 30 minutes is labeled stale, matching the app's Today section. SOC
+expires independently after two hours, matching the app's existing source validation.
+Prior-day, future-dated, corrupt, unsupported or missing snapshots show unavailable.
+The revised snapshot is version 2; old snapshots fail closed. Open the app to refresh.
+WidgetKit refresh dates are requests, not guaranteed deadlines; the displayed source
+time makes delayed updates visible. There is no new background polling promise.
 See [Apple's refresh guidance](https://developer.apple.com/documentation/widgetkit/keeping-a-widget-up-to-date).
 
 ### Apple and Xcode setup
@@ -218,9 +220,9 @@ sharing authentication or command handling with this widget. ActivityKit is not 
 ### Widget previews in Xcode
 
 Open `PWUsageWidgets/today-energy-widget-previews.swift` in the generated project
-and show the Xcode Canvas using a Debug configuration. Named previews cover current
-and stale data in both widget sizes, a negative export credit, unknown cost, missing
-data in both sizes, and a long site name with large totals. The timeline preview lets
-you advance from fresh to stale to the following local day. All fixtures use a fixed
-clock and local data; no sign-in, App Group setup, or server access is required to
-preview the layouts.
+and show the Xcode Canvas using a Debug configuration. Named previews cover both
+sizes, import/discharge and export/charge, full/low/unknown/stale SOC, stale energy,
+missing intervals/data, long names/large totals and a fresh-to-stale-to-next-day timeline.
+Fixtures use a fixed clock and local data; no sign-in, App Group setup or server access
+is required. The native widget tests also render the actual shared widget content in
+both sizes and light/dark appearances for visual inspection.
