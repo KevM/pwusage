@@ -13,7 +13,7 @@ struct MetricTile: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 2 : 8) {
+        VStack(alignment: compact ? .center : .leading, spacing: compact ? 2 : 8) {
             Label(title, systemImage: symbol)
                 .font((compact ? Font.caption2 : .subheadline).weight(.medium))
                 .foregroundStyle(isMuted ? .secondary : tint)
@@ -32,7 +32,8 @@ struct MetricTile: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: compact ? 0 : 76, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: compact ? 38 : 76,
+               maxHeight: compact ? .infinity : nil, alignment: compact ? .center : .leading)
         .padding(.horizontal, compact ? 6 : 12)
         .padding(.vertical, compact ? 4 : 12)
         .background(isMuted ? Color(uiColor: .tertiarySystemGroupedBackground) : tint.opacity(0.07), in: RoundedRectangle(cornerRadius: compact ? 10 : 16, style: .continuous))

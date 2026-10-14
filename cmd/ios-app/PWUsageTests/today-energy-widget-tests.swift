@@ -144,6 +144,17 @@ struct TodayEnergyWidgetTests {
         let smallOutput = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("today-widget-small-medium.png")
         try smallPNG.write(to: smallOutput)
         print("Today widget render: \(smallOutput.path)")
+        let largerTextView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                                                      date: TodayEnergyPreviewFixtures.date, compact: true)
+            .padding(10).frame(width: 338, height: 158)
+            .background(Color(uiColor: .secondarySystemGroupedBackground))
+            .environment(\.colorScheme, .light).environment(\.dynamicTypeSize, .xxxLarge)
+        let largerTextRenderer = ImageRenderer(content: largerTextView)
+        largerTextRenderer.scale = 2
+        let largerTextPNG = try #require(largerTextRenderer.uiImage?.pngData())
+        let largerTextOutput = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("today-widget-medium-larger-text.png")
+        try largerTextPNG.write(to: largerTextOutput)
+        print("Today widget render: \(largerTextOutput.path)")
         for compact in [true, false] {
             for dark in [false, true] {
                 for (name, snapshot) in fixtures {

@@ -47,9 +47,18 @@ struct TodayEnergyWidgetContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 3 : 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Today so far").font((compact ? Font.footnote : .title3).weight(.bold))
+                Text(compact ? "Today" : "Today so far").font((compact ? Font.footnote : .title3).weight(.bold))
                     .lineLimit(1).layoutPriority(1)
                     .accessibilityAddTraits(.isHeader)
+                if compact, let snapshot, snapshot.availability(at: date) != .missing {
+                    compactUpdate(snapshot)
+                        .font(.caption2).lineLimit(1).minimumScaleFactor(0.8).layoutPriority(1)
+                    if !snapshot.energy.todayComplete {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.caption2).foregroundStyle(.orange)
+                            .accessibilityLabel("Some energy intervals are missing")
+                    }
+                }
                 Spacer(minLength: 0)
                 if let snapshot {
                     Text(snapshot.siteName).font(.caption2).foregroundStyle(.secondary)
@@ -62,25 +71,32 @@ struct TodayEnergyWidgetContent: View {
                     gridNetKwh: snapshot.energy.gridNetKwh, batteryNetKwh: snapshot.energy.batteryNetKwh,
                     compact: compact, showsStateOfCharge: true, stateOfCharge: snapshot.stateOfCharge(at: date)
                 )
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: compact ? 6 : 10), GridItem(.flexible(), spacing: compact ? 6 : 10)],
-                          spacing: compact ? 6 : 10) {
-                    ForEach(tiles.indices, id: \.self) { tiles[$0] }
-                }
-                Spacer(minLength: 0)
-                HStack(spacing: 4) {
-                    if let source = snapshot.energy.energyDataThrough {
-                        let stale = snapshot.availability(at: date) == .stale
-                        Label("\(stale ? "Stale" : "Updated") · \(updatedTime(source, timezone: snapshot.timezone))",
-                              systemImage: stale ? "clock.badge.exclamationmark" : "clock")
-                            .foregroundStyle(stale ? .orange : .secondary)
-                            .lineLimit(1).minimumScaleFactor(0.8)
+                if compact {
+                    VStack(spacing: 6) {
+                        HStack(spacing: 6) { tiles[0]; tiles[1] }
+                            .frame(maxHeight: .infinity)
+                        HStack(spacing: 6) { tiles[2]; tiles[3] }
+                            .frame(maxHeight: .infinity)
                     }
-                    if !snapshot.energy.todayComplete {
-                        Image(systemName: "exclamationmark.triangle")
-                            .foregroundStyle(.orange).accessibilityLabel("Some energy intervals are missing")
+                    .frame(maxHeight: .infinity)
+                } else {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                        ForEach(tiles.indices, id: \.self) { tiles[$0] }
                     }
-                }.font(.caption2)
-                if !compact {
+                    Spacer(minLength: 0)
+                    HStack(spacing: 4) {
+                        if let source = snapshot.energy.energyDataThrough {
+                            let stale = snapshot.availability(at: date) == .stale
+                            Label("\(stale ? "Stale" : "Updated") · \(updatedTime(source, timezone: snapshot.timezone))",
+                                  systemImage: stale ? "clock.badge.exclamationmark" : "clock")
+                                .foregroundStyle(stale ? .orange : .secondary)
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                        }
+                        if !snapshot.energy.todayComplete {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundStyle(.orange).accessibilityLabel("Some energy intervals are missing")
+                        }
+                    }.font(.caption2)
                     if !snapshot.energy.todayComplete {
                         Text("Some energy intervals are missing").font(.caption).foregroundStyle(.secondary)
                     }
@@ -95,12 +111,26 @@ struct TodayEnergyWidgetContent: View {
                 Spacer(minLength: 0)
             }
         }
+        // The medium widget has fixed height; bound text growth while preserving VoiceOver details.
+        .dynamicTypeSize(.xSmall...(compact ? .xLarge : .accessibility5))
     }
 
-    private func updatedTime(_ date: Date, timezone: String) -> String {
+    @ViewBuilder
+    private func compactUpdate(_ snapshot: TodayEnergySnapshot) -> some View {
+        if let source = snapshot.energy.energyDataThrough {
+            let stale = snapshot.availability(at: date) == .stale
+            let time = updatedTime(source, timezone: snapshot.timezone, includesTimezone: false)
+            Label(stale ? "Stale · \(time)" : time,
+                  systemImage: stale ? "clock.badge.exclamationmark" : "clock")
+                .foregroundStyle(stale ? .orange : .secondary)
+                .accessibilityLabel("\(stale ? "Stale. " : "")Updated \(updatedTime(source, timezone: snapshot.timezone))")
+        }
+    }
+
+    private func updatedTime(_ date: Date, timezone: String, includesTimezone: Bool = true) -> String {
         let formatter = DateFormatter()
         formatter.timeZone = TimeZone(identifier: timezone)
-        formatter.dateFormat = "h:mm a z"
+        formatter.dateFormat = includesTimezone ? "h:mm a z" : "h:mm a"
         return formatter.string(from: date)
     }
 }

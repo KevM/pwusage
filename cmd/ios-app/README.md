@@ -163,7 +163,7 @@ energy, using the same shared metric tiles, tinted backgrounds, glyphs, numeric
 formatting and import/export/charge/discharge labels. The battery glyph's fill conveys
 state of charge using the app's charge bands; VoiceOver announces the exact percentage.
 Unknown charge uses the empty outline and an explicit unknown accessibility label.
-Medium widgets keep direction arrows and omit the repeated net-direction captions to give the tiles more room; VoiceOver still reads the full details. Large widgets also show the active tariff and missing-interval notice. Both sizes show
+Medium widgets use a short “Today” headline with the update time inline and center the labels and values in equal-height tiles. They keep direction arrows and omit repeated net-direction captions; VoiceOver still reads the full details. Medium text growth is capped at X Large to fit its fixed height, while large widgets retain the full text-size range. Large widgets also show the active tariff and missing-interval notice. Both sizes show
 the site and last energy update time. Tap the widget to open pwusage.
 
 The widget uses the app's existing `MobileLiveResponse.today` and source timestamps.
