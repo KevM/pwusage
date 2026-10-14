@@ -163,7 +163,7 @@ energy, using the same shared metric tiles, tinted backgrounds, glyphs, numeric
 formatting and import/export/charge/discharge labels. The battery glyph's fill conveys
 state of charge using the app's charge bands; VoiceOver announces the exact percentage.
 Unknown charge uses the empty outline and an explicit unknown accessibility label.
-Large widgets also show the active tariff and missing-interval notice. Both sizes show
+Medium widgets keep direction arrows and omit the repeated net-direction captions to give the tiles more room; VoiceOver still reads the full details. Large widgets also show the active tariff and missing-interval notice. Both sizes show
 the site and last energy update time. Tap the widget to open pwusage.
 
 The widget uses the app's existing `MobileLiveResponse.today` and source timestamps.

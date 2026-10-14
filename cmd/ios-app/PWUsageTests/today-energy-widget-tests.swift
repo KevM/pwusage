@@ -133,11 +133,22 @@ struct TodayEnergyWidgetTests {
                 batteryNetKwh: -209.8, siteName: "Our family's home with a long site name")),
             ("missing", nil)
         ]
+        let smallView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                                               date: TodayEnergyPreviewFixtures.date, compact: true)
+            .padding(10).frame(width: 292, height: 141)
+            .background(Color(uiColor: .secondarySystemGroupedBackground))
+            .environment(\.colorScheme, .light)
+        let smallRenderer = ImageRenderer(content: smallView)
+        smallRenderer.scale = 2
+        let smallPNG = try #require(smallRenderer.uiImage?.pngData())
+        let smallOutput = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("today-widget-small-medium.png")
+        try smallPNG.write(to: smallOutput)
+        print("Today widget render: \(smallOutput.path)")
         for compact in [true, false] {
             for dark in [false, true] {
                 for (name, snapshot) in fixtures {
                     let view = TodayEnergyWidgetContent(snapshot: snapshot, date: TodayEnergyPreviewFixtures.date, compact: compact)
-                        .padding(16)
+                        .padding(compact ? 10 : 16)
                         .frame(width: 338, height: compact ? 158 : 354)
                         .background(Color(uiColor: .secondarySystemGroupedBackground))
                         .environment(\.colorScheme, dark ? .dark : .light)

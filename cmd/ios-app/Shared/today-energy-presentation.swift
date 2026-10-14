@@ -45,9 +45,10 @@ struct TodayEnergyWidgetContent: View {
     var compact = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 4 : 12) {
+        VStack(alignment: .leading, spacing: compact ? 3 : 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("Today so far").font((compact ? Font.footnote : .title3).weight(.bold))
+                    .lineLimit(1).layoutPriority(1)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 0)
                 if let snapshot {
@@ -61,8 +62,8 @@ struct TodayEnergyWidgetContent: View {
                     gridNetKwh: snapshot.energy.gridNetKwh, batteryNetKwh: snapshot.energy.batteryNetKwh,
                     compact: compact, showsStateOfCharge: true, stateOfCharge: snapshot.stateOfCharge(at: date)
                 )
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: compact ? 5 : 10), GridItem(.flexible(), spacing: compact ? 5 : 10)],
-                          spacing: compact ? 5 : 10) {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: compact ? 6 : 10), GridItem(.flexible(), spacing: compact ? 6 : 10)],
+                          spacing: compact ? 6 : 10) {
                     ForEach(tiles.indices, id: \.self) { tiles[$0] }
                 }
                 Spacer(minLength: 0)

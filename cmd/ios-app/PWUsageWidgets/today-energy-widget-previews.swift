@@ -61,4 +61,10 @@ private func entry(_ snapshot: TodayEnergySnapshot? = TodayEnergyPreviewFixtures
     entry(at: TodayEnergyPreviewFixtures.date.addingTimeInterval(2 * 3600))
     entry(at: TodayEnergyPreviewFixtures.date.addingTimeInterval(24 * 3600))
 }
+#Preview("Small device · Medium") {
+    TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(), date: TodayEnergyPreviewFixtures.date, compact: true)
+        .padding(10).frame(width: 292, height: 141)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+}
 #endif

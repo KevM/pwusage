@@ -42,6 +42,7 @@ struct TodayEnergyWidgetView: View {
     @Environment(\.widgetFamily) private var family
     var body: some View {
         TodayEnergyWidgetContent(snapshot: entry.snapshot, date: entry.date, compact: family == .systemMedium)
+            .padding(family == .systemMedium ? 10 : 16)
             .widgetURL(URL(string: "pwusage://dashboard"))
             .privacySensitive()
             .containerBackground(Color(uiColor: .secondarySystemGroupedBackground), for: .widget)
@@ -57,5 +58,6 @@ struct TodayEnergyWidget: Widget {
         .configurationDisplayName("Today's Energy")
         .description("Home, solar, net grid and battery energy today, with the battery charge glyph.")
         .supportedFamilies([.systemMedium, .systemLarge])
+        .contentMarginsDisabled()
     }
 }
