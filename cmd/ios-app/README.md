@@ -213,3 +213,14 @@ See [Apple's refresh guidance](https://developer.apple.com/documentation/widgetk
 The shared `TodayEnergy` presentation model/store lives outside app UI and networking.
 Future Battery Hold Live Activities can add their own state contract and lifecycle without
 sharing authentication or command handling with this widget. ActivityKit is not added.
+
+
+### Widget previews in Xcode
+
+Open `PWUsageWidgets/today-energy-widget-previews.swift` in the generated project
+and show the Xcode Canvas using a Debug configuration. Named previews cover current
+and stale data in both widget sizes, a negative export credit, unknown cost, missing
+data in both sizes, and a long site name with large totals. The timeline preview lets
+you advance from fresh to stale to the following local day. All fixtures use a fixed
+clock and local data; no sign-in, App Group setup, or server access is required to
+preview the layouts.

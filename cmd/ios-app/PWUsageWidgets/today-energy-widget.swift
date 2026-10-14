@@ -97,7 +97,3 @@ struct TodayEnergyWidget: Widget {
         .supportedFamilies([.systemMedium, .systemLarge])
     }
 }
-
-#Preview(as: .systemMedium) { TodayEnergyWidget() } timeline: {
-    TodayEnergyEntry(date: .now, snapshot: nil)
-}
