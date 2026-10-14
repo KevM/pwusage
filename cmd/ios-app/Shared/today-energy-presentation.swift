@@ -54,7 +54,7 @@ struct TodayEnergyWidgetContent: View {
     var compact = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 3 : 8) {
+        VStack(alignment: .leading, spacing: compact ? 3 : 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(compact ? "Today" : "Today so far").font((compact ? Font.footnote : .title3).weight(.bold))
                     .lineLimit(1).layoutPriority(1)
@@ -82,6 +82,7 @@ struct TodayEnergyWidgetContent: View {
                 ).map { original in
                     var tile = original
                     tile.reducedPadding = !compact
+                    tile.showsDetail = compact
                     return tile
                 }
                 if compact {
@@ -98,25 +99,16 @@ struct TodayEnergyWidgetContent: View {
                     }
                     todayCost(snapshot)
                     Spacer(minLength: 0)
-                    HStack(spacing: 4) {
-                        if let source = snapshot.energy.energyDataThrough {
-                            let stale = snapshot.availability(at: date) == .stale
-                            Label("\(stale ? "Stale" : "Updated") · \(updatedTime(source, timezone: snapshot.timezone))",
-                                  systemImage: stale ? "clock.badge.exclamationmark" : "clock")
-                                .foregroundStyle(stale ? .orange : .secondary)
-                                .lineLimit(1).minimumScaleFactor(0.8)
-                        }
+                    HStack(spacing: 6) {
+                        compactUpdate(snapshot)
+                        Spacer(minLength: 0)
                         if !snapshot.energy.todayComplete {
-                            Image(systemName: "exclamationmark.triangle")
-                                .foregroundStyle(.orange).accessibilityLabel("Some energy intervals are missing")
+                            Label("Partial data", systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.orange)
+                                .accessibilityLabel("Some energy intervals are missing")
                         }
-                    }.font(.caption2)
-                    if !snapshot.energy.todayComplete {
-                        Text("Some energy intervals are missing").font(.caption).foregroundStyle(.secondary)
                     }
-                    Label(snapshot.energy.activeTariff.map { "Active tariff · \($0)" } ?? "No active tariff is configured",
-                          systemImage: snapshot.energy.activeTariff == nil ? "info.circle" : "tag")
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .font(.caption2).lineLimit(1).minimumScaleFactor(0.8)
                 }
             } else {
                 Spacer(minLength: 0)
@@ -130,25 +122,32 @@ struct TodayEnergyWidgetContent: View {
     }
 
     private func todayCost(_ snapshot: TodayEnergySnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text("Today's Cost").font(.subheadline.weight(.semibold))
-                Spacer(minLength: 4)
-                Text("Estimated").font(.caption2).foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if let cost = snapshot.todayCost, cost.isValid {
+                    Text(money(cost.netCost, currency: cost.currency))
+                        .font(.title2.weight(.bold)).monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                        .accessibilityLabel("Estimated net cost \(money(cost.netCost, currency: cost.currency))")
+                } else {
+                    Text("—").font(.title2.weight(.bold))
+                        .accessibilityLabel("Cost unavailable")
+                }
             }
             if let cost = snapshot.todayCost, cost.isValid {
-                Text(money(cost.netCost, currency: cost.currency))
-                    .font(.title2.weight(.bold)).monospacedDigit()
-                    .lineLimit(1).minimumScaleFactor(0.6)
-                    .accessibilityLabel("Net cost \(money(cost.netCost, currency: cost.currency))")
                 Text("Import \(money(cost.importCharges, currency: cost.currency)) · Export \(money(-cost.exportCredits, currency: cost.currency))")
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                     .lineLimit(1).minimumScaleFactor(0.65)
                     .accessibilityLabel("Import charges \(money(cost.importCharges, currency: cost.currency)). Export credits \(money(cost.exportCredits, currency: cost.currency)). Netted by tariff period.")
-            } else {
-                Text("Cost unavailable").font(.caption).foregroundStyle(.secondary)
             }
+            Text("Estimated").font(.caption2).foregroundStyle(.secondary)
         }
+        .padding(12)
+        .background(Color(uiColor: .tertiarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 

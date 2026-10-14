@@ -9,6 +9,7 @@ struct MetricTile: View {
     var compact = false
     var prominentValue = false
     var reducedPadding = false
+    var showsDetail = true
     var symbolPrefix: String? = nil
     var isMuted = false
     var numericValue: Double? = nil
@@ -29,7 +30,7 @@ struct MetricTile: View {
                 .foregroundStyle(isMuted ? .secondary : .primary)
                 .minimumScaleFactor(prominentValue ? 0.6 : 0.8)
                 .lineLimit(1)
-            if let detail, !compact {
+            if let detail, !compact, showsDetail {
                 Text(detail)
                     .font(compact ? .system(size: 9) : .caption)
                     .foregroundStyle(.secondary)
