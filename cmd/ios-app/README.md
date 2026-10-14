@@ -220,8 +220,15 @@ sharing authentication or command handling with this widget. ActivityKit is not 
 
 ### Widget previews in Xcode
 
-Open `PWUsageWidgets/today-energy-widget-previews.swift` in the generated project
-and show the Xcode Canvas using a Debug configuration. Named previews cover both
+For medium/large widgets, open `PWUsageWidgets/today-energy-widget-previews.swift`.
+For small widgets, open `PWUsageWidgets/today-energy-metric-widget-previews.swift`.
+Show the Xcode Canvas using a Debug configuration and an iPhone simulator destination.
+The small file starts with an **All four small choices · Layout** board and an individual
+battery layout preview, which render the actual content without WidgetKit/App Intents
+preview hosting. Its **Small · Home/Solar/Grid/Battery** previews use `.systemSmall`
+and the configurable `TodayEnergyMetricWidget`. Do not select Small for a preview of
+`TodayEnergyWidget`: that separate widget intentionally supports medium and large only.
+Run `./generate.sh` and reopen the generated project if the new file is not in Xcode. Named previews cover both
 sizes, import/discharge and export/charge, full/low/unknown/stale SOC, stale energy,
 missing intervals/data, long names/large totals and a fresh-to-stale-to-next-day timeline.
 Fixtures use a fixed clock and local data; no sign-in, App Group setup or server access

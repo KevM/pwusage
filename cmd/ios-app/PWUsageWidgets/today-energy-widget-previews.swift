@@ -67,34 +67,4 @@ private func entry(_ snapshot: TodayEnergySnapshot? = TodayEnergyPreviewFixtures
         .background(Color(uiColor: .secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 22))
 }
-
-#Preview("Small · Home", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-    TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: TodayEnergyPreviewFixtures.snapshot(), metric: .home)
-}
-
-#Preview("Small · Solar", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-    TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: TodayEnergyPreviewFixtures.snapshot(), metric: .solar)
-}
-
-#Preview("Small · Grid", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-    TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: TodayEnergyPreviewFixtures.snapshot(), metric: .grid)
-}
-
-#Preview("Small · Battery", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-    TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: TodayEnergyPreviewFixtures.snapshot(), metric: .battery)
-}
-
-#Preview("Small · Stale grid", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-    TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date,
-                          snapshot: TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600), metric: .grid)
-}
-
-#Preview("Small · Unknown SOC", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-    TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date,
-                          snapshot: TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil), metric: .battery)
-}
-
-#Preview("Small · No data", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-    TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: nil, metric: .solar)
-}
 #endif
