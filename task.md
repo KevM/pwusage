@@ -805,3 +805,42 @@ Validation: 1,166 tests passed / one existing skip; lint and production build pa
 ## Compact flag-on Dev timeout repair
 
 Harrison's site and live-data requests hit Dev's 10-second runtime limit after enabling compact reads. A mixed monthly read performed 31,684 timezone conversions for 6,336 raw samples; projected overlap checks recomputed local midnight per sample and summary. Precompute validated scalar/coverage day bounds and reuse sorted sample day boundaries during rollup. Regression retains exact totals and bounds conversions below 100. All 1,167 tests passed / one existing skip, lint and build passed; independent reader review found no blockers. Dev billing read measured about 0.8 seconds after the change versus about 5 seconds before. Flag remains scoped to this PR preview; raw samples retained. Deployment/page verification follows.
+
+## Daily retention archival (2026-10-07)
+- [x] Inspect landed #135 and approve archive direction.
+- [x] Record design and implementation plan.
+- [x] Implement budgeted archival orchestration and durable controls/retries.
+- [x] Replace destructive cleanup route; preserve tags and tariff history.
+- [x] Verify private PostgreSQL lifecycle and hosted Dev rehearsal; restore all raw samples and pause.
+- [x] Run full tests (1,197 passed, one skipped), lint and build; commit verified work.
+- [ ] Production activation (separate first-trim approval).
+
+# Archive safety follow-up (2026-10-09)
+
+- [x] Control revision guards inside archive/trim transactions.
+- [x] Repair and require synthetic PostgreSQL CI tests; late-sample regression.
+- [x] Bounded reviewed restoration command and flag-off compatibility.
+- [x] Explicit missing-pricing state for web/mobile/TRMNL billing.
+- [x] Retention transition, capacity, staged rollout and rollback documentation.
+- [x] Full tests, lint, build, final review and commit.
+
+
+Verification: 1,225 tests passed, one unrelated existing skip, including all 73
+synthetic PostgreSQL archive/recovery cases. CI now runs this fixture through
+`npm run test:compact`; normal unit-only runs still skip it without a private
+socket. Lint passed with three pre-existing navigation warnings; TypeScript
+passed. Production build passed using `npm run build -- --webpack`; the default
+Turbopack build failed its local worker port binding even with escalation.
+
+Independent safety review identified a first-prune backend-selection race and
+missing-pricing masking corruption in another day. Both were reproduced and
+fixed: selection/raw queries now share per-site locks and the same transaction
+client; all metadata/detail integrity checks precede typed pricing unavailability.
+The reviewer rechecked the fixes and found no additional actionable issues.
+Live detail preserves today's usage independently of unavailable cycle pricing.
+
+Recovery now has a read-only bounded preview and revision-checked apply command;
+pause is checked/locked inside each restoration transaction. No migration,
+production/dev hosted mutation, flag activation, deployment or tariff deletion
+was performed. Hosted rehearsal, first-trim approval and demonstrated fleet
+capacity remain deployment gates documented in the operations guide.

@@ -371,3 +371,14 @@ describe('mobile bill summary route', () => {
         expect(usageMock).not.toHaveBeenCalled();
     });
 });
+
+it('returns missing pricing without a numeric bill or load timing when attribution is incomplete',async()=>{
+    const {IncompleteTariffAttributionError}=await import('@/lib/billing-availability');
+    verifyAccessMock.mockResolvedValue(true);
+    siteMock.mockResolvedValue({id:'site-a',name:'Home',timezone:'UTC',billing_start_day:1,tariffs:[]});
+    currencyMock.mockResolvedValue('USD');latestMock.mockResolvedValue(new Date());
+    usageMock.mockRejectedValueOnce(new IncompleteTariffAttributionError());
+    const response=await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({currentBill:{status:'incomplete-attribution',estimatedCost:null,periods:[]},loadTiming:null});
+});

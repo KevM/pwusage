@@ -36,7 +36,7 @@ export class PostgresTransferMeter {
     private bytes=0;private rows=0;private requests=0;private selectRequests=0;
     private measuring=false;private failure:Error|undefined;
     constructor(private readonly upstream:string) {
-        if(!/^\/private\/tmp\/compact-energy-pg-[A-Za-z0-9-]+$/.test(upstream)||(statSync(upstream).mode&0o777)!==0o700) throw new Error('Meter requires a private local database socket');
+        if(!/^\/(?:private\/)?tmp\/compact-energy-pg-[A-Za-z0-9-]+$/.test(upstream)||(statSync(upstream).mode&0o777)!==0o700) throw new Error('Meter requires a private local database socket');
         this.host=join(upstream,'meter');mkdirSync(this.host,{mode:0o700});
         this.server=createServer(downstream=>{
             const backend=createConnection({path:join(upstream,'.s.PGSQL.55439')});

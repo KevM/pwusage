@@ -21,6 +21,7 @@ export interface RenderContext {
     dateRange: string;
     tariffGroups: TariffGroup[];
     totalCost: number;
+    billingUnavailable?: boolean;
     currency: string;
     displayCost: string;
     costLabel: string;

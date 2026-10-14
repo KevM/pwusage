@@ -1,3 +1,4 @@
+import {readBillingAvailability} from '@/lib/billing-availability';
 import { Temporal } from '@js-temporal/polyfill';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { SiteRepo } from '@/lib/site-repo';
@@ -107,7 +108,8 @@ export default async function UsagePage({ params, searchParams }: {
         currencySymbol = '€';
     }
 
-    const usage = await repo.getUsageByTOU(id, start, end);
+    const billing = await readBillingAvailability(()=>repo.getUsageByTOU(id, start, end),[]);
+    const usage=billing.value;
 
     // Convert UTC instant to site-local date components for display
     const getSiteLocalComponents = (utcDate: Date) => {
@@ -191,7 +193,11 @@ export default async function UsagePage({ params, searchParams }: {
 
                 <DataSyncer siteId={id} start={start} end={end} viewDate={start} />
 
-                <BillSummary usage={usage} currencySymbol={currencySymbol} />
+                {billing.status==='complete' ? <BillSummary usage={usage} currencySymbol={currencySymbol} /> : (
+                    <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+                        Historical pricing is missing for part of this period. Your energy history is available, but we cannot estimate a complete bill yet.
+                    </div>
+                )}
             </div>
         </PageShell>
     );

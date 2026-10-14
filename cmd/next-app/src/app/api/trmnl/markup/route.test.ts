@@ -86,6 +86,16 @@ describe('/api/trmnl/markup', () => {
         mocks.getSchedulesForSite.mockResolvedValue([]);
     });
 
+    it('renders live and chart sections while clearly withholding an incompletely priced bill',async()=>{
+        const {IncompleteTariffAttributionError}=await import('@/lib/billing-availability');
+        mocks.getCycleAggregates.mockRejectedValueOnce(new IncompleteTariffAttributionError());
+        const response=await GET(new Request('http://localhost/api/trmnl/markup?site_id=site-1&component_config='+encodeURIComponent(JSON.stringify({showEstimatedBill:true,showEnergyChart:true}))));
+        expect(response.status).toBe(200);
+        const body=await response.json();
+        expect(body.markup).toContain('Pricing unavailable');
+        expect(body.markup).toContain('--');
+        expect(response.headers.get('X-Billing-Status')).toBe('incomplete-attribution');
+    });
     it('augments the site name with the generation timestamp in the site timezone', async () => {
         const mockTime = new Date('2026-05-20T12:30:00Z'); // 12:30 UTC -> 7:30 AM in America/Chicago
         vi.useFakeTimers();

@@ -8,7 +8,12 @@ export const billSection: TrmnlSection = {
     configKey: 'showEstimatedBill',
     isEnabled: (l) => l.showEstimatedBill,
     render: (ctx, l) => {
-        const tariffTables = components.renderTariffTables(ctx, l.billRowsTarget, l.billCompactLevel);
+        const tariffTables = ctx.billingUnavailable ? `
+            <div class="flex flex--col gap--small">
+                <span class="label">Pricing unavailable</span>
+                <span class="title title--medium">--</span>
+                <span class="label label--small">Historical tariff attribution is incomplete</span>
+            </div>` : components.renderTariffTables(ctx, l.billRowsTarget, l.billCompactLevel);
         return `
             <div class="flex flex--col w--full">
                 ${l.showBillMetaHeader ? `

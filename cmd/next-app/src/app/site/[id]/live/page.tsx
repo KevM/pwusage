@@ -1,3 +1,4 @@
+import {readLiveBillingAvailability} from '@/lib/billing-availability';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
@@ -99,8 +100,8 @@ export default async function SiteLivePage({
         }
     }
 
-    const [{ cycle, today }, todayChartRows, rawEnergyRows, latestEnergyData, liveStatus, activeHold, activeNotice] = await Promise.all([
-        repo.getCycleAndTodayTotals(id, cycleStart, todayStart, now),
+    const [billing, todayChartRows, rawEnergyRows, latestEnergyData, liveStatus, activeHold, activeNotice] = await Promise.all([
+        readLiveBillingAvailability(()=>repo.getCycleAndTodayTotals(id, cycleStart, todayStart, now),()=>repo.getUsageByTOU(id,todayStart,now)),
         repo.getBucketedEnergyData(id, todayStart, now),
         repo.getRawEnergyData(id, todayStart, now),
         repo.getLatestEnergyData(id),
@@ -109,9 +110,10 @@ export default async function SiteLivePage({
         holdRepo.getLatestCancelledUnacked(id),
     ]);
 
+    const {cycle,today}=billing;
     const todayTotals = sumTodayRows(rawEnergyRows);
 
-    const loadTiming = schedule
+    const loadTiming = billing.cycleStatus==='complete' && schedule
         ? computeLoadTiming(schedule, cycle, now, site.timezone, activePeriod)
         : null;
 
@@ -157,6 +159,8 @@ export default async function SiteLivePage({
                     gridPower={liveStatus?.grid_power ?? (latestEnergyData !== null ? energyToAveragePower(latestEnergyData.gridPower) : 0)}
                     loadPower={liveStatus?.load_power ?? (latestEnergyData !== null ? energyToAveragePower(latestEnergyData.loadPower) : 0)}
                     today={today}
+                    todayPricingUnavailable={billing.todayStatus!=='complete'}
+                    cyclePricingUnavailable={billing.cycleStatus!=='complete'}
                     todayTotals={todayTotals}
                     todayChartRows={todayChartRows}
                     todayStart={todayStart}

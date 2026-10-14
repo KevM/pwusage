@@ -1,22 +1,30 @@
+import {withRawEnergyAccess,energyQueryExecutor} from '../energy-storage-access';
+import {HistoryArchiveRecoveryRepo,parseRestorePlan,restoreHistoryPlan} from '../history-archive-recovery';
+import {IncompleteTariffAttributionError,readBillingAvailability} from '../billing-availability';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
+import {addDaysInSiteTimezone} from '../date-utils';
 import { readFileSync, statSync } from 'node:fs';
 import { CompactHistoryStore } from './compact-history-store';
 import { CompactHistoryReader } from './compact-history-reader';
+import {HistoryArchiveRepo} from '../history-archive-repo';
+import {archiveCutoff,runHistoryArchive} from '../history-archive-service';
 
 const socket = process.env.COMPACT_HISTORY_TEST_SOCKET;
 const start = new Date('2026-01-01T06:00:00Z');
 const end = new Date('2026-01-02T06:00:00Z');
 const now = new Date('2026-01-03T06:00:00Z');
 // Never fall back to DATABASE_URL. Integration fixtures are synthetic and disposable.
-describe.skipIf(!socket)('compact persistence on private local PostgreSQL', () => {
+// These tests run multiple real transactions; shared CI runners can exceed
+// Vitest's 5s unit-test default even when the database operations succeed.
+describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { timeout: 30000 }, () => {
     let pool: Pool;
     let admin: Pool;
     const database = `compact_history_test_${randomUUID().replaceAll('-','')}`;
     let store: CompactHistoryStore;
     beforeAll(async () => {
-        if (!socket || !/^\/private\/tmp\/compact-energy-pg-[A-Za-z0-9-]+$/.test(socket)
+        if (!socket || !/^\/(?:private\/)?tmp\/compact-energy-pg-[A-Za-z0-9-]+$/.test(socket)
             || (statSync(socket).mode & 0o777) !== 0o700) throw new Error('Unsafe integration socket');
         admin = new Pool({ host: socket, port: 55439, database: 'postgres', user: process.env.USER });
         await admin.query(`CREATE DATABASE ${database}`);
@@ -46,16 +54,215 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', () =
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007132054_compact_energy_latest_projection.sql',import.meta.url),'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007134255_compact_energy_payload_integrity.sql',import.meta.url),'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007144600_compact_energy_trim_recovery.sql',import.meta.url),'utf8'));
+        await pool.query(readFileSync(new URL('../../../db-migrations/20261007190945_history_archive_job.sql',import.meta.url),'utf8'));
+        await pool.query("ALTER TABLE \"Site\" ADD COLUMN user_id text DEFAULT 'owner'");
         store = new CompactHistoryStore(pool);
     });
     beforeEach(async () => {
-        await pool.query('TRUNCATE "EnergyData", "LoadTag", "EnergyDayArchive" CASCADE');
+        await pool.query('TRUNCATE "EnergyData", "LoadTag", "EnergyDayArchive", "HistoryArchiveRetry" CASCADE');
+        await pool.query(`UPDATE "HistoryArchiveControl" SET paused=true,trim=false,last_report=null,site_ids=ARRAY['site'],from_date=null,before_date=null`);
         await pool.query(`UPDATE "Site" SET timezone='America/Chicago' WHERE id='site'`);
         await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null),('site',$2,1,2,20,3,-5,-2,50)`, [start, new Date(+start+300000)]);
     });
     afterAll(async () => {
         await pool?.end();
         if (admin) { try { await admin.query(`DROP DATABASE IF EXISTS ${database}`); } finally { await admin.end(); } }
+    });
+    const jobOptions={now:new Date('2026-01-10T12:00:00Z'),retentionDays:3,maxDays:2,maxTimeMs:30000,maxEstimatedBytes:4*1024*1024,readsEnabled:true};
+    it('archives and trims exact gaps through the daily job, preserving tags and tariffs',async()=>{
+        await pool.query('INSERT INTO "LoadTag" VALUES ($1)',[end]);
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
+        const original=(await store.readVerificationSnapshot('site',start,end)).raw;
+        const tariffs=(await pool.query('SELECT * FROM "TariffSchedule"')).rows;
+        const reader=new CompactHistoryReader(store,'America/Chicago');
+        const coverage=await reader.getDailyCoverage('site',start,end,'America/Chicago');
+        const totals=await reader.getCycleAggregates('site',start,end);
+        const report=await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions);
+        expect(report.days).toEqual([{siteId:'site',start:start.toISOString(),status:'trimmed',samples:2}]);
+        expect(report.stopped).toBe('caught-up');
+        expect(await reader.getRawEnergyData('site',start,end)).toEqual(original);
+        expect(await reader.getDailyCoverage('site',start,end,'America/Chicago')).toEqual(coverage);
+        expect(await reader.getCycleAggregates('site',start,end)).toEqual(totals);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "LoadTag"')).rows[0].n).toBe(1);
+        expect((await pool.query('SELECT * FROM "TariffSchedule"')).rows).toEqual(tariffs);
+        expect((await pool.query('SELECT last_report FROM "HistoryArchiveControl"')).rows[0].last_report).toEqual(report);
+        const revision=(await pool.query('SELECT revision FROM "EnergyDayArchive"')).rows[0].revision;
+        await store.restoreDay('site',start,revision);
+        expect((await store.readVerificationSnapshot('site',start,end)).raw).toEqual(original);
+    });
+    it('rejects a replaced control revision inside the mutation transaction',async()=>{
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
+        const repo=new HistoryArchiveRepo(pool);await repo.claim();
+        try {
+            const reviewed=await repo.control();
+            await pool.query("UPDATE \"HistoryArchiveControl\" SET site_ids=ARRAY['other']");
+            const day={siteId:'site',start,end,timezone:'America/Chicago'};
+            await expect(repo.finalize(day,jobOptions.now,reviewed)).rejects.toThrow('Archive control changed');
+            expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
+            const finalized=await store.finalizeDay('site',start,jobOptions.now);
+            await expect(repo.trim(day,finalized.revision!,jobOptions.now,reviewed)).rejects.toThrow('Archive control changed');
+            expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(2);
+        } finally {await repo.release();}
+    });
+    it('restores a pruned day before adding a late sample and can trim the rebuilt day',async()=>{
+        const original=(await store.readVerificationSnapshot('site',start,end)).raw;
+        const first=await store.finalizeDay('site',start,jobOptions.now);
+        await store.trimDay('site',start,first.revision!,jobOptions.now);
+        const added={...original[0],timestamp:new Date(+start+600000),grid_power:7};
+        await store.writeEnergyDataBatch([added]);
+        expect((await store.readVerificationSnapshot('site',start,end)).raw).toEqual([...original,added]);
+        const rebuilt=await store.finalizeDay('site',start,jobOptions.now);
+        expect(rebuilt).toMatchObject({status:'finalized',attributionComplete:true});
+        expect(await store.trimDay('site',start,rebuilt.revision!,jobOptions.now)).toMatchObject({status:'trimmed',samples:3});
+        expect(await new CompactHistoryReader(store,'America/Chicago').getRawEnergyData('site',start,end)).toEqual([...original,added]);
+    });
+    it('previews and restores reviewed pruned days only while the job is paused',async()=>{
+        const original=(await store.readVerificationSnapshot('site',start,end)).raw;
+        const finalized=await store.finalizeDay('site',start,jobOptions.now);
+        await store.trimDay('site',start,finalized.revision!,jobOptions.now);
+        const repo=new HistoryArchiveRecoveryRepo(pool);
+        const plan=await repo.preview(null);
+        expect(plan).toMatchObject({version:1,remainingPrunedDays:1,days:[{siteId:'site',start:start.toISOString(),revision:finalized.revision}]});
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false');
+        await expect(restoreHistoryPlan(repo,parseRestorePlan(plan))).rejects.toThrow('Pause the archive job');
+        expect(await repo.remaining()).toBe(1);
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=true');
+        await expect(restoreHistoryPlan(repo,parseRestorePlan({...plan,days:[{...plan.days[0],revision:randomUUID()}]}))).rejects.toThrow('Reviewed archive revision changed');
+        expect(await repo.remaining()).toBe(1);
+        expect(await restoreHistoryPlan(repo,parseRestorePlan(plan))).toMatchObject({remainingPrunedDays:0,stopped:'complete'});
+        expect((await store.readVerificationSnapshot('site',start,end)).raw).toEqual(original);
+    });
+    it('classifies missing pricing in scalar billing while preserving charts and integrity failures',async()=>{
+        await pool.query('UPDATE "EnergyData" SET tariff_schedule_id=null');
+        await store.finalizeDay('site',start,jobOptions.now);
+        const reader=new CompactHistoryReader(store,'America/Chicago');
+        expect(await reader.getRawEnergyData('site',start,end)).toHaveLength(2);
+        await expect(reader.getCycleAggregates('site',start,end)).rejects.toBeInstanceOf(IncompleteTariffAttributionError);
+        expect(await readBillingAvailability(()=>reader.getCycleAggregates('site',start,end),[])).toEqual({status:'incomplete-attribution',value:[]});
+        await pool.query('UPDATE "EnergyDaySummary" SET grid_power=999');
+        await expect(readBillingAvailability(()=>reader.getCycleAggregates('site',start,end),[])).rejects.toThrow('Day metadata mismatch');
+    });
+    it('does not let missing pricing in one day mask corrupted metadata in another',async()=>{
+        await pool.query('UPDATE "EnergyData" SET tariff_schedule_id=null');
+        await store.finalizeDay('site',start,jobOptions.now);
+        await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null)`,[end]);
+        await store.finalizeDay('site',end,jobOptions.now);
+        await pool.query('UPDATE "EnergyDaySummary" SET grid_power=999 WHERE day_start=$1',[end]);
+        const reader=new CompactHistoryReader(store,'America/Chicago');
+        await expect(readBillingAvailability(()=>reader.getCycleAggregates('site',start,addDaysInSiteTimezone(end,1,'America/Chicago')),[])).rejects.toThrow('Day metadata mismatch');
+    });
+    it('does not let the first trim straddle flag-off storage selection and a raw operation',async()=>{
+        const finalized=await store.finalizeDay('site',start,jobOptions.now);
+        const read=await withRawEnergyAccess(['site'],'read',async()=>{
+            expect(await store.trimDay('site',start,finalized.revision!,jobOptions.now)).toMatchObject({status:'busy'});
+            return Number((await energyQueryExecutor().query('SELECT count(*) AS n FROM "EnergyData" WHERE site_id=$1',['site'])).rows[0].n);
+        },pool);
+        expect(read).toEqual({kind:'raw',value:2});
+        expect(await store.trimDay('site',start,finalized.revision!,jobOptions.now)).toMatchObject({status:'trimmed'});
+        for(const mode of ['read','write'] as const) {
+            expect(await withRawEnergyAccess(['site'],mode,async()=>{throw new Error('Unexpected raw operation after pruning');},pool)).toEqual({kind:'compact'});
+        }
+    });
+    it('archive-only progress skips retained modern archives on the next run',async()=>{
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false');
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days[0].status).toBe('archived');
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days).toEqual([]);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(2);
+    });
+    it('persistent backoff lets other days progress and retries after expiry',async()=>{
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
+        await pool.query('UPDATE "EnergyData" SET tariff_schedule_id=null');
+        const second=addDaysInSiteTimezone(start,1,'America/Chicago');
+        await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null)`,[second]);
+        const report=await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions);
+        expect(report.days.map(d=>d.status)).toEqual(['incomplete-attribution','trimmed']);
+        const retry=(await pool.query('SELECT attempts,reason,retry_after FROM "HistoryArchiveRetry"')).rows[0];
+        expect(retry.attempts).toBe(1);expect(retry.reason).toBe('incomplete-attribution');
+        const next=await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions);expect(next.days).toEqual([]);
+        await pool.query('UPDATE "EnergyData" SET tariff_schedule_id=2');
+        const later=await runHistoryArchive(new HistoryArchiveRepo(pool),{...jobOptions,now:new Date(+jobOptions.now+16*60000)});
+        expect(later.days[0].status).toBe('trimmed');expect((await pool.query('SELECT * FROM "HistoryArchiveRetry"')).rows).toEqual([]);
+    });
+    it('daily retry failures cannot consume all progress slots',async()=>{
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
+        await pool.query('UPDATE "EnergyData" SET tariff_schedule_id=null');
+        const second=addDaysInSiteTimezone(start,1,'America/Chicago');
+        const third=addDaysInSiteTimezone(start,2,'America/Chicago');
+        await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,null,20,3,10,-2,null),('site',$2,1,2,20,3,10,-2,null)`,[second,third]);
+        await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions);
+        const daily=await runHistoryArchive(new HistoryArchiveRepo(pool),{...jobOptions,now:new Date(+jobOptions.now+86400000)});
+        expect(daily.days.some(d=>d.start===third.toISOString()&&d.status==='trimmed')).toBe(true);
+    });
+    it('newer repaired retries progress past permanent older failures',async()=>{
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
+        await pool.query('UPDATE "EnergyData" SET tariff_schedule_id=null');
+        const second=addDaysInSiteTimezone(start,1,'America/Chicago');
+        const third=addDaysInSiteTimezone(start,2,'America/Chicago');
+        await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,null,20,3,10,-2,null),('site',$2,1,2,20,3,10,-2,null)`,[second,third]);
+        for(const date of [start,second,third])await pool.query(`INSERT INTO "HistoryArchiveRetry" VALUES ('site',$1,$2,7,$3,'failed')`,[date,addDaysInSiteTimezone(date,1,'America/Chicago'),new Date(+jobOptions.now-86400000)]);
+        await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions);
+        const daily=await runHistoryArchive(new HistoryArchiveRepo(pool),{...jobOptions,now:new Date(+jobOptions.now+86400000)});
+        expect(daily.days.some(d=>d.start===third.toISOString()&&d.status==='trimmed')).toBe(true);
+    });
+    it('scopes the job to explicitly selected owned sites',async()=>{
+        await pool.query(`UPDATE "HistoryArchiveControl" SET paused=false,trim=true,site_ids='{}'`);
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days).toEqual([]);
+        await pool.query(`UPDATE "HistoryArchiveControl" SET site_ids=ARRAY['site']; UPDATE "Site" SET user_id=null WHERE id='site'`);
+        try {expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days).toEqual([]);}
+        finally {await pool.query(`UPDATE "Site" SET user_id='owner' WHERE id='site'`);}
+    });
+    it('date cohorts bound discovery to whole site-local days',async()=>{
+        await pool.query(`UPDATE "HistoryArchiveControl" SET paused=false,trim=true,from_date='2026-01-02',before_date='2026-01-03'`);
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days).toEqual([]);
+        await pool.query(`UPDATE "HistoryArchiveControl" SET from_date='2026-01-01',before_date='2026-01-02'`);
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days[0].start).toBe(start.toISOString());
+    });
+    it('a timed-out archive transaction rolls back without losing raw history',async()=>{
+        await pool.query(`CREATE FUNCTION slow_archive() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(.1); RETURN NEW; END $$;
+            CREATE TRIGGER slow_archive BEFORE INSERT ON "EnergyDayArchive" FOR EACH ROW EXECUTE FUNCTION slow_archive();`);
+        try {
+            await expect(new CompactHistoryStore(pool,10).finalizeDay('site',start,now)).rejects.toThrow();
+            expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(2);
+            expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
+        } finally {await pool.query('DROP TRIGGER slow_archive ON "EnergyDayArchive"; DROP FUNCTION slow_archive()');}
+    });
+    it('daily job response transfer fits its conservative reservation',async()=>{
+        const {PostgresTransferMeter}=await import('./postgres-transfer-meter');
+        const meter=new PostgresTransferMeter(socket!);await meter.start();
+        const metered=new Pool({host:meter.host,port:55439,database,user:process.env.USER,max:3});
+        try {
+            await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
+            await pool.query('TRUNCATE "EnergyData"');
+            await pool.query(`INSERT INTO "EnergyData" SELECT 'site',$1::timestamptz+n*interval '5 minutes',1,2,20,3,10,-2,null FROM generate_series(0,287) n`,[start]);
+            await metered.query('SELECT 1');
+            const measured=await meter.measure(()=>runHistoryArchive(new HistoryArchiveRepo(metered),jobOptions));
+            expect(measured.value.days[0]).toMatchObject({status:'trimmed',samples:288});
+            expect(measured.transfer.bytes).toBeLessThan(measured.value.estimatedBytes);
+            const repeat=await meter.measure(()=>runHistoryArchive(new HistoryArchiveRepo(metered),jobOptions));
+            expect(repeat.value.days).toEqual([]);expect(repeat.transfer.bytes).toBeLessThan(32768);
+        } finally {await metered.end();await meter.close();}
+    });
+    it('admits only whole days outside retention including DST and exact cutoff',async()=>{
+        const repo=new HistoryArchiveRepo(pool);await repo.claim();
+        try {
+            expect(await repo.next(true,9,jobOptions.now)).toBeNull();
+            expect((await repo.next(true,8,jobOptions.now))?.start).toEqual(start);
+            const cutoff=archiveCutoff(new Date('2026-03-10T12:00:00Z'),'America/Chicago',2);
+            expect(cutoff.toISOString()).toBe('2026-03-08T06:00:00.000Z');
+        } finally {await repo.release();}
+    });
+    it('a second runner cannot claim the active job and pause is persistent',async()=>{
+        const held=new HistoryArchiveRepo(pool);await held.claim();
+        try {expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).stopped).toBe('busy');}
+        finally {await held.release();}
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).stopped).toBe('paused');
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(2);
+    });
+    it('preflight refuses transfer over budget without changing raw samples',async()=>{
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
+        const report=await runHistoryArchive(new HistoryArchiveRepo(pool),{...jobOptions,maxEstimatedBytes:40000});
+        expect(report.stopped).toBe('byte-budget');expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(2);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
     });
     it('trims a reviewed day while preserving its archive, summaries and reader parity',async()=>{
         const finalized=await store.finalizeDay('site',start,now);

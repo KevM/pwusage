@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { isTeslaAuthError } from '@/lib/tesla-client';
-import { createEnergyRepo,compactHistoryReadsEnabled } from '@/lib/energy-repo-factory';
+import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { EnergyRepo } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { Schedule, getCurrentTariffLabel } from '@/lib/schedule';
@@ -22,6 +22,8 @@ import {
 } from './sparkline-utils';
 
 export const dynamic = 'force-dynamic';
+// Token refresh, today's import, and an uncached cycle rollup can exceed 10s.
+export const maxDuration = 60;
 const MOBILE_ENERGY_STALE_AFTER_MS = 30 * 60 * 1000;
 
 export async function GET(request: Request) {
@@ -46,8 +48,7 @@ export async function GET(request: Request) {
             const sparklineScaleStart = new Date(now.getTime() - (scaleWindowHours * 60 * 60 * 1000));
 
             const sitePromise=siteRepo.getSite(siteId);
-            const repoPromise=compactHistoryReadsEnabled()?sitePromise.then(site=>createEnergyRepo(site?.timezone??'UTC')):
-                Promise.resolve(createEnergyRepo('UTC'));
+            const repoPromise=sitePromise.then(site=>createEnergyRepo(site?.timezone??'UTC'));
             const [liveResult, site, repo, initialHistoryRows] = await Promise.all([
                 refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000 }),
                 sitePromise,

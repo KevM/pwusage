@@ -41,7 +41,18 @@ jobs:
           cache-dependency-path: ./cmd/next-app/package-lock.json
       - run: npm ci
       - run: npm run lint
-      - run: npm test
+      - name: Install PostgreSQL 17 for synthetic archive tests
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17
+      - name: Run all tests including lossless archive and recovery checks
+        env:
+          COMPACT_HISTORY_PG_BIN: /usr/lib/postgresql/17/bin
+        run: npm run test:compact
 
   build:
     name: Build App
