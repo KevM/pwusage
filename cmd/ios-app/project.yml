@@ -16,10 +16,12 @@ targets:
     platform: iOS
     sources:
       - path: PWUsage
+      - path: Shared
     info:
       path: PWUsage/Info.plist
       properties:
         CFBundleDisplayName: pwusage
+        PWUSAGE_APP_GROUP: "$(PWUSAGE_APP_GROUP)"
         PWUSAGE_API_ORIGIN: "$(PWUSAGE_API_ORIGIN)"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
@@ -41,16 +43,55 @@ targets:
           - CFBundleURLName: fm.rodeo.pwusage
             CFBundleURLSchemes:
               - pwusage
+    dependencies:
+      - target: PWUsageWidgets
+        embed: true
+    entitlements:
+      path: PWUsage/PWUsage.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - "$(PWUSAGE_APP_GROUP)"
     settings:
       base:
+        PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage
         PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 6HQGHHRK87
       configs:
         Debug:
+          PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
           PWUSAGE_API_ORIGIN: https://pwusagebeta.fm.rodeo
         Release:
           PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
+  PWUsageWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PWUsageWidgets
+      - path: Shared
+    info:
+      path: PWUsageWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Today's Energy
+        PWUSAGE_APP_GROUP: "$(PWUSAGE_APP_GROUP)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: PWUsageWidgets/PWUsageWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - "$(PWUSAGE_APP_GROUP)"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage.widgets
+        DEVELOPMENT_TEAM: 6HQGHHRK87
+        CODE_SIGN_STYLE: Automatic
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage
+      configs:
+        Debug:
+          PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
   PWUsageTests:
     type: bundle.unit-test
     platform: iOS

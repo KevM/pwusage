@@ -1,3 +1,4 @@
+import type { MobileTodayCost } from '@/lib/mobile-dashboard-contract';
 import { NextResponse } from 'next/server';
 import { isTeslaAuthError } from '@/lib/tesla-client';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
@@ -204,6 +205,27 @@ export async function GET(request: Request) {
             const fallbackSoc = mobileView && !liveSocUsable
                 ? await repo.getLatestBatterySoc(siteId, new Date(now.getTime() - MOBILE_SOC_MAX_AGE_MS))
                 : null;
+            // Use canonical daily TOU netting, never bucket averages or the current rate.
+            // Only the mobile response needs this; it adds no Tesla requests.
+            let todayCost: MobileTodayCost | null = null;
+            if (mobileView && (site?.tariffs?.length ?? 0) > 0) {
+                try {
+                    const [usage, currency] = await Promise.all([
+                        repo.getUsageByTOU(siteId, siteMidnight, now),
+                        siteRepo.getSiteCurrencyCode(siteId),
+                    ]);
+                    if (usage.length > 0 && usage.every(item => item.touName !== 'Unknown'
+                        && typeof item.cost === 'number' && Number.isFinite(item.cost))) {
+                        const importCharges = usage.reduce((sum, item) => sum + Math.max(item.cost!, 0), 0);
+                        const exportCredits = usage.reduce((sum, item) => sum + Math.max(-item.cost!, 0), 0);
+                        if (Number.isFinite(importCharges) && Number.isFinite(exportCredits)) {
+                            todayCost = { netCost: importCharges - exportCredits, importCharges, exportCredits, currency: currency || 'USD' };
+                        }
+                    }
+                } catch (error) {
+                    console.warn('[site-live-data] daily cost unavailable:', error);
+                }
+            }
             const mobileContract = buildMobileDashboardContract({
                 site: { id: siteId, name: site?.name ?? '', timezone: siteTimezone },
                 live: liveStatus,
@@ -214,6 +236,7 @@ export async function GET(request: Request) {
                 activeLoadTiming,
                 today: sumBucketedTodayRows(todayRows, siteMidnight),
                 todayComplete,
+                todayCost,
                 bill: null,
                 todayDate: formatSiteDate(now, siteTimezone),
             });

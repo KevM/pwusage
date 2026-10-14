@@ -22,6 +22,7 @@ struct MobileLiveResponse: Codable, Equatable {
     let activeTariff: String?
     let activeLoadTiming: ActiveLoadTiming?
     let today: Today
+    let todayCost: TodayEnergyCost?
     let todayComplete: Bool
     let currentBill: Bill?
     let sources: Sources
@@ -85,7 +86,7 @@ struct MobileLiveResponse: Codable, Equatable {
         case unsupportedVersion(Int)
     }
 
-    private enum CodingKeys: String, CodingKey { case version, site, live, stateOfCharge, activeTariff, activeLoadTiming, today, todayComplete, currentBill, sources }
+    private enum CodingKeys: String, CodingKey { case version, site, live, stateOfCharge, activeTariff, activeLoadTiming, today, todayCost, todayComplete, currentBill, sources }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -104,6 +105,7 @@ struct MobileLiveResponse: Codable, Equatable {
         activeTariff = try container.decodeIfPresent(String.self, forKey: .activeTariff)
         activeLoadTiming = try container.decodeIfPresent(ActiveLoadTiming.self, forKey: .activeLoadTiming)
         today = try container.decode(Today.self, forKey: .today)
+        todayCost = try container.decodeIfPresent(TodayEnergyCost.self, forKey: .todayCost)
         todayComplete = try container.decode(Bool.self, forKey: .todayComplete)
         currentBill = try container.decodeIfPresent(Bill.self, forKey: .currentBill)
         self.sources = sources

@@ -40,7 +40,7 @@ bundle exec fastlane lanes
 5. CI is configured with `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT`, `MATCH_PASSWORD`, `MATCH_GIT_URL=git@github.com:KevM/20four7-certs.git`, and `MATCH_GIT_PRIVATE_KEY`. The deploy key on `KevM/20four7-certs` is read-only and dedicated to pwusage. Signing assets live on its `master` branch. Local signing preparation needs write access; the CI deploy key cannot create or update profiles.
 6. Deploy the website's public pages and use `https://pwusage.fm.rodeo/privacy` for the App Store privacy-policy URL and `https://pwusage.fm.rodeo/support` for its support URL. The policy describes server account/energy data and optional device-local Solcast credentials; review it when data handling changes.
 
-Privacy and support links are also available on the native sign-in screen and dashboard menu.
+Privacy and support links are also available on the native sign-in screen and the About sheet, opened from the dashboard’s More menu.
 
 ### Upload a build
 
@@ -92,7 +92,7 @@ The Solcast enhancement is split this way: the Solcast forecast itself is device
 - One app-owned coordinator requests live data at most every five minutes and the bill on three tiers: at most every 30 minutes on the foreground timer, at most every five minutes when the Load timing screen opens, and always on an explicit pull to refresh. It stops timers in the background, and before the coordinator is dropped on sign-out, and makes a due bill request after the live request, so a stale-history refresh is reflected in the bill.
 - When the stored energy sample is over 30 minutes old, the mobile live endpoint asks the server to refresh it before responding. A per-site import lock limits these attempts to once every 30 minutes, and only a successful import rereads the energy buckets. Normal polls add no database read.
 - A recent last-known battery charge may be shown with its source age; values older than two hours remain unknown (`--`). Source timestamps stay attached to readings. Missing energy data, expired sessions, and temporary server/network failures have separate states.
-- The Load Timing toolbar includes native battery hold controls. Automatic holds restore when charging ends, with an eight-hour safety limit; fixed holds run for 1–24 hours. Starting a hold and restoring the original reserve require explicit confirmation. Stop the Battery Hold resets the original reserve, including changes made in Tesla. Automatic restoration uses the server's reserve-change safeguard and shows a dismissible cancellation notice when that safeguard cancels a hold. There is no background refresh, widget, or notification support.
+- The Load Timing toolbar includes native battery hold controls. Automatic holds restore when charging ends, with an eight-hour safety limit; fixed holds run for 1–24 hours. Starting a hold and restoring the original reserve require explicit confirmation. Stop the Battery Hold resets the original reserve, including changes made in Tesla. Automatic restoration uses the server's reserve-change safeguard and shows a dismissible cancellation notice when that safeguard cancels a hold. There is no background refresh or notification support for Battery Hold.
 
 SwiftUI previews under `PWUsage/Views/DashboardPreviews.swift` use fixed, local sample payloads for normal readings, no energy samples, stale source timestamps, an unavailable server, sign-in, and bill detail. The previews do not contact pwusage or a database.
 
@@ -153,3 +153,109 @@ that still matches that prior hold's target is treated as pending synchronizatio
 and starting is refused with a recovery message. This prevents a cached hold
 target from becoming the next original reserve. This guard does not guarantee
 upstream cache freshness once that window expires.
+
+
+## Today's Energy widget
+
+The embedded `PWUsageWidgets` extension supports medium and large Today’s Energy widgets and a configurable small Today’s Metric widget.
+It mirrors the app's **Today so far** section: Home, Solar, net Grid and net Battery
+energy, using the same shared metric tiles, tinted backgrounds, glyphs, numeric
+formatting and import/export/charge/discharge labels. The battery glyph's fill conveys
+state of charge using the app's charge bands, with the percentage immediately to its left.
+Unknown or expired SOC has no percentage; VoiceOver announces valid percentages or unknown charge.
+Unknown charge uses the empty outline and an explicit unknown accessibility label.
+Medium widgets use a short “Today” headline with the update time inline and center the labels and values in equal-height tiles. They keep direction arrows and omit repeated net-direction captions; VoiceOver still reads the full details. Medium text growth is capped at X Large to fit its fixed height, while large widgets retain the full text-size range. Large widgets omit repeated direction captions and the active-tariff footer to keep the energy and cost glanceable. Their footer shows the update time and a compact partial-data warning when needed. Full direction descriptions remain available to VoiceOver. Both sizes show
+the site and last energy update time. Tap the widget to open pwusage.
+
+The widget uses `MobileLiveResponse.today`, optional `todayCost`, and source timestamps.
+The Large widget adds **Today's Cost**: prominent estimated net cost with smaller import
+charges and export credits in the site's currency. These are daily tariff/TOU netted
+charges and credits from the existing `getUsageByTOU` calculation, not gross energy
+flows or billing-cycle totals. Missing pricing shows “Cost unavailable”; older server
+responses and snapshots remain readable. Small and Medium layouts are unchanged.
+
+Deploy the additive `todayCost` field in `/api/site-live-data?view=mobile` to populate
+real costs. Mobile refreshes add a daily tariff usage query and currency lookup, while
+the widget itself makes no network requests and adds no Tesla requests. Today energy
+is **net** for Grid/Battery, with the app's arrows and sign conventions.
+
+The app writes only presentation totals, daily cost and timestamped SOC to an atomic, versioned
+JSON file in its App Group, with protection until the device's first unlock. No cookies,
+account credentials, Solcast keys, or battery commands enter this container. The
+extension only reads it. Debug and Release use separate groups. App-private caches and
+polling behavior are preserved. Site changes, revoked access, logout and session expiry
+clear or replace shared data and request a WidgetKit reload; an in-flight invalidated
+app request cannot repopulate it. WidgetKit may retain a previously rendered view until
+it honors the reload request.
+
+The app publishes after normal successful live refreshes (normally five minutes while
+foregrounded, or an explicit refresh). WidgetKit is asked to reread the cache after 30
+minutes, with scheduled entries for energy staleness, SOC expiry and site-local midnight.
+Energy older than 30 minutes is labeled stale, matching the app's Today section. SOC
+expires independently after two hours, matching the app's existing source validation.
+Prior-day, future-dated, corrupt, unsupported or missing snapshots show unavailable.
+The revised snapshot is version 2; old snapshots fail closed. Open the app to refresh.
+WidgetKit refresh dates are requests, not guaranteed deadlines; the displayed source
+time makes delayed updates visible. There is no new background polling promise.
+See [Apple's refresh guidance](https://developer.apple.com/documentation/widgetkit/keeping-a-widget-up-to-date).
+
+### Apple and Xcode setup
+
+1. Register the extension App ID `fm.rodeo.pwusage.widgets` under team `6HQGHHRK87`.
+2. Register `group.fm.rodeo.pwusage` and `group.fm.rodeo.pwusage.debug` in Apple Developer,
+   and enable both App Groups for **both** the app and extension App IDs. The build
+   configuration selects the production or debug group through `PWUSAGE_APP_GROUP`.
+3. Run `./generate.sh`. XcodeGen configures the extension dependency/embedding,
+   entitlements, WidgetKit extension point and the shared sources. Both targets retain
+   automatic development signing and the committed team ID. Allow Xcode to refresh
+   development profiles after enabling capabilities.
+4. Run `bundle exec fastlane ios prepare_signing` on an authorized machine after the
+   capability changes. Match now includes both bundle IDs; regenerate the app profile
+   with App Groups and create the extension profile. The archive/export lane supplies
+   separate manual signing profiles for both targets. CI's read-only signing repository
+   must contain those refreshed profiles before another TestFlight release.
+5. On a device, launch and sign in, refresh the dashboard, then add Today's Energy from
+   the widget gallery. Check both sizes, site switching, locked-device behavior after
+   first unlock, sign-out, offline aging and site-local midnight. Simulator compilation
+   does not verify Apple provisioning or WidgetKit's real refresh budget.
+
+The shared `TodayEnergy` presentation model/store lives outside app UI and networking.
+Future Battery Hold Live Activities can add their own state contract and lifecycle without
+sharing authentication or command handling with this widget. ActivityKit is not added.
+
+
+### Widget previews in Xcode
+
+For medium/large widgets, open `PWUsageWidgets/today-energy-widget-previews.swift`.
+For small widgets, open `PWUsageWidgets/today-energy-metric-widget-previews.swift`.
+Show the Xcode Canvas using a Debug configuration and an iPhone simulator destination.
+The small file starts with an **All four small choices · Layout** board and an individual
+battery layout preview, which render the actual content without WidgetKit/App Intents
+preview hosting. Its **Small · Home/Solar/Grid/Battery** previews use `.systemSmall`
+and the configurable `TodayEnergyMetricWidget`. The `TodayEnergyWidget` gallery entry intentionally supports medium and large only.
+If Canvas overrides its family to Small, the shared family router now renders the Home
+single-metric layout instead of squeezing the large four-metric view into a small frame.
+Use `TodayEnergyMetricWidget` previews for the configurable small selections.
+Run `./generate.sh` and reopen the generated project if the new file is not in Xcode. Named previews cover both
+sizes, import/discharge and export/charge, full/low/unknown/stale SOC, stale energy,
+missing intervals/data, long names/large totals and a fresh-to-stale-to-next-day timeline.
+Fixtures use a fixed clock and local data; no sign-in, App Group setup or server access
+is required. The native widget tests also render the actual shared widget content in
+both sizes and light/dark appearances for visual inspection.
+
+
+### Configurable small widget
+
+Add **Today's Metric** in the widget gallery for the small size. Home is the default.
+Long-press it, choose **Edit Widget**, and select **Metric → Home, Solar, Grid, or Battery**.
+Each small widget has its own selection, so you can add several with different metrics.
+Grid and Battery retain the same net-energy arrows as the app; Battery uses the SOC glyph.
+Small widgets use the same protected cache, selected site, staleness/SOC expiry and
+midnight schedule as the larger widgets, without additional network requests.
+
+This is a separate App Intents configuration and widget kind in the existing extension.
+Existing medium/large widget kinds and configuration remain intact; no new signing,
+App Group or server setup is required. Both kinds reload when the app saves or clears
+its snapshot. Xcode previews include all four small selections plus stale, unknown-SOC
+and unavailable states. Check **Edit Widget** selection and multiple independent widgets
+on a device; simulator builds verify App Intents metadata and layout, not the full picker UI.

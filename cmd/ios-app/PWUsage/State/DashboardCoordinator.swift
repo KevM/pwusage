@@ -219,6 +219,7 @@ final class DashboardCoordinator: ObservableObject {
         self.now = now
         self.timerInterval = timerInterval
         self.cache = cache
+        if sessionVerified { cache?.selectWidgetSite(selectedSiteID) }
         restoreCachedReadings()
     }
 
@@ -241,6 +242,7 @@ final class DashboardCoordinator: ObservableObject {
     func restoreLaunchCache(_ cache: DashboardCache?, sessionVerified: Bool = true) {
         self.sessionVerified = sessionVerified
         self.cache = cache
+        if sessionVerified { cache?.selectWidgetSite(selectedSiteID) }
         restoreCachedReadings()
     }
 
@@ -395,6 +397,7 @@ final class DashboardCoordinator: ObservableObject {
         guard !canRequestAccountData else { return }
         sessionVerified = true
         requiresSignIn = false
+        cache?.selectWidgetSite(selectedSiteID)
         live.lastAttempt = nil
         bill.lastAttempt = nil
         guard sceneIsActive else { return }
@@ -408,6 +411,7 @@ final class DashboardCoordinator: ObservableObject {
     /// still on the wire. Without this a response that lands after sign-out
     /// repopulates a coordinator the user has already left.
     func authenticationInvalidated() {
+        cache?.selectWidgetSite(nil)
         sessionVerified = false
         forecastGeneration += 1
         siteGeneration += 1
@@ -424,6 +428,7 @@ final class DashboardCoordinator: ObservableObject {
     func selectSite(_ siteID: String) {
         guard siteID != selectedSiteID else { return }
         selectedSiteID = siteID
+        if canRequestAccountData { cache?.selectWidgetSite(siteID) }
         siteGeneration += 1
         forecastGeneration += 1
         cancelInFlightRequests()

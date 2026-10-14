@@ -18,6 +18,7 @@ export interface MobileDashboardContractInput {
     activeLoadTiming?: MobileActiveLoadTiming | null;
     today: MobileTodayTotals;
     todayComplete: boolean;
+    todayCost?: MobileTodayCost | null;
     bill: {
         estimatedCost: number | null;
         currency: string;
@@ -26,6 +27,13 @@ export interface MobileDashboardContractInput {
         periods?: MobileBillPeriod[];
     } | null;
     todayDate: string;
+}
+
+export interface MobileTodayCost {
+    netCost: number;
+    importCharges: number;
+    exportCredits: number;
+    currency: string;
 }
 
 export interface MobileCurrentBill {
@@ -85,6 +93,7 @@ export interface MobileDashboardContract {
     activeLoadTiming?: MobileActiveLoadTiming | null;
     today: MobileTodayTotals;
     todayComplete: boolean;
+    todayCost?: MobileTodayCost | null;
     currentBill: MobileCurrentBill | null;
     sources: { liveStatusAt: string | null; energyDataThrough: string | null; stateOfChargeAt: string | null };
 }
@@ -124,6 +133,7 @@ export function buildMobileDashboardContract(input: MobileDashboardContractInput
         ...(input.activeLoadTiming !== undefined ? { activeLoadTiming: input.activeLoadTiming } : {}),
         today: input.today,
         todayComplete: input.todayComplete,
+        todayCost: input.todayCost ?? null,
         currentBill: input.bill ? {
             estimatedCost: input.bill.estimatedCost,
             currency: input.bill.currency,
