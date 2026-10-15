@@ -37,10 +37,14 @@ export class TeslaTokenRepo {
 
         const site = await this.siteRepo.getSite(siteId);
         if (site && site.user_id) {
+            // A revoked user's refresh token is dead. Refusing the lock sends the
+            // caller to waitForTokenRefresh, which throws on revoked, instead of
+            // re-submitting the token that a concurrent refresh just had rejected.
             const result = await pool.query(`
                 UPDATE "User"
                 SET is_refreshing = 1, refresh_lock_expires = $1
                 WHERE id = $2 AND (is_refreshing = 0 OR refresh_lock_expires < $3)
+                  AND auth_status IS DISTINCT FROM 'revoked'
             `, [expires, site.user_id, now]);
             return (result.rowCount ?? 0) > 0;
         }
