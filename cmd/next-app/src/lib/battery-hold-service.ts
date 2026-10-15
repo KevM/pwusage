@@ -4,6 +4,7 @@ import { TeslaClient, TeslaAuthError, isTeslaAuthError } from './tesla-client';
 import { BatteryHoldRepo } from './battery-hold-repo';
 import { createTeslaClientForSite } from './tesla-client-factory';
 import type { BatteryHold } from './db';
+import { reconcileBatteryHoldActivities } from './battery-hold-activity-repo';
 
 const START_RESERVE_SETTLE_MS = 60 * 1000;
 export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
@@ -138,8 +139,9 @@ export async function restoreBattery(deps: RestoreDeps): Promise<RestoreResult> 
   // Manual stop uses the same claim as cron, bound to the hold observed here.
   let claimedId: number | undefined;
   const owner = randomUUID();
+  let result: RestoreResult;
   try {
-    return await withIoDeadline(10000, async () => {
+    result = await withIoDeadline(10000, async () => {
       const hold = await deps.repo.getActiveHold(deps.siteId);
       if (!hold || (deps.expectedHoldId !== undefined && hold.id !== deps.expectedHoldId)) return { status: 'no_active_hold' };
       claimedId = hold.id;
@@ -147,13 +149,17 @@ export async function restoreBattery(deps: RestoreDeps): Promise<RestoreResult> 
       return restoreClaimedBattery({ ...deps, expectedHoldId: hold.id, leaseOwner: owner });
     });
   } catch (e) {
-    return { status: 'error', message: errMsg(e) };
+    result = { status: 'error', message: errMsg(e) };
   } finally {
     if (claimedId !== undefined) {
       try { await withIoDeadline(1000, () => deps.repo.releaseHold(claimedId!, owner)); }
       catch { console.warn(`[BatteryHold] Lease release deferred for hold ${claimedId}`); }
     }
   }
+  // Push bookkeeping after the lease is released and outside the restore deadline.
+  // Any claimed outcome may have changed the hold, so reconcile it; this never throws.
+  if (claimedId !== undefined) await reconcileBatteryHoldActivities(claimedId);
+  return result;
 }
 
 async function restoreClaimedBattery({ client, repo, siteId, reason, expectedHoldId, leaseOwner }: RestoreDeps): Promise<RestoreResult> {

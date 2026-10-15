@@ -100,10 +100,15 @@ export class BatteryHoldRepo {
     parkedSoc: number; baselineLoadW: number; safetyExpiresAt: Date;
     mode?: 'auto' | 'timer';
   }): Promise<BatteryHold> {
+    // Share the activity registration lock, before allocating/inserting a new
+    // hold. The CTE keeps the site lock until this statement commits.
     const { rows } = await pool.query(`
+      WITH locked_site AS (
+        SELECT id FROM "Site" WHERE id = $1 FOR NO KEY UPDATE
+      )
       INSERT INTO "BatteryHold"
         (site_id, original_reserve, target_reserve, parked_soc, baseline_load_w, safety_expires_at, mode)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      SELECT id, $2, $3, $4, $5, $6, $7 FROM locked_site
       RETURNING *
     `, [
       params.siteId, params.originalReserve, params.targetReserve,

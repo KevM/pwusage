@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeTargetReserve, parkBattery, restoreBattery } from './battery-hold-service';
 import type { BatteryHold } from './db';
+
+const activity = vi.hoisted(() => ({ reconcile: vi.fn() }));
+vi.mock('./battery-hold-activity-repo', () => ({ reconcileBatteryHoldActivities: activity.reconcile }));
 
 function fakeRepo(active: BatteryHold | null) {
   return {
@@ -247,5 +250,79 @@ describe('restoreBattery', () => {
     const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'load_ended' });
     expect(res.status).toBe('error');
     expect(repo.markRestored).not.toHaveBeenCalled();
+  });
+});
+
+describe('restoreBattery push bookkeeping', () => {
+  beforeEach(() => {
+    activity.reconcile.mockReset();
+    activity.reconcile.mockResolvedValue(1);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const activeHold = (over: Partial<BatteryHold> = {}) => ({
+    id: 5, site_id: 's', original_reserve: 20, target_reserve: 100, restore_attempted_at: null,
+    created_at: new Date(Date.now() - 10 * 60 * 1000), ...over,
+  } as unknown as BatteryHold);
+
+  it('reconciles the claimed hold once after a manual stop, following lease release', async () => {
+    const repo = fakeRepo(activeHold());
+    const client = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }) });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'manual' });
+    expect(res).toEqual({ status: 'ok' });
+    expect(activity.reconcile).toHaveBeenCalledTimes(1);
+    expect(activity.reconcile).toHaveBeenCalledWith(5);
+    expect(activity.reconcile.mock.invocationCallOrder[0]).toBeGreaterThan(repo.releaseHold.mock.invocationCallOrder[0]);
+  });
+
+  it('reconciles the claimed hold after a manual stop that finds the reserve changed', async () => {
+    const repo = fakeRepo(activeHold({ restore_attempted_at: new Date() }));
+    const client = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 50 }) });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'manual' });
+    expect(res).toEqual({ status: 'reserve_changed', current: 50 });
+    expect(activity.reconcile).toHaveBeenCalledTimes(1);
+    expect(activity.reconcile).toHaveBeenCalledWith(5);
+  });
+
+  it('keeps a successful restore when reconciliation resolves null', async () => {
+    activity.reconcile.mockResolvedValue(null);
+    const repo = fakeRepo(activeHold());
+    const client = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }) });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'manual' });
+    expect(res).toEqual({ status: 'ok' });
+    expect(client.setBackupReserve).toHaveBeenCalledTimes(1);
+  });
+
+  it('a slow reconciliation neither changes the restore outcome nor repeats the Tesla command', async () => {
+    vi.useFakeTimers();
+    activity.reconcile.mockImplementation(() => new Promise(resolve => setTimeout(() => resolve(null), 5000)));
+    const repo = fakeRepo(activeHold());
+    const client = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }) });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pending = restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'manual' });
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(pending).resolves.toEqual({ status: 'ok' });
+    expect(client.setBackupReserve).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reconcile when there was no hold to claim', async () => {
+    const repo = fakeRepo(null);
+    const client = fakeClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'manual' });
+    expect(res).toEqual({ status: 'no_active_hold' });
+    expect(activity.reconcile).not.toHaveBeenCalled();
+  });
+
+  it('leaves reconciliation to the monitor for lease-owned restores', async () => {
+    const repo = fakeRepo(activeHold());
+    const client = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }) });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await restoreBattery({ client: client as any, repo: repo as any, siteId: 's', reason: 'load_ended', expectedHoldId: 5, leaseOwner: 'monitor-owner' });
+    expect(res).toEqual({ status: 'ok' });
+    expect(activity.reconcile).not.toHaveBeenCalled();
   });
 });

@@ -28,6 +28,8 @@ INSERT INTO public."EnergyData" ("timestamp", site_id, load_power) VALUES
     (now() - interval '1 hour', 's1', 4);
 INSERT INTO public."MobileLoginHandoff" VALUES ('00000000-0000-0000-0000-000000000001', 'u1');
 INSERT INTO public."TrmnlInstallation" VALUES ('t1', 'inbound-token', 'unused-refresh-token');
+CREATE TABLE public."BatteryHoldActivity" (id serial PRIMARY KEY, push_token text);
+INSERT INTO public."BatteryHoldActivity" (push_token) VALUES ('device-token');
 `;
 
 const MARK_DEV = `CREATE SCHEMA pwusage_env; CREATE TABLE pwusage_env.environment (name text PRIMARY KEY); INSERT INTO pwusage_env.environment VALUES ('dev');`;
@@ -69,6 +71,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         energy: await rows(`SELECT count(*)::int AS n FROM public."EnergyData"`),
         handoffs: await rows(`SELECT count(*)::int AS n FROM public."MobileLoginHandoff"`),
         trmnl: await rows(`SELECT access_token, refresh_token FROM public."TrmnlInstallation"`),
+        activities: await rows(`SELECT count(*)::int AS n FROM public."BatteryHoldActivity"`),
     });
 
     it.each([
@@ -107,6 +110,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         expect(await rows(`SELECT access_token, refresh_token FROM public."TrmnlInstallation"`))
             .toEqual([{ access_token: 'inbound-token', refresh_token: null }]);
         expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyData"`)).toEqual([{ n: 4 }]);
+        expect(await rows(`SELECT count(*)::int AS n FROM public."BatteryHoldActivity"`)).toEqual([{ n: 0 }]);
         // Idempotent.
         expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
     });
@@ -121,7 +125,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
     });
 
     it('skips rules for tables that do not exist yet', async () => {
-        await target!.query(`${MARK_DEV} DROP TABLE public."MobileLoginHandoff"; DROP TABLE public."TrmnlInstallation"; DROP TABLE public."EnergyData";`);
+        await target!.query(`${MARK_DEV} DROP TABLE public."MobileLoginHandoff"; DROP TABLE public."TrmnlInstallation"; DROP TABLE public."EnergyData"; DROP TABLE public."BatteryHoldActivity";`);
         expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
         expect((await psql('scripts/prune-dev-copy.sql')).code).toBe(0);
     });

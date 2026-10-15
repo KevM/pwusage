@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BatteryHold } from './db';
-const mocks = vi.hoisted(() => ({ claim: vi.fn(), release: vi.fn(), record: vi.fn(), raw: vi.fn(), refresh: vi.fn(), client: vi.fn(), restore: vi.fn() }));
+const mocks = vi.hoisted(() => ({ claim: vi.fn(), release: vi.fn(), record: vi.fn(), raw: vi.fn(), refresh: vi.fn(), client: vi.fn(), restore: vi.fn(), reconcile: vi.fn() }));
+vi.mock('./battery-hold-activity-repo', () => ({ reconcileBatteryHoldActivities: mocks.reconcile }));
 vi.mock('./battery-hold-repo', () => ({ BatteryHoldRepo: class { claimHold = mocks.claim; releaseHold = mocks.release; recordMonitoring = mocks.record; } }));
 vi.mock('./energy-repo', () => ({ EnergyRepo: class { getRawEnergyData = mocks.raw; } }));
 vi.mock('./today-refresh', () => ({ refreshTodayData: mocks.refresh }));
@@ -20,6 +21,7 @@ describe('bounded hold monitoring', () => {
     mocks.claim.mockResolvedValue(true); mocks.release.mockResolvedValue(undefined); mocks.record.mockResolvedValue(undefined);
     mocks.raw.mockResolvedValue([]); mocks.refresh.mockResolvedValue({ status: 'persisted' });
     mocks.client.mockResolvedValue({}); mocks.restore.mockResolvedValue({ status: 'ok' });
+    mocks.reconcile.mockResolvedValue(2);
   });
   afterEach(() => vi.useRealTimers());
   it('attempts ten slow sites within 120 seconds with at most three workers and a failed site', async () => {
@@ -70,6 +72,31 @@ describe('bounded hold monitoring', () => {
     const assertion = expect(pending).resolves.toMatchObject({ attempted: 10, failed: 10 });
     await vi.runAllTimersAsync(); await assertion;
     expect(mocks.refresh).toHaveBeenCalledTimes(10);
+  });
+  it('reconciles activities once per run, without a hold id, after every hold is released', async () => {
+    await monitorBatteryHolds([hold(1), hold(2, { safety_expires_at: NOW })]);
+    expect(mocks.reconcile).toHaveBeenCalledTimes(1);
+    expect(mocks.reconcile).toHaveBeenCalledWith();
+    const lastRelease = Math.max(...mocks.release.mock.invocationCallOrder);
+    expect(mocks.reconcile.mock.invocationCallOrder[0]).toBeGreaterThan(lastRelease);
+  });
+  it('reconciles once for an empty run', async () => {
+    const result = await monitorBatteryHolds([]);
+    expect(mocks.reconcile).toHaveBeenCalledTimes(1);
+    expect(mocks.reconcile).toHaveBeenCalledWith();
+    expect(result).toMatchObject({ eligible: 0, activitiesSynced: 2 });
+  });
+  it('reports the activity sync count in the summary', async () => {
+    mocks.reconcile.mockResolvedValue(3);
+    const result = await monitorBatteryHolds([hold(1)]);
+    expect(result.activitiesSynced).toBe(3);
+  });
+  it('keeps every result and the failure count when activity reconciliation returns null', async () => {
+    mocks.reconcile.mockResolvedValue(null);
+    const result = await monitorBatteryHolds([hold(1, { safety_expires_at: NOW }), hold(2)]);
+    expect(result.activitiesSynced).toBeNull();
+    expect(result.results).toHaveLength(2);
+    expect(result).toMatchObject({ failed: 0, completed: 1 });
   });
   it('aborts hung per-site I/O and still attempts every queued site', async () => {
     const aborted: string[] = [];

@@ -38,12 +38,13 @@ does not exist.
 |---|---|---|
 | `MobileLoginHandoff` | All rows deleted | Short-lived one-time login codes |
 | `TrmnlInstallation` | `refresh_token` set to NULL | Stored but never used by the app |
+| `BatteryHoldActivity` | All rows deleted | Live Activity push tokens; beta must never push to copied prod registrations |
 
 Kept on purpose: `TrmnlInstallation.access_token` (inbound-only), `User` Tesla
 tokens and emails. Beta's cron jobs rely on the Tesla tokens.
 
-When a table holds new secrets (for example Live Activity push tokens), add its
-rule to `sanitize-dev-copy.sql` in the same PR that creates the table.
+When a table holds new secrets, add its rule to `sanitize-dev-copy.sql` in the
+same PR that creates the table.
 
 ## The dev marker
 

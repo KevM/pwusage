@@ -19,5 +19,9 @@ BEGIN
     IF to_regclass('public."TrmnlInstallation"') IS NOT NULL THEN
         EXECUTE 'UPDATE public."TrmnlInstallation" SET refresh_token = NULL WHERE refresh_token IS NOT NULL';
     END IF;
+    -- Live Activity push tokens: beta must never push to copied prod registrations.
+    IF to_regclass('public."BatteryHoldActivity"') IS NOT NULL THEN
+        EXECUTE 'DELETE FROM public."BatteryHoldActivity"';
+    END IF;
 END
 $$;
