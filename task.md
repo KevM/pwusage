@@ -889,3 +889,138 @@ Draft PR: https://github.com/KevM/pwusage/pull/141. Implementation commit 8c8426
 New regressions failed before their fixes. The seven skipped hold integration
 cases run separately; the remaining skip is pre-existing and unrelated. No
 production migration, deployment, real Tesla command or iOS change was performed.
+
+## Battery Hold Task 3: Control Center navigation (2026-10-14)
+
+- [x] Read approved implementation/design and extension authorization boundary.
+- [x] Start isolated branch from main containing merged #141; preserve original checkout.
+- [x] Fetch current Apple WidgetKit/App Intents docs through Context7.
+- [x] Add configured-site launcher with noncredential picker metadata.
+- [x] Route cold/warm launches through current site verification and the existing sheet.
+- [x] Cover sign-in, loading/retry, invalid/removed sites and already-active holds.
+- [x] Native tests/build and required web tests/lint/build.
+- [x] Review final change, record device-only checks and commit.
+
+The launcher performs no extension networking or Tesla commands. The existing App
+Group carries only site IDs/names for configuration; current app-side site loading
+is authoritative. Signing team 6HQGHHRK87 and existing entitlements are preserved.
+
+Validation: 480 Swift Testing tests passed in 29 suites through `run-tests.sh`;
+targeted app-model/Battery Hold coordinator tests passed. Tests first exposed the
+missing navigation API; a separate warm/offline regression failed before adding
+the retry action and passed afterward. Generic iOS app/extension build passed
+with signing disabled. Web lint and webpack production build passed; Vitest
+reported 1,202 passed and 82 existing configured skips. Final diff whitespace
+check passed. Independent source review found no remaining actionable issues
+after fixing warm-launch retry feedback and resetting competing modal/navigation
+state for external launches. Normal toolbar navigation is retained.
+
+User reported successfully testing the Control Center control. This confirms
+the basic launcher check; the exact scenarios/device/OS were not specified.
+The user subsequently confirmed all listed functional device tests succeeded.
+The agent has not independently verified provisioning. The prior checklist was:
+Control Center gallery/configuration,
+cold/warm/locked-device handoff, several configured sites, post-sign-in/offline
+retry, removed sites, active holds, and launches from Tariffs/About/Load Timing
+settings. Device discovery failed to initialize CoreDeviceService; no signed
+device test or provisioning verification is claimed. No Tesla command, APNs
+delivery, ActivityKit layout, server mutation, push, or deployment was performed.
+Existing project target/shared-source configuration already supports the control;
+project.yml and signing entitlements need no changes.
+
+## Control Center branding follow-up
+
+- [x] Add a vector custom symbol based on the app icon: upright Powerwall, bolt and six rays.
+- [x] Use pwusage as the main label, site as the secondary label and pwusage Battery Hold in the gallery.
+- [x] Visually inspect light/dark rendering at small and large sizes.
+- [x] Verify scalable asset loading, full native tests/build and required web checks.
+- [x] Commit and push to draft PR #142.
+
+This update retains the existing control kind and configured-site navigation.
+The updated icon/labels still need a device appearance check after installation.
+
+Branding validation: 481 native tests passed in 29 suites via run-tests.sh,
+including custom symbol asset loading at 18/24/32 points and ultralight/regular/black
+weights. Generic iOS app/extension build passed without signing. Web lint and
+webpack production build passed; 1,202 tests passed / 82 configured skips.
+The vector preview was inspected in light/dark at 24/40/100 points. No Tesla
+commands or server behavior changed.
+
+## Control Center icon rendering report
+
+The user reports a blank icon in the configured control and the previous battery
+symbol in the gallery, despite the updated gallery title. Earlier asset-loading
+tests did not verify the remote Control Center rendering path.
+
+Investigation: assetutil confirmed the compiled widget extension contains the
+custom vector glyph. Pixel-level native rendering tests passed in both app and
+extension bundles for all nine weights and three symbol scales. The actual
+compiled symbol render was visually inspected and matches the intended artwork.
+Thus the symbol is present and drawable locally; the device failure was not
+reproduced by those tests. Simulator Control Center UI interaction was unavailable
+through the supported capture surface.
+
+Candidate correction: give SwiftUI Image an explicit extension bundle instead of
+an unspecified bundle, and request ControlCenter.reloadControls for the existing
+kind on app launch. The control kind/site configuration are preserved. Public
+reload requests refresh configured templates; they do not guarantee gallery
+cache invalidation or prove a device result. Device confirmation remains pending.
+
+- [x] Strengthen the regression to inspect visible pixels and the embedded extension's asset.
+- [x] Explicit bundle reference and configured-template refresh on app launch.
+- [x] Native/web verification, commit and push.
+- [ ] User confirms icon in configured control and Add a Control gallery after updated installation.
+
+Correction validation: full native run passed 481 tests in 29 suites; generic iOS
+app/extension build passed without signing. Web lint and webpack build passed;
+1,202 tests passed / 82 configured skips. Whitespace check passed. This is a
+resource-lookup/refresh correction with local validation, not a claim that the
+reported device icon failure has been conclusively resolved.
+
+## Control icon template correction after failed device retest
+
+The user reports the bundle/refresh change did not resolve the blank icon. The
+worktree has not moved: /Users/kevm/.codex/worktrees/battery-hold-control/pwusage.
+The generated project is cmd/ios-app/PWUsage.xcodeproj, alongside the PWUsage
+source directory, and includes the shared symbol resources in both targets.
+
+Independent review found a concrete template discrepancy: the custom actionLabel
+contained only site text. Apple's title/actionLabel example puts the icon in the
+action label unconditionally. Use ControlWidgetButton's title initializer with
+pwusage as title and a shared action Label containing both site text and symbol.
+The control kind and site configuration remain unchanged.
+
+A regression against the actual shared production action label failed when it
+contained only text and passed when it rendered the branded symbol under
+icon-only label styling. Full native tests passed: 482 tests / 29 suites. Generic
+iOS app/extension build, web lint, webpack production build and 1,202 web tests
+passed (82 configured skips). Pixel-level app/extension asset tests remain in
+place. Device Control Center/gallery confirmation remains pending; source and
+local render verification are not claimed as proof of the system-hosted result.
+The project was regenerated in place. No real Tesla commands were sent.
+
+## Control action label direct primitive template fix
+
+Action label wrapped the icon and site text in a composite SwiftUI `Label`. In
+WidgetKit `ControlWidgetButton(_:action:actionLabel:)`, the system template builder
+expects primitive `Image` and `Text` views directly rather than a composite `Label`
+hierarchy.
+
+Updated `BatteryHoldControlActionLabel` to provide `Image` and `Text` directly via
+`@ViewBuilder`. Updated `controlActionLabelIcon` unit test. Regenerated Xcode project,
+built clean with zero warnings, and passed the full native test suite (482 tests in
+29 suites).
+
+## Bootstrap race error handling fix (PR review)
+
+On cold control launches with cached sites, concurrent `bootstrap()` could claim a newer
+site-install generation than the control's site reload. If `bootstrap()` failed (e.g. offline
+or session expired) while a cached coordinator existed, it previously left `batteryHoldNavigationMessage`
+nil and dropped the control retry alert.
+
+Updated `PWUsageAppModel.bootstrap()` catch blocks to route failures to `batteryHoldNavigationMessage`
+and expired sessions to `signInMessage` when `pendingBatteryHoldSiteID` is present.
+Added regression tests covering offline failure and session expiration when bootstrap supersedes
+control validation. Full native test suite passed (484 tests in 29 suites). Generic iOS app/extension
+build passed. Web lint, webpack production build, and 1,202 web tests passed (82 configured skips).
+

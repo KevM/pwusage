@@ -7,9 +7,6 @@ struct DashboardView: View {
     var onRefresh: (() async -> Void)? = nil
     let onSignOut: () -> Void
 
-    @State private var isTariffSheetPresented = false
-    @State private var isAboutSheetPresented = false
-
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -47,17 +44,21 @@ struct DashboardView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle(site.name)
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $isTariffSheetPresented) {
-                TariffSheet(site: site, load: { try await coordinator.fetchTariffs() })
-                    .id(site.id)
-            }
-            .sheet(isPresented: $isAboutSheetPresented) {
-                AboutSheet()
+            .sheet(item: $coordinator.presentedSheet) { sheet in
+                switch sheet {
+                case .batteryHold:
+                    BatteryHoldSheet(coordinator: coordinator, site: site)
+                case .tariffs:
+                    TariffSheet(site: site, load: { try await coordinator.fetchTariffs() })
+                        .id(site.id)
+                case .about:
+                    AboutSheet()
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Tariffs", systemImage: "tag") {
-                        isTariffSheetPresented = true
+                        coordinator.presentedSheet = .tariffs
                     }
                     .accessibilityHint("View tariff seasons, periods, and rates")
                 }
@@ -65,7 +66,7 @@ struct DashboardView: View {
                     Menu {
                         Button("Switch Site", systemImage: "arrow.left.arrow.right", action: onChooseSite)
                         Button("About", systemImage: "info.circle") {
-                            isAboutSheetPresented = true
+                            coordinator.presentedSheet = .about
                         }
                         Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive, action: onSignOut)
                     } label: {

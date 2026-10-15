@@ -6,6 +6,274 @@ import Testing
 @MainActor
 @Suite("PWUsage App Model Tests", .serialized)
 struct PWUsageAppModelTests {
+    @Test("Control launch leaves the saved dashboard default alone")
+    func controlLaunchKeepsSavedDashboardDefault() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
+        let defaults = makeDefaults()
+        defaults.set("site-1", forKey: PWUsageAppModel.selectedSiteDefaultsKey)
+        let model = try makeModel(api: api, userDefaults: defaults)
+        await model.openBatteryHold(siteID: "site-2")
+        #expect(model.selectedSiteID == "site-2")
+        #expect(defaults.string(forKey: PWUsageAppModel.selectedSiteDefaultsKey) == "site-1",
+                "A control launch is a one-visit detour, not a new dashboard default.")
+
+        // A later reload keeps the site on screen rather than snapping back.
+        await model.reloadSitesAfterSignIn()
+        #expect(model.selectedSiteID == "site-2")
+        #expect(defaults.string(forKey: PWUsageAppModel.selectedSiteDefaultsKey) == "site-1")
+    }
+
+    @Test("Dismissing the launcher alert discards the pending request")
+    func cancellingControlRequestStopsLaterNavigation() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
+        let defaults = makeDefaults()
+        defaults.set("site-1", forKey: PWUsageAppModel.selectedSiteDefaultsKey)
+        let model = try makeModel(api: api, userDefaults: defaults)
+        await model.bootstrap()
+        api.sitesError = URLError(.notConnectedToInternet)
+        await model.openBatteryHold(siteID: "site-2")
+        #expect(model.pendingBatteryHoldSiteID == "site-2")
+
+        model.cancelBatteryHoldNavigation()
+        #expect(model.pendingBatteryHoldSiteID == nil)
+        #expect(model.batteryHoldNavigationMessage == nil)
+
+        api.sitesError = nil
+        await model.reloadSitesAfterSignIn()
+        #expect(model.selectedSiteID == "site-1", "A dismissed request must not move the dashboard later.")
+        #expect(model.coordinator?.isBatteryHoldSheetPresented != true)
+    }
+
+    @Test("Control launch closes a competing dashboard sheet so its alert is reachable")
+    func controlLaunchDismissesCompetingDashboardSheet() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        model.coordinator?.presentedSheet = .tariffs
+        api.sitesError = URLError(.notConnectedToInternet)
+
+        await model.openBatteryHold(siteID: "site-2")
+
+        #expect(model.batteryHoldNavigationMessage != nil)
+        #expect(model.coordinator?.presentedSheet == nil,
+                "The root alert and loading overlay cannot be seen underneath a dashboard sheet.")
+    }
+
+    @Test("Only one dashboard sheet is presented at a time")
+    func dashboardSheetsAreMutuallyExclusive() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        let coordinator = try #require(model.coordinator)
+
+        coordinator.presentedSheet = .about
+        coordinator.isBatteryHoldSheetPresented = true
+        #expect(coordinator.presentedSheet == .batteryHold)
+
+        coordinator.isBatteryHoldSheetPresented = false
+        #expect(coordinator.presentedSheet == nil)
+
+        coordinator.presentedSheet = .tariffs
+        coordinator.isBatteryHoldSheetPresented = false
+        #expect(coordinator.presentedSheet == .tariffs, "Closing the hold sheet must not close an unrelated sheet.")
+    }
+
+    @Test("External launch replaces navigation presentation identity each time")
+    func externalControlResetsNavigation() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        #expect(model.batteryHoldNavigationID == nil)
+        await model.openBatteryHold(siteID: "site-1")
+        let first = try #require(model.batteryHoldNavigationID)
+        await model.openBatteryHold(siteID: "site-1")
+        #expect(model.batteryHoldNavigationID != first)
+        let latest = model.batteryHoldNavigationID
+        await model.openBatteryHold(siteID: "removed")
+        #expect(model.batteryHoldNavigationID == latest)
+        #expect(model.coordinator?.isBatteryHoldSheetPresented == false)
+    }
+
+    @Test("Warm launcher reports failed site validation and keeps a retryable request")
+    func warmControlSiteLoadingRetry() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        api.sitesError = URLError(.notConnectedToInternet)
+        await model.openBatteryHold(siteID: "site-2")
+        #expect(model.coordinator?.isBatteryHoldSheetPresented != true)
+        #expect(model.pendingBatteryHoldSiteID == "site-2")
+        #expect(model.batteryHoldNavigationMessage != nil)
+        api.sitesError = nil
+        await model.reloadSitesAfterSignIn()
+        #expect(model.selectedSiteID == "site-2")
+        #expect(model.batteryHoldNavigationMessage == nil)
+        #expect(model.coordinator?.isBatteryHoldSheetPresented == true)
+    }
+
+    @Test("Cold launcher with cached sites reports failed validation when bootstrap races control reload")
+    func coldControlLoadingRetryWithCachedSites() async throws {
+        let defaults = makeDefaults()
+        let cacheURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
+        defer { try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent()) }
+        let cache = DashboardCache(fileURL: cacheURL)
+        cache.storeSites([Self.site("site-1"), Self.site("site-2")])
+
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
+        api.holdSites = true
+
+        let model = try makeModel(api: api, cache: cache, userDefaults: defaults)
+
+        // 1. Control launcher starts and claims generation 1, then parks in fetchSites
+        let hold = Task { await model.openBatteryHold(siteID: "site-2") }
+        try await waitUntil { api.siteFetchCount == 1 }
+
+        // 2. Root view bootstrap starts and claims generation 2, superseding hold's generation 1
+        let bootstrap = Task { await model.bootstrap() }
+        try await waitUntil { api.siteFetchCount == 2 }
+
+        // 3. Network fails
+        api.sitesError = URLError(.notConnectedToInternet)
+        api.resumeSites()
+        await hold.value
+        await bootstrap.value
+
+        #expect(model.coordinator?.isBatteryHoldSheetPresented != true)
+        #expect(model.pendingBatteryHoldSiteID == "site-2")
+        #expect(model.batteryHoldNavigationMessage != nil)
+
+        api.sitesError = nil
+        await model.reloadSitesAfterSignIn()
+        #expect(model.selectedSiteID == "site-2")
+        #expect(model.batteryHoldNavigationMessage == nil)
+        #expect(model.coordinator?.isBatteryHoldSheetPresented == true)
+    }
+
+    @Test("Cold launcher with cached sites preserves pending request and reports expired session when bootstrap supersedes control reload")
+    func coldControlLoadingSignInRequiredWithCachedSites() async throws {
+        let defaults = makeDefaults()
+        let cacheURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
+        defer { try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent()) }
+        let cache = DashboardCache(fileURL: cacheURL)
+        cache.storeSites([Self.site("site-1"), Self.site("site-2")])
+
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
+        api.holdSites = true
+
+        let model = try makeModel(api: api, cache: cache, userDefaults: defaults)
+
+        let hold = Task { await model.openBatteryHold(siteID: "site-2") }
+        try await waitUntil { api.siteFetchCount == 1 }
+
+        let bootstrap = Task { await model.bootstrap() }
+        try await waitUntil { api.siteFetchCount == 2 }
+
+        api.sitesError = PWUsageAPIError.signInRequired
+        api.resumeSites()
+        await hold.value
+        await bootstrap.value
+
+        #expect(model.screenState == .signedOut)
+        #expect(model.pendingBatteryHoldSiteID == "site-2")
+        #expect(model.signInMessage == "Your session expired. Sign in to continue.")
+    }
+
+    @Test("Launching an already-active hold opens its status without commands")
+    func controlOpensActiveHoldWithoutCommands() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        api.batteryHoldResponse = .init(hold: try MobileContractDecoder.make().decode(BatteryHold.self,
+            from: Data(BatteryHoldTests.holdJSON.utf8)), notice: nil)
+        let model = try makeModel(api: api)
+        await model.openBatteryHold(siteID: "site-1")
+        let coordinator = try #require(model.coordinator)
+        await coordinator.refreshBatteryHold()
+        #expect(coordinator.isBatteryHoldSheetPresented)
+        #expect(coordinator.batteryHold.response?.hold?.status == .active)
+        #expect(api.holdCommands.isEmpty)
+    }
+
+    @Test("Explicit sign-out discards a pending launcher request")
+    func signOutClearsControlRequest() async throws {
+        let api = ApplicationAPISpy(sites: [], sitesError: PWUsageAPIError.signInRequired)
+        let model = try makeModel(api: api)
+        await model.openBatteryHold(siteID: "site-2")
+        await model.signOut()
+        api.sitesError = nil
+        api.sites = [Self.site("site-2")]
+        await model.reloadSitesAfterSignIn()
+        #expect(model.coordinator?.isBatteryHoldSheetPresented != true)
+    }
+
+    @Test("Control launch waits for sites and overrides saved selection")
+    func controlLaunchWaitsForSites() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
+        api.holdSites = true
+        let defaults = makeDefaults()
+        defaults.set("site-1", forKey: PWUsageAppModel.selectedSiteDefaultsKey)
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: defaults)
+        let launch = Task { await model.openBatteryHold(siteID: "site-2") }
+        try await waitUntil { api.siteFetchCount == 1 }
+        #expect(model.coordinator?.isBatteryHoldSheetPresented != true)
+        api.resumeSites()
+        await launch.value
+        #expect(model.selectedSiteID == "site-2")
+        #expect(model.coordinator?.selectedSiteID == "site-2")
+        #expect(model.coordinator?.isBatteryHoldSheetPresented == true)
+    }
+
+    @Test("Control request survives sign-in and loads the requested site")
+    func controlRequestSurvivesSignIn() async throws {
+        let api = ApplicationAPISpy(sites: [], sitesError: PWUsageAPIError.signInRequired)
+        let model = try makeModel(api: api)
+        await model.openBatteryHold(siteID: "site-2")
+        #expect(model.screenState == .signedOut)
+        #expect(model.pendingBatteryHoldSiteID == "site-2")
+        api.sitesError = nil
+        api.sites = [Self.site("site-1"), Self.site("site-2")]
+        await model.reloadSitesAfterSignIn()
+        #expect(model.selectedSiteID == "site-2")
+        #expect(model.coordinator?.isBatteryHoldSheetPresented == true)
+        #expect(model.pendingBatteryHoldSiteID == nil)
+    }
+
+    @Test("Removed control site never opens a different site's hold sheet")
+    func removedControlSiteDoesNotFallBack() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        api.sites = [Self.site("site-1")]
+        await model.openBatteryHold(siteID: "site-2")
+        #expect(model.coordinator?.isBatteryHoldSheetPresented != true)
+        #expect(model.batteryHoldNavigationMessage != nil)
+        #expect(model.pendingBatteryHoldSiteID == nil)
+    }
+
+    @Test("Malformed control links cannot use global site selection")
+    func malformedControlLinks() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        for link in ["pwusage://battery-hold", "pwusage://battery-hold?site=", "pwusage://battery-hold?site=a&site=b"] {
+            await model.openNavigationURL(try #require(URL(string: link)))
+            #expect(model.coordinator?.isBatteryHoldSheetPresented != true)
+            #expect(model.batteryHoldNavigationMessage != nil)
+        }
+        #expect(api.siteFetchCount == 1)
+    }
+
+    @Test("Failed site loading preserves the request for retry")
+    func controlSiteLoadingRetry() async throws {
+        let api = ApplicationAPISpy(sites: [], sitesError: PWUsageAPIError.recoverableServerError(statusCode: 503))
+        let model = try makeModel(api: api)
+        await model.openBatteryHold(siteID: "site-2")
+        #expect(model.pendingBatteryHoldSiteID == "site-2")
+        #expect(model.coordinator == nil)
+        api.sitesError = nil
+        api.sites = [Self.site("site-2")]
+        await model.reloadSitesAfterSignIn()
+        #expect(model.coordinator?.isBatteryHoldSheetPresented == true)
+    }
+
     @Test("Bootstrap restores cookie session and fetches sites only once")
     func bootstrapRestoresCookieSessionAndFetchesSitesOnlyOnce() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
@@ -554,12 +822,14 @@ struct PWUsageAppModelTests {
         api: ApplicationAPISpy,
         forecast: any SolarForecastManaging = AppForecastManagerSpy(),
         timerInterval: Duration? = nil,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        cache: DashboardCache? = nil,
+        userDefaults: UserDefaults? = nil
     ) throws -> PWUsageAppModel {
         PWUsageAppModel(
             configuration: try Self.makeConfiguration(),
             api: api,
-            userDefaults: makeDefaults(),
+            userDefaults: userDefaults ?? makeDefaults(),
             forecastStore: forecast,
             coordinatorFactory: { siteID, accountScopeID in
                 DashboardCoordinator(
@@ -571,7 +841,8 @@ struct PWUsageAppModelTests {
                     now: now,
                     timerInterval: timerInterval
                 )
-            }
+            },
+            cache: cache
         )
     }
 
@@ -611,14 +882,21 @@ private final class AppTestClock {
 }
 
 @MainActor
-private final class ApplicationAPISpy: PWUsageApplicationAPI {
+private final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
+    var batteryHoldResponse = BatteryHoldResponse(hold: nil, notice: nil)
+    private(set) var holdCommands: [BatteryHoldCommand] = []
+    func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse { batteryHoldResponse }
+    func sendBatteryHoldCommand(siteID: String, command: BatteryHoldCommand) async throws -> BatteryHoldCommandResult {
+        holdCommands.append(command)
+        return .init(status: .ok, hold: nil, current: nil)
+    }
     var sites: [MobileSite]
     /// Consumed one entry per `fetchSites` before `sites` is used, so a test can
     /// hand successive attempts different site lists.
     var sitesSequence: [[MobileSite]] = []
     var sitesError: Error?
     var holdSites = false
-    private var sitesContinuation: CheckedContinuation<[MobileSite], Error>?
+    private var sitesContinuations: [CheckedContinuation<[MobileSite], Error>] = []
     var holdLive = false
     private(set) var siteFetchCount = 0
     private(set) var liveSiteIDs: [String] = []
@@ -635,7 +913,7 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI {
 
     func fetchSites() async throws -> [MobileSite] {
         siteFetchCount += 1
-        if holdSites { return try await withCheckedThrowingContinuation { sitesContinuation = $0 } }
+        if holdSites { return try await withCheckedThrowingContinuation { sitesContinuations.append($0) } }
         if let sitesError { throw sitesError }
         if sitesSequence.isEmpty { return sites }
         return sitesSequence.removeFirst()
@@ -643,8 +921,15 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI {
 
     func resumeSites() {
         holdSites = false
-        sitesContinuation?.resume(returning: sites)
-        sitesContinuation = nil
+        let pending = sitesContinuations
+        sitesContinuations.removeAll()
+        for continuation in pending {
+            if let sitesError {
+                continuation.resume(throwing: sitesError)
+            } else {
+                continuation.resume(returning: sites)
+            }
+        }
     }
 
     func fetchLive(siteID: String) async throws -> MobileLiveResponse {

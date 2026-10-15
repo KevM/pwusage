@@ -259,3 +259,62 @@ App Group or server setup is required. Both kinds reload when the app saves or c
 its snapshot. Xcode previews include all four small selections plus stale, unknown-SOC
 and unavailable states. Check **Edit Widget** selection and multiple independent widgets
 on a device; simulator builds verify App Intents metadata and layout, not the full picker UI.
+
+### Battery Hold in Control Center (iOS 18+)
+
+Open pwusage and sign in so the app can load your sites. In Control Center, choose
+**Add a Control → pwusage → pwusage Battery Hold**, then select its **Site**. Each control
+keeps its own site, independently of the dashboard selection. Tap it to open the
+existing Battery Hold sheet and choose a reserve/duration or review an active hold.
+Adding or tapping the control does not send a Tesla command.
+
+The launcher is included in both app and extension intent metadata. Its OpenIntent
+runs in the foreground app and queues the requested site until the UI is ready.
+The app reloads the authorized site list before presenting the sheet. Sign-in and
+connection retries retain the request; a removed site or malformed link shows a
+message instead of opening another site's controls. Explicit sign-out discards a
+pending request. Valid external launches reset the dashboard navigation and its
+other sheets before opening Battery Hold; the normal toolbar retains navigation.
+The existing sheet refreshes hold status and controls all writes.
+
+The existing App Group carries a separate protected, atomically replaced picker
+file containing only site IDs/names. It is refreshed from authorized site loading
+and cleared on logout/session invalidation. A saved control may retain an old site
+identifier, which is checked again in the app. No shared cookies, new credentials,
+new App Groups, APNs registration, or ActivityKit behavior are added.
+
+Device acceptance still requires a signed iOS 18 build: verify gallery/configuration,
+several controls for different sites, cold and warm taps, tap while signed out then
+sign in, offline retry, removed-site behavior and an existing active hold. Check
+locked-device launch/unlock and return to the sheet from another app screen. Do not
+start/restore a real hold without explicit Tesla command test authorization.
+Simulator tests/builds validate routing and intent metadata, not Control Center's
+device handoff or signed provisioning.
+
+The Battery Hold control's icon is the system symbol `bolt.batteryblock`
+(`BatteryHoldControlIdentity.symbolName`). Its main label is **pwusage**, with the
+configured site as the secondary label; the gallery name is **pwusage Battery
+Hold**. Existing controls keep their kind and site configuration.
+
+**Don't swap in a custom symbol without a device test, and restart the device
+between tests.** Control Center caches the last artwork it drew for a control
+kind; deleting and reinstalling the app does not clear it, but a restart does. A
+blank result without a restart is not evidence.
+
+A branded Powerwall glyph was tried. The hand-written template SVG rendered blank
+on device even after a restart. A genuine SF Symbols app export (Template v7), and
+a `hierarchical` rendering intent, were also reported blank, but a restart before
+those checks was not confirmed, so they are inconclusive. Every variant compiled
+into the extension and drew in-process, so native pixel tests cannot catch this.
+`bolt.batteryblock` in the identical inline `Label` renders correctly. The iOS
+Simulator's gallery also blanks Apple's own Ambient Music controls, so it is no
+substitute for a device check.
+
+Control Center draws the resting tile from the button's **label**
+(`Label("pwusage", systemImage:)`, inline in
+`ControlWidgetButton(action:label:actionLabel:)`); the action label is only the
+transient state while the action runs and carries the site name.
+
+Opening the app asks the system to reload configured Battery Hold controls, but
+that does not refresh cached artwork. After an icon change: remove the control,
+install, restart the device, then re-add the control.

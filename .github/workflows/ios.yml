@@ -1,21 +1,29 @@
 name: iOS CI
 
-run-name: ${{ github.event_name == 'workflow_dispatch' && format('🧪 Manual Run ({0})', github.ref_name) || github.ref_name }}
+run-name: ${{ github.event_name == 'pull_request' && format('👀 {0}', github.event.pull_request.title) || github.event_name == 'push' && format('⛵ {0}', github.event.head_commit.message) || github.ref_name }}
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    paths:
+      - 'cmd/ios-app/**'
+      - '.github/workflows/ios.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# New PR updates (including a return to draft) supersede older test runs.
+# Manual runs have independent groups and are never canceled by PR activity.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.run_id }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     name: Run iOS Tests
-    runs-on: macos-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    runs-on: self-hosted
     timeout-minutes: 15
 
     defaults:

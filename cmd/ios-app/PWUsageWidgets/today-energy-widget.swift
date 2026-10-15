@@ -52,5 +52,6 @@ struct TodayEnergyWidgetBundle: WidgetBundle {
     var body: some Widget {
         TodayEnergyWidget()
         TodayEnergyMetricWidget()
+        BatteryHoldControl()
     }
 }

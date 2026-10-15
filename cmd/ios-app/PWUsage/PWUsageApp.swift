@@ -1,4 +1,5 @@
 import SwiftUI
+import WidgetKit
 import Combine
 import OSLog
 import UIKit
@@ -20,13 +21,17 @@ struct PWUsageApp: App {
     private let launch: Launch
 
     init() {
+        // Ask the system to rebuild configured control templates from this
+        // extension version after an app update. Keep saved site configuration.
+        ControlCenter.shared.reloadControls(ofKind: BatteryHoldControlIdentity.kind)
         do {
             let configuration = try AppConfiguration.fromBundle()
             launch = .ready(
                 PWUsageAppModel(
                     configuration: configuration,
                     api: PWUsageAPI(configuration: configuration),
-                    cache: .persistent(apiOrigin: configuration.apiOrigin)
+                    cache: .persistent(apiOrigin: configuration.apiOrigin),
+                    controlSiteStore: .shared()
                 )
             )
         } catch let error as AppConfiguration.ValidationError {
@@ -133,9 +138,14 @@ final class PWUsageAppModel: ObservableObject {
     private let api: any PWUsageApplicationAPI
     private let userDefaults: UserDefaults
     private let cache: DashboardCache?
+    @Published private(set) var batteryHoldNavigationID: UUID?
+    @Published private(set) var pendingBatteryHoldSiteID: String?
+    @Published var batteryHoldNavigationMessage: String?
+    private let controlSiteStore: BatteryHoldControlSiteStore?
     private var sessionVerified = false
     private var hasBootstrapAttempted = false
-    private var siteRequestCount = 0
+    @Published private var siteRequestCount = 0
+    var isBatteryHoldNavigationLoading: Bool { pendingBatteryHoldSiteID != nil && siteRequestCount > 0 }
     private let forecastStore: any SolarForecastManaging
     private let coordinatorFactory: CoordinatorFactory
     private var coordinatorAuthSubscription: AnyCancellable?
@@ -153,8 +163,10 @@ final class PWUsageAppModel: ObservableObject {
         forecastStore: any SolarForecastManaging = SolarForecastStore.shared,
         coordinatorFactory: CoordinatorFactory? = nil,
         cache: DashboardCache? = nil,
-        authService: MobileAuthService? = nil
+        authService: MobileAuthService? = nil,
+        controlSiteStore: BatteryHoldControlSiteStore? = nil
     ) {
+        self.controlSiteStore = controlSiteStore
         self.api = api
         self.userDefaults = userDefaults
         self.cache = cache
@@ -209,13 +221,20 @@ final class PWUsageAppModel: ObservableObject {
         } catch let error as PWUsageAPIError {
             guard generation == siteInstallGeneration else { return }
             if error == .signInRequired {
-                await invalidateSession(message: nil)
+                let message = pendingBatteryHoldSiteID != nil ? "Your session expired. Sign in to continue." : nil
+                await invalidateSession(message: message)
             } else {
                 if coordinator == nil { screenState = .unavailable }
+                if pendingBatteryHoldSiteID != nil {
+                    batteryHoldNavigationMessage = "Could not verify this control’s site. Check your connection and try again."
+                }
             }
         } catch {
             guard generation == siteInstallGeneration else { return }
             if coordinator == nil { screenState = .unavailable }
+            if pendingBatteryHoldSiteID != nil {
+                batteryHoldNavigationMessage = "Could not verify this control’s site. Check your connection and try again."
+            }
         }
     }
 
@@ -287,6 +306,7 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func reloadSitesAfterSignIn() async {
+        if pendingBatteryHoldSiteID != nil { batteryHoldNavigationMessage = nil }
         siteRequestCount += 1
         defer { siteRequestCount -= 1 }
         let generation = claimSiteInstall()
@@ -299,6 +319,9 @@ final class PWUsageAppModel: ObservableObject {
         } catch {
             guard generation == siteInstallGeneration else { return }
             if coordinator == nil { screenState = authService.isAuthenticated ? .unavailable : .signedOut }
+            if pendingBatteryHoldSiteID != nil {
+                batteryHoldNavigationMessage = "Could not verify this control’s site. Check your connection and try again."
+            }
         }
     }
 
@@ -317,12 +340,63 @@ final class PWUsageAppModel: ObservableObject {
         coordinator?.selectSite(site.id)
     }
 
+    func openNavigationURL(_ url: URL) async {
+        guard url.scheme == "pwusage", url.host == "battery-hold" else { return }
+        guard let siteID = BatteryHoldLink.siteID(from: url) else {
+            pendingBatteryHoldSiteID = nil
+            dismissCompetingPresentations()
+            batteryHoldNavigationMessage = "Choose a site in the Battery Hold control’s configuration, then try again."
+            return
+        }
+        await openBatteryHold(siteID: siteID)
+    }
+
+    func openBatteryHold(siteID: String) async {
+        pendingBatteryHoldSiteID = siteID
+        batteryHoldNavigationMessage = nil
+        dismissCompetingPresentations()
+        // Even a warm launch rechecks the current account's sites. A saved picker
+        // entry and the dashboard cache are never evidence of current access.
+        await reloadSitesAfterSignIn()
+    }
+
+    /// The loading overlay and the launcher alert both live on the root view, so
+    /// anything already presented above it would hide them. An external launch
+    /// closes those before it starts waiting on the network.
+    private func dismissCompetingPresentations() {
+        isSitePickerPresented = false
+        coordinator?.presentedSheet = nil
+    }
+
+    /// Dismissing the launcher alert abandons the request. Without this the
+    /// pending site survives and hijacks the next successful site load.
+    func cancelBatteryHoldNavigation() {
+        pendingBatteryHoldSiteID = nil
+        batteryHoldNavigationMessage = nil
+    }
+
+    private func resolveBatteryHoldNavigation() {
+        guard let requestedID = pendingBatteryHoldSiteID else { return }
+        pendingBatteryHoldSiteID = nil
+        guard let site = sites.first(where: { $0.id == requestedID }) else {
+            batteryHoldNavigationMessage = "This control’s site is no longer available to this account. Choose an available site in the control’s configuration."
+            return
+        }
+        selectSite(site)
+        // Rebuild only for an external route: this drops the old navigation path
+        // and every dashboard/detail modal before the new host opens the sheet.
+        batteryHoldNavigationID = UUID()
+        coordinator?.isBatteryHoldSheetPresented = true
+    }
+
     func openSitePicker() {
         guard screenState == .signedIn, !sites.isEmpty else { return }
         isSitePickerPresented = true
     }
 
     func signOut() async {
+        pendingBatteryHoldSiteID = nil
+        batteryHoldNavigationMessage = nil
         teardownCoordinator()
         var cleanupFailed = false
         do { try await authService.logout() }
@@ -369,6 +443,7 @@ final class PWUsageAppModel: ObservableObject {
         siteInstallGeneration += 1
         sessionVerified = false
         cache?.clear()
+        controlSiteStore?.clear()
         coordinatorAuthSubscription = nil
         coordinator?.authenticationInvalidated()
         coordinator?.scenePhaseChanged(isActive: false)
@@ -407,7 +482,9 @@ final class PWUsageAppModel: ObservableObject {
         guard generation == siteInstallGeneration else { return }
         cache?.storeSites(availableSites)
         sessionVerified = true
+        controlSiteStore?.save(availableSites.map { BatteryHoldControlSite(id: $0.id, name: $0.name) })
         guard !availableSites.isEmpty else {
+            resolveBatteryHoldNavigation()
             coordinatorAuthSubscription = nil
             coordinator?.authenticationInvalidated()
             coordinator?.scenePhaseChanged(isActive: false)
@@ -417,10 +494,16 @@ final class PWUsageAppModel: ObservableObject {
             return
         }
 
+        // The saved default belongs to the user and only `selectSite` changes it.
+        // A control launch moves the dashboard for this visit, and an ordinary
+        // reload keeps whatever is already on screen, so neither rewrites it.
         let savedID = userDefaults.string(forKey: Self.selectedSiteDefaultsKey)
-        let chosen = availableSites.first(where: { $0.id == savedID }) ?? availableSites[0]
+        let defaultSite = availableSites.first(where: { $0.id == savedID }) ?? availableSites[0]
+        let chosen = availableSites.first(where: { $0.id == pendingBatteryHoldSiteID })
+            ?? availableSites.first(where: { $0.id == selectedSiteID })
+            ?? defaultSite
         selectedSiteID = chosen.id
-        userDefaults.set(chosen.id, forKey: Self.selectedSiteDefaultsKey)
+        userDefaults.set(defaultSite.id, forKey: Self.selectedSiteDefaultsKey)
 
         if let coordinator, coordinator.selectedSiteID == chosen.id {
             coordinator.authenticationRestored()
@@ -433,6 +516,7 @@ final class PWUsageAppModel: ObservableObject {
             coordinator?.scenePhaseChanged(isActive: sceneIsActive)
         }
         screenState = .signedIn
+        resolveBatteryHoldNavigation()
     }
 
     private func installCoordinator(siteID: String, accountScopeID: String) {
@@ -469,6 +553,7 @@ final class PWUsageAppModel: ObservableObject {
 }
 
 private struct PWUsageRootView: View {
+    @StateObject private var navigationInbox = BatteryHoldNavigationInbox.shared
     @EnvironmentObject private var model: PWUsageAppModel
     @Environment(\.scenePhase) private var scenePhase
 
@@ -497,6 +582,7 @@ private struct PWUsageRootView: View {
                         DashboardView(coordinator: coordinator, site: site, onChooseSite: { model.openSitePicker() }, onRefresh: { await model.refreshDashboard() }) {
                             Task { await model.signOut() }
                         }
+                        .id(model.batteryHoldNavigationID)
                         .environment(\.reconnectTesla, TeslaReconnectAction(owner: model) { await model.reconnectTesla() })
                         .sheet(isPresented: $model.isSitePickerPresented) {
                             SitePickerView(sites: model.sites, selectedSiteID: site.id) { selected in
@@ -525,6 +611,30 @@ private struct PWUsageRootView: View {
             configureWindowSizeRestrictions()
             model.scenePhaseChanged(isActive: scenePhase == .active)
             await model.bootstrap()
+        }
+        .task(id: navigationInbox.request?.id) {
+            if let url = navigationInbox.take() { await model.openNavigationURL(url) }
+        }
+        .onOpenURL { navigationInbox.send($0) }
+        .overlay(alignment: .top) {
+            if model.isBatteryHoldNavigationLoading {
+                ProgressView("Loading this control’s site…")
+                    .padding().background(.regularMaterial, in: Capsule())
+                    .padding()
+            }
+        }
+        .alert("Battery Hold", isPresented: Binding(
+            get: { model.batteryHoldNavigationMessage != nil },
+            // Only the buttons dismiss this alert; "OK" is what abandons the
+            // request, so the binding must not cancel out from under "Try Again".
+            set: { if !$0 { model.batteryHoldNavigationMessage = nil } }
+        )) {
+            if model.pendingBatteryHoldSiteID != nil {
+                Button("Try Again") { Task { await model.reloadSitesAfterSignIn() } }
+            }
+            Button("OK", role: .cancel) { model.cancelBatteryHoldNavigation() }
+        } message: {
+            Text(model.batteryHoldNavigationMessage ?? "")
         }
         .onChange(of: scenePhase) { _, phase in
             model.scenePhaseChanged(isActive: phase == .active)

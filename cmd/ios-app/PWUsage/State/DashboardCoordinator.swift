@@ -123,6 +123,16 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
     }
 }
 
+/// The sheets the dashboard screen itself owns. They are mutually exclusive, so
+/// one value can both present the right sheet and close whatever else is up.
+enum DashboardSheet: String, Identifiable, CaseIterable {
+    case batteryHold
+    case tariffs
+    case about
+
+    var id: String { rawValue }
+}
+
 @MainActor
 final class DashboardCoordinator: ObservableObject {
     /// What asked for a refresh, for both endpoints. Every call site must state
@@ -143,6 +153,19 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var bill = DashboardEndpointState<MobileBillResponse>()
     @Published private(set) var isForeground = false
     @Published private(set) var requiresSignIn = false
+    /// The dashboard presents one sheet at a time. Keeping that in a single
+    /// published value means an external Battery Hold launch can clear whatever
+    /// is on screen, so the root view's alert and loading overlay are not left
+    /// stranded underneath a sheet that is still up.
+    @Published var presentedSheet: DashboardSheet?
+
+    var isBatteryHoldSheetPresented: Bool {
+        get { presentedSheet == .batteryHold }
+        set {
+            if newValue { presentedSheet = .batteryHold }
+            else if presentedSheet == .batteryHold { presentedSheet = nil }
+        }
+    }
     @Published private(set) var batteryHold = BatteryHoldState()
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
     @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
@@ -411,6 +434,7 @@ final class DashboardCoordinator: ObservableObject {
     /// still on the wire. Without this a response that lands after sign-out
     /// repopulates a coordinator the user has already left.
     func authenticationInvalidated() {
+        presentedSheet = nil
         cache?.selectWidgetSite(nil)
         sessionVerified = false
         forecastGeneration += 1
@@ -427,6 +451,7 @@ final class DashboardCoordinator: ObservableObject {
 
     func selectSite(_ siteID: String) {
         guard siteID != selectedSiteID else { return }
+        presentedSheet = nil
         selectedSiteID = siteID
         if canRequestAccountData { cache?.selectWidgetSite(siteID) }
         siteGeneration += 1

@@ -216,7 +216,6 @@ struct LoadTimingView: View {
     @StateObject private var profileStore: LoadProfileStore
     @State private var isProfileSheetPresented = false
     @State private var isSolarForecastSheetPresented = false
-    @State private var isBatteryHoldSheetPresented = false
     @State private var runDetailsSnapshot: LoadRunDetailsSnapshot?
     @State private var exploredProfileID: String?
 
@@ -395,7 +394,7 @@ struct LoadTimingView: View {
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
-                    isBatteryHoldSheetPresented = true
+                    coordinator.isBatteryHoldSheetPresented = true
                 } label: {
                     BatteryHoldToolbarLabel(state: coordinator.batteryHold, now: .now)
                 }
@@ -410,9 +409,6 @@ struct LoadTimingView: View {
         }
         .sheet(isPresented: $isSolarForecastSheetPresented) {
             SolarForecastSettingsSheet(coordinator: coordinator)
-        }
-        .sheet(isPresented: $isBatteryHoldSheetPresented) {
-            BatteryHoldSheet(coordinator: coordinator, site: site)
         }
         .sheet(item: $runDetailsSnapshot) { snapshot in
             LoadRunDetailsSheet(snapshot: snapshot)
