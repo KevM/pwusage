@@ -41,7 +41,8 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
   const acknowledge = async (id: number, version: number) => {
     const owner = randomUUID();
     await local.database.query(`UPDATE "BatteryHoldActivity" SET claim_owner = $2, claim_expires_at = now() + interval '1 minute' WHERE id = $1`, [id, owner]);
-    return repo.completeDelivery(id, owner, version);
+    const { rows: [{ push_token }] } = await local.database.query('SELECT push_token FROM "BatteryHoldActivity" WHERE id = $1', [id]);
+    return repo.completeDelivery(id, owner, version, push_token);
   };
 
   beforeAll(async () => {
@@ -481,6 +482,7 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
 
   describe('delivery claims', () => {
     const SANDBOX = ['sandbox' as const];
+    const TOKEN = 'a'.repeat(64);
     const claim = (owner = randomUUID(), environments: ('sandbox' | 'production')[] = SANDBOX, limit = 50) =>
       repo.claimForDelivery({ owner, environments, limit });
     const pendingRow = async (overrides: Partial<ActivityRegistration> = {}) => {
@@ -573,9 +575,9 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
       await local.database.query(`UPDATE "BatteryHoldActivity" SET claim_expires_at = now() - interval '1 second'`);
       const second = randomUUID();
       await claim(second);
-      expect(await repo.completeDelivery(id, randomUUID(), 1)).toBe(false);
+      expect(await repo.completeDelivery(id, randomUUID(), 1, TOKEN)).toBe(false);
       expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', delivered_version: 0, claim_owner: second });
-      expect(await repo.completeDelivery(id, second, 1)).toBe(true);
+      expect(await repo.completeDelivery(id, second, 1, TOKEN)).toBe(true);
       expect((await rows())[0]).toMatchObject({ delivery_state: 'current', delivered_version: 1, claim_owner: null, claim_expires_at: null });
     });
 
@@ -585,7 +587,7 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
       const [claimed] = await claim(owner);
       await holdRepo.recordMonitoring(holdId, monitoring(T1));
       await repo.syncDesired(holdId);
-      expect(await repo.completeDelivery(id, owner, claimed.version)).toBe(true);
+      expect(await repo.completeDelivery(id, owner, claimed.version, claimed.pushToken)).toBe(true);
       expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', delivered_version: 1, desired_version: 2, claim_owner: null });
       const [next] = await claim();
       expect(next.version).toBe(2);
@@ -600,7 +602,7 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
       await local.database.query(`UPDATE "BatteryHoldActivity" SET attempt_count = 3, next_attempt_at = now() - interval '1 second', last_error = 'ServiceUnavailable'`);
       const owner = randomUUID();
       await claim(owner);
-      expect(await repo.completeDelivery(id, owner, 1)).toBe(true);
+      expect(await repo.completeDelivery(id, owner, 1, TOKEN)).toBe(true);
       expect((await rows())[0]).toMatchObject({
         delivery_state: 'pending', delivered_version: 1, attempt_count: 3, last_error: 'ServiceUnavailable', claim_owner: null,
       });
@@ -644,6 +646,31 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
       expect((await claim()).map(c => c.version)).toEqual([2]);
     });
 
+    it('an acceptance for a token rotated mid-send releases the claim and keeps the version pending for the new token', async () => {
+      const id = await pendingRow({ pushToken: TOKEN });
+      const owner = randomUUID();
+      await claim(owner);
+      const [{ registration_id }] = await rows();
+      await repo.register(registration({ registrationId: registration_id, pushToken: 'b'.repeat(64) }));
+      expect(await repo.completeDelivery(id, owner, 1, TOKEN)).toBe(false);
+      expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', delivered_version: 0, push_token: 'b'.repeat(64), claim_owner: null });
+      const [again] = await claim();
+      expect(again).toMatchObject({ version: 1, pushToken: 'b'.repeat(64) });
+    });
+
+    it('an accepted end for a rotated token neither ends the row nor clears the new token', async () => {
+      const id = await pendingRow({ pushToken: TOKEN });
+      await holdRepo.markRestored(holdId, 'manual');
+      await repo.syncDesired(holdId);
+      const owner = randomUUID();
+      const [claimed] = await claim(owner);
+      const [{ registration_id }] = await rows();
+      await repo.register(registration({ registrationId: registration_id, pushToken: 'b'.repeat(64) }));
+      expect(await repo.completeDelivery(id, owner, claimed.version, TOKEN)).toBe(false);
+      expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', delivered_version: 0, push_token: 'b'.repeat(64) });
+      expect((await claim()).map(c => c.pushToken)).toEqual(['b'.repeat(64)]);
+    });
+
     it('an invalid token disables the row and clears the token, unless the token rotated meanwhile', async () => {
       const id = await pendingRow({ pushToken: 'a'.repeat(64) });
       let owner = randomUUID();
@@ -684,7 +711,7 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
       await repo.syncDesired(holdId);
       const owner = randomUUID();
       const [claimed] = await claim(owner);
-      expect(await repo.completeDelivery(id, owner, claimed.version)).toBe(true);
+      expect(await repo.completeDelivery(id, owner, claimed.version, claimed.pushToken)).toBe(true);
       const [row] = await rows();
       expect(row).toMatchObject({ delivery_state: 'ended', push_token: null });
       expect(await repo.register(registration({ registrationId: row.registration_id, pushToken: 'd'.repeat(64) }))).toBe('ended');

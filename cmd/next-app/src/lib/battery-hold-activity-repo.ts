@@ -200,28 +200,37 @@ export class BatteryHoldActivityRepo {
   }
 
   /**
-   * APNs accepted `version` for the claim held by `owner`. Advance-only: a stale
-   * or duplicate completion just releases the claim and leaves backoff alone.
-   * A newer desired version stays pending; an accepted end drops the token;
-   * ended/disabled never revive.
+   * APNs accepted `version`, sent to `token`, for the claim held by `owner`.
+   * Advance-only: a stale or duplicate completion just releases the claim and
+   * leaves backoff alone. If the app rotated the token mid-send, the acceptance
+   * says nothing about the new token: the claim is released without advancing
+   * so the same version goes to the new token next run. A newer desired
+   * version stays pending; an accepted end drops the token; ended/disabled
+   * never revive. Returns true when the version was acknowledged.
    */
-  async completeDelivery(id: number, owner: string, version: number): Promise<boolean> {
-    const result = await pool.query(`UPDATE "BatteryHoldActivity"
-      SET delivered_version = GREATEST(delivered_version, $3),
+  async completeDelivery(id: number, owner: string, version: number, token: string): Promise<boolean> {
+    const { rows } = await pool.query(`WITH c AS (
+        SELECT id, push_token IS NOT DISTINCT FROM $4 AND push_token IS NOT NULL AS sent
+        FROM "BatteryHoldActivity"
+        WHERE id = $1 AND claim_owner = $2::uuid AND $3 > 0 AND $3 <= desired_version
+        FOR UPDATE)
+      UPDATE "BatteryHoldActivity" a
+      SET delivered_version = CASE WHEN c.sent THEN GREATEST(a.delivered_version, $3) ELSE a.delivered_version END,
           delivery_state = CASE
-            WHEN delivery_state IN ('ended', 'disabled') OR $3 <= delivered_version THEN delivery_state
-            WHEN desired_version > $3 THEN 'pending'
-            WHEN desired_snapshot->>'status' <> 'active' THEN 'ended'
+            WHEN NOT c.sent OR a.delivery_state IN ('ended', 'disabled') OR $3 <= a.delivered_version THEN a.delivery_state
+            WHEN a.desired_version > $3 THEN 'pending'
+            WHEN a.desired_snapshot->>'status' <> 'active' THEN 'ended'
             ELSE 'current' END,
           push_token = CASE
-            WHEN $3 > delivered_version AND desired_version = $3 AND desired_snapshot->>'status' <> 'active' THEN NULL
-            ELSE push_token END,
-          attempt_count = CASE WHEN $3 > delivered_version THEN 0 ELSE attempt_count END,
-          next_attempt_at = CASE WHEN $3 > delivered_version THEN NULL ELSE next_attempt_at END,
-          last_error = CASE WHEN $3 > delivered_version THEN NULL ELSE last_error END,
+            WHEN c.sent AND $3 > a.delivered_version AND a.desired_version = $3 AND a.desired_snapshot->>'status' <> 'active' THEN NULL
+            ELSE a.push_token END,
+          attempt_count = CASE WHEN c.sent AND $3 > a.delivered_version THEN 0 ELSE a.attempt_count END,
+          next_attempt_at = CASE WHEN c.sent AND $3 > a.delivered_version THEN NULL ELSE a.next_attempt_at END,
+          last_error = CASE WHEN c.sent AND $3 > a.delivered_version THEN NULL ELSE a.last_error END,
           claim_owner = NULL, claim_expires_at = NULL, updated_at = now()
-      WHERE id = $1 AND claim_owner = $2::uuid AND $3 > 0 AND $3 <= desired_version`, [id, owner, version]);
-    return result.rowCount === 1;
+      FROM c WHERE a.id = c.id
+      RETURNING c.sent`, [id, owner, version, token]);
+    return rows[0]?.sent === true;
   }
 
   /**

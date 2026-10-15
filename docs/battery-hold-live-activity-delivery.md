@@ -31,7 +31,7 @@ methods in `battery-hold-activity-repo.ts`.
 
 | APNs result | Row effect |
 | --- | --- |
-| 200 (accepted) | `delivered_version` advances to the version sent; `current`, or `ended` with the token cleared for a terminal snapshot. A newer desired version stays `pending`. |
+| 200 (accepted) | `delivered_version` advances to the version sent; `current`, or `ended` with the token cleared for a terminal snapshot. A newer desired version stays `pending`. If the app rotated the token mid-send, nothing advances and the same version goes to the new token next run. |
 | `Unregistered`, `ExpiredToken`, `BadDeviceToken`, `DeviceTokenNotForTopic`, any 410 | `disabled`, token cleared, unless the app rotated the token mid-send (then only the claim is released). |
 | 429 `TooManyRequests`, 5xx, timeout, transport | Backoff: 1 min doubling to 30 min; 5xx waits at least 15 min (Apple's guidance). |
 | Provider-token or topic errors (`InvalidProviderToken`, `ExpiredProviderToken`, `Forbidden`, `TopicDisallowed`, …) | Surfaced: route returns **503** with `credentialFailure`, `console.error` names the reason, the rest of that environment is released for this run, and the attempted row backs off (5 min doubling). |

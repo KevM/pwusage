@@ -85,7 +85,7 @@ describe('deliverBatteryHoldActivities', () => {
     const client = fakeClient(() => ({ kind: 'accepted', apnsId: 'x' }));
     const summary = await deliverBatteryHoldActivities(deps(repo, client));
     const owner = repo.claimForDelivery.mock.calls[0][0].owner;
-    expect(repo.completeDelivery).toHaveBeenCalledWith(1, owner, 4);
+    expect(repo.completeDelivery).toHaveBeenCalledWith(1, owner, 4, TOKEN(1));
     expect(summary).toMatchObject({ status: 'ran', claimed: 1, accepted: 1 });
     expect(client.send.mock.calls[0][0]).toMatchObject({ environment: 'sandbox', token: TOKEN(1), priority: 5 });
     expect(client.close).toHaveBeenCalled();
@@ -128,7 +128,7 @@ describe('deliverBatteryHoldActivities', () => {
     expect(client.send).toHaveBeenCalledTimes(2);
     expect(repo.deferDelivery).toHaveBeenCalledWith(1, expect.any(String), 1, expect.objectContaining({ error: 'InvalidProviderToken' }));
     expect(repo.releaseClaim).toHaveBeenCalledWith(2, expect.any(String));
-    expect(repo.completeDelivery).toHaveBeenCalledWith(3, expect.any(String), 1);
+    expect(repo.completeDelivery).toHaveBeenCalledWith(3, expect.any(String), 1, TOKEN(3));
     expect(logs.some(line => line.includes('credentials rejected') && line.includes('InvalidProviderToken'))).toBe(true);
   });
 

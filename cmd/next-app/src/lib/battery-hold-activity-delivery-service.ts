@@ -109,7 +109,7 @@ export async function deliverBatteryHoldActivities(deps: DeliveryDeps = {}): Pro
     switch (result.kind) {
       case 'accepted':
         summary.accepted++;
-        await write('completion', () => repo.completeDelivery(activity.id, owner, activity.version));
+        await write('completion', () => repo.completeDelivery(activity.id, owner, activity.version, activity.pushToken));
         return;
       case 'invalid_token':
         summary.disabled++;
