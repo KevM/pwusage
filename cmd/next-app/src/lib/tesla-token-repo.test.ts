@@ -140,6 +140,29 @@ describe('getLockedRefreshHandler', () => {
         expect(lockReleaseCall![1], 'auth_status value must be "revoked"').toContain('revoked');
     });
 
+    it('does not re-submit a refresh token after a concurrent refresh revoked the user', async () => {
+        // A request that got its 401 before a concurrent refresh revoked the user
+        // arrives after that refresh released the lock. It must not take the free
+        // lock and send the same dead refresh token to Tesla again.
+        const user = { is_refreshing: 0, auth_status: 'revoked' };
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 }); // getSite site scalars
+        queryMock.mockResolvedValueOnce({ rows: [] }); // getSite tariff tree
+        queryMock.mockImplementation(async (sql: string) => {
+            if (sql.includes('SET is_refreshing = 1')) {
+                const excludesRevoked = /auth_status IS DISTINCT FROM 'revoked'/.test(sql);
+                return { rowCount: user.is_refreshing === 0 && !(excludesRevoked && user.auth_status === 'revoked') ? 1 : 0 };
+            }
+            if (sql.includes('SELECT access_token')) {
+                return { rows: [{ access_token: 'old-token', refresh_token: 'old-refresh', ...user }] };
+            }
+            return { rowCount: 1 };
+        });
+
+        const handlers = tokenRepo.getLockedRefreshHandler('site-1');
+        await expect(handlers.refreshHandler('old-refresh')).rejects.toThrow('auth revoked');
+        expect(refreshAccessTokenMock).not.toHaveBeenCalled();
+    });
+
     it('releases lock normally on non-terminal (transient) failure', async () => {
         // getSite cached after acquireRefreshLock's first call, so releaseRefreshLock hits cache
         queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 }); // getSite site scalars
