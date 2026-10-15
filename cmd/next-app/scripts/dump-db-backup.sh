@@ -9,6 +9,21 @@ kind="${1:?Usage: dump-db-backup.sh <kind> <outdir>}"
 out="${2:?Usage: dump-db-backup.sh <kind> <outdir>}"
 : "${DATABASE_URL:?DATABASE_URL is required}"
 
+# pg_dump uses session settings. Keep it off the application's transaction
+# pool, where those settings can leak into unrelated requests. Direct and local
+# connections are left alone; Supavisor's session listener uses port 5432.
+DATABASE_URL="$(node -e '
+  const source = process.env.DATABASE_URL;
+  const url = new URL(source);
+  if (url.hostname.endsWith(".pooler.supabase.com") && url.port === "6543") {
+    url.port = "5432";
+    process.stdout.write(url.toString());
+  } else {
+    process.stdout.write(source);
+  }
+')"
+export DATABASE_URL
+
 dump="$(npx tsx scripts/db-backup-kinds.ts "$kind" dump)"
 mkdir -p "$out"
 # Restores use this to refuse a daily backup that is not newer than the full one.

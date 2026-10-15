@@ -212,6 +212,8 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
+          # Like migrations, dumps need session state, isolated from app traffic.
+          DATABASE_URL="${DATABASE_URL/:6543\//:5432/}"
           # Dump Schema
           supabase db dump --db-url "$DATABASE_URL" -f schema.sql
           # Only public is reset below. Managed auth/storage data can include
