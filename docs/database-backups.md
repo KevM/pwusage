@@ -25,6 +25,11 @@ Everything is defined in one place: `cmd/next-app/scripts/db-backup-kinds.ts`
 (folders, retention, full or daily dump) and `.github/workflows/db-backup.yml`
 (schedule). To take a backup now: Actions → **Database Backup** → **Run workflow**.
 
+Data dumps explicitly select `--schema public`. Supabase-managed `auth` and
+`storage` tables are excluded: some, such as `storage.buckets_vectors`, cannot
+be restored by the hosted `postgres` role. These backups cover application data,
+not Supabase Auth accounts or Storage metadata.
+
 The separate prod -> dev copy that CI makes for migration PRs is described in
 [`dev-database-copy.md`](./dev-database-copy.md).
 

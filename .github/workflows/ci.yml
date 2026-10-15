@@ -214,8 +214,9 @@ jobs:
         run: |
           # Dump Schema
           supabase db dump --db-url "$DATABASE_URL" -f schema.sql
-          # Dump Data
-          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy
+          # Only public is reset below. Managed auth/storage data can include
+          # protected tables (e.g. storage.buckets_vectors) we cannot restore.
+          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public
           
           # Dump Migration History (using Supabase CLI for reliability)
           # We use "|| true" to prevent failure if the schema doesn't exist yet (soft fail)
