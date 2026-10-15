@@ -39,7 +39,7 @@ and [pg_net request semantics](https://github.com/supabase/pg_net).
 | History refresh, within site budget | 4 seconds |
 | Failure telemetry / lease cleanup | 1 second each, independently caught |
 | Stop admitting additional work | after 40 seconds; skipped sites remain active |
-| Live Activity desired-state reconcile (once per run, after the workers) | 2 seconds, isolated from the site deadlines, never fails the run |
+| Live Activity reconcile (once per run, after the workers: expire, prune rows retired over 24 hours, sync live rows) | 2 seconds, isolated from the site deadlines, never fails the run |
 | Database pool | 3 connections; acquisition 1s; statement 1.5s; lock 1s; query 2s |
 | Route / pg_net caller | 60s / 65s |
 | Hold processing lease | 120 seconds |

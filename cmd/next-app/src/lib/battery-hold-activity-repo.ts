@@ -8,6 +8,10 @@ export type ActivityDeliveryState = 'pending' | 'current' | 'ended' | 'disabled'
 export const ACTIVITY_LIFETIME_HOURS = 12;
 export const ENDED_HOLD_REGISTRATION_WINDOW_MS = 4 * 60 * 60 * 1000;
 export const ACTIVITY_SYNC_BUDGET_MS = 2000;
+// Devices one user may observe a hold from; bounds the rows every reconcile scans.
+export const MAX_LIVE_REGISTRATIONS_PER_HOLD = 5;
+// Disabled or expired rows are deleted after this, so the table stays small.
+export const ACTIVITY_RETENTION_HOURS = 24;
 
 /** Production APNs only on the production deployment; beta, preview and local accept sandbox only. */
 export function allowedApnsEnvironments(env: Readonly<Record<string, string | undefined>> = process.env): ApnsEnvironment[] {
@@ -34,6 +38,9 @@ const SNAPSHOT = `jsonb_build_object(
   'restored_at', ${iso('h.restored_at')}, 'restore_reason', h.restore_reason,
   'cancelled_observed_reserve', h.cancelled_observed_reserve, 'monitoring', h.monitoring)`;
 
+/** A registration's delivery state, or why the registration was refused. */
+export type RegisterResult = ActivityDeliveryState | 'conflict' | 'limit';
+
 export interface ActivityRegistration {
   holdId: number; userId: string; registrationId: string;
   pushToken: string; apnsEnvironment: ApnsEnvironment;
@@ -48,30 +55,57 @@ export class BatteryHoldActivityRepo {
     return rows.length === 1;
   }
 
-  async getHoldForSite(holdId: number, siteId: string): Promise<{ id: number; status: string; restored_at: Date | null } | null> {
-    const { rows } = await pool.query(`SELECT id, status, restored_at FROM "BatteryHold" WHERE id = $1 AND site_id = $2`, [holdId, siteId]);
+  /** `latest` is false once a newer hold exists for the site (a site has at most one active hold). */
+  async getHoldForSite(holdId: number, siteId: string): Promise<{ id: number; status: string; restored_at: Date | null; latest: boolean } | null> {
+    const { rows } = await pool.query(`SELECT h.id, h.status, h.restored_at,
+        NOT EXISTS (SELECT 1 FROM "BatteryHold" n WHERE n.site_id = h.site_id AND n.id > h.id) AS latest
+      FROM "BatteryHold" h WHERE h.id = $1 AND h.site_id = $2`, [holdId, siteId]);
     if (!rows.length) return null;
-    return { id: Number(rows[0].id), status: rows[0].status, restored_at: rows[0].restored_at ? new Date(rows[0].restored_at) : null };
+    return { id: Number(rows[0].id), status: rows[0].status, restored_at: rows[0].restored_at ? new Date(rows[0].restored_at) : null, latest: rows[0].latest };
   }
 
   /**
    * Idempotent per (user, registration); a repeat rotates the token. Returns the
-   * delivery state, or null when the registration id belongs to another hold or
-   * APNs environment. A disabled registration stays disabled.
+   * delivery state; 'conflict' when the registration id belongs to another hold
+   * or APNs environment; 'limit' when a new registration would exceed
+   * MAX_LIVE_REGISTRATIONS_PER_HOLD for this user. A disabled or expired
+   * registration stays disabled and loses its token.
    */
-  async register(r: ActivityRegistration): Promise<ActivityDeliveryState | null> {
-    const { rows } = await pool.query(`INSERT INTO "BatteryHoldActivity"
-        (hold_id, user_id, registration_id, push_token, apns_environment, expires_at)
-      VALUES ($1, $2, $3::uuid, $4, $5, now() + make_interval(hours => $6))
-      ON CONFLICT (user_id, registration_id) DO UPDATE
-        SET push_token = CASE WHEN "BatteryHoldActivity".delivery_state = 'disabled'
-              THEN "BatteryHoldActivity".push_token ELSE EXCLUDED.push_token END,
-            updated_at = now()
-        WHERE "BatteryHoldActivity".hold_id = EXCLUDED.hold_id
-          AND "BatteryHoldActivity".apns_environment = EXCLUDED.apns_environment
-      RETURNING delivery_state`,
-    [r.holdId, r.userId, r.registrationId, r.pushToken, r.apnsEnvironment, ACTIVITY_LIFETIME_HOURS]);
-    return rows.length ? rows[0].delivery_state as ActivityDeliveryState : null;
+  async register(r: ActivityRegistration): Promise<RegisterResult> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Serializes registrations for this hold, so concurrent requests cannot race the quota.
+      await client.query('SELECT 1 FROM "BatteryHold" WHERE id = $1 FOR NO KEY UPDATE', [r.holdId]);
+      const existing = await client.query(`SELECT 1 FROM "BatteryHoldActivity" WHERE user_id = $1 AND registration_id = $2::uuid`,
+        [r.userId, r.registrationId]);
+      if (!existing.rows.length) {
+        const { rows: [{ live }] } = await client.query(`SELECT count(*)::int AS live FROM "BatteryHoldActivity"
+          WHERE user_id = $1 AND hold_id = $2 AND delivery_state <> 'disabled' AND expires_at > now()`, [r.userId, r.holdId]);
+        if (live >= MAX_LIVE_REGISTRATIONS_PER_HOLD) {
+          await client.query('ROLLBACK');
+          return 'limit';
+        }
+      }
+      const { rows } = await client.query(`INSERT INTO "BatteryHoldActivity" AS a
+          (hold_id, user_id, registration_id, push_token, apns_environment, expires_at)
+        VALUES ($1, $2, $3::uuid, $4, $5, now() + make_interval(hours => $6))
+        ON CONFLICT (user_id, registration_id) DO UPDATE
+          SET push_token = CASE WHEN a.delivery_state = 'disabled' OR a.expires_at <= now() THEN NULL ELSE EXCLUDED.push_token END,
+              delivery_state = CASE WHEN a.expires_at <= now() THEN 'disabled' ELSE a.delivery_state END,
+              disabled_reason = CASE WHEN a.delivery_state <> 'disabled' AND a.expires_at <= now() THEN 'expired' ELSE a.disabled_reason END,
+              updated_at = now()
+          WHERE a.hold_id = EXCLUDED.hold_id AND a.apns_environment = EXCLUDED.apns_environment
+        RETURNING delivery_state`,
+      [r.holdId, r.userId, r.registrationId, r.pushToken, r.apnsEnvironment, ACTIVITY_LIFETIME_HOURS]);
+      await client.query('COMMIT');
+      return rows.length ? rows[0].delivery_state as ActivityDeliveryState : 'conflict';
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   async remove(userId: string, siteId: string, registrationId: string): Promise<boolean> {
@@ -93,7 +127,8 @@ export class BatteryHoldActivityRepo {
           delivery_state = 'pending', updated_at = now()
       FROM (SELECT a2.id, ${SNAPSHOT} AS snapshot
             FROM "BatteryHoldActivity" a2 JOIN "BatteryHold" h ON h.id = a2.hold_id
-            WHERE ($1::bigint IS NULL OR a2.hold_id = $1)) l
+            WHERE ($1::bigint IS NULL OR a2.hold_id = $1)
+              AND a2.delivery_state IN ('pending', 'current') AND a2.expires_at > now()) l
       WHERE a.id = l.id
         AND a.delivery_state IN ('pending', 'current') AND a.expires_at > now()
         AND a.desired_snapshot IS DISTINCT FROM l.snapshot
@@ -126,18 +161,29 @@ export class BatteryHoldActivityRepo {
       WHERE delivery_state <> 'disabled' AND expires_at <= now()`);
     return result.rowCount ?? 0;
   }
+
+  /** Deletes rows disabled or expired longer than the retention window. */
+  async pruneRetired(): Promise<number> {
+    const result = await pool.query(`DELETE FROM "BatteryHoldActivity"
+      WHERE expires_at <= now() - make_interval(hours => $1)
+         OR (delivery_state = 'disabled' AND updated_at <= now() - make_interval(hours => $1))`, [ACTIVITY_RETENTION_HOURS]);
+    return result.rowCount ?? 0;
+  }
 }
 
 /**
  * Push bookkeeping only: bounded, isolated from the caller's (possibly expired)
  * deadline, and never throws, so it can never block or fail reserve restoration.
- * Without a hold id it reconciles every live registration and expires stale ones.
+ * Without a hold id it also expires stale registrations and prunes retired ones.
  */
 export async function reconcileBatteryHoldActivities(holdId?: number): Promise<number | null> {
   try {
     return await withIoDeadline(ACTIVITY_SYNC_BUDGET_MS, async () => {
       const repo = new BatteryHoldActivityRepo();
-      if (holdId === undefined) await repo.expireStale();
+      if (holdId === undefined) {
+        await repo.expireStale();
+        await repo.pruneRetired();
+      }
       return repo.syncDesired(holdId);
     }, null);
   } catch (e) {

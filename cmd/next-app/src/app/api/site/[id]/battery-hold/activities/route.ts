@@ -61,19 +61,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const hold = await repo.getHoldForSite(registration.holdId, id);
     if (!hold) return json({ error: 'hold_not_found' }, 404);
 
-    const ended = hold.status !== 'active'
-      && (hold.restored_at === null || Date.now() - hold.restored_at.getTime() > ENDED_HOLD_REGISTRATION_WINDOW_MS);
+    // Only the site's latest hold (a site has at most one active hold) can be observed.
+    const ended = !hold.latest || (hold.status !== 'active'
+      && (hold.restored_at === null || Date.now() - hold.restored_at.getTime() > ENDED_HOLD_REGISTRATION_WINDOW_MS));
     if (ended) return json({ error: 'hold_ended' }, 410);
 
-    const state = await repo.register({
+    const result = await repo.register({
       holdId: hold.id,
       userId: user.id,
       registrationId: registration.registrationId.toLowerCase(),
       pushToken: registration.pushToken.toLowerCase(),
       apnsEnvironment: registration.apnsEnvironment,
     });
-    if (state === null) return json({ error: 'registration_conflict' }, 409);
-    if (state === 'disabled') return json({ error: 'registration_disabled' }, 410);
+    if (result === 'limit') return json({ error: 'registration_limit' }, 429);
+    if (result === 'conflict') return json({ error: 'registration_conflict' }, 409);
+    if (result === 'disabled') return json({ error: 'registration_disabled' }, 410);
 
     // Separate call after register, so a completion committed meanwhile is seen.
     await repo.syncDesired(hold.id);

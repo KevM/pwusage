@@ -5,10 +5,13 @@ import { randomUUID } from 'node:crypto';
 import type { BatteryHoldMonitoring } from './battery-hold-monitoring';
 
 const local = vi.hoisted(() => ({ database: undefined as unknown as import('pg').Pool }));
-vi.mock('./db', () => ({ pool: { query: (...args: unknown[]) => Reflect.apply(local.database.query, local.database, args) } }));
+vi.mock('./db', () => ({ pool: {
+  query: (...args: unknown[]) => Reflect.apply(local.database.query, local.database, args),
+  connect: () => local.database.connect(),
+} }));
 import { BatteryHoldRepo } from './battery-hold-repo';
 import {
-  BatteryHoldActivityRepo, reconcileBatteryHoldActivities, type ActivityRegistration,
+  BatteryHoldActivityRepo, MAX_LIVE_REGISTRATIONS_PER_HOLD, reconcileBatteryHoldActivities, type ActivityRegistration,
 } from './battery-hold-activity-repo';
 import { restoreBattery } from './battery-hold-service';
 import { monitorBatteryHolds } from './battery-hold-monitor-service';
@@ -105,7 +108,7 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
   });
 
   it('getHoldForSite returns the hold only for its own site', async () => {
-    expect(await repo.getHoldForSite(holdId, 's1')).toMatchObject({ id: holdId, status: 'active', restored_at: null });
+    expect(await repo.getHoldForSite(holdId, 's1')).toMatchObject({ id: holdId, status: 'active', restored_at: null, latest: true });
     expect(await repo.getHoldForSite(holdId, 's2')).toBeNull();
     expect(await repo.getHoldForSite(999999, 's1')).toBeNull();
   });
@@ -142,11 +145,60 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
     const secondHold = await holdRepo.createHold({
       siteId: 's1', originalReserve: 20, targetReserve: 100, parkedSoc: 90, baselineLoadW: 500, safetyExpiresAt: new Date(),
     });
-    expect(await repo.register(registration({ holdId: secondHold.id, registrationId, pushToken: 'b'.repeat(64) }))).toBeNull();
-    expect(await repo.register(registration({ registrationId, pushToken: 'b'.repeat(64), apnsEnvironment: 'production' }))).toBeNull();
+    expect(await repo.register(registration({ holdId: secondHold.id, registrationId, pushToken: 'b'.repeat(64) }))).toBe('conflict');
+    expect(await repo.register(registration({ registrationId, pushToken: 'b'.repeat(64), apnsEnvironment: 'production' }))).toBe('conflict');
     const [after] = await rows();
     expect(after.hold_id).toBe(before.hold_id);
     expect(after.push_token).toBe(before.push_token);
+  });
+
+  it('getHoldForSite marks a superseded hold as not the latest for its site', async () => {
+    await holdRepo.markRestored(holdId, 'manual');
+    const secondHold = await holdRepo.createHold({
+      siteId: 's1', originalReserve: 20, targetReserve: 100, parkedSoc: 90, baselineLoadW: 500, safetyExpiresAt: new Date(),
+    });
+    expect(await repo.getHoldForSite(holdId, 's1')).toMatchObject({ id: holdId, latest: false });
+    expect(await repo.getHoldForSite(secondHold.id, 's1')).toMatchObject({ id: secondHold.id, latest: true });
+  });
+
+  it('caps live registrations per user and hold, while rotation and other users are unaffected', async () => {
+    const ids = Array.from({ length: MAX_LIVE_REGISTRATIONS_PER_HOLD }, () => randomUUID());
+    for (const registrationId of ids) expect(await repo.register(registration({ registrationId }))).toBe('pending');
+    expect(await repo.register(registration())).toBe('limit');
+    expect(await repo.register(registration({ registrationId: ids[0], pushToken: 'b'.repeat(64) }))).toBe('pending');
+    expect(await repo.register(registration({ userId: 'admin' }))).toBe('pending');
+    // An expired or disabled registration frees its slot.
+    await local.database.query(`UPDATE "BatteryHoldActivity" SET expires_at = now() - interval '1 minute' WHERE registration_id = $1`, [ids[1]]);
+    expect(await repo.register(registration())).toBe('pending');
+    expect((await rows()).filter(r => r.user_id === 'u1')).toHaveLength(MAX_LIVE_REGISTRATIONS_PER_HOLD + 1);
+  });
+
+  it('concurrent registrations cannot exceed the cap', async () => {
+    const results = await Promise.all(Array.from({ length: 10 }, () => repo.register(registration())));
+    expect(results.filter(r => r === 'pending')).toHaveLength(MAX_LIVE_REGISTRATIONS_PER_HOLD);
+    expect(results.filter(r => r === 'limit')).toHaveLength(10 - MAX_LIVE_REGISTRATIONS_PER_HOLD);
+    expect(await rows()).toHaveLength(MAX_LIVE_REGISTRATIONS_PER_HOLD);
+  });
+
+  it('re-registering a row past its expiry is refused even before expireStale runs', async () => {
+    const registrationId = randomUUID();
+    await repo.register(registration({ registrationId }));
+    await repo.syncDesired(holdId);
+    await local.database.query(`UPDATE "BatteryHoldActivity" SET expires_at = now() - interval '1 minute'`);
+    expect(await repo.register(registration({ registrationId, pushToken: 'b'.repeat(64) }))).toBe('disabled');
+    const [row] = await rows();
+    expect(row).toMatchObject({ delivery_state: 'disabled', disabled_reason: 'expired', push_token: null, desired_version: 1 });
+  });
+
+  it('reconcile prunes retired rows after the retention window and keeps recent ones', async () => {
+    const [retired, expiredLongAgo, recentlyDisabled, live] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    for (const registrationId of [retired, expiredLongAgo, recentlyDisabled, live]) await repo.register(registration({ registrationId }));
+    await local.database.query(`UPDATE "BatteryHoldActivity" SET delivery_state = 'disabled', push_token = NULL,
+      updated_at = now() - interval '25 hours' WHERE registration_id = $1`, [retired]);
+    await local.database.query(`UPDATE "BatteryHoldActivity" SET expires_at = now() - interval '25 hours' WHERE registration_id = $1`, [expiredLongAgo]);
+    await local.database.query(`UPDATE "BatteryHoldActivity" SET delivery_state = 'disabled', push_token = NULL WHERE registration_id = $1`, [recentlyDisabled]);
+    expect(await reconcileBatteryHoldActivities()).toBe(1);
+    expect((await rows()).map(r => r.registration_id).sort()).toEqual([recentlyDisabled, live].sort());
   });
 
   it('a registration that arrives after completion starts with the terminal snapshot', async () => {

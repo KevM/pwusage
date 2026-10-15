@@ -36,7 +36,7 @@ import { DELETE, POST } from './route';
 const URL_BASE = 'http://localhost/api/site/site-1/battery-hold/activities';
 const ctx = { params: Promise.resolve({ id: 'site-1' }) } as never;
 const SESSION_USER = { id: 'user-1' };
-const ACTIVE_HOLD = { id: 7, status: 'active', restored_at: null };
+const ACTIVE_HOLD = { id: 7, status: 'active', restored_at: null, latest: true };
 
 function postReq(body: unknown, contentType: string | null = 'application/json') {
   const headers: Record<string, string> = contentType ? { 'content-type': contentType } : {};
@@ -169,7 +169,7 @@ describe('battery-hold activities route', () => {
 
     it('returns 410 hold_ended for a hold restored more than the window ago', async () => {
       mocks.getHoldForSite.mockResolvedValue({
-        id: 7, status: 'restored', restored_at: new Date(Date.now() - 5 * 60 * 60 * 1000),
+        id: 7, status: 'restored', restored_at: new Date(Date.now() - 5 * 60 * 60 * 1000), latest: true,
       });
       const res = await POST(postReq(validBody()), ctx);
       expect(res.status).toBe(410);
@@ -179,7 +179,7 @@ describe('battery-hold activities route', () => {
 
     it('accepts a registration for a hold that ended inside the window and seeds its terminal snapshot', async () => {
       mocks.getHoldForSite.mockResolvedValue({
-        id: 7, status: 'restored', restored_at: new Date(Date.now() - 10 * 60 * 1000),
+        id: 7, status: 'restored', restored_at: new Date(Date.now() - 10 * 60 * 1000), latest: true,
       });
       const res = await POST(postReq(validBody()), ctx);
       expect(res.status).toBe(200);
@@ -187,8 +187,26 @@ describe('battery-hold activities route', () => {
       expect(mocks.syncDesired).toHaveBeenCalledWith(7);
     });
 
-    it('returns 409 registration_conflict and skips the snapshot sync when register returns null', async () => {
-      mocks.register.mockResolvedValue(null);
+    it('returns 410 hold_ended for a hold superseded by a newer hold on the site, even inside the window', async () => {
+      mocks.getHoldForSite.mockResolvedValue({
+        id: 7, status: 'restored', restored_at: new Date(Date.now() - 10 * 60 * 1000), latest: false,
+      });
+      const res = await POST(postReq(validBody()), ctx);
+      expect(res.status).toBe(410);
+      expect(await res.json()).toEqual({ error: 'hold_ended' });
+      expect(mocks.register).not.toHaveBeenCalled();
+    });
+
+    it('returns 429 registration_limit and skips the snapshot sync when the quota is reached', async () => {
+      mocks.register.mockResolvedValue('limit');
+      const res = await POST(postReq(validBody()), ctx);
+      expect(res.status).toBe(429);
+      expect(await res.json()).toEqual({ error: 'registration_limit' });
+      expect(mocks.syncDesired).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 registration_conflict and skips the snapshot sync on a conflicting registration id', async () => {
+      mocks.register.mockResolvedValue('conflict');
       const res = await POST(postReq(validBody()), ctx);
       expect(res.status).toBe(409);
       expect(await res.json()).toEqual({ error: 'registration_conflict' });
