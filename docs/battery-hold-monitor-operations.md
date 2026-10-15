@@ -39,13 +39,21 @@ and [pg_net request semantics](https://github.com/supabase/pg_net).
 | History refresh, within site budget | 4 seconds |
 | Failure telemetry / lease cleanup | 1 second each, independently caught |
 | Stop admitting additional work | after 40 seconds; skipped sites remain active |
+| Live Activity desired-state reconcile (once per run, after the workers) | 2 seconds, isolated from the site deadlines, never fails the run |
 | Database pool | 3 connections; acquisition 1s; statement 1.5s; lock 1s; query 2s |
 | Route / pg_net caller | 60s / 65s |
 | Hold processing lease | 120 seconds |
 | Uncertain-write resend deferral | at least 15 minutes, with a reserve re-read |
 
 For ten holds, four waves of at most 12 seconds (including both cleanup budgets)
-plus the initial query fit inside the route duration with headroom. This bounds
+plus the initial query fit inside the route duration with headroom. The worst
+case is about 2 seconds to load, up to 40 seconds of admission, 12 seconds for
+the last admitted site, and 2 seconds for the Live Activity reconcile: roughly
+56 of the 60 seconds the route allows (65 seconds for pg_net). The run summary
+reports `activitiesSynced`, the number of registrations advanced; `null` means
+the reconcile was deferred (it timed out or failed, and the next run retries).
+The timing test (`battery-hold-monitor-timing.test.ts`) models the full reconcile
+budget, so raising it or adding a second step trips the 60 second guard. This bounds
 attempts under the tested conditions; it does **not** guarantee Tesla restoration
 within 120 seconds or successful upstream responses. Work admission also bounds
 larger queues; inspect skipped counts if the fleet grows beyond the tested size.

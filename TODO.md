@@ -85,6 +85,24 @@ Candidates that remain, in rough value order:
   ordered by rows, and/or a Supabase egress alert at ~50% of tier, would catch
   the next one in days.
 
+## Live Activity delivery (battery hold Task 5)
+
+Deferred from the Task 4 registration and pending-delivery work (branch `claude/live-activity-registration-e9b5ca`). Delete items as they land.
+
+- [ ] **Prune and narrow `syncDesired`:** the no-id sync builds a JSONB snapshot for every `BatteryHoldActivity` row, including disabled and ended ones, and nothing deletes rows. Add `AND a2.delivery_state IN ('pending','current') AND a2.expires_at > now()` to the `l` subquery (no behavior change; the outer guard already requires it) and prune rows disabled or ended more than N days ago in `expireStale` or the Task 5 worker. It runs under a 1.5 s statement timeout and a 2 s budget, and Task 5 will run it every minute.
+- [ ] **Per-user and per-hold registration cap:** `POST /battery-hold/activities` lets an authenticated user mint unlimited registration UUIDs, each costing an APNs request per desired version until expiry. Reject with 429 above about 10 live (`pending`/`current`) rows for a user and hold.
+- [ ] **Registration past expiry reports success:** if a row is past `expires_at` but `expireStale` has not run, `register` rotates the token and the route answers 200 although `syncDesired` skips it. Return `'disabled'` from `register` when `expires_at <= now()` so the route answers 410.
+- [ ] **Smaller deferred items:** token rotation leaves a `current` row current (confirm against ActivityKit docs); ended rows keep their token until expiry (null it on terminal acknowledgement, which needs the CHECK relaxed for `ended`); no `Origin` check on DELETE and no body size cap; optional `register` assertion in the in-window terminal route test; the slow-reconcile test (5 s) is shorter than the 10 s restore deadline (the ordering test already pins placement); no test for the cross-user same-registration-id case; a theoretical deadlock between the no-id and per-hold syncs is bounded by `lock_timeout` and caught. Task 5 or 6 should also map `status = 'active'` plus `restore_reason` to "restoring" on purpose, or ignore it; the snapshot includes it.
+- [ ] **Design note before the plan finishes:** add a `DesignDecisions.md` section for the activity bookkeeping invariants: SQL-side monotonic guards in `syncDesired`, bookkeeping only after lease release and outside restore deadlines, the periodic no-id reconcile as the recovery path, production APNs only when `VERCEL_ENV === 'production'`, and the dev copy deleting all activity rows.
+
+**Task 5 contract notes:**
+
+- The delivery claim selects only `delivery_state = 'pending' AND desired_version > delivered_version AND desired_snapshot IS NOT NULL AND push_token IS NOT NULL AND expires_at > now()`, gates `apns_environment` against `allowedApnsEnvironments()` again, re-checks current access (`User.is_active`, roles, `Site.user_id` through the hold), and captures `(desired_version, desired_snapshot)` atomically so it sends exactly that pair.
+- Replace `acknowledgeDelivery` with an owner-conditioned, advance-only version that touches backoff and claim columns only when the delivered version advances (a stale or duplicate ack must not reset backoff or leave the claim held).
+- Decide whether a new terminal version bypasses backoff: `syncDesired` leaves `next_attempt_at` untouched.
+- Never store the token or raw APNs response bodies in `last_error`; log with `activityErrorTag`.
+- Call `reconcileBatteryHoldActivities()` before claiming, and keep the worker's budget separate from the 60 s monitor.
+
 ## TRMNL: Loose Pending Installation Flow Note
 
 - **Note (2026-07-01):** The loose-pending fallback flow (installation row with NULL `uuid` and NULL `plugin_setting_id`, claimed by the next webhook within 15 minutes) has been retained. Database inspection confirmed that loose installations still occur (most recent on June 23, 2026). This fallback remains necessary to handle cases where `plugin_setting_id` is missing from the callback URL during manual setups or when the TRMNL API `fetchMe` fails. Revisit and remove this flow if loose installs stop appearing after the manual-install path is fixed.
