@@ -118,5 +118,14 @@ identical to the daily backup's. The dumps were taken with the host's `pg_dump`
 plus the CLI's `roles.sql` and `schema.sql`, because this machine's network kept
 dropping the CLI's container connections; CI's own pre-migration dumps on
 2026-10-08 and 2026-10-14 succeeded. The first scheduled runs are still the first
-end-to-end test of `supabase db dump -x 'public."EnergyData"'`, and
-`verify-db-backup.ts` fails them loudly if the exclusion does not take effect.
+end-to-end test against Supabase itself; `verify-db-backup.ts` fails them loudly
+if anything is off.
+
+**2026-10-15, CLI check.** `dump-db-backup.sh` ran end to end (Supabase CLI
+2.120, daily and weekly) against a seeded local Supabase Postgres container. The
+check caught a real bug: the CLI parses `-x` as a CSV list and rejected the
+quoted `-x 'public."EnergyData"'` outright, so every daily backup would have
+failed. Unquoted, `-x public.EnergyData` excludes the table's data and keeps its
+sequence. Real CLI dumps also contain Supabase's `auth.*` tables; restoring a
+weekly plus a newer daily into a fresh container worked, the next `EnergyData`
+insert got an id past every restored row, and an older daily was refused.

@@ -19,10 +19,12 @@ if [[ "$dump" == full ]]; then
   supabase db dump --db-url "$DATABASE_URL" -f "$out/data.sql" --data-only --use-copy
 else
   # EnergyData history is about 90% of a dump and backfillable from Tesla, so
-  # daily backups keep only its last three days, in a separate file. The quotes
-  # matter: unquoted, Postgres lowercases the name, matches nothing, and the
-  # whole table is dumped (verify-db-backup.ts rejects that).
-  supabase db dump --db-url "$DATABASE_URL" -f "$out/data.sql" --data-only --use-copy -x 'public."EnergyData"'
+  # daily backups keep only its last three days, in a separate file. Pass the
+  # name unquoted: the CLI reads -x as a CSV list, rejects embedded quotes, and
+  # quotes the identifier itself (checked against Supabase Postgres 17, CLI
+  # 2.120). If the exclusion ever stops working, verify-db-backup.ts rejects the
+  # dump instead of uploading it.
+  supabase db dump --db-url "$DATABASE_URL" -f "$out/data.sql" --data-only --use-copy -x public.EnergyData
   psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -c "\copy (SELECT * FROM public.\"EnergyData\" WHERE \"timestamp\" >= now() - interval '3 days' ORDER BY \"timestamp\", site_id) TO '$out/energy-recent.csv' WITH (FORMAT csv, HEADER true)"
 fi
 npx tsx scripts/verify-db-backup.ts "$out" "$dump"
