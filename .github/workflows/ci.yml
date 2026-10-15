@@ -57,6 +57,10 @@ jobs:
         env:
           BATTERY_HOLD_PG_BIN: /usr/lib/postgresql/17/bin
         run: npm run test:hold:postgres
+      - name: Test backup restore against isolated PostgreSQL
+        env:
+          DB_BACKUP_PG_BIN: /usr/lib/postgresql/17/bin
+        run: npm run test:backup:postgres
 
   build:
     name: Build App
@@ -79,62 +83,12 @@ jobs:
     name: Backup Database
     if: github.ref == 'refs/heads/main' && needs.check-db-changes.outputs.migrations == 'true'
     needs: [test, build, check-db-changes]
-    runs-on: ubuntu-latest
-    
-    defaults:
-      run:
-        working-directory: ./cmd/next-app
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7.0.1
-
-      - name: Install Supabase CLI
-        uses: supabase/setup-cli@v3.0.1
-        with:
-          version: latest
-
-      - name: Check private backup credentials
-        env:
-          BACKUP_BLOB_READ_WRITE_TOKEN: ${{ secrets.BACKUP_BLOB_READ_WRITE_TOKEN }}
-        run: |
-          if [ -z "$BACKUP_BLOB_READ_WRITE_TOKEN" ]; then
-            echo "::error::Configure BACKUP_BLOB_READ_WRITE_TOKEN for a private Vercel Blob store before running migrations."
-            exit 1
-          fi
-
-      - name: Create DB Backup
-        id: create_backup
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-          # Dump Roles
-          supabase db dump --db-url "$DATABASE_URL" -f roles.sql --role-only
-          # Dump Schema
-          supabase db dump --db-url "$DATABASE_URL" -f schema.sql
-          # Dump Data
-          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy
-          
-          # Zip files
-          ZIP_FILENAME="backup-${TIMESTAMP}.zip"
-          zip -q "${ZIP_FILENAME}" roles.sql schema.sql data.sql
-          
-          echo "filename=${ZIP_FILENAME}" >> $GITHUB_OUTPUT
-
-      - name: Set up Node for private backup upload
-        uses: actions/setup-node@v7.0.0
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: cmd/next-app/package-lock.json
-      - name: Install private backup dependencies
-        run: npm ci
-      - name: Upload private database backup
-        env:
-          BACKUP_BLOB_READ_WRITE_TOKEN: ${{ secrets.BACKUP_BLOB_READ_WRITE_TOKEN }}
-          BACKUP_FILENAME: ${{ steps.create_backup.outputs.filename }}
-        run: npx tsx scripts/upload-db-backup.ts "$BACKUP_FILENAME"
+    uses: ./.github/workflows/db-backup.yml
+    with:
+      kind: pre-migration
+    secrets:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BACKUP_BLOB_READ_WRITE_TOKEN: ${{ secrets.BACKUP_BLOB_READ_WRITE_TOKEN }}
 
   migrate:
     name: Run Migrations

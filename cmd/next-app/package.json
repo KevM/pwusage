@@ -18,6 +18,7 @@
     "test:compact": "bash scripts/test-compact-history.sh",
     "check:archive-preflight": "tsx scripts/check-archive-preflight.ts",
     "test:hold:postgres": "bash scripts/test-battery-hold.sh",
+    "test:backup:postgres": "bash scripts/test-db-backup-restore.sh",
     "test:hold:timing": "BATTERY_HOLD_TIMING_REALTIME=1 vitest --run src/lib/battery-hold-monitor-timing.test.ts"
   },
   "dependencies": {
