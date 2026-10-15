@@ -33,6 +33,11 @@ not Supabase Auth accounts or Storage metadata.
 The separate prod -> dev copy that CI makes for migration PRs is described in
 [`dev-database-copy.md`](./dev-database-copy.md).
 
+Backups use a direct or session connection. `dump-db-backup.sh` switches hosted
+Supavisor URLs from transaction port 6543 to session port 5432 for every dump
+and recent-readings export. This keeps backup session settings out of the
+application's transaction pool; direct and local URLs are preserved.
+
 ## Safety checks
 
 - **Verified before upload.** `verify-db-backup.ts` rejects a missing or empty

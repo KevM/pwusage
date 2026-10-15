@@ -16,4 +16,5 @@ trap cleanup EXIT
 LC_ALL=C "$hold_pg_bin/pg_ctl" -D "$hold_socket/data" -l "$hold_socket/server.log" -o "-k $hold_socket -p 55440 -h ''" -w start >/dev/null
 hold_started=true
 export BATTERY_HOLD_TEST_SOCKET="$hold_socket"
-npm test -- --run src/lib/battery-hold-postgres.test.ts src/lib/battery-hold-activity-postgres.test.ts
+npm test -- --run src/lib/battery-hold-postgres.test.ts src/lib/battery-hold-activity-postgres.test.ts \
+  src/lib/battery-hold-activity-delivery-postgres.test.ts "$@"

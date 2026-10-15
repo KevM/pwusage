@@ -85,20 +85,17 @@ Candidates that remain, in rough value order:
   ordered by rows, and/or a Supabase egress alert at ~50% of tier, would catch
   the next one in days.
 
-## Live Activity delivery (battery hold Task 5)
+## Live Activity delivery (battery hold Tasks 5–6)
 
-Deferred from the Task 4 registration and pending-delivery work (branch `claude/live-activity-registration-e9b5ca`). Delete items as they land.
+Task 5 (APNs sender and delivery trigger) landed the claim/acknowledge contract, the
+`ended`-row token clearing and the terminal backoff bypass; see
+[`docs/battery-hold-live-activity-delivery.md`](./docs/battery-hold-live-activity-delivery.md).
+Delete items as they land.
 
-- [ ] **Smaller deferred items:** token rotation leaves a `current` row current (confirm against ActivityKit docs); ended rows keep their token until expiry (null it on terminal acknowledgement, which needs the CHECK relaxed for `ended`); no `Origin` check on DELETE and no body size cap; optional `register` assertion in the in-window terminal route test; the slow-reconcile test (5 s) is shorter than the 10 s restore deadline (the ordering test already pins placement); no test for the cross-user same-registration-id case; a theoretical deadlock between the no-id and per-hold syncs is bounded by `lock_timeout` and caught. (iOS presents `status = 'active'` with a `restore_reason` or the `restoring` phase as "Restoring", in `BatteryHoldActivityPresentation`.)
-- [ ] **Design note before the plan finishes:** add a `DesignDecisions.md` section for the activity bookkeeping invariants: SQL-side monotonic guards in `syncDesired`, bookkeeping only after lease release and outside restore deadlines, the periodic no-id reconcile as the recovery path, production APNs only when `VERCEL_ENV === 'production'`, and the dev copy deleting all activity rows.
-
-**Task 5 contract notes:**
-
-- The delivery claim selects only `delivery_state = 'pending' AND desired_version > delivered_version AND desired_snapshot IS NOT NULL AND push_token IS NOT NULL AND expires_at > now()`, gates `apns_environment` against `allowedApnsEnvironments()` again, re-checks current access (`User.is_active`, roles, `Site.user_id` through the hold), and captures `(desired_version, desired_snapshot)` atomically so it sends exactly that pair.
-- Replace `acknowledgeDelivery` with an owner-conditioned, advance-only version that touches backoff and claim columns only when the delivered version advances (a stale or duplicate ack must not reset backoff or leave the claim held).
-- Decide whether a new terminal version bypasses backoff: `syncDesired` leaves `next_attempt_at` untouched.
-- Never store the token or raw APNs response bodies in `last_error`; log with `activityErrorTag`.
-- Call `reconcileBatteryHoldActivities()` before claiming, and keep the worker's budget separate from the 60 s monitor.
+- [ ] **Enable the production schedule deliberately.** Merging the Task 5 migration starts `battery-hold-activity-delivery-trigger` every 5 minutes (`2-59/5`). The `APNS_*` variables are set in Production and Preview, so each run reconciles and claims. After merge, confirm pg_net responses, runtime and egress over a few runs. If manual-stop latency (up to 5 minutes) is noticeable in Task 6, send from the stop path rather than running the cron more often.
+- [ ] **Smaller deferred items:** token rotation leaves a `current` row current, so the new token gets nothing until the next desired change (ActivityKit keeps the shown content, so this is believed fine; confirm on device in Task 6); no `Origin` check on DELETE and no body size cap; optional `register` assertion in the in-window terminal route test; the slow-reconcile test (5 s) is shorter than the 10 s restore deadline (the ordering test already pins placement); no test for the cross-user same-registration-id case; a theoretical deadlock between the no-id and per-hold syncs is bounded by `lock_timeout` and caught. iOS presents `status = 'active'` with the `restoring` phase or a `restore_reason` as "Restoring" (`BatteryHoldActivityPresentation`).
+- [ ] **Rows that lose access stay pending until expiry.** The claim skips them (no push), and expiry clears their token within 12 hours. Disabling at claim time would also strand a user whose `is_active` flips back after a Tesla re-login, so this was left as is.
+- [ ] **Design note before the plan finishes:** add a `DesignDecisions.md` section for the activity bookkeeping invariants: SQL-side monotonic guards in `syncDesired`, bookkeeping only after lease release and outside restore deadlines, the periodic no-id reconcile as the recovery path, production APNs only when `VERCEL_ENV === 'production'` (gated at registration and claim), the dev copy deleting all activity rows, owner-conditioned advance-only acknowledgement, data-time APNs timestamps, and "accepted is not delivered".
 
 ## TRMNL: Loose Pending Installation Flow Note
 

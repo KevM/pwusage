@@ -28,6 +28,7 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `CRON_SECRET`: Secret key used to authorize Vercel Cron Job requests.
 - `DATA_RETENTION_DAYS`: Number of days of raw energy data kept before it becomes eligible for archival (default: `365`). It controls archive/trim eligibility, not automatic deletion.
 - `SPARKLINE_SCALE_WINDOW_HOURS`: Header sparkline y-axis clamp window in hours (default: `12`, minimum effective value: `4`).
+- `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`: Apple Push Notification service token-auth key (10-character Key ID, Team ID, and the full `.p8` PEM; `\n` escapes accepted) for battery hold Live Activity updates. `APNS_BUNDLE_ID` is optional (default `fm.rodeo.pwusage`). Without them the delivery cron does nothing. Production APNs is used only when `VERCEL_ENV=production`; Preview deployments send sandbox pushes only. Setup steps: [Live Activity delivery](../../docs/battery-hold-live-activity-delivery.md).
 
 ### Deployment & CI (GitHub Actions Secrets)
 These variables are set as Secrets in your GitHub repository for automated deployments, backups, and migrations:
@@ -46,6 +47,11 @@ The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for b
 
 - **User Status Check** (`/api/cron/check-users`): Runs daily at 08:00 UTC. Verifies Tesla Fleet API credentials for all users to ensure tokens are valid and active. Updates `last_checked_at` and `auth_status`.
 - **History Archive** (`/api/cron/cleanup`): Runs daily at 09:00 UTC. Legacy energy and tag deletion is retired. The replacement is disabled unless `HISTORY_ARCHIVE_JOB_ENABLED=true` and the database control is unpaused with an explicit site cohort. Archive-only preserves raw data; separately selected trim mode removes verified archived raw days. `DATA_RETENTION_DAYS` controls raw-day eligibility, not automatic history expiry. Until archival/trim is activated with sufficient throughput, raw storage continues growing. Tags and historical tariffs remain permanent. See [archive operations](../../docs/plans/2026-10-07-daily-history-archive-operations.md) for activation, capacity and recovery.
+
+Sub-daily jobs run from Supabase `pg_cron` + `pg_net` (created by migrations, authorized with `CRON_SECRET`), not `vercel.json`:
+
+- **Battery hold monitor** (`/api/cron/restore-reserve`): every 15 minutes.
+- **Live Activity delivery** (`/api/cron/battery-hold-activity-delivery`): every 5 minutes at :02, :07, …, about 2 minutes after each monitor run; a no-op until the `APNS_*` variables are set. See [Live Activity delivery](../../docs/battery-hold-live-activity-delivery.md).
 
 ## Getting Started
 

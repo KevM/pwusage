@@ -15,7 +15,7 @@ See [`GOALS.md`](./GOALS.md) for the energy optimization strategy and success me
 ```bash
 cd cmd/next-app
 npm install
-cp .env.example .env  # Configure DATABASE_URL and Tesla API credentials
+cp example.env .env  # Configure DATABASE_URL and Tesla API credentials
 ```
 
 **Database Setup (Local):**
@@ -185,7 +185,11 @@ npm test -- --ui           # Open test UI
 - `TRMNL_CLIENT_SECRET`
 - `TRMNL_API_URL`
 
-See `.env.example` for full list.
+**Battery hold Live Activities (APNs, optional):**
+- `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY` (the `.p8` PEM), optional `APNS_BUNDLE_ID`
+- Unset = the delivery cron is a no-op. Production APNs is used only when `VERCEL_ENV=production`; Preview sends sandbox pushes only. See [`docs/battery-hold-live-activity-delivery.md`](./docs/battery-hold-live-activity-delivery.md).
+
+See `cmd/next-app/example.env` for full list.
 
 ## Common Troubleshooting
 
