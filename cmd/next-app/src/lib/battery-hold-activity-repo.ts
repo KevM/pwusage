@@ -39,7 +39,7 @@ const SNAPSHOT = `jsonb_build_object(
   'cancelled_observed_reserve', h.cancelled_observed_reserve, 'monitoring', h.monitoring)`;
 
 /** A registration's delivery state, or why the registration was refused. */
-export type RegisterResult = ActivityDeliveryState | 'conflict' | 'limit';
+export type RegisterResult = ActivityDeliveryState | 'conflict' | 'limit' | 'hold_ended';
 
 export interface ActivityRegistration {
   holdId: number; userId: string; registrationId: string;
@@ -69,14 +69,27 @@ export class BatteryHoldActivityRepo {
    * delivery state; 'conflict' when the registration id belongs to another hold
    * or APNs environment; 'limit' when a new registration would exceed
    * MAX_LIVE_REGISTRATIONS_PER_HOLD for this user. A disabled or expired
-   * registration stays disabled and loses its token.
+   * registration stays disabled and loses its token. 'hold_ended' means the
+   * hold was superseded or is outside the ended registration window.
    */
   async register(r: ActivityRegistration): Promise<RegisterResult> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      // Serializes registrations for this hold, so concurrent requests cannot race the quota.
-      await client.query('SELECT 1 FROM "BatteryHold" WHERE id = $1 FOR NO KEY UPDATE', [r.holdId]);
+      // Same site-first lock order as createHold. Recheck in a separate statement
+      // after acquiring it, so a replacement committed during the wait is visible.
+      await client.query(`SELECT s.id FROM "Site" s JOIN "BatteryHold" h ON h.site_id = s.id
+        WHERE h.id = $1 FOR NO KEY UPDATE OF s`, [r.holdId]);
+      // Also lock the hold against terminal transitions and serialize its quota.
+      const { rows: [hold] } = await client.query<{ status: string; restored_at: Date | null; latest: boolean }>(
+        `SELECT h.status, h.restored_at,
+            NOT EXISTS (SELECT 1 FROM "BatteryHold" n WHERE n.site_id = h.site_id AND n.id > h.id) AS latest
+          FROM "BatteryHold" h WHERE h.id = $1 FOR NO KEY UPDATE OF h`, [r.holdId]);
+      if (!hold || !hold.latest || (hold.status !== 'active'
+        && (hold.restored_at === null || Date.now() - hold.restored_at.getTime() > ENDED_HOLD_REGISTRATION_WINDOW_MS))) {
+        await client.query('ROLLBACK');
+        return 'hold_ended';
+      }
       const existing = await client.query(`SELECT 1 FROM "BatteryHoldActivity" WHERE user_id = $1 AND registration_id = $2::uuid`,
         [r.userId, r.registrationId]);
       if (!existing.rows.length) {

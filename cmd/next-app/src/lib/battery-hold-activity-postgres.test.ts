@@ -141,12 +141,12 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
     const registrationId = randomUUID();
     await repo.register(registration({ registrationId, pushToken: 'a'.repeat(64) }));
     const before = (await rows())[0];
+    expect(await repo.register(registration({ registrationId, pushToken: 'b'.repeat(64), apnsEnvironment: 'production' }))).toBe('conflict');
     await holdRepo.markRestored(holdId, 'manual');
     const secondHold = await holdRepo.createHold({
       siteId: 's1', originalReserve: 20, targetReserve: 100, parkedSoc: 90, baselineLoadW: 500, safetyExpiresAt: new Date(),
     });
     expect(await repo.register(registration({ holdId: secondHold.id, registrationId, pushToken: 'b'.repeat(64) }))).toBe('conflict');
-    expect(await repo.register(registration({ registrationId, pushToken: 'b'.repeat(64), apnsEnvironment: 'production' }))).toBe('conflict');
     const [after] = await rows();
     expect(after.hold_id).toBe(before.hold_id);
     expect(after.push_token).toBe(before.push_token);
@@ -159,6 +159,83 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
     });
     expect(await repo.getHoldForSite(holdId, 's1')).toMatchObject({ id: holdId, latest: false });
     expect(await repo.getHoldForSite(secondHold.id, 's1')).toMatchObject({ id: secondHold.id, latest: true });
+  });
+
+  it('refuses registration if the hold was replaced after the route read it', async () => {
+    expect(await repo.getHoldForSite(holdId, 's1')).toMatchObject({ latest: true, status: 'active' });
+    await holdRepo.markRestored(holdId, 'manual');
+    await holdRepo.createHold({
+      siteId: 's1', originalReserve: 20, targetReserve: 100, parkedSoc: 90, baselineLoadW: 500, safetyExpiresAt: new Date(),
+    });
+    expect(await repo.register(registration())).toBe('hold_ended');
+    expect(await rows()).toHaveLength(0);
+  });
+
+  it('rechecks the ended-hold window inside registration', async () => {
+    await holdRepo.markRestored(holdId, 'manual');
+    await local.database.query(`UPDATE "BatteryHold" SET restored_at = now() - interval '5 hours' WHERE id = $1`, [holdId]);
+    expect(await repo.register(registration())).toBe('hold_ended');
+    expect(await rows()).toHaveLength(0);
+  });
+
+  describe('registration and hold replacement (multiple connections)', () => {
+    const untilBlocked = async (count: number) => {
+      for (let i = 0; i < 200; i++) {
+        const { rows: [{ waiting }] } = await local.database.query(`SELECT count(*)::int AS waiting FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`);
+        if (waiting >= count) return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      throw new Error(`Expected ${count} blocked database operations`);
+    };
+
+    it('sees a replacement committed while registration waits for the site lock', async () => {
+      const blocker = await local.database.connect();
+      let pending: ReturnType<BatteryHoldActivityRepo['register']> | undefined;
+      try {
+        expect(await repo.getHoldForSite(holdId, 's1')).toMatchObject({ latest: true, status: 'active' });
+        await blocker.query('BEGIN');
+        await blocker.query(`SELECT 1 FROM "Site" WHERE id = 's1' FOR NO KEY UPDATE`);
+        await blocker.query(`UPDATE "BatteryHold" SET status = 'restored', restored_at = now() WHERE id = $1`, [holdId]);
+        await blocker.query(`INSERT INTO "BatteryHold"
+          (site_id, original_reserve, target_reserve, parked_soc, baseline_load_w, safety_expires_at)
+          VALUES ('s1', 20, 100, 90, 500, now() + interval '1 hour')`);
+        pending = repo.register(registration());
+        await untilBlocked(1);
+        await blocker.query('COMMIT');
+        expect(await pending).toBe('hold_ended');
+        expect(await rows()).toHaveLength(0);
+      } finally {
+        await blocker.query('ROLLBACK');
+        blocker.release();
+        if (pending) await Promise.allSettled([pending]);
+      }
+    });
+
+    it('hold creation waits until an already-running registration commits', async () => {
+      await holdRepo.markRestored(holdId, 'manual');
+      const blocker = await local.database.connect();
+      let pending: ReturnType<BatteryHoldActivityRepo['register']> | undefined;
+      let replacement: ReturnType<BatteryHoldRepo['createHold']> | undefined;
+      try {
+        await blocker.query('BEGIN');
+        await blocker.query('SELECT 1 FROM "BatteryHold" WHERE id = $1 FOR NO KEY UPDATE', [holdId]);
+        pending = repo.register(registration());
+        await untilBlocked(1);
+        replacement = holdRepo.createHold({
+          siteId: 's1', originalReserve: 20, targetReserve: 100, parkedSoc: 90, baselineLoadW: 500, safetyExpiresAt: new Date(),
+        });
+        await untilBlocked(2);
+        await blocker.query('COMMIT');
+        expect(await pending).toBe('pending');
+        expect((await replacement).status).toBe('active');
+        expect(await rows()).toMatchObject([{ hold_id: String(holdId) }]);
+      } finally {
+        await blocker.query('ROLLBACK');
+        blocker.release();
+        await Promise.allSettled([pending, replacement]);
+      }
+    });
   });
 
   it('caps live registrations per user and hold, while rotation and other users are unaffected', async () => {

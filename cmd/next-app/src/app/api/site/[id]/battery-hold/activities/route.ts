@@ -73,6 +73,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       pushToken: registration.pushToken.toLowerCase(),
       apnsEnvironment: registration.apnsEnvironment,
     });
+    // The transaction rechecks eligibility after the optimistic route precheck.
+    if (result === 'hold_ended') return json({ error: 'hold_ended' }, 410);
     if (result === 'limit') return json({ error: 'registration_limit' }, 429);
     if (result === 'conflict') return json({ error: 'registration_conflict' }, 409);
     if (result === 'disabled') return json({ error: 'registration_disabled' }, 410);

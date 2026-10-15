@@ -205,6 +205,14 @@ describe('battery-hold activities route', () => {
       expect(mocks.syncDesired).not.toHaveBeenCalled();
     });
 
+    it('returns 410 when registration finds the hold ended after the route precheck', async () => {
+      mocks.register.mockResolvedValue('hold_ended');
+      const res = await POST(postReq(validBody()), ctx);
+      expect(res.status).toBe(410);
+      expect(await res.json()).toEqual({ error: 'hold_ended' });
+      expect(mocks.syncDesired).not.toHaveBeenCalled();
+    });
+
     it('returns 409 registration_conflict and skips the snapshot sync on a conflicting registration id', async () => {
       mocks.register.mockResolvedValue('conflict');
       const res = await POST(postReq(validBody()), ctx);

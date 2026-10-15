@@ -58,6 +58,14 @@ attempts under the tested conditions; it does **not** guarantee Tesla restoratio
 within 120 seconds or successful upstream responses. Work admission also bounds
 larger queues; inspect skipped counts if the fleet grows beyond the tested size.
 
+Live Activity registration and hold creation both lock the parent `Site` row
+before locking or inserting a hold. Registration rechecks the latest hold and
+the four-hour ended window after acquiring that lock, inside its transaction.
+A replacement committed while registration waits is therefore rejected with
+`410 hold_ended`; a replacement started after registration holds the site lock
+waits for registration to commit. These locks cover database work only, with no
+Tesla or APNs calls inside the transaction.
+
 Real fetches receive the request-local abort signal. Token refresh, retry delays,
 body reads and DB acquisition share that deadline; no retry starts after expiry.
 A canceled or disconnected request can still have reached Tesla. A durable marker
