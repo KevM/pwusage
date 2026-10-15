@@ -26,12 +26,19 @@ struct PWUsageApp: App {
         ControlCenter.shared.reloadControls(ofKind: BatteryHoldControlIdentity.kind)
         do {
             let configuration = try AppConfiguration.fromBundle()
+            let api = PWUsageAPI(configuration: configuration)
             launch = .ready(
                 PWUsageAppModel(
                     configuration: configuration,
-                    api: PWUsageAPI(configuration: configuration),
+                    api: api,
                     cache: .persistent(apiOrigin: configuration.apiOrigin),
-                    controlSiteStore: .shared()
+                    controlSiteStore: .shared(),
+                    liveActivities: BatteryHoldActivityCoordinator(
+                        host: ActivityKitBatteryHoldHost(),
+                        api: api,
+                        apnsEnvironment: .fromBundle(),
+                        store: .init(defaults: .standard)
+                    )
                 )
             )
         } catch let error as AppConfiguration.ValidationError {
@@ -60,6 +67,7 @@ struct PWUsageApp: App {
             case .ready(let model):
                 PWUsageRootView()
                     .environmentObject(model)
+                    .environment(model.liveActivities)
             case .misconfigured(let message):
                 EmptyStateScreen(
                     symbol: "exclamationmark.triangle",
@@ -142,6 +150,7 @@ final class PWUsageAppModel: ObservableObject {
     @Published private(set) var pendingBatteryHoldSiteID: String?
     @Published var batteryHoldNavigationMessage: String?
     private let controlSiteStore: BatteryHoldControlSiteStore?
+    let liveActivities: BatteryHoldActivityCoordinator?
     private var sessionVerified = false
     private var hasBootstrapAttempted = false
     @Published private var siteRequestCount = 0
@@ -164,9 +173,11 @@ final class PWUsageAppModel: ObservableObject {
         coordinatorFactory: CoordinatorFactory? = nil,
         cache: DashboardCache? = nil,
         authService: MobileAuthService? = nil,
-        controlSiteStore: BatteryHoldControlSiteStore? = nil
+        controlSiteStore: BatteryHoldControlSiteStore? = nil,
+        liveActivities: BatteryHoldActivityCoordinator? = nil
     ) {
         self.controlSiteStore = controlSiteStore
+        self.liveActivities = liveActivities
         self.api = api
         self.userDefaults = userDefaults
         self.cache = cache
@@ -242,6 +253,7 @@ final class PWUsageAppModel: ObservableObject {
         sceneIsActive = isActive
         if sessionVerified {
             coordinator?.scenePhaseChanged(isActive: isActive)
+            if isActive { liveActivities?.reconcileInBackground() }
         } else if isActive, hasBootstrapAttempted, coordinator != nil, siteRequestCount == 0 {
             Task { await reloadSitesAfterSignIn() }
         }
@@ -395,6 +407,8 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func signOut() async {
+        // First, while the session cookie can still unregister this device's pushes.
+        await liveActivities?.signOut()
         pendingBatteryHoldSiteID = nil
         batteryHoldNavigationMessage = nil
         teardownCoordinator()
@@ -419,6 +433,7 @@ final class PWUsageAppModel: ObservableObject {
 
     private func invalidateSession(message: String?) async {
         teardownCoordinator()
+        await liveActivities?.sessionInvalidated()
         var cleanupFailed = false
         do { try await authService.invalidateAuthenticatedSession() }
         catch { cleanupFailed = true }
@@ -483,6 +498,7 @@ final class PWUsageAppModel: ObservableObject {
         cache?.storeSites(availableSites)
         sessionVerified = true
         controlSiteStore?.save(availableSites.map { BatteryHoldControlSite(id: $0.id, name: $0.name) })
+        liveActivities?.sitesAuthorized(availableSites)
         guard !availableSites.isEmpty else {
             resolveBatteryHoldNavigation()
             coordinatorAuthSubscription = nil
@@ -522,6 +538,7 @@ final class PWUsageAppModel: ObservableObject {
     private func installCoordinator(siteID: String, accountScopeID: String) {
         let nextCoordinator = coordinatorFactory(siteID, accountScopeID)
         nextCoordinator.restoreLaunchCache(cache, sessionVerified: sessionVerified)
+        nextCoordinator.batteryHoldActivityObserver = liveActivities
         coordinator = nextCoordinator
         coordinatorAuthSubscription = nextCoordinator.$requiresSignIn
             .removeDuplicates()

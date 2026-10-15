@@ -23,6 +23,10 @@ targets:
         CFBundleDisplayName: pwusage
         PWUSAGE_APP_GROUP: "$(PWUSAGE_APP_GROUP)"
         PWUSAGE_API_ORIGIN: "$(PWUSAGE_API_ORIGIN)"
+        # Read at runtime so each Live Activity registration reports the APNs
+        # environment its entitlement actually uses.
+        PWUSAGE_APS_ENVIRONMENT: "$(PWUSAGE_APS_ENVIRONMENT)"
+        NSSupportsLiveActivities: true
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         ITSAppUsesNonExemptEncryption: false
@@ -51,9 +55,11 @@ targets:
       properties:
         com.apple.security.application-groups:
           - "$(PWUSAGE_APP_GROUP)"
+        aps-environment: "$(PWUSAGE_APS_ENVIRONMENT)"
     settings:
       base:
         PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage
+        PWUSAGE_APS_ENVIRONMENT: production
         PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 6HQGHHRK87
@@ -61,6 +67,7 @@ targets:
         Debug:
           PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
           PWUSAGE_API_ORIGIN: https://pwusagebeta.fm.rodeo
+          PWUSAGE_APS_ENVIRONMENT: development
         Release:
           PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
   PWUsageWidgets:

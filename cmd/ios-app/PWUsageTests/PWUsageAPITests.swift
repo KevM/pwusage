@@ -58,6 +58,42 @@ final class PWUsageAPITests {
         #expect(body["durationHours"] == nil)
     }
 
+    @Test("Live Activity registrations post the server's JSON shape and delete by registration id")
+    func batteryHoldActivityTransport() async throws {
+        var requests: [(URLRequest, Data)] = []
+        StubURLProtocol.requestHandler = { request in
+            requests.append((request, (try? Self.bodyData(from: request)) ?? Data()))
+            let body = request.httpMethod == "POST" ? #"{"status":"registered","holdStatus":"active"}"# : #"{"status":"removed"}"#
+            return (try Self.response(request, status: 200), Data(body.utf8))
+        }
+        let registrationID = try #require(UUID(uuidString: "6F1C2E1A-7B4D-4F45-9A0B-1C2D3E4F5A6B"))
+        try await api.registerBatteryHoldActivity(siteID: "a/b", registration: .init(
+            holdId: 7, registrationId: registrationID.uuidString.lowercased(),
+            pushToken: String(repeating: "ab", count: 32), apnsEnvironment: .sandbox))
+        try await api.unregisterBatteryHoldActivity(siteID: "a/b", registrationID: registrationID)
+        #expect(requests.count == 2)
+        let post = requests[0]
+        #expect(post.0.httpMethod == "POST")
+        #expect(post.0.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath }
+            == "/api/site/a%2Fb/battery-hold/activities")
+        #expect(post.0.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        let body = try #require(JSONSerialization.jsonObject(with: post.1) as? [String: NSObject])
+        #expect(body["holdId"] == 7 as NSNumber)
+        #expect(body["registrationId"] == "6f1c2e1a-7b4d-4f45-9a0b-1c2d3e4f5a6b" as NSString)
+        #expect(body["pushToken"] == String(repeating: "ab", count: 32) as NSString)
+        #expect(body["apnsEnvironment"] == "sandbox" as NSString)
+        let delete = requests[1]
+        #expect(delete.0.httpMethod == "DELETE")
+        #expect(delete.0.url?.query == "registrationId=6f1c2e1a-7b4d-4f45-9a0b-1c2d3e4f5a6b")
+
+        StubURLProtocol.requestHandler = { request in
+            (try Self.response(request, status: 410), Data(#"{"error":"hold_ended"}"#.utf8))
+        }
+        await #expect(throws: PWUsageAPIError.requestRejected(statusCode: 410, message: "hold_ended")) {
+            try await api.unregisterBatteryHoldActivity(siteID: "a/b", registrationID: registrationID)
+        }
+    }
+
     @Test("Battery command permission errors remain actionable")
     func batteryHoldPermissionError() async {
         StubURLProtocol.requestHandler = { request in

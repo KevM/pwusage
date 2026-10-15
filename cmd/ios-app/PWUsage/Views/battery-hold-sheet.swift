@@ -6,6 +6,7 @@ struct BatteryHoldSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.reconnectTesla) private var reconnectTesla
+    @Environment(BatteryHoldActivityCoordinator.self) private var liveActivities: BatteryHoldActivityCoordinator?
 
     var body: some View {
         NavigationStack {
@@ -28,7 +29,11 @@ struct BatteryHoldSheet: View {
                         if let hold = response.hold {
                             BatteryHoldActiveSection(
                                 hold: hold, timeZone: timeZone, now: context.date,
-                                canRestore: canControl(at: context.date), onRestore: restore
+                                canRestore: canControl(at: context.date), onRestore: restore,
+                                liveActivity: liveActivities?.offer(forHoldID: hold.id),
+                                // Only confirmed status is shown as current; starting a display never changes the hold.
+                                canShowLiveActivity: coordinator.batteryHold.statusIsCurrent(at: context.date),
+                                onShowLiveActivity: { showLiveActivity(hold) }
                             )
                         } else {
                             BatteryHoldSetupSection(
@@ -104,6 +109,11 @@ struct BatteryHoldSheet: View {
     private func start(_ choice: BatteryHoldChoice) { send(.park(choice)) }
     private func restore() { send(.restore) }
     private func dismissNotice() { send(.dismiss) }
+
+    private func showLiveActivity(_ hold: BatteryHold) {
+        guard coordinator.selectedSiteID == site.id else { return }
+        liveActivities?.show(hold, siteID: site.id, timeZone: timeZone)
+    }
 
     private func send(_ command: BatteryHoldCommand) {
         guard coordinator.selectedSiteID == site.id else { return }

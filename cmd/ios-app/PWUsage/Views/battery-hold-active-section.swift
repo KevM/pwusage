@@ -6,6 +6,9 @@ struct BatteryHoldActiveSection: View {
     let now: Date
     let canRestore: Bool
     let onRestore: () -> Void
+    var liveActivity: BatteryHoldLiveActivityOffer? = nil
+    var canShowLiveActivity = false
+    var onShowLiveActivity: () -> Void = {}
     @State private var isConfirmingRestore = false
 
     var body: some View {
@@ -25,6 +28,20 @@ struct BatteryHoldActiveSection: View {
                     .foregroundStyle(.secondary)
             }
             Text(BatteryHoldPresentation.restorationText(hold, timeZone: timeZone, at: now))
+            if let liveActivity {
+                switch liveActivity {
+                case .showing:
+                    Text("Following this hold on your Lock Screen.").foregroundStyle(.secondary)
+                case .available:
+                    Button("Show on Lock Screen", action: onShowLiveActivity).disabled(!canShowLiveActivity)
+                case .disabled:
+                    Text("Turn on Live Activities for pwusage in Settings to follow holds on your Lock Screen.")
+                        .foregroundStyle(.secondary)
+                }
+                if liveActivity != .disabled, let limit = BatteryHoldPresentation.liveActivityLimitText(hold, at: now) {
+                    Text(limit).font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             DisclosureGroup("Info") {
                 LabeledContent("Original backup reserve", value: "\(hold.originalReserve)%")
                 if hold.mode == .auto {

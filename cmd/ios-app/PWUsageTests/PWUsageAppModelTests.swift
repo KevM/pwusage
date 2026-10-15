@@ -192,6 +192,39 @@ struct PWUsageAppModelTests {
         #expect(api.holdCommands.isEmpty)
     }
 
+    @Test("Live Activities follow the verified sites and are cleared on sign-out")
+    func liveActivitiesFollowSession() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
+        let host = FakeActivityHost()
+        let activityAPI = FakeActivityAPI()
+        let live = BatteryHoldActivityCoordinator(
+            host: host, api: activityAPI, apnsEnvironment: .sandbox,
+            store: .init(defaults: makeDefaults()), sleep: { _ in })
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api,
+                                    userDefaults: makeDefaults(), liveActivities: live)
+        await model.bootstrap()
+        let coordinator = try #require(model.coordinator)
+        #expect(coordinator.batteryHoldActivityObserver === live)
+        let hold = try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(BatteryHoldTests.holdJSON.utf8))
+        live.show(hold, siteID: "site-1", timeZone: nil)
+        live.show(try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(BatteryHoldTests.holdJSON
+            .replacingOccurrences(of: #""id":1"#, with: #""id":2"#)
+            .replacingOccurrences(of: "site-1", with: "site-2").utf8)), siteID: "site-2", timeZone: nil)
+        #expect(host.handles.map(\.attributes.siteID) == ["site-1", "site-2"])
+        #expect(host.handles[1].attributes.holdID == 2)
+
+        // Losing access to a site clears its activity from the Lock Screen.
+        api.sites = [Self.site("site-1")]
+        await model.reloadSitesAfterSignIn()
+        await eventually { host.handles[1].ends.count == 1 }
+        #expect(host.handles[1].ends.first?.immediately == true)
+        #expect(host.handles[0].ends.isEmpty)
+
+        await model.signOut()
+        #expect(activityAPI.removals.map(\.registrationID).contains(host.handles[0].attributes.registrationID))
+        #expect(host.handles[0].ends.first?.immediately == true)
+    }
+
     @Test("Explicit sign-out discards a pending launcher request")
     func signOutClearsControlRequest() async throws {
         let api = ApplicationAPISpy(sites: [], sitesError: PWUsageAPIError.signInRequired)

@@ -280,8 +280,8 @@ The existing sheet refreshes hold status and controls all writes.
 The existing App Group carries a separate protected, atomically replaced picker
 file containing only site IDs/names. It is refreshed from authorized site loading
 and cleared on logout/session invalidation. A saved control may retain an old site
-identifier, which is checked again in the app. No shared cookies, new credentials,
-new App Groups, APNs registration, or ActivityKit behavior are added.
+identifier, which is checked again in the app. The control adds no shared cookies,
+credentials or App Groups; the Live Activity below is the only APNs/ActivityKit use.
 
 Device acceptance still requires a signed iOS 18 build: verify gallery/configuration,
 several controls for different sites, cold and warm taps, tap while signed out then
@@ -318,3 +318,39 @@ transient state while the action runs and carries the site name.
 Opening the app asks the system to reload configured Battery Hold controls, but
 that does not refresh cached artwork. After an icon change: remove the control,
 install, restart the device, then re-add the control.
+
+### Battery Hold Live Activity
+
+After you confirm a hold in the app, pwusage starts a Live Activity (token pushes
+only, no push-to-start) and registers its push token with
+`/api/site/{id}/battery-hold/activities`. The server then sends `update` and `end`
+pushes (content-state schema 1, `docs/battery-hold-live-activity-delivery.md`).
+A hold started on the web or another phone is not shown automatically: the Battery
+Hold sheet offers **Show on Lock Screen**. Taps open that sheet; stopping goes
+through its confirmation. Denied or failed Live Activities never affect the hold.
+
+`BatteryHoldActivityCoordinator` owns the lifecycle: it re-registers rotated tokens
+(retrying temporary failures), reconciles on foreground and relaunch (database
+reads only, never Tesla), unregisters dismissals it observes or finds later,
+ends activities for sites the account can no longer access, and on sign-out
+unregisters before clearing every activity. It stores a token digest, never the token.
+
+Apple ends a standard Live Activity after eight hours. Fixed holds can run 24 hours,
+so the activity and the sheet say when the display ends; the app never restarts it.
+
+Setup: enable **Push Notifications** on the App ID `fm.rodeo.pwusage`, let Xcode refresh
+development profiles, and run `bundle exec fastlane ios prepare_signing` so the App
+Store profile carries `aps-environment` before the next TestFlight build. The
+entitlement and `PWUSAGE_APS_ENVIRONMENT` come from one build setting: `development`
+(APNs sandbox) for Debug, `production` for Release. Each registration reports that
+value; the server accepts production only on the production deployment.
+
+Device checks (need the delivery cron from plan Task 5 merged, the APNs key in
+Vercel, and signed builds; don't send real Tesla commands without an explicit test
+scope): updates arrive with the app closed; token rotation re-registers; sign-out
+clears the Lock Screen and stops pushes; two phones on one hold; restore and cancel
+end it with the right final text; dismissal stops pushes; the eight-hour end of a
+long fixed hold; overdue text once updates stop; Dynamic Island layouts; taps open
+the sheet when locked, signed out, and cold. Repeat on a Release/TestFlight build for
+production APNs. Simulator tests cover the contract and lifecycle with a fake
+ActivityKit, not system rendering or delivery.

@@ -96,6 +96,24 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         } catch { throw PWUsageAPIError.invalidResponse }
     }
 
+    func registerBatteryHoldActivity(siteID: String, registration: BatteryHoldActivityRegistration) async throws {
+        var request = URLRequest(url: try makeSiteURL(siteID: siteID, suffix: "battery-hold/activities"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(registration)
+        _ = try await perform(request)
+    }
+
+    func unregisterBatteryHoldActivity(siteID: String, registrationID: UUID) async throws {
+        let url = try makeSiteURL(siteID: siteID, suffix: "battery-hold/activities")
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { throw PWUsageAPIError.invalidResponse }
+        components.queryItems = [URLQueryItem(name: "registrationId", value: registrationID.uuidString.lowercased())]
+        guard let deleteURL = components.url else { throw PWUsageAPIError.invalidResponse }
+        var request = URLRequest(url: deleteURL)
+        request.httpMethod = "DELETE"
+        _ = try await perform(request)
+    }
+
     private func makeSiteURL(siteID: String, suffix: String) throws -> URL {
         let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/%?#"))
         guard !siteID.isEmpty, let encodedID = siteID.addingPercentEncoding(withAllowedCharacters: allowed),
@@ -192,3 +210,4 @@ extension PWUsageAPI: PWUsageApplicationAPI {}
 
 extension PWUsageAPI: MobileTariffDataAPI {}
 extension PWUsageAPI: MobileBatteryHoldDataAPI {}
+extension PWUsageAPI: BatteryHoldActivityAPI {}
