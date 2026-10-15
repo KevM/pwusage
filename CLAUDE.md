@@ -165,9 +165,9 @@ npm test -- --ui           # Open test UI
 - Cron jobs configured in `vercel.json` run in `src/app/api/cron/*`
 
 **Database:**
-- Production: Supabase PostgreSQL
+- Production: Supabase PostgreSQL (Free plan: no automatic backups, 5 GB/month egress)
 - Dev: PostgreSQL (from backup) or local SQLite
-- Backups before migrations stored in Vercel Blob
+- Private backups in Vercel Blob: daily (no EnergyData history), weekly full, and before migrations. See [`docs/database-backups.md`](./docs/database-backups.md) for retention and the restore runbook.
 
 ## Environment Variables
 
