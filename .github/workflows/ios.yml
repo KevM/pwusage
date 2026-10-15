@@ -23,7 +23,9 @@ jobs:
   test:
     name: Run iOS Tests
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
-    runs-on: self-hosted
+    # GitHub-hosted only. A self-hosted runner would execute fork PR code on a
+    # personal machine once the repository is public.
+    runs-on: macos-latest
     timeout-minutes: 15
 
     defaults:
