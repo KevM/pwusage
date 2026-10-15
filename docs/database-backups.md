@@ -25,6 +25,9 @@ Everything is defined in one place: `cmd/next-app/scripts/db-backup-kinds.ts`
 (folders, retention, full or daily dump) and `.github/workflows/db-backup.yml`
 (schedule). To take a backup now: Actions → **Database Backup** → **Run workflow**.
 
+The separate prod -> dev copy that CI makes for migration PRs is described in
+[`dev-database-copy.md`](./dev-database-copy.md).
+
 ## Safety checks
 
 - **Verified before upload.** `verify-db-backup.ts` rejects a missing or empty

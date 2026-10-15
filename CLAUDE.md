@@ -116,6 +116,7 @@ supabase migration up --db-url "postgresql://user:pass@localhost/pwusage"
 - On merge to main: Database is backed up to Vercel Blob, then migrations run
 - Migrations must be idempotent (safe to run multiple times)
 - Note: This may invalidate Trmnl devices in dev database
+- The dev copy is guarded by a positive dev marker, scrubbed in the restore transaction, and pruned after migrations. See [`docs/dev-database-copy.md`](./docs/dev-database-copy.md).
 
 See [`Agents.md`](./Agents.md) for migration and deployment conventions.
 
@@ -231,6 +232,7 @@ doesn't reintroduce a bug that was already paid for.
 ## Useful References
 
 - [`DesignDecisions.md`](./DesignDecisions.md): Why load-bearing design decisions were made (read before refactoring those areas)
+- [`docs/dev-database-copy.md`](./docs/dev-database-copy.md): Prod -> dev copy, its dev marker, scrub and prune
 - [`Agents.md`](./Agents.md): Architecture, conventions, development practices, agent environment
 - [`Authentication.md`](./Authentication.md): Auth flows, JWT, Trmnl integration details
 - [`GOALS.md`](./GOALS.md): Energy optimization strategy and success metrics
