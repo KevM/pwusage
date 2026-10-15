@@ -81,6 +81,20 @@ describe('dev-only database scripts stay away from prod', () => {
         );
     });
 
+    it('copies only public data, keeping managed Supabase tables out of dev restores', () => {
+        const dump = stepNamed(verifyDb, 'Dump Production DB');
+        const data = dump.split('\n').find((line) => line.includes('-f data.sql'));
+        expect(data).toMatch(/--schema public(?:\s|$)/);
+        expect(dump).toContain('--schema supabase_migrations');
+    });
+
+    it('also excludes managed Supabase tables from full and daily backup data', () => {
+        const script = readFileSync('scripts/dump-db-backup.sh', 'utf8');
+        const dumps = script.split('\n').filter((line) => line.trimStart().startsWith('supabase db dump') && line.includes('--data-only'));
+        expect(dumps).toHaveLength(2);
+        for (const dump of dumps) expect(dump).toMatch(/--schema public(?:\s|$)/);
+    });
+
     it('prunes only after migrations were verified on full data', () => {
         const prune = stepIndex(verifyDb, 'Prune Dev Copy');
         expect(stepNamed(verifyDb, 'Prune Dev Copy')).toContain('-f scripts/prune-dev-copy.sql');

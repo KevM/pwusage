@@ -12,6 +12,10 @@ beta site (pwusagebeta.fm.rodeo) and the dev pg_cron jobs run against that copy.
    project, or when either is missing or the dev project cannot be identified. It
    never prints either URL.
 2. **Dumps production** with `supabase db dump` (schema, data, migration history).
+   The data dump explicitly selects `--schema public`: only application tables
+   are copied. Supabase-managed `auth` and `storage` tables stay untouched;
+   protected tables such as `storage.buckets_vectors` cannot be restored by
+   `postgres`. Migration history is dumped separately from `supabase_migrations`.
 3. **Restores to dev.** The first command is the dev guard
    (`scripts/assert-dev-database.sql`); only then does it drop and recreate the
    `public` schema and load the schema. Data is loaded and scrubbed in one
