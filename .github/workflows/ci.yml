@@ -61,6 +61,10 @@ jobs:
         env:
           DB_BACKUP_PG_BIN: /usr/lib/postgresql/17/bin
         run: npm run test:backup:postgres
+      - name: Test dev-copy guard, sanitize and prune against isolated PostgreSQL
+        env:
+          DEV_COPY_PG_BIN: /usr/lib/postgresql/17/bin
+        run: npm run test:dev-copy:postgres
 
   build:
     name: Build App
@@ -197,6 +201,13 @@ jobs:
         with:
           version: latest
 
+      # Before any SQL: the dev-only steps below drop and rewrite the target.
+      - name: Check dev and prod databases differ
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+        run: bash scripts/check-dev-database-url.sh
+
       - name: Dump Production DB
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -219,14 +230,19 @@ jobs:
         env:
           DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
         run: |
+          # Refuse unless the target carries the dev marker (docs/database-backups.md).
+          # Must stay the first command: everything below drops or rewrites data.
+          psql -X -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f scripts/assert-dev-database.sql
+
           # Reset Dev DB public schema
           psql "$DEV_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO postgres; GRANT ALL ON SCHEMA public TO public;"
           
           # Restore Schema
           psql "$DEV_DATABASE_URL" -f schema.sql
           
-          # Restore Data
-          psql "$DEV_DATABASE_URL" -f data.sql
+          # Restore Data and scrub it in one transaction, so beta and the dev
+          # pg_cron jobs never see unscrubbed rows. Any error rolls back both.
+          psql -X --single-transaction -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f data.sql -f scripts/sanitize-dev-copy.sql
           
           # Restore Migration History
           # (We truncate first to remove any stale Dev history, then apply Prod's history)
@@ -268,6 +284,15 @@ jobs:
         run: |
           MIGRATION_DB_URL=$(echo "$DEV_DATABASE_URL" | sed 's/:6543/:5432/')
           supabase migration up --db-url "$MIGRATION_DB_URL"
+
+      # After migrations were verified on full prod-sized data: shrink the copy.
+      - name: Prune Dev Copy
+        env:
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+        run: |
+          # Session mode (:5432), as for migrations, for the long-running VACUUM FULL.
+          PRUNE_DB_URL=$(echo "$DEV_DATABASE_URL" | sed 's/:6543/:5432/')
+          psql -X -v ON_ERROR_STOP=1 "$PRUNE_DB_URL" -f scripts/prune-dev-copy.sql
 
   deploy-preview:
     name: Deploy to Vercel (Preview)

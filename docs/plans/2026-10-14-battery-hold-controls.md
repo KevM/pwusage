@@ -78,7 +78,10 @@ modify `battery-hold-service.ts` and monitor service for desired snapshots.
    Persist desired pushes after authoritative monitoring and terminal transitions,
    including website/manual actions. Recover missed desired-state writes by
    reconciliation; no push bookkeeping failure may block reserve restoration.
-4. Verify isolated migration/RLS and web tests/lint/build; commit.
+4. In the same PR, add a rule to `cmd/next-app/scripts/sanitize-dev-copy.sql`
+   clearing the activity push tokens on the prod -> dev copy, with a case in
+   `dev-copy-scripts.test.ts` (see `docs/dev-database-copy.md`).
+5. Verify isolated migration/RLS and web tests/lint/build; commit.
 
 ## Task 5: Deliver Apple pushes separately
 
