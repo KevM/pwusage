@@ -51,12 +51,26 @@ require() {
   done
 }
 
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+info() { [[ -f "$1/backup-info" ]] || return 0; sed -n "s/^$2=//p" "$1/backup-info" | head -n 1; }
+
 full_dir="$(unpack "$full" full)" || exit 1
 require "$full_dir" roles.sql schema.sql data.sql || exit 1
+# The same checks a backup passes before upload; this also stops a daily
+# backup from being restored as if it were complete.
+npx tsx "$script_dir/verify-db-backup.ts" "$full_dir" full >/dev/null || exit 1
 newest_dir="$full_dir"
 if [[ -n "$daily" ]]; then
   daily_dir="$(unpack "$daily" daily)" || exit 1
   require "$daily_dir" roles.sql schema.sql data.sql energy-recent.csv || exit 1
+  npx tsx "$script_dir/verify-db-backup.ts" "$daily_dir" small >/dev/null || exit 1
+  # A full backup without backup-info predates daily backups, so it is older.
+  full_at="$(info "$full_dir" taken_at)"
+  daily_at="$(info "$daily_dir" taken_at)"
+  if [[ -n "$full_at" && ! "$full_at" < "$daily_at" ]]; then
+    echo "The daily backup ($daily_at) must be newer than the full backup ($full_at)." >&2
+    exit 1
+  fi
   newest_dir="$daily_dir"
 fi
 

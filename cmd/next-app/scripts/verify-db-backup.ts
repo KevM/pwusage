@@ -6,12 +6,24 @@ import type { BackupDump } from './db-backup-kinds';
 // pg_dump writes `COPY public."User" (...) FROM stdin;`; tolerate quoted or bare names.
 const COPY_HEADER = /^COPY\s+(?:"?public"?\.)?"?([^"\s(]+)"?\s*(?:\(.*\))?\s+FROM\s+stdin;$/;
 const RECENT_ENERGY = 'energy-recent.csv';
+const BACKUP_INFO = 'backup-info';
+const TAKEN_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
 async function required(dir: string, name: string): Promise<string> {
     let body = '';
     try { body = await readFile(join(dir, name), 'utf8'); } catch { /* reported below */ }
     if (body.length === 0) throw new Error(`${name} is missing or empty`);
     return body;
+}
+
+/** `key=value` lines written by dump-db-backup.sh; undefined for backups made before it existed. */
+export async function readBackupInfo(dir: string): Promise<Record<string, string> | undefined> {
+    let body: string;
+    try { body = await readFile(join(dir, BACKUP_INFO), 'utf8'); } catch { return undefined; }
+    return Object.fromEntries(body.split('\n').filter((line) => line.includes('=')).map((line) => {
+        const at = line.indexOf('=');
+        return [line.slice(0, at), line.slice(at + 1)];
+    }));
 }
 
 /** Rows per table in a pg_dump data file; throws if a table's data is cut off. */
@@ -39,7 +51,20 @@ export function countCopyRows(data: string): Record<string, number> {
 export async function verifyBackupDirectory(dir: string, dump: BackupDump): Promise<Record<string, number>> {
     await required(dir, 'roles.sql');
     await required(dir, 'schema.sql');
-    const rows = countCopyRows(await required(dir, 'data.sql'));
+    const data = await required(dir, 'data.sql');
+
+    // Restores pair a full backup with a newer daily one, so the backup has to
+    // say what it is and when it was taken. Only daily backups require it:
+    // full backups made before backup-info existed are still restorable.
+    const info = await readBackupInfo(dir);
+    if (info === undefined) {
+        if (dump === 'small') throw new Error(`${BACKUP_INFO} is missing; daily backups must record when they were taken`);
+    } else {
+        if (info.dump !== dump) throw new Error(`${BACKUP_INFO} says this is a ${info.dump ?? 'unknown'} backup, not ${dump}`);
+        if (!TAKEN_AT.test(info.taken_at ?? '')) throw new Error(`${BACKUP_INFO} has no valid taken_at (expected UTC like 2026-10-15T09:23:05Z)`);
+    }
+
+    const rows = countCopyRows(data);
 
     const mustHaveRows = dump === 'full' ? ['User', 'Site', 'EnergyData'] : ['User', 'Site'];
     for (const table of mustHaveRows) {

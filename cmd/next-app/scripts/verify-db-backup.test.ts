@@ -12,6 +12,8 @@ const SITES = copyBlock('Site', '"id", "user_id"', ['s1\tu1', 's2\tu1']);
 const ENERGY = copyBlock('EnergyData', '"timestamp", "site_id", "load_power"', ['2026-10-15 00:00:00+00\ts1\t500']);
 const PREAMBLE = 'SET session_replication_role = replica;\n';
 const RECENT = 'timestamp,site_id,load_power\n2026-10-15 00:00:00+00,s1,500\n';
+const DAILY_INFO = 'kind=daily\ndump=small\ntaken_at=2026-10-15T09:23:05Z\n';
+const WEEKLY_INFO = 'kind=weekly\ndump=full\ntaken_at=2026-10-12T09:41:00Z\n';
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'pwusage-verify-backup-')); });
@@ -29,7 +31,7 @@ describe('verifyBackupDirectory', () => {
     });
 
     it('accepts a small backup with recent energy readings kept separately', async () => {
-        await backup({ 'data.sql': PREAMBLE + USERS + SITES, 'energy-recent.csv': RECENT });
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES, 'energy-recent.csv': RECENT, 'backup-info': DAILY_INFO });
         await expect(verifyBackupDirectory(dir, 'small')).resolves.toEqual({ User: 1, Site: 2, 'EnergyData (recent)': 1 });
     });
 
@@ -51,15 +53,32 @@ describe('verifyBackupDirectory', () => {
     });
 
     it('rejects a small backup whose data still contains EnergyData, so a failed exclusion is caught', async () => {
-        await backup({ 'data.sql': PREAMBLE + USERS + SITES + ENERGY, 'energy-recent.csv': RECENT });
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES + ENERGY, 'energy-recent.csv': RECENT, 'backup-info': DAILY_INFO });
         await expect(verifyBackupDirectory(dir, 'small')).rejects.toThrow('EnergyData was not excluded');
     });
 
     it('rejects a small backup without a recent-readings file header', async () => {
-        await backup({ 'data.sql': PREAMBLE + USERS + SITES, 'energy-recent.csv': '' });
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES, 'energy-recent.csv': '', 'backup-info': DAILY_INFO });
         await expect(verifyBackupDirectory(dir, 'small')).rejects.toThrow('energy-recent.csv');
-        await backup({ 'data.sql': PREAMBLE + USERS + SITES, 'energy-recent.csv': 'a,b\n1,2\n' });
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES, 'energy-recent.csv': 'a,b\n1,2\n', 'backup-info': DAILY_INFO });
         await expect(verifyBackupDirectory(dir, 'small')).rejects.toThrow('header');
+    });
+
+    it('accepts a full backup with matching backup-info, and a legacy one without it', async () => {
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES + ENERGY, 'backup-info': WEEKLY_INFO });
+        await expect(verifyBackupDirectory(dir, 'full')).resolves.toEqual({ User: 1, Site: 2, EnergyData: 1 });
+    });
+
+    it('rejects a daily backup offered as a full one', async () => {
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES, 'energy-recent.csv': RECENT, 'backup-info': DAILY_INFO });
+        await expect(verifyBackupDirectory(dir, 'full')).rejects.toThrow('a small backup, not full');
+    });
+
+    it('requires backup-info with a valid timestamp on daily backups', async () => {
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES, 'energy-recent.csv': RECENT });
+        await expect(verifyBackupDirectory(dir, 'small')).rejects.toThrow('backup-info is missing');
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES, 'energy-recent.csv': RECENT, 'backup-info': 'kind=daily\ndump=small\ntaken_at=yesterday\n' });
+        await expect(verifyBackupDirectory(dir, 'small')).rejects.toThrow('taken_at');
     });
 
     it('accepts unquoted schema names the way pg_dump may write them', async () => {

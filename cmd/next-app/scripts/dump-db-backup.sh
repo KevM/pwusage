@@ -11,6 +11,8 @@ out="${2:?Usage: dump-db-backup.sh <kind> <outdir>}"
 
 dump="$(npx tsx scripts/db-backup-kinds.ts "$kind" dump)"
 mkdir -p "$out"
+# Restores use this to refuse a daily backup that is not newer than the full one.
+printf 'kind=%s\ndump=%s\ntaken_at=%s\n' "$kind" "$dump" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$out/backup-info"
 supabase db dump --db-url "$DATABASE_URL" -f "$out/roles.sql" --role-only
 supabase db dump --db-url "$DATABASE_URL" -f "$out/schema.sql"
 if [[ "$dump" == full ]]; then

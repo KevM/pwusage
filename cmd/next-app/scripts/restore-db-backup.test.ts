@@ -38,6 +38,7 @@ const T2 = '2026-10-14 00:00:00+00';
 const T3 = '2026-10-15 00:00:00+00';
 
 const WEEKLY = {
+    'backup-info': 'kind=weekly\ndump=full\ntaken_at=2026-10-12T09:41:00Z\n',
     'roles.sql': '-- no custom roles\n',
     'schema.sql': SCHEMA,
     'data.sql': 'SET session_replication_role = replica;\n'
@@ -49,6 +50,7 @@ const WEEKLY = {
 };
 
 const DAILY = {
+    'backup-info': 'kind=daily\ndump=small\ntaken_at=2026-10-15T09:23:00Z\n',
     'roles.sql': '-- no custom roles\n',
     'schema.sql': SCHEMA,
     'data.sql': 'SET session_replication_role = replica;\n'
@@ -154,6 +156,28 @@ describe.skipIf(!safeSocket)('restore-db-backup.sh against isolated PostgreSQL',
         const inserted = await rows(`INSERT INTO public."EnergyData" ("timestamp", site_id, load_power)
                                      VALUES ('2026-10-16 00:00:00+00', 's1', 1) RETURNING id`);
         expect(inserted[0].id).toBeGreaterThan(5);
+    });
+
+    it('refuses a daily backup passed as the full backup, before touching the target', async () => {
+        const result = await restore('--full', await backupDir('daily', DAILY));
+        expect(result.code).not.toBe(0);
+        expect(result.out).toContain('not full');
+        expect(await tableCount()).toBe(0);
+    });
+
+    it('refuses a daily backup that is not newer than the full backup', async () => {
+        const staleDaily = { ...DAILY, 'backup-info': 'kind=daily\ndump=small\ntaken_at=2026-10-11T09:23:00Z\n' };
+        const result = await restore('--full', await backupDir('weekly', WEEKLY), '--daily', await backupDir('daily', staleDaily));
+        expect(result.code).not.toBe(0);
+        expect(result.out).toContain('must be newer');
+        expect(await tableCount()).toBe(0);
+    });
+
+    it('combines a legacy full backup without backup-info with a daily one', async () => {
+        const { 'backup-info': _info, ...legacy } = WEEKLY;
+        const result = await restore('--full', await backupDir('weekly', legacy), '--daily', await backupDir('daily', DAILY));
+        expect(result.out).toContain('Restore complete');
+        expect(await rows(`SELECT id FROM public."Site" ORDER BY id`)).toEqual([{ id: 's1' }, { id: 's3' }]);
     });
 
     it('rolls back completely when the backups do not fit together', async () => {

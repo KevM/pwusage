@@ -38,6 +38,12 @@ Everything is defined in one place: `cmd/next-app/scripts/db-backup-kinds.ts`
 - **Restores only into an empty database.** `restore-db-backup.sh` refuses any
   target with tables in its `public` schema, so it cannot overwrite production or
   dev. It loads everything in one transaction: a failure leaves the target empty.
+- **Restores check what they are given.** Before touching the target, the restore
+  runs the same verification on `--full` (it must be a complete backup) and
+  `--daily`. Each backup carries a `backup-info` file (kind, dump type, UTC time
+  taken); the restore refuses a daily backup that is not newer than the full one.
+  Full backups from before `backup-info` existed are accepted, since every daily
+  backup is newer than them.
 
 ## Restoring
 
