@@ -51,7 +51,7 @@ The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for b
 Sub-daily jobs run from Supabase `pg_cron` + `pg_net` (created by migrations, authorized with `CRON_SECRET`), not `vercel.json`:
 
 - **Battery hold monitor** (`/api/cron/restore-reserve`): every 15 minutes.
-- **Live Activity delivery** (`/api/cron/battery-hold-activity-delivery`): every minute; a no-op until the `APNS_*` variables are set. See [Live Activity delivery](../../docs/battery-hold-live-activity-delivery.md).
+- **Live Activity delivery** (`/api/cron/battery-hold-activity-delivery`): every 5 minutes at :02, :07, …, about 2 minutes after each monitor run; a no-op until the `APNS_*` variables are set. See [Live Activity delivery](../../docs/battery-hold-live-activity-delivery.md).
 
 ## Getting Started
 

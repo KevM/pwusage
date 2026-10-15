@@ -128,15 +128,31 @@ the route stays a no-op.
 ## Schedule and rollout
 
 Migration `20261015124607_battery_hold_activity_delivery_cron.sql` schedules
-`battery-hold-activity-delivery-trigger` every minute (provisional). It derives
+`battery-hold-activity-delivery-trigger` every 5 minutes at :02, :07, :12, …
+(`2-59/5`). Each run lands about 2 minutes after a 15-minute monitor run
+(:00/:15/:30/:45, up to about 60 s), so monitor updates and automatic ends go out
+about 2 minutes after the check. A manual stop waits at most 5 minutes; a stop
+made in the iOS app can end the activity locally (Task 6). Every 2.5 minutes
+can't be written as one cron expression. If manual-stop latency matters, send
+from the stop path rather than running the cron more often.
+
+Egress: an idle run (keys set, nothing pending) measured 342 bytes of query
+results on local Postgres. Each run also reconnects through the pooler, because
+the app pool closes idle connections after 30 s; TLS plus auth is estimated at
+about 5 KB. That is roughly 40–60 MB a month at this cadence, versus 200–300 MB
+at once a minute. Each pending registration adds about 0.5 KB.
+
+It derives
 the URL from the existing `battery_restore_cron_target_url` Vault secret, so
 prod calls pwusage and the dev copy calls pwusagebeta. If that secret ever stops
 ending in `/api/cron/restore-reserve`, the job calls nothing. The route allows 30 s;
 pg_net allows 35 s.
 
 **CI runs migrations on merge to main, so merging turns on this production
-schedule.** Until the APNs variables are set, each run is one authorized HTTP
-request that returns at once with no database or Apple work. Merging needs the
+schedule.** Without the APNs variables a run is one authorized HTTP request
+that returns at once, with no database or Apple work. They are now set in
+Production and Preview, so each run reconciles and claims; Apple is contacted
+only once activities are registered (Task 6). Merging needs the
 owner's explicit approval (the plan does not authorize production schedules).
 To pause it later: `SELECT cron.unschedule('battery-hold-activity-delivery-trigger');`.
 

@@ -2,9 +2,12 @@
 -- Created at: 2026-10-15T17:46:07.583Z
 
 -- Live Activity delivery trigger, separate from the 15-minute battery monitor.
--- Provisionally once a minute. The route is a no-op (no database work, no Apple
--- calls) until APNs credentials are configured, and does no Apple calls while
--- nothing is pending. A failed or timed-out call changes nothing: claims lapse
+-- Every 5 minutes at :02, :07, ... so each run lands about 2 minutes after a
+-- 15-minute monitor run (:00/:15/:30/:45, up to ~60 s) and picks up its updates.
+-- Manual stops wait at most 5 minutes. Each idle run reconnects to the database
+-- (the pool idles out after 30 s), so cadence drives egress. The route is a no-op
+-- (no database work, no Apple calls) until APNs credentials are configured, and
+-- makes no Apple calls while nothing is pending. A failed or timed-out call changes nothing: claims lapse
 -- and pending rows are retried by the next run.
 --
 -- The target is derived from the existing restore-reserve Vault secret, so prod
@@ -13,7 +16,7 @@
 -- nothing rather than the monitor. The route allows 30 seconds; pg_net allows 35.
 SELECT cron.schedule(
   'battery-hold-activity-delivery-trigger',
-  '* * * * *',
+  '2-59/5 * * * *',
   $$
   SELECT net.http_get(
     url := target.url,
