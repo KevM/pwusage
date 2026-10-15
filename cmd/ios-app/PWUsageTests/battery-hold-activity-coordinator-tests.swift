@@ -196,6 +196,23 @@ struct BatteryHoldActivityCoordinatorTests {
         _ = try await started(coordinator, hold(id: 8))
         await eventually { old.ends.count == 1 }
         #expect(host.handles.count == 2)
+        // Removed from the Lock Screen, not left beside the new hold's activity.
+        #expect(old.ends.first?.immediately == true)
+    }
+
+    @Test("A new hold dismisses the site's finished activity still on the Lock Screen")
+    func newHoldDismissesFinished() async throws {
+        let coordinator = makeCoordinator()
+        let finished = try await started(coordinator, hold(id: 7))
+        // The server's end push finished it; it stays visible under the default policy.
+        await finished.end(finished.state.ended(as: .restored, reason: .loadEnded, at: start), immediately: false)
+        await eventually { coordinator.offer(forHoldID: 7) == .available }
+        let other = try await started(coordinator, hold(id: 9, site: "site-2"))
+        _ = try await started(coordinator, hold(id: 8))
+        await eventually { finished.ends.count == 2 }
+        #expect(finished.ends.count == 2)
+        #expect(finished.ends.last?.immediately == true)
+        #expect(other.ends.isEmpty)
     }
 
     @Test("Dismissal is observed and unregisters the activity")

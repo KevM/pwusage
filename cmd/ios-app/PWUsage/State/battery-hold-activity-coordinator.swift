@@ -288,9 +288,15 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
             Task { await update(existing, to: state) }
             return
         }
-        // A site has one active hold: anything older on this site is over.
-        let older = trackedItems(siteID: siteID)
-        Task { for item in older { await end(item, as: item.handle.state.ended(as: .ended, at: now())) } }
+        // A site shows one hold. Anything else for it is over, including a finished
+        // activity still on the Lock Screen, so remove it rather than leave two.
+        let others = host.activities().filter { $0.attributes.siteID == siteID && $0.attributes.holdID != hold.id }
+        Task {
+            for handle in others {
+                if let item = tracked[handle.id] { await end(item, as: nil, immediately: true) }
+                else { await handle.end(nil, immediately: true) }
+            }
+        }
         guard host.activitiesEnabled else { return }
         let attributes = BatteryHoldActivityAttributes(
             siteID: siteID, siteName: siteName, holdID: hold.id, registrationID: UUID(),
