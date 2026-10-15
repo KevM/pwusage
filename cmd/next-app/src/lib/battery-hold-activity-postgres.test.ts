@@ -1,6 +1,4 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Pool } from 'pg';
-import { readFile, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import type { BatteryHoldMonitoring } from './battery-hold-monitoring';
 
@@ -11,15 +9,12 @@ vi.mock('./db', () => ({ pool: {
 } }));
 import { BatteryHoldRepo } from './battery-hold-repo';
 import {
-  BatteryHoldActivityRepo, MAX_LIVE_REGISTRATIONS_PER_HOLD, reconcileBatteryHoldActivities, type ActivityRegistration,
+  BatteryHoldActivityRepo, MAX_LIVE_REGISTRATIONS_PER_HOLD, allowedApnsEnvironments, reconcileBatteryHoldActivities, type ActivityRegistration,
 } from './battery-hold-activity-repo';
 import { restoreBattery } from './battery-hold-service';
 import { monitorBatteryHolds } from './battery-hold-monitor-service';
 import type { TeslaClient } from './tesla-client';
-
-const socket = process.env.BATTERY_HOLD_TEST_SOCKET;
-const safeSocket = socket && /^\/(?:private\/)?tmp\/battery-hold-pg-[a-zA-Z0-9]+$/.test(socket);
-if (socket && !safeSocket) throw new Error('Battery hold tests require a disposable private local socket');
+import { createActivityTestDatabase, safeActivityTestSocket as safeSocket } from './battery-hold-activity-test-db';
 
 const T1 = '2026-10-15T10:00:00.000Z';
 const T2 = '2026-10-15T10:15:00.000Z';
@@ -42,29 +37,16 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
       VALUES ($1, 'u1', $2::uuid, $3, $4, $5, now() + interval '1 hour')`,
     [holdId, randomUUID(), values.push_token === undefined ? 'a'.repeat(64) : values.push_token,
       values.apns_environment ?? 'sandbox', values.delivery_state ?? 'pending']);
+  // Stands in for a delivery worker that claimed the row and APNs accepted `version`.
+  const acknowledge = async (id: number, version: number) => {
+    const owner = randomUUID();
+    await local.database.query(`UPDATE "BatteryHoldActivity" SET claim_owner = $2, claim_expires_at = now() + interval '1 minute' WHERE id = $1`, [id, owner]);
+    const { rows: [{ push_token }] } = await local.database.query('SELECT push_token FROM "BatteryHoldActivity" WHERE id = $1', [id]);
+    return repo.completeDelivery(id, owner, version, push_token);
+  };
 
   beforeAll(async () => {
-    const admin = new Pool({ host: socket, port: 55440, user: process.env.USER, database: 'postgres', max: 1 });
-    await admin.query('DROP DATABASE IF EXISTS battery_hold_activity_test');
-    await admin.query('CREATE DATABASE battery_hold_activity_test');
-    await admin.end();
-    local.database = new Pool({ host: socket, port: 55440, user: process.env.USER, database: 'battery_hold_activity_test', max: 5 });
-    for (const role of ['anon', 'authenticated', 'service_role']) {
-      await local.database.query(`DO $$ BEGIN CREATE ROLE ${role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`);
-    }
-    await local.database.query(`CREATE TABLE "User" (id text PRIMARY KEY, is_active boolean DEFAULT true, roles text[])`);
-    await local.database.query(`CREATE TABLE "Site" (id text PRIMARY KEY, user_id text REFERENCES "User"(id))`);
-    for (const migration of [
-      '20260525000000_add_battery_hold.sql', '20260525010000_battery_hold_enhancements.sql',
-      '20260525020000_add_cancelled_observed_reserve.sql', '20260701114315_enable_battery_hold_rls.sql',
-      '20261002135116_battery_hold_monitoring.sql', '20261014133344_battery_hold_monitor_claim.sql',
-    ]) {
-      await local.database.query(await readFile(`db-migrations/${migration}`, 'utf8'));
-    }
-    const [activityMigration] = (await readdir('db-migrations')).filter(f => f.endsWith('_battery_hold_activities.sql'));
-    const sql = await readFile(`db-migrations/${activityMigration}`, 'utf8');
-    await local.database.query(sql);
-    await local.database.query(sql);
+    local.database = await createActivityTestDatabase('battery_hold_activity_test');
     repo = new BatteryHoldActivityRepo();
     holdRepo = new BatteryHoldRepo();
   });
@@ -304,20 +286,20 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
     await repo.syncDesired(holdId);
     let [row] = await rows();
     const id = Number(row.id);
-    await repo.acknowledgeDelivery(id, 1);
+    await acknowledge(id, 1);
     expect((await rows())[0].delivery_state).toBe('current');
     await holdRepo.recordMonitoring(holdId, monitoring(T1));
     expect(await repo.syncDesired(holdId)).toBe(1);
     expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', desired_version: 2 });
-    await repo.acknowledgeDelivery(id, 1);
+    await acknowledge(id, 1);
     [row] = await rows();
     expect(row).toMatchObject({ delivery_state: 'pending', delivered_version: 1 });
-    await repo.acknowledgeDelivery(id, 2);
+    await acknowledge(id, 2);
     [row] = await rows();
     expect(row).toMatchObject({ delivery_state: 'current', delivered_version: 2 });
     expect(await repo.syncDesired(holdId)).toBe(0);
     expect((await rows())[0].desired_version).toBe(2);
-    expect(await repo.acknowledgeDelivery(id, 3)).toBe(false);
+    expect(await acknowledge(id, 3)).toBe(false);
   });
 
   it('an older monitoring check never replaces a newer one', async () => {
@@ -395,14 +377,14 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
     await repo.register(registration());
     await repo.syncDesired(holdId);
     const id = Number((await rows())[0].id);
-    await repo.acknowledgeDelivery(id, 1);
+    await acknowledge(id, 1);
     await holdRepo.markRestored(holdId, 'manual');
     await repo.syncDesired(holdId);
-    await repo.acknowledgeDelivery(id, 2);
+    await acknowledge(id, 2);
     expect((await rows())[0].delivery_state).toBe('ended');
     const terminal = (await rows())[0].desired_snapshot;
     expect(await repo.syncDesired(holdId)).toBe(0);
-    await repo.acknowledgeDelivery(id, 2);
+    await acknowledge(id, 2);
     await local.database.query(`UPDATE "BatteryHold" SET status = 'active', restored_at = NULL WHERE id = $1`, [holdId]);
     expect(await repo.syncDesired(holdId)).toBe(0);
     const [row] = await rows();
@@ -488,7 +470,7 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
   it('the next monitor run recovers a missed terminal write by reconciling activities', async () => {
     await repo.register(registration());
     await repo.syncDesired(holdId);
-    await repo.acknowledgeDelivery(Number((await rows())[0].id), 1);
+    await acknowledge(Number((await rows())[0].id), 1);
     expect((await rows())[0].delivery_state).toBe('current');
     await holdRepo.markRestored(holdId, 'manual');
     expect((await rows())[0].desired_version).toBe(1);
@@ -496,5 +478,244 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
     const [row] = await rows();
     expect(row).toMatchObject({ desired_version: 2, delivery_state: 'pending' });
     expect(row.desired_snapshot.status).toBe('restored');
+  });
+
+  describe('delivery claims', () => {
+    const SANDBOX = ['sandbox' as const];
+    const TOKEN = 'a'.repeat(64);
+    const claim = (owner = randomUUID(), environments: ('sandbox' | 'production')[] = SANDBOX, limit = 50) =>
+      repo.claimForDelivery({ owner, environments, limit });
+    const pendingRow = async (overrides: Partial<ActivityRegistration> = {}) => {
+      await repo.register(registration(overrides));
+      await repo.syncDesired(holdId);
+      return Number((await rows()).at(-1).id);
+    };
+
+    it('claims only synced, unexpired, tokened pending rows that are due and unclaimed', async () => {
+      const due = await pendingRow();
+      const backedOff = await pendingRow();
+      const leased = await pendingRow();
+      const leaseLapsed = await pendingRow();
+      const expired = await pendingRow();
+      const current = await pendingRow();
+      await acknowledge(current, 1);
+      await repo.register(registration());
+      const unsynced = Number((await rows()).at(-1).id);
+      await local.database.query(`UPDATE "BatteryHoldActivity" SET next_attempt_at = now() + interval '5 minutes' WHERE id = $1`, [backedOff]);
+      await local.database.query(`UPDATE "BatteryHoldActivity" SET claim_owner = gen_random_uuid(), claim_expires_at = now() + interval '1 minute' WHERE id = $1`, [leased]);
+      await local.database.query(`UPDATE "BatteryHoldActivity" SET claim_owner = gen_random_uuid(), claim_expires_at = now() - interval '1 second' WHERE id = $1`, [leaseLapsed]);
+      await local.database.query(`UPDATE "BatteryHoldActivity" SET expires_at = now() - interval '1 second' WHERE id = $1`, [expired]);
+      const claimed = await claim();
+      expect(claimed.map(c => c.id).sort()).toEqual([due, leaseLapsed].sort());
+      expect([backedOff, leased, expired, current, unsynced].some(id => claimed.some(c => c.id === id))).toBe(false);
+    });
+
+    it('captures exactly the desired version, snapshot, token and environment it claimed', async () => {
+      const id = await pendingRow({ pushToken: 'c'.repeat(64) });
+      const owner = randomUUID();
+      const [claimed] = await claim(owner);
+      expect(claimed).toMatchObject({ id, version: 1, pushToken: 'c'.repeat(64), apnsEnvironment: 'sandbox' });
+      expect(claimed.snapshot).toMatchObject({ hold_id: holdId, status: 'active' });
+      expect(claimed.expiresAt).toBeInstanceOf(Date);
+      const [row] = await rows();
+      expect(row.claim_owner).toBe(owner);
+      expect(new Date(row.claim_expires_at).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('re-gates the APNs environment at claim time, so beta never sends production pushes', async () => {
+      const production = await pendingRow({ apnsEnvironment: 'production' });
+      const sandbox = await pendingRow();
+      expect((await claim(randomUUID(), allowedApnsEnvironments({ VERCEL_ENV: 'preview' }))).map(c => c.id)).toEqual([sandbox]);
+      expect((await claim(randomUUID(), allowedApnsEnvironments({ VERCEL_ENV: 'production' }))).map(c => c.id)).toEqual([production]);
+      expect(await claim(randomUUID(), [])).toEqual([]);
+    });
+
+    it('rechecks current access: inactive users and lost site ownership are skipped, admins are not', async () => {
+      await pendingRow();
+      await local.database.query(`UPDATE "User" SET is_active = false WHERE id = 'u1'`);
+      expect(await claim()).toEqual([]);
+      await local.database.query(`UPDATE "User" SET is_active = true WHERE id = 'u1'`);
+      await local.database.query(`UPDATE "Site" SET user_id = 'u2' WHERE id = 's1'`);
+      expect(await claim()).toEqual([]);
+      await repo.register(registration({ userId: 'admin' }));
+      await repo.syncDesired(holdId);
+      expect((await claim()).map(c => c.id)).toHaveLength(1);
+    });
+
+    it('bounds the batch and claims terminal snapshots first', async () => {
+      const otherHold = (await holdRepo.createHold({
+        siteId: 's2', originalReserve: 20, targetReserve: 100, parkedSoc: 90, baselineLoadW: 500, safetyExpiresAt: new Date(),
+      })).id;
+      for (let i = 0; i < 3; i++) await pendingRow();
+      await repo.register(registration({ holdId: otherHold, userId: 'u2' }));
+      await holdRepo.markRestored(otherHold, 'manual');
+      await repo.syncDesired(otherHold);
+      const claimed = await claim(randomUUID(), SANDBOX, 2);
+      expect(claimed).toHaveLength(2);
+      expect((claimed[0].snapshot as { status: string }).status).toBe('restored');
+    });
+
+    it('overlapping workers claim disjoint rows', async () => {
+      for (let i = 0; i < 5; i++) {
+        await repo.register(registration());
+        await repo.register(registration({ userId: 'admin' }));
+      }
+      await repo.syncDesired(holdId);
+      const [a, b] = await Promise.all([claim(randomUUID(), SANDBOX, 6), claim(randomUUID(), SANDBOX, 6)]);
+      const ids = [...a, ...b].map(c => c.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(ids).toHaveLength(10);
+      expect(await claim()).toEqual([]);
+    });
+
+    it('a completion from a worker that lost its claim changes nothing', async () => {
+      const id = await pendingRow();
+      const [first] = await claim();
+      expect(first.id).toBe(id);
+      await local.database.query(`UPDATE "BatteryHoldActivity" SET claim_expires_at = now() - interval '1 second'`);
+      const second = randomUUID();
+      await claim(second);
+      expect(await repo.completeDelivery(id, randomUUID(), 1, TOKEN)).toBe(false);
+      expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', delivered_version: 0, claim_owner: second });
+      expect(await repo.completeDelivery(id, second, 1, TOKEN)).toBe(true);
+      expect((await rows())[0]).toMatchObject({ delivery_state: 'current', delivered_version: 1, claim_owner: null, claim_expires_at: null });
+    });
+
+    it('new desired state arriving mid-delivery stays pending and is sent by the next claim', async () => {
+      const id = await pendingRow();
+      const owner = randomUUID();
+      const [claimed] = await claim(owner);
+      await holdRepo.recordMonitoring(holdId, monitoring(T1));
+      await repo.syncDesired(holdId);
+      expect(await repo.completeDelivery(id, owner, claimed.version, claimed.pushToken)).toBe(true);
+      expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', delivered_version: 1, desired_version: 2, claim_owner: null });
+      const [next] = await claim();
+      expect(next.version).toBe(2);
+      expect((next.snapshot as { monitoring: { checked_at: string } }).monitoring.checked_at).toBe(T1);
+    });
+
+    it('a stale or duplicate completion releases the claim without resetting backoff', async () => {
+      const id = await pendingRow();
+      await acknowledge(id, 1);
+      await holdRepo.recordMonitoring(holdId, monitoring(T1));
+      await repo.syncDesired(holdId);
+      await local.database.query(`UPDATE "BatteryHoldActivity" SET attempt_count = 3, next_attempt_at = now() - interval '1 second', last_error = 'ServiceUnavailable'`);
+      const owner = randomUUID();
+      await claim(owner);
+      expect(await repo.completeDelivery(id, owner, 1, TOKEN)).toBe(true);
+      expect((await rows())[0]).toMatchObject({
+        delivery_state: 'pending', delivered_version: 1, attempt_count: 3, last_error: 'ServiceUnavailable', claim_owner: null,
+      });
+    });
+
+    it('a deferred attempt backs off, records only the reason and releases the claim', async () => {
+      const id = await pendingRow();
+      const owner = randomUUID();
+      await claim(owner);
+      const retryAt = new Date(Date.now() + 60_000);
+      expect(await repo.deferDelivery(id, owner, 1, { error: 'ServiceUnavailable', retryAt })).toBe(true);
+      const [row] = await rows();
+      expect(row).toMatchObject({ delivery_state: 'pending', attempt_count: 1, last_error: 'ServiceUnavailable', claim_owner: null });
+      expect(new Date(row.next_attempt_at).getTime()).toBe(retryAt.getTime());
+      expect(await claim()).toEqual([]);
+      expect(await repo.deferDelivery(id, owner, 1, { error: 'x', retryAt })).toBe(false);
+    });
+
+    it('a new terminal version skips the backoff left by earlier failures', async () => {
+      const id = await pendingRow();
+      const owner = randomUUID();
+      await claim(owner);
+      await repo.deferDelivery(id, owner, 1, { error: 'ServiceUnavailable', retryAt: new Date(Date.now() + 15 * 60_000) });
+      await holdRepo.recordMonitoring(holdId, monitoring(T1));
+      await repo.syncDesired(holdId);
+      expect(await claim()).toEqual([]);
+      await holdRepo.markRestored(holdId, 'manual');
+      await repo.syncDesired(holdId);
+      const [terminal] = await claim();
+      expect((terminal.snapshot as { status: string }).status).toBe('restored');
+    });
+
+    it('a failure that races a new terminal version does not re-impose backoff on it', async () => {
+      const id = await pendingRow();
+      const owner = randomUUID();
+      await claim(owner);
+      await holdRepo.markRestored(holdId, 'manual');
+      await repo.syncDesired(holdId);
+      await repo.deferDelivery(id, owner, 1, { error: 'timeout', retryAt: new Date(Date.now() + 15 * 60_000) });
+      expect((await rows())[0]).toMatchObject({ next_attempt_at: null, attempt_count: 1 });
+      expect((await claim()).map(c => c.version)).toEqual([2]);
+    });
+
+    it('an acceptance for a token rotated mid-send releases the claim and keeps the version pending for the new token', async () => {
+      const id = await pendingRow({ pushToken: TOKEN });
+      const owner = randomUUID();
+      await claim(owner);
+      const [{ registration_id }] = await rows();
+      await repo.register(registration({ registrationId: registration_id, pushToken: 'b'.repeat(64) }));
+      expect(await repo.completeDelivery(id, owner, 1, TOKEN)).toBe(false);
+      expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', delivered_version: 0, push_token: 'b'.repeat(64), claim_owner: null });
+      const [again] = await claim();
+      expect(again).toMatchObject({ version: 1, pushToken: 'b'.repeat(64) });
+    });
+
+    it('an accepted end for a rotated token neither ends the row nor clears the new token', async () => {
+      const id = await pendingRow({ pushToken: TOKEN });
+      await holdRepo.markRestored(holdId, 'manual');
+      await repo.syncDesired(holdId);
+      const owner = randomUUID();
+      const [claimed] = await claim(owner);
+      const [{ registration_id }] = await rows();
+      await repo.register(registration({ registrationId: registration_id, pushToken: 'b'.repeat(64) }));
+      expect(await repo.completeDelivery(id, owner, claimed.version, TOKEN)).toBe(false);
+      expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', delivered_version: 0, push_token: 'b'.repeat(64) });
+      expect((await claim()).map(c => c.pushToken)).toEqual(['b'.repeat(64)]);
+    });
+
+    it('an invalid token disables the row and clears the token, unless the token rotated meanwhile', async () => {
+      const id = await pendingRow({ pushToken: 'a'.repeat(64) });
+      let owner = randomUUID();
+      await claim(owner);
+      const [{ registration_id }] = await rows();
+      await repo.register(registration({ registrationId: registration_id, pushToken: 'b'.repeat(64) }));
+      expect(await repo.disableInvalidToken(id, owner, 'a'.repeat(64), 'Unregistered')).toBe(false);
+      expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', push_token: 'b'.repeat(64), claim_owner: null, attempt_count: 0 });
+      owner = randomUUID();
+      await claim(owner);
+      expect(await repo.disableInvalidToken(id, owner, 'b'.repeat(64), 'Unregistered')).toBe(true);
+      expect((await rows())[0]).toMatchObject({ delivery_state: 'disabled', disabled_reason: 'Unregistered', push_token: null, claim_owner: null });
+      expect(await repo.syncDesired()).toBe(0);
+    });
+
+    it('releasing a claim neither counts an attempt nor backs off', async () => {
+      const id = await pendingRow();
+      const owner = randomUUID();
+      await claim(owner);
+      expect(await repo.releaseClaim(id, owner)).toBe(true);
+      expect((await rows())[0]).toMatchObject({ claim_owner: null, attempt_count: 0, next_attempt_at: null });
+      expect(await claim()).toHaveLength(1);
+    });
+
+    it('a worker that dies mid-delivery leaves the row pending for the next run after its lease', async () => {
+      await pendingRow();
+      await claim();
+      expect(await claim()).toEqual([]);
+      await local.database.query(`UPDATE "BatteryHoldActivity" SET claim_expires_at = now() - interval '1 second'`);
+      const [again] = await claim();
+      expect(again.version).toBe(1);
+      expect((await rows())[0]).toMatchObject({ delivery_state: 'pending', attempt_count: 0 });
+    });
+
+    it('an accepted end clears the token, and re-registration of the ended activity does not store one', async () => {
+      const id = await pendingRow();
+      await holdRepo.markRestored(holdId, 'manual');
+      await repo.syncDesired(holdId);
+      const owner = randomUUID();
+      const [claimed] = await claim(owner);
+      expect(await repo.completeDelivery(id, owner, claimed.version, claimed.pushToken)).toBe(true);
+      const [row] = await rows();
+      expect(row).toMatchObject({ delivery_state: 'ended', push_token: null });
+      expect(await repo.register(registration({ registrationId: row.registration_id, pushToken: 'd'.repeat(64) }))).toBe('ended');
+      expect((await rows())[0].push_token).toBeNull();
+    });
   });
 });
