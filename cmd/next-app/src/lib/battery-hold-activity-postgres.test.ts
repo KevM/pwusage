@@ -201,6 +201,67 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
     expect((await rows())[0].desired_snapshot.monitoring.checked_at).toBe(T2);
   });
 
+  // A sync whose hold snapshot was read before a concurrent commit must be
+  // rejected by the row-lock recheck, not applied over the newer committed row.
+  describe('concurrent desired-state changes (two connections)', () => {
+    const lockWaiters = async () => Number((await local.database.query(
+      `SELECT count(*) AS n FROM pg_stat_activity
+       WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`)).rows[0].n);
+    const untilBlocked = async () => {
+      for (let i = 0; i < 200; i++) {
+        if (await lockWaiters() >= 1) return;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      throw new Error('syncDesired never blocked on the row lock');
+    };
+    // Holds the activity row locked with `updateSql`, starts a sync that read the
+    // hold before that commit, lets it block, then commits and returns its result.
+    const syncBlockedBehind = async (updateSql: string, params: unknown[]) => {
+      const blocker = await local.database.connect();
+      try {
+        await blocker.query('BEGIN');
+        await blocker.query(updateSql, params);
+        const stale = repo.syncDesired(holdId);
+        await untilBlocked();
+        await blocker.query('COMMIT');
+        return await stale;
+      } catch (e) {
+        await blocker.query('ROLLBACK').catch(() => undefined);
+        throw e;
+      } finally { blocker.release(); }
+    };
+
+    it('a sync that read an active hold cannot replace a snapshot that became terminal while it waited', async () => {
+      await repo.register(registration());
+      await repo.syncDesired(holdId);
+      await holdRepo.recordMonitoring(holdId, monitoring(T2));
+      const result = await syncBlockedBehind(
+        `UPDATE "BatteryHoldActivity"
+         SET desired_snapshot = jsonb_set(desired_snapshot, '{status}', '"restored"'), desired_version = desired_version + 1
+         WHERE hold_id = $1`, [holdId]);
+      expect(result).toBe(0);
+      const [row] = await rows();
+      expect(row.desired_snapshot.status).toBe('restored');
+      expect(row.desired_snapshot.monitoring).toBeNull();
+      expect(row.desired_version).toBe(2);
+    });
+
+    it('a sync that read an older monitoring check cannot replace a newer one committed while it waited', async () => {
+      const T3 = '2026-10-15T10:30:00.000Z';
+      await repo.register(registration());
+      await repo.syncDesired(holdId);
+      await holdRepo.recordMonitoring(holdId, monitoring(T2));
+      const result = await syncBlockedBehind(
+        `UPDATE "BatteryHoldActivity"
+         SET desired_snapshot = jsonb_set(desired_snapshot, '{monitoring}', $2::jsonb), desired_version = desired_version + 1
+         WHERE hold_id = $1`, [holdId, JSON.stringify(monitoring(T3))]);
+      expect(result).toBe(0);
+      const [row] = await rows();
+      expect(row.desired_snapshot.monitoring.checked_at).toBe(T3);
+      expect(row.desired_version).toBe(2);
+    });
+  });
+
   it('an acknowledged terminal state is never revived or regressed', async () => {
     await repo.register(registration());
     await repo.syncDesired(holdId);
