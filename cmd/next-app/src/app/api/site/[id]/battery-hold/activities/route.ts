@@ -6,6 +6,7 @@ import {
   APNS_ENVIRONMENTS,
   BatteryHoldActivityRepo,
   ENDED_HOLD_REGISTRATION_WINDOW_MS,
+  activityErrorTag,
   allowedApnsEnvironments,
   type ApnsEnvironment,
 } from '@/lib/battery-hold-activity-repo';
@@ -77,8 +78,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // Separate call after register, so a completion committed meanwhile is seen.
     await repo.syncDesired(hold.id);
     return json({ status: 'registered', holdStatus: hold.status });
-  } catch {
-    console.error('[battery-hold-activities] registration failed');
+  } catch (e) {
+    console.error('[battery-hold-activities] registration failed', activityErrorTag(e));
     return json({ error: 'registration_failed' }, 500);
   }
 }
@@ -95,8 +96,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   try {
     await new BatteryHoldActivityRepo().remove(user.id, id, registrationId.toLowerCase());
     return json({ status: 'removed' });
-  } catch {
-    console.error('[battery-hold-activities] removal failed');
+  } catch (e) {
+    console.error('[battery-hold-activities] removal failed', activityErrorTag(e));
     return json({ error: 'removal_failed' }, 500);
   }
 }

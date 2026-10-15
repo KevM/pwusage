@@ -10,8 +10,19 @@ export const ENDED_HOLD_REGISTRATION_WINDOW_MS = 4 * 60 * 60 * 1000;
 export const ACTIVITY_SYNC_BUDGET_MS = 2000;
 
 /** Production APNs only on the production deployment; beta, preview and local accept sandbox only. */
-export function allowedApnsEnvironments(env: NodeJS.ProcessEnv = process.env): ApnsEnvironment[] {
+export function allowedApnsEnvironments(env: Readonly<Record<string, string | undefined>> = process.env): ApnsEnvironment[] {
   return env.VERCEL_ENV === 'production' ? ['sandbox', 'production'] : ['sandbox'];
+}
+
+/**
+ * Token-free cause for swallowed bookkeeping failures: the SQLSTATE, 'deadline',
+ * or the error name. Never the message or pg detail, which can echo a row (the token).
+ */
+export function activityErrorTag(e: unknown): string {
+  const code = (e as { code?: unknown } | null | undefined)?.code;
+  if (typeof code === 'string') return code;
+  if (e instanceof Error) return e.message === 'I/O deadline exceeded' ? 'deadline' : e.name;
+  return 'unknown';
 }
 
 const iso = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
@@ -129,8 +140,8 @@ export async function reconcileBatteryHoldActivities(holdId?: number): Promise<n
       if (holdId === undefined) await repo.expireStale();
       return repo.syncDesired(holdId);
     }, null);
-  } catch {
-    console.warn(`[BatteryHold] Activity state sync deferred${holdId === undefined ? '' : ` for hold ${holdId}`}`);
+  } catch (e) {
+    console.warn(`[BatteryHold] Activity state sync deferred${holdId === undefined ? '' : ` for hold ${holdId}`}`, activityErrorTag(e));
     return null;
   }
 }

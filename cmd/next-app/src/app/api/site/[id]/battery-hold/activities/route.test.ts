@@ -232,13 +232,23 @@ describe('battery-hold activities route', () => {
       expect(text).not.toContain('AB'.repeat(32));
     });
 
+    it('logs only the SQLSTATE, never the message, detail or token, when registration fails', async () => {
+      const token = 'ab'.repeat(32);
+      mocks.register.mockRejectedValue(Object.assign(new Error(`bad ${token}`), { code: '23514', detail: `Failing row contains (${token})` }));
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const res = await POST(postReq(validBody()), ctx);
+      expect(res.status).toBe(500);
+      expect(errorSpy).toHaveBeenCalledWith('[battery-hold-activities] registration failed', '23514');
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(token);
+    });
+
     it('returns 500 registration_failed without logging the token when the sync fails', async () => {
       mocks.syncDesired.mockRejectedValue(new Error('db down'));
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const res = await POST(postReq(validBody()), ctx);
       expect(res.status).toBe(500);
       expect(await res.json()).toEqual({ error: 'registration_failed' });
-      expect(errorSpy).toHaveBeenCalledWith('[battery-hold-activities] registration failed');
+      expect(errorSpy).toHaveBeenCalledWith('[battery-hold-activities] registration failed', 'Error');
       for (const call of errorSpy.mock.calls) {
         expect(JSON.stringify(call)).not.toContain('ab'.repeat(32));
       }
@@ -279,7 +289,17 @@ describe('battery-hold activities route', () => {
       const res = await DELETE(deleteReq(`?registrationId=${randomUUID()}`), ctx);
       expect(res.status).toBe(500);
       expect(await res.json()).toEqual({ error: 'removal_failed' });
-      expect(errorSpy).toHaveBeenCalledWith('[battery-hold-activities] removal failed');
+      expect(errorSpy).toHaveBeenCalledWith('[battery-hold-activities] removal failed', 'Error');
+    });
+
+    it('logs only the SQLSTATE, never the message, detail or token, when removal fails', async () => {
+      const token = 'ab'.repeat(32);
+      mocks.remove.mockRejectedValue(Object.assign(new Error(`bad ${token}`), { code: '40P01', detail: token }));
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const res = await DELETE(deleteReq(`?registrationId=${randomUUID()}`), ctx);
+      expect(res.status).toBe(500);
+      expect(errorSpy).toHaveBeenCalledWith('[battery-hold-activities] removal failed', '40P01');
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(token);
     });
   });
 });
