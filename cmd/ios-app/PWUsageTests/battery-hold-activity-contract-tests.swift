@@ -38,6 +38,18 @@ struct BatteryHoldActivityContractTests {
         #expect(state.cancelledObservedReserve == nil)
     }
 
+    @Test("Decodes the home load range, and its absence from older payloads")
+    func decodesLoadRange() throws {
+        let state = try decode(Self.deliveryDocExample.replacingOccurrences(of: #""cancelledObservedReserve": null }"#, with:
+            #""cancelledObservedReserve": null, "sampledAt": 813751800, "baselineLoadW": 1200, "homeLoadW": 8400, "peakLoadW": 9100 }"#))
+        #expect(state.sampledAt == Date(timeIntervalSinceReferenceDate: 813751800))
+        #expect(state.baselineLoadW == 1200)
+        #expect(state.homeLoadW == 8400)
+        #expect(state.peakLoadW == 9100)
+        let older = try decode(Self.deliveryDocExample)
+        #expect(older.homeLoadW == nil && older.sampledAt == nil)
+    }
+
     @Test("Decodes terminal payloads: restored and cancelled")
     func decodesTerminal() throws {
         let restored = try decode("""
@@ -108,5 +120,13 @@ struct BatteryHoldActivityContractTests {
             nextCheckAt: Date(timeIntervalSinceReferenceDate: 813753000), sampledAt: nil, estimatedLoadW: 7200
         )
         #expect(BatteryHoldActivityAttributes.ContentState(hold: hold) == (try decode(Self.deliveryDocExample)))
+        let monitoring = try MobileContractDecoder.make().decode(BatteryHoldMonitoring.self, from: Data("""
+        {"phase":"load_running","checked_at":"2026-10-15T10:15:02.000Z","next_check_at":"2026-10-15T10:30:00.000Z",
+         "sampled_at":"2026-10-15T10:10:00.000Z","estimated_load_w":7200,"baseline_load_w":1200,"home_load_w":8400,"peak_load_w":9100}
+        """.utf8))
+        hold.monitoring = monitoring
+        let state = BatteryHoldActivityAttributes.ContentState(hold: hold)
+        #expect(state.sampledAt == monitoring.sampledAt)
+        #expect(state.baselineLoadW == 1200 && state.homeLoadW == 8400 && state.peakLoadW == 9100)
     }
 }

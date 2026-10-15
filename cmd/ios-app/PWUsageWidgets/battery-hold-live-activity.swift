@@ -78,6 +78,9 @@ struct BatteryHoldActivityDetails: View {
             Text(BatteryHoldActivityPresentation.detail(state, isStale: isStale))
                 .font(.subheadline)
                 .foregroundStyle(isStale ? .orange : .primary)
+            if let range = BatteryHoldActivityPresentation.loadRange(state, timeZone: zone, now: now) {
+                Text(range).font(.caption).monospacedDigit()
+            }
             HStack(spacing: 6) {
                 if let deadline = BatteryHoldActivityPresentation.deadline(state, timeZone: zone, now: now) {
                     Text(deadline)

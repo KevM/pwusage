@@ -26,6 +26,18 @@ describe('battery hold monitoring', () => {
     expect(stale.estimated_load_w).toBeNull();
     expect(stale.sampled_at).toBe(start.toISOString());
   });
+  it('records the home load range from samples it already read: baseline, latest and peak', () => {
+    const running = summarizeHoldMonitoring(hold, [point(0, 520.4), point(5, 9600), point(15, 9500)], now, null);
+    expect(running).toMatchObject({ baseline_load_w: 500, home_load_w: 9500, peak_load_w: 9600, sampled_at: point(15, 0).timestamp });
+    expect(summarizeHoldMonitoring(hold, [point(15, 480.6)], now, null)).toMatchObject({ phase: 'watching', home_load_w: 481, peak_load_w: 481 });
+    // A stale latest sample is still reported with its own time; the phase stays honest.
+    const stale = summarizeHoldMonitoring(hold, [point(0, 9500)], new Date('2026-10-02T10:45:00Z'), null);
+    expect(stale).toMatchObject({ phase: 'waiting_for_data', home_load_w: 9500, sampled_at: start.toISOString() });
+  });
+  it('reports no load figures without samples, or for timer holds that never read history', () => {
+    expect(summarizeHoldMonitoring(hold, [], now, null)).toMatchObject({ baseline_load_w: 500, home_load_w: null, peak_load_w: null });
+    expect(summarizeHoldMonitoring({ ...hold, mode: 'timer' }, [], now, null)).toMatchObject({ baseline_load_w: null, home_load_w: null, peak_load_w: null });
+  });
   it('reports watching when no rise was detected and timer for fixed holds', () => {
     expect(summarizeHoldMonitoring(hold, [point(15, 500)], now, null).phase).toBe('watching');
     expect(summarizeHoldMonitoring({ ...hold, mode: 'timer' }, [], now, null).phase).toBe('timer');

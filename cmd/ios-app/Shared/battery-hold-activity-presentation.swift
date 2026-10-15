@@ -51,7 +51,8 @@ enum BatteryHoldActivityPresentation {
         case nil: return state.mode == .timer ? "Holding until the scheduled stop time." : "Waiting for the first home load check."
         case .watching: return "Watching home load."
         case .loadRunning:
-            if let watts = state.estimatedLoadW, watts.isFinite, watts >= 0 {
+            // The load range line carries the figures when the server sent them.
+            if state.homeLoadW == nil, let watts = state.estimatedLoadW, watts.isFinite, watts >= 0 {
                 let power = (watts / 1000).formatted(.number.precision(.fractionLength(0...1)))
                 return "Home load about \(power) kW above the start."
             }
@@ -76,6 +77,20 @@ enum BatteryHoldActivityPresentation {
         case .ended, .unknown:
             return nil
         }
+    }
+
+    /// The home load range from the last check. The latest sample carries its own
+    /// time: it is a five-minute reading, not a live one.
+    static func loadRange(_ state: State, timeZone: TimeZone, now: Date) -> String? {
+        guard state.status == .active, let home = state.homeLoadW, let sampledAt = state.sampledAt else { return nil }
+        var parts = ["Home \(kilowatts(home)) at \(clock(sampledAt, timeZone: timeZone, now: now))"]
+        if let baseline = state.baselineLoadW { parts.append("started \(kilowatts(baseline))") }
+        if let peak = state.peakLoadW { parts.append("peak \(kilowatts(peak))") }
+        return parts.joined(separator: " · ")
+    }
+
+    static func kilowatts(_ watts: Double) -> String {
+        "\((max(0, watts) / 1000).formatted(.number.precision(.fractionLength(0...1)))) kW"
     }
 
     /// When the server last checked. An absolute time stays honest on a Lock Screen that isn't redrawn.

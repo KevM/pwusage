@@ -85,6 +85,25 @@ struct BatteryHoldActivityPresentationTests {
         #expect(P.checked(state(), timeZone: utc, now: start) == nil)
     }
 
+    @Test("The home load range shows the latest sample with its own time, the start and the peak")
+    func loadRange() {
+        var running = state(phase: .loadRunning)
+        running.sampledAt = start.addingTimeInterval(600)
+        running.baselineLoadW = 1200
+        running.homeLoadW = 8400
+        running.peakLoadW = 9100
+        let time = P.clock(running.sampledAt!, timeZone: utc, now: start)
+        #expect(P.detail(running, isStale: false) == "Home load is running.")
+        #expect(P.loadRange(running, timeZone: utc, now: start) == "Home 8.4 kW at \(time) · started 1.2 kW · peak 9.1 kW")
+        running.peakLoadW = nil
+        running.baselineLoadW = nil
+        #expect(P.loadRange(running, timeZone: utc, now: start) == "Home 8.4 kW at \(time)")
+        // No sample, a timer hold, or a finished hold: nothing to show.
+        #expect(P.loadRange(state(phase: .watching), timeZone: utc, now: start) == nil)
+        running.status = .restored
+        #expect(P.loadRange(running, timeZone: utc, now: start) == nil)
+    }
+
     @Test("Times on another day name the weekday")
     func clock() {
         let sameDay = P.clock(start.addingTimeInterval(3600), timeZone: utc, now: start)

@@ -76,6 +76,14 @@ older version delivered late can't replace a newer one. Updates carry
   "nextCheckAt": 813753000, "endedAt": null, "restoreReason": null, "cancelledObservedReserve": null }
 ```
 
+Optional keys added to schema 1 (older payloads omit them; apps that predate
+them ignore them): `sampledAt` (time of the latest five-minute sample),
+`baselineLoadW` (home load when an Auto hold started), `homeLoadW` (that latest
+sample) and `peakLoadW` (highest sample since the start). The monitor already
+reads these samples for its decision, so they cost no Tesla call or query;
+timer holds never read history and send `null`. They update once per
+15-minute check, so the app labels the home load with `sampledAt`.
+
 `phase` is passed through from the monitor (`restoring` included). Task 6 owns
 how "active with a restore in progress" is presented.
 

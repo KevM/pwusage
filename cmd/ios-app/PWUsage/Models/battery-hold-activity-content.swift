@@ -17,7 +17,11 @@ extension BatteryHoldActivityAttributes.ContentState {
             nextCheckAt: hold.monitoring?.nextCheckAt,
             endedAt: nil,
             restoreReason: nil,
-            cancelledObservedReserve: hold.cancelledObservedReserve
+            cancelledObservedReserve: hold.cancelledObservedReserve,
+            sampledAt: hold.monitoring?.sampledAt,
+            baselineLoadW: hold.monitoring?.baselineLoadW,
+            homeLoadW: hold.monitoring?.homeLoadW,
+            peakLoadW: hold.monitoring?.peakLoadW
         )
     }
 
