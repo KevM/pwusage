@@ -1,0 +1,48 @@
+name: iOS Signing Credential Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/signing-credential-diagnostic']
+    paths: ['.github/workflows/ios-signing-diagnostic.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  fingerprints:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b
+        with:
+          ruby-version: '3.3'
+      - name: Compare credential fingerprints without revealing credentials
+        shell: ruby {0}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: |
+          require "base64"
+          require "digest"
+          require "openssl"
+
+          %w[ASC_KEY_ID ASC_ISSUER_ID].each do |name|
+            value = ENV.fetch(name)
+            abort "#{name}: missing" if value.empty?
+            puts "#{name} SHA256: #{Digest::SHA256.hexdigest(value)}"
+            puts "#{name} surrounding whitespace: #{value != value.strip}"
+          end
+
+          begin
+            encoded_key = ENV.fetch("ASC_KEY_CONTENT")
+            abort "ASC_KEY_CONTENT: missing" if encoded_key.empty?
+            key = OpenSSL::PKey.read(Base64.decode64(encoded_key))
+            abort "ASC_KEY_CONTENT: not an EC private key" unless key.is_a?(OpenSSL::PKey::EC) && key.private?
+            puts "ASC_KEY_CONTENT public key SHA256: #{Digest::SHA256.hexdigest(key.public_to_der)}"
+            puts "ASC_KEY_CONTENT curve: #{key.group.curve_name}"
+          rescue OpenSSL::PKey::PKeyError, ArgumentError
+            abort "ASC_KEY_CONTENT: could not parse decoded key"
+          end
