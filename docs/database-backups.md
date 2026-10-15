@@ -14,8 +14,8 @@ has no automatic backups and a 5 GB monthly egress quota shared with the app.
 
 `EnergyData` history is about 90% of a dump and can be re-imported from Tesla
 (billable), so daily backups skip it. Measured 2026-10-15 against the dev copy of
-production: a full dump is about 65 MB of egress and a daily one about 1.4 MB,
-roughly 0.33 GB a month in total.
+production: a full dump is about 67 MB of egress and a daily one about 3 MB
+(2.2 MB of tables plus 0.9 MB of recent readings), roughly 0.38 GB a month.
 
 Backups made before 2026-10-15 sit directly under `db-backup/` as
 `backup-<timestamp>.zip`. Retention never touches them; delete them by hand when
@@ -80,13 +80,35 @@ Everything is defined in one place: `cmd/next-app/scripts/db-backup-kinds.ts`
 
 ### Local rehearsal
 
-A plain Postgres lacks the roles Supabase schemas grant to. Create stand-ins in
-the empty target before restoring:
+A plain Postgres cannot take these backups: `schema.sql` installs Supabase
+extensions (`supabase_vault`, `pg_graphql`, `pg_net`, `pg_cron`, `index_advisor`,
+`hypopg` and others) and `roles.sql` adjusts Supabase's own roles. Rehearse
+against Supabase's Postgres image instead, which the Supabase CLI already pulls:
 
-```sql
-CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;
+```bash
+docker run -d --name pwusage-restore-rehearsal -p 127.0.0.1:55443:5432 \
+  -e POSTGRES_PASSWORD=rehearsal public.ecr.aws/supabase/postgres:17.11.0.004
+bash scripts/restore-db-backup.sh --target "postgresql://postgres:rehearsal@127.0.0.1:55443/postgres" \
+  --full weekly.zip --daily daily.zip
+docker rm -f pwusage-restore-rehearsal   # the restored data includes Tesla tokens
 ```
 
-`npm run test:backup:postgres` exercises the restore script against a disposable
-local Postgres in CI and locally (set `DB_BACKUP_PG_BIN` to the Postgres `bin`
-directory if `pg_config` is not on `PATH`).
+As on Supabase, `postgres` is not a superuser there; the restore's paused-trigger
+load still works.
+
+`npm run test:backup:postgres` covers the restore script's logic against a
+disposable plain Postgres, in CI and locally (set `DB_BACKUP_PG_BIN` to the
+Postgres `bin` directory if `pg_config` is not on `PATH`).
+
+### Rehearsal record
+
+**2026-10-15**, from the dev database (a copy of production): a full and a daily
+backup, both passing `verify-db-backup.ts`, restored together into the Supabase
+image in 9 seconds. All 15 tables matched the backups' row counts (75 users,
+77 sites, 911,671 `EnergyData` rows), and all 12,820 recent readings were
+identical to the daily backup's. The dumps were taken with the host's `pg_dump`
+plus the CLI's `roles.sql` and `schema.sql`, because this machine's network kept
+dropping the CLI's container connections; CI's own pre-migration dumps on
+2026-10-08 and 2026-10-14 succeeded. The first scheduled runs are still the first
+end-to-end test of `supabase db dump -x 'public."EnergyData"'`, and
+`verify-db-backup.ts` fails them loudly if the exclusion does not take effect.

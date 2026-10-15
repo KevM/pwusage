@@ -101,7 +101,7 @@ SQL
   files+=(-f "$work/merge-energy.sql")
 fi
 
-"${psql_target[@]}" --single-transaction "${files[@]}"
+"${psql_target[@]}" --single-transaction -o /dev/null "${files[@]}"
 
 echo "Rows restored:"
 "${psql_target[@]}" -A -t -F ': ' -c "
