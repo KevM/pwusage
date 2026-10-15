@@ -67,7 +67,9 @@ Everything is defined in one place: `cmd/next-app/scripts/db-backup-kinds.ts`
 
    The schema and all tables except `EnergyData` come from the daily backup.
    `EnergyData` history comes from the weekly backup, minus rows for sites deleted
-   since, and the daily backup's last 3 days replace any overlap. Readings between
+   since, and the daily backup's last 3 days replace any overlap. `EnergyData`'s
+   id sequence is then moved past every restored row, so new readings cannot
+   reuse an id. Readings between
    the weekly backup and those 3 days are not in either backup; re-import them
    from Tesla if needed.
 

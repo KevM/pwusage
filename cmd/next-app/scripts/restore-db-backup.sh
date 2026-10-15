@@ -97,6 +97,14 @@ WHERE e."timestamp" = r."timestamp" AND e.site_id = r.site_id;
 INSERT INTO public."EnergyData"
 SELECT r.* FROM energy_recent r
 WHERE EXISTS (SELECT 1 FROM public."Site" s WHERE s.id = r.site_id);
+-- The daily dump records EnergyData's sequence before the recent readings are
+-- copied, so readings imported in between can carry higher ids. Move the
+-- sequence past every restored row (never backwards) so new inserts, which
+-- omit the id, cannot collide.
+SELECT setval(seq, GREATEST(
+    COALESCE((SELECT max(id) FROM public."EnergyData"), 1),
+    COALESCE(pg_sequence_last_value(seq), 1)))
+FROM (SELECT pg_get_serial_sequence('public."EnergyData"', 'id')::regclass AS seq) AS energy_sequence;
 SQL
   files+=(-f "$work/merge-energy.sql")
 fi

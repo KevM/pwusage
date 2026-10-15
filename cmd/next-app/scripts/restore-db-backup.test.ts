@@ -17,6 +17,7 @@ const SCHEMA = `
 CREATE TABLE public."User" (id text PRIMARY KEY, email text);
 CREATE TABLE public."Site" (id text PRIMARY KEY, user_id text REFERENCES public."User"(id));
 CREATE TABLE public."EnergyData" (
+    id serial PRIMARY KEY,
     "timestamp" timestamptz NOT NULL,
     site_id text NOT NULL REFERENCES public."Site"(id) ON DELETE CASCADE,
     load_power double precision,
@@ -42,8 +43,9 @@ const WEEKLY = {
     'data.sql': 'SET session_replication_role = replica;\n'
         + copy('User', 'id, email', ['u1\told@example.com'])
         + copy('Site', 'id, user_id', ['s1\tu1', 's2\tu1'])
-        + copy('EnergyData', '"timestamp", site_id, load_power, battery_soc', [`${T1}\ts1\t100\t50`, `${T2}\ts1\t100\t50`, `${T1}\ts2\t200\t50`])
-        + copy('EnergyDayArchive', 'site_id, day_start', [`s1\t${T1}`]),
+        + copy('EnergyData', 'id, "timestamp", site_id, load_power, battery_soc', [`1\t${T1}\ts1\t100\t50`, `2\t${T2}\ts1\t100\t50`, `3\t${T1}\ts2\t200\t50`])
+        + copy('EnergyDayArchive', 'site_id, day_start', [`s1\t${T1}`])
+        + `SELECT pg_catalog.setval('public."EnergyData_id_seq"', 3, true);\n`,
 };
 
 const DAILY = {
@@ -52,8 +54,11 @@ const DAILY = {
     'data.sql': 'SET session_replication_role = replica;\n'
         + copy('User', 'id, email', ['u1\tnew@example.com', 'u2\t\\N'])
         + copy('Site', 'id, user_id', ['s1\tu1', 's3\tu2'])
-        + copy('EnergyDayArchive', 'site_id, day_start', [`s1\t${T1}`]),
-    'energy-recent.csv': `timestamp,site_id,load_power,battery_soc\n${T2},s1,150,60\n${T3},s3,300,70\n`,
+        + copy('EnergyDayArchive', 'site_id, day_start', [`s1\t${T1}`])
+        // pg_dump keeps EnergyData's sequence even when the table's data is excluded,
+        // but the recent readings are copied a moment later: id 5 landed in between.
+        + `SELECT pg_catalog.setval('public."EnergyData_id_seq"', 4, true);\n`,
+    'energy-recent.csv': `id,timestamp,site_id,load_power,battery_soc\n2,${T2},s1,150,60\n5,${T3},s3,300,70\n`,
 };
 
 describe.skipIf(!safeSocket)('restore-db-backup.sh against isolated PostgreSQL', () => {
@@ -140,6 +145,15 @@ describe.skipIf(!safeSocket)('restore-db-backup.sh against isolated PostgreSQL',
         ]);
         // Triggers stay paused, as when the dump itself loads.
         expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 1 }]);
+    });
+
+    it('advances the EnergyData id sequence past every restored row', async () => {
+        const result = await restore('--full', await backupDir('weekly', WEEKLY), '--daily', await backupDir('daily', DAILY));
+        expect(result.code).toBe(0);
+        // The app inserts readings without an id; the next one must not reuse a restored id.
+        const inserted = await rows(`INSERT INTO public."EnergyData" ("timestamp", site_id, load_power)
+                                     VALUES ('2026-10-16 00:00:00+00', 's1', 1) RETURNING id`);
+        expect(inserted[0].id).toBeGreaterThan(5);
     });
 
     it('rolls back completely when the backups do not fit together', async () => {
