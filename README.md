@@ -93,7 +93,7 @@ To configure CI/CD, set the following secrets in your GitHub repository (**Setti
 | `DATABASE_URL` | Production Migrations & Backups | The production PostgreSQL database connection string. Used to run migrations and perform backups before migrations. |
 | `DEV_DATABASE_URL` | Migration Verification & Previews | The development/preview PostgreSQL database connection string. Used to verify migrations on PRs and configure preview deployments. |
 | `CRON_SECRET` | Migrations | The API secret used to authorize sub-daily cron triggers. The migration job replaces the `{{CRON_SECRET}}` placeholder in SQL migration files with this secret at deploy time. |
-| `BLOB_READ_WRITE_TOKEN` | Database Backups | Vercel Blob read-write token. Used to upload zipped SQL database backups before migrations run. |
+| `BACKUP_BLOB_READ_WRITE_TOKEN` | Database Backups | Read-write token for a **private** Vercel Blob store. Used to upload database backups before migrations run. Never use a public store: backups contain user data and Tesla tokens. |
 | `VERCEL_TOKEN` | Vercel Deployment | Vercel Personal Access Token used to authenticate deployments. |
 | `VERCEL_ORG_ID` | Vercel Deployment | Vercel Organization ID. |
 | `VERCEL_PROJECT_ID` | Vercel Deployment | Vercel Project ID. |

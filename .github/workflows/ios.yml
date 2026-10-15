@@ -22,7 +22,13 @@ concurrency:
 jobs:
   test:
     name: Run iOS Tests
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    # Keep fork PRs off the self-hosted runner (a personal machine). A fork can
+    # edit this file, so the real gate is requiring approval for outside
+    # contributors' workflow runs in the repository's Actions settings.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.draft == false &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: self-hosted
     timeout-minutes: 15
 

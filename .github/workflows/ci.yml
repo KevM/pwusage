@@ -226,7 +226,11 @@ jobs:
   verify-db:
     name: Verify Migrations (Prod -> Dev)
     needs: [test, build, check-db-changes]
-    if: github.event_name == 'pull_request' && needs.check-db-changes.outputs.migrations == 'true'
+    # Fork PRs get no secrets; skip rather than fail against an empty DB URL.
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.check-db-changes.outputs.migrations == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -316,6 +320,7 @@ jobs:
     needs: [test, build, verify-db]
     if: |
       github.event_name == 'pull_request' && 
+      github.event.pull_request.head.repo.full_name == github.repository &&
       always() && 
       needs.test.result == 'success' && 
       needs.build.result == 'success' && 

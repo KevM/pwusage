@@ -107,7 +107,7 @@ struct SolcastClient: Sendable {
 
     /// Solcast derives rooftop resource IDs from the site name entered in the
     /// toolkit, so a real ID can contain non-ASCII characters such as
-    /// `381e-ебас-145а-4695`. An ASCII-only allowlist silently rejected those and
+    /// `381e-ебас-145а-4695` (a synthetic example). An ASCII-only allowlist silently rejected those and
     /// the app never made a request at all. Instead, reject only what could break
     /// out of the single path component or alter the request.
     private static func isSafeResourceID(_ value: String) -> Bool {
