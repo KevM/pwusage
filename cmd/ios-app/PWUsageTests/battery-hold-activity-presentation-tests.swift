@@ -22,6 +22,11 @@ struct BatteryHoldActivityPresentationTests {
               timeZoneIdentifier: "UTC", activityStartedAt: startedAt)
     }
 
+    @Test("The Live Activity uses the Battery Hold control's glyph")
+    func glyph() {
+        #expect(P.symbolName == BatteryHoldControlIdentity.symbolName)
+    }
+
     @Test("Active holds show the target reserve and the monitor's phase in home-load terms")
     func activePhases() {
         #expect(P.headline(state(phase: .watching)) == "Holding at 100%")

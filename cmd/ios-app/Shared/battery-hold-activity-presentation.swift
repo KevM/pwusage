@@ -7,6 +7,10 @@ import Foundation
 enum BatteryHoldActivityPresentation {
     typealias State = BatteryHoldActivityAttributes.ContentState
 
+    /// The Battery Hold control's glyph, so Control Center, the Lock Screen and
+    /// the Dynamic Island show the same mark.
+    static let symbolName = BatteryHoldControlIdentity.symbolName
+
     static func isRestoring(_ state: State) -> Bool {
         state.status == .active && (state.phase == .restoring || state.restoreReason != nil)
     }

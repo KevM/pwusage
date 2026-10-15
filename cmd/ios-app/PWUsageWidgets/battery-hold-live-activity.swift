@@ -13,7 +13,7 @@ struct BatteryHoldLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Label(BatteryHoldActivityPresentation.reserveText(context.state), systemImage: symbol(context.state))
+                    Label(BatteryHoldActivityPresentation.reserveText(context.state), systemImage: BatteryHoldActivityPresentation.symbolName)
                         .font(.headline)
                         .monospacedDigit()
                 }
@@ -29,22 +29,18 @@ struct BatteryHoldLiveActivity: Widget {
                                                isStale: context.isStale, showsHeadline: false)
                 }
             } compactLeading: {
-                Image(systemName: symbol(context.state))
+                Image(systemName: BatteryHoldActivityPresentation.symbolName)
                     .accessibilityLabel("Battery hold")
             } compactTrailing: {
                 Text(BatteryHoldActivityPresentation.reserveText(context.state))
                     .monospacedDigit()
                     .foregroundStyle(context.isStale ? .secondary : .primary)
             } minimal: {
-                Image(systemName: symbol(context.state))
+                Image(systemName: BatteryHoldActivityPresentation.symbolName)
                     .accessibilityLabel(BatteryHoldActivityPresentation.headline(context.state))
             }
             .widgetURL(BatteryHoldLink.url(siteID: context.attributes.siteID))
         }
-    }
-
-    private func symbol(_ state: BatteryHoldActivityAttributes.ContentState) -> String {
-        state.isFinal ? "battery.100percent.circle" : "battery.100percent.bolt"
     }
 }
 
@@ -55,7 +51,7 @@ struct BatteryHoldLockScreenView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(attributes.siteName, systemImage: "battery.100percent.bolt")
+            Label(attributes.siteName, systemImage: BatteryHoldActivityPresentation.symbolName)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
