@@ -241,6 +241,42 @@ struct BatteryHoldActivityCoordinatorTests {
         await eventually { api.registrations.count == 2 }
     }
 
+    @Test("A rotation while a registration is in flight is sent after it, so the newest token wins")
+    func serializedRotation() async throws {
+        let coordinator = makeCoordinator()
+        let handle = try await started(coordinator, hold())
+        api.pauseRegistration = true
+        handle.emit(token: Data(repeating: 0xAA, count: 32))
+        await eventually { api.isPaused }
+        handle.emit(token: Data(repeating: 0xBB, count: 32))
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(api.registerAttempts == 1)
+        api.resume()
+        await eventually { api.registrations.count == 2 }
+        #expect(api.registrations.map { String($0.registration.pushToken.prefix(2)) } == ["aa", "bb"])
+        // The stored digest is the newest token's: a relaunch doesn't re-send it.
+        handle.emit(token: Data(repeating: 0xBB, count: 32))
+        coordinator.stopObserving()
+        let relaunched = makeCoordinator()
+        _ = relaunched
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(api.registrations.count == 2)
+    }
+
+    @Test("A registration still in flight at sign-out is removed after it lands")
+    func signOutDrainsRegistration() async throws {
+        let coordinator = makeCoordinator()
+        let handle = try await started(coordinator, hold())
+        api.pauseRegistration = true
+        handle.emit(token: Data(repeating: 1, count: 32))
+        await eventually { api.isPaused }
+        let signOut = Task { await coordinator.signOut() }
+        try await Task.sleep(for: .milliseconds(20))
+        api.resume()
+        await signOut.value
+        #expect(api.events == ["register", "remove"])
+    }
+
     @Test("A start before relaunch reconcile reaches an existing activity adopts it")
     func adoptsBeforeReconcile() async throws {
         let existing = FakeActivityHandle(
@@ -351,6 +387,8 @@ final class FakeActivityAPI: BatteryHoldActivityAPI {
     struct Registered { let siteID: String; let registration: BatteryHoldActivityRegistration }
     struct Removed { let siteID: String; let registrationID: UUID }
     var registrations: [Registered] = []
+    /// Completed calls in order.
+    var events: [String] = []
     var removals: [Removed] = []
     var registerAttempts = 0
     var registerErrors: [any Error] = []
@@ -372,9 +410,11 @@ final class FakeActivityAPI: BatteryHoldActivityAPI {
         }
         if !registerErrors.isEmpty { throw registerErrors.removeFirst() }
         registrations.append(.init(siteID: siteID, registration: registration))
+        events.append("register")
     }
     func unregisterBatteryHoldActivity(siteID: String, registrationID: UUID) async throws {
         removals.append(.init(siteID: siteID, registrationID: registrationID))
+        events.append("remove")
     }
     func resume() { continuation?.resume(); continuation = nil }
 }

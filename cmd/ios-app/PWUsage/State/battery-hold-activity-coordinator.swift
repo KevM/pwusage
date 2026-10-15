@@ -147,6 +147,8 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
         let handle: any BatteryHoldActivityHandle
         var observers: [Task<Void, Never>] = []
         var latestToken: Data?
+        /// The last registration queued; each waits for the one before it.
+        var registration: Task<Void, Never>?
         init(handle: any BatteryHoldActivityHandle) { self.handle = handle }
     }
 
@@ -193,14 +195,18 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
     /// Unregisters while the session cookie still works, then clears every activity.
     func signOut() async {
         beginSessionChange()
-        let removals = store.entries.map { ($0.siteID, $0.registrationID) }
-            + tracked.values.map { ($0.handle.attributes.siteID, $0.handle.attributes.registrationID) }
-        var seen = Set<UUID>()
-        let unique = removals.filter { seen.insert($0.1).inserted }
+        // A registration still in flight is removed after it lands, not before.
+        let live = tracked.values.map {
+            ($0.handle.attributes.siteID, $0.handle.attributes.registrationID, $0.registration)
+        }
+        let liveIDs = Set(live.map(\.1))
+        let unique = live + store.entries.filter { !liveIDs.contains($0.registrationID) }
+            .map { ($0.siteID, $0.registrationID, nil as Task<Void, Never>?) }
         let timeout = signOutTimeout
         await withTaskGroup(of: Bool.self) { group in
-            for (siteID, registrationID) in unique {
+            for (siteID, registrationID, registration) in unique {
                 group.addTask { [api] in
+                    await registration?.value
                     try? await api.unregisterBatteryHoldActivity(siteID: siteID, registrationID: registrationID)
                     return true
                 }
@@ -370,7 +376,12 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
     private func tokenReceived(_ token: Data, activityID: String) {
         guard let item = tracked[activityID], item.latestToken != token else { return }
         item.latestToken = token
-        Task { await register(token, activityID: activityID) }
+        // One at a time per activity: an older token's request can't land after a newer one's.
+        let previous = item.registration
+        item.registration = Task {
+            await previous?.value
+            await register(token, activityID: activityID)
+        }
     }
 
     private func register(_ token: Data, activityID: String) async {
