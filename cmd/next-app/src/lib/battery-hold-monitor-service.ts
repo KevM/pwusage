@@ -6,6 +6,7 @@ import { summarizeHoldMonitoring, type BatteryHoldMonitoring } from './battery-h
 import { evaluateHold } from './battery-hold-detection';
 import { refreshTodayData } from './today-refresh';
 import { createSiteTeslaClient, restoreBattery } from './battery-hold-service';
+import { reconcileBatteryHoldActivities } from './battery-hold-activity-repo';
 import { ioSignal, withIoDeadline } from './io-deadline';
 import type { BatteryHold } from './db';
 import type { PowerData } from './nilm/types';
@@ -74,9 +75,12 @@ export async function monitorBatteryHolds(holds: BatteryHold[]) {
       else results.push(await processHold(hold));
     }
   }));
+  // One reconcile covers every monitoring update and terminal transition of this run.
+  const activitiesSynced = await reconcileBatteryHoldActivities();
   return { eligible: holds.length, attempted: results.filter(r => r.status !== 'skipped').length,
     skipped: results.filter(r => r.status === 'skipped').length,
     failed: results.filter(r => r.status === 'failed').length,
     completed: results.filter(r => r.status === 'completed').length,
+    activitiesSynced,
     runtimeMs: Date.now() - started, results };
 }

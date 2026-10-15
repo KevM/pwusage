@@ -10,6 +10,9 @@ import { BatteryHoldRepo } from './battery-hold-repo';
 import {
   BatteryHoldActivityRepo, reconcileBatteryHoldActivities, type ActivityRegistration,
 } from './battery-hold-activity-repo';
+import { restoreBattery } from './battery-hold-service';
+import { monitorBatteryHolds } from './battery-hold-monitor-service';
+import type { TeslaClient } from './tesla-client';
 
 const socket = process.env.BATTERY_HOLD_TEST_SOCKET;
 const safeSocket = socket && /^\/(?:private\/)?tmp\/battery-hold-pg-[a-zA-Z0-9]+$/.test(socket);
@@ -275,5 +278,33 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
     const all = await rows();
     expect(all[0]).toMatchObject({ delivery_state: 'disabled', push_token: null });
     expect(all[1]).toMatchObject({ delivery_state: 'pending', desired_version: 1 });
+  });
+
+  it('a manual stop pushes the restored snapshot to a synced activity', async () => {
+    await repo.register(registration());
+    await repo.syncDesired(holdId);
+    const client = {
+      getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }),
+      setBackupReserve: vi.fn().mockResolvedValue({ Code: 200 }),
+    };
+    const result = await restoreBattery({ client: client as unknown as TeslaClient, repo: holdRepo, siteId: 's1', reason: 'manual' });
+    expect(result).toEqual({ status: 'ok' });
+    expect(client.setBackupReserve).toHaveBeenCalledWith('s1', 20);
+    const [row] = await rows();
+    expect(row).toMatchObject({ desired_version: 2, delivery_state: 'pending' });
+    expect(row.desired_snapshot.status).toBe('restored');
+  });
+
+  it('the next monitor run recovers a missed terminal write by reconciling activities', async () => {
+    await repo.register(registration());
+    await repo.syncDesired(holdId);
+    await repo.acknowledgeDelivery(Number((await rows())[0].id), 1);
+    expect((await rows())[0].delivery_state).toBe('current');
+    await holdRepo.markRestored(holdId, 'manual');
+    expect((await rows())[0].desired_version).toBe(1);
+    await monitorBatteryHolds([]);
+    const [row] = await rows();
+    expect(row).toMatchObject({ desired_version: 2, delivery_state: 'pending' });
+    expect(row.desired_snapshot.status).toBe('restored');
   });
 });

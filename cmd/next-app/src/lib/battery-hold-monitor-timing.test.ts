@@ -8,6 +8,7 @@ vi.mock('./battery-hold-repo', () => ({ BatteryHoldRepo: class {
   async recordMonitoring() {}
 } }));
 vi.mock('./energy-repo', () => ({ EnergyRepo: class {} }));
+vi.mock('./battery-hold-activity-repo', () => ({ reconcileBatteryHoldActivities: async () => null }));
 vi.mock('./today-refresh', () => ({ refreshTodayData: async () => new Promise(() => {}) }));
 vi.mock('./battery-hold-service', () => ({
   createSiteTeslaClient: async () => ({}),
