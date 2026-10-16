@@ -499,7 +499,10 @@ final class DashboardCoordinator: ObservableObject {
             guard isForeground else { return }
         }
 
-        launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation)
+        // Re-read the clock: another caller may have attempted the bill during
+        // the wait, and comparing that newer attempt with the pre-wait time
+        // would read as a backwards clock and send a duplicate request.
+        launchBillTaskIfNeeded(trigger: trigger, requestTime: now(), generation: generation)
 
         await billTask?.value
     }
