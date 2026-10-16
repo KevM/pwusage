@@ -258,17 +258,18 @@ func homeColumns(width: Double, regular: Bool, accessibility: Bool, expected: Bo
 - Consumes: `AppTab`, `model.selectedTab` / `selectTab`, `DashboardView`, `SettingsView`, `BillView`, `LoadTimingView`, `BatteryHoldSheet`.
 - Produces: `AppTabView(model: PWUsageAppModel, coordinator: DashboardCoordinator, site: MobileSite)`.
 
-- [ ] **Step 1: Build `AppTabView`**
+- [x] **Step 1: Build `AppTabView`**
   - `TabView(selection:)` bound with a custom binding whose setter calls `model.selectTab` (the tab-selection side-effect pattern), `ForEach(AppTab.allCases)` → `Tab(tab.title, systemImage: tab.systemImage, value: tab)`.
   - Each tab: `NavigationStack { content }.id(model.batteryHoldNavigationID)` — Home: `DashboardView(coordinator:site:onOpenTab: model.selectTab, onRefresh: { await model.refreshDashboard() })`; Bill: `BillView`; Smart Shift: `LoadTimingView(coordinator:site:)`; Settings: `SettingsView(site:coordinator:onChooseSite: model.openSitePicker, onSignOut: { Task { await model.signOut() } })`.
   - `.tabViewStyle(.sidebarAdaptable)`, `.defaultAdaptableTabBarPlacement(.sidebar)`.
   - `.tabViewSidebarHeader`: site name; when `model.sites.count > 1`, a `Menu` listing sites (checkmark on current) calling `model.selectSite`.
   - `.sheet(item: $coordinator.presentedSheet)` → `.batteryHold`: `BatteryHoldSheet(coordinator:site:)`.
-- [ ] **Step 2: Wire the root** — replace the temporary Task 5 host with `AppTabView(...)`; move `.environment(\.reconnectTesla, …)` onto it; keep the site-picker `.sheet` on the root; remove the old `.id(model.batteryHoldNavigationID)` from the root view.
-- [ ] **Step 3: Smart Shift page** — `LoadTimingView` `.navigationTitle("Smart Shift")`; trailing `ToolbarItemGroup(placement: .topBarTrailing)` → `.primaryAction` (leading sun button unchanged).
-- [ ] **Step 4: Run the full suite** — `./run-tests.sh` → PASS.
+- [x] **Step 2: Wire the root** — replace the temporary Task 5 host with `AppTabView(...)`; move `.environment(\.reconnectTesla, …)` onto it; keep the site-picker `.sheet` on the root; remove the old `.id(model.batteryHoldNavigationID)` from the root view.
+- [x] **Step 3: Smart Shift page** — `LoadTimingView` `.navigationTitle("Smart Shift")`; trailing `ToolbarItemGroup(placement: .topBarTrailing)` → `.primaryAction` (leading sun button unchanged).
+- [x] **Step 4: Run the full suite** — `./run-tests.sh` → PASS.
 - [ ] **Step 5: Manual check (Review Focus 1)** — iPad simulator: collapse the sidebar, open `pwusage://battery-hold?site=<id>` with `xcrun simctl openurl booted ...`; sidebar stays collapsed, Smart Shift selected, sheet up. Switch Home ↔ Smart Shift with a breakpoint in `LoadTimingView.refreshBatteryHoldWhileVisible`: the loop stops when Smart Shift is hidden and restarts on return.
-- [ ] **Step 6: Commit** — `feat(ios): sidebar-adaptable tab navigation`
+  - Partly done (iPhone only, via a temporary fake-data harness): a warm deep link from a launch whose saved tab was Bill lands on Smart Shift with the sheet, and a cold relaunch reopens Bill. Not yet done: the iPad collapsed-sidebar deep link and the polling stop/restart check.
+- [x] **Step 6: Commit** — `feat(ios): sidebar-adaptable tab navigation`
 
 ---
 
