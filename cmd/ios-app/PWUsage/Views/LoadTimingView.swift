@@ -373,7 +373,7 @@ struct LoadTimingView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(22)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+                    .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20))
                 }
             }
             .padding(20)
@@ -386,7 +386,7 @@ struct LoadTimingView: View {
         }
         .background { SectionTheme.loadTiming.screenBackground }
         .navigationTitle("Load Timing")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavigationTitle()
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { isSolarForecastSheetPresented = true } label: { Image(systemName: "sun.max") }
@@ -878,9 +878,9 @@ private struct LoadRunDetailsSheet: View {
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background(SectionTheme.groupedBackground)
             .navigationTitle("Load Run Details")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
@@ -1020,6 +1020,6 @@ private struct LoadTimingCard<Content: View>: View {
         }
         .padding(17)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }

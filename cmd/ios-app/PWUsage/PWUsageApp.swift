@@ -615,8 +615,12 @@ private struct PWUsageRootView: View {
                             Task { await model.signIn() }
                         }
                     } else {
-                        DashboardView(coordinator: coordinator, site: site, onChooseSite: { model.openSitePicker() }, onRefresh: { await model.refreshDashboard() }) {
-                            Task { await model.signOut() }
+                        // Temporary host until the tab view replaces it.
+                        NavigationStack {
+                            DashboardView(coordinator: coordinator, site: site, onOpenTab: { model.selectTab($0) }, onRefresh: { await model.refreshDashboard() })
+                        }
+                        .sheet(item: Binding(get: { coordinator.presentedSheet }, set: { coordinator.presentedSheet = $0 })) { _ in
+                            BatteryHoldSheet(coordinator: coordinator, site: site)
                         }
                         .id(model.batteryHoldNavigationID)
                         .environment(\.reconnectTesla, TeslaReconnectAction(owner: model) { await model.reconnectTesla() })

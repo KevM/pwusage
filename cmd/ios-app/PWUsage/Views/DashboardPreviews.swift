@@ -136,11 +136,13 @@ private struct DashboardPreview: View {
     }
 
     var body: some View {
-        DashboardView(coordinator: coordinator, site: site, onChooseSite: {}, onSignOut: {})
-            .task {
-                coordinator.scenePhaseChanged(isActive: true)
-                await coordinator.refreshDue()
-            }
+        NavigationStack {
+            DashboardView(coordinator: coordinator, site: site, onOpenTab: { _ in })
+        }
+        .task {
+            coordinator.scenePhaseChanged(isActive: true)
+            await coordinator.refreshDue()
+        }
     }
 }
 
@@ -199,6 +201,12 @@ private struct LoadTimingPreview: View {
 
 #Preview("Dashboard · Normal") {
     DashboardPreview(mode: .normal)
+}
+
+#Preview("Dashboard · iPad landscape", traits: .landscapeLeft, .fixedLayout(width: 1180, height: 820)) {
+    // A fixed layout alone can report a compact size class, so pin it to regular.
+    DashboardPreview(mode: .normal)
+        .environment(\.horizontalSizeClass, .regular)
 }
 
 #Preview("Dashboard · No energy") {
