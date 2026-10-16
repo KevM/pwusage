@@ -81,7 +81,7 @@ func tabsMatchDesign() {
 
 Rules: init reads the saved raw value, falling back to `.home` when missing or unknown. `selectTab` writes the key. `resolveBatteryHoldNavigation` sets `selectedTab = .smartShift` without writing the key, in the same branch that sets `batteryHoldNavigationID`. `signOut` and `invalidateSession` remove the key and set `.home`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```swift
 @Test("A picked tab is restored on the next launch")
@@ -150,10 +150,10 @@ func signOutResetsTab() async throws {
 }
 ```
 
-- [ ] **Step 2: Run to verify they fail** — `./run-tests.sh PWUsageAppModelTests` → FAIL (`selectedTab` missing).
-- [ ] **Step 3: Implement** `selectedTab`, `selectTab(_:)`, the key, and the four rule sites above.
-- [ ] **Step 4: Run to verify they pass** — same command → all PWUsageAppModelTests PASS.
-- [ ] **Step 5: Commit** — `feat(ios): track the selected tab on the app model`
+- [x] **Step 2: Run to verify they fail** — `./run-tests.sh PWUsageAppModelTests` → FAIL (`selectedTab` missing).
+- [x] **Step 3: Implement** `selectedTab`, `selectTab(_:)`, the key, and the four rule sites above.
+- [x] **Step 4: Run to verify they pass** — same command → all PWUsageAppModelTests PASS.
+- [x] **Step 5: Commit** — `feat(ios): track the selected tab on the app model`
 
 ---
 
