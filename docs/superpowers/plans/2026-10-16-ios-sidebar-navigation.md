@@ -166,12 +166,12 @@ func signOutResetsTab() async throws {
 **Interfaces:**
 - Produces: `enum DashboardSheet { case batteryHold }` (other cases removed; `presentedSheet` / `isBatteryHoldSheetPresented` unchanged). Rate Plans and About become pushed pages in Task 6.
 
-- [ ] **Step 1: Update the tests first**
+- [x] **Step 1: Update the tests first**
   - `controlLaunchDismissesCompetingDashboardSheet`: replace `presentedSheet = .tariffs` with `model.isSitePickerPresented = true`; assert `model.isSitePickerPresented == false` after the failed `openBatteryHold`, keeping the existing `presentedSheet == nil` assertion.
   - `dashboardSheetsAreMutuallyExclusive` → rename `batteryHoldSheetBindingRoundTrips`: `isBatteryHoldSheetPresented = true` gives `.batteryHold`; `= false` gives `nil`. Drop the `.about`/`.tariffs` lines.
-- [ ] **Step 2: Remove `.tariffs` and `.about`**; update the doc comment to say the dashboard owns one sheet but keeps the value so an external launch can clear it. Temporarily delete the two matching `case` branches and the Tariffs toolbar button / About menu item in `DashboardView` so the target builds (Task 5 rewrites that file).
-- [ ] **Step 3: Run** — `./run-tests.sh PWUsageAppModelTests` → PASS.
-- [ ] **Step 4: Commit** — `refactor(ios): dashboard owns only the Battery Saver sheet`
+- [x] **Step 2: Remove `.tariffs` and `.about`**; update the doc comment to say the dashboard owns one sheet but keeps the value so an external launch can clear it. Temporarily delete the two matching `case` branches and the Tariffs toolbar button / About menu item in `DashboardView` so the target builds (Task 5 rewrites that file).
+- [x] **Step 3: Run** — `./run-tests.sh PWUsageAppModelTests` → PASS.
+- [x] **Step 4: Commit** — `refactor(ios): dashboard owns only the Battery Saver sheet`
 
 ---
 

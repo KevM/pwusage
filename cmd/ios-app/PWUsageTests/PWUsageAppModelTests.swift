@@ -114,33 +114,32 @@ struct PWUsageAppModelTests {
         let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
         let model = try makeModel(api: api)
         await model.bootstrap()
-        model.coordinator?.presentedSheet = .tariffs
+        model.isSitePickerPresented = true
         api.sitesError = URLError(.notConnectedToInternet)
 
         await model.openBatteryHold(siteID: "site-2")
 
         #expect(model.batteryHoldNavigationMessage != nil)
+        #expect(model.isSitePickerPresented == false)
         #expect(model.coordinator?.presentedSheet == nil,
                 "The root alert and loading overlay cannot be seen underneath a dashboard sheet.")
     }
 
-    @Test("Only one dashboard sheet is presented at a time")
-    func dashboardSheetsAreMutuallyExclusive() async throws {
+    @Test("The Battery Saver sheet binding round-trips through the dashboard sheet")
+    func batteryHoldSheetBindingRoundTrips() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
         let model = try makeModel(api: api)
         await model.bootstrap()
         let coordinator = try #require(model.coordinator)
 
-        coordinator.presentedSheet = .about
+        #expect(DashboardSheet.allCases == [.batteryHold],
+                "Rate Plans and About are pushed pages in Settings, not dashboard sheets.")
+
         coordinator.isBatteryHoldSheetPresented = true
         #expect(coordinator.presentedSheet == .batteryHold)
 
         coordinator.isBatteryHoldSheetPresented = false
         #expect(coordinator.presentedSheet == nil)
-
-        coordinator.presentedSheet = .tariffs
-        coordinator.isBatteryHoldSheetPresented = false
-        #expect(coordinator.presentedSheet == .tariffs, "Closing the hold sheet must not close an unrelated sheet.")
     }
 
     @Test("External launch replaces navigation presentation identity each time")

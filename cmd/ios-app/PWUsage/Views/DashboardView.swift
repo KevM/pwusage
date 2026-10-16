@@ -48,26 +48,12 @@ struct DashboardView: View {
                 switch sheet {
                 case .batteryHold:
                     BatteryHoldSheet(coordinator: coordinator, site: site)
-                case .tariffs:
-                    TariffSheet(site: site, load: { try await coordinator.fetchTariffs() })
-                        .id(site.id)
-                case .about:
-                    AboutSheet()
                 }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Tariffs", systemImage: "tag") {
-                        coordinator.presentedSheet = .tariffs
-                    }
-                    .accessibilityHint("View tariff seasons, periods, and rates")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("Switch Site", systemImage: "arrow.left.arrow.right", action: onChooseSite)
-                        Button("About", systemImage: "info.circle") {
-                            coordinator.presentedSheet = .about
-                        }
                         Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive, action: onSignOut)
                     } label: {
                         Image(systemName: "ellipsis.circle")
