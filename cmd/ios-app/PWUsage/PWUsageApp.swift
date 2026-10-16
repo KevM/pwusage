@@ -602,7 +602,7 @@ private struct PWUsageRootView: View {
                     Text("Connecting to pwusage…").foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(uiColor: .systemGroupedBackground))
+                .background(SectionTheme.groupedBackground)
             case .signedOut:
                 SignInView(isWorking: model.isSigningIn, message: model.signInMessage) {
                     Task { await model.signIn() }
@@ -615,14 +615,7 @@ private struct PWUsageRootView: View {
                             Task { await model.signIn() }
                         }
                     } else {
-                        // Temporary host until the tab view replaces it.
-                        NavigationStack {
-                            DashboardView(coordinator: coordinator, site: site, onOpenTab: { model.selectTab($0) }, onRefresh: { await model.refreshDashboard() })
-                        }
-                        .sheet(item: Binding(get: { coordinator.presentedSheet }, set: { coordinator.presentedSheet = $0 })) { _ in
-                            BatteryHoldSheet(coordinator: coordinator, site: site)
-                        }
-                        .id(model.batteryHoldNavigationID)
+                        AppTabView(model: model, coordinator: coordinator, site: site)
                         .environment(\.reconnectTesla, TeslaReconnectAction(owner: model) { await model.reconnectTesla() })
                         .sheet(isPresented: $model.isSitePickerPresented) {
                             SitePickerView(sites: model.sites, selectedSiteID: site.id) { selected in
@@ -726,6 +719,6 @@ private struct EmptyStateScreen: View {
         .padding(32)
         .frame(maxWidth: 500)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background(SectionTheme.groupedBackground)
     }
 }

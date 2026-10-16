@@ -385,14 +385,14 @@ struct LoadTimingView: View {
             await coordinator.refreshBatteryHold()
         }
         .background { SectionTheme.loadTiming.screenBackground }
-        .navigationTitle("Load Timing")
+        .navigationTitle("Smart Shift")
         .inlineNavigationTitle()
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { isSolarForecastSheetPresented = true } label: { Image(systemName: "sun.max") }
                     .accessibilityLabel("Solar forecast settings")
             }
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     coordinator.isBatteryHoldSheetPresented = true
                 } label: {
