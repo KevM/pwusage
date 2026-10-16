@@ -311,6 +311,27 @@ struct BatteryHoldActivityCoordinatorTests {
         api.resume()
     }
 
+    @Test("Sign-out stays bounded and stops every queued registration when a token rotated mid-request")
+    func signOutBoundsQueuedRegistrations() async throws {
+        let coordinator = makeCoordinator(signOutTimeout: .milliseconds(50))
+        let handle = try await started(coordinator, hold())
+        api.pauseRegistration = true
+        handle.emit(token: Data(repeating: 1, count: 32))
+        await eventually { api.isPaused }
+        // The rotated token's registration queues behind the stalled one.
+        handle.emit(token: Data(repeating: 2, count: 32))
+        try await Task.sleep(for: .milliseconds(10))
+        let done = Flag()
+        Task { await coordinator.signOut(); done.value = true }
+        await eventually { done.value }
+        #expect(done.value)
+        #expect(handle.ends.first?.immediately == true)
+        // Cancellation reached the stalled request behind the queued one.
+        await eventually { api.cancelledRegistrations == 1 }
+        #expect(api.cancelledRegistrations == 1)
+        #expect(api.registrations.isEmpty)
+    }
+
     @Test("A site read that started before a new hold can't end the new hold's activity")
     func staleReconcileSparesNewActivity() async throws {
         let coordinator = makeCoordinator()
@@ -446,6 +467,7 @@ final class FakeActivityAPI: BatteryHoldActivityAPI {
     var holdResponses: [String: BatteryHoldResponse] = [:]
     var pauseRegistration = false
     private(set) var isPaused = false
+    private(set) var cancelledRegistrations = 0
     var pauseFetch = false
     private(set) var isFetchPaused = false
 
@@ -466,7 +488,8 @@ final class FakeActivityAPI: BatteryHoldActivityAPI {
             pauseRegistration = false
             isPaused = true
             // Like URLSession, a paused request gives up when its task is cancelled.
-            while isPaused { try await Task.sleep(for: .milliseconds(2)) }
+            do { while isPaused { try await Task.sleep(for: .milliseconds(2)) } }
+            catch { cancelledRegistrations += 1; throw error }
         }
         if !registerErrors.isEmpty { throw registerErrors.removeFirst() }
         registrations.append(.init(siteID: siteID, registration: registration))

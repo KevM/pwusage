@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import Observation
 import OSLog
+import os
 
 /// The APNs environment a build's `aps-environment` entitlement selects. The
 /// server keeps sandbox and production registrations apart and accepts
@@ -202,33 +203,43 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
         let liveIDs = Set(live.map(\.1))
         let unique = live + store.entries.filter { !liveIDs.contains($0.registrationID) }
             .map { ($0.siteID, $0.registrationID, nil as Task<Void, Never>?) }
-        let timeout = signOutTimeout
-        await withTaskGroup(of: Bool.self) { group in
-            for (siteID, registrationID, registration) in unique {
-                group.addTask { [api] in
-                    // At the timeout the group cancels this child; pass that on, or a
-                    // stalled request or retry wait would hold sign-out open past it.
-                    await withTaskCancellationHandler {
-                        await registration?.value
-                    } onCancel: {
-                        registration?.cancel()
+        let work = Task { [api] in
+            await withTaskGroup(of: Void.self) { group in
+                for (siteID, registrationID, registration) in unique {
+                    group.addTask {
+                        // At the timeout this child is cancelled; pass that on so a stalled
+                        // request or retry wait stops rather than running on after sign-out.
+                        await withTaskCancellationHandler {
+                            await registration?.value
+                        } onCancel: {
+                            registration?.cancel()
+                        }
+                        try? await api.unregisterBatteryHoldActivity(siteID: siteID, registrationID: registrationID)
                     }
-                    try? await api.unregisterBatteryHoldActivity(siteID: siteID, registrationID: registrationID)
-                    return true
                 }
             }
-            // Never hold up sign-out on the network for long.
-            group.addTask {
-                try? await Task.sleep(for: timeout)
-                return false
-            }
-            var remaining = unique.count
-            while remaining > 0, let finished = await group.next() {
-                if finished { remaining -= 1 } else { break }
-            }
-            group.cancelAll()
         }
+        // Never hold up sign-out on the network for long. Leaving a task group waits
+        // for every child, so the bound is a race outside it: whatever doesn't stop
+        // on cancellation finishes in the background instead of holding logout.
+        await Self.wait(for: work, atMost: signOutTimeout)
+        work.cancel()
         await endEverything()
+    }
+
+    /// Returns when `work` finishes or `timeout` passes, whichever is first, without waiting for the other.
+    private static func wait(for work: Task<Void, Never>, atMost timeout: Duration) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let pending = OSAllocatedUnfairLock<CheckedContinuation<Void, Never>?>(initialState: continuation)
+            let finish: @Sendable () -> Void = {
+                pending.withLock { state -> CheckedContinuation<Void, Never>? in
+                    defer { state = nil }
+                    return state
+                }?.resume()
+            }
+            Task { await work.value; finish() }
+            Task { try? await Task.sleep(for: timeout); finish() }
+        }
     }
 
     /// The session is already gone, so nothing can be unregistered; clear locally.
@@ -394,7 +405,13 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
         // One at a time per activity: an older token's request can't land after a newer one's.
         let previous = item.registration
         item.registration = Task {
-            await previous?.value
+            // Cancelling the newest registration (sign-out) cancels the queue behind it.
+            await withTaskCancellationHandler {
+                await previous?.value
+            } onCancel: {
+                previous?.cancel()
+            }
+            guard !Task.isCancelled else { return }
             await register(token, activityID: activityID)
         }
     }
