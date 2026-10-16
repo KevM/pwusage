@@ -22,9 +22,40 @@ struct BatteryHoldActivityPresentationTests {
               timeZoneIdentifier: "UTC", activityStartedAt: startedAt)
     }
 
-    @Test("The Live Activity uses the Battery Hold control's glyph")
+    @Test("The Live Activity is branded with the pwusage glyph; Control Center keeps its own symbol")
     func glyph() {
-        #expect(P.symbolName == BatteryHoldControlIdentity.symbolName)
+        #expect(P.glyphName == "pwusage-glyph")
+        #expect(BatteryHoldControlIdentity.symbolName == "bolt.batteryblock")
+    }
+
+    @Test("A known battery charge leads the detail, as a whole number")
+    func batteryPrefix() {
+        var watching = state(phase: .watching)
+        #expect(P.batteryText(watching) == nil)
+        watching.batteryPercent = 81.6
+        #expect(P.batteryText(watching) == "Battery 82%")
+        #expect(P.detail(watching, isStale: false) == "Battery 82% · watching home load.")
+        var timer = state(mode: .timer, phase: .timer)
+        timer.batteryPercent = 74
+        #expect(P.detail(timer, isStale: false) == "Battery 74% · holding until the scheduled stop time.")
+        watching.batteryPercent = .nan
+        #expect(P.detail(watching, isStale: false) == "Watching home load.")
+    }
+
+    @Test("Live figures never mask a history outage, a failed check, or an overdue update")
+    func batteryPrefixKeepsWarnings() {
+        var waiting = state(phase: .waitingForData)
+        waiting.batteryPercent = 74
+        #expect(P.detail(waiting, isStale: false) == "Battery 74% · waiting for usage data. The hold is still active.")
+        var failed = state(phase: .checkFailed)
+        failed.batteryPercent = 74
+        #expect(P.detail(failed, isStale: false) == "Battery 74% · the last check failed. The hold is still active.")
+        // An overdue charge is old: the warning stands alone.
+        #expect(P.detail(waiting, isStale: true) == "Update overdue. Open pwusage for the current status.")
+        var restored = state(status: .restored)
+        restored.restoreReason = .manual
+        restored.batteryPercent = 74
+        #expect(P.detail(restored, isStale: false) == "Stopped in pwusage.")
     }
 
     @Test("Active holds show the target reserve and the monitor's phase in home-load terms")
@@ -80,7 +111,14 @@ struct BatteryHoldActivityPresentationTests {
         let timer = state(mode: .timer, phase: .timer, hours: 4)
         #expect(P.deadline(timer, timeZone: utc, now: start) == "Stops \(P.clock(timer.safetyExpiresAt, timeZone: utc, now: start))")
         let auto = state(phase: .watching)
-        #expect(P.deadline(auto, timeZone: utc, now: start)?.hasPrefix("Safety stop by ") == true)
+        // Auto's safety stop rarely matters early: it shows only in the last hour.
+        #expect(P.deadline(auto, timeZone: utc, now: start) == nil)
+        #expect(P.deadline(auto, timeZone: utc, now: start.addingTimeInterval(6.9 * 3600)) == nil)
+        let lastHour = start.addingTimeInterval(7 * 3600 + 60)
+        #expect(P.deadline(auto, timeZone: utc, now: lastHour) == "Safety stop by \(P.clock(auto.safetyExpiresAt, timeZone: utc, now: lastHour))")
+        #expect(P.deadline(auto, timeZone: utc, now: start.addingTimeInterval(9 * 3600))?.hasPrefix("Safety stop by ") == true)
+        // A fixed hold's stop time is the plan, so it always shows.
+        #expect(P.deadline(state(mode: .timer, phase: .timer, hours: 20), timeZone: utc, now: start)?.hasPrefix("Stops ") == true)
         #expect(P.checked(auto, timeZone: utc, now: start) == "Checked \(P.clock(auto.checkedAt!, timeZone: utc, now: start))")
         #expect(P.checked(state(), timeZone: utc, now: start) == nil)
     }

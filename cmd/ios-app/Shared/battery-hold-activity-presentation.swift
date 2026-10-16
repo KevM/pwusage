@@ -7,9 +7,18 @@ import Foundation
 enum BatteryHoldActivityPresentation {
     typealias State = BatteryHoldActivityAttributes.ContentState
 
-    /// The Battery Hold control's glyph, so Control Center, the Lock Screen and
-    /// the Dynamic Island show the same mark.
-    static let symbolName = BatteryHoldControlIdentity.symbolName
+    /// The pwusage glyph (asset catalog, template). Control Center keeps the
+    /// system symbol in `BatteryHoldControlIdentity.symbolName`: it caches control artwork.
+    static let glyphName = "pwusage-glyph"
+
+    /// Auto's safety stop is shown only this close to it; earlier it rarely matters.
+    static let safetyStopNotice: TimeInterval = 60 * 60
+
+    /// The live charge as a whole number. The drawn fill uses the unrounded value.
+    static func batteryText(_ state: State) -> String? {
+        guard let percent = state.batteryPercent, percent.isFinite else { return nil }
+        return "Battery \(Int(min(max(percent, 0), 100).rounded()))%"
+    }
 
     static func isRestoring(_ state: State) -> Bool {
         state.status == .active && (state.phase == .restoring || state.restoreReason != nil)
@@ -46,6 +55,12 @@ enum BatteryHoldActivityPresentation {
             break
         }
         if isStale { return "Update overdue. Open pwusage for the current status." }
+        let text = activeDetail(state)
+        guard let battery = batteryText(state) else { return text }
+        return "\(battery) · \(text.prefix(1).lowercased())\(text.dropFirst())"
+    }
+
+    private static func activeDetail(_ state: State) -> String {
         if isRestoring(state) { return "Restore requested. Waiting for Tesla to confirm." }
         switch state.phase {
         case nil: return state.mode == .timer ? "Holding until the scheduled stop time." : "Waiting for the first home load check."
@@ -71,7 +86,8 @@ enum BatteryHoldActivityPresentation {
         switch state.status {
         case .active:
             let time = clock(state.safetyExpiresAt, timeZone: timeZone, now: now)
-            return state.mode == .timer ? "Stops \(time)" : "Safety stop by \(time)"
+            if state.mode == .timer { return "Stops \(time)" }
+            return state.safetyExpiresAt.timeIntervalSince(now) <= safetyStopNotice ? "Safety stop by \(time)" : nil
         case .restored, .cancelled:
             return state.endedAt.map { "Ended \(clock($0, timeZone: timeZone, now: now))" }
         case .ended, .unknown:
@@ -79,8 +95,8 @@ enum BatteryHoldActivityPresentation {
         }
     }
 
-    /// The home load range from the last check. The latest sample carries its own
-    /// time: it is a five-minute reading, not a live one.
+    /// The home load range from the last check. The current load carries its own
+    /// time: the live reading's when the check had one, else the five-minute sample's.
     static func loadRange(_ state: State, timeZone: TimeZone, now: Date) -> String? {
         guard state.status == .active, let home = state.homeLoadW, let sampledAt = state.sampledAt else { return nil }
         var parts = ["Home \(kilowatts(home)) at \(clock(sampledAt, timeZone: timeZone, now: now))"]

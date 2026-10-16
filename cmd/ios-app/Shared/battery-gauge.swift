@@ -121,6 +121,5 @@ struct BatteryGaugeView: View {
                 }
             }
         }
-        .accessibilityHidden(true)
     }
 }

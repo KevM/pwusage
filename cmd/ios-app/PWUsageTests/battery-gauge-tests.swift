@@ -1,5 +1,7 @@
 import CoreGraphics
+import SwiftUI
 import Testing
+import UIKit
 @testable import PWUsage
 
 @Suite("Drawn battery gauge geometry")
@@ -66,5 +68,38 @@ struct BatteryGaugeGeometryTests {
         let g = geometry(.bar, size: size, charge: 50, hold: 74)
         #expect(g.body.minX == 0 && g.body.height == size.height)
         #expect(g.nub.maxX <= size.width && g.nub.minX > g.body.maxX)
+    }
+
+    @Test("The pwusage glyph ships as a template image")
+    func glyphAsset() throws {
+        let image = try #require(UIImage(named: BatteryHoldActivityPresentation.glyphName))
+        #expect(image.renderingMode == .alwaysTemplate)
+        #expect(image.size == CGSize(width: 24, height: 24))
+    }
+
+    @MainActor
+    @Test("Renders each gauge style with the glyph, in light and dark", arguments: [ColorScheme.light, .dark])
+    func render(_ scheme: ColorScheme) throws {
+        let sample = VStack(alignment: .leading, spacing: 12) {
+            BatteryGaugeView(style: .card, charge: 82, holdLevel: 74).frame(width: 360, height: 132)
+            BatteryGaugeView(style: .card, charge: 82, holdLevel: 74, isStale: true).frame(width: 360, height: 132)
+            BatteryGaugeView(style: .card, charge: 71, holdLevel: 74, isFinal: true).frame(width: 360, height: 132)
+            BatteryGaugeView(style: .bar, charge: 82, holdLevel: 74).frame(width: 300, height: 26)
+            HStack(spacing: 12) {
+                Image(BatteryHoldActivityPresentation.glyphName).renderingMode(.template).resizable()
+                    .frame(width: 20, height: 20).foregroundStyle(Color.accentColor)
+                BatteryGaugeView(style: .mini, charge: 82, holdLevel: 74).frame(width: 30, height: 21)
+                BatteryGaugeView(style: .mini, charge: nil, holdLevel: 74).frame(width: 24, height: 17)
+            }
+        }
+        .padding(16)
+        .background(Color(uiColor: .secondarySystemBackground))
+        .environment(\.colorScheme, scheme)
+        let renderer = ImageRenderer(content: sample)
+        renderer.scale = 3
+        let png = try #require(renderer.uiImage?.pngData())
+        let output = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("battery-gauge-\(scheme).png")
+        try png.write(to: output)
+        print("Rendered gauge: \(output.path)")
     }
 }
