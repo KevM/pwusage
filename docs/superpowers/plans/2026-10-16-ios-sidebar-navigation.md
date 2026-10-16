@@ -268,7 +268,7 @@ func homeColumns(width: Double, regular: Bool, accessibility: Bool, expected: Bo
 - [x] **Step 3: Smart Shift page** — `LoadTimingView` `.navigationTitle("Smart Shift")`; trailing `ToolbarItemGroup(placement: .topBarTrailing)` → `.primaryAction` (leading sun button unchanged).
 - [x] **Step 4: Run the full suite** — `./run-tests.sh` → PASS.
 - [ ] **Step 5: Manual check (Review Focus 1)** — iPad simulator: collapse the sidebar, open `pwusage://battery-hold?site=<id>` with `xcrun simctl openurl booted ...`; sidebar stays collapsed, Smart Shift selected, sheet up. Switch Home ↔ Smart Shift with a breakpoint in `LoadTimingView.refreshBatteryHoldWhileVisible`: the loop stops when Smart Shift is hidden and restarts on return.
-  - Partly done (iPhone only, via a temporary fake-data harness): a warm deep link from a launch whose saved tab was Bill lands on Smart Shift with the sheet, and a cold relaunch reopens Bill. Not yet done: the iPad collapsed-sidebar deep link and the polling stop/restart check.
+  - Partly done: the previous iPhone harness check verified a warm deep link from saved Bill to Smart Shift + sheet and relaunch to Bill. This continuation captured the iPad sidebar with all four entries and site header, plus Home at largest accessibility text in one column. Simulator UI is unavailable to the computer-use tool (name, path and bundle ID all return `Invalid app`); the iPad URL attempt stops at the system Open confirmation. Collapsed-sidebar preservation and polling stop/restart remain unverified. Screenshots: `.superpowers/sdd/2026-10-16-ios-sidebar-navigation/screenshots-task9/`.
 - [x] **Step 6: Commit** — `feat(ios): sidebar-adaptable tab navigation`
 
 ---
@@ -285,10 +285,10 @@ Exact copy:
 - Sheet `navigationTitle("Battery Saver")`; unavailable title "Battery Saver Unavailable".
 - Toolbar glyph `Image(systemName: "bolt.shield")`.
 
-- [ ] **Step 1: Update string tests first** — add `#expect(BatteryHoldPresentation.toolbarLabel(state: BatteryHoldState(), at: now) == "Battery Saver")` and the active-state accessibility label assertion next to the existing `contains("unknown")` test; run `./run-tests.sh battery-hold-coordinator-tests` → FAIL.
-- [ ] **Step 2: Apply the copy and glyph.**
-- [ ] **Step 3: Run** `./run-tests.sh` → PASS (fix any other test asserting "Battery Hold" in these three strings).
-- [ ] **Step 4: Commit** — `feat(ios): rename Battery Hold surfaces in navigation to Battery Saver`
+- [x] **Step 1: Update string tests first** — add `#expect(BatteryHoldPresentation.toolbarLabel(state: BatteryHoldState(), at: now) == "Battery Saver")` and the active-state accessibility label assertion next to the existing `contains("unknown")` test; run `./run-tests.sh battery-hold-coordinator-tests` → FAIL.
+- [x] **Step 2: Apply the copy and glyph.**
+- [x] **Step 3: Run** `./run-tests.sh` → PASS (fix any other test asserting "Battery Hold" in these three strings).
+- [x] **Step 4: Commit** — `feat(ios): rename Battery Hold surfaces in navigation to Battery Saver`
 
 ---
 

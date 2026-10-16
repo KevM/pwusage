@@ -11,7 +11,7 @@ struct BatteryHoldToolbarLabel: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "battery.100percent")
+            Image(systemName: "bolt.shield")
             if let reserve {
                 Text(reserve).font(.caption).monospacedDigit()
             }
