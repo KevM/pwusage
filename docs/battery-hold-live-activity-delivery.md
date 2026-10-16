@@ -76,6 +76,34 @@ older version delivered late can't replace a newer one. Updates carry
   "nextCheckAt": 813753000, "endedAt": null, "restoreReason": null, "cancelledObservedReserve": null }
 ```
 
+Optional keys added to schema 1 (older payloads omit them; apps that predate
+them ignore them): `sampledAt` (when `homeLoadW` was measured),
+`baselineLoadW` (home load when an Auto hold started), `homeLoadW` (the current
+home load), `peakLoadW` (highest load since the start) and `batteryPercent`
+(the battery's charge, 0–100, unrounded).
+
+Where the figures come from: every check (Auto and timer) reads Tesla's
+`live_status` through `refreshLiveStatus`, with a 2-minute cache and a 4-second
+budget, so a dashboard read from moments earlier is reused through its
+cross-instance claim but the previous check's reading never is. With a reading,
+`homeLoadW` is its `load_power`, `sampledAt` its `timestamp`, and
+`batteryPercent` its `percentage_charged`; `peakLoadW` is the larger of the
+history peak and the live load. Without one (failure, timeout, or a cached
+reading older than 2 minutes), `batteryPercent` is `null` and the load figures
+fall back to the latest five-minute history sample, as before. Phase and
+`estimatedLoadW` always come from history, so a history outage still reads
+`waiting_for_data`. Timer holds read no history: they send the live load and
+charge only, with `baselineLoadW` and `peakLoadW` `null`.
+
+At hold start, `parkBattery` writes a first monitoring snapshot from the
+`live_status` it already reads (phase `watching` for Auto, `timer` for timer),
+so the app's first content state and the first push carry real figures.
+
+The stored `BatteryHold.monitoring` JSON uses snake_case: `battery_percent`,
+`live_at` (Tesla's measurement time; equal to `sampled_at` when the load is
+live), alongside `sampled_at`, `baseline_load_w`, `home_load_w` and
+`peak_load_w`.
+
 `phase` is passed through from the monitor (`restoring` included). Task 6 owns
 how "active with a restore in progress" is presented.
 

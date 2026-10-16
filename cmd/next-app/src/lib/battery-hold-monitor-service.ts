@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { BatteryHoldRepo } from './battery-hold-repo';
 import { EnergyRepo } from './energy-repo';
 import { adaptTeslaData } from './nilm/tesla-adapter';
-import { summarizeHoldMonitoring, type BatteryHoldMonitoring } from './battery-hold-monitoring';
+import { summarizeHoldMonitoring, type BatteryHoldMonitoring, type HoldLiveStatus } from './battery-hold-monitoring';
 import { evaluateHold } from './battery-hold-detection';
-import { refreshTodayData } from './today-refresh';
+import { refreshLiveStatus, refreshTodayData } from './today-refresh';
 import { createSiteTeslaClient, restoreBattery } from './battery-hold-service';
 import { reconcileBatteryHoldActivities } from './battery-hold-activity-repo';
 import { ioSignal, withIoDeadline } from './io-deadline';
@@ -14,7 +14,25 @@ import type { PowerData } from './nilm/types';
 export const MONITOR_SITE_BUDGET_MS = 10000;
 export const MONITOR_HISTORY_BUDGET_MS = 4000;
 export const MONITOR_WORKERS = 3;
+// One live_status per check: reuse a dashboard read from moments ago, never the previous check's.
+export const MONITOR_LIVE_TTL_MS = 2 * 60 * 1000;
+// Runs alongside the history refresh, inside the site budget; Tesla's own call is capped at 3s.
+export const MONITOR_LIVE_BUDGET_MS = 4000;
 type MonitorResult = { siteId: string; status: 'holding' | 'skipped' | 'completed' | 'failed'; restore?: string };
+
+/** The current charge and home load, or null: a live-status failure never fails the check. */
+async function readLiveStatus(siteId: string): Promise<HoldLiveStatus | null> {
+  try {
+    // refreshLiveStatus holds the cross-instance claim, so concurrent readers share one Tesla call.
+    const result = await withIoDeadline(MONITOR_LIVE_BUDGET_MS, () =>
+      refreshLiveStatus(siteId, { cacheTtlMs: MONITOR_LIVE_TTL_MS, timeoutMs: 3000 }));
+    // A lost claim can hand back an older cached status; that is not this check's reading.
+    if (!result.liveStatus || result.fetchedAt === undefined || Date.now() - result.fetchedAt > MONITOR_LIVE_TTL_MS) return null;
+    return result.liveStatus;
+  } catch {
+    return null;
+  }
+}
 
 async function processHold(hold: BatteryHold): Promise<MonitorResult> {
   const repo = new BatteryHoldRepo();
@@ -30,8 +48,16 @@ async function processHold(hold: BatteryHold): Promise<MonitorResult> {
       let samples: PowerData[] = [];
       // Both timer and Auto safety deadlines precede any billable history work.
       let decision = evaluateHold(hold, [], now);
-      if (!decision && !hold.restore_attempted_at && hold.mode !== 'timer') {
-        await refreshTodayData(hold.site_id, { timeoutMs: MONITOR_HISTORY_BUDGET_MS, signal: ioSignal() });
+      let live: HoldLiveStatus | null = null;
+      if (!decision && !hold.restore_attempted_at && hold.mode === 'timer') {
+        live = await readLiveStatus(hold.site_id);
+        now = new Date();
+        decision = evaluateHold(hold, [], now);
+      } else if (!decision && !hold.restore_attempted_at) {
+        [live] = await Promise.all([
+          readLiveStatus(hold.site_id),
+          refreshTodayData(hold.site_id, { timeoutMs: MONITOR_HISTORY_BUDGET_MS, signal: ioSignal() }),
+        ]);
         now = new Date();
         decision = evaluateHold(hold, [], now);
         if (!decision) {
@@ -41,7 +67,7 @@ async function processHold(hold: BatteryHold): Promise<MonitorResult> {
           decision = evaluateHold(hold, samples, now);
         }
       }
-      const monitoring = summarizeHoldMonitoring(hold, samples, now, decision);
+      const monitoring = summarizeHoldMonitoring(hold, samples, now, decision, live);
       if (!decision && !hold.restore_attempted_at) { await record(monitoring); return { siteId: hold.site_id, status: 'holding' }; }
       const client = await createSiteTeslaClient(hold.site_id);
       if (!client) { await record({ ...monitoring, phase: 'check_failed' }); return { siteId: hold.site_id, status: 'failed', restore: 'no-tokens' }; }

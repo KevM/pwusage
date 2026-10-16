@@ -167,6 +167,8 @@ final class DashboardCoordinator: ObservableObject {
         }
     }
     @Published private(set) var batteryHold = BatteryHoldState()
+    /// Told about confirmed hold state only; it can never change the hold.
+    weak var batteryHoldActivityObserver: (any BatteryHoldActivityObserving)?
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
     @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
     @Published private(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
@@ -343,6 +345,7 @@ final class DashboardCoordinator: ObservableObject {
             batteryHold.response = response
             batteryHold.isCurrent = true
             batteryHold.fetchedAt = now()
+            reportBatteryHold(.refreshed(response), siteID: siteID)
             // A DB read cannot tell whether the Tesla token has command permission.
             if batteryHold.failure != .needsReauthentication && batteryHold.failure != .needsChoice {
                 batteryHold.failure = nil
@@ -361,6 +364,7 @@ final class DashboardCoordinator: ObservableObject {
         if case .park(let choice) = command, !choice.isValid { return }
         let generation = siteGeneration
         let siteID = selectedSiteID
+        let previousHoldID = batteryHold.response?.hold?.id
         batteryHold.isSubmitting = true
         batteryHold.failure = nil
         defer { if generation == siteGeneration { batteryHold.isSubmitting = false } }
@@ -374,18 +378,26 @@ final class DashboardCoordinator: ObservableObject {
             batteryHold.isCurrent = false
             if case .park = command {
                 batteryHold.response = .init(hold: result.hold, notice: batteryHold.response?.notice)
+                if let hold = result.hold { reportBatteryHold(.started(hold), siteID: siteID) }
             } else if case .restore = command {
                 batteryHold.response = .init(hold: nil, notice: batteryHold.response?.notice)
+                if result.status == .ok, let previousHoldID { reportBatteryHold(.stopped(holdID: previousHoldID), siteID: siteID) }
             }
             let response = try await holdAPI.fetchBatteryHold(siteID: siteID).validating(siteID: siteID)
             guard generation == siteGeneration, canRequestAccountData else { return }
             batteryHold.response = response
             batteryHold.isCurrent = true
             batteryHold.fetchedAt = now()
+            reportBatteryHold(.refreshed(response), siteID: siteID)
         } catch {
             guard generation == siteGeneration else { return }
             handleBatteryHoldError(error)
         }
+    }
+
+    private func reportBatteryHold(_ confirmation: BatteryHoldConfirmation, siteID: String) {
+        let timeZone = live.response?.site.timezone ?? bill.response?.site.timezone
+        batteryHoldActivityObserver?.batteryHoldConfirmed(confirmation, siteID: siteID, timeZone: timeZone)
     }
 
     func batteryHoldStateOfCharge(at date: Date) -> Double? {

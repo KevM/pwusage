@@ -53,5 +53,6 @@ struct TodayEnergyWidgetBundle: WidgetBundle {
         TodayEnergyWidget()
         TodayEnergyMetricWidget()
         BatteryHoldControl()
+        BatteryHoldLiveActivity()
     }
 }

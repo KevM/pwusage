@@ -33,6 +33,12 @@ enum BatteryHoldPresentation {
         return "As a safety limit, your original reserve is restored after eight hours (\(hold.safetyExpiresAt.formatted(format)))."
     }
 
+    /// Apple ends a standard Live Activity after eight hours, and this app never restarts one to get around that.
+    static func liveActivityLimitText(_ hold: BatteryHold, at now: Date) -> String? {
+        guard hold.safetyExpiresAt.timeIntervalSince(now) > BatteryHoldActivityAttributes.displayLimit else { return nil }
+        return "iOS shows a Live Activity for up to eight hours. This hold runs longer: open pwusage or the Battery Hold control to check it after that."
+    }
+
     static func noticeText(_ notice: BatteryHold) -> String {
         if let reserve = notice.cancelledObservedReserve {
             return "Hold cancelled. Your reserve was changed outside pwusage to \(reserve)%, so we left it as-is."

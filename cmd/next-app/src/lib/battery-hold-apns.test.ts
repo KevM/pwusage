@@ -22,6 +22,8 @@ const snapshot = (overrides: Record<string, unknown> = {}) => ({
   monitoring: {
     phase: 'load_running', checked_at: '2026-10-15T10:15:02.500Z', next_check_at: '2026-10-15T10:30:00.000Z',
     sampled_at: '2026-10-15T10:10:00.000Z', estimated_load_w: 7200,
+    baseline_load_w: 1200, home_load_w: 8400, peak_load_w: 9100,
+    battery_percent: 82.4, live_at: '2026-10-15T10:14:30.000Z',
   },
   ...overrides,
 });
@@ -92,7 +94,15 @@ describe('buildLiveActivityRequest', () => {
       checkedAt: Date.parse('2026-10-15T10:15:02.000Z') / 1000 - REFERENCE_EPOCH_S,
       nextCheckAt: Date.parse('2026-10-15T10:30:00.000Z') / 1000 - REFERENCE_EPOCH_S,
       endedAt: null, restoreReason: null, cancelledObservedReserve: null,
+      sampledAt: Date.parse('2026-10-15T10:10:00.000Z') / 1000 - REFERENCE_EPOCH_S,
+      baselineLoadW: 1200, homeLoadW: 8400, peakLoadW: 9100, batteryPercent: 82.4,
     });
+  });
+
+  it('sends null load figures for monitoring recorded before they existed', () => {
+    const { phase, checked_at, next_check_at } = snapshot().monitoring;
+    const request = buildLiveActivityRequest(snapshot({ monitoring: { phase, checked_at, next_check_at, sampled_at: null, estimated_load_w: null } }), EXPIRES);
+    expect(request.payload.aps['content-state']).toMatchObject({ sampledAt: null, baselineLoadW: null, homeLoadW: null, peakLoadW: null, batteryPercent: null });
   });
 
   it('maps a terminal hold to a high-priority end carrying the final content state', () => {

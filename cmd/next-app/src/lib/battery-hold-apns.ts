@@ -64,6 +64,10 @@ export interface LiveActivityContentState {
   originalReserve: number; targetReserve: number; estimatedLoadW: number | null;
   startedAt: number; safetyExpiresAt: number; checkedAt: number | null; nextCheckAt: number | null;
   endedAt: number | null; restoreReason: string | null; cancelledObservedReserve: number | null;
+  /** Home load figures from the monitor's last check; the samples are as of `sampledAt`. */
+  sampledAt: number | null; baselineLoadW: number | null; homeLoadW: number | null; peakLoadW: number | null;
+  /** Live battery charge (0-100, unrounded) from the last check or hold start. */
+  batteryPercent: number | null;
 }
 export interface LiveActivityPayload {
   aps: {
@@ -113,6 +117,10 @@ export function buildLiveActivityRequest(snapshot: unknown, expiresAt: Date): Li
     startedAt: swiftDate(startedMs)!, safetyExpiresAt: swiftDate(epochMs(s.safety_expires_at, 'safety_expires_at'))!,
     checkedAt: swiftDate(checkedMs), nextCheckAt: swiftDate(nextCheckMs), endedAt: swiftDate(endedMs),
     restoreReason: stringOrNull(s.restore_reason), cancelledObservedReserve: numberOrNull(s.cancelled_observed_reserve),
+    sampledAt: swiftDate(optionalMs(monitoring.sampled_at, 'sampled_at')),
+    baselineLoadW: numberOrNull(monitoring.baseline_load_w), homeLoadW: numberOrNull(monitoring.home_load_w),
+    peakLoadW: numberOrNull(monitoring.peak_load_w),
+    batteryPercent: numberOrNull(monitoring.battery_percent),
   };
   const aps: LiveActivityPayload['aps'] = {
     timestamp: unixSeconds(Math.max(startedMs, checkedMs ?? 0, endedMs ?? 0)),

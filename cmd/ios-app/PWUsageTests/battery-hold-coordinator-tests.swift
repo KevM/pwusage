@@ -175,6 +175,33 @@ struct BatteryHoldCoordinatorTests {
         #expect(api.readCount == 2)
     }
 
+    @Test("Confirmed starts, stops and reads reach the Live Activity observer; failures don't")
+    func liveActivityObserver() async throws {
+        let api = BatteryHoldAPISpy()
+        let observer = ConfirmationRecorder()
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
+        coordinator.batteryHoldActivityObserver = observer
+        await coordinator.refreshBatteryHold()
+        #expect(observer.events == ["refreshed:nil"])
+
+        api.commandResult = .init(status: .ok, hold: try Self.hold(), current: nil)
+        api.response = .init(hold: try Self.hold(), notice: nil)
+        await coordinator.sendBatteryHoldCommand(.park(.init(mode: .auto)))
+        let holdID = try Self.hold().id
+        #expect(observer.events.suffix(2) == ["started:\(holdID)", "refreshed:\(holdID)"])
+
+        api.commandResult = .init(status: .ok, hold: nil, current: nil)
+        api.response = .init(hold: nil, notice: nil)
+        await coordinator.sendBatteryHoldCommand(.restore)
+        #expect(observer.events.suffix(2) == ["stopped:\(holdID)", "refreshed:nil"])
+        #expect(observer.siteIDs == Set(["site-1"]))
+
+        let before = observer.events.count
+        api.error = URLError(.timedOut)
+        await coordinator.refreshBatteryHold()
+        #expect(observer.events.count == before)
+    }
+
     private static func hold(cancelled: Bool = false) throws -> BatteryHold {
         let json = cancelled ? BatteryHoldTests.holdJSON
             .replacingOccurrences(of: "\"active\"", with: "\"cancelled\"")
@@ -221,4 +248,18 @@ private final class BatteryHoldAPISpy: MobileDashboardDataAPI, MobileBatteryHold
         await withCheckedContinuation { started = $0 }
     }
     func resume() { continuation?.resume(); continuation = nil }
+}
+
+@MainActor
+private final class ConfirmationRecorder: BatteryHoldActivityObserving {
+    var events: [String] = []
+    var siteIDs: Set<String> = []
+    func batteryHoldConfirmed(_ confirmation: BatteryHoldConfirmation, siteID: String, timeZone: String?) {
+        siteIDs.insert(siteID)
+        switch confirmation {
+        case .refreshed(let response): events.append("refreshed:\(response.hold.map { String($0.id) } ?? "nil")")
+        case .started(let hold): events.append("started:\(hold.id)")
+        case .stopped(let holdID): events.append("stopped:\(holdID)")
+        }
+    }
 }

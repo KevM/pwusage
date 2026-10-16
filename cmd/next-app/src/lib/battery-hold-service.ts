@@ -4,6 +4,7 @@ import { TeslaClient, TeslaAuthError, isTeslaAuthError } from './tesla-client';
 import { BatteryHoldRepo } from './battery-hold-repo';
 import { createTeslaClientForSite } from './tesla-client-factory';
 import type { BatteryHold } from './db';
+import { seedHoldMonitoring } from './battery-hold-monitoring';
 import { reconcileBatteryHoldActivities } from './battery-hold-activity-repo';
 
 const START_RESERVE_SETTLE_MS = 60 * 1000;
@@ -43,7 +44,7 @@ export async function parkBattery(
   const existing = await repo.getActiveHold(siteId);
   if (existing) return { status: 'already_active', hold: existing };
 
-  let live: { percentage_charged: number; load_power: number };
+  let live: { percentage_charged: number; load_power: number; timestamp: string };
   let info: { backup_reserve_percent: number };
   let lastRestored: BatteryHold | null;
   try {
@@ -116,6 +117,15 @@ export async function parkBattery(
       console.error(`[BatteryHold] Compensating restore failed for site ${siteId}:`, restoreError);
     }
     return { status: 'error', message: `Database error: ${errMsg(dbError)}` };
+  }
+  // The app's first Live Activity state and the first push carry the figures read above.
+  // The hold already started, so a failed write only leaves it for the first check.
+  const monitoring = seedHoldMonitoring(hold, live, now);
+  try {
+    await repo.recordMonitoring(hold.id, monitoring);
+    hold = { ...hold, monitoring };
+  } catch {
+    console.warn(`[BatteryHold] Initial monitoring write failed for hold ${hold.id}`);
   }
   return { status: 'ok', hold };
 }
