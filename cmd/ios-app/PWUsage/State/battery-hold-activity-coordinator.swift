@@ -206,7 +206,13 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
         await withTaskGroup(of: Bool.self) { group in
             for (siteID, registrationID, registration) in unique {
                 group.addTask { [api] in
-                    await registration?.value
+                    // At the timeout the group cancels this child; pass that on, or a
+                    // stalled request or retry wait would hold sign-out open past it.
+                    await withTaskCancellationHandler {
+                        await registration?.value
+                    } onCancel: {
+                        registration?.cancel()
+                    }
                     try? await api.unregisterBatteryHoldActivity(siteID: siteID, registrationID: registrationID)
                     return true
                 }
@@ -260,7 +266,8 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
         case .started(let hold):
             start(hold, siteID: siteID, timeZone: timeZone)
         case .refreshed(let response):
-            Task { await apply(response, siteID: siteID) }
+            let current = activityIDs(siteID: siteID)
+            Task { await apply(response, siteID: siteID, to: current) }
         case .stopped(let holdID):
             Task {
                 for item in trackedItems(siteID: siteID) where item.handle.attributes.holdID == holdID {
@@ -309,8 +316,10 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
         }
     }
 
-    private func apply(_ response: BatteryHoldResponse, siteID: String) async {
-        for item in trackedItems(siteID: siteID) {
+    /// Applies a site read to the activities that existed when it was taken. One
+    /// started since is newer than the read, which mustn't end it.
+    private func apply(_ response: BatteryHoldResponse, siteID: String, to activityIDs: Set<String>) async {
+        for item in trackedItems(siteID: siteID) where activityIDs.contains(item.handle.id) {
             let holdID = item.handle.attributes.holdID
             if let hold = response.hold, hold.id == holdID {
                 await update(item, to: .init(hold: hold))
@@ -508,8 +517,13 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
 
     private func refreshSite(_ siteID: String) async {
         let generation = generation
+        let current = activityIDs(siteID: siteID)
         guard let response = try? await api.fetchBatteryHold(siteID: siteID).validating(siteID: siteID),
               generation == self.generation, sessionActive else { return }
-        await apply(response, siteID: siteID)
+        await apply(response, siteID: siteID, to: current)
+    }
+
+    private func activityIDs(siteID: String) -> Set<String> {
+        Set(trackedItems(siteID: siteID).map(\.handle.id))
     }
 }

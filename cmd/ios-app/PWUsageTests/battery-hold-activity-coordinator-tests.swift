@@ -10,11 +10,13 @@ struct BatteryHoldActivityCoordinatorTests {
     private let defaults = UserDefaults(suiteName: "activity-tests-\(UUID().uuidString)")!
     private let start = Date(timeIntervalSinceReferenceDate: 813751200)
 
-    private func makeCoordinator(environment: ApnsEnvironment? = .sandbox) -> BatteryHoldActivityCoordinator {
+    private func makeCoordinator(environment: ApnsEnvironment? = .sandbox,
+                                 signOutTimeout: Duration = .seconds(3)) -> BatteryHoldActivityCoordinator {
         let coordinator = BatteryHoldActivityCoordinator(
             host: host, api: api, apnsEnvironment: environment,
             store: BatteryHoldActivityRegistrationStore(defaults: defaults),
-            now: { [start] in start.addingTimeInterval(600) }, sleep: { _ in }
+            now: { [start] in start.addingTimeInterval(600) }, sleep: { _ in },
+            signOutTimeout: signOutTimeout
         )
         coordinator.sitesAuthorized([MobileSite(id: "site-1", name: "Home", utility: "PGE"),
                                      MobileSite(id: "site-2", name: "Cabin", utility: "PGE")])
@@ -294,6 +296,38 @@ struct BatteryHoldActivityCoordinatorTests {
         #expect(api.events == ["register", "remove"])
     }
 
+    @Test("Sign-out is bounded by its timeout even when a registration never answers")
+    func signOutTimeoutBounds() async throws {
+        let coordinator = makeCoordinator(signOutTimeout: .milliseconds(50))
+        let handle = try await started(coordinator, hold())
+        api.pauseRegistration = true
+        handle.emit(token: Data(repeating: 1, count: 32))
+        await eventually { api.isPaused }
+        let done = Flag()
+        Task { await coordinator.signOut(); done.value = true }
+        await eventually { done.value }
+        #expect(done.value)
+        #expect(handle.ends.first?.immediately == true)
+        api.resume()
+    }
+
+    @Test("A site read that started before a new hold can't end the new hold's activity")
+    func staleReconcileSparesNewActivity() async throws {
+        let coordinator = makeCoordinator()
+        let old = try await started(coordinator, hold(id: 7))
+        api.pauseFetch = true
+        api.holdResponses["site-1"] = .init(hold: hold(id: 7), notice: nil)
+        coordinator.reconcileInBackground()
+        await eventually { api.isFetchPaused }
+        let new = try await started(coordinator, hold(id: 8))
+        await eventually { old.ends.count == 1 }
+        api.holdResponses["site-1"] = .init(hold: hold(id: 8), notice: nil)
+        api.resumeFetch()
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(new.ends.isEmpty)
+        #expect(coordinator.offer(forHoldID: 8) == .showing)
+    }
+
     @Test("A start before relaunch reconcile reaches an existing activity adopts it")
     func adoptsBeforeReconcile() async throws {
         let existing = FakeActivityHandle(
@@ -412,10 +446,18 @@ final class FakeActivityAPI: BatteryHoldActivityAPI {
     var holdResponses: [String: BatteryHoldResponse] = [:]
     var pauseRegistration = false
     private(set) var isPaused = false
-    private var continuation: CheckedContinuation<Void, Never>?
+    var pauseFetch = false
+    private(set) var isFetchPaused = false
 
     func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse {
-        guard let response = holdResponses[siteID] else { throw URLError(.notConnectedToInternet) }
+        // The answer as of when the read began, as a real request would have it.
+        let response = holdResponses[siteID]
+        if pauseFetch {
+            pauseFetch = false
+            isFetchPaused = true
+            while isFetchPaused { try await Task.sleep(for: .milliseconds(2)) }
+        }
+        guard let response else { throw URLError(.notConnectedToInternet) }
         return response
     }
     func registerBatteryHoldActivity(siteID: String, registration: BatteryHoldActivityRegistration) async throws {
@@ -423,7 +465,8 @@ final class FakeActivityAPI: BatteryHoldActivityAPI {
         if pauseRegistration {
             pauseRegistration = false
             isPaused = true
-            await withCheckedContinuation { continuation = $0 }
+            // Like URLSession, a paused request gives up when its task is cancelled.
+            while isPaused { try await Task.sleep(for: .milliseconds(2)) }
         }
         if !registerErrors.isEmpty { throw registerErrors.removeFirst() }
         registrations.append(.init(siteID: siteID, registration: registration))
@@ -433,5 +476,9 @@ final class FakeActivityAPI: BatteryHoldActivityAPI {
         removals.append(.init(siteID: siteID, registrationID: registrationID))
         events.append("remove")
     }
-    func resume() { continuation?.resume(); continuation = nil }
+    func resume() { isPaused = false }
+    func resumeFetch() { isFetchPaused = false }
 }
+
+@MainActor
+final class Flag { var value = false }
