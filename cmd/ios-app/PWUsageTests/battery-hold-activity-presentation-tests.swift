@@ -28,118 +28,98 @@ struct BatteryHoldActivityPresentationTests {
         #expect(BatteryHoldControlIdentity.symbolName == "bolt.batteryblock")
     }
 
-    @Test("A known battery charge leads the detail, as a whole number")
-    func batteryPrefix() {
+    private func status(_ state: P.State, stale: Bool = false, now: Date? = nil, startedAt: Date? = nil) -> P.Status? {
+        P.status(attributes(startedAt: startedAt ?? start), state, isStale: stale, now: now ?? start)
+    }
+
+    @Test("The figures line: charge as a whole number, the current home load, and a peak only when it adds something")
+    func figures() {
         var watching = state(phase: .watching)
-        #expect(P.batteryText(watching) == nil)
+        #expect(P.batteryText(watching) == nil && P.homeLoadText(watching) == nil && P.peakText(watching) == nil)
         watching.batteryPercent = 81.6
-        #expect(P.batteryText(watching) == "Battery 82%")
-        #expect(P.detail(watching, isStale: false) == "Battery 82% · watching home load.")
-        var timer = state(mode: .timer, phase: .timer)
-        timer.batteryPercent = 74
-        #expect(P.detail(timer, isStale: false) == "Battery 74% · holding until the scheduled stop time.")
+        watching.homeLoadW = 1840
+        watching.peakLoadW = 1790
+        #expect(P.batteryText(watching) == "82%")
+        #expect(P.homeLoadText(watching) == "1.8 kW")
+        #expect(P.kilowatts(7000) == "7.0 kW")
+        // A peak that reads the same as the current load is noise.
+        #expect(P.peakText(watching) == nil)
+        watching.peakLoadW = 7240
+        #expect(P.peakText(watching) == "peak 7.2 kW")
         watching.batteryPercent = .nan
-        #expect(P.detail(watching, isStale: false) == "Watching home load.")
+        #expect(P.batteryText(watching) == nil)
+        // A finished hold keeps its last charge but no load.
+        var restored = watching
+        restored.status = .restored
+        restored.batteryPercent = 71
+        #expect(P.batteryText(restored) == "71%")
+        #expect(P.homeLoadText(restored) == nil && P.peakText(restored) == nil)
     }
 
-    @Test("Live figures never mask a history outage, a failed check, or an overdue update")
-    func batteryPrefixKeepsWarnings() {
-        var waiting = state(phase: .waitingForData)
-        waiting.batteryPercent = 74
-        #expect(P.detail(waiting, isStale: false) == "Battery 74% · waiting for usage data. The hold is still active.")
-        var failed = state(phase: .checkFailed)
-        failed.batteryPercent = 74
-        #expect(P.detail(failed, isStale: false) == "Battery 74% · the last check failed. The hold is still active.")
-        // An overdue charge is old: the warning stands alone.
-        #expect(P.detail(waiting, isStale: true) == "Update overdue. Open pwusage for the current status.")
-        var restored = state(status: .restored)
-        restored.restoreReason = .manual
-        restored.batteryPercent = 74
-        #expect(P.detail(restored, isStale: false) == "Stopped in pwusage.")
+    @Test("A normal active hold needs no status line: the figures say it")
+    func quietWhenNormal() {
+        for phase: P.State.Phase in [.watching, .loadRunning, .unknown] {
+            #expect(status(state(phase: phase)) == nil)
+        }
     }
 
-    @Test("Active holds show the target reserve and the monitor's phase in home-load terms")
-    func activePhases() {
-        #expect(P.headline(state(phase: .watching)) == "Holding at 100%")
-        #expect(P.detail(state(phase: .loadRunning), isStale: false) == "Home load about 7.2 kW above the start.")
-        #expect(P.detail(state(phase: .confirmingEnd), isStale: false).contains("Home load dropped"))
-        #expect(P.detail(state(), isStale: false) == "Waiting for the first home load check.")
-        #expect(P.detail(state(mode: .timer), isStale: false) == "Holding until the scheduled stop time.")
-        #expect(P.detail(state(phase: .checkFailed), isStale: false).contains("still active"))
-        #expect(P.detail(state(phase: .waitingForData), isStale: false).contains("still active"))
+    @Test("Problems get a short warning, and an overdue update wins over everything")
+    func warnings() {
+        #expect(status(state(phase: .waitingForData)) == .init(text: "Usage data delayed", isWarning: true))
+        #expect(status(state(phase: .checkFailed)) == .init(text: "Last check failed", isWarning: true))
+        #expect(status(state(phase: .confirmingEnd), stale: true) == .init(text: "Update overdue", isWarning: true))
+        #expect(status(state(mode: .timer, phase: .timer), stale: true)?.text == "Update overdue")
+    }
+
+    @Test("Transitions are said in a few words")
+    func transitions() {
+        #expect(status(state(phase: .confirmingEnd)) == .init(text: "Load dropped, confirming", isWarning: false))
+        #expect(status(state(phase: .restoring))?.text == "Confirming with Tesla")
+        var reason = state(phase: .loadRunning)
+        reason.restoreReason = .loadEnded
+        #expect(P.isRestoring(reason))
+        #expect(P.headline(reason) == "Restoring 20% reserve")
+        #expect(status(reason)?.text == "Confirming with Tesla")
+        #expect(status(state())?.text == "Waiting for first check")
         for phase: P.State.Phase in [.watching, .loadRunning, .confirmingEnd, .waitingForData, .checkFailed, .timer, .restoring, .unknown] {
-            let text = P.detail(state(phase: phase), isStale: false).lowercased()
+            let text = (status(state(phase: phase))?.text ?? "").lowercased()
             #expect(!text.contains("car") && !text.contains("vehicle") && !text.contains("charging"))
         }
     }
 
-    @Test("A late update says so instead of presenting old state as current")
-    func stale() {
-        #expect(P.detail(state(phase: .loadRunning), isStale: true) == "Update overdue. Open pwusage for the current status.")
+    @Test("Fixed holds show their stop time; Auto shows its safety stop only in the last hour")
+    func deadlines() {
+        let timer = state(mode: .timer, phase: .timer, hours: 4)
+        #expect(status(timer) == .init(text: "Stops \(P.clock(timer.safetyExpiresAt, timeZone: utc, now: start))", isWarning: false))
+        let auto = state(phase: .watching)
+        #expect(status(auto) == nil)
+        #expect(status(auto, now: start.addingTimeInterval(6.9 * 3600)) == nil)
+        let lastHour = start.addingTimeInterval(7 * 3600 + 60)
+        #expect(status(auto, now: lastHour)?.text == "Safety stop \(P.clock(auto.safetyExpiresAt, timeZone: utc, now: lastHour))")
+        // A warning outranks the deadline.
+        #expect(status(state(mode: .timer, phase: .checkFailed, hours: 4))?.text == "Last check failed")
     }
 
-    @Test("Restoring is presented on purpose, from the phase or a recorded restore reason")
-    func restoring() {
-        var restoring = state(phase: .restoring)
-        #expect(P.headline(restoring) == "Restoring 20% reserve")
-        #expect(P.reserveText(restoring) == "20%")
-        restoring = state(phase: .loadRunning)
-        restoring.restoreReason = .loadEnded
-        #expect(P.isRestoring(restoring))
-        #expect(P.detail(restoring, isStale: false).contains("Waiting for Tesla to confirm"))
-    }
-
-    @Test("Final states say how the hold ended, and only what is known")
+    @Test("Final states say how the hold ended, briefly, and only what is known")
     func finalStates() {
         var restored = state(status: .restored)
         restored.restoreReason = .manual
-        restored.endedAt = start.addingTimeInterval(3600)
         #expect(P.headline(restored) == "Reserve restored to 20%")
-        #expect(P.detail(restored, isStale: false) == "Stopped in pwusage.")
-        #expect(P.deadline(restored, timeZone: utc, now: start) == "Ended \(P.clock(restored.endedAt!, timeZone: utc, now: start))")
+        #expect(status(restored)?.text == "Stopped in pwusage")
+        restored.restoreReason = .loadEnded
+        #expect(status(restored)?.text == "Load finished")
+        restored.restoreReason = .safetyTimeout
+        #expect(status(restored)?.text == "8-hour safety limit")
+        restored.restoreReason = .timerElapsed
+        #expect(status(restored)?.text == "Stop time reached")
         var cancelled = state(status: .cancelled)
         cancelled.cancelledObservedReserve = 45
-        #expect(P.detail(cancelled, isStale: false).contains("45%"))
+        #expect(status(cancelled)?.text == "Reserve set to 45% outside pwusage")
+        cancelled.cancelledObservedReserve = nil
+        #expect(status(cancelled)?.text == "Reserve changed outside pwusage")
         let ended = state(status: .ended)
         #expect(P.headline(ended) == "Battery hold ended")
-        #expect(!P.detail(ended, isStale: false).contains("restored"))
-        #expect(P.deadline(ended, timeZone: utc, now: start) == nil)
-    }
-
-    @Test("Fixed holds show their stop time; Auto shows its safety deadline")
-    func deadlines() {
-        let timer = state(mode: .timer, phase: .timer, hours: 4)
-        #expect(P.deadline(timer, timeZone: utc, now: start) == "Stops \(P.clock(timer.safetyExpiresAt, timeZone: utc, now: start))")
-        let auto = state(phase: .watching)
-        // Auto's safety stop rarely matters early: it shows only in the last hour.
-        #expect(P.deadline(auto, timeZone: utc, now: start) == nil)
-        #expect(P.deadline(auto, timeZone: utc, now: start.addingTimeInterval(6.9 * 3600)) == nil)
-        let lastHour = start.addingTimeInterval(7 * 3600 + 60)
-        #expect(P.deadline(auto, timeZone: utc, now: lastHour) == "Safety stop by \(P.clock(auto.safetyExpiresAt, timeZone: utc, now: lastHour))")
-        #expect(P.deadline(auto, timeZone: utc, now: start.addingTimeInterval(9 * 3600))?.hasPrefix("Safety stop by ") == true)
-        // A fixed hold's stop time is the plan, so it always shows.
-        #expect(P.deadline(state(mode: .timer, phase: .timer, hours: 20), timeZone: utc, now: start)?.hasPrefix("Stops ") == true)
-        #expect(P.checked(auto, timeZone: utc, now: start) == "Checked \(P.clock(auto.checkedAt!, timeZone: utc, now: start))")
-        #expect(P.checked(state(), timeZone: utc, now: start) == nil)
-    }
-
-    @Test("The home load range shows the latest sample with its own time, the start and the peak")
-    func loadRange() {
-        var running = state(phase: .loadRunning)
-        running.sampledAt = start.addingTimeInterval(600)
-        running.baselineLoadW = 1200
-        running.homeLoadW = 8400
-        running.peakLoadW = 9100
-        let time = P.clock(running.sampledAt!, timeZone: utc, now: start)
-        #expect(P.detail(running, isStale: false) == "Home load is running.")
-        #expect(P.loadRange(running, timeZone: utc, now: start) == "Home 8.4 kW at \(time) · started 1.2 kW · peak 9.1 kW")
-        running.peakLoadW = nil
-        running.baselineLoadW = nil
-        #expect(P.loadRange(running, timeZone: utc, now: start) == "Home 8.4 kW at \(time)")
-        // No sample, a timer hold, or a finished hold: nothing to show.
-        #expect(P.loadRange(state(phase: .watching), timeZone: utc, now: start) == nil)
-        running.status = .restored
-        #expect(P.loadRange(running, timeZone: utc, now: start) == nil)
+        #expect(status(ended) == .init(text: "Open pwusage for details", isWarning: false))
     }
 
     @Test("Times on another day name the weekday")
@@ -153,12 +133,11 @@ struct BatteryHoldActivityPresentationTests {
     @Test("Holds longer than Apple's eight-hour display limit say the display ends first")
     func displayLimit() {
         let long = state(mode: .timer, phase: .timer, hours: 24)
-        let note = P.displayLimitNote(attributes(startedAt: start), long, now: start)
-        #expect(note?.contains("The hold continues") == true)
-        #expect(P.displayLimitNote(attributes(startedAt: start), state(phase: .watching), now: start) == nil)
+        let text = status(long)?.text ?? ""
+        #expect(text.hasPrefix("Stops ") && text.hasSuffix(" · display ends \(P.clock(start.addingTimeInterval(8 * 3600), timeZone: utc, now: start))"))
+        #expect(status(state(mode: .timer, phase: .timer, hours: 8))?.text.contains("display") == false)
         // Started late in an Auto hold, the activity still ends after its safety deadline.
-        #expect(P.displayLimitNote(attributes(startedAt: start.addingTimeInterval(3600)), state(phase: .watching), now: start) == nil)
-        #expect(P.displayLimitNote(attributes(startedAt: start), state(hours: 24, status: .restored), now: start) == nil)
+        #expect(status(state(phase: .watching), now: start.addingTimeInterval(7.5 * 3600), startedAt: start.addingTimeInterval(3600))?.text.contains("display") == false)
     }
 
     @Test("The sheet explains the eight-hour display limit only for holds that outlast it")

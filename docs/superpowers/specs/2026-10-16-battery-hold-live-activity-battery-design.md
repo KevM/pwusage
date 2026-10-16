@@ -261,3 +261,28 @@ server's APNs payload tests need cases with and without the new key.
 - Whether the drawn battery lives in `Shared/` or the widget target.
 - The live-status timeout value inside the per-site budget.
 - How to express "drawn more faintly" for final states.
+
+## Amendment (2026-10-16, after on-device review): glanceable text
+
+The user found the text too long for a glance: "Checked 10:45 AM" isn't
+needed and "Home load is running" is redundant. The text under the headline
+is now:
+
+- **Figures line:** `⚡82%` (green bolt, matching the fill), `⌂ 1.8 kW` (current
+  home load) and `peak 7.2 kW`. The peak shows only when it reads higher than the
+  current load. kW always has one decimal. "started" and the reading's time are
+  dropped. The overdue state covers how old the reading is.
+- **Status line, only when needed, one line:** a warning (orange triangle) wins
+  over a transition, which wins over a deadline. Warnings: "Update overdue",
+  "Usage data delayed", "Last check failed". Transitions: "Confirming with
+  Tesla", "Load dropped, confirming", "Waiting for first check". Deadlines:
+  "Stops 3:21 PM" (timer, plus "· display ends …" past iOS's eight-hour limit),
+  "Safety stop 3:21 PM" (Auto, last hour only). Final states give a short reason
+  ("Load finished", "Stopped in pwusage", "8-hour safety limit", "Stop time
+  reached", "Reserve set to 45% outside pwusage").
+- The phase sentences ("Watching home load.", "Home load is running.") and
+  "Checked …" are gone. The figures carry the phase.
+
+The same summary sits under the bar in the expanded Dynamic Island. The views
+moved to `Shared/battery-hold-activity-views.swift` so the app's tests can
+render them (`BatteryHoldActivityRenderTests`).

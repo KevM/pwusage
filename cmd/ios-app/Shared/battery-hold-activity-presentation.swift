@@ -1,9 +1,10 @@
 import Foundation
 
-/// Copy for the battery hold Live Activity. Shows only what the server
-/// confirmed: absolute check and deadline times rather than live-counting
-/// timers, "home load" rather than any claim about a car, and an explicit
-/// overdue state once updates stop arriving.
+/// Copy for the battery hold Live Activity, kept glanceable: a headline, one
+/// line of figures, and a status line only when something needs saying. Shows
+/// only what the server confirmed: absolute deadline times rather than
+/// live-counting timers, "home load" rather than any claim about a car, and an
+/// explicit overdue state once updates stop arriving.
 enum BatteryHoldActivityPresentation {
     typealias State = BatteryHoldActivityAttributes.ContentState
 
@@ -14,10 +15,29 @@ enum BatteryHoldActivityPresentation {
     /// Auto's safety stop is shown only this close to it; earlier it rarely matters.
     static let safetyStopNotice: TimeInterval = 60 * 60
 
-    /// The live charge as a whole number. The drawn fill uses the unrounded value.
+    /// One short line under the figures. Warnings are drawn in orange with a symbol.
+    struct Status: Equatable {
+        let text: String
+        let isWarning: Bool
+    }
+
+    /// The live charge as a whole number, shown in the fill's green. The fill uses the unrounded value.
     static func batteryText(_ state: State) -> String? {
         guard let percent = state.batteryPercent, percent.isFinite else { return nil }
-        return "Battery \(Int(min(max(percent, 0), 100).rounded()))%"
+        return "\(Int(min(max(percent, 0), 100).rounded()))%"
+    }
+
+    /// The current home load from the last check. The overdue state covers its age.
+    static func homeLoadText(_ state: State) -> String? {
+        guard state.status == .active, let home = state.homeLoadW, home.isFinite else { return nil }
+        return kilowatts(home)
+    }
+
+    /// The peak since the hold started, only when it reads higher than the current load.
+    static func peakText(_ state: State) -> String? {
+        guard let home = homeLoadText(state), let peak = state.peakLoadW, peak.isFinite,
+              peak > (state.homeLoadW ?? 0), kilowatts(peak) != home else { return nil }
+        return "peak \(kilowatts(peak))"
     }
 
     static func isRestoring(_ state: State) -> Bool {
@@ -34,93 +54,55 @@ enum BatteryHoldActivityPresentation {
         }
     }
 
-    static func detail(_ state: State, isStale: Bool) -> String {
+    /// The status line, or nil when the headline and figures already say it all.
+    /// One line: a warning wins over a transition, which wins over a deadline.
+    static func status(_ attributes: BatteryHoldActivityAttributes, _ state: State, isStale: Bool, now: Date) -> Status? {
+        let info = { (text: String) in Status(text: text, isWarning: false) }
         switch state.status {
         case .restored:
             switch state.restoreReason {
-            case .loadEnded: return "Home load finished."
-            case .manual: return "Stopped in pwusage."
-            case .safetyTimeout: return "Eight-hour safety limit reached."
-            case .timerElapsed: return "Scheduled stop time reached."
-            default: return "The hold has finished."
+            case .loadEnded: return info("Load finished")
+            case .manual: return info("Stopped in pwusage")
+            case .safetyTimeout: return info("8-hour safety limit")
+            case .timerElapsed: return info("Stop time reached")
+            default: return nil
             }
         case .cancelled:
-            if let reserve = state.cancelledObservedReserve {
-                return "Reserve changed outside pwusage to \(reserve)%, so it was left as-is."
-            }
-            return "Reserve changed outside pwusage, so it was left as-is."
+            return info(state.cancelledObservedReserve.map { "Reserve set to \($0)% outside pwusage" } ?? "Reserve changed outside pwusage")
         case .ended, .unknown:
-            return "Open pwusage to see how it finished."
+            return info("Open pwusage for details")
         case .active:
             break
         }
-        if isStale { return "Update overdue. Open pwusage for the current status." }
-        let text = activeDetail(state)
-        guard let battery = batteryText(state) else { return text }
-        return "\(battery) · \(text.prefix(1).lowercased())\(text.dropFirst())"
-    }
-
-    private static func activeDetail(_ state: State) -> String {
-        if isRestoring(state) { return "Restore requested. Waiting for Tesla to confirm." }
+        if isStale { return Status(text: "Update overdue", isWarning: true) }
+        if isRestoring(state) { return info("Confirming with Tesla") }
         switch state.phase {
-        case nil: return state.mode == .timer ? "Holding until the scheduled stop time." : "Waiting for the first home load check."
-        case .watching: return "Watching home load."
-        case .loadRunning:
-            // The load range line carries the figures when the server sent them.
-            if state.homeLoadW == nil, let watts = state.estimatedLoadW, watts.isFinite, watts >= 0 {
-                let power = (watts / 1000).formatted(.number.precision(.fractionLength(0...1)))
-                return "Home load about \(power) kW above the start."
-            }
-            return "Home load is running."
-        case .confirmingEnd: return "Home load dropped. Confirming it stays low."
-        case .waitingForData: return "Waiting for usage data. The hold is still active."
-        case .checkFailed: return "The last check failed. The hold is still active."
-        case .timer: return "Holding until the scheduled stop time."
-        case .restoring: return "Restore requested. Waiting for Tesla to confirm."
-        case .unknown: return "The hold is active."
+        case .waitingForData: return Status(text: "Usage data delayed", isWarning: true)
+        case .checkFailed: return Status(text: "Last check failed", isWarning: true)
+        case .confirmingEnd: return info("Load dropped, confirming")
+        case nil where state.mode == .auto: return info("Waiting for first check")
+        default: break
         }
+        return deadline(attributes, state, now: now).map(info)
     }
 
-    /// The fixed restore time, or the Auto safety deadline. Reaching it is not proof of restoration.
-    static func deadline(_ state: State, timeZone: TimeZone, now: Date) -> String? {
-        switch state.status {
-        case .active:
-            let time = clock(state.safetyExpiresAt, timeZone: timeZone, now: now)
-            if state.mode == .timer { return "Stops \(time)" }
-            return state.safetyExpiresAt.timeIntervalSince(now) <= safetyStopNotice ? "Safety stop by \(time)" : nil
-        case .restored, .cancelled:
-            return state.endedAt.map { "Ended \(clock($0, timeZone: timeZone, now: now))" }
-        case .ended, .unknown:
-            return nil
+    /// A fixed hold's stop time is its plan, so it always shows. Auto's safety stop
+    /// rarely matters early, so it shows only in the last hour. Reaching either is
+    /// not proof of restoration.
+    private static func deadline(_ attributes: BatteryHoldActivityAttributes, _ state: State, now: Date) -> String? {
+        let zone = timeZone(attributes)
+        let time = clock(state.safetyExpiresAt, timeZone: zone, now: now)
+        guard state.mode == .timer else {
+            return state.safetyExpiresAt.timeIntervalSince(now) <= safetyStopNotice ? "Safety stop \(time)" : nil
         }
-    }
-
-    /// The home load range from the last check. The current load carries its own
-    /// time: the live reading's when the check had one, else the five-minute sample's.
-    static func loadRange(_ state: State, timeZone: TimeZone, now: Date) -> String? {
-        guard state.status == .active, let home = state.homeLoadW, let sampledAt = state.sampledAt else { return nil }
-        var parts = ["Home \(kilowatts(home)) at \(clock(sampledAt, timeZone: timeZone, now: now))"]
-        if let baseline = state.baselineLoadW { parts.append("started \(kilowatts(baseline))") }
-        if let peak = state.peakLoadW { parts.append("peak \(kilowatts(peak))") }
-        return parts.joined(separator: " · ")
+        // Apple ends a standard Live Activity after eight hours; a longer fixed hold keeps running.
+        let displayEnd = attributes.activityStartedAt.addingTimeInterval(BatteryHoldActivityAttributes.displayLimit)
+        guard state.safetyExpiresAt > displayEnd else { return "Stops \(time)" }
+        return "Stops \(time) · display ends \(clock(displayEnd, timeZone: zone, now: now))"
     }
 
     static func kilowatts(_ watts: Double) -> String {
-        "\((max(0, watts) / 1000).formatted(.number.precision(.fractionLength(0...1)))) kW"
-    }
-
-    /// When the server last checked. An absolute time stays honest on a Lock Screen that isn't redrawn.
-    static func checked(_ state: State, timeZone: TimeZone, now: Date) -> String? {
-        guard state.status == .active, let checkedAt = state.checkedAt else { return nil }
-        return "Checked \(clock(checkedAt, timeZone: timeZone, now: now))"
-    }
-
-    /// Apple ends a standard Live Activity after eight hours; a longer fixed hold keeps running.
-    static func displayLimitNote(_ attributes: BatteryHoldActivityAttributes, _ state: State, now: Date) -> String? {
-        let displayEnd = attributes.activityStartedAt.addingTimeInterval(BatteryHoldActivityAttributes.displayLimit)
-        guard state.status == .active, state.safetyExpiresAt > displayEnd else { return nil }
-        let zone = timeZone(attributes)
-        return "iOS ends this display \(clock(displayEnd, timeZone: zone, now: now)). The hold continues; check pwusage."
+        "\((max(0, watts) / 1000).formatted(.number.precision(.fractionLength(1)))) kW"
     }
 
     static func timeZone(_ attributes: BatteryHoldActivityAttributes) -> TimeZone {

@@ -31,12 +31,7 @@ struct BatteryHoldLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     // Ended activities leave the Dynamic Island at once, so this is always an active hold.
-                    VStack(alignment: .leading, spacing: 8) {
-                        BatteryHoldGauge(style: .bar, state: context.state, isStale: context.isStale)
-                            .frame(height: 26)
-                        BatteryHoldActivityDetails(attributes: context.attributes, state: context.state,
-                                                   isStale: context.isStale, showsHeadline: false)
-                    }
+                    BatteryHoldExpandedBottom(attributes: context.attributes, state: context.state, isStale: context.isStale)
                 }
             } compactLeading: {
                 BatteryHoldGlyph(size: 20)
@@ -51,99 +46,6 @@ struct BatteryHoldLiveActivity: Widget {
             }
             .widgetURL(BatteryHoldLink.url(siteID: context.attributes.siteID))
         }
-    }
-}
-
-/// The pwusage glyph, tinted by the surrounding foreground style.
-struct BatteryHoldGlyph: View {
-    let size: CGFloat
-
-    var body: some View {
-        Image(BatteryHoldActivityPresentation.glyphName)
-            .renderingMode(.template)
-            .resizable()
-            .scaledToFit()
-            .frame(width: size, height: size)
-            .accessibilityHidden(true)
-    }
-}
-
-/// The drawn battery for a hold: the live charge, and the held reserve until the hold ends.
-struct BatteryHoldGauge: View {
-    let style: BatteryGaugeStyle
-    let state: BatteryHoldActivityAttributes.ContentState
-    let isStale: Bool
-
-    var body: some View {
-        BatteryGaugeView(style: style, charge: state.batteryPercent, holdLevel: state.targetReserve,
-                         isStale: isStale, isFinal: state.isFinal)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel([BatteryHoldActivityPresentation.headline(state),
-                                 BatteryHoldActivityPresentation.batteryText(state)].compactMap { $0 }.joined(separator: ", "))
-    }
-}
-
-struct BatteryHoldLockScreenView: View {
-    let attributes: BatteryHoldActivityAttributes
-    let state: BatteryHoldActivityAttributes.ContentState
-    let isStale: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 7) {
-                BatteryHoldGlyph(size: 18)
-                Text(attributes.siteName)
-            }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Color.accentColor)
-            .lineLimit(1)
-            BatteryHoldActivityDetails(attributes: attributes, state: state, isStale: isStale, showsHeadline: true)
-        }
-        // The text sits inside the drawn outline (inset 8pt, 18pt trailing for the nub).
-        .padding(EdgeInsets(top: 15, leading: 20, bottom: 15, trailing: 28))
-        .background {
-            BatteryGaugeView(style: .card, charge: state.batteryPercent, holdLevel: state.targetReserve,
-                             isStale: isStale, isFinal: state.isFinal)
-                .accessibilityHidden(true)
-        }
-        .activityBackgroundTint(Color(uiColor: .secondarySystemBackground))
-    }
-}
-
-struct BatteryHoldActivityDetails: View {
-    let attributes: BatteryHoldActivityAttributes
-    let state: BatteryHoldActivityAttributes.ContentState
-    let isStale: Bool
-    let showsHeadline: Bool
-
-    var body: some View {
-        let now = Date()
-        let zone = BatteryHoldActivityPresentation.timeZone(attributes)
-        let deadline = BatteryHoldActivityPresentation.deadline(state, timeZone: zone, now: now)
-        let checked = BatteryHoldActivityPresentation.checked(state, timeZone: zone, now: now)
-        VStack(alignment: .leading, spacing: 3) {
-            if showsHeadline {
-                Text(BatteryHoldActivityPresentation.headline(state))
-                    .font(.headline)
-                    .foregroundStyle(Color.accentColor)
-            }
-            Text(BatteryHoldActivityPresentation.detail(state, isStale: isStale))
-                .font(.subheadline)
-                .foregroundStyle(isStale ? .orange : .primary)
-            if let range = BatteryHoldActivityPresentation.loadRange(state, timeZone: zone, now: now) {
-                Text(range).font(.caption).monospacedDigit()
-            }
-            if deadline != nil || checked != nil {
-                Text([deadline, checked].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let note = BatteryHoldActivityPresentation.displayLimitNote(attributes, state, now: now) {
-                Text(note).font(.caption2).foregroundStyle(.secondary)
-            }
-        }
-        .lineLimit(2)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
