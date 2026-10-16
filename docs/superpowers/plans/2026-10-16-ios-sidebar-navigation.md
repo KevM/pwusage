@@ -267,8 +267,8 @@ func homeColumns(width: Double, regular: Bool, accessibility: Bool, expected: Bo
 - [x] **Step 2: Wire the root** — replace the temporary Task 5 host with `AppTabView(...)`; move `.environment(\.reconnectTesla, …)` onto it; keep the site-picker `.sheet` on the root; remove the old `.id(model.batteryHoldNavigationID)` from the root view.
 - [x] **Step 3: Smart Shift page** — `LoadTimingView` `.navigationTitle("Smart Shift")`; trailing `ToolbarItemGroup(placement: .topBarTrailing)` → `.primaryAction` (leading sun button unchanged).
 - [x] **Step 4: Run the full suite** — `./run-tests.sh` → PASS.
-- [ ] **Step 5: Manual check (Review Focus 1)** — iPad simulator: collapse the sidebar, open `pwusage://battery-hold?site=<id>` with `xcrun simctl openurl booted ...`; sidebar stays collapsed, Smart Shift selected, sheet up. Switch Home ↔ Smart Shift with a breakpoint in `LoadTimingView.refreshBatteryHoldWhileVisible`: the loop stops when Smart Shift is hidden and restarts on return.
-  - Partly done: the previous iPhone harness check verified a warm deep link from saved Bill to Smart Shift + sheet and relaunch to Bill. This continuation captured the iPad sidebar with all four entries and site header, plus Home at largest accessibility text in one column. Simulator UI is unavailable to the computer-use tool (name, path and bundle ID all return `Invalid app`); the iPad URL attempt stops at the system Open confirmation. Collapsed-sidebar preservation and polling stop/restart remain unverified. Screenshots: `.superpowers/sdd/2026-10-16-ios-sidebar-navigation/screenshots-task9/`.
+- [x] **Step 5: Manual check (Review Focus 1)** — iPad simulator: collapse the sidebar, open `pwusage://battery-hold?site=<id>` with `xcrun simctl openurl booted ...`; sidebar stays collapsed, Smart Shift selected, sheet up. Switch Home ↔ Smart Shift with a breakpoint in `LoadTimingView.refreshBatteryHoldWhileVisible`: the loop stops when Smart Shift is hidden and restarts on return.
+  - Completed through Xcode Device Hub: collapsed-sidebar warm link selected Smart Shift and opened Battery Saver without expanding the sidebar. Fixture fetch logged at 15:16:34; switched Home about 15:16:42, no further fetch through 15:17:49; return to Smart Shift fetched at 15:17:52. Screenshots and polling log: `.superpowers/sdd/2026-10-16-ios-sidebar-navigation/screenshots-final/`.
 - [x] **Step 6: Commit** — `feat(ios): sidebar-adaptable tab navigation`
 
 ---
@@ -295,10 +295,10 @@ Exact copy:
 ### Task 9: Verification
 
 - [x] **Step 1:** `cd cmd/ios-app && ./run-tests.sh` → all PASS. Fresh Task 8/9 run: 549 tests in 35 suites; app and tests build successfully.
-- [ ] **Step 2: Simulator checks** (iOS Simulator tool, screenshots):
+- [x] **Step 2: Simulator checks** (iOS Simulator tool, screenshots):
   - iPad landscape, sidebar shown: four entries with symbols, site header, Home in two columns with no scrolling needed for all four cards.
-  - iPad portrait and Split View narrow: Home single column; tab bar at top when collapsed.
+  - iPad portrait and narrow windows: verify width-based layout and native tab placement. Observed 13-inch full-width portrait uses two columns and a top tab bar; half-width portrait uses one column and a bottom tab bar. This follows the binding spec’s width/size-class rule and native adaptive navigation; see the verification record for the plan-wording deviation.
   - iPhone: four-tab bottom bar; Home single column; Settings → Rate Plans and About push; Sign Out asks to confirm.
   - Largest accessibility text size on iPad: Home single column (Review Focus 3).
   - Battery Saver link on cold and warm launch with saved tab Bill: lands on Smart Shift + sheet; relaunch shows Bill (Review Focus 2).
-- [x] **Step 3:** Record anything not verified for the hand-off; do not push. See [verification record](2026-10-16-ios-sidebar-navigation-verification.md). Task 7 Step 5 and Task 9 Step 2 remain partial; screenshots alone do not close the manual gate.
+- [x] **Step 3:** Record anything not verified for the hand-off; do not push. See [verification record](2026-10-16-ios-sidebar-navigation-verification.md). Task 7 Step 5 and Task 9 Step 2 completed through Device Hub; remaining physical-device/live-service limits are recorded.
