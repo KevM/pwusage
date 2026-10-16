@@ -294,11 +294,11 @@ Exact copy:
 
 ### Task 9: Verification
 
-- [ ] **Step 1:** `cd cmd/ios-app && ./run-tests.sh` → all PASS.
+- [x] **Step 1:** `cd cmd/ios-app && ./run-tests.sh` → all PASS. Fresh Task 8/9 run: 549 tests in 35 suites; app and tests build successfully.
 - [ ] **Step 2: Simulator checks** (iOS Simulator tool, screenshots):
   - iPad landscape, sidebar shown: four entries with symbols, site header, Home in two columns with no scrolling needed for all four cards.
   - iPad portrait and Split View narrow: Home single column; tab bar at top when collapsed.
   - iPhone: four-tab bottom bar; Home single column; Settings → Rate Plans and About push; Sign Out asks to confirm.
   - Largest accessibility text size on iPad: Home single column (Review Focus 3).
   - Battery Saver link on cold and warm launch with saved tab Bill: lands on Smart Shift + sheet; relaunch shows Bill (Review Focus 2).
-- [ ] **Step 3:** Record anything not verified for the hand-off; do not push.
+- [x] **Step 3:** Record anything not verified for the hand-off; do not push. See [verification record](2026-10-16-ios-sidebar-navigation-verification.md). Task 7 Step 5 and Task 9 Step 2 remain partial; screenshots alone do not close the manual gate.
