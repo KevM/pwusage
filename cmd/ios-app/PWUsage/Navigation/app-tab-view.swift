@@ -39,7 +39,7 @@ struct AppTabView: View {
         case .bill:
             BillView(coordinator: coordinator, site: site)
         case .smartShift:
-            LoadTimingView(coordinator: coordinator, site: site)
+            LoadTimingView(coordinator: coordinator, site: site, isSelected: model.selectedTab == .smartShift)
         case .settings:
             SettingsView(site: site, coordinator: coordinator,
                          onChooseSite: model.openSitePicker,

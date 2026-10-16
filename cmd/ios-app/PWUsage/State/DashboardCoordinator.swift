@@ -552,6 +552,12 @@ final class DashboardCoordinator: ObservableObject {
         await billTask?.value
     }
 
+    /// Handles the retained Smart Shift tab's foreground callback.
+    func loadTimingDetailForegrounded(isSelected: Bool) async {
+        guard isSelected else { return }
+        await loadTimingDetailAppeared()
+    }
+
     /// Starts the optional enhancement only when a local credential and array
     /// selection exist. This path refreshes bill/context data but never live data.
     func loadTimingDetailAppeared() async {

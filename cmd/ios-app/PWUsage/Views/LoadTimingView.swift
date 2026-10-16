@@ -211,6 +211,7 @@ enum LoadTimingPresentation {
 struct LoadTimingView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
+    let isSelected: Bool
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var profileStore: LoadProfileStore
@@ -219,9 +220,10 @@ struct LoadTimingView: View {
     @State private var runDetailsSnapshot: LoadRunDetailsSnapshot?
     @State private var exploredProfileID: String?
 
-    init(coordinator: DashboardCoordinator, site: MobileSite, profileStore: LoadProfileStore? = nil, initialExploredProfileID: String? = nil) {
+    init(coordinator: DashboardCoordinator, site: MobileSite, isSelected: Bool = true, profileStore: LoadProfileStore? = nil, initialExploredProfileID: String? = nil) {
         self.coordinator = coordinator
         self.site = site
+        self.isSelected = isSelected
         _profileStore = StateObject(wrappedValue: profileStore ?? LoadProfileStore())
         _exploredProfileID = State(initialValue: initialExploredProfileID)
     }
@@ -424,7 +426,8 @@ struct LoadTimingView: View {
         }
         .onChange(of: coordinator.isForeground) { _, isForeground in
             guard isForeground else { return }
-            Task { await coordinator.loadTimingDetailAppeared() }
+            // TabView retains this observer after switching to another tab.
+            Task { await coordinator.loadTimingDetailForegrounded(isSelected: isSelected) }
         }
     }
 
