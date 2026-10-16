@@ -1,86 +1,82 @@
 import SwiftUI
 
+/// The Rate Plans page. Pushed from Settings, so it has no stack or Done button
+/// of its own; the host supplies those.
 struct TariffSheet: View {
     let site: MobileSite
     let load: @MainActor () async throws -> MobileTariffsResponse
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var response: MobileTariffsResponse?
     @State private var isLoading = false
     @State private var failed = false
 
     var body: some View {
-        NavigationStack {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                List {
-                    if let response {
-                        Section("Currently active") {
-                            if let summary = response.activeSummary(now: context.date), !failed {
-                                Label(summary, systemImage: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                            } else {
-                                Text(failed ? "Current activity unavailable" : response.activityIsCurrent(now: context.date) ? "No period matches the current time." : "Updating current activity…")
-                                    .foregroundStyle(.secondary)
-                            }
-                            Text("Times shown in \(response.site.timezone)")
-                                .font(.caption).foregroundStyle(.secondary)
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            List {
+                if let response {
+                    Section("Currently active") {
+                        if let summary = response.activeSummary(now: context.date), !failed {
+                            Label(summary, systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else {
+                            Text(failed ? "Current activity unavailable" : response.activityIsCurrent(now: context.date) ? "No period matches the current time." : "Updating current activity…")
+                                .foregroundStyle(.secondary)
                         }
-                        ForEach(response.tariffs) { tariff in
-                            if tariff.seasons.isEmpty {
-                                Section(tariff.name) { Text("No seasons defined.").foregroundStyle(.secondary) }
-                            }
-                            ForEach(tariff.seasons) { season in
-                                Section {
-                                    if season.periods.isEmpty {
-                                        Text("No periods defined.").foregroundStyle(.secondary)
-                                    }
-                                    ForEach(season.periods) { period in
-                                        periodRow(period, currency: response.currency,
-                                                  active: period.isActive && !failed && response.activityIsCurrent(now: context.date))
-                                    }
-                                } header: {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(tariff.name)
-                                        Text(season.name + (season.isActive && !failed && response.activityIsCurrent(now: context.date) ? " · Active season" : ""))
-                                            .font(.headline)
-                                        Text(season.dates)
-                                    }
+                        Text("Times shown in \(response.site.timezone)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(response.tariffs) { tariff in
+                        if tariff.seasons.isEmpty {
+                            Section(tariff.name) { Text("No seasons defined.").foregroundStyle(.secondary) }
+                        }
+                        ForEach(tariff.seasons) { season in
+                            Section {
+                                if season.periods.isEmpty {
+                                    Text("No periods defined.").foregroundStyle(.secondary)
+                                }
+                                ForEach(season.periods) { period in
+                                    periodRow(period, currency: response.currency,
+                                              active: period.isActive && !failed && response.activityIsCurrent(now: context.date))
+                                }
+                            } header: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(tariff.name)
+                                    Text(season.name + (season.isActive && !failed && response.activityIsCurrent(now: context.date) ? " · Active season" : ""))
+                                        .font(.headline)
+                                    Text(season.dates)
                                 }
                             }
                         }
-                        if response.tariffs.isEmpty {
-                            ContentUnavailableView("No tariffs", systemImage: "tag", description: Text("No tariffs are configured for this site."))
-                        }
-                    } else if isLoading {
-                        HStack { Spacer(); ProgressView("Loading tariffs…"); Spacer() }
                     }
-                    if failed {
-                        Section {
-                            Text(response == nil ? "Tariffs could not be loaded." : "Showing previously loaded rates. Current activity could not be refreshed.")
-                                .foregroundStyle(.secondary)
-                            Button("Retry") { Task { await refresh() } }.disabled(isLoading)
-                        }
+                    if response.tariffs.isEmpty {
+                        ContentUnavailableView("No tariffs", systemImage: "tag", description: Text("No tariffs are configured for this site."))
                     }
+                } else if isLoading {
+                    HStack { Spacer(); ProgressView("Loading tariffs…"); Spacer() }
+                }
+                if failed {
                     Section {
-                        Text("Rates are saved from your Powerwall settings in the Tesla app. Holiday overrides are included when determining the active period.")
-                            .font(.footnote).foregroundStyle(.secondary)
+                        Text(response == nil ? "Tariffs could not be loaded." : "Showing previously loaded rates. Current activity could not be refreshed.")
+                            .foregroundStyle(.secondary)
+                        Button("Retry") { Task { await refresh() } }.disabled(isLoading)
                     }
                 }
-                .navigationTitle("Tariffs")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                Section {
+                    Text("Rates are saved from your Powerwall settings in the Tesla app. Holiday overrides are included when determining the active period.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
-                .refreshable { await refresh() }
-                .task(id: scenePhase) {
-                    guard scenePhase == .active else { return }
+            }
+            .navigationTitle("Rate Plans")
+            .inlineNavigationTitle()
+            .refreshable { await refresh() }
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
+                await refresh()
+                while !Task.isCancelled {
+                    // Refresh at minute boundaries, when tariff activity can change.
+                    let seconds = 60 - Date.now.timeIntervalSince1970.truncatingRemainder(dividingBy: 60)
+                    do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
                     await refresh()
-                    while !Task.isCancelled {
-                        // Refresh at minute boundaries, when tariff activity can change.
-                        let seconds = 60 - Date.now.timeIntervalSince1970.truncatingRemainder(dividingBy: 60)
-                        do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
-                        await refresh()
-                    }
                 }
             }
         }
@@ -134,14 +130,16 @@ struct TariffSheet: View {
     }
 }
 
-#Preview("Tariffs · Empty") {
-    TariffSheet(site: MobileSite(id: "preview", name: "Home", utility: "Utility"), load: {
-        MobileTariffsResponse(version: 1, site: .init(id: "preview", name: "Home", timezone: "America/Chicago"), currency: "USD", asOf: .now, tariffs: [])
-    })
+#Preview("Rate Plans · Empty") {
+    NavigationStack {
+        TariffSheet(site: MobileSite(id: "preview", name: "Home", utility: "Utility"), load: {
+            MobileTariffsResponse(version: 1, site: .init(id: "preview", name: "Home", timezone: "America/Chicago"), currency: "USD", asOf: .now, tariffs: [])
+        })
+    }
 }
 
-#Preview("Tariffs · Seasons and periods") {
-    TariffSheet(site: MobileSite(id: "preview", name: "Home", utility: "Utility"), load: {
+#Preview("Rate Plans · Seasons and periods") {
+    NavigationStack { TariffSheet(site: MobileSite(id: "preview", name: "Home", utility: "Utility"), load: {
         MobileTariffsResponse(
             version: 1, site: .init(id: "preview", name: "Home", timezone: "America/Chicago"),
             currency: "USD", asOf: .now,
@@ -156,5 +154,5 @@ struct TariffSheet: View {
                 ]),
             ])]
         )
-    })
+    }) }
 }

@@ -235,15 +235,15 @@ func homeColumns(width: Double, regular: Bool, accessibility: Bool, expected: Bo
 **Interfaces:**
 - Produces: `SettingsView(site: MobileSite, coordinator: DashboardCoordinator, onChooseSite: () -> Void, onSignOut: () -> Void)`; private `enum SettingsDestination: Hashable { case ratePlans, about }`. `TariffSheet` and `AboutSheet` keep their names and initializers but lose their own `NavigationStack`, `@Environment(\.dismiss)` and Done button, so they render as pushed pages; `TariffSheet` title becomes "Rate Plans".
 
-- [ ] **Step 1: Make the two pages pushable** — remove stack/Done from both; keep `TariffSheet`'s `.refreshable`, `.task(id: scenePhase)` loop and `.id(site.id)` behaviour (apply `.id(site.id)` at the push site). Update their `#Preview`s to wrap in `NavigationStack`.
-- [ ] **Step 2: Build `SettingsView`** — `List` with sections:
+- [x] **Step 1: Make the two pages pushable** — remove stack/Done from both; keep `TariffSheet`'s `.refreshable`, `.task(id: scenePhase)` loop and `.id(site.id)` behaviour (apply `.id(site.id)` at the push site). Update their `#Preview`s to wrap in `NavigationStack`.
+- [x] **Step 2: Build `SettingsView`** — `List` with sections:
   - **Site**: a button row showing `site.name` and `site.utility` with a chevron, action `onChooseSite` (opens the existing root site-picker sheet).
   - **Rate Plans** → `NavigationLink(value: .ratePlans)`, label `Label("Rate Plans", systemImage: "list.bullet.rectangle")`; **About** → `.about`, `Label("About", systemImage: "info.circle")`.
   - **Sign Out**: `Button("Sign Out", role: .destructive)` presenting `confirmationDialog("Sign out of pwusage?", ...)` with "Sign Out" (destructive, calls `onSignOut`) and "Cancel"; attach the dialog to the button.
   - `navigationTitle("Settings")`; `navigationDestination(for: SettingsDestination.self)` → `TariffSheet(site:load: { try await coordinator.fetchTariffs() }).id(site.id)` / `AboutSheet()`.
-- [ ] **Step 3: Preview** — `#Preview` in `NavigationStack` with a fixture site.
-- [ ] **Step 4: Build** — `./run-tests.sh TariffSheetTests` → PASS.
-- [ ] **Step 5: Commit** — `feat(ios): Settings tab with Rate Plans, About and Sign Out`
+- [x] **Step 3: Preview** — `#Preview` in `NavigationStack` with a fixture site.
+- [x] **Step 4: Build** — `./run-tests.sh TariffSheetTests` → PASS.
+- [x] **Step 5: Commit** — `feat(ios): Settings tab with Rate Plans, About and Sign Out`
 
 ---
 
