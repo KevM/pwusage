@@ -1,86 +1,77 @@
 import SwiftUI
 
+/// The Home tab's content. It has no navigation chrome of its own: the host
+/// supplies the stack (which shows `navigationTitle`), and the summary cards
+/// switch tabs through `onOpenTab` rather than pushing duplicate pages.
 struct DashboardView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
-    let onChooseSite: () -> Void
+    let onOpenTab: (AppTab) -> Void
     var onRefresh: (() async -> Void)? = nil
-    let onSignOut: () -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var availableWidth: Double = 0
 
     private var live: MobileLiveResponse? { coordinator.live.response }
     private var bill: MobileBillResponse? { coordinator.bill.response }
 
+    private var usesTwoColumns: Bool {
+        DashboardPresentation.homeUsesTwoColumns(
+            width: availableWidth,
+            isRegularWidth: horizontalSizeClass == .regular,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    if coordinator.live.isRestored || coordinator.bill.isRestored {
-                        AvailabilityBanner(message: "Showing saved data from your last visit.", symbol: "clock.arrow.circlepath")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                banners
+                if usesTwoColumns {
+                    Grid(alignment: .topLeading, horizontalSpacing: 22, verticalSpacing: 22) {
+                        GridRow {
+                            liveSection.frame(maxWidth: .infinity, alignment: .topLeading)
+                            todaySection.frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
+                        GridRow {
+                            billNavigation.frame(maxWidth: .infinity, alignment: .topLeading)
+                            loadTimingNavigation.frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
                     }
-                    if coordinator.live.isUnavailable {
-                        AvailabilityBanner(message: "Live data is temporarily unavailable. Showing the last successful reading with its original source time.", symbol: "wifi.exclamationmark")
-                    }
-                    if coordinator.bill.isUnavailable {
-                        AvailabilityBanner(message: "The bill estimate could not be refreshed. Showing the last successful estimate.", symbol: "clock.badge.exclamationmark")
-                    }
+                } else {
                     liveSection
                     todaySection
                     billNavigation
                     loadTimingNavigation
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 14)
-                .padding(.bottom, 28)
-                .frame(maxWidth: 760)
-                .frame(maxWidth: .infinity)
             }
-            .refreshable {
-                if let onRefresh { await onRefresh() }
-                else { await coordinator.refreshAll(trigger: .userGesture) }
-            }
-            .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle(site.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .sheet(item: $coordinator.presentedSheet) { sheet in
-                switch sheet {
-                case .batteryHold:
-                    BatteryHoldSheet(coordinator: coordinator, site: site)
-                case .tariffs:
-                    TariffSheet(site: site, load: { try await coordinator.fetchTariffs() })
-                        .id(site.id)
-                case .about:
-                    AboutSheet()
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Tariffs", systemImage: "tag") {
-                        coordinator.presentedSheet = .tariffs
-                    }
-                    .accessibilityHint("View tariff seasons, periods, and rates")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("Switch Site", systemImage: "arrow.left.arrow.right", action: onChooseSite)
-                        Button("About", systemImage: "info.circle") {
-                            coordinator.presentedSheet = .about
-                        }
-                        Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive, action: onSignOut)
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .accessibilityLabel("More options")
-                }
-            }
-            .navigationDestination(for: BillDestination.self) { _ in
-                BillView(coordinator: coordinator, site: site)
-            }
-            .navigationDestination(for: LoadTimingDestination.self) { _ in
-                LoadTimingView(coordinator: coordinator, site: site)
-            }
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 28)
+            .frame(maxWidth: usesTwoColumns ? 1100 : 760)
+            .frame(maxWidth: .infinity)
+        }
+        .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { availableWidth = $0 }
+        .refreshable {
+            if let onRefresh { await onRefresh() }
+            else { await coordinator.refreshAll(trigger: .userGesture) }
+        }
+        .background(SectionTheme.groupedBackground)
+        .navigationTitle(site.name)
+        .inlineNavigationTitle()
+    }
+
+    @ViewBuilder private var banners: some View {
+        if coordinator.live.isRestored || coordinator.bill.isRestored {
+            AvailabilityBanner(message: "Showing saved data from your last visit.", symbol: "clock.arrow.circlepath")
+        }
+        if coordinator.live.isUnavailable {
+            AvailabilityBanner(message: "Live data is temporarily unavailable. Showing the last successful reading with its original source time.", symbol: "wifi.exclamationmark")
+        }
+        if coordinator.bill.isUnavailable {
+            AvailabilityBanner(message: "The bill estimate could not be refreshed. Showing the last successful estimate.", symbol: "clock.badge.exclamationmark")
         }
     }
 
@@ -205,7 +196,7 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeading("Current Bill", subtitle: bill.map { "Calculated · \(DashboardPresentation.freshness($0.sources.calculatedAt, staleAfter: 60 * 60).replacingOccurrences(of: "Updated ", with: ""))" } ?? "Waiting for estimate")
             if let bill {
-                NavigationLink(value: BillDestination.current) {
+                Button { onOpenTab(.bill) } label: {
                     StatusCard(theme: .bill) {
                         HStack(spacing: 16) {
                             Image(systemName: "dollarsign.circle.fill")
@@ -231,10 +222,10 @@ struct DashboardView: View {
                         .contentShape(Rectangle())
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityHint("View bill cycle dates and tariff period details")
+                    .accessibilityHint("Opens the Bill tab")
                 }
                 .buttonStyle(.plain)
-                .hoverEffect()
+                .pointerHoverEffect()
             } else {
                 StatusCard(theme: .bill) {
                     HStack(spacing: 12) {
@@ -252,7 +243,7 @@ struct DashboardView: View {
 
     private var loadTimingNavigation: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Load Timing", subtitle: live.map {
+            sectionHeading("Smart Shift", subtitle: live.map {
                 "Live summary · \(DashboardPresentation.freshness($0.activeLoadTiming?.energyDataThrough ?? $0.sources.energyDataThrough, staleAfter: 30 * 60).replacingOccurrences(of: "Updated ", with: ""))"
             } ?? "Waiting for active tariff")
             let summarySource = live?.activeLoadTiming?.energyDataThrough ?? live?.sources.energyDataThrough
@@ -263,7 +254,7 @@ struct DashboardView: View {
                 isStale: summaryIsStale,
                 currencyCode: bill?.currentBill.currency
             )
-            NavigationLink(value: LoadTimingDestination.current) {
+            Button { onOpenTab(.smartShift) } label: {
                 StatusCard(theme: .loadTiming) {
                     HStack(spacing: 14) {
                         Image(systemName: "clock.arrow.circlepath")
@@ -307,10 +298,10 @@ struct DashboardView: View {
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(summary.accessibilityLabel)
-                .accessibilityHint("View load timing and estimate appliance costs by tariff period")
+                .accessibilityHint("Opens Smart Shift")
             }
             .buttonStyle(.plain)
-            .hoverEffect()
+            .pointerHoverEffect()
         }
     }
 
@@ -341,9 +332,6 @@ struct DashboardView: View {
 
 }
 
-private struct BillDestination: Hashable { static let current = Self() }
-private struct LoadTimingDestination: Hashable { static let current = Self() }
-
 private struct StatusCard<Content: View>: View {
     var theme: SectionTheme? = nil
     @ViewBuilder let content: Content
@@ -355,7 +343,7 @@ private struct StatusCard<Content: View>: View {
                     if let theme {
                         theme.cardBackground
                     } else {
-                        Color(uiColor: .secondarySystemGroupedBackground)
+                        SectionTheme.secondaryGroupedBackground
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -496,7 +484,7 @@ struct EmptyCard: View {
         }
         .frame(maxWidth: .infinity)
         .padding(24)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20))
         .accessibilityElement(children: .combine)
     }
 }
@@ -510,7 +498,7 @@ private struct LoadingCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20))
         .accessibilityElement(children: .combine)
     }
 }

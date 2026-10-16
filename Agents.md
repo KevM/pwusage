@@ -24,6 +24,7 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - **Scripts**: Standalone maintenance scripts in `scripts/`, runnable via `npx tsx scripts/script-name.ts`.
     - **Environment Variables**: Scripts must explicitly load the `.env` file using `dotenv` or similar at the very beginning to ensure correct configuration when run from the CLI.
 - **Cron Jobs**: Vercel Cron Jobs configured in `vercel.json` and implemented in `src/app/api/cron/*`.
+- **User-facing copy**: Follow [`docs/voice-and-terms.md`](./docs/voice-and-terms.md) for voice and the word list (Smart Shift, Battery Saver, job, export cushion) in every app, widget, web and TRMNL string.
 
 ## Development
 - **Linting**: `npm run lint` must pass.

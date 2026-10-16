@@ -123,12 +123,11 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
     }
 }
 
-/// The sheets the dashboard screen itself owns. They are mutually exclusive, so
-/// one value can both present the right sheet and close whatever else is up.
+/// The sheet the dashboard itself owns. There is only one, but it stays a
+/// value so an external launch can clear whatever is up in a single write.
+/// Rate Plans and About are pages pushed from Settings, not sheets.
 enum DashboardSheet: String, Identifiable, CaseIterable {
     case batteryHold
-    case tariffs
-    case about
 
     var id: String { rawValue }
 }
@@ -551,6 +550,12 @@ final class DashboardCoordinator: ObservableObject {
         launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation, followsLive: liveTask == nil)
 
         await billTask?.value
+    }
+
+    /// Handles the retained Smart Shift tab's foreground callback.
+    func loadTimingDetailForegrounded(isSelected: Bool) async {
+        guard isSelected else { return }
+        await loadTimingDetailAppeared()
     }
 
     /// Starts the optional enhancement only when a local credential and array

@@ -211,6 +211,7 @@ enum LoadTimingPresentation {
 struct LoadTimingView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
+    let isSelected: Bool
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var profileStore: LoadProfileStore
@@ -219,9 +220,10 @@ struct LoadTimingView: View {
     @State private var runDetailsSnapshot: LoadRunDetailsSnapshot?
     @State private var exploredProfileID: String?
 
-    init(coordinator: DashboardCoordinator, site: MobileSite, profileStore: LoadProfileStore? = nil, initialExploredProfileID: String? = nil) {
+    init(coordinator: DashboardCoordinator, site: MobileSite, isSelected: Bool = true, profileStore: LoadProfileStore? = nil, initialExploredProfileID: String? = nil) {
         self.coordinator = coordinator
         self.site = site
+        self.isSelected = isSelected
         _profileStore = StateObject(wrappedValue: profileStore ?? LoadProfileStore())
         _exploredProfileID = State(initialValue: initialExploredProfileID)
     }
@@ -373,7 +375,7 @@ struct LoadTimingView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(22)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+                    .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20))
                 }
             }
             .padding(20)
@@ -385,14 +387,14 @@ struct LoadTimingView: View {
             await coordinator.refreshBatteryHold()
         }
         .background { SectionTheme.loadTiming.screenBackground }
-        .navigationTitle("Load Timing")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("Smart Shift")
+        .inlineNavigationTitle()
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { isSolarForecastSheetPresented = true } label: { Image(systemName: "sun.max") }
                     .accessibilityLabel("Solar forecast settings")
             }
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     coordinator.isBatteryHoldSheetPresented = true
                 } label: {
@@ -424,7 +426,8 @@ struct LoadTimingView: View {
         }
         .onChange(of: coordinator.isForeground) { _, isForeground in
             guard isForeground else { return }
-            Task { await coordinator.loadTimingDetailAppeared() }
+            // TabView retains this observer after switching to another tab.
+            Task { await coordinator.loadTimingDetailForegrounded(isSelected: isSelected) }
         }
     }
 
@@ -878,9 +881,9 @@ private struct LoadRunDetailsSheet: View {
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background(SectionTheme.groupedBackground)
             .navigationTitle("Load Run Details")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
@@ -1020,6 +1023,6 @@ private struct LoadTimingCard<Content: View>: View {
         }
         .padding(17)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }

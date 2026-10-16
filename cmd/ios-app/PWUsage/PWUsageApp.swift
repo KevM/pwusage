@@ -137,6 +137,9 @@ final class PWUsageAppModel: ObservableObject {
     @Published private(set) var signInMessage: String?
     @Published var isSitePickerPresented = false
     @Published private(set) var accountScopeID: String?
+    /// The tab on screen. Only `selectTab` persists it; an external Battery Saver
+    /// launch moves it for one visit, like the saved site.
+    @Published private(set) var selectedTab: AppTab
 
     /// Builds the dashboard coordinator for a site. Injected so tests can control
     /// the polling cadence and the clock.
@@ -182,6 +185,7 @@ final class PWUsageAppModel: ObservableObject {
         self.userDefaults = userDefaults
         self.cache = cache
         self.forecastStore = forecastStore
+        selectedTab = userDefaults.string(forKey: Self.selectedTabDefaultsKey).flatMap(AppTab.init(rawValue:)) ?? .home
         if let coordinatorFactory {
             self.coordinatorFactory = coordinatorFactory
         } else {
@@ -352,6 +356,11 @@ final class PWUsageAppModel: ObservableObject {
         coordinator?.selectSite(site.id)
     }
 
+    func selectTab(_ tab: AppTab) {
+        selectedTab = tab
+        userDefaults.set(tab.rawValue, forKey: Self.selectedTabDefaultsKey)
+    }
+
     func openNavigationURL(_ url: URL) async {
         guard url.scheme == "pwusage", url.host == "battery-hold" else { return }
         guard let siteID = BatteryHoldLink.siteID(from: url) else {
@@ -398,6 +407,7 @@ final class PWUsageAppModel: ObservableObject {
         // Rebuild only for an external route: this drops the old navigation path
         // and every dashboard/detail modal before the new host opens the sheet.
         batteryHoldNavigationID = UUID()
+        selectedTab = .smartShift
         coordinator?.isBatteryHoldSheetPresented = true
     }
 
@@ -422,6 +432,7 @@ final class PWUsageAppModel: ObservableObject {
         selectedSiteID = nil
         isSitePickerPresented = false
         userDefaults.removeObject(forKey: Self.selectedSiteDefaultsKey)
+        clearSelectedTab()
         await clearAccountScopeID()
         screenState = .signedOut
         signInMessage = cleanupFailed ? "Could not clear local solar forecast data. Please try again." : nil
@@ -443,6 +454,7 @@ final class PWUsageAppModel: ObservableObject {
         sites = []
         selectedSiteID = nil
         userDefaults.removeObject(forKey: Self.selectedSiteDefaultsKey)
+        clearSelectedTab()
         await clearAccountScopeID()
         screenState = .signedOut
         signInMessage = cleanupFailed
@@ -550,6 +562,13 @@ final class PWUsageAppModel: ObservableObject {
 
     static let selectedSiteDefaultsKey = "pwusage.selectedSiteID"
     static let accountScopeDefaultsKey = "pwusage.localAccountScopeID"
+    static let selectedTabDefaultsKey = "pwusage.selectedTab"
+
+    /// The next session starts on Home, not on whatever tab this one ended on.
+    private func clearSelectedTab() {
+        selectedTab = .home
+        userDefaults.removeObject(forKey: Self.selectedTabDefaultsKey)
+    }
 
     private func ensureAccountScopeID() -> String {
         if let existing = userDefaults.string(forKey: Self.accountScopeDefaultsKey), !existing.isEmpty {
@@ -583,7 +602,7 @@ private struct PWUsageRootView: View {
                     Text("Connecting to pwusage…").foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(uiColor: .systemGroupedBackground))
+                .background(SectionTheme.groupedBackground)
             case .signedOut:
                 SignInView(isWorking: model.isSigningIn, message: model.signInMessage) {
                     Task { await model.signIn() }
@@ -596,10 +615,7 @@ private struct PWUsageRootView: View {
                             Task { await model.signIn() }
                         }
                     } else {
-                        DashboardView(coordinator: coordinator, site: site, onChooseSite: { model.openSitePicker() }, onRefresh: { await model.refreshDashboard() }) {
-                            Task { await model.signOut() }
-                        }
-                        .id(model.batteryHoldNavigationID)
+                        AppTabView(model: model, coordinator: coordinator, site: site)
                         .environment(\.reconnectTesla, TeslaReconnectAction(owner: model) { await model.reconnectTesla() })
                         .sheet(isPresented: $model.isSitePickerPresented) {
                             SitePickerView(sites: model.sites, selectedSiteID: site.id) { selected in
@@ -703,6 +719,6 @@ private struct EmptyStateScreen: View {
         .padding(32)
         .frame(maxWidth: 500)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background(SectionTheme.groupedBackground)
     }
 }

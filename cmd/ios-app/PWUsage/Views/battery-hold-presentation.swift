@@ -95,15 +95,15 @@ enum BatteryHoldPresentation {
     }
 
     static func toolbarAccessibilityLabel(state: BatteryHoldState, at now: Date) -> String {
-        guard state.statusIsCurrent(at: now) else { return "Battery Hold, status unknown" }
+        guard state.statusIsCurrent(at: now) else { return "Battery Saver, status unknown" }
         if let reserve = toolbarReserve(state: state, at: now) {
-            return "Battery Hold active, holding at \(reserve). Open battery hold controls."
+            return "Battery Saver on, saving your Powerwall at \(reserve). Open Battery Saver."
         }
-        return "Battery Hold. Open battery hold controls."
+        return "Battery Saver. Open Battery Saver."
     }
 
     static func toolbarLabel(state: BatteryHoldState, at now: Date) -> String {
-        guard state.statusIsCurrent(at: now) else { return "Battery Hold" }
-        return state.response?.hold == nil ? "Battery Hold" : "Hold Active"
+        guard state.statusIsCurrent(at: now) else { return "Battery Saver" }
+        return state.response?.hold == nil ? "Battery Saver" : "Battery Saver On"
     }
 }

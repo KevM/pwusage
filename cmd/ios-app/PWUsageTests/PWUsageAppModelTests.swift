@@ -23,6 +23,71 @@ struct PWUsageAppModelTests {
         #expect(defaults.string(forKey: PWUsageAppModel.selectedSiteDefaultsKey) == "site-1")
     }
 
+    @Test("A picked tab is restored on the next launch")
+    func pickedTabPersists() async throws {
+        let defaults = makeDefaults()
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = try makeModel(api: api, userDefaults: defaults)
+        #expect(model.selectedTab == .home)
+        model.selectTab(.bill)
+        let relaunched = try makeModel(api: api, userDefaults: defaults)
+        #expect(relaunched.selectedTab == .bill)
+    }
+
+    @Test("An unknown saved tab falls back to Home")
+    func unknownSavedTabFallsBack() throws {
+        let defaults = makeDefaults()
+        defaults.set("loadTiming", forKey: PWUsageAppModel.selectedTabDefaultsKey)
+        let model = try makeModel(api: ApplicationAPISpy(sites: [Self.site("site-1")]), userDefaults: defaults)
+        #expect(model.selectedTab == .home)
+    }
+
+    @Test("A Battery Saver launch shows Smart Shift without changing the saved tab")
+    func controlLaunchSelectsSmartShiftOnce() async throws {
+        let defaults = makeDefaults()
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = try makeModel(api: api, userDefaults: defaults)
+        await model.bootstrap()
+        model.selectTab(.bill)
+        await model.openBatteryHold(siteID: "site-1")
+        #expect(model.selectedTab == .smartShift)
+        #expect(model.coordinator?.isBatteryHoldSheetPresented == true)
+        #expect(defaults.string(forKey: PWUsageAppModel.selectedTabDefaultsKey) == "bill",
+                "A control launch is a one-visit detour, like the saved site.")
+    }
+
+    @Test("A failed Battery Saver launch leaves the tab alone")
+    func removedSiteKeepsTab() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        model.selectTab(.bill)
+        await model.openBatteryHold(siteID: "removed")
+        #expect(model.selectedTab == .bill)
+    }
+
+    @Test("Switching site closes the Battery Saver sheet")
+    func siteSwitchClosesSheet() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        await model.openBatteryHold(siteID: "site-1")
+        model.selectSite(Self.site("site-2"))
+        #expect(model.coordinator?.isBatteryHoldSheetPresented == false)
+    }
+
+    @Test("Signing out returns the next session to Home")
+    func signOutResetsTab() async throws {
+        let defaults = makeDefaults()
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = try makeModel(api: api, userDefaults: defaults)
+        await model.bootstrap()
+        model.selectTab(.settings)
+        await model.signOut()
+        #expect(model.selectedTab == .home)
+        #expect(defaults.string(forKey: PWUsageAppModel.selectedTabDefaultsKey) == nil)
+    }
+
     @Test("Dismissing the launcher alert discards the pending request")
     func cancellingControlRequestStopsLaterNavigation() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
@@ -49,33 +114,32 @@ struct PWUsageAppModelTests {
         let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")])
         let model = try makeModel(api: api)
         await model.bootstrap()
-        model.coordinator?.presentedSheet = .tariffs
+        model.isSitePickerPresented = true
         api.sitesError = URLError(.notConnectedToInternet)
 
         await model.openBatteryHold(siteID: "site-2")
 
         #expect(model.batteryHoldNavigationMessage != nil)
+        #expect(model.isSitePickerPresented == false)
         #expect(model.coordinator?.presentedSheet == nil,
                 "The root alert and loading overlay cannot be seen underneath a dashboard sheet.")
     }
 
-    @Test("Only one dashboard sheet is presented at a time")
-    func dashboardSheetsAreMutuallyExclusive() async throws {
+    @Test("The Battery Saver sheet binding round-trips through the dashboard sheet")
+    func batteryHoldSheetBindingRoundTrips() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
         let model = try makeModel(api: api)
         await model.bootstrap()
         let coordinator = try #require(model.coordinator)
 
-        coordinator.presentedSheet = .about
+        #expect(DashboardSheet.allCases == [.batteryHold],
+                "Rate Plans and About are pushed pages in Settings, not dashboard sheets.")
+
         coordinator.isBatteryHoldSheetPresented = true
         #expect(coordinator.presentedSheet == .batteryHold)
 
         coordinator.isBatteryHoldSheetPresented = false
         #expect(coordinator.presentedSheet == nil)
-
-        coordinator.presentedSheet = .tariffs
-        coordinator.isBatteryHoldSheetPresented = false
-        #expect(coordinator.presentedSheet == .tariffs, "Closing the hold sheet must not close an unrelated sheet.")
     }
 
     @Test("External launch replaces navigation presentation identity each time")

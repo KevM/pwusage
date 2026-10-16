@@ -5,6 +5,37 @@ import Testing
 @MainActor
 @Suite("Solar Forecast Coordinator Tests", .serialized)
 struct SolarForecastCoordinatorTests {
+    @Test("A retained Smart Shift tab skips foreground requests while another tab is selected")
+    func hiddenDetailSkipsForegroundRefresh() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+        #expect(await forecast.refreshCount == 1)
+        #expect(api.contextSiteIDs == ["site-a"])
+        #expect(api.billSiteIDs == ["site-a"])
+
+        // Visit Home, then foreground the app after the request caches expire.
+        api.now = api.now.addingTimeInterval(24 * 60 * 60)
+        await coordinator.loadTimingDetailForegrounded(isSelected: false)
+        #expect(await forecast.refreshCount == 1)
+        #expect(api.contextSiteIDs == ["site-a"])
+        #expect(api.billSiteIDs == ["site-a"])
+        #expect(coordinator.solarForecastState == .enhanced)
+
+        // Foregrounding with Smart Shift selected must still refresh normally.
+        await coordinator.loadTimingDetailForegrounded(isSelected: true)
+        #expect(await forecast.refreshCount == 2)
+        #expect(api.contextSiteIDs == ["site-a", "site-a"])
+        #expect(api.billSiteIDs == ["site-a", "site-a"])
+        #expect(api.liveSiteIDs.isEmpty)
+    }
+
     @Test("Unconfigured detail keeps basic estimate and performs no forecast-only requests")
     func unconfiguredDetailMakesNoForecastRequests() async {
         let forecast = ForecastManagerSpy()

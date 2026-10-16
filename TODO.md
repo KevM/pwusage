@@ -18,6 +18,15 @@ When starting fresh work in this repo, check this file. If a session begins some
 
 Separately, fix the PR #110 mobile OAuth error paths that still return JSON into `ASWebAuthenticationSession` instead of redirecting an error to the app. That is a current sign-in issue, not a widget feature.
 
+## iOS: macOS/tvOS readiness (2026-10-16)
+
+Audit and evidence: [multiplatform readiness audit](docs/superpowers/specs/2026-10-16-multiplatform-readiness-audit.md). Item numbers below refer to its "Ordered refactors" table. No port is in progress.
+
+- [ ] **Cheap seams, partly covered by the nav rework (items 1, 3, 5):** colour shim replacing the 24 `Color(uiColor:)` uses, semantic toolbar placements and an inline-title wrapper, and an `AppTab` enum. The [nav design](docs/superpowers/specs/2026-10-16-ios-sidebar-navigation-design.md) ("Platform portability") covers these in the files it touches only; finish the rest (untouched views, Shared tiles, widget files) opportunistically.
+- [ ] **Seams follow-up PR, after the nav rework lands (items 2, 4, 6, 7, 8):** move `PWUsageAppModel` and `PWUsageApplicationAPI` out of the `@main` file, put the auth presentation anchor and `UIPasteboard` behind platform helpers (plus a `kSecUseDataProtectionKeychain` helper), add a `WidgetReloading` protocol for the `WidgetCenter`/`ControlCenter` calls, split `BatteryHoldActivityAttributes.ContentState` from ActivityKit, and use SwiftUI window sizing instead of `UIWindowScene.sizeRestrictions`. Touches `PWUsageApp.swift`, `MobileAuthService.swift`, `DashboardCache.swift`, so wait for the rework to avoid view conflicts.
+- [ ] **tvOS device-code login spec (item 13), blocked on a product decision:** `ASWebAuthenticationSession` is unavailable on tvOS. Spec a QR plus short-code flow reusing the `MobileLoginHandoff` PKCE exchange (`/api/mobile/device`, `/login/device`, poll, `/auth/tesla-callback` branch) and Keychain-stored session token. Needs a security decision on session storage before building.
+- [ ] **Revisit if we pursue Mac or TV (items 9–12, 14):** storage abstraction, `Shared/` reorganisation, `PWUsageCore` Swift package, native macOS target (menu bar extra, widgets), tvOS app. Unverified until then: tvOS cookie persistence, macOS app-group id format, `ControlCenter` macOS 26 requirement.
+
 ## DB egress: remaining reduction candidates
 
 The July 2026 Supabase egress spike was traced to site queries duplicating wide

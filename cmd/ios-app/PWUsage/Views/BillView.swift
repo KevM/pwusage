@@ -28,7 +28,7 @@ struct BillView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(22)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+                    .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20))
                 }
             }
             .padding(20)
@@ -40,7 +40,7 @@ struct BillView: View {
         }
         .background { SectionTheme.bill.screenBackground }
         .navigationTitle("Current Bill")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavigationTitle()
     }
 
     private func estimateCard(_ response: MobileBillResponse) -> some View {
@@ -62,7 +62,7 @@ struct BillView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 
@@ -143,6 +143,6 @@ private struct BillInformationCard<Content: View>: View {
             content
         }
         .padding(17)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }

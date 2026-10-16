@@ -268,4 +268,14 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.chargeAgeLabel(now.addingTimeInterval(-5 * 60), now: now) == nil)
         #expect(DashboardPresentation.chargeAgeLabel(now.addingTimeInterval(-30 * 60), now: now) == "Charge as of 30 min ago")
     }
+
+    @Test("Home uses two columns only when wide, regular and not at accessibility sizes",
+          arguments: [
+            (700.0, true, false, true), (699.0, true, false, false),
+            (1100.0, false, false, false), (1100.0, true, true, false),
+          ])
+    func homeColumns(width: Double, regular: Bool, accessibility: Bool, expected: Bool) {
+        #expect(DashboardPresentation.homeUsesTwoColumns(
+            width: width, isRegularWidth: regular, isAccessibilitySize: accessibility) == expected)
+    }
 }

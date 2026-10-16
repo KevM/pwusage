@@ -50,7 +50,7 @@ struct BatteryHoldSheet: View {
                             .id(coordinator.selectedSiteID)
                         }
                     } else if !coordinator.batteryHold.isRefreshing {
-                        ContentUnavailableView("Battery Hold Unavailable", systemImage: "battery.0percent",
+                        ContentUnavailableView("Battery Saver Unavailable", systemImage: "battery.0percent",
                                                description: Text("Refresh to load the current hold status."))
                     }
                     if coordinator.batteryHold.isBusy {
@@ -73,7 +73,7 @@ struct BatteryHoldSheet: View {
                     }
                 }
             }
-            .navigationTitle("Battery Hold")
+            .navigationTitle("Battery Saver")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

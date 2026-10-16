@@ -1,6 +1,16 @@
 import Foundation
 
 enum DashboardPresentation {
+    /// Narrowest content width, in points, at which Home splits into two columns:
+    /// enough for Live power beside Today on iPad landscape with the sidebar up.
+    static let homeTwoColumnMinimumWidth: Double = 700
+
+    /// Home goes two-column only when there is room for it. A compact size class
+    /// or an accessibility text size keeps the single column, whatever the width.
+    static func homeUsesTwoColumns(width: Double, isRegularWidth: Bool, isAccessibilitySize: Bool) -> Bool {
+        isRegularWidth && !isAccessibilitySize && width >= homeTwoColumnMinimumWidth
+    }
+
     enum PowerSource: String, CaseIterable, Identifiable {
         case solar, home, grid, battery
         var id: Self { self }
