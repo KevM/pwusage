@@ -23,6 +23,7 @@ function fakeRepo(active: BatteryHold | null) {
     } as BatteryHold)),
     markRestored: vi.fn().mockResolvedValue(true),
     markCancelled: vi.fn().mockResolvedValue(true),
+    recordMonitoring: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -56,6 +57,31 @@ describe('parkBattery', () => {
     expect(client.setBackupReserve).toHaveBeenCalledWith('s', 100);
     const created = repo.createHold.mock.calls[0][0];
     expect(created).toMatchObject({ siteId: 's', originalReserve: 20, targetReserve: 100, parkedSoc: 90, baselineLoadW: 450, mode: 'auto' });
+  });
+
+  it('seeds the hold with the battery charge and home load it read, and returns the hold with them', async () => {
+    const repo = fakeRepo(null);
+    const client = fakeClient({ getLiveStatus: vi.fn().mockResolvedValue({ percentage_charged: 70.4, load_power: 1612, timestamp: '2026-10-02T10:00:10Z' }) });
+    const now = new Date('2026-10-02T10:01:00Z');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await parkBattery({ client: client as any, repo: repo as any, siteId: 's', mode: 'auto', now });
+    const monitoring = { phase: 'watching', battery_percent: 70.4, home_load_w: 1612, baseline_load_w: 1612,
+      live_at: '2026-10-02T10:00:10.000Z', checked_at: now.toISOString(), next_check_at: '2026-10-02T10:15:00.000Z' };
+    expect(repo.recordMonitoring).toHaveBeenCalledWith(1, expect.objectContaining(monitoring));
+    expect(res).toMatchObject({ status: 'ok', hold: { id: 1, monitoring } });
+  });
+
+  it('still starts the hold when the first monitoring write fails, returning it without monitoring', async () => {
+    const repo = fakeRepo(null);
+    repo.recordMonitoring.mockRejectedValue(new Error('db down'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const client = fakeClient({ getLiveStatus: vi.fn().mockResolvedValue({ percentage_charged: 70, load_power: 450 }) });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await parkBattery({ client: client as any, repo: repo as any, siteId: 's', mode: 'timer', durationHours: 2 });
+    expect(res.status).toBe('ok');
+    expect(res.status === 'ok' && res.hold.monitoring).toBeFalsy();
+    expect(client.setBackupReserve).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 
   it('returns needs_choice in the ambiguous band when no choice is given', async () => {
