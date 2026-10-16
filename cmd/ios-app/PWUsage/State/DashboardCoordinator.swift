@@ -203,6 +203,12 @@ final class DashboardCoordinator: ObservableObject {
     private var siteGeneration = 0
     private var forecastGeneration = 0
     private var billSuccessGeneration = 0
+    /// Counts bill launches so a refresh can tell whether another caller
+    /// attempted the bill while it waited on live.
+    private var billAttempts = 0
+    /// Whether the latest bill launch started with no live request pending, so
+    /// it calculated from the history live imports.
+    private var latestBillAttemptFollowedLive = true
     private var planningContextCache: [String: PlanningContextCacheEntry] = [:]
     private var planningContextTasks: [String: PlanningContextTask] = [:]
 
@@ -493,15 +499,32 @@ final class DashboardCoordinator: ObservableObject {
         }
         // The live endpoint may first import stale energy history. Wait for it
         // before asking the bill endpoint to calculate from that history.
+        let billAttemptsBeforeWait = billAttempts
         await liveTask?.value
-        guard canRequestAccountData, generation == siteGeneration else { return }
-        if trigger == .scheduled {
-            guard isForeground else { return }
-        }
+        guard canStillRefresh(trigger: trigger, generation: generation) else { return }
 
-        launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation)
+        if billAttempts == billAttemptsBeforeWait {
+            launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation, followsLive: true)
+        } else if !latestBillAttemptFollowedLive {
+            // Another caller attempted the bill while live was still importing
+            // history, so that bill is stale. Let it finish, then recalculate
+            // once, whichever waiting refresh gets here first.
+            await billTask?.value
+            guard canStillRefresh(trigger: trigger, generation: generation) else { return }
+            if !latestBillAttemptFollowedLive {
+                launchBillTaskIfNeeded(trigger: .userGesture, requestTime: now(), generation: generation, followsLive: true)
+            }
+        }
+        // Otherwise a bill already followed this live request. Comparing its
+        // newer attempt with the pre-wait time would read as a backwards clock
+        // and send a duplicate request.
 
         await billTask?.value
+    }
+
+    private func canStillRefresh(trigger: RefreshTrigger, generation: Int) -> Bool {
+        guard canRequestAccountData, generation == siteGeneration else { return false }
+        return trigger != .scheduled || isForeground
     }
 
     /// Refreshes the bill estimate, subject to the trigger's cadence.
@@ -513,7 +536,7 @@ final class DashboardCoordinator: ObservableObject {
         let requestTime = now()
         let generation = siteGeneration
 
-        launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation)
+        launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation, followsLive: liveTask == nil)
 
         await billTask?.value
     }
@@ -857,7 +880,7 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastSaveFailure = false
     }
 
-    private func launchBillTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int) {
+    private func launchBillTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int, followsLive: Bool) {
         guard billTask == nil else { return }
         let due: Bool
         switch trigger {
@@ -869,6 +892,8 @@ final class DashboardCoordinator: ObservableObject {
         }
         guard due else { return }
         bill.lastAttempt = requestTime
+        billAttempts += 1
+        latestBillAttemptFollowedLive = followsLive
         let siteID = selectedSiteID
         billTask = Task { await performBill(siteID: siteID, generation: generation) }
     }

@@ -183,6 +183,54 @@ struct DashboardCoordinatorTests {
         #expect(api.billSiteIDs.count == 1)
     }
 
+    @Test("A bill fetched while live was still importing history is recalculated once after live")
+    func billFetchedDuringLiveWaitIsRecalculatedAfterLive() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        // Both the scene-phase refresh and this one wait on the same live request.
+        coordinator.scenePhaseChanged(isActive: true)
+        let waiting = Task { await coordinator.refreshDue() }
+        await api.waitUntilLiveRequestStarts()
+
+        // A screen appearance fetches the bill before live has imported history.
+        clock.advance(minutes: 1)
+        await coordinator.refreshBill(trigger: .screenAppearance)
+        #expect(api.billSiteIDs.count == 1)
+
+        api.resumeRequests()
+        await waiting.value
+        await coordinator.refreshDue()
+
+        #expect(api.liveSiteIDs.count == 1)
+        #expect(api.billSiteIDs.count == 2, "Exactly one bill follows live, however many refreshes waited on it.")
+    }
+
+    @Test("A bill still in flight when live finishes is recalculated once after it")
+    func billInFlightWhenLiveFinishesIsRecalculatedAfterIt() async {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        api.holdBill = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        let waiting = Task { await coordinator.refreshDue() }
+        await api.waitUntilLiveRequestStarts()
+
+        clock.advance(minutes: 1)
+        let appearance = Task { await coordinator.refreshBill(trigger: .screenAppearance) }
+        await api.waitUntilBillRequestStarts()
+
+        api.resumeRequests()
+        await waiting.value
+        await appearance.value
+        await coordinator.refreshDue()
+
+        #expect(api.liveSiteIDs.count == 1)
+        #expect(api.billSiteIDs.count == 2)
+    }
+
     @Test("Site switch resets cadence and ignores old site response")
     func siteSwitchResetsCadenceAndIgnoresOldSiteResponse() async {
         let clock = TestClock()
