@@ -72,9 +72,6 @@ struct AppTabView: View {
 
     private func siteHeaderLabel(showsChevron: Bool) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "house.fill")
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
             Text(site.name)
                 .font(.headline)
                 .foregroundStyle(.primary)
