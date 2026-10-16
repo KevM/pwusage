@@ -184,7 +184,7 @@ func signOutResetsTab() async throws {
 **Interfaces:**
 - Produces: `static func homeUsesTwoColumns(width: Double, isRegularWidth: Bool, isAccessibilitySize: Bool) -> Bool` and `static let homeTwoColumnMinimumWidth: Double = 700` on `DashboardPresentation`. True only when all of: regular width, width ≥ 700, not an accessibility size.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```swift
 @Test("Home uses two columns only when wide, regular and not at accessibility sizes",
@@ -198,10 +198,10 @@ func homeColumns(width: Double, regular: Bool, accessibility: Bool, expected: Bo
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `./run-tests.sh DashboardPresentationTests` → FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run to verify it passes.**
-- [ ] **Step 5: Commit** — `feat(ios): decide when Home uses two columns`
+- [x] **Step 2: Run to verify it fails** — `./run-tests.sh DashboardPresentationTests` → FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run to verify it passes.**
+- [x] **Step 5: Commit** — `feat(ios): decide when Home uses two columns`
 
 ---
 
