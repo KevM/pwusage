@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BatteryHold } from './db';
-const mocks = vi.hoisted(() => ({ claim: vi.fn(), release: vi.fn(), record: vi.fn(), raw: vi.fn(), refresh: vi.fn(), client: vi.fn(), restore: vi.fn(), reconcile: vi.fn() }));
+const mocks = vi.hoisted(() => ({ claim: vi.fn(), release: vi.fn(), record: vi.fn(), raw: vi.fn(), refresh: vi.fn(), client: vi.fn(), restore: vi.fn(), reconcile: vi.fn(), live: vi.fn() }));
 vi.mock('./battery-hold-activity-repo', () => ({ reconcileBatteryHoldActivities: mocks.reconcile }));
 vi.mock('./battery-hold-repo', () => ({ BatteryHoldRepo: class { claimHold = mocks.claim; releaseHold = mocks.release; recordMonitoring = mocks.record; } }));
 vi.mock('./energy-repo', () => ({ EnergyRepo: class { getRawEnergyData = mocks.raw; } }));
-vi.mock('./today-refresh', () => ({ refreshTodayData: mocks.refresh }));
+vi.mock('./today-refresh', () => ({ refreshTodayData: mocks.refresh, refreshLiveStatus: mocks.live }));
 vi.mock('./battery-hold-service', () => ({ createSiteTeslaClient: mocks.client, restoreBattery: mocks.restore }));
 vi.mock('./nilm/tesla-adapter', () => ({ adaptTeslaData: (x: unknown) => x }));
 import { monitorBatteryHolds } from './battery-hold-monitor-service';
@@ -22,6 +22,7 @@ describe('bounded hold monitoring', () => {
     mocks.raw.mockResolvedValue([]); mocks.refresh.mockResolvedValue({ status: 'persisted' });
     mocks.client.mockResolvedValue({}); mocks.restore.mockResolvedValue({ status: 'ok' });
     mocks.reconcile.mockResolvedValue(2);
+    mocks.live.mockResolvedValue({ status: 'error' });
   });
   afterEach(() => vi.useRealTimers());
   it('attempts ten slow sites within 120 seconds with at most three workers and a failed site', async () => {
@@ -107,5 +108,38 @@ describe('bounded hold monitoring', () => {
     await vi.runAllTimersAsync();
     const result = await pending;
     expect(aborted).toHaveLength(10); expect(result.failed).toBe(10); expect(result.runtimeMs).toBeLessThanOrEqual(120000);
+  });
+  it('reads the live status for Auto and timer holds with a short cache, and records it', async () => {
+    const liveStatus = { percentage_charged: 82, load_power: 1800, timestamp: '2026-10-14T11:59:30Z' };
+    mocks.live.mockResolvedValue({ status: 'refreshed', liveStatus, fetchedAt: NOW.getTime() });
+    await monitorBatteryHolds([hold(1), hold(2, { mode: 'timer' })]);
+    expect(mocks.live).toHaveBeenCalledTimes(2);
+    expect(mocks.live).toHaveBeenCalledWith('1', expect.objectContaining({ cacheTtlMs: 120000 }));
+    expect(mocks.live).toHaveBeenCalledWith('2', expect.objectContaining({ cacheTtlMs: 120000 }));
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+    for (const id of [1, 2]) {
+      expect(mocks.record).toHaveBeenCalledWith(id, expect.objectContaining({ battery_percent: 82, home_load_w: 1800, live_at: '2026-10-14T11:59:30.000Z' }));
+    }
+  });
+  it('a failed, missing or old live status leaves the check history-based and successful', async () => {
+    const liveStatus = { percentage_charged: 82, load_power: 1800, timestamp: '2026-10-14T11:40:00Z' };
+    mocks.live.mockResolvedValueOnce({ status: 'cached', liveStatus, fetchedAt: NOW.getTime() - 3 * 60000 })
+      .mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce({ status: 'throttled' });
+    const result = await monitorBatteryHolds([hold(1), hold(2), hold(3, { mode: 'timer' })]);
+    expect(result).toMatchObject({ failed: 0 });
+    expect(mocks.record).toHaveBeenCalledTimes(3);
+    for (const [, monitoring] of mocks.record.mock.calls) expect(monitoring).toMatchObject({ battery_percent: null, home_load_w: null });
+  });
+  it('a hung live status is cut off without failing the check', async () => {
+    mocks.live.mockImplementation(() => new Promise(() => {}));
+    const pending = monitorBatteryHolds([hold(1), hold(2, { mode: 'timer' })]);
+    await vi.runAllTimersAsync();
+    const result = await pending;
+    expect(result).toMatchObject({ failed: 0 });
+    expect(mocks.record).toHaveBeenCalledTimes(2);
+  });
+  it('does not read the live status for a hold being restored', async () => {
+    await monitorBatteryHolds([hold(1, { safety_expires_at: NOW }), hold(2, { restore_attempted_at: NOW, restore_reason: 'load_ended' })]);
+    expect(mocks.live).not.toHaveBeenCalled();
   });
 });

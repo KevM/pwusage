@@ -19,7 +19,8 @@ vi.mock('./battery-hold-activity-repo', async (importOriginal) => {
     },
   };
 });
-vi.mock('./today-refresh', () => ({ refreshTodayData: async () => new Promise(() => {}) }));
+// The live status read is bounded on its own, so it is hung too.
+vi.mock('./today-refresh', () => ({ refreshTodayData: async () => new Promise(() => {}), refreshLiveStatus: async () => new Promise(() => {}) }));
 vi.mock('./battery-hold-service', () => ({
   createSiteTeslaClient: async () => ({}),
   restoreBattery: async () => new Promise(() => {}),
