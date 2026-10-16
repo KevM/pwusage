@@ -21,7 +21,8 @@ extension BatteryHoldActivityAttributes.ContentState {
             sampledAt: hold.monitoring?.sampledAt,
             baselineLoadW: hold.monitoring?.baselineLoadW,
             homeLoadW: hold.monitoring?.homeLoadW,
-            peakLoadW: hold.monitoring?.peakLoadW
+            peakLoadW: hold.monitoring?.peakLoadW,
+            batteryPercent: hold.monitoring?.batteryPercent
         )
     }
 

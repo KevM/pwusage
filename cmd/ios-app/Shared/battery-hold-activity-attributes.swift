@@ -84,6 +84,9 @@ struct BatteryHoldActivityAttributes: ActivityAttributes {
         var baselineLoadW: Double?
         var homeLoadW: Double?
         var peakLoadW: Double?
+        /// The battery's charge (0...100, unrounded) from the last check or hold
+        /// start. Optional schema-1 key; older payloads omit it.
+        var batteryPercent: Double?
 
         /// The data time of this state, matching the server's APNs `timestamp`.
         /// A state with an older data time never replaces a newer one.
@@ -104,7 +107,7 @@ extension BatteryHoldActivityAttributes.ContentState {
     private enum CodingKeys: String, CodingKey {
         case schema, holdId, status, mode, phase, originalReserve, targetReserve, estimatedLoadW
         case startedAt, safetyExpiresAt, checkedAt, nextCheckAt, endedAt, restoreReason, cancelledObservedReserve
-        case sampledAt, baselineLoadW, homeLoadW, peakLoadW
+        case sampledAt, baselineLoadW, homeLoadW, peakLoadW, batteryPercent
     }
 
     init(from decoder: any Decoder) throws {
@@ -129,5 +132,6 @@ extension BatteryHoldActivityAttributes.ContentState {
         baselineLoadW = try c.decodeIfPresent(Double.self, forKey: .baselineLoadW)
         homeLoadW = try c.decodeIfPresent(Double.self, forKey: .homeLoadW)
         peakLoadW = try c.decodeIfPresent(Double.self, forKey: .peakLoadW)
+        batteryPercent = try c.decodeIfPresent(Double.self, forKey: .batteryPercent)
     }
 }

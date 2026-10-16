@@ -50,6 +50,16 @@ struct BatteryHoldActivityContractTests {
         #expect(older.homeLoadW == nil && older.sampledAt == nil)
     }
 
+    @Test("Decodes the live battery charge, and its absence from older payloads")
+    func decodesBatteryPercent() throws {
+        let state = try decode(Self.deliveryDocExample.replacingOccurrences(of: #""cancelledObservedReserve": null }"#, with:
+            #""cancelledObservedReserve": null, "batteryPercent": 82.4 }"#))
+        #expect(state.batteryPercent == 82.4)
+        #expect(try decode(Self.deliveryDocExample).batteryPercent == nil)
+        let data = try JSONEncoder().encode(state)
+        #expect(try JSONDecoder().decode(BatteryHoldActivityAttributes.ContentState.self, from: data) == state)
+    }
+
     @Test("Decodes terminal payloads: restored and cancelled")
     func decodesTerminal() throws {
         let restored = try decode("""
@@ -122,11 +132,12 @@ struct BatteryHoldActivityContractTests {
         #expect(BatteryHoldActivityAttributes.ContentState(hold: hold) == (try decode(Self.deliveryDocExample)))
         let monitoring = try MobileContractDecoder.make().decode(BatteryHoldMonitoring.self, from: Data("""
         {"phase":"load_running","checked_at":"2026-10-15T10:15:02.000Z","next_check_at":"2026-10-15T10:30:00.000Z",
-         "sampled_at":"2026-10-15T10:10:00.000Z","estimated_load_w":7200,"baseline_load_w":1200,"home_load_w":8400,"peak_load_w":9100}
+         "sampled_at":"2026-10-15T10:10:00.000Z","estimated_load_w":7200,"baseline_load_w":1200,"home_load_w":8400,"peak_load_w":9100,"battery_percent":82.4}
         """.utf8))
         hold.monitoring = monitoring
         let state = BatteryHoldActivityAttributes.ContentState(hold: hold)
         #expect(state.sampledAt == monitoring.sampledAt)
         #expect(state.baselineLoadW == 1200 && state.homeLoadW == 8400 && state.peakLoadW == 9100)
+        #expect(state.batteryPercent == 82.4)
     }
 }

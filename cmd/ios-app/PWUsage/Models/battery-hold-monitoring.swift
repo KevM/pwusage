@@ -16,6 +16,7 @@ struct BatteryHoldMonitoring: Decodable, Equatable {
     var baselineLoadW: Double? = nil
     var homeLoadW: Double? = nil
     var peakLoadW: Double? = nil
+    var batteryPercent: Double? = nil
 
     private enum CodingKeys: String, CodingKey {
         case phase
@@ -26,5 +27,6 @@ struct BatteryHoldMonitoring: Decodable, Equatable {
         case baselineLoadW = "baseline_load_w"
         case homeLoadW = "home_load_w"
         case peakLoadW = "peak_load_w"
+        case batteryPercent = "battery_percent"
     }
 }
