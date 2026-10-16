@@ -42,7 +42,7 @@
 **Interfaces:**
 - Produces: `enum AppTab: String, CaseIterable, Identifiable, Hashable { case home, bill, smartShift, settings }` with `var id: String { rawValue }`, `var title: String`, `var systemImage: String`. Foundation + no SwiftUI import (portable).
 
-- [ ] **Step 1: Branch and commit the design docs**
+- [x] **Step 1: Branch and commit the design docs**
 
 ```bash
 git switch -c feat/ios-sidebar-navigation
@@ -50,7 +50,7 @@ git add docs/superpowers/specs/2026-10-16-ios-sidebar-navigation-design.md docs/
 git commit -m "docs: sidebar navigation, copy and multiplatform designs"
 ```
 
-- [ ] **Step 2: Write the failing test** (`@Suite("App Tab Tests")`)
+- [x] **Step 2: Write the failing test** (`@Suite("App Tab Tests")`)
 
 ```swift
 @Test("Tabs keep their order, titles and symbols")
@@ -62,10 +62,10 @@ func tabsMatchDesign() {
 }
 ```
 
-- [ ] **Step 3: Run it to verify it fails** — `./run-tests.sh app-tab-tests` → FAIL, `AppTab` not found.
-- [ ] **Step 4: Implement `AppTab`** in `app-tab.swift`.
-- [ ] **Step 5: Run it to verify it passes** — same command → PASS.
-- [ ] **Step 6: Commit** — `git add cmd/ios-app/PWUsage/Navigation/app-tab.swift cmd/ios-app/PWUsageTests/app-tab-tests.swift && git commit -m "feat(ios): add AppTab for sidebar navigation"`
+- [x] **Step 3: Run it to verify it fails** — `./run-tests.sh app-tab-tests` → FAIL, `AppTab` not found.
+- [x] **Step 4: Implement `AppTab`** in `app-tab.swift`.
+- [x] **Step 5: Run it to verify it passes** — same command → PASS.
+- [x] **Step 6: Commit** — `git add cmd/ios-app/PWUsage/Navigation/app-tab.swift cmd/ios-app/PWUsageTests/app-tab-tests.swift && git commit -m "feat(ios): add AppTab for sidebar navigation"`
 
 ---
 
