@@ -30,7 +30,7 @@ final class DashboardPreviewAPI: MobileDashboardDataAPI {
     private let liveJSON: String
     private let billJSON: String
 
-    init(mode: DashboardPreviewMode, liveJSON: String? = nil, billJSON: String? = nil) {
+    init(mode: DashboardPreviewMode, site: MobileSite = .preview, liveJSON: String? = nil, billJSON: String? = nil) {
         self.mode = mode
         // The stale mode is 2h01m old rather than exactly 2h: a charge reading is suppressed only
         // once it is *older* than two hours, and fixture construction and decoding happen at
@@ -99,7 +99,7 @@ final class DashboardPreviewAPI: MobileDashboardDataAPI {
         // the wrong reason. Every mode reports a charge of 72. The stale mode deliberately reports
         // one anyway, against a source two hours and a minute old, so the `--` it shows is caused
         // by the client-side freshness rule rather than by the fixture withholding the value.
-        let builtLiveJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago","localDate":"2026-09-23"},"live":{"solarPower":4180,"loadPower":1260,"batteryPower":-2920,"gridPower":0},"stateOfCharge":72,"activeTariff":\#(tariffJSON),"activeLoadTiming":\#(activeLoadTiming),"today":{"homeKwh":18.4,"solarKwh":14.8,"gridNetKwh":3.6,"batteryNetKwh":-2.1},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"\#(sourceTime)","energyDataThrough":\#(hasData ? #""\#(sourceTime)""# : "null"),"stateOfChargeAt":"\#(sourceTime)"}}"#
+        let builtLiveJSON = #"{"version":1,"site":{"id":"\#(site.id)","name":"\#(site.name)","timezone":"America/Chicago","localDate":"2026-09-23"},"live":{"solarPower":4180,"loadPower":1260,"batteryPower":-2920,"gridPower":0},"stateOfCharge":72,"activeTariff":\#(tariffJSON),"activeLoadTiming":\#(activeLoadTiming),"today":{"homeKwh":18.4,"solarKwh":14.8,"gridNetKwh":3.6,"batteryNetKwh":-2.1},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"\#(sourceTime)","energyDataThrough":\#(hasData ? #""\#(sourceTime)""# : "null"),"stateOfChargeAt":"\#(sourceTime)"}}"#
         let observedPeriods: String
         if !hasData {
             observedPeriods = "[]"
@@ -109,7 +109,7 @@ final class DashboardPreviewAPI: MobileDashboardDataAPI {
             observedPeriods = #"[{"name":"Peak","marginalCost":\#(peakBalance > 0 ? "0.12" : "0.48"),"basis":\#(peakBalance > 0 ? #""sell""# : #""buy""#),"cycleNetExportKwh":\#(peakBalance),"isActive":true,"nextStartPhrase":"in 3 hours","buyRate":0.48,"sellRate":0.12},{"name":"Off peak","marginalCost":0.12,"basis":"sell","cycleNetExportKwh":\#(offPeakBalance),"isActive":false,"nextStartPhrase":"tomorrow at 12:00 AM","buyRate":0.22,"sellRate":0.12}]"#
         }
         let loadTimingJSON = #"{"hasTariff":true,"hasCycleData":\#(hasData ? "true" : "false"),"activeIsCheapest":false,"periods":\#(observedPeriods),"pricingPeriods":[{"name":"Off peak","marginalCost":\#(hasData ? "0.12" : "null"),"basis":\#(hasData ? #""sell""# : #""unobserved""#),"cycleNetExportKwh":\#(hasData ? String(offPeakBalance) : "0"),"isActive":false,"nextStartPhrase":"tomorrow at 12:00 AM","buyRate":0.22,"sellRate":0.12},{"name":"Peak","marginalCost":\#(hasData ? (peakBalance > 0 ? "0.12" : "0.48") : "null"),"basis":\#(hasData ? (peakBalance > 0 ? #""sell""# : #""buy""#) : #""unobserved""#),"cycleNetExportKwh":\#(hasData ? String(peakBalance) : "0"),"isActive":true,"nextStartPhrase":"in 3 hours","buyRate":0.48,"sellRate":0.12},{"name":"Shoulder","marginalCost":null,"basis":"unobserved","cycleNetExportKwh":0,"isActive":false,"nextStartPhrase":"tomorrow at 10:00 PM","buyRate":0.30,"sellRate":0.08}],"tariffTimeline":[\#(tariffTimelineJSON)],"nextCheaper":\#(hasData ? #"{"name":"Off peak","marginalCost":0.12,"phrase":"in 3 hours"}"# : "null"),"nextCheaperPhrase":\#(hasData ? #""Wait until Off peak in 3 hours""# : "null"),"nextStartPhraseByKey":{"Peak":"in 3 hours","Off peak":"tomorrow at 12:00 AM","Shoulder":"tomorrow at 10:00 PM"}}"#
-        let builtBillJSON = #"{"version":1,"site":{"id":"preview-home","name":"Cedar House","timezone":"America/Chicago"},"currentBill":{"estimatedCost":146.82,"currency":"USD","cycleStart":"\#(cycleStartText)","cycleEnd":"\#(cycleEndText)","periods":[{"tariffName":"Residential · Time of use","periodName":"Off peak","netGridKwh":214.6,"cost":26.83},{"tariffName":"Residential · Time of use","periodName":"Peak","netGridKwh":142.8,"cost":87.75},{"tariffName":"Residential · Time of use","periodName":"Solar credit","netGridKwh":-94.2,"cost":-8.72}]},"loadTiming":\#(hasTariff ? loadTimingJSON : "null"),"sources":{"calculatedAt":"\#(calculatedTime)","energyDataThrough":"\#(sourceTime)"}}"#
+        let builtBillJSON = #"{"version":1,"site":{"id":"\#(site.id)","name":"\#(site.name)","timezone":"America/Chicago"},"currentBill":{"estimatedCost":146.82,"currency":"USD","cycleStart":"\#(cycleStartText)","cycleEnd":"\#(cycleEndText)","periods":[{"tariffName":"Residential · Time of use","periodName":"Off peak","netGridKwh":214.6,"cost":26.83},{"tariffName":"Residential · Time of use","periodName":"Peak","netGridKwh":142.8,"cost":87.75},{"tariffName":"Residential · Time of use","periodName":"Solar credit","netGridKwh":-94.2,"cost":-8.72}]},"loadTiming":\#(hasTariff ? loadTimingJSON : "null"),"sources":{"calculatedAt":"\#(calculatedTime)","energyDataThrough":"\#(sourceTime)"}}"#
         self.liveJSON = liveJSON ?? builtLiveJSON
         self.billJSON = billJSON ?? builtBillJSON
     }
@@ -122,6 +122,65 @@ final class DashboardPreviewAPI: MobileDashboardDataAPI {
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
         if mode == .error { throw PWUsageAPIError.recoverableServerError(statusCode: 503) }
         return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(billJSON.utf8))
+    }
+}
+
+extension MobileSite {
+    static let preview = MobileSite(id: "preview-home", name: "Cedar House", utility: "Demo utility")
+}
+
+/// An account with several sites, for previewing the site picker and the
+/// sidebar's site menu. Each site answers with the normal fixture under its
+/// own id and name, so the coordinator accepts it after a switch.
+@MainActor
+final class MultiSitePreviewAPI: PWUsageApplicationAPI {
+    static let sites = [
+        MobileSite.preview,
+        MobileSite(id: "preview-cabin", name: "Lakeside Cabin", utility: "North Shore Electric"),
+        MobileSite(id: "preview-office", name: "Main Street Office", utility: "City Power & Light"),
+        MobileSite(id: "preview-ranch", name: "Hill Country Ranch", utility: "Pedernales Co-op"),
+        MobileSite(id: "preview-rental", name: "Elm Street Rental", utility: "Demo utility"),
+    ]
+
+    let sites: [MobileSite]
+
+    init(sites: [MobileSite] = MultiSitePreviewAPI.sites) {
+        self.sites = sites
+    }
+
+    private func fixture(for siteID: String) -> DashboardPreviewAPI {
+        DashboardPreviewAPI(mode: .normal, site: sites.first(where: { $0.id == siteID }) ?? .preview)
+    }
+
+    func fetchSites() async throws -> [MobileSite] { sites }
+    func fetchLive(siteID: String) async throws -> MobileLiveResponse { try await fixture(for: siteID).fetchLive(siteID: siteID) }
+    func fetchBill(siteID: String) async throws -> MobileBillResponse { try await fixture(for: siteID).fetchBill(siteID: siteID) }
+    func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
+        throw URLError(.notConnectedToInternet)
+    }
+    func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
+    func logout() async throws {}
+    func clearSiteAuthCookie() async {}
+}
+
+extension PWUsageAppModel {
+    /// A signed-in model for `api`'s sites, already showing `tab`. Built from a
+    /// seeded cache, so it never bootstraps or reaches the network.
+    static func preview(api: MultiSitePreviewAPI = MultiSitePreviewAPI(), tab: AppTab = .home) -> PWUsageAppModel {
+        let suiteName = "pwusage.preview.multi-site.\(tab.rawValue)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(tab.rawValue, forKey: selectedTabDefaultsKey)
+        let cache = DashboardCache(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(suiteName)-\(UUID().uuidString).json"))
+        cache.storeSites(api.sites)
+        return PWUsageAppModel(
+            configuration: try! AppConfiguration(apiOriginString: AppConfiguration.debugFallbackAPIOrigin.absoluteString, isRelease: false),
+            api: api,
+            userDefaults: defaults,
+            coordinatorFactory: { siteID, _ in DashboardCoordinator(siteID: siteID, api: api, timerInterval: nil) },
+            cache: cache
+        )
     }
 }
 

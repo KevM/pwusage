@@ -18,6 +18,28 @@ struct PreviewFixtureTests {
         await #expect(throws: (any Error).self) { try await api.fetchBill(siteID: "preview-home") }
     }
 
+    /// The multi-site previews in `app-tab-view.swift` start from this model.
+    /// It must come up signed in on the first site, load that site, and load the
+    /// next one after a switch, or the canvas has nothing to show.
+    @Test("The multi-site preview model loads each site it switches to")
+    func multiSitePreviewModelLoadsEachSite() async throws {
+        let model = PWUsageAppModel.preview(tab: .settings)
+        #expect(model.screenState == .signedIn)
+        #expect(model.selectedTab == .settings)
+        #expect(model.sites.count == MultiSitePreviewAPI.sites.count)
+        let coordinator = try #require(model.coordinator)
+        coordinator.scenePhaseChanged(isActive: true)
+        coordinator.authenticationRestored()
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(coordinator.live.response?.site.id == "preview-home")
+
+        let cabin = MultiSitePreviewAPI.sites[1]
+        model.selectSite(cabin)
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(coordinator.live.response?.site.id == cabin.id)
+        #expect(coordinator.live.response?.site.name == cabin.name)
+    }
+
     @Test("Preview tariff data contrasts on-peak against off-peak")
     func previewTariffHasRateContrast() async throws {
         let response = try await DashboardPreviewAPI(mode: .normal).fetchBill(siteID: "preview-home")

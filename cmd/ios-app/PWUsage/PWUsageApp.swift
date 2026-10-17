@@ -617,13 +617,6 @@ private struct PWUsageRootView: View {
                     } else {
                         AppTabView(model: model, coordinator: coordinator, site: site)
                         .environment(\.reconnectTesla, TeslaReconnectAction(owner: model) { await model.reconnectTesla() })
-                        .sheet(isPresented: $model.isSitePickerPresented) {
-                            SitePickerView(sites: model.sites, selectedSiteID: site.id) { selected in
-                                model.selectSite(selected)
-                                model.isSitePickerPresented = false
-                            }
-                            .presentationDetents(model.sites.count > 4 ? [.medium, .large] : [.medium])
-                        }
                     }
                 } else {
                     errorState
