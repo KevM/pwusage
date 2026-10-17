@@ -136,7 +136,7 @@ struct LoadTimingViewTests {
         #expect(card.total == "Estimated $1.92 to start now")
         #expect(card.finish == details.finish)
         #expect(details.energy == "About 4.0 kWh from the wall")
-        #expect(LoadTimingPresentation.runDetailsAccessibilityLabel == "Load run details")
+        #expect(LoadTimingPresentation.runDetailsAccessibilityLabel == "Job Details")
         #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: estimate.hasUnobservedBalance) != nil)
     }
 
@@ -148,16 +148,16 @@ struct LoadTimingViewTests {
 
     @Test("Recommendation copy distinguishes ready, no fit, stale, incomplete, no energy, and empty profiles")
     func recommendationMessagesExplainEachState() {
-        #expect(LoadTimingPresentation.recommendationMessage(for: .ready).title == "Good fit now")
-        #expect(LoadTimingPresentation.recommendationMessage(for: .ready).detail == "Your observed tariff surplus covers this run’s estimated energy.")
-        #expect(LoadTimingPresentation.recommendationMessage(for: .noFit).title == "Your surplus won’t cover a full load.")
+        #expect(LoadTimingPresentation.recommendationMessage(for: .ready).title == "Good time to start")
+        #expect(LoadTimingPresentation.recommendationMessage(for: .ready).detail == "Your export cushion covers this job.")
+        #expect(LoadTimingPresentation.recommendationMessage(for: .noFit).title == "No saved job fits your export cushion.")
         #expect(LoadTimingPresentation.recommendationMessage(for: .noFit, refreshUnavailable: true).detail.contains("refresh failed"))
         #expect(LoadTimingPresentation.recommendationMessage(for: .stale).detail.contains("older than one hour"))
         #expect(LoadTimingPresentation.recommendationMessage(for: .stale, refreshUnavailable: true).detail.contains("refresh failed"))
-        #expect(LoadTimingPresentation.recommendationMessage(for: .incompleteData, hasTariff: false).detail.contains("tariff"))
+        #expect(LoadTimingPresentation.recommendationMessage(for: .incompleteData, hasTariff: false).detail.contains("rate plan"))
         #expect(LoadTimingPresentation.recommendationMessage(for: .incompleteData, hasExpiredCandidate: true).detail.contains("billing cycle"))
         #expect(LoadTimingPresentation.recommendationMessage(for: .noEnergyNeeded).detail.contains("already at its target"))
-        #expect(LoadTimingPresentation.recommendationMessage(for: .noCandidates).detail.contains("Add a load profile"))
+        #expect(LoadTimingPresentation.recommendationMessage(for: .noCandidates).detail.contains("Add a job"))
     }
 
     @Test("Recommendation actions and neutral exploration titles name appliances and cars")
@@ -176,9 +176,9 @@ struct LoadTimingViewTests {
         let estimate = LoadTimingEstimator.StartNowEstimate(total: 1.25, finishTime: .now, batteryKwh: 0, wallKwh: 5, durationHours: 1, segments: [segment], hasUnobservedBalance: false)
         let candidate = LoadTimingRecommendation.Candidate(profile: LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 5, durationHours: 1, carSettings: nil), result: .estimate(estimate), remainingSurplusKwh: 3.5)
         let impact = LoadTimingPresentation.energyImpact(candidate)
-        #expect(impact.surplusConsumed == "Uses 1.5 kWh of observed surplus")
-        #expect(impact.energyBought == "Buys 3.5 kWh at tariff rates")
-        #expect(impact.remainingSurplus == "3.5 kWh surplus remains across the tariff periods used")
+        #expect(impact.surplusConsumed == "1.5 kWh from your export cushion")
+        #expect(impact.energyBought == "3.5 kWh at the grid rate")
+        #expect(impact.remainingSurplus == "3.5 kWh of export cushion remains in these rate periods")
         let unknown = LoadTimingPresentation.energyImpact(LoadTimingRecommendation.Candidate(profile: candidate.profile, result: candidate.result, remainingSurplusKwh: nil))
         #expect(unknown.remainingSurplus == nil)
     }
