@@ -257,11 +257,15 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
                       && slot.homeKw.map(\.isFinite) ?? true
                       && slot.batteryNetChargeKw.map(\.isFinite) ?? true
               }),
+              // `coverage` is the share of usable days that voted for the slot. The
+              // 90% interval rule is applied server-side before a day/slot may vote,
+              // so requiring 0.9 here rejected real sites whose late-evening slots
+              // had 10 of 13 votes, and with them the whole profile.
               availability != .available || (
                   usableDayCount >= 5
                       && slots.allSatisfy { slot in
                           guard slot.homeKw != nil || slot.batteryNetChargeKw != nil else { return true }
-                          return slot.sampleCount >= 5 && slot.coverage >= 0.9
+                          return slot.sampleCount >= 5
                       }
               ) else { throw ContractError.invalidSource }
         return self

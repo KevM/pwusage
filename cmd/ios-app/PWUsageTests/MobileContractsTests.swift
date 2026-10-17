@@ -244,13 +244,52 @@ struct MobileContractsTests {
         }
     }
 
+    /// `coverage` is the share of usable days that voted for a slot, not the 90%
+    /// interval rule (which the server applies before a day/slot may vote). A real
+    /// site with 13 usable days and 10 late-evening votes (0.77) was rejected
+    /// wholesale as malformed, so the forecast never appeared.
+    @Test("A slot with five or more day votes validates whatever share of days voted")
+    func planningContextAcceptsSlotVotedByFewerThanAllUsableDays() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let response = Self.makePlanningContext(
+            siteID: "site-a",
+            asOf: now.addingTimeInterval(-60),
+            usableDayCount: 13,
+            slot: { index in
+                index >= 45
+                    ? .init(localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: 10, coverage: 10.0 / 13.0)
+                    : .init(localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: 13, coverage: 1)
+            }
+        )
+        #expect(throws: Never.self) { try response.validating(siteID: "site-a", now: now) }
+    }
+
+    @Test("A slot carrying a value from fewer than five day votes is still rejected")
+    func planningContextRejectsValuedSlotWithTooFewVotes() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let response = Self.makePlanningContext(
+            siteID: "site-a",
+            asOf: now.addingTimeInterval(-60),
+            slot: { index in
+                .init(localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: index == 0 ? 4 : 14, coverage: 1)
+            }
+        )
+        #expect(throws: MobileLoadPlanningContextResponse.ContractError.invalidSource) {
+            try response.validating(siteID: "site-a", now: now)
+        }
+    }
+
     /// Satisfies every clause of `validating`, so a test can vary `asOf` alone.
     /// `DashboardCoordinatorTests` needs the same fixture but keeps its own copy.
     private static func makePlanningContext(
         siteID: String,
         asOf: Date,
         power: String = "kW",
-        timeZone: String = "UTC"
+        timeZone: String = "UTC",
+        usableDayCount: Int = 14,
+        slot: (Int) -> MobileLoadPlanningContextResponse.Slot = { index in
+            .init(localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: 14, coverage: 1)
+        }
     ) -> MobileLoadPlanningContextResponse {
         MobileLoadPlanningContextResponse(
             version: 1,
@@ -259,14 +298,10 @@ struct MobileContractsTests {
             asOf: asOf,
             availability: .available,
             unavailableReason: nil,
-            usableDayCount: 14,
+            usableDayCount: usableDayCount,
             historyStart: asOf.addingTimeInterval(-14 * 24 * 60 * 60),
             historyEnd: asOf.addingTimeInterval(-60),
-            slots: (0..<48).map { index in
-                MobileLoadPlanningContextResponse.Slot(
-                    localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: 14, coverage: 1
-                )
-            }
+            slots: (0..<48).map(slot)
         )
     }
 }
