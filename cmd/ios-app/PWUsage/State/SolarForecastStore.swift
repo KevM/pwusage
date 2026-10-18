@@ -235,7 +235,7 @@ actor SolarForecastStore {
         if let deferredUntil = normalizedBudget(state.budgets[credential.credentialID], at: clock.now()).deferredUntil,
            deferredUntil > clock.now() { throw StoreError.deferred }
         guard reserveRequests(1, credentialID: credential.credentialID, manual: manual) else {
-            let outcome = await persistFailureState(scope: scope, credential: credential, description: "Forecast request budget is exhausted")
+            let outcome = await persistRefusal(scope: scope, credential: credential, description: "Forecast request budget is exhausted")
             throw Self.discoveryError(for: outcome, ordinaryError: .budgetExhausted)
         }
         do { try await persist() } catch {
@@ -272,12 +272,17 @@ actor SolarForecastStore {
                 guard await removeRejectedCredential(credential, scope: scope) else { throw StoreError.cleanupFailed }
                 throw StoreError.discoveryFailed(.unauthorized)
             }
-            let outcome = await persistFailureState(scope: scope, credential: credential, description: Self.safeDescription(error))
-            guard outcome == .persisted else { throw Self.discoveryError(for: outcome, ordinaryError: .persistenceFailed) }
+            if Self.disablesCachedForecast(error) {
+                let outcome = await persistFailureState(scope: scope, credential: credential, description: Self.safeDescription(error))
+                guard outcome == .persisted else { throw Self.discoveryError(for: outcome, ordinaryError: .persistenceFailed) }
+            } else {
+                let outcome = await persistRefusal(scope: scope, credential: credential, description: Self.safeDescription(error))
+                guard outcome == .persisted else { throw Self.discoveryError(for: outcome, ordinaryError: .persistenceFailed) }
+            }
             throw StoreError.discoveryFailed(Self.failureKind(error))
         } catch {
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID else { throw StoreError.cancelled }
-            let outcome = await persistFailureState(scope: scope, credential: credential, description: "Forecast request failed")
+            let outcome = await persistRefusal(scope: scope, credential: credential, description: "Forecast request failed")
             guard outcome == .persisted else { throw Self.discoveryError(for: outcome, ordinaryError: .persistenceFailed) }
             throw StoreError.discoveryFailed(.requestFailed)
         }
@@ -440,7 +445,7 @@ actor SolarForecastStore {
               state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
         let requestCount = credential.resourceIDs.count
         guard reserveRequests(requestCount, credentialID: credential.credentialID, manual: manual) else {
-            let outcome = await persistFailureState(scope: scope, credential: credential, description: "Forecast request budget is exhausted")
+            let outcome = await persistRefusal(scope: scope, credential: credential, description: "Forecast request budget is exhausted")
             return Self.refreshResult(for: outcome, ordinaryResult: .budgetExhausted)
         }
         do { try await persist() } catch {
@@ -489,13 +494,18 @@ actor SolarForecastStore {
         } catch let error as SolcastClientError {
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID else { return .cancelled }
             recordRateLimit(error, credentialID: credential.credentialID)
+            guard Self.disablesCachedForecast(error) else {
+                let outcome = await persistRefusal(scope: scope, credential: credential, description: Self.safeDescription(error))
+                return Self.refreshResult(for: outcome, ordinaryResult: Self.refreshFailure(error))
+            }
             let outcome = await persistFailureState(scope: scope, credential: credential, description: Self.safeDescription(error))
             return outcome == .persisted ? Self.refreshFailure(error) : Self.refreshResult(for: outcome, ordinaryResult: Self.refreshFailure(error))
         } catch is CancellationError {
             return .cancelled
         } catch {
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID else { return .cancelled }
-            let outcome = await persistFailureState(scope: scope, credential: credential, description: "Forecast request failed")
+            // A new response that can't be combined says nothing against the forecast already saved.
+            let outcome = await persistRefusal(scope: scope, credential: credential, description: "Forecast request failed")
             let failure: SolarForecastRefreshFailure = (error as? SolarForecastError) == nil ? .requestFailed : .invalidForecast
             return Self.refreshResult(for: outcome, ordinaryResult: .failed(failure))
         }
@@ -520,6 +530,33 @@ actor SolarForecastStore {
         return .refreshed
     }
 
+    /// A request that was refused or failed (budget, rate limit, network, server,
+    /// an unreadable response) says nothing against the forecast already saved,
+    /// so it stays usable until it ages out. Only the description and the budget
+    /// are recorded. If that record can't be saved, a relaunch could spend
+    /// requests the budget or a rate limit has refused, so this falls back to
+    /// `persistFailureState` exactly as before.
+    private func persistRefusal(scope: String, credential: SolarForecastCredential,
+                                description: String) async -> FailurePersistenceOutcome {
+        lastErrorDescription = description
+        do {
+            try await persist()
+            return .persisted
+        } catch {
+            state.failedScopes.insert(scope)
+            return await quarantineAfterFailedSave(credential)
+        }
+    }
+
+    /// Problems with the key or the selected arrays: the saved forecast can no
+    /// longer be trusted to belong to this setup, so it is disabled.
+    private static func disablesCachedForecast(_ error: SolcastClientError) -> Bool {
+        switch failureKind(error) {
+        case .unauthorized, .unknownResource: true
+        default: error == .invalidResourceID
+        }
+    }
+
     private func persistFailureState(scope: String, credential: SolarForecastCredential, description: String) async -> FailurePersistenceOutcome {
         state.failedScopes.insert(scope)
         lastErrorDescription = description
@@ -527,13 +564,19 @@ actor SolarForecastStore {
             try await persist()
             return .persisted
         } catch {
-            guard await quarantineCredential(accountScopeID: credential.accountScopeID, siteID: credential.siteID) else {
-                lastErrorDescription = "Forecast data could not be safely disabled"
-                return .cleanupFailed
-            }
-            lastErrorDescription = "Forecast data was disabled because it could not be saved"
-            return .quarantined
+            return await quarantineAfterFailedSave(credential)
         }
+    }
+
+    /// A failure record that can't be saved can't be enforced after a relaunch,
+    /// so the credential is quarantined rather than trusted.
+    private func quarantineAfterFailedSave(_ credential: SolarForecastCredential) async -> FailurePersistenceOutcome {
+        guard await quarantineCredential(accountScopeID: credential.accountScopeID, siteID: credential.siteID) else {
+            lastErrorDescription = "Forecast data could not be safely disabled"
+            return .cleanupFailed
+        }
+        lastErrorDescription = "Forecast data was disabled because it could not be saved"
+        return .quarantined
     }
 
     private func quarantineCredential(accountScopeID: String, siteID: String) async -> Bool {
