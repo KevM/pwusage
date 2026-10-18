@@ -203,17 +203,33 @@ enum SmartShiftPresentation {
     /// For each period the recommended run draws on: the part its bank covers and the part bought.
     /// The lane ends `draw` lower than it would without the run, which gives the bank it drew from.
     static func runRows(comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming) -> [RunRow] {
-        let start = comparison.recommendedStart, end = comparison.recommendedEnd
+        let kwh: (Double) -> String = { $0.formatted(.number.precision(.fractionLength(1))) }
+        return draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, profile: profile, timing: timing,
+                     laneEnd: { $0.recommended.last?.kwh }, lanes: comparison.lanes).map { draw in
+            RunRow(name: periodTitle(draw.key, timing: timing), fromBank: "\(kwh(draw.fromBank)) kWh from your bank",
+                   bought: "\(kwh(draw.kwh - draw.fromBank)) kWh bought")
+        }
+    }
+
+    struct Draw {
+        let key: String
+        let kwh: Double
+        let fromBank: Double
+    }
+
+    /// What a run takes from each period, in the order it reaches them, and how much
+    /// of that its bank covers. A lane ends `kwh` lower than it would without the run,
+    /// so the bank it drew from is that lane's end plus the draw.
+    static func draws(from start: Date, to end: Date, profile: LoadProfile, timing: LoadTiming,
+                      laneEnd: (LoadTimingForecastEstimator.BalanceLane) -> Double?,
+                      lanes: [LoadTimingForecastEstimator.BalanceLane]) -> [Draw] {
         let hours = end.timeIntervalSince(start) / 3600
         guard hours > 0, let energy = energyKwh(of: profile), energy > 0 else { return [] }
         let powerKw = energy / hours
-        let kwh: (Double) -> String = { $0.formatted(.number.precision(.fractionLength(1))) }
         return hoursByPeriod(from: start, to: end, timing: timing).map { key, periodHours in
             let drawn = powerKw * periodHours
-            let laneEnd = comparison.lanes.first { $0.periodKey == key }?.recommended.last?.kwh
-            let fromBank = laneEnd.map { min(drawn, max($0 + drawn, 0)) } ?? 0
-            return RunRow(name: periodTitle(key, timing: timing), fromBank: "\(kwh(fromBank)) kWh from your bank",
-                          bought: "\(kwh(drawn - fromBank)) kWh bought")
+            let end = lanes.first { $0.periodKey == key }.flatMap(laneEnd)
+            return Draw(key: key, kwh: drawn, fromBank: end.map { min(drawn, max($0 + drawn, 0)) } ?? 0)
         }
     }
 
@@ -359,11 +375,6 @@ enum SmartShiftPresentation {
             timing.tariffTimeline.first { $0.start <= date && date < $0.end }?.periodKey
         }
 
-        /// Period keys a run touches, in the order it reaches them.
-        func periods(from start: Date, to end: Date) -> [String] {
-            hoursByPeriod(from: start, to: end, timing: timing).map(\.key)
-        }
-
         func startKwh(_ key: String) -> Double? {
             comparison.lanes.first { $0.periodKey == key }?.startKwh
         }
@@ -432,39 +443,61 @@ enum SmartShiftPresentation {
                 return "It's \(period), and your \(period) bank covers \(share) of this run."
             }
             let duration = comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart)
-            let nowPeriods = periods(from: now, to: now.addingTimeInterval(duration))
-            let laterPeriods = periods(from: comparison.recommendedStart, to: comparison.recommendedEnd)
-            guard let first = nowPeriods.first, !laterPeriods.isEmpty else { return "" }
+            let nowEnd = now.addingTimeInterval(duration)
+            let nowDraws = draws(from: now, to: nowEnd, profile: profile, timing: timing,
+                                 laneEnd: { $0.startNow.last?.kwh }, lanes: comparison.lanes)
+            let laterDraws = draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, profile: profile,
+                                   timing: timing, laneEnd: { $0.recommended.last?.kwh }, lanes: comparison.lanes)
             let time = when(comparison.recommendedStart)
-            let laterBanks = banks(laterPeriods)
-            if nowPeriods == laterPeriods {
-                // Both runs cross the same periods, so the saving comes from how the
-                // energy splits between them: name the period starting now leans on more.
-                let nowEnd = now.addingTimeInterval(duration)
-                let laterHours = Dictionary(uniqueKeysWithValues: hoursByPeriod(
-                    from: comparison.recommendedStart, to: comparison.recommendedEnd, timing: timing).map { ($0.key, $0.hours) })
-                if let heavier = hoursByPeriod(from: now, to: nowEnd, timing: timing)
-                    .map({ (key: $0.key, extra: $0.hours - (laterHours[$0.key] ?? 0)) })
-                    .filter({ $0.extra > 0 })
-                    .max(by: { $0.extra < $1.extra })?.key {
-                    return "Starting now puts more of it in \(name(heavier)), where you \(bankPhrase(heavier)). "
-                        + "Run at \(time) so less of it lands there."
-                }
+            guard let nowMain = nowDraws.max(by: { $0.kwh < $1.kwh }),
+                  let laterMain = laterDraws.max(by: { $0.kwh < $1.kwh }) else {
+                return "Starting at \(time) costs less than starting now."
             }
-            if first == laterPeriods.first, let other = nowPeriods.first(where: { !laterPeriods.contains($0) }) {
-                return "Starting now runs into \(name(other)), where you \(bankPhrase(other)). "
-                    + "Run at \(time) to stay in your \(laterBanks)."
+            if nowMain.key != laterMain.key {
+                return nowClause(nowMain, crossesPeriods: nowDraws.count > 1) + " "
+                    + laterClause(laterMain, total: laterDraws.reduce(0) { $0 + $1.kwh }, time: time)
             }
-            return "Starting now runs during \(name(first)), where you \(bankPhrase(first)). "
-                + "Run at \(time) to use your \(laterBanks)."
+            // Both runs lean on the same period, so the saving comes from how the
+            // energy splits: name the period starting now puts more into.
+            let laterKwh = Dictionary(uniqueKeysWithValues: laterDraws.map { ($0.key, $0.kwh) })
+            if let heavier = nowDraws
+                .map({ (key: $0.key, extra: $0.kwh - (laterKwh[$0.key] ?? 0)) })
+                .filter({ $0.extra > 0.000_001 })
+                .max(by: { $0.extra < $1.extra })?.key {
+                return "Starting now puts more of it in \(name(heavier)), where you \(bankPhrase(heavier)). "
+                    + "Run at \(time) so less of it lands there."
+            }
+            return "Starting at \(time) costs less than starting now."
         }
 
-        /// "Off-Peak bank", "Peak and Off-Peak banks", "Mid, Peak and Off-Peak banks".
-        func banks(_ keys: [String]) -> String {
-            let names = keys.map(name)
-            guard let last = names.last else { return "bank" }
-            let list = names.count == 1 ? last : "\(names.dropLast().joined(separator: ", ")) and \(last)"
-            return "\(list) \(names.count == 1 ? "bank" : "banks")"
+        func rate(_ key: String, sell: Bool) -> String {
+            let segment = timing.tariffTimeline.first { $0.periodKey == key }
+            return DashboardPresentation.loadRate(sell ? segment?.sellRate : segment?.buyRate, code: currencyCode)
+        }
+
+        /// Why starting now costs what it does: bought at the period's rate, or its bank's credit given up.
+        func nowClause(_ draw: Draw, crossesPeriods: Bool) -> String {
+            let period = name(draw.key)
+            if draw.fromBank >= draw.kwh / 2 {
+                return "Starting now uses your \(period) bank, giving up \(rate(draw.key, sell: true)) in credit."
+            }
+            let bought = draw.fromBank > 0.05 ? "most of it is bought" : "it's bought"
+            return "Starting now runs \(crossesPeriods ? "into" : "during") \(period), where you \(bankPhrase(draw.key)), "
+                + "so \(bought) at \(rate(draw.key, sell: false))."
+        }
+
+        /// What the later start uses instead. A bank larger than today's means the
+        /// forecast expects solar to fill it before the run.
+        func laterClause(_ draw: Draw, total: Double, time: String) -> String {
+            let period = name(draw.key)
+            let mostly = total > 0 && draw.kwh / total < 0.95 ? "mostly " : ""
+            guard draw.fromBank >= draw.kwh / 2 else {
+                return "At \(time) it's \(mostly)bought at the \(period) rate of \(rate(draw.key, sell: false))."
+            }
+            let source = draw.fromBank > max(startKwh(draw.key) ?? 0, 0) + 0.5
+                ? "\(period) energy your solar banks before then"
+                : "your \(period) bank"
+            return "At \(time) it \(mostly)uses \(source), giving up \(rate(draw.key, sell: true)) in credit."
         }
 
         func lane(_ lane: LoadTimingForecastEstimator.BalanceLane) -> LaneDisplay {
