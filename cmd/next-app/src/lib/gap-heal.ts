@@ -10,7 +10,7 @@ import { addDaysInSiteTimezone, getSiteMidnight } from './date-utils';
  * /api/sync), and the today refresh only covers today plus yesterday's tail, so
  * older holes (whole missing days, interior gaps) were never healed for sites
  * only used from iOS. That broke the 14-day load-planning profile. This walks
- * each eligible site's trailing complete site-local days through
+ * each recently used site's trailing complete site-local days through
  * ensureDataForRange (planImport under the import lock), capped per site and
  * by a shared time budget sized for the Vercel Hobby 60s function limit.
  * Unhealed windows are simply re-planned by the next run.
@@ -36,6 +36,8 @@ export interface HealTrailingGapsResult {
 export const GAP_HEAL_DAYS = 14;
 export const GAP_HEAL_MAX_WINDOWS_PER_SITE = 3;
 export const GAP_HEAL_MAX_TIME_MS = 35_000;
+/** Idle sites are left alone; a returning site re-enters on its next live refresh. */
+export const GAP_HEAL_ACTIVE_WITHIN_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function healTrailingGaps(options: HealTrailingGapsOptions = {}): Promise<HealTrailingGapsResult> {
     const days = options.days ?? GAP_HEAL_DAYS;
@@ -45,7 +47,7 @@ export async function healTrailingGaps(options: HealTrailingGapsOptions = {}): P
     const clock = options.clock ?? Date.now;
 
     const startedAt = clock();
-    const sites = await new SiteRepo().getSitesForGapHeal();
+    const sites = await new SiteRepo().getSitesForGapHeal(now().getTime() - GAP_HEAL_ACTIVE_WITHIN_MS);
     const result: HealTrailingGapsResult = { sites: [] };
 
     for (const site of sites) {

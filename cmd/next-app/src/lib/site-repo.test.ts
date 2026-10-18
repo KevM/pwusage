@@ -502,11 +502,13 @@ describe('SiteRepo live refresh claim', () => {
 describe('SiteRepo.getSitesForGapHeal', () => {
     beforeEach(() => queryMock.mockReset());
 
-    it('lists only sites whose owner can call Tesla, least recently imported first', async () => {
+    it('lists only recently used sites whose owner can call Tesla, least recently imported first', async () => {
         queryMock.mockResolvedValueOnce({ rows: [{ id: 'site-1', timezone: 'America/Chicago' }] });
 
-        await expect(new SiteRepo().getSitesForGapHeal()).resolves.toEqual([{ id: 'site-1', timezone: 'America/Chicago' }]);
-        const [sql] = queryMock.mock.calls[0] as [string];
+        await expect(new SiteRepo().getSitesForGapHeal(1_000)).resolves.toEqual([{ id: 'site-1', timezone: 'America/Chicago' }]);
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('s.last_live_refresh_at >= $1');
+        expect(params).toEqual([1_000]);
         expect(sql).toContain('u.is_active = true');
         expect(sql).toContain('u.refresh_token IS NOT NULL');
         expect(sql).toContain(`u.auth_status IS DISTINCT FROM 'revoked'`);

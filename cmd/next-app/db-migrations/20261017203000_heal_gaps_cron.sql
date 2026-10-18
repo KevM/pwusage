@@ -1,7 +1,9 @@
 -- Migration: heal_gaps_cron
 -- Created at: 2026-10-17T20:30:00.000Z
 
--- Bounded trailing-window EnergyData gap heal (/api/cron/heal-gaps). Each run
+-- Bounded trailing-window EnergyData gap heal (/api/cron/heal-gaps). Only sites
+-- with a live status refresh (web, mobile, TRMNL, battery hold) in the last
+-- 7 days are healed; idle sites cost nothing. Each run
 -- audits the last 14 complete site-local days per site (one coverage query) and
 -- imports at most 3 missing day windows per site from Tesla, newest first,
 -- within a 35 s budget. Complete sites cost no Tesla calls. Anything still

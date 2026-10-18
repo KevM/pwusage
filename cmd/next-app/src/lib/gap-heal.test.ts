@@ -59,6 +59,12 @@ describe('healTrailingGaps', () => {
         expect(result.stopped).toBeUndefined();
     });
 
+    it('only heals sites with live activity (web, mobile, TRMNL, battery hold) in the last 7 days', async () => {
+        await run();
+
+        expect(mocks.getSitesForGapHeal).toHaveBeenCalledWith(NOW.getTime() - 7 * 24 * 60 * 60 * 1000);
+    });
+
     it('reports partial when windows remain, and passes only the remaining time budget on', async () => {
         mocks.ensureDataForRange.mockImplementationOnce(async () => {
             clock += 20_000;

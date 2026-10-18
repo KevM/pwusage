@@ -226,11 +226,13 @@ export class SiteRepo {
     }
 
     /**
-     * Sites whose owner can still call Tesla (active, has a refresh token, not
-     * revoked), least recently imported first so a time-bounded gap heal
-     * round-robins across runs.
+     * Sites in recent use whose owner can still call Tesla (active, has a
+     * refresh token, not revoked), least recently imported first so a
+     * time-bounded gap heal round-robins across runs. "In use" means a live
+     * status refresh since `activeSinceMs`: only demand paths set it (web,
+     * mobile, TRMNL markup, active battery holds), never the heal itself.
      */
-    async getSitesForGapHeal(): Promise<Array<{ id: string; timezone: string }>> {
+    async getSitesForGapHeal(activeSinceMs: number): Promise<Array<{ id: string; timezone: string }>> {
         const { rows } = await pool.query<{ id: string; timezone: string }>(`
             SELECT s.id, s.timezone
             FROM "Site" s
@@ -238,8 +240,9 @@ export class SiteRepo {
             WHERE u.is_active = true
               AND u.refresh_token IS NOT NULL
               AND u.auth_status IS DISTINCT FROM 'revoked'
+              AND s.last_live_refresh_at >= $1
             ORDER BY s.last_import_at ASC NULLS FIRST, s.id
-        `);
+        `, [activeSinceMs]);
         return rows;
     }
 
