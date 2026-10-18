@@ -13,6 +13,26 @@ struct LoadTimingForecastEstimator {
     static let observedIntervalDuration: TimeInterval = 5 * 60
     /// How far ahead the Solcast forecast drives the projection; site history takes over after it.
     static let forecastWindow: TimeInterval = 7 * 86_400
+    /// How far below zero a cloudy week may leave a bank a start dips into.
+    static let safetyShortfallKwh = 3.0
+
+    /// Whether the cautious projection lets the starts dip into banks.
+    enum Safety: Equatable {
+        /// Starting now passes (and so does the recommendation).
+        case nowSafe
+        /// Starting now would leave this bank short; a later start passes and may cost more than now.
+        case nowUnsafe(periodKey: String)
+        /// No start passes; the recommendation leaves this bank least short.
+        case noSafeStart(periodKey: String)
+    }
+
+    /// The cheapest start the safety rule rejected, when it is cheaper than the recommendation.
+    struct RuledOut: Equatable {
+        let start: Date
+        let cost: Double
+        /// The bank a cloudy week would leave more than `safetyShortfallKwh` short.
+        let periodKey: String
+    }
 
     enum UnavailableReason: Equatable {
         case invalidInput
@@ -165,11 +185,16 @@ struct LoadTimingForecastEstimator {
         let projectionEnd: Date
         /// The projection ended at a rate change or a period with no balance, before the bill date.
         let projectionEndsAtRateChange: Bool
+        /// Where the safety rule reads the cautious projection: min(now + forecastWindow, projectionEnd).
+        let safetyEnd: Date
+        let safety: Safety
+        let ruledOut: RuledOut?
 
         init(costNow: Double, recommendedStart: Date, recommendedEnd: Date, recommendedCost: Double, savings: Double,
              bestAlternativeSavings: Double, estimatedSolarContribution: Double, horizonStart: Date, horizonEnd: Date,
              evaluatedStarts: [Date], assumptions: [String], hasUnobservedBalance: Bool, lanes: [BalanceLane],
-             periodSwitches: [Date], projectionEnd: Date? = nil, projectionEndsAtRateChange: Bool = false) {
+             periodSwitches: [Date], projectionEnd: Date? = nil, projectionEndsAtRateChange: Bool = false,
+             safetyEnd: Date? = nil, safety: Safety = .nowSafe, ruledOut: RuledOut? = nil) {
             self.costNow = costNow
             self.recommendedStart = recommendedStart
             self.recommendedEnd = recommendedEnd
@@ -186,6 +211,9 @@ struct LoadTimingForecastEstimator {
             self.periodSwitches = periodSwitches
             self.projectionEnd = projectionEnd ?? horizonEnd
             self.projectionEndsAtRateChange = projectionEndsAtRateChange
+            self.safetyEnd = safetyEnd ?? projectionEnd ?? horizonEnd
+            self.safety = safety
+            self.ruledOut = ruledOut
         }
     }
 
@@ -206,6 +234,18 @@ struct LoadTimingForecastEstimator {
         let solarContribution: Double
         /// kWh the run takes from each period's balance.
         let draws: [String: Double]
+        /// The part of `draws` taken before the safety window ends.
+        let drawsBySafetyEnd: [String: Double]
+    }
+
+    /// A candidate read against the cautious projection at the safety window's end.
+    private struct Assessment {
+        let candidate: Candidate
+        /// The lowest cautious balance among the banks the run dips into, and that bank.
+        let worst: (periodKey: String, kwh: Double)?
+
+        var passes: Bool { (worst?.kwh ?? 0) >= -LoadTimingForecastEstimator.safetyShortfallKwh - 1e-9 }
+        var shortfall: Double { max(0, -(worst?.kwh ?? 0)) }
     }
 
     private enum BaselineResult {
@@ -494,6 +534,16 @@ struct LoadTimingForecastEstimator {
         case .invalidInput: return unavailable(.invalidInput)
         case .incompleteCoverage: return unavailable(.incompleteCoverage)
         }
+        // The cautious run (pv_estimate10, then the dull day) is read only at the
+        // safety window's end: history beyond it never makes a start pass.
+        let safetyEnd = min(now.addingTimeInterval(Self.forecastWindow), projectionEnd)
+        let cautiousBalances: [String: Double]
+        switch integrateBaseline(from: projectionStart, to: safetyEnd, balances: balances,
+                                 model: model.cautiousModel(), tariffs: tariffs) {
+        case .balances(let projected): cautiousBalances = projected
+        case .invalidInput: return unavailable(.invalidInput)
+        case .incompleteCoverage: return unavailable(.incompleteCoverage)
+        }
         let candidates = candidateStarts(now: now, horizonEnd: horizonEnd, duration: load.duration,
                                         model: model, tariffs: tariffs)
         var scored: [Candidate] = []
@@ -504,27 +554,20 @@ struct LoadTimingForecastEstimator {
             // A run starts inside the search window but may finish after it, up to the projection end.
             guard candidateEnd <= projectionEnd else { continue }
             switch score(start: candidateStart, end: candidateEnd, load: load,
-                         baseBalances: baseBalances, rates: rates, model: model, tariffs: tariffs) {
+                         baseBalances: baseBalances, rates: rates, model: model, tariffs: tariffs,
+                         safetyEnd: safetyEnd) {
             case .candidate(let candidate): scored.append(candidate)
             case .invalidInput: return unavailable(.invalidInput)
             case .incompleteCoverage: return unavailable(.incompleteCoverage)
             }
         }
         guard let nowCandidate = scored.first(where: { $0.start == now }) else { return unavailable(.noFittingRun) }
-        guard let best = scored.min(by: { $0.cost == $1.cost ? $0.start < $1.start : $0.cost < $1.cost }) else {
-            return unavailable(.noFittingRun)
-        }
-        let rawSavings = nowCandidate.cost - best.cost
-        guard rawSavings.isFinite else { return unavailable(.invalidInput) }
-        let savings = max(0, rawSavings)
-        let alternative = scored
-            .filter { $0.start != now }
-            .min(by: { $0.cost == $1.cost ? $0.start < $1.start : $0.cost < $1.cost })
-        let rawAlternative = alternative.map { nowCandidate.cost - $0.cost } ?? 0
-        guard rawAlternative.isFinite else { return unavailable(.invalidInput) }
-        let bestAlternativeSavings = max(0, rawAlternative)
+        guard scored.allSatisfy({ $0.cost.isFinite }) else { return unavailable(.invalidInput) }
         let minorUnit = currencyMinorUnit(currencyCode)
-        let recommendation = savings > minorUnit ? best : nowCandidate
+        let selection = select(scored.map { assess($0, baseBalances: baseBalances, cautiousBalances: cautiousBalances) },
+                               now: now, minorUnit: minorUnit)
+        let recommendation = selection.recommendation
+        let savings = recommendation.start == nowCandidate.start ? 0 : max(0, nowCandidate.cost - recommendation.cost)
         guard let lanes = balanceLanes(now: now, horizonEnd: horizonEnd, projectionStart: projectionStart,
                                        balances: balances, baseBalances: baseBalances, load: load,
                                        startNow: nowCandidate, recommended: recommendation,
@@ -536,8 +579,8 @@ struct LoadTimingForecastEstimator {
             recommendedStart: recommendation.start,
             recommendedEnd: recommendation.end,
             recommendedCost: recommendation.cost,
-            savings: recommendation.start == nowCandidate.start ? 0 : savings,
-            bestAlternativeSavings: bestAlternativeSavings,
+            savings: savings,
+            bestAlternativeSavings: selection.bestAlternativeSavings,
             estimatedSolarContribution: recommendation.solarContribution,
             horizonStart: now,
             horizonEnd: horizonEnd,
@@ -547,8 +590,76 @@ struct LoadTimingForecastEstimator {
             lanes: lanes,
             periodSwitches: periodSwitches(in: tariffs, after: now, before: horizonEnd),
             projectionEnd: projectionEnd,
-            projectionEndsAtRateChange: endsAtRateChange
+            projectionEndsAtRateChange: endsAtRateChange,
+            safetyEnd: safetyEnd,
+            safety: selection.safety,
+            ruledOut: selection.ruledOut
         ), unavailableReason: nil)
+    }
+
+    /// A run "dips into" a bank when the typical projection prices some of it at
+    /// that period's sell rate: the bank ends the projection banked and the run
+    /// draws on it. Each such bank is read in the cautious projection at the
+    /// safety window's end, less the run's draw before then.
+    private static func assess(_ candidate: Candidate, baseBalances: [String: Double],
+                               cautiousBalances: [String: Double]) -> Assessment {
+        var worst: (periodKey: String, kwh: Double)?
+        for (key, draw) in candidate.draws.sorted(by: { $0.key < $1.key }) where draw > 0 {
+            guard let typical = baseBalances[key], typical > 0, let cautious = cautiousBalances[key] else { continue }
+            let remaining = cautious - (candidate.drawsBySafetyEnd[key] ?? 0)
+            if worst == nil || remaining < worst!.kwh { worst = (key, remaining) }
+        }
+        return Assessment(candidate: candidate, worst: worst)
+    }
+
+    private struct Selection {
+        let recommendation: Candidate
+        let safety: Safety
+        let ruledOut: RuledOut?
+        let bestAlternativeSavings: Double
+    }
+
+    /// The cheapest start that passes the safety rule (ties: earliest); starting
+    /// now unless a passing later start saves more than a minor unit while now
+    /// passes too. When nothing passes, the start leaving its bank least short
+    /// (ties: cheapest, then earliest).
+    private static func select(_ assessed: [Assessment], now: Date, minorUnit: Double) -> Selection {
+        func cheapest(_ pool: [Assessment]) -> Assessment? {
+            pool.min { $0.candidate.cost == $1.candidate.cost ? $0.candidate.start < $1.candidate.start
+                                                              : $0.candidate.cost < $1.candidate.cost }
+        }
+        // `evaluate` only calls this with a scored "now".
+        let nowAssessment = assessed.first { $0.candidate.start == now }!
+        let passing = assessed.filter(\.passes)
+        let recommended: Assessment
+        let safety: Safety
+        if let best = cheapest(passing) {
+            if nowAssessment.passes {
+                recommended = nowAssessment.candidate.cost - best.candidate.cost > minorUnit ? best : nowAssessment
+                safety = .nowSafe
+            } else {
+                recommended = best
+                safety = .nowUnsafe(periodKey: nowAssessment.worst?.periodKey ?? "")
+            }
+        } else {
+            let least = assessed.map(\.shortfall).min() ?? 0
+            let pool = assessed.filter { $0.shortfall <= least + 1e-9 }
+            let best = cheapest(pool) ?? nowAssessment
+            let nowInPool = pool.contains { $0.candidate.start == now }
+            recommended = nowInPool && nowAssessment.candidate.cost - best.candidate.cost <= minorUnit ? nowAssessment : best
+            safety = .noSafeStart(periodKey: recommended.worst?.periodKey ?? "")
+        }
+        let rejectedCheaper = assessed.filter {
+            !$0.passes && recommended.candidate.cost - $0.candidate.cost > minorUnit
+        }
+        let ruledOut = cheapest(rejectedCheaper).map {
+            RuledOut(start: $0.candidate.start, cost: $0.candidate.cost, periodKey: $0.worst?.periodKey ?? "")
+        }
+        // Raw saving of the cheapest eligible non-now start, before the minor-unit threshold.
+        let alternatives = (passing.isEmpty ? assessed : passing).filter { $0.candidate.start != now }
+        let bestAlternativeSavings = cheapest(alternatives).map { max(0, nowAssessment.candidate.cost - $0.candidate.cost) } ?? 0
+        return Selection(recommendation: recommended.candidate, safety: safety, ruledOut: ruledOut,
+                         bestAlternativeSavings: bestAlternativeSavings)
     }
 
     private static func balanceLanes(now: Date, horizonEnd: Date, projectionStart: Date, balances: [String: Double],
@@ -827,8 +938,9 @@ struct LoadTimingForecastEstimator {
 
     private static func score(start: Date, end: Date, load: (energy: Double, duration: TimeInterval),
                               baseBalances: [String: Double], rates: [String: PeriodRate],
-                              model: FlowModel, tariffs: [LoadTimingTariffSegment]) -> ScoreResult {
+                              model: FlowModel, tariffs: [LoadTimingTariffSegment], safetyEnd: Date) -> ScoreResult {
         var withLoad = baseBalances
+        var drawsBySafetyEnd: [String: Double] = [:]
         var solarContribution = 0.0
         let points = integrationBoundaries(from: start, to: end, model: model, tariffs: tariffs)
         guard points.count >= 2 else { return .incompleteCoverage }
@@ -852,6 +964,7 @@ struct LoadTimingForecastEstimator {
                   physicalSurplus.isFinite, physicalSurplusPower.isFinite,
                   contribution.isFinite, updatedSolarContribution.isFinite else { return .invalidInput }
             withLoad[tariff.periodKey] = loadedBalance
+            if b <= safetyEnd { drawsBySafetyEnd[tariff.periodKey, default: 0] += energy }
             solarContribution = updatedSolarContribution
         }
         var total = 0.0
@@ -871,7 +984,8 @@ struct LoadTimingForecastEstimator {
             if let base = baseBalances[key], loadedBalance != base { draws[key] = base - loadedBalance }
         }
         return .candidate(Candidate(start: start, end: end, cost: total,
-                                    solarContribution: cappedSolarContribution, draws: draws))
+                                    solarContribution: cappedSolarContribution, draws: draws,
+                                    drawsBySafetyEnd: drawsBySafetyEnd))
     }
 
     private static func cost(balance: Double, rate: PeriodRate) -> Double? {

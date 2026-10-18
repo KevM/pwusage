@@ -829,3 +829,149 @@ extension LoadTimingForecastEstimatorTests {
         #expect(abs(lane.projectedKwh - (2 + 37)) < 1e-9)
     }
 }
+
+// MARK: - Cautious projection and the safety rule
+
+extension LoadTimingForecastEstimatorTests {
+    /// Half-hour intervals over [0, hours) from `start`, typical and cautious kW by hour offset.
+    private func halfHourForecast(hours: Int, typical: (Double) -> Double, cautious: ((Double) -> Double?)?) -> [SolarForecastInterval] {
+        (0..<(hours * 2)).map { index in
+            let hour = Double(index) / 2
+            return SolarForecastInterval(periodStart: start.addingTimeInterval(hour * 3600),
+                                         periodEnd: start.addingTimeInterval((hour + 0.5) * 3600),
+                                         powerKw: typical(hour), cautiousPowerKw: cautious?(hour))
+        }
+    }
+
+    private func safetyEvaluate(
+        forecast: [SolarForecastInterval],
+        tariffs: [LoadTimingTariffSegment],
+        balances: [String: Double],
+        profile: LoadProfile
+    ) -> LoadTimingForecastEstimator.Result {
+        LoadTimingForecastEstimator.evaluate(profile: profile, now: start, timing: timing(tariffs, balances: balances),
+                                             projection: .forecast(intervals: forecast, context: context()),
+                                             balanceSourceTime: start, billingCycleEnd: start.addingTimeInterval(20 * 86_400),
+                                             currencyCode: "USD")
+    }
+
+    private func load(_ kwh: Double, hours: Double) -> LoadProfile {
+        LoadProfile(id: "job", name: "Job", kind: .appliance, energyKwh: kwh, durationHours: hours, carSettings: nil)
+    }
+
+    @Test("cautiousSafetyRulesOutADipACloudyWeekWouldSink")
+    func cautiousSafetyRulesOutADipACloudyWeekWouldSink() throws {
+        let tariffs = [tariff(0, 14_400, key: "OFF", buy: 0.10, sell: 0.03), tariff(14_400, 57_600, key: "ON", buy: 0.31, sell: 0.04),
+                       tariff(57_600, 100_800, key: "OFF", buy: 0.10, sell: 0.03), tariff(100_800, 144_000, key: "ON", buy: 0.31, sell: 0.04)]
+        // Median solar banks 4 kW through each On-Peak; a cloudy week banks nothing.
+        let onPeak = { (hour: Double) in (4..<16).contains(hour) || (28..<40).contains(hour) }
+        let forecast = halfHourForecast(hours: 40, typical: { onPeak($0) ? 4 : 0 }, cautious: { _ in 0 })
+        // 8 kWh in an hour: even a run straddling into On-Peak leaves it 4 short.
+        let result = safetyEvaluate(forecast: forecast, tariffs: tariffs, balances: ["ON": 0, "OFF": -20], profile: load(8, hours: 1))
+
+        let comparison = try #require(result.comparison)
+        #expect(comparison.safety == .nowSafe)
+        #expect(comparison.recommendedStart == start)
+        #expect(abs(comparison.recommendedCost - 0.80) < 1e-9)
+        let ruledOut = try #require(comparison.ruledOut)
+        #expect(ruledOut.start == start.addingTimeInterval(14_400))
+        #expect(ruledOut.periodKey == "ON")
+        #expect(abs(ruledOut.cost - 0.32) < 1e-9)
+    }
+
+    @Test("nowIsCheckedToo")
+    func nowIsCheckedToo() throws {
+        let tariffs = [tariff(0, 43_200, key: "ON_PEAK", buy: 0.31, sell: 0.04), tariff(43_200, 144_000, key: "OFF_PEAK", buy: 0.10, sell: 0.03)]
+        let forecast = halfHourForecast(hours: 40, typical: { $0 < 12 ? 1 : 0 }, cautious: { _ in 0 })
+        // 10 kWh in an hour: starting now leaves On-Peak 9 short in a dull week, and
+        // a run straddling into Off-Peak still leaves it 4 short.
+        let result = safetyEvaluate(forecast: forecast, tariffs: tariffs, balances: ["ON_PEAK": 1, "OFF_PEAK": -20],
+                                    profile: load(10, hours: 1))
+
+        let comparison = try #require(result.comparison)
+        #expect(comparison.safety == .nowUnsafe(periodKey: "ON_PEAK"))
+        #expect(abs(comparison.costNow - 0.40) < 1e-9)
+        #expect(comparison.recommendedCost > comparison.costNow)
+        #expect(comparison.recommendedStart >= start.addingTimeInterval(43_200))
+        #expect(comparison.savings == 0)
+    }
+
+    @Test("noSafeStartPicksSmallestShortfall")
+    func noSafeStartPicksSmallestShortfall() throws {
+        // Half-hour runs never straddle the 20 h switch. A dull week leaves A at
+        // +1 and B at 0, so an 8 kWh run leaves A 7 short and B 8 short.
+        let tariffs = [tariff(0, 72_000, key: "A", buy: 0.31, sell: 0.06), tariff(72_000, 144_000, key: "B", buy: 0.31, sell: 0.04)]
+        let forecast = halfHourForecast(hours: 40,
+                                        typical: { $0 < 9 || (20..<29).contains($0) ? 1 : 0 },
+                                        cautious: { $0 < 1 ? 1 : 0 })
+        let result = safetyEvaluate(forecast: forecast, tariffs: tariffs, balances: ["A": 0, "B": 0], profile: load(8, hours: 0.5))
+
+        let comparison = try #require(result.comparison)
+        #expect(comparison.safety == .noSafeStart(periodKey: "A"))
+        #expect(comparison.recommendedStart == start)
+        #expect(comparison.ruledOut?.start == start.addingTimeInterval(72_000))
+        #expect(comparison.ruledOut?.periodKey == "B")
+    }
+
+    @Test("shortfallOfThreeIsAllowed")
+    func shortfallOfThreeIsAllowed() throws {
+        let tariffs = [tariff(0, 144_000, key: "P", buy: 0.31, sell: 0.04)]
+        func safety(cautiousKw: Double) throws -> LoadTimingForecastEstimator.Safety {
+            // Typical solar banks 20 kWh; the cautious run banks cautiousKw over one half hour.
+            let forecast = halfHourForecast(hours: 40, typical: { $0 < 10 ? 2 : 0 }, cautious: { $0 < 0.5 ? cautiousKw : 0 })
+            let result = safetyEvaluate(forecast: forecast, tariffs: tariffs, balances: ["P": 0], profile: load(6, hours: 0.5))
+            return try #require(result.comparison).safety
+        }
+        #expect(try safety(cautiousKw: 6) == .nowSafe)       // 3 - 6 = -3.00
+        #expect(try safety(cautiousKw: 5.98) == .noSafeStart(periodKey: "P"))  // 2.99 - 6 = -3.01
+    }
+
+    @Test("boughtPeriodsAreNotChecked")
+    func boughtPeriodsAreNotChecked() throws {
+        let tariffs = [tariff(0, 144_000, key: "OFF", buy: 0.10, sell: 0.03)]
+        let forecast = halfHourForecast(hours: 40, typical: { _ in 0 }, cautious: { _ in 0 })
+        let result = safetyEvaluate(forecast: forecast, tariffs: tariffs, balances: ["OFF": -20], profile: load(6, hours: 1))
+
+        let comparison = try #require(result.comparison)
+        #expect(comparison.safety == .nowSafe)
+        #expect(comparison.ruledOut == nil)
+    }
+
+    @Test("missingCautiousSolarUsesMedian")
+    func missingCautiousSolarUsesMedian() throws {
+        let tariffs = [tariff(0, 144_000, key: "P", buy: 0.31, sell: 0.04)]
+        let forecast = halfHourForecast(hours: 40, typical: { $0 < 10 ? 2 : 0 }, cautious: nil)
+        let result = safetyEvaluate(forecast: forecast, tariffs: tariffs, balances: ["P": 0], profile: load(6, hours: 1))
+
+        let comparison = try #require(result.comparison)
+        #expect(comparison.safety == .nowSafe)
+        #expect(comparison.ruledOut == nil)
+    }
+
+    @Test("safetyWindowEndsAtBillDateWhenSooner")
+    func safetyWindowEndsAtBillDateWhenSooner() throws {
+        let tariffs = dailyTariffs(days: 12)
+        let context = historyContext { Self.isDaylight($0) ? 2 : -0.5 }
+        func safetyEnd(cycleDays: Double) throws -> Date {
+            let result = evaluate(.history(context: context), now: start, tariffs: tariffs,
+                                  balances: ["ON_PEAK": 2, "OFF_PEAK": -10], cycleEnd: start.addingTimeInterval(cycleDays * 86_400))
+            return try #require(result.comparison).safetyEnd
+        }
+        #expect(try safetyEnd(cycleDays: 3) == start.addingTimeInterval(3 * 86_400))
+        #expect(try safetyEnd(cycleDays: 10) == start.addingTimeInterval(7 * 86_400))
+    }
+
+    @Test("History after the safety window cannot make a start pass")
+    func historyBeyondTheSafetyWindowCannotRescueAStart() throws {
+        // Typical history banks plenty in On-Peak over 20 days; the dull day banks
+        // nothing, so a 6 kWh dip leaves On-Peak 6 short at the seven-day mark.
+        let context = historyContext(grid: { Self.isDaylight($0) ? 3 : 0 }, cautious: { _ in 0 })
+        let result = evaluate(.history(context: context), profile: load(6, hours: 1), now: start, tariffs: dailyTariffs(days: 22),
+                              balances: ["ON_PEAK": 0, "OFF_PEAK": -10], cycleEnd: start.addingTimeInterval(20 * 86_400))
+
+        let comparison = try #require(result.comparison)
+        // `start` is 08:00, inside On-Peak: starting now dips into it.
+        #expect(comparison.safety == .nowUnsafe(periodKey: "ON_PEAK"))
+        #expect(comparison.ruledOut?.periodKey == "ON_PEAK")
+    }
+}
