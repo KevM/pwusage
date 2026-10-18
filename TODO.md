@@ -27,6 +27,19 @@ Audit and evidence: [multiplatform readiness audit](docs/superpowers/specs/2026-
 - [ ] **tvOS device-code login spec (item 13), blocked on a product decision:** `ASWebAuthenticationSession` is unavailable on tvOS. Spec a QR plus short-code flow reusing the `MobileLoginHandoff` PKCE exchange (`/api/mobile/device`, `/login/device`, poll, `/auth/tesla-callback` branch) and Keychain-stored session token. Needs a security decision on session storage before building.
 - [ ] **Revisit if we pursue Mac or TV (items 9–12, 14):** storage abstraction, `Shared/` reorganisation, `PWUsageCore` Swift package, native macOS target (menu bar extra, widgets), tvOS app. Unverified until then: tvOS cookie persistence, macOS app-group id format, `ControlCenter` macOS 26 requirement.
 
+## Solcast setup guide: capture screenshots (2026-10-18)
+
+[`/help/solcast`](cmd/next-app/src/app/help/solcast/page.tsx) ships with six `ScreenshotPlaceholder`s. Wait until the Smart Shift redesign settles before capturing them. Step 5's "no Save button for arrays" copy assumes the save-on-toggle change from `feat/smart-shift-one-job-card` (790ecc3) has landed. Blur the API key and any home address.
+
+- [ ] iOS: Smart Shift without a forecast, showing the "Connect Solcast" note (step 1)
+- [ ] Web: Solcast registration page with the Home User option (step 2)
+- [ ] Web: Solcast Toolkit form for adding a home PV system (step 3)
+- [ ] Web: Toolkit username menu with the API key, blurred (step 4)
+- [ ] iOS: the sun button on the Smart Shift screen (step 5)
+- [ ] iOS: Solar Forecast settings with a saved key and an array turned on (step 5)
+
+Also deferred: link the guide from the iOS app. Proposed spots are a "How to set up Solcast" link beside the Smart Shift "Connect Solcast" note, and a footer in the Solar Forecast sheet's Connection section when no key is saved. Errors could link `/help/solcast#step-7`. Build the URL from the app's server base URL so beta builds open pwusagebeta.
+
 ## DB egress: remaining reduction candidates
 
 The July 2026 Supabase egress spike was traced to site queries duplicating wide
