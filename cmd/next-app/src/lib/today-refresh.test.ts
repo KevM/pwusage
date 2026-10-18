@@ -211,6 +211,22 @@ describe('refreshTodayData', () => {
         expect(siteRepoMock.releaseImportLock).toHaveBeenCalledWith('site-1', expect.any(String));
     });
 
+    it('passes the latest stored timestamp so the importer can backfill the previous day tail', async () => {
+        const latest = new Date('2026-10-16T03:50:00Z');
+        energyRepoMock.getLatestEnergyData.mockResolvedValue({ timestamp: latest });
+        const { refreshTodayData } = await importRefreshTodayData();
+
+        await refreshTodayData('site-1');
+        expect(importerMock.getTodayData).toHaveBeenCalledWith('site-1', latest);
+    });
+
+    it('passes null when the site has no stored rows', async () => {
+        const { refreshTodayData } = await importRefreshTodayData();
+
+        await refreshTodayData('site-1');
+        expect(importerMock.getTodayData).toHaveBeenCalledWith('site-1', null);
+    });
+
     it('returns error and still releases the lock when Tesla fetch fails', async () => {
         importerMock.getTodayData.mockRejectedValue(new Error('tesla down'));
         const { refreshTodayData } = await importRefreshTodayData();

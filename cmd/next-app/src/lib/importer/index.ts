@@ -8,7 +8,7 @@ import { UserRepo } from '../user-repo';
 import { TariffRepo } from '../tariff-repo';
 import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
-import { planImport, splitAtSiteMidnight, auditDays } from './import-planner';
+import { planImport, splitAtSiteMidnight, auditDays, type DateWindow } from './import-planner';
 import { getSiteMidnight } from '../date-utils';
 import { withImportLock } from '../import-lock';
 
@@ -21,6 +21,34 @@ export type { EnergyDataRow } from './energy-transformer';
 
 
 
+
+/**
+ * Audit stored coverage for [site midnight of `start`, `end`) and return the
+ * day windows planImport says must be fetched. Needs no Tesla client, so a
+ * caller can skip token and site loads when nothing is missing.
+ */
+export async function planMissingWindows(
+    rawRepo: EnergyRepo,
+    site: { id: string; timezone: string; installed: Date | string },
+    start: Date,
+    end: Date,
+    force = false
+): Promise<DateWindow[]> {
+    const auditStartTime = getSiteMidnight(start, site.timezone);
+    const existingCoverage = await createEnergyRepo(site.timezone, rawRepo).getDailyCoverage(
+        site.id,
+        auditStartTime,
+        end,
+        site.timezone
+    );
+    return planImport({
+        requestedRange: { start: auditStartTime, end },
+        existingCoverage,
+        timezone: site.timezone,
+        installationDate: new Date(site.installed),
+        forceRefetch: force,
+    });
+}
 
 export interface EnsureDataResult {
     complete: boolean;
@@ -53,17 +81,45 @@ export class Importer {
     }
 
 
-    async getTodayData(siteId: string): Promise<EnergyDataRow[]> {
+    /**
+     * Fetch today's rows (site-local midnight → now). When `latestTimestamp`
+     * (the newest stored row) is before today's midnight, also fetch the rest of
+     * yesterday: otherwise the last refresh before midnight (~22:50) leaves
+     * 22:55–23:55 unimported forever, since the next refresh only asks for the
+     * new day. Bounded to one extra day; older gaps are left to planImport.
+     */
+    async getTodayData(siteId: string, latestTimestamp?: Date | null): Promise<EnergyDataRow[]> {
         const site = await this.siteRepo.getSite(siteId);
         if (!site) return [];
 
         const now = new Date();
         const start = EnergyRepo.getSiteMidnight(now, site.timezone);
+        const tailStart = this.previousDayTailStart(latestTimestamp, start, site.timezone);
 
         console.log(`[Importer] Fetching today's data: ${start.toISOString()} to ${now.toISOString()}`);
 
         // We fetch from Tesla. We don't write to DB yet.
-        return this.fetchRange(site, start, now, 'day');
+        const [tail, today] = await Promise.all([
+            tailStart ? this.fetchPreviousDayTail(site, tailStart, start) : Promise.resolve([]),
+            this.fetchRange(site, start, now, 'day'),
+        ]);
+        return [...tail, ...today];
+    }
+
+    private previousDayTailStart(latestTimestamp: Date | null | undefined, todayMidnight: Date, timezone: string): Date | null {
+        if (!latestTimestamp) return null;
+        // The last 5-minute sample of a day is 23:55, so a row within 5 min of midnight means the tail is complete.
+        if (latestTimestamp.getTime() + 5 * 60 * 1000 >= todayMidnight.getTime()) return null;
+        const yesterdayMidnight = EnergyRepo.getSiteMidnight(new Date(todayMidnight.getTime() - 1), timezone);
+        return latestTimestamp > yesterdayMidnight ? latestTimestamp : yesterdayMidnight;
+    }
+
+    private async fetchPreviousDayTail(site: SiteWithTariffs, start: Date, todayMidnight: Date): Promise<EnergyDataRow[]> {
+        console.log(`[Importer] Fetching previous-day tail: ${start.toISOString()} to ${todayMidnight.toISOString()}`);
+        // End 1s before midnight so Tesla stays within yesterday (see loadInterval), and
+        // filter since Tesla returns the whole calendar day regardless of start.
+        const rows = await this.fetchRange(site, start, new Date(todayMidnight.getTime() - 1000), 'day');
+        return rows.filter(r => r.timestamp >= start && r.timestamp < todayMidnight);
     }
 
     async persistHistory(siteId: string, rows: EnergyDataRow[], latestTimestamp: Date | null): Promise<number> {
@@ -107,10 +163,11 @@ export class Importer {
         start: Date,
         end: Date,
         onProgress?: (msg: string) => void,
-        options?: { force?: boolean; maxTimeMs?: number }
+        options?: { force?: boolean; maxTimeMs?: number; maxWindows?: number }
     ): Promise<EnsureDataResult> {
         const force = options?.force ?? false;
         const maxTimeMs = options?.maxTimeMs;
+        const maxWindows = options?.maxWindows;
 
         if (Importer.pendingSyncs.has(siteId) && !force) {
             logSync(`Skip: Data for range already being synced for site ${siteId}`);
@@ -139,21 +196,13 @@ export class Importer {
                 async () => {
                     logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
 
-                    const auditStartTime = getSiteMidnight(start, site.timezone);
-                    const existingCoverage = await createEnergyRepo(site.timezone,this.repo).getDailyCoverage(
-                        siteId,
-                        auditStartTime,
-                        end,
-                        site.timezone
-                    );
+                    const windows = await planMissingWindows(this.repo, site, start, end, force);
 
-                    const windows = planImport({
-                        requestedRange: { start: auditStartTime, end },
-                        existingCoverage,
-                        timezone: site.timezone,
-                        installationDate: new Date(site.installed),
-                        forceRefetch: force,
-                    });
+                    // A window cap takes the newest days first (the most useful
+                    // to recent-history readers); the rest are re-planned next run.
+                    const toImport = maxWindows === undefined
+                        ? windows
+                        : [...windows].reverse().slice(0, maxWindows);
 
                     const allRows: EnergyDataRow[] = [];
                     let successCount = 0;
@@ -161,14 +210,14 @@ export class Importer {
                     let timeBudgetExceeded = false;
                     const startTime = Date.now();
 
-                    for (let i = 0; i < windows.length; i++) {
+                    for (let i = 0; i < toImport.length; i++) {
                         if (maxTimeMs !== undefined && Date.now() - startTime >= maxTimeMs) {
                             logSync(`Time budget reached (${maxTimeMs}ms) after processing ${successCount}/${windows.length} windows`);
                             timeBudgetExceeded = true;
                             break;
                         }
 
-                        const window = windows[i];
+                        const window = toImport[i];
                         const dateStr = window.start.toISOString().split('T')[0];
                         if (onProgress) onProgress(`Importing ${dateStr}...`);
                         logSync(`Importing window: ${window.start.toISOString()} - ${window.end.toISOString()}`);
@@ -183,8 +232,8 @@ export class Importer {
                         }
                     }
 
-                    if (windows.length > 0 && successCount === 0 && !timeBudgetExceeded) {
-                        throw lastError || new Error(`All ${windows.length} import windows failed`);
+                    if (toImport.length > 0 && successCount === 0 && !timeBudgetExceeded) {
+                        throw lastError || new Error(`All ${toImport.length} import windows failed`);
                     }
 
                     // Complete only when every planned window imported. Failed
@@ -234,17 +283,16 @@ export class Importer {
 
     async fetchRange(site: SiteWithTariffs, start: Date, end: Date, period: string = "day"): Promise<EnergyDataRow[]> {
         const allRows: EnergyDataRow[] = [];
-        let cursor = new Date(start);
-        const chunkMs = 24 * 60 * 60 * 1000;
 
-        while (cursor < end) {
-            const next = new Date(Math.min(cursor.getTime() + chunkMs, end.getTime()));
-
+        // One request per site-local day: Tesla returns the whole calendar day for
+        // any request inside it, so fixed 24h chunks fetched the 25-hour DST
+        // fall-back day twice and produced duplicate timestamps in one batch.
+        for (const { start: chunkStart, end: chunkEnd } of splitAtSiteMidnight({ start, end }, site.timezone)) {
             const [history, soeHistory] = await Promise.all([
-                this.client.getEnergyHistory(site.id, cursor, next, period, site.timezone),
-                this.client.getSoeHistory(site.id, cursor, next, period, site.timezone)
+                this.client.getEnergyHistory(site.id, chunkStart, chunkEnd, period, site.timezone),
+                this.client.getSoeHistory(site.id, chunkStart, chunkEnd, period, site.timezone)
                     .catch(error => {
-                        console.warn(`[Importer] SOE history fetch failed for ${site.id} (${cursor.toISOString()}-${next.toISOString()})`, error);
+                        console.warn(`[Importer] SOE history fetch failed for ${site.id} (${chunkStart.toISOString()}-${chunkEnd.toISOString()})`, error);
                         return [] as SoeHistoryEntry[];
                     })
             ]);
@@ -253,7 +301,6 @@ export class Importer {
                 const rows = await this.processHistory(site, history, soeHistory);
                 allRows.push(...rows);
             }
-            cursor = next;
         }
         return allRows;
     }
