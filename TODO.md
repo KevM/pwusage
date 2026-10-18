@@ -27,6 +27,21 @@ Audit and evidence: [multiplatform readiness audit](docs/superpowers/specs/2026-
 - [ ] **tvOS device-code login spec (item 13), blocked on a product decision:** `ASWebAuthenticationSession` is unavailable on tvOS. Spec a QR plus short-code flow reusing the `MobileLoginHandoff` PKCE exchange (`/api/mobile/device`, `/login/device`, poll, `/auth/tesla-callback` branch) and Keychain-stored session token. Needs a security decision on session storage before building.
 - [ ] **Revisit if we pursue Mac or TV (items 9–12, 14):** storage abstraction, `Shared/` reorganisation, `PWUsageCore` Swift package, native macOS target (menu bar extra, widgets), tvOS app. Unverified until then: tvOS cookie persistence, macOS app-group id format, `ControlCenter` macOS 26 requirement.
 
+## iOS: delete the pre-redesign Smart Shift card code (2026-10-18, branch `claude/smart-shift-energy-weather-5de814`)
+
+The energy weather redesign replaced the old Job card, but left its presentation code in place, now unreachable from any view. It still ships "export cushion" / "grid rate" copy.
+
+- [ ] **Delete the dead copy and models:** `LoadTimingForecastPresentation.overlay` / `placement` (`Enhanced`, `Overlay`, `Card`, `Placement`), the unused `LoadTimingPresentation` statics (`recommendationMessage`, `energyImpact`, `costDifference`, `startNowSummary`, `runCardSummary`, `breakdownRows`, `missingBalanceNote`, `unavailableMessage`, `noChargeMessage`, `cycleObservationMessage`, `activeBalanceSummary`, `observedBalances`, `noResponseExplorationMessage`), and `LoadTimingRecommendation` if nothing else adopts it. Migrate the ~30 overlay tests in `LoadTimingViewTests` that guard the forecast note copy onto `forecastAvailability` / `forecastUnavailableNote` first, since those reuse the same note details.
+- [ ] **Smart Shift polish from the branch review:**
+  - "Covers all of this run" ignores periods the run crosses into.
+  - A connected user can briefly see "Connect Solcast" before the credential resolves.
+  - After picking a Job, adding or editing another in Manage Jobs doesn't switch the card to it.
+  - "Rate periods" omits a tariff period that has no balance yet.
+  - A future energy source time shows the generic "can't compare" sentence.
+  - VoiceOver reads "plus 18 kWh banked now".
+  - At accessibility text sizes the cost bars can be squeezed out.
+  - The forecast comparison costs about 37 ms per pass for six Jobs on the simulator; cache per-Job savings if devices show hitches.
+
 ## DB egress: remaining reduction candidates
 
 The July 2026 Supabase egress spike was traced to site queries duplicating wide
