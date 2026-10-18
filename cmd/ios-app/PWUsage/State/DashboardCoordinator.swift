@@ -184,6 +184,8 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var solarForecastSaveFailure = false
     @Published private(set) var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
     @Published private(set) var solarForecastBatch: SolarForecastBatch?
+    /// The last forecast refresh's outcome, kept for Smart Shift diagnostics only.
+    private(set) var solarForecastLastRefresh: SolarForecastRefreshResult?
     @Published private(set) var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
     /// The household pattern with grid history, published whether or not Solcast
     /// is connected, so Smart Shift can project banks from history alone.
@@ -609,6 +611,7 @@ final class DashboardCoordinator: ObservableObject {
         await billRefresh
 
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        solarForecastLastRefresh = refresh
         // Published even when the forecast half fails, so the card can fall back to history.
         householdPattern = context
         solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
@@ -659,6 +662,23 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastSaveFailure = saveFailed
     }
 
+    /// The forecast store's view of this site, for Smart Shift's "Copy
+    /// diagnostics". It reads the store's cached batch rather than
+    /// `solarForecastBatch`, which is cleared whenever the card can't use it.
+    func solarForecastDiagnostics() async -> SmartShiftDiagnostics.SolarForecast? {
+        guard let forecastStore, let accountScopeID else { return nil }
+        let siteID = selectedSiteID
+        let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID)
+        return SmartShiftDiagnostics.SolarForecast(
+            batch: batch, now: now(),
+            recommendationUsable: await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
+            budget: await forecastStore.budget(for: accountScopeID, siteID: siteID),
+            lastErrorDescription: await forecastStore.lastErrorDescription,
+            lastRefresh: solarForecastLastRefresh, unavailableCause: solarForecastUnavailableCause,
+            connection: solarForecastConnection, state: solarForecastState,
+            unavailableReason: solarForecastUnavailableReason)
+    }
+
     func refreshSolarForecast(manual: Bool) async {
         guard canRequestAccountData else { return }
         let operation = beginForecastOperation()
@@ -678,6 +698,7 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastState = .loadingWithBasic
         let refresh = await forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: manual)
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        solarForecastLastRefresh = refresh
         if loadPlanningContext == nil {
             solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
             solarForecastBatch = nil
@@ -917,6 +938,7 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastUnavailableCause = nil
         solarForecastUnavailableReason = nil
         solarForecastSaveFailure = false
+        solarForecastLastRefresh = nil
     }
 
     private func launchBillTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int, followsLive: Bool) {

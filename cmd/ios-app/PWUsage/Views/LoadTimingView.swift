@@ -436,7 +436,7 @@ struct LoadTimingView: View {
             SolarForecastSettingsSheet(coordinator: coordinator)
         }
         .sheet(item: $detailsSnapshot) { snapshot in
-            SmartShiftDetailsView(snapshot: snapshot)
+            SmartShiftDetailsView(snapshot: snapshot, solarForecast: { await coordinator.solarForecastDiagnostics() })
         }
         .onChange(of: profileStore.profiles) { _, profiles in
             if let exploredProfileID, !profiles.contains(where: { $0.id == exploredProfileID }) {

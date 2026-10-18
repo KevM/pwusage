@@ -551,6 +551,9 @@ struct SolarForecastStoreTests {
             try await transportHarness.store.discoverSites(accountScopeID: "account-a", siteID: "site-a", manual: true)
         }
         #expect(await transportHarness.store.lastErrorDescription == "Forecast network request failed")
+        let managed: any SolarForecastManaging = transportHarness.store
+        #expect(await managed.lastErrorDescription == "Forecast network request failed",
+                "The store's own description must back the protocol, not the extension's nil.")
 
         let invalidHarness = Harness()
         try await invalidHarness.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: [])

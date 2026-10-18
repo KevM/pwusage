@@ -21,6 +21,8 @@ struct SmartShiftDetailsSnapshot: Identifiable {
 /// Rate periods, what the run draws from each bank, freshness and assumptions.
 struct SmartShiftDetailsView: View {
     let snapshot: SmartShiftDetailsSnapshot
+    /// Reads the forecast store's state when diagnostics are copied.
+    var solarForecast: () async -> SmartShiftDiagnostics.SolarForecast? = { nil }
 
     @Environment(\.dismiss) private var dismiss
     @State private var copiedDiagnostics = false
@@ -116,9 +118,13 @@ struct SmartShiftDetailsView: View {
                 if let diagnostics = snapshot.diagnostics {
                     Section {
                         Button {
-                            guard let json = try? diagnostics.json() else { return }
-                            Clipboard.copy(json)
-                            copiedDiagnostics = true
+                            Task {
+                                var diagnostics = diagnostics
+                                diagnostics.solarForecast = await solarForecast()
+                                guard let json = try? diagnostics.json() else { return }
+                                Clipboard.copy(json)
+                                copiedDiagnostics = true
+                            }
                         } label: {
                             Label(copiedDiagnostics ? "Copied" : "Copy diagnostics",
                                   systemImage: copiedDiagnostics ? "checkmark" : "doc.on.doc")

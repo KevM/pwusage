@@ -77,6 +77,12 @@ protocol SolarForecastManaging: Sendable {
     func budget(for accountScopeID: String, siteID: String) async -> SolarForecastBudget
     func disconnect(accountScopeID: String, siteID: String) async throws
     func signOut() async throws
+    /// A fixed, credential-free sentence about the last failure, for diagnostics.
+    var lastErrorDescription: String? { get async }
+}
+
+extension SolarForecastManaging {
+    var lastErrorDescription: String? { get async { nil } }
 }
 
 actor SolarForecastStore {
