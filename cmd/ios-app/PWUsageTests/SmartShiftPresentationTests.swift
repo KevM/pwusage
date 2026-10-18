@@ -209,6 +209,21 @@ struct SmartShiftPresentationTests {
             == "Starting now runs during Peak, where you have no bank. Run at 3:00 PM to use your Peak and Off-Peak banks.")
     }
 
+    @Test func whyLineWhenBothRunsCrossTheSamePeriodsNamesTheShift() throws {
+        // 24 kWh over 20 h: starting now (08:30) spends 8 h in Peak, starting at 11:00 only 5.5 h.
+        // Both runs cross Peak then Off-Peak, and no solar is involved.
+        let pump = LoadProfile(id: UUID().uuidString, name: "Pool pump", kind: .custom, energyKwh: 24, durationHours: 20, carSettings: nil)
+        let comparison = Estimator.Comparison(
+            costNow: 4.37, recommendedStart: Self.at(11), recommendedEnd: Self.at(31), recommendedCost: 4.01, savings: 0.36,
+            bestAlternativeSavings: 0.36, estimatedSolarContribution: 0, horizonStart: Self.now, horizonEnd: Self.horizonEnd,
+            evaluatedStarts: [Self.now, Self.at(11)], assumptions: [], hasUnobservedBalance: false,
+            lanes: Self.laterLanes, periodSwitches: [Self.at(16.5)])
+        let verdict = try Self.verdict(Self.make(profile: pump, result: .init(comparison: comparison, unavailableReason: nil)))
+        #expect(!verdict.why.localizedCaseInsensitiveContains("solar"))
+        #expect(Self.normalized(verdict.why)
+            == "Starting now puts more of it in Peak, where you have no bank. Run at 11:00 AM so less of it lands there.")
+    }
+
     @Test func whyLineWhenNowIsCheapest() throws {
         let covered = [Self.lane("Off-Peak", start: 50, later: 10, startNow: 10)]
         let partly = [Self.lane("Off-Peak", start: 25, later: 0, startNow: 0)]

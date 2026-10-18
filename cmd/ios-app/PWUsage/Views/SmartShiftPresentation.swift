@@ -207,22 +207,28 @@ enum SmartShiftPresentation {
         let hours = end.timeIntervalSince(start) / 3600
         guard hours > 0, let energy = energyKwh(of: profile), energy > 0 else { return [] }
         let powerKw = energy / hours
-        var draws: [(key: String, kwh: Double)] = []
-        for segment in timing.tariffTimeline.sorted(by: { $0.start < $1.start }) where segment.start < end && segment.end > start {
-            let overlap = min(segment.end, end).timeIntervalSince(max(segment.start, start)) / 3600
-            if let index = draws.firstIndex(where: { $0.key == segment.periodKey }) {
-                draws[index].kwh += powerKw * overlap
-            } else {
-                draws.append((segment.periodKey, powerKw * overlap))
-            }
-        }
         let kwh: (Double) -> String = { $0.formatted(.number.precision(.fractionLength(1))) }
-        return draws.map { key, drawn in
+        return hoursByPeriod(from: start, to: end, timing: timing).map { key, periodHours in
+            let drawn = powerKw * periodHours
             let laneEnd = comparison.lanes.first { $0.periodKey == key }?.recommended.last?.kwh
             let fromBank = laneEnd.map { min(drawn, max($0 + drawn, 0)) } ?? 0
             return RunRow(name: periodTitle(key, timing: timing), fromBank: "\(kwh(fromBank)) kWh from your bank",
                           bought: "\(kwh(drawn - fromBank)) kWh bought")
         }
+    }
+
+    /// Hours a run spends in each rate period, in the order it reaches them.
+    static func hoursByPeriod(from start: Date, to end: Date, timing: LoadTiming) -> [(key: String, hours: Double)] {
+        var result: [(key: String, hours: Double)] = []
+        for segment in timing.tariffTimeline.sorted(by: { $0.start < $1.start }) where segment.start < end && segment.end > start {
+            let overlap = min(segment.end, end).timeIntervalSince(max(segment.start, start)) / 3600
+            if let index = result.firstIndex(where: { $0.key == segment.periodKey }) {
+                result[index].hours += overlap
+            } else {
+                result.append((segment.periodKey, overlap))
+            }
+        }
+        return result
     }
 
     // MARK: - A better Job
@@ -355,12 +361,7 @@ enum SmartShiftPresentation {
 
         /// Period keys a run touches, in the order it reaches them.
         func periods(from start: Date, to end: Date) -> [String] {
-            var keys: [String] = []
-            for segment in timing.tariffTimeline.sorted(by: { $0.start < $1.start })
-            where segment.start < end && segment.end > start && !keys.contains(segment.periodKey) {
-                keys.append(segment.periodKey)
-            }
-            return keys
+            hoursByPeriod(from: start, to: end, timing: timing).map(\.key)
         }
 
         func startKwh(_ key: String) -> Double? {
@@ -437,8 +438,18 @@ enum SmartShiftPresentation {
             let time = when(comparison.recommendedStart)
             let laterBanks = banks(laterPeriods)
             if nowPeriods == laterPeriods {
-                return "Starting now runs during \(name(first)), where you \(bankPhrase(first)). "
-                    + "By \(time), solar adds to your \(laterBanks)."
+                // Both runs cross the same periods, so the saving comes from how the
+                // energy splits between them: name the period starting now leans on more.
+                let nowEnd = now.addingTimeInterval(duration)
+                let laterHours = Dictionary(uniqueKeysWithValues: hoursByPeriod(
+                    from: comparison.recommendedStart, to: comparison.recommendedEnd, timing: timing).map { ($0.key, $0.hours) })
+                if let heavier = hoursByPeriod(from: now, to: nowEnd, timing: timing)
+                    .map({ (key: $0.key, extra: $0.hours - (laterHours[$0.key] ?? 0)) })
+                    .filter({ $0.extra > 0 })
+                    .max(by: { $0.extra < $1.extra })?.key {
+                    return "Starting now puts more of it in \(name(heavier)), where you \(bankPhrase(heavier)). "
+                        + "Run at \(time) so less of it lands there."
+                }
             }
             if first == laterPeriods.first, let other = nowPeriods.first(where: { !laterPeriods.contains($0) }) {
                 return "Starting now runs into \(name(other)), where you \(bankPhrase(other)). "
