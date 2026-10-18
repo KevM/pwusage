@@ -1183,7 +1183,9 @@ struct LoadTimingForecastPresentationTests {
             horizonEnd: Date(timeIntervalSince1970: 1_800_036_000),
             evaluatedStarts: [Date(timeIntervalSince1970: 1_800_000_000), recommendedStart],
             assumptions: [],
-            hasUnobservedBalance: false
+            hasUnobservedBalance: false,
+            lanes: [],
+            periodSwitches: []
         )
     }
 }

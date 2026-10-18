@@ -65,6 +65,21 @@ struct LoadTimingForecastEstimator {
         }
     }
 
+    struct BalancePoint: Equatable {
+        let date: Date
+        let kwh: Double
+    }
+
+    /// One rate period's signed balance from `now` to the horizon end, for the
+    /// run starting now and for the recommended run, each on top of the baseline.
+    struct BalanceLane: Equatable {
+        let periodKey: String
+        /// The projected balance at `now`.
+        let startKwh: Double
+        let recommended: [BalancePoint]
+        let startNow: [BalancePoint]
+    }
+
     struct Comparison: Equatable {
         /// The **marginal** cost of running the load now against the projected
         /// household baseline — `Σ (cost(withLoad) − cost(baseline))` over the
@@ -94,6 +109,11 @@ struct LoadTimingForecastEstimator {
         /// A rate period the runs could touch has no observed balance, so it was
         /// priced from zero (at the buy rate). Only the `.flat` projection allows this.
         let hasUnobservedBalance: Bool
+        /// Periods either run touches plus the period in effect now, ordered by
+        /// first occurrence from now.
+        let lanes: [BalanceLane]
+        /// Tariff period changes strictly inside (now, horizonEnd).
+        let periodSwitches: [Date]
     }
 
     struct Result: Equatable {
@@ -296,6 +316,11 @@ struct LoadTimingForecastEstimator {
         let bestAlternativeSavings = max(0, rawAlternative)
         let minorUnit = currencyMinorUnit(currencyCode)
         let recommendation = savings > minorUnit ? best : nowCandidate
+        guard let lanes = balanceLanes(now: now, horizonEnd: horizonEnd, projectionStart: projectionStart,
+                                       balances: balances, load: load, startNow: nowCandidate, recommended: recommendation,
+                                       projection: projection, tariffs: tariffs, timeZone: zone) else {
+            return unavailable(.invalidInput)
+        }
         return Result(comparison: Comparison(
             costNow: nowCandidate.cost,
             recommendedStart: recommendation.start,
@@ -308,8 +333,83 @@ struct LoadTimingForecastEstimator {
             horizonEnd: horizonEnd,
             evaluatedStarts: scored.map(\.start).sorted(),
             assumptions: assumptions(for: projection),
-            hasUnobservedBalance: hasUnobservedBalance
+            hasUnobservedBalance: hasUnobservedBalance,
+            lanes: lanes,
+            periodSwitches: periodSwitches(in: tariffs, after: now, before: horizonEnd)
         ), unavailableReason: nil)
+    }
+
+    private static func balanceLanes(now: Date, horizonEnd: Date, projectionStart: Date, balances: [String: Double],
+                                     load: (energy: Double, duration: TimeInterval), startNow: Candidate,
+                                     recommended: Candidate, projection: Projection,
+                                     tariffs: [LoadTimingTariffSegment], timeZone: TimeZone) -> [BalanceLane]? {
+        let powerKw = load.energy / (load.duration / 3600)
+        // The baseline from the end of observed data to now gives each lane's starting balance.
+        var nowBalances = balances
+        if projectionStart < now {
+            guard case .balances(let projected) = integrateBaseline(from: projectionStart, to: now, balances: balances,
+                                                                    projection: projection, tariffs: tariffs,
+                                                                    timeZone: timeZone) else { return nil }
+            nowBalances = projected
+        }
+        guard let nowSeries = balanceSeries(from: now, to: horizonEnd, balances: nowBalances,
+                                            run: (startNow.start, startNow.end), powerKw: powerKw,
+                                            projection: projection, tariffs: tariffs, timeZone: timeZone),
+              let recommendedSeries = balanceSeries(from: now, to: horizonEnd, balances: nowBalances,
+                                                    run: (recommended.start, recommended.end), powerKw: powerKw,
+                                                    projection: projection, tariffs: tariffs, timeZone: timeZone)
+        else { return nil }
+
+        func periods(touching start: Date, _ end: Date) -> Set<String> {
+            Set(tariffs.filter { $0.start < end && $0.end > start }.map(\.periodKey))
+        }
+        var keys = periods(touching: startNow.start, startNow.end).union(periods(touching: recommended.start, recommended.end))
+        if let current = tariffs.first(where: { $0.start <= now && now < $0.end }) { keys.insert(current.periodKey) }
+        let firstOccurrence = Dictionary(tariffs.filter { $0.end > now && $0.start < horizonEnd }
+            .map { ($0.periodKey, max($0.start, now)) }, uniquingKeysWith: min)
+
+        return keys.filter { nowBalances[$0] != nil }
+            .sorted { (firstOccurrence[$0] ?? .distantFuture, $0) < (firstOccurrence[$1] ?? .distantFuture, $1) }
+            .compactMap { key in
+                guard let start = nowBalances[key], let later = recommendedSeries[key], let immediate = nowSeries[key] else {
+                    return nil
+                }
+                return BalanceLane(periodKey: key, startKwh: start, recommended: later, startNow: immediate)
+            }
+    }
+
+    /// Integrates the baseline plus, inside `run`, the load's draw, recording every
+    /// period's balance at each integration boundary. `nil` when a value overflows.
+    private static func balanceSeries(from start: Date, to end: Date, balances: [String: Double],
+                                      run: (start: Date, end: Date), powerKw: Double, projection: Projection,
+                                      tariffs: [LoadTimingTariffSegment], timeZone: TimeZone) -> [String: [BalancePoint]]? {
+        var boundaries = Set(integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs,
+                                                   timeZone: timeZone))
+        for edge in [run.start, run.end] where edge > start && edge < end { boundaries.insert(edge) }
+        let points = boundaries.sorted()
+        guard points.count >= 2 else { return nil }
+        var current = balances
+        var series = current.mapValues { [BalancePoint(date: start, kwh: $0)] }
+        for index in 0..<(points.count - 1) {
+            let a = points[index], b = points[index + 1]
+            let mid = a.addingTimeInterval(b.timeIntervalSince(a) / 2)
+            guard let flow = flow(at: mid, projection: projection, timeZone: timeZone),
+                  let tariff = tariffs.first(where: { $0.start <= mid && mid < $0.end }),
+                  let old = current[tariff.periodKey] else { return nil }
+            let hours = b.timeIntervalSince(a) / 3600
+            let draw = a >= run.start && b <= run.end ? powerKw * hours : 0
+            let updated = old + flow.netExportKw * hours - draw
+            guard updated.isFinite else { return nil }
+            current[tariff.periodKey] = updated
+            for (key, kwh) in current { series[key, default: []].append(BalancePoint(date: b, kwh: kwh)) }
+        }
+        return series
+    }
+
+    private static func periodSwitches(in tariffs: [LoadTimingTariffSegment], after now: Date, before end: Date) -> [Date] {
+        zip(tariffs, tariffs.dropFirst()).compactMap { previous, next in
+            next.periodKey != previous.periodKey && next.start > now && next.start < end ? next.start : nil
+        }
     }
 
     private static func assumptions(for projection: Projection) -> [String] {

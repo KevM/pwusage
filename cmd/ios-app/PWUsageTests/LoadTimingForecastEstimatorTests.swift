@@ -549,4 +549,82 @@ struct LoadTimingForecastEstimatorTests {
         #expect(starts.contains(try #require(formatter.date(from: "2026-11-01T06:30:00Z"))))
         #expect(starts.contains(try #require(formatter.date(from: "2026-11-01T07:30:00Z"))))
     }
+
+    // MARK: - Balance lanes
+
+    private func lane(_ key: String, in comparison: LoadTimingForecastEstimator.Comparison) throws -> LoadTimingForecastEstimator.BalanceLane {
+        try #require(comparison.lanes.first { $0.periodKey == key })
+    }
+
+    @Test func lanesTrackEachPlanAgainstItsBank() throws {
+        let now = hours(8.5)
+        let comparison = try #require(evaluateFlat(profile: profile(14, hours: 5.9), now: now, tariffs: peakOffPeakTariffs(),
+                                                   balances: ["Peak": -6, "Off-Peak": 18]).comparison)
+        let offPeak = try lane("Off-Peak", in: comparison)
+        let peak = try lane("Peak", in: comparison)
+
+        #expect(abs(try #require(offPeak.recommended.last).kwh - (18 - 14)) < 0.000_001)
+        #expect(abs(try #require(offPeak.startNow.last).kwh - 18) < 0.000_001)
+        #expect(abs(try #require(peak.startNow.last).kwh - (-6 - 14)) < 0.000_001)
+        #expect(abs(try #require(peak.recommended.last).kwh - (-6)) < 0.000_001)
+        #expect(offPeak.startKwh == 18)
+        #expect(peak.startKwh == -6)
+        #expect(comparison.periodSwitches.contains(hours(16.5)))
+        for series in [offPeak.recommended, offPeak.startNow, peak.recommended, peak.startNow] {
+            #expect(series.first?.date == now)
+            #expect(series.last?.date == comparison.horizonEnd)
+        }
+    }
+
+    @Test func lanesShowOnlyTouchedPeriodsAndCurrent() throws {
+        // Super Off-Peak 00–06, Off-Peak 06–10, Mid 10–14, Peak 14–20, Off-Peak 20–24, on two days.
+        let rates: [String: (buy: Double, sell: Double)] = [
+            "Super Off-Peak": (0.40, 0.02), "Off-Peak": (0.30, 0.04), "Mid": (0.35, 0.05), "Peak": (0.50, 0.08)
+        ]
+        let spans: [(Double, Double, String)] = [(0, 6, "Super Off-Peak"), (6, 10, "Off-Peak"), (10, 14, "Mid"),
+                                                 (14, 20, "Peak"), (20, 24, "Off-Peak")]
+        let segments = [0.0, 24].flatMap { day in
+            spans.map { from, to, key in
+                LoadTimingTariffSegment(start: hours(day + from), end: hours(day + to), periodKey: key, name: key,
+                                        buyRate: rates[key]!.buy, sellRate: rates[key]!.sell)
+            }
+        }
+        let comparison = try #require(evaluateFlat(profile: profile(2, hours: 1), now: hours(8), tariffs: segments,
+            balances: ["Super Off-Peak": 0, "Off-Peak": 0, "Mid": 10, "Peak": 0]).comparison)
+
+        #expect(comparison.recommendedStart == hours(10))
+        #expect(comparison.lanes.map(\.periodKey) == ["Off-Peak", "Mid"])
+        #expect(comparison.periodSwitches.contains(hours(10)))
+        #expect(comparison.periodSwitches.contains(hours(14)))
+        #expect(comparison.periodSwitches.contains(hours(30)))
+        #expect(comparison.periodSwitches.allSatisfy { $0 > hours(8) && $0 < comparison.horizonEnd })
+    }
+
+    @Test func forecastLanesIncludeProjectedSolar() throws {
+        // A high Peak export rate makes the Off-Peak bank the cheaper one to spend,
+        // so the recommended run never touches Peak, yet Peak still fills from solar.
+        let tariffs = peakOffPeakTariffs().map { segment in
+            LoadTimingTariffSegment(start: segment.start, end: segment.end, periodKey: segment.periodKey, name: segment.name,
+                                    buyRate: segment.buyRate, sellRate: segment.periodKey == "Peak" ? 0.40 : segment.sellRate)
+        }
+        let solar = (0..<96).map { index -> SolarForecastInterval in
+            let from = hours(Double(index) / 2), to = hours(Double(index + 1) / 2)
+            let inPeak = tariffs.contains { $0.periodKey == "Peak" && $0.start <= from && from < $0.end }
+            return SolarForecastInterval(periodStart: from, periodEnd: to, powerKw: inPeak ? 3 : 0)
+        }
+        let now = hours(8.5)
+        let result = LoadTimingForecastEstimator.evaluate(
+            profile: profile(14, hours: 5.9), now: now,
+            timing: timing(tariffs, balances: ["Peak": -6, "Off-Peak": 18]),
+            projection: .forecast(intervals: solar, context: context()),
+            balanceSourceTime: now, billingCycleEnd: now.addingTimeInterval(7 * 86_400), currencyCode: "USD")
+        let comparison = try #require(result.comparison)
+        #expect(comparison.recommendedStart >= hours(16.5))
+        let peak = try lane("Peak", in: comparison)
+
+        #expect(peak.startKwh == -6)
+        // 8 hours of 3 kW today (08:30–16:30) and 9.5 hours tomorrow (07:00–16:30).
+        #expect(abs(try #require(peak.recommended.last).kwh - (-6 + 3 * 8 + 3 * 9.5)) < 0.000_001)
+        #expect(try #require(peak.recommended.last).kwh > peak.startKwh)
+    }
 }
