@@ -1136,6 +1136,12 @@ struct LoadTimingViewTests {
                                        forecastFetchedAt: nil, now: now) == ForecastAvailability.none)
         #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
                                        forecastFetchedAt: nil, now: now) == .loading)
+        // A refresh keeps the previous batch in memory; while it is still fresh it keeps
+        // pricing the card, so the verdict doesn't flip to the forecast-free answer and back.
+        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                       forecastFetchedAt: fresh, now: now) == .ready)
+        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                       forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now) == .loading)
         #expect(P.forecastAvailability(state: .basic, connection: .awaitingArraySelection, cause: nil, reason: nil,
                                        forecastFetchedAt: nil, now: now) == .unusable("Choose your solar arrays to add a forecast."))
         #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,

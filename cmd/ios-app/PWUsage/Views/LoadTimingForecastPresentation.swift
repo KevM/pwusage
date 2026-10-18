@@ -277,9 +277,13 @@ enum LoadTimingForecastPresentation {
         case .awaitingArraySelection: return .unusable(firstSentence(awaitingArraySelectionNote))
         case .ready: break
         }
-        if state == .loadingWithBasic { return .loading }
         let age = forecastFetchedAt.map { now.timeIntervalSince($0) }
-        if state == .enhanced, let age, age >= 0, age <= maximumForecastAge { return .ready }
+        let isFresh = age.map { $0 >= 0 && $0 <= maximumForecastAge } ?? false
+        // A refresh keeps the previous batch in memory until it is replaced. While
+        // that batch is still fresh it keeps pricing the card, so the verdict
+        // doesn't flip to the forecast-free answer and back on every pull.
+        if state == .loadingWithBasic { return isFresh ? .ready : .loading }
+        if state == .enhanced, isFresh { return .ready }
         if let reason { return .unusable(firstSentence(enhancementDetail(reason))) }
         return .unusable(firstSentence(causeDetail(cause, forecastIsFutureDated: age.map { $0 < 0 } ?? false)))
     }
