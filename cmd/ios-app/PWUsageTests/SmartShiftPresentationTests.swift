@@ -651,3 +651,17 @@ extension SmartShiftPresentationTests {
         #expect(assumptions.contains("Typical household and battery behavior follows the historical local-time profile."))
     }
 }
+
+extension SmartShiftPresentationTests {
+    @Test func unsafeNowWithACheaperSafeStartStillClaimsTheSaving() throws {
+        let now = Self.at(32.5)
+        let comparison = Self.cycleComparison(now: now, recommendedStart: Self.at(44), costNow: 2.83, recommendedCost: 1.00, savings: 1.83,
+                                              onPeak: (1, 1, -9, 1, 1, -9), offPeak: (-20, -30, -20, -20, -30, -20),
+                                              safety: .nowUnsafe(periodKey: "ON_PEAK"))
+        let verdict = try Self.cycleVerdict(comparison, now: now)
+        #expect(Self.normalized(verdict.headline) == "Charge the car at 8:00 PM: about \(Self.money(1.83)) cheaper than now")
+        #expect(verdict.barsCaption == "Added to your bill (shorter is better)")
+        #expect(verdict.percentLess != nil)
+        #expect(verdict.why.hasPrefix("Starting now would draw on your On-Peak bank"))
+    }
+}

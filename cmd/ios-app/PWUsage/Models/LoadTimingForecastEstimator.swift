@@ -632,6 +632,9 @@ struct LoadTimingForecastEstimator {
         var forecastEnd = projectionStart
         if case .forecast(let forecast, let context) = projection {
             let coverageEnd = contiguousEnd(of: forecast, startingAt: projectionStart)
+            // A forecast that doesn't reach now can't price anything; without this,
+            // history would stand in silently under the forecast's name.
+            guard coverageEnd > now else { return unavailable(.incompleteCoverage) }
             if context.hasGridHistory {
                 // History fills in after the forecast window, or where the forecast falls short of it.
                 forecastEnd = min(coverageEnd, now.addingTimeInterval(Self.forecastWindow))
@@ -832,13 +835,16 @@ struct LoadTimingForecastEstimator {
     /// A run "dips into" a bank when the typical projection prices some of it at
     /// that period's sell rate: the bank ends the projection banked and the run
     /// draws on it. Each such bank is read in the cautious projection at the
-    /// safety window's end, less the run's draw before then.
+    /// safety window's end, less the bank-covered part of the run's draw before then.
     private static func assess(_ candidate: Candidate, baseBalances: [String: Double],
                                cautiousBalances: [String: Double]) -> Assessment {
         var worst: (periodKey: String, kwh: Double)?
         for (key, draw) in candidate.draws.sorted(by: { $0.key < $1.key }) where draw > 0 {
             guard let typical = baseBalances[key], typical > 0, let cautious = cautiousBalances[key] else { continue }
-            let remaining = cautious - (candidate.drawsBySafetyEnd[key] ?? 0)
+            // Only the part the typical bank covers is priced at the sell rate and so
+            // at risk in a cloudy week; an overdraw is already priced at the buy rate.
+            let covered = min(candidate.drawsBySafetyEnd[key] ?? 0, typical)
+            let remaining = cautious - covered
             if worst == nil || remaining < worst!.kwh { worst = (key, remaining) }
         }
         return Assessment(candidate: candidate, worst: worst)

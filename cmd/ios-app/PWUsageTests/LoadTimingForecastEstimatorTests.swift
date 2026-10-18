@@ -975,3 +975,32 @@ extension LoadTimingForecastEstimatorTests {
         #expect(comparison.ruledOut?.periodKey == "ON_PEAK")
     }
 }
+
+// MARK: - Review fixes
+
+extension LoadTimingForecastEstimatorTests {
+    @Test("An overdraw already priced at the buy rate does not fail the safety rule")
+    func overdrawAlreadyPricedIsNotPenalised() throws {
+        // Off-Peak has 2 kWh banked; a 30 kWh charge buys the other 28 at 10¢ whatever the weather.
+        let tariffs = [tariff(0, 43_200, key: "OFF", buy: 0.10, sell: 0.03), tariff(43_200, 144_000, key: "ON", buy: 0.31, sell: 0.04)]
+        let result = evaluate(.flat(timeZone: "UTC"), profile: LoadProfile(id: "car", name: "Car", kind: .appliance, energyKwh: 30,
+                                                                        durationHours: 3, carSettings: nil),
+                              now: start, tariffs: tariffs, balances: ["OFF": 2, "ON": -20], cycleEnd: start.addingTimeInterval(144_000))
+
+        let comparison = try #require(result.comparison)
+        #expect(comparison.safety == .nowSafe)
+        #expect(comparison.recommendedStart == start)
+        #expect(abs(comparison.costNow - (2 * 0.03 + 28 * 0.10)) < 1e-9)
+    }
+
+    @Test("A forecast that misses the start of the projection is not used with history")
+    func forecastMustCoverTheProjectionStart() {
+        // The batch starts half an hour after now; history must not silently stand in under the forecast label.
+        let intervals = (1..<96).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+        let result = evaluate(.forecast(intervals: intervals, context: historyContext(home: 1, grid: { _ in 0.5 })), now: start,
+                              tariffs: [tariff(0, 5 * 86_400)], balances: ["p": 2], cycleEnd: start.addingTimeInterval(5 * 86_400))
+
+        #expect(result.comparison == nil)
+        #expect(result.unavailableReason == .incompleteCoverage)
+    }
+}

@@ -497,7 +497,7 @@ enum SmartShiftPresentation {
         var headline: String {
             let time = isNow ? "now" : when(comparison.recommendedStart)
             switch comparison.safety {
-            case .nowSafe:
+            case .nowSafe, .nowUnsafe where claimsSaving:
                 return isNow
                     ? "\(profile.name) now: no cheaper time today"
                     : "\(profile.name) \(time): about \(money(comparison.savings)) cheaper than now"
@@ -509,8 +509,17 @@ enum SmartShiftPresentation {
             }
         }
 
-        /// Shorter is better only when the recommendation is also the cheaper bar.
-        var claimsSaving: Bool { comparison.safety == .nowSafe && !isNow }
+        /// Shorter is better only when the recommendation is also the cheaper bar:
+        /// never when no start is safe, and not when the safe start costs more than now.
+        var claimsSaving: Bool {
+            guard !isNow else { return false }
+            switch comparison.safety {
+            case .nowSafe: return true
+            case .nowUnsafe:
+                return comparison.costNow - comparison.recommendedCost > LoadTimingForecastEstimator.currencyMinorUnit(currencyCode)
+            case .noSafeStart: return false
+            }
+        }
 
         func verdict(forecast: ForecastAvailability) -> SmartShiftVerdict {
             let nowBar = CostBar(label: nowLabel, amount: money(comparison.costNow), value: comparison.costNow, isRecommended: isNow)
