@@ -129,24 +129,64 @@ enum SmartShiftPresentation {
         currencyCode: String,
         timeZone: String
     ) -> SmartShiftEvaluation {
+        evaluator(now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
+                  balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
+                  currencyCode: currencyCode, timeZone: timeZone)(profile)
+    }
+
+    /// Prices Jobs for one pass, as `evaluate` does. The projection work that
+    /// doesn't depend on the Job is planned once per projection and shared, so
+    /// pricing every saved Job for the hint stays within the per-pass budget.
+    static func evaluator(
+        now: Date,
+        timing: LoadTiming,
+        forecast: ForecastAvailability,
+        intervals: [SolarForecastInterval]?,
+        context: LoadTimingForecastEstimator.PlanningContext?,
+        balanceSourceTime: Date?,
+        billingCycleEnd: Date,
+        currencyCode: String,
+        timeZone: String
+    ) -> (LoadProfile) -> SmartShiftEvaluation {
         guard let balanceSourceTime else {
-            return SmartShiftEvaluation(result: .init(comparison: nil, unavailableReason: .staleBalance), forecast: forecast)
+            return { _ in SmartShiftEvaluation(result: .init(comparison: nil, unavailableReason: .staleBalance), forecast: forecast) }
         }
-        func run(_ projection: LoadTimingForecastEstimator.Projection) -> LoadTimingForecastEstimator.Result {
-            LoadTimingForecastEstimator.evaluate(profile: profile, now: now, timing: timing, projection: projection,
-                                                 balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
-                                                 currencyCode: currencyCode)
+        let plans = PassPlans { projection in
+            LoadTimingForecastEstimator.plan(now: now, timing: timing, projection: projection,
+                                             balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
+                                             currencyCode: currencyCode)
         }
-        var availability = forecast
-        if forecast == .ready, let intervals, let context {
-            let result = run(.forecast(intervals: intervals, context: context))
-            guard let reason = result.unavailableReason else { return SmartShiftEvaluation(result: result, forecast: .ready) }
-            availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(reason))
-        } else if forecast == .ready {
-            availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(.incompleteContext))
+        return { profile in
+            var availability = forecast
+            if forecast == .ready, let intervals, let context {
+                let result = LoadTimingForecastEstimator.evaluate(
+                    profile: profile, plan: plans.plan(for: .forecast(intervals: intervals, context: context)))
+                guard let reason = result.unavailableReason else { return SmartShiftEvaluation(result: result, forecast: .ready) }
+                availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(reason))
+            } else if forecast == .ready {
+                availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(.incompleteContext))
+            }
+            return SmartShiftEvaluation(
+                result: LoadTimingForecastEstimator.evaluate(profile: profile, plan: plans.plan(for: .flat(timeZone: timeZone))),
+                forecast: availability)
         }
-        return SmartShiftEvaluation(result: run(.flat(timeZone: timeZone)),
-                                    forecast: availability)
+    }
+
+    /// Each projection's plan for one pass, built the first time a Job needs it.
+    private final class PassPlans {
+        private let make: (LoadTimingForecastEstimator.Projection) -> LoadTimingForecastEstimator.Plan
+        private var built: [(LoadTimingForecastEstimator.Projection, LoadTimingForecastEstimator.Plan)] = []
+
+        init(make: @escaping (LoadTimingForecastEstimator.Projection) -> LoadTimingForecastEstimator.Plan) {
+            self.make = make
+        }
+
+        func plan(for projection: LoadTimingForecastEstimator.Projection) -> LoadTimingForecastEstimator.Plan {
+            if let hit = built.first(where: { $0.0 == projection }) { return hit.1 }
+            let plan = make(projection)
+            built.append((projection, plan))
+            return plan
+        }
     }
 
     static let connectSolcastNote = "Without a solar forecast, banks are shown as they stand now. Connect Solcast to see today's solar."

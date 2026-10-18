@@ -1203,4 +1203,31 @@ struct LoadTimingViewTests {
         let missingSource = evaluate(.none, sourceAge: nil)
         #expect(missingSource.result.unavailableReason == .staleBalance)
     }
+
+    @Test("One pass's evaluator prices every Job exactly as evaluating each alone")
+    func passEvaluatorMatchesPerJobEvaluation() {
+        let now = SmartShiftPresentationTests.now
+        let timing = SmartShiftPresentationTests.timing()
+        let intervals = [SolarForecastInterval(periodStart: SmartShiftPresentationTests.at(0),
+                                               periodEnd: SmartShiftPresentationTests.at(48), powerKw: 2)]
+        let slots = stride(from: 0, to: 1440, by: 30).map {
+            LoadTimingForecastEstimator.PlanningSlot(localMinute: $0, homeKw: 0.5, batteryNetChargeKw: 0)
+        }
+        let context = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC", slots: slots, asOf: now)
+        let jobs = [SmartShiftPresentationTests.car, SmartShiftPresentationTests.pump,
+                    LoadProfile(id: "kettle", name: "Boil the kettle", kind: .appliance, energyKwh: 0.2, durationHours: 0.1, carSettings: nil)]
+        for (forecast, sourceAge) in [(ForecastAvailability.ready, 0.0), (.ready, 40.0 * 60), (.none, 0)] {
+            let evaluate = SmartShiftPresentation.evaluator(
+                now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
+                balanceSourceTime: now.addingTimeInterval(-sourceAge), billingCycleEnd: now.addingTimeInterval(20 * 86_400),
+                currencyCode: "USD", timeZone: "UTC")
+            for job in jobs {
+                let alone = SmartShiftPresentation.evaluate(
+                    profile: job, now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
+                    balanceSourceTime: now.addingTimeInterval(-sourceAge), billingCycleEnd: now.addingTimeInterval(20 * 86_400),
+                    currencyCode: "USD", timeZone: "UTC")
+                #expect(evaluate(job) == alone)
+            }
+        }
+    }
 }

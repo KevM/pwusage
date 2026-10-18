@@ -281,20 +281,18 @@ struct LoadTimingView: View {
             forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
             now: now
         )
-        func evaluate(_ profile: LoadProfile) -> SmartShiftEvaluation {
-            SmartShiftPresentation.evaluate(
-                profile: profile,
-                now: now,
-                timing: timing,
-                forecast: availability,
-                intervals: coordinator.solarForecastBatch?.intervals,
-                context: coordinator.loadPlanningContext,
-                balanceSourceTime: response.sources.energyDataThrough,
-                billingCycleEnd: response.currentBill.cycleEnd,
-                currencyCode: currencyCode,
-                timeZone: timeZone
-            )
-        }
+        // One evaluator per pass, so every Job shares the projection's plan.
+        let evaluate = SmartShiftPresentation.evaluator(
+            now: now,
+            timing: timing,
+            forecast: availability,
+            intervals: coordinator.solarForecastBatch?.intervals,
+            context: coordinator.loadPlanningContext,
+            balanceSourceTime: response.sources.energyDataThrough,
+            billingCycleEnd: response.currentBill.cycleEnd,
+            currencyCode: currencyCode,
+            timeZone: timeZone
+        )
         let evaluation = profile.map(evaluate)
         let screen = SmartShiftPresentation.make(
             profile: profile,
