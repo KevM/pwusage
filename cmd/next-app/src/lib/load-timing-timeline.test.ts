@@ -55,4 +55,49 @@ describe('buildLoadTimingTimeline', () => {
             { start: '2026-10-01T07:00:00.000Z', end: '2026-10-01T07:02:00.000Z', periodKey: 'Winter all day', name: 'Winter all day', buyRate: 0.8, sellRate: 0.02 },
         ]);
     });
+
+    it('ends at a tariff gap past the required horizon instead of dropping the timeline', () => {
+        // Summer covers June–September only, so October has no tariff.
+        const seasons: NonNullable<Tariff['seasons']> = [
+            { id: 2, tariff_id: 1, name: 'Summer', from_month: 6, from_day: 1, to_month: 9, to_day: 30, buy_rate: 0.4, sell_rate: 0.05,
+                schedules: [{ id: 3, season_id: 2, name: 'Summer all day', buy_rate: 0.4, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }] },
+        ];
+        const schedule = makeSchedule({ seasons });
+        const now = new Date('2026-09-20T07:00:00Z');
+
+        const reaching = buildLoadTimingTimeline(schedule, now, new Date('2026-10-15T07:00:00Z'), new Date('2026-09-27T07:00:00Z'));
+        const required = buildLoadTimingTimeline(schedule, now, new Date('2026-10-15T07:00:00Z'), new Date('2026-10-05T07:00:00Z'));
+
+        expect(reaching.at(-1)?.end).toBe('2026-10-01T07:00:00.000Z');
+        expect(required).toEqual([]);
+    });
+
+    it('lands quarter-hour and off-quarter switches on their minute', () => {
+        const now = new Date('2026-07-08T18:00:00Z'); // 11:00 in Los Angeles
+        const end = new Date('2026-07-09T18:00:00Z');
+
+        const quarter = buildLoadTimingTimeline(makeSchedule({ switchMinute: 45 }), now, end);
+        const offQuarter = buildLoadTimingTimeline(makeSchedule({ switchMinute: 10 }), now, end);
+
+        expect(quarter.map(({ start, name }) => ({ start, name }))).toEqual([
+            { start: '2026-07-08T18:00:00.000Z', name: 'Day' },
+            { start: '2026-07-08T19:45:00.000Z', name: 'Night' },
+            { start: '2026-07-09T07:00:00.000Z', name: 'Day' },
+        ]);
+        expect(offQuarter.map(({ start, name }) => ({ start, name }))).toEqual([
+            { start: '2026-07-08T18:00:00.000Z', name: 'Day' },
+            { start: '2026-07-08T19:10:00.000Z', name: 'Night' },
+            { start: '2026-07-09T07:00:00.000Z', name: 'Day' },
+        ]);
+    });
+
+    it('samples a 31-day horizon quickly', () => {
+        const startedAt = performance.now();
+        const timeline = buildLoadTimingTimeline(makeSchedule(), new Date('2026-10-18T05:00:00Z'), new Date('2026-11-18T06:00:00Z'));
+        const elapsedMs = performance.now() - startedAt;
+
+        expect(timeline.at(-1)?.end).toBe('2026-11-18T06:00:00.000Z');
+        console.info(`[load-timing-timeline] 31-day timeline built in ${elapsedMs.toFixed(1)} ms`);
+        expect(elapsedMs).toBeLessThan(50);
+    });
 });

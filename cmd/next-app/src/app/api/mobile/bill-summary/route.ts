@@ -89,13 +89,17 @@ export async function GET(request: Request) {
                 energyDataThrough ? Math.min(energyDataThrough.getTime(), now.getTime()) : now.getTime(),
                 now.getTime() - TIMELINE_LOOKBACK_MS,
             ));
+            const sevenDaysOut = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
             const loadTimingWithTimeline = loadTiming
                 ? {
                     ...loadTiming,
+                    // Reach the bill date so the app can project banks to it;
+                    // never less than the seven days the app always needs.
                     tariffTimeline: buildLoadTimingTimeline(
                         schedule,
                         timelineStart,
-                        new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+                        new Date(Math.max(sevenDaysOut.getTime(), cycleEnd.getTime())),
+                        sevenDaysOut
                     ),
                 }
                 : null;

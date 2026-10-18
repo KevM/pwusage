@@ -19,12 +19,23 @@ interface ResolvedPeriod {
 }
 
 const MINUTE_MS = 60_000;
+/**
+ * Tariff rules switch on whole local minutes, and in practice on quarter
+ * hours. Walk in quarter-hour steps and, when the period differs, bisect the
+ * minutes in between so an off-quarter switch still lands on its minute.
+ */
+const STEP_MS = 15 * MINUTE_MS;
 
-/** Build a compact tariff timeline by sampling local tariff rules at UTC minute boundaries. */
+/**
+ * Build a compact tariff timeline by sampling local tariff rules at UTC minute
+ * boundaries. A tariff gap before `requiredEnd` yields no timeline; a gap after
+ * it ends the timeline there (the app treats that as the end of coverage).
+ */
 export function buildLoadTimingTimeline(
     schedule: Schedule,
     now: Date,
-    horizonEnd: Date
+    horizonEnd: Date,
+    requiredEnd: Date = horizonEnd
 ): LoadTimingTimelineSegment[] {
     const startMs = now.getTime();
     const endMs = horizonEnd.getTime();
@@ -35,18 +46,37 @@ export function buildLoadTimingTimeline(
 
     const segments: LoadTimingTimelineSegment[] = [];
     let segmentStart = startMs;
-    let current = first;
-    let sampleAt = Math.floor(startMs / MINUTE_MS) * MINUTE_MS + MINUTE_MS;
+    let current: ResolvedPeriod = first;
+    // The latest minute known to resolve to `current`.
+    let knownAt = startMs;
+    let sampleAt = Math.floor(startMs / STEP_MS) * STEP_MS + STEP_MS;
 
-    while (sampleAt < endMs) {
-        const resolved = resolvePeriod(schedule, new Date(sampleAt));
-        if (!resolved) return [];
-        if (!samePeriod(current, resolved)) {
-            segments.push(toSegment(segmentStart, sampleAt, current));
-            segmentStart = sampleAt;
-            current = resolved;
+    while (knownAt < endMs) {
+        const probeAt = Math.min(sampleAt, endMs);
+        const probe = probeAt < endMs ? resolvePeriod(schedule, new Date(probeAt)) : current;
+        if (probe && samePeriod(current, probe)) {
+            knownAt = probeAt;
+            sampleAt += STEP_MS;
+            continue;
         }
-        sampleAt += MINUTE_MS;
+        // The period changes (or coverage ends) somewhere in (knownAt, probeAt]:
+        // find the first whole minute that differs.
+        let low = Math.floor(knownAt / MINUTE_MS) * MINUTE_MS + MINUTE_MS;
+        let high = probeAt;
+        while (low < high) {
+            const middle = Math.floor((low + high) / 2 / MINUTE_MS) * MINUTE_MS;
+            const resolved = resolvePeriod(schedule, new Date(middle));
+            if (resolved && samePeriod(current, resolved)) low = middle + MINUTE_MS;
+            else high = middle;
+        }
+        const changeAt = low;
+        const next = resolvePeriod(schedule, new Date(changeAt));
+        segments.push(toSegment(segmentStart, changeAt, current));
+        if (!next) return changeAt >= requiredEnd.getTime() ? segments : [];
+        segmentStart = changeAt;
+        current = next;
+        knownAt = changeAt;
+        if (sampleAt <= changeAt) sampleAt = Math.floor(changeAt / STEP_MS) * STEP_MS + STEP_MS;
     }
 
     segments.push(toSegment(segmentStart, endMs, current));
