@@ -323,15 +323,16 @@ struct LoadTimingView: View {
     private func detailsSnapshot(_ state: SmartShiftState, verdict: SmartShiftVerdict) -> SmartShiftDetailsSnapshot {
         let comparison = state.evaluation?.result.comparison
         let usedForecast = state.evaluation?.forecast == .ready
-        var runRows: [RunRow] = []
+        var breakdowns: [CostBreakdown] = []
         if let comparison, let profile = state.profile {
-            runRows = SmartShiftPresentation.runRows(comparison: comparison, profile: profile, timing: state.timing)
+            breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: profile, timing: state.timing,
+                                                               now: state.now, currencyCode: currencyCode, timeZone: timeZone)
         }
         return SmartShiftDetailsSnapshot(
             verdict: verdict,
             comparison: comparison,
             rows: SmartShiftPresentation.periodRows(timing: state.timing, currencyCode: currencyCode),
-            runRows: runRows,
+            breakdowns: breakdowns,
             forecastFetchedAt: usedForecast ? coordinator.solarForecastBatch?.fetchedAt : nil,
             contextAsOf: usedForecast ? coordinator.loadPlanningContext?.asOf : nil,
             capturedAt: state.now

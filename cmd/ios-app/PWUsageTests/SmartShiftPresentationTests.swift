@@ -109,8 +109,8 @@ struct SmartShiftPresentationTests {
     @Test func laterStartTomorrowSaysSo() throws {
         let comparison = Self.comparison(recommendedStart: Self.at(40.5))
         let verdict = try Self.verdict(Self.make(result: .init(comparison: comparison, unavailableReason: nil)))
-        #expect(Self.normalized(verdict.headline) == "Charge the car at 4:30 PM tomorrow: about \(Self.money(1.89)) cheaper than now")
-        #expect(Self.normalized(verdict.why).contains("At 4:30 PM tomorrow it"))
+        #expect(Self.normalized(verdict.headline) == "Charge the car tomorrow at 4:30 PM: about \(Self.money(1.89)) cheaper than now")
+        #expect(Self.normalized(verdict.why).contains("Tomorrow at 4:30 PM it"))
     }
 
     @Test func nowIsCheapestShowsOneBar() throws {
@@ -240,7 +240,7 @@ struct SmartShiftPresentationTests {
         let why = Self.normalized(try Self.verdict(screen).why)
         #expect(!why.contains("Off-Peak bank"))
         #expect(why == "Starting now runs during Off-Peak, where you have no bank, so it's bought at \(Self.rate(0.132)). "
-            + "At 4:30 PM tomorrow it mostly uses On-Peak energy your solar banks before then, giving up \(Self.rate(0.072)) in credit.")
+            + "Tomorrow at 4:30 PM it mostly uses On-Peak energy your solar banks before then, giving up \(Self.rate(0.072)) in credit.")
     }
 
     @Test func whyLineSaysMostlyWhenTheLaterRunSpansPeriods() throws {
@@ -350,22 +350,76 @@ struct SmartShiftPresentationTests {
         #expect(verdict.why.hasPrefix("Starting now runs during On-Peak,"))
     }
 
-    @Test func runRowsSplitEachBankFromWhatIsBought() {
-        // 14 kWh over 5.9 h from 16:30 runs entirely in Off-Peak; that bank ends at +4, so all 14 came from it.
-        let pump = LoadProfile(id: UUID().uuidString, name: "Pool pump", kind: .custom, energyKwh: 14, durationHours: 5.9, carSettings: nil)
-        let later = SmartShiftPresentation.runRows(comparison: Self.comparison(), profile: pump, timing: Self.timing())
-        #expect(later == [RunRow(name: "Off-Peak", fromBank: "14.0 kWh from your bank", bought: "0.0 kWh bought")])
+    /// The owner's Sunday at Harrison: Off-Peak all weekend (10¢ buy, 3¢ credit) and owed; Monday
+    /// On-Peak 08:00–20:00 (31¢ buy, 4¢ credit) banks tomorrow's solar from +5 to +33. The car
+    /// draws 52.7 kWh over 5.86 h; at 16:30 tomorrow 31.5 kWh lands in On-Peak and 21.2 after 20:00.
+    static func harrisonSunday() -> (timing: LoadTiming, comparison: Estimator.Comparison, now: Date, car: LoadProfile) {
+        let now = at(13.2)
+        let car = LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: 0, durationHours: 0,
+            carSettings: CarLoadSettings(capacityKwh: 79.05, initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level2))
+        let spans: [(Double, Double, String, Double, Double)] = [(0, 32, "OFF_PEAK", 0.10, 0.03), (32, 44, "ON_PEAK", 0.31, 0.04),
+                                                                 (44, 48, "OFF_PEAK", 0.10, 0.03)]
+        let segments = spans.map { LoadTimingTariffSegment(start: at($0.0), end: at($0.1), periodKey: $0.2, name: $0.2,
+                                                          buyRate: $0.3, sellRate: $0.4) }
+        let periods = [("OFF_PEAK", -64.0, 0.10, 0.03), ("ON_PEAK", 5.0, 0.31, 0.04)].map {
+            LoadTimingPeriod(name: $0.0, marginalCost: nil, basis: "cycle-net-export", cycleNetExportKwh: $0.1,
+                             isActive: false, nextStartPhrase: nil, buyRate: $0.2, sellRate: $0.3)
+        }
+        let timing = LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: periods,
+                                pricingPeriods: periods, tariffTimeline: segments, nextCheaper: nil, nextCheaperPhrase: nil,
+                                nextStartPhraseByKey: [:])
+        func lane(_ key: String, start: Double, later: Double, startNow: Double) -> Estimator.BalanceLane {
+            Estimator.BalanceLane(periodKey: key, startKwh: start,
+                                  recommended: [.init(date: now, kwh: start), .init(date: horizonEnd, kwh: later)],
+                                  startNow: [.init(date: now, kwh: start), .init(date: horizonEnd, kwh: startNow)])
+        }
+        let duration = 52.7 / 9
+        let comparison = Estimator.Comparison(
+            costNow: 5.27, recommendedStart: at(40.5), recommendedEnd: at(40.5 + duration), recommendedCost: 3.38,
+            savings: 1.89, bestAlternativeSavings: 1.89, estimatedSolarContribution: 0, horizonStart: now,
+            horizonEnd: horizonEnd, evaluatedStarts: [now, at(40.5)], assumptions: [], hasUnobservedBalance: false,
+            lanes: [lane("OFF_PEAK", start: -64, later: -93.5, startNow: -125), lane("ON_PEAK", start: 5, later: 1.5, startNow: 33)],
+            periodSwitches: [at(32), at(44)])
+        return (timing, comparison, now, car)
+    }
 
-        // Starting now (08:30) runs entirely in Peak, which is owed, so all of it is bought.
-        let nowLanes = [Self.lane("Peak", start: -6, later: -20, startNow: -20)]
-        let now = Self.comparison(costNow: 5.32, recommendedCost: 5.32, savings: 0, recommendedStart: Self.now, lanes: nowLanes)
-        #expect(SmartShiftPresentation.runRows(comparison: now, profile: pump, timing: Self.timing())
-            == [RunRow(name: "Peak", fromBank: "0.0 kWh from your bank", bought: "14.0 kWh bought")])
+    @Test func costBreakdownShowsTheArithmeticForBothStarts() throws {
+        let (timing, comparison, now, car) = Self.harrisonSunday()
+        let breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: car, timing: timing, now: now,
+                                                                currencyCode: "USD", timeZone: "UTC")
+        #expect(breakdowns.count == 2)
+        let later = try #require(breakdowns.first)
+        #expect(Self.normalized(later.title) == "Charge tomorrow at 4:30 PM")
+        #expect(later.total == Self.money(3.38))
+        #expect(later.lines == [
+            CostLine(period: "On-Peak", detail: "31.5 kWh from your bank × \(Self.rate(0.04)) credit", amount: Self.money(1.26)),
+            CostLine(period: "Off-Peak", detail: "21.2 kWh bought × \(Self.rate(0.10))", amount: Self.money(2.12)),
+        ])
+        #expect(later.notes == ["On-Peak bank: +5 kWh banked now, about +33 kWh with the forecast solar."])
+        let startNow = try #require(breakdowns.last)
+        #expect(startNow.title == "Charge now")
+        #expect(startNow.total == Self.money(5.27))
+        #expect(startNow.lines == [CostLine(period: "Off-Peak", detail: "52.7 kWh bought × \(Self.rate(0.10))", amount: Self.money(5.27))])
+        #expect(startNow.notes.isEmpty)
+    }
 
-        // A bank that covers part of the run: Off-Peak ends at -2 after drawing 14, so 12 came from the bank.
+    @Test func costBreakdownSplitsAPartlyBankedPeriod() throws {
+        // Off-Peak ends at -2 after the 14 kWh run: 12 kWh came from the bank, 2 were bought.
         let partLanes = [Self.lane("Peak", start: -6, later: -6, startNow: -20), Self.lane("Off-Peak", start: 12, later: -2, startNow: 12)]
-        #expect(SmartShiftPresentation.runRows(comparison: Self.comparison(lanes: partLanes), profile: pump, timing: Self.timing())
-            == [RunRow(name: "Off-Peak", fromBank: "12.0 kWh from your bank", bought: "2.0 kWh bought")])
+        let breakdowns = SmartShiftPresentation.costBreakdowns(comparison: Self.comparison(lanes: partLanes), profile: Self.pump,
+            timing: Self.timing(), now: Self.now, currencyCode: "USD", timeZone: "UTC")
+        #expect(try #require(breakdowns.first).lines == [
+            CostLine(period: "Off-Peak", detail: "12.0 kWh from your bank × \(Self.rate(0.26)) credit", amount: Self.money(3.12)),
+            CostLine(period: "Off-Peak", detail: "2.0 kWh bought × \(Self.rate(0.20))", amount: Self.money(0.40)),
+        ])
+    }
+
+    @Test func costBreakdownWhenNowIsCheapestHasOneBlock() throws {
+        let nowLanes = [Self.lane("Peak", start: -6, later: -20, startNow: -20)]
+        let comparison = Self.comparison(costNow: 5.32, recommendedCost: 5.32, savings: 0, recommendedStart: Self.now, lanes: nowLanes)
+        let breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: Self.pump, timing: Self.timing(),
+                                                                now: Self.now, currencyCode: "USD", timeZone: "UTC")
+        #expect(breakdowns.map(\.title) == ["Start now"])
     }
 
     // MARK: - A better Job

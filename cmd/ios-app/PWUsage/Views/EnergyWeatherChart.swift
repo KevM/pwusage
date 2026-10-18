@@ -81,8 +81,10 @@ private struct LaneChart: View {
     private var yDomain: ClosedRange<Double> {
         let values = allPoints.map(\.kwh) + [0]
         let low = values.min() ?? 0, high = values.max() ?? 0
-        let pad = max((high - low) * 0.18, 1)
-        let topPad = showsSwitchLabels ? max((high - low) * 0.45, 3) : pad
+        // Room above and below the lines for the end labels, so they clear the
+        // lines and the axis labels; more on top of the first lane for switch labels.
+        let pad = max((high - low) * 0.3, 2)
+        let topPad = showsSwitchLabels ? max((high - low) * 0.55, 4) : pad
         return (low - pad)...(high + topPad)
     }
 
@@ -163,7 +165,7 @@ private struct LaneChart: View {
             ForEach(Array(endPoints.enumerated()), id: \.offset) { _, end in
                 PointMark(x: .value("Time", end.point.date), y: .value("kWh", end.point.kwh))
                     .symbolSize(0)
-                    .annotation(position: end.isAbove ? .topLeading : .bottomLeading, spacing: 2,
+                    .annotation(position: end.isAbove ? .topLeading : .bottomLeading, spacing: 6,
                                 overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
                         Text(end.label)
                             .font(.caption2.weight(end.isRecommended ? .bold : .regular))

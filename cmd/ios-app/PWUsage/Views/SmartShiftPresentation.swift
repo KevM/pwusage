@@ -71,11 +71,22 @@ struct PeriodRow: Equatable {
     let balance: String
 }
 
-/// How much of the recommended run each bank covers, and how much is bought.
-struct RunRow: Equatable {
-    let name: String
-    let fromBank: String
-    let bought: String
+/// One priced part of a run: energy from a bank (its credit given up) or bought (its buy rate).
+struct CostLine: Equatable {
+    let period: String
+    /// "31.5 kWh from your bank × 4¢/kWh credit" or "21.2 kWh bought × 10¢/kWh"
+    let detail: String
+    let amount: String
+}
+
+/// What one start time adds to the bill, as arithmetic that sums to its cost bar.
+struct CostBreakdown: Equatable {
+    /// "Charge tomorrow at 4:30 PM" or "Charge now"
+    let title: String
+    let total: String
+    let lines: [CostLine]
+    /// Explains a bank the run uses that the forecast fills beyond today's balance.
+    let notes: [String]
 }
 
 /// Points at another saved Job that waiting would save more on right now.
@@ -202,19 +213,19 @@ enum SmartShiftPresentation {
 
     /// For each period the recommended run draws on: the part its bank covers and the part bought.
     /// The lane ends `draw` lower than it would without the run, which gives the bank it drew from.
-    static func runRows(comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming) -> [RunRow] {
-        let kwh: (Double) -> String = { $0.formatted(.number.precision(.fractionLength(1))) }
-        return draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, profile: profile, timing: timing,
-                     laneEnd: { $0.recommended.last?.kwh }, lanes: comparison.lanes).map { draw in
-            RunRow(name: periodTitle(draw.key, timing: timing), fromBank: "\(kwh(draw.fromBank)) kWh from your bank",
-                   bought: "\(kwh(draw.kwh - draw.fromBank)) kWh bought")
-        }
+    /// The recommended start's arithmetic, then starting now's (just now's when they're the same).
+    static func costBreakdowns(comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
+                               now: Date, currencyCode: String, timeZone: String) -> [CostBreakdown] {
+        Context(profile: profile, comparison: comparison, timing: timing, now: now, currencyCode: currencyCode,
+                timeZone: timeZone).costBreakdowns
     }
 
     struct Draw {
         let key: String
         let kwh: Double
         let fromBank: Double
+        /// The period's projected bank without this run, when its lane is known.
+        let bankWithoutRun: Double?
     }
 
     /// What a run takes from each period, in the order it reaches them, and how much
@@ -228,8 +239,8 @@ enum SmartShiftPresentation {
         let powerKw = energy / hours
         return hoursByPeriod(from: start, to: end, timing: timing).map { key, periodHours in
             let drawn = powerKw * periodHours
-            let end = lanes.first { $0.periodKey == key }.flatMap(laneEnd)
-            return Draw(key: key, kwh: drawn, fromBank: end.map { min(drawn, max($0 + drawn, 0)) } ?? 0)
+            let bank = lanes.first { $0.periodKey == key }.flatMap(laneEnd).map { $0 + drawn }
+            return Draw(key: key, kwh: drawn, fromBank: bank.map { min(drawn, max($0, 0)) } ?? 0, bankWithoutRun: bank)
         }
     }
 
@@ -359,12 +370,17 @@ enum SmartShiftPresentation {
 
         func money(_ amount: Double) -> String { DashboardPresentation.currency(amount, code: currencyCode) }
 
-        /// "4:30 PM", or "4:30 PM tomorrow" when the start falls on a later local day.
+        /// "at 4:30 PM", or "tomorrow at 4:30 PM" when the start falls on a later local day,
+        /// with the day first so it can't be missed.
         func when(_ date: Date) -> String {
             let clock = DashboardPresentation.date(date, timeZoneIdentifier: timeZone, dateStyle: .none, timeStyle: .short)
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = TimeZone(identifier: timeZone) ?? .current
-            return calendar.isDate(date, inSameDayAs: now) ? clock : "\(clock) tomorrow"
+            return calendar.isDate(date, inSameDayAs: now) ? "at \(clock)" : "tomorrow at \(clock)"
+        }
+
+        func capitalized(_ phrase: String) -> String {
+            phrase.prefix(1).uppercased() + phrase.dropFirst()
         }
 
         func name(_ key: String) -> String {
@@ -387,7 +403,7 @@ enum SmartShiftPresentation {
         func verdict(forecast: ForecastAvailability) -> SmartShiftVerdict {
             let headline = isNow
                 ? "\(profile.name) now: no cheaper time today"
-                : "\(profile.name) at \(when(comparison.recommendedStart)): about \(money(comparison.savings)) cheaper than now"
+                : "\(profile.name) \(when(comparison.recommendedStart)): about \(money(comparison.savings)) cheaper than now"
             let nowBar = CostBar(label: nowLabel, amount: money(comparison.costNow), value: comparison.costNow, isRecommended: isNow)
             let bars = isNow
                 ? [nowBar]
@@ -451,7 +467,7 @@ enum SmartShiftPresentation {
             let time = when(comparison.recommendedStart)
             guard let nowMain = nowDraws.max(by: { $0.kwh < $1.kwh }),
                   let laterMain = laterDraws.max(by: { $0.kwh < $1.kwh }) else {
-                return "Starting at \(time) costs less than starting now."
+                return "Starting \(time) costs less than starting now."
             }
             if nowMain.key != laterMain.key {
                 return nowClause(nowMain, crossesPeriods: nowDraws.count > 1) + " "
@@ -465,14 +481,53 @@ enum SmartShiftPresentation {
                 .filter({ $0.extra > 0.000_001 })
                 .max(by: { $0.extra < $1.extra })?.key {
                 return "Starting now puts more of it in \(name(heavier)), where you \(bankPhrase(heavier)). "
-                    + "Run at \(time) so less of it lands there."
+                    + "Run \(time) so less of it lands there."
             }
-            return "Starting at \(time) costs less than starting now."
+            return "Starting \(time) costs less than starting now."
+        }
+
+        func rateValue(_ key: String, sell: Bool) -> Double? {
+            let segment = timing.tariffTimeline.first { $0.periodKey == key }
+            return sell ? segment?.sellRate : segment?.buyRate
         }
 
         func rate(_ key: String, sell: Bool) -> String {
-            let segment = timing.tariffTimeline.first { $0.periodKey == key }
-            return DashboardPresentation.loadRate(sell ? segment?.sellRate : segment?.buyRate, code: currencyCode)
+            DashboardPresentation.loadRate(rateValue(key, sell: sell), code: currencyCode)
+        }
+
+        var costBreakdowns: [CostBreakdown] {
+            let duration = comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart)
+            let startNow = breakdown(title: nowLabel, total: comparison.costNow,
+                                     draws: draws(from: now, to: now.addingTimeInterval(duration), profile: profile,
+                                                  timing: timing, laneEnd: { $0.startNow.last?.kwh }, lanes: comparison.lanes))
+            guard !isNow else { return [startNow] }
+            let later = breakdown(title: "\(verb) \(when(comparison.recommendedStart))", total: comparison.recommendedCost,
+                                  draws: draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, profile: profile,
+                                               timing: timing, laneEnd: { $0.recommended.last?.kwh }, lanes: comparison.lanes))
+            return [later, startNow]
+        }
+
+        func breakdown(title: String, total: Double, draws: [Draw]) -> CostBreakdown {
+            let kwh: (Double) -> String = { $0.formatted(.number.precision(.fractionLength(1))) }
+            var lines: [CostLine] = []
+            var notes: [String] = []
+            for draw in draws {
+                let period = name(draw.key)
+                let bought = draw.kwh - draw.fromBank
+                if draw.fromBank >= 0.05 {
+                    lines.append(CostLine(period: period, detail: "\(kwh(draw.fromBank)) kWh from your bank × \(rate(draw.key, sell: true)) credit",
+                                          amount: money(draw.fromBank * (rateValue(draw.key, sell: true) ?? 0))))
+                    let today = startKwh(draw.key) ?? 0
+                    if draw.fromBank > max(today, 0) + 0.5, let projected = draw.bankWithoutRun {
+                        notes.append("\(period) bank: \(startLabel(today)), about \(signedKwh(projected)) kWh with the forecast solar.")
+                    }
+                }
+                if bought >= 0.05 {
+                    lines.append(CostLine(period: period, detail: "\(kwh(bought)) kWh bought × \(rate(draw.key, sell: false))",
+                                          amount: money(bought * (rateValue(draw.key, sell: false) ?? 0))))
+                }
+            }
+            return CostBreakdown(title: title, total: money(total), lines: lines, notes: notes)
         }
 
         /// Why starting now costs what it does: bought at the period's rate, or its bank's credit given up.
@@ -492,12 +547,12 @@ enum SmartShiftPresentation {
             let period = name(draw.key)
             let mostly = total > 0 && draw.kwh / total < 0.95 ? "mostly " : ""
             guard draw.fromBank >= draw.kwh / 2 else {
-                return "At \(time) it's \(mostly)bought at the \(period) rate of \(rate(draw.key, sell: false))."
+                return "\(capitalized(time)) it's \(mostly)bought at the \(period) rate of \(rate(draw.key, sell: false))."
             }
             let source = draw.fromBank > max(startKwh(draw.key) ?? 0, 0) + 0.5
                 ? "\(period) energy your solar banks before then"
                 : "your \(period) bank"
-            return "At \(time) it \(mostly)uses \(source), giving up \(rate(draw.key, sell: true)) in credit."
+            return "\(capitalized(time)) it \(mostly)uses \(source), giving up \(rate(draw.key, sell: true)) in credit."
         }
 
         func lane(_ lane: LoadTimingForecastEstimator.BalanceLane) -> LaneDisplay {

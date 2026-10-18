@@ -7,7 +7,7 @@ struct SmartShiftDetailsSnapshot: Identifiable {
     let verdict: SmartShiftVerdict
     let comparison: LoadTimingForecastEstimator.Comparison?
     let rows: [PeriodRow]
-    let runRows: [RunRow]
+    let breakdowns: [CostBreakdown]
     /// Present only when the solar forecast priced this comparison.
     let forecastFetchedAt: Date?
     let contextAsOf: Date?
@@ -23,6 +23,50 @@ struct SmartShiftDetailsView: View {
     var body: some View {
         NavigationStack {
             List {
+                ForEach(Array(snapshot.breakdowns.enumerated()), id: \.offset) { _, breakdown in
+                    Section {
+                        ForEach(Array(breakdown.lines.enumerated()), id: \.offset) { _, line in
+                            HStack(alignment: .firstTextBaseline) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(line.period).font(.body.weight(.semibold))
+                                    Text(line.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(line.amount)
+                                    .monospacedDigit()
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                        HStack {
+                            Text("Added to your bill").font(.body.weight(.semibold))
+                            Spacer()
+                            Text(breakdown.total)
+                                .font(.body.weight(.bold))
+                                .monospacedDigit()
+                        }
+                        .accessibilityElement(children: .combine)
+                        ForEach(breakdown.notes, id: \.self) { note in
+                            Text(note)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } header: {
+                        Text(breakdown.title)
+                    }
+                }
+                if !snapshot.breakdowns.isEmpty {
+                    Section {
+                        if let solar = snapshot.comparison?.estimatedSolarContribution, solar > 0 {
+                            Text("About \(solar.formatted(.number.precision(.fractionLength(1)))) kWh of this run could come from your solar.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    } footer: {
+                        Text("Energy from a bank costs only the export credit you give up. The rest is bought at the period's rate.")
+                    }
+                }
                 Section("Rate periods") {
                     ForEach(Array(snapshot.rows.enumerated()), id: \.offset) { _, row in
                         HStack(alignment: .firstTextBaseline) {
@@ -39,28 +83,6 @@ struct SmartShiftDetailsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .accessibilityElement(children: .combine)
-                    }
-                }
-                if !snapshot.runRows.isEmpty {
-                    Section {
-                        ForEach(Array(snapshot.runRows.enumerated()), id: \.offset) { _, row in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(row.name).font(.body.weight(.semibold))
-                                Text("\(row.fromBank) · \(row.bought)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .accessibilityElement(children: .combine)
-                        }
-                        if let solar = snapshot.comparison?.estimatedSolarContribution, solar > 0 {
-                            Text("About \(solar.formatted(.number.precision(.fractionLength(1)))) kWh of this run could come from your solar.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                    } header: {
-                        Text("This run")
-                    } footer: {
-                        Text("Energy from a bank costs only the credit you give up. The rest is bought at the full rate.")
                     }
                 }
                 if snapshot.forecastFetchedAt != nil || snapshot.contextAsOf != nil {
