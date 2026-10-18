@@ -40,7 +40,15 @@ The energy weather redesign replaced the old Job card, but left its presentation
   - A future energy source time shows the generic "can't compare" sentence.
   - VoiceOver reads "plus 18 kWh banked now".
   - At accessibility text sizes the cost bars can be squeezed out.
-  - The forecast comparison costs about 37 ms per pass for six Jobs on the simulator; cache per-Job savings if devices show hitches.
+  - Six Jobs per pass now cost about 10 ms on the simulator (forecast, history or flat) since one plan is shared across the pass (branch `claude/smart-shift-bill-date-projection-2f834d`); cache per-Job savings only if devices still show hitches.
+
+## Smart Shift bill-date projection follow-ups (2026-10-18, branch `claude/smart-shift-bill-date-projection-2f834d`)
+
+Smart Shift now projects rate-period banks to the bill date from 7 days of Solcast and the site's last 28 days of grid history. See the [design](docs/superpowers/specs/2026-10-18-smart-shift-cycle-projection-design.md).
+
+- [ ] **Backfill and per-slot rollups:** the projection reads whatever raw 5-minute history a site has (28 days, about 835 KB per read for Harrison, memoised per site per day). A new or patchy site gets flat banks or a noisy dull day until history fills in. Do this as part of the rollup-storage migration, and read the household pattern from rollups once they exist.
+- [ ] **A 1-in-4 cloudy *week* for the cautious history:** today's cautious run uses a 1-in-4 dull *day* (mean of the 20th–30th percentile days). A cloudy-week profile fits the safety rule better but needs months of history. Revisit once backfill lands.
+- [ ] **14-day projected-bill views using `pv_estimate10`:** a separate PR. The per-slot solar history (`solarKw`) added here is meant to feed it and to compare Solcast against what the roof actually did.
 
 ## DB egress: remaining reduction candidates
 
