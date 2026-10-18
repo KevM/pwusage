@@ -139,6 +139,40 @@ struct LoadTimingForecastEstimator {
         case incompleteCoverage
     }
 
+    /// The site's time zone and its local half-hour boundaries across the whole
+    /// search. Integration and candidate starts both need those boundaries, and
+    /// re-scanning them minute by minute for every candidate run dominated the
+    /// cost of an evaluation, so they are scanned once.
+    private struct WallClock {
+        /// Gregorian, in the site's time zone; built once because slot lookups run per interval.
+        let calendar: Calendar
+        private let halfHourBoundaries: [Date]
+
+        init(timeZone: TimeZone, from start: Date, to end: Date) {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = timeZone
+            self.calendar = calendar
+            // Scan minute boundaries so non-hour offsets and DST transitions are honored.
+            var boundaries: [Date] = []
+            var cursor = Date(timeIntervalSince1970: floor(start.timeIntervalSince1970 / 60) * 60 + 60)
+            while cursor < end {
+                if calendar.component(.minute, from: cursor).isMultiple(of: 30),
+                   calendar.component(.second, from: cursor) == 0 {
+                    boundaries.append(cursor)
+                }
+                cursor = cursor.addingTimeInterval(60)
+            }
+            halfHourBoundaries = boundaries
+        }
+
+        /// Local half-hour boundaries strictly between `start` and `end`.
+        func halfHours(after start: Date, before end: Date) -> ArraySlice<Date> {
+            let lower = halfHourBoundaries.partitionPoint { $0 > start }
+            let upper = halfHourBoundaries.partitionPoint { $0 >= end }
+            return lower < upper ? halfHourBoundaries[lower..<upper] : []
+        }
+    }
+
     /// Household flow at one instant: what the baseline exports to the grid, and the
     /// solar left over after the home and any battery charging, which an added load can use.
     private struct Flow {
@@ -203,6 +237,7 @@ struct LoadTimingForecastEstimator {
         let tomorrowEnd = endOfTomorrow(after: now, timeZone: zone)
         guard let tomorrowEnd, tomorrowEnd > now else { return unavailable(.invalidInput) }
         var horizonEnd = min(tomorrowEnd, billingCycleEnd)
+        let clock = WallClock(timeZone: zone, from: projectionStart, to: horizonEnd)
         if case .forecast(let forecast, _) = projection {
             horizonEnd = min(horizonEnd, contiguousEnd(of: forecast, startingAt: projectionStart))
         }
@@ -217,7 +252,7 @@ struct LoadTimingForecastEstimator {
         guard horizonEnd > now else { return unavailable(.incompleteCoverage) }
 
         if let contextGap = firstContextGap(from: projectionStart, to: horizonEnd, projection: projection,
-                                            tariffs: tariffs, timeZone: zone) {
+                                            tariffs: tariffs, clock: clock) {
             horizonEnd = min(horizonEnd, contextGap)
             guard horizonEnd > now else { return unavailable(.incompleteContext) }
         }
@@ -274,19 +309,19 @@ struct LoadTimingForecastEstimator {
         // Forecast/context/tariff coverage from the end of observed data through
         // the shared horizon is needed even when a candidate run starts later.
         guard completeCoverage(from: projectionStart, to: horizonEnd, projection: projection,
-                               tariffs: tariffs, timeZone: zone) else {
+                               tariffs: tariffs, clock: clock) else {
             return unavailable(.incompleteCoverage)
         }
 
         let baseBalances: [String: Double]
         switch integrateBaseline(from: projectionStart, to: horizonEnd, balances: balances,
-                                 projection: projection, tariffs: tariffs, timeZone: zone) {
+                                 projection: projection, tariffs: tariffs, clock: clock) {
         case .balances(let projected): baseBalances = projected
         case .invalidInput: return unavailable(.invalidInput)
         case .incompleteCoverage: return unavailable(.incompleteCoverage)
         }
         let candidates = candidateStarts(now: now, horizonEnd: horizonEnd, duration: load.duration,
-                                        projection: projection, tariffs: tariffs, timeZone: zone)
+                                        projection: projection, tariffs: tariffs, clock: clock)
         var scored: [Candidate] = []
         for candidateStart in candidates {
             let candidateEnd = candidateStart.addingTimeInterval(load.duration)
@@ -295,7 +330,7 @@ struct LoadTimingForecastEstimator {
             guard candidateEnd <= horizonEnd else { continue }
             switch score(start: candidateStart, end: candidateEnd, load: load,
                          baseBalances: baseBalances, rates: rates,
-                         projection: projection, tariffs: tariffs, timeZone: zone) {
+                         projection: projection, tariffs: tariffs, clock: clock) {
             case .candidate(let candidate): scored.append(candidate)
             case .invalidInput: return unavailable(.invalidInput)
             case .incompleteCoverage: return unavailable(.incompleteCoverage)
@@ -318,7 +353,7 @@ struct LoadTimingForecastEstimator {
         let recommendation = savings > minorUnit ? best : nowCandidate
         guard let lanes = balanceLanes(now: now, horizonEnd: horizonEnd, projectionStart: projectionStart,
                                        balances: balances, load: load, startNow: nowCandidate, recommended: recommendation,
-                                       projection: projection, tariffs: tariffs, timeZone: zone) else {
+                                       projection: projection, tariffs: tariffs, clock: clock) else {
             return unavailable(.invalidInput)
         }
         return Result(comparison: Comparison(
@@ -342,22 +377,22 @@ struct LoadTimingForecastEstimator {
     private static func balanceLanes(now: Date, horizonEnd: Date, projectionStart: Date, balances: [String: Double],
                                      load: (energy: Double, duration: TimeInterval), startNow: Candidate,
                                      recommended: Candidate, projection: Projection,
-                                     tariffs: [LoadTimingTariffSegment], timeZone: TimeZone) -> [BalanceLane]? {
+                                     tariffs: [LoadTimingTariffSegment], clock: WallClock) -> [BalanceLane]? {
         let powerKw = load.energy / (load.duration / 3600)
         // The baseline from the end of observed data to now gives each lane's starting balance.
         var nowBalances = balances
         if projectionStart < now {
             guard case .balances(let projected) = integrateBaseline(from: projectionStart, to: now, balances: balances,
                                                                     projection: projection, tariffs: tariffs,
-                                                                    timeZone: timeZone) else { return nil }
+                                                                    clock: clock) else { return nil }
             nowBalances = projected
         }
         guard let nowSeries = balanceSeries(from: now, to: horizonEnd, balances: nowBalances,
                                             run: (startNow.start, startNow.end), powerKw: powerKw,
-                                            projection: projection, tariffs: tariffs, timeZone: timeZone),
+                                            projection: projection, tariffs: tariffs, clock: clock),
               let recommendedSeries = balanceSeries(from: now, to: horizonEnd, balances: nowBalances,
                                                     run: (recommended.start, recommended.end), powerKw: powerKw,
-                                                    projection: projection, tariffs: tariffs, timeZone: timeZone)
+                                                    projection: projection, tariffs: tariffs, clock: clock)
         else { return nil }
 
         func periods(touching start: Date, _ end: Date) -> Set<String> {
@@ -385,9 +420,9 @@ struct LoadTimingForecastEstimator {
     /// period's balance at each integration boundary. `nil` when a value overflows.
     private static func balanceSeries(from start: Date, to end: Date, balances: [String: Double],
                                       run: (start: Date, end: Date), powerKw: Double, projection: Projection,
-                                      tariffs: [LoadTimingTariffSegment], timeZone: TimeZone) -> [String: [BalancePoint]]? {
+                                      tariffs: [LoadTimingTariffSegment], clock: WallClock) -> [String: [BalancePoint]]? {
         var boundaries = Set(integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs,
-                                                   timeZone: timeZone))
+                                                   clock: clock))
         for edge in [run.start, run.end] where edge > start && edge < end { boundaries.insert(edge) }
         let points = boundaries.sorted()
         guard points.count >= 2 else { return nil }
@@ -396,7 +431,7 @@ struct LoadTimingForecastEstimator {
         for index in 0..<(points.count - 1) {
             let a = points[index], b = points[index + 1]
             let mid = a.addingTimeInterval(b.timeIntervalSince(a) / 2)
-            guard let flow = flow(at: mid, projection: projection, timeZone: timeZone),
+            guard let flow = flow(at: mid, projection: projection, clock: clock),
                   let tariff = tariffs.first(where: { $0.start <= mid && mid < $0.end }),
                   let old = current[tariff.periodKey] else { return nil }
             let hours = b.timeIntervalSince(a) / 3600
@@ -539,9 +574,9 @@ struct LoadTimingForecastEstimator {
     }
 
     private static func completeCoverage(from start: Date, to end: Date, projection: Projection,
-                                         tariffs: [LoadTimingTariffSegment], timeZone: TimeZone) -> Bool {
+                                         tariffs: [LoadTimingTariffSegment], clock: WallClock) -> Bool {
         guard start < end else { return false }
-        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, timeZone: timeZone)
+        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, clock: clock)
         guard points.count >= 2 else { return false }
         for index in 0..<(points.count - 1) {
             let a = points[index]
@@ -556,20 +591,20 @@ struct LoadTimingForecastEstimator {
     }
 
     private static func firstContextGap(from start: Date, to end: Date, projection: Projection,
-                                        tariffs: [LoadTimingTariffSegment], timeZone: TimeZone) -> Date? {
+                                        tariffs: [LoadTimingTariffSegment], clock: WallClock) -> Date? {
         guard case .forecast(_, let context) = projection else { return nil }
         guard start < end else { return start }
-        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, timeZone: timeZone)
+        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, clock: clock)
         guard points.count >= 2 else { return start }
         for index in 0..<(points.count - 1) {
             let midpoint = points[index].addingTimeInterval(points[index + 1].timeIntervalSince(points[index]) / 2)
-            guard slot(at: midpoint, context: context, timeZone: timeZone) != nil else { return points[index] }
+            guard slot(at: midpoint, context: context, calendar: clock.calendar) != nil else { return points[index] }
         }
         return nil
     }
 
     private static func integrationBoundaries(from start: Date, to end: Date, projection: Projection,
-                                              tariffs: [LoadTimingTariffSegment], timeZone: TimeZone) -> [Date] {
+                                              tariffs: [LoadTimingTariffSegment], clock: WallClock) -> [Date] {
         var values: Set<Date> = [start, end]
         for interval in projection.intervals {
             if interval.periodStart > start && interval.periodStart < end { values.insert(interval.periodStart) }
@@ -579,22 +614,12 @@ struct LoadTimingForecastEstimator {
             if segment.start > start && segment.start < end { values.insert(segment.start) }
             if segment.end > start && segment.end < end { values.insert(segment.end) }
         }
-        // Context values change on local half-hour boundaries. Scan minute
-        // boundaries so non-hour offsets and DST transitions are honored.
-        var cursor = Date(timeIntervalSince1970: floor(start.timeIntervalSince1970 / 60) * 60 + 60)
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        while cursor < end {
-            let minute = calendar.component(.minute, from: cursor)
-            if minute.isMultiple(of: 30) { values.insert(cursor) }
-            cursor = cursor.addingTimeInterval(60)
-        }
+        // Context values change on local half-hour boundaries.
+        values.formUnion(clock.halfHours(after: start, before: end))
         return values.sorted()
     }
 
-    private static func slot(at date: Date, context: PlanningContext, timeZone: TimeZone) -> PlanningSlot? {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
+    private static func slot(at date: Date, context: PlanningContext, calendar: Calendar) -> PlanningSlot? {
         let localMinute = calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date)
         let slotMinute = (localMinute / 30) * 30
         let matches = context.slots.filter { $0.localMinute == slotMinute }
@@ -606,13 +631,13 @@ struct LoadTimingForecastEstimator {
     }
 
     /// `nil` when the forecast or household profile doesn't cover `date`. `.flat` never moves.
-    private static func flow(at date: Date, projection: Projection, timeZone: TimeZone) -> Flow? {
+    private static func flow(at date: Date, projection: Projection, clock: WallClock) -> Flow? {
         switch projection {
         case .flat:
             return Flow(netExportKw: 0, physicalSurplusKw: 0)
         case .forecast(let forecast, let context):
             guard let solar = forecast.first(where: { $0.periodStart <= date && date < $0.periodEnd })?.powerKw,
-                  let profile = slot(at: date, context: context, timeZone: timeZone),
+                  let profile = slot(at: date, context: context, calendar: clock.calendar),
                   let home = profile.homeKw, let battery = profile.batteryNetChargeKw else { return nil }
             return Flow(netExportKw: solar - home - battery, physicalSurplusKw: solar - home - max(battery, 0))
         }
@@ -620,14 +645,14 @@ struct LoadTimingForecastEstimator {
 
     private static func integrateBaseline(from start: Date, to end: Date, balances: [String: Double],
                                           projection: Projection, tariffs: [LoadTimingTariffSegment],
-                                          timeZone: TimeZone) -> BaselineResult {
+                                          clock: WallClock) -> BaselineResult {
         var result = balances
-        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, timeZone: timeZone)
+        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, clock: clock)
         guard points.count >= 2 else { return .incompleteCoverage }
         for index in 0..<(points.count - 1) {
             let a = points[index], b = points[index + 1]
             let mid = a.addingTimeInterval(b.timeIntervalSince(a) / 2)
-            guard let flow = flow(at: mid, projection: projection, timeZone: timeZone),
+            guard let flow = flow(at: mid, projection: projection, clock: clock),
                   let tariff = tariffs.first(where: { $0.start <= mid && mid < $0.end }),
                   let old = result[tariff.periodKey] else { return .incompleteCoverage }
             let seconds = b.timeIntervalSince(a)
@@ -646,17 +671,17 @@ struct LoadTimingForecastEstimator {
     private static func score(start: Date, end: Date, load: (energy: Double, duration: TimeInterval),
                               baseBalances: [String: Double], rates: [String: PeriodRate],
                               projection: Projection, tariffs: [LoadTimingTariffSegment],
-                              timeZone: TimeZone) -> ScoreResult {
+                              clock: WallClock) -> ScoreResult {
         var withLoad = baseBalances
         var solarContribution = 0.0
-        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, timeZone: timeZone)
+        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, clock: clock)
         guard points.count >= 2 else { return .incompleteCoverage }
         let powerKw = load.energy / (load.duration / 3600)
         guard powerKw.isFinite, powerKw > 0 else { return .invalidInput }
         for index in 0..<(points.count - 1) {
             let a = points[index], b = points[index + 1]
             let mid = a.addingTimeInterval(b.timeIntervalSince(a) / 2)
-            guard let flow = flow(at: mid, projection: projection, timeZone: timeZone),
+            guard let flow = flow(at: mid, projection: projection, clock: clock),
                   let tariff = tariffs.first(where: { $0.start <= mid && mid < $0.end }),
                   let balance = withLoad[tariff.periodKey] else { return .incompleteCoverage }
             let seconds = b.timeIntervalSince(a)
@@ -699,7 +724,7 @@ struct LoadTimingForecastEstimator {
 
     private static func candidateStarts(now: Date, horizonEnd: Date, duration: TimeInterval,
                                         projection: Projection, tariffs: [LoadTimingTariffSegment],
-                                        timeZone: TimeZone) -> [Date] {
+                                        clock: WallClock) -> [Date] {
         var starts: Set<Date> = [now]
         for interval in projection.intervals {
             if interval.periodStart >= now && interval.periodStart < horizonEnd { starts.insert(interval.periodStart) }
@@ -715,15 +740,20 @@ struct LoadTimingForecastEstimator {
         }
         // Use the site's wall-clock half-hour boundaries. This also covers zones
         // whose UTC offset is a quarter hour and naturally follows DST changes.
-        var boundary = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970 / 60) * 60 + 60)
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        while boundary < horizonEnd {
-            let minute = calendar.component(.minute, from: boundary)
-            let second = calendar.component(.second, from: boundary)
-            if minute.isMultiple(of: 30) && second == 0 { starts.insert(boundary) }
-            boundary = boundary.addingTimeInterval(60)
-        }
+        starts.formUnion(clock.halfHours(after: now, before: horizonEnd))
         return starts.sorted()
+    }
+}
+
+private extension Array {
+    /// The first index whose element satisfies `predicate`, for a predicate that is
+    /// false then true across the (sorted) array.
+    func partitionPoint(where predicate: (Element) -> Bool) -> Int {
+        var low = 0, high = count
+        while low < high {
+            let mid = (low + high) / 2
+            if predicate(self[mid]) { high = mid } else { low = mid + 1 }
+        }
+        return low
     }
 }
