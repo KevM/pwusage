@@ -583,8 +583,9 @@ struct LoadTimingForecastEstimator {
         /// Typical balances at the projection end, and at `now`.
         let baseBalances: [String: Double]
         let nowBalances: [String: Double]
-        /// Cautious balances at the safety window's end.
-        let cautiousBalances: [String: Double]
+        /// Cautious balances at the safety window's end, or `nil` when the safety
+        /// rule doesn't apply (a forecast without grid history: see `plan`).
+        let cautiousBalances: [String: Double]?
         let hasUnobservedBalance: Bool
         let minorUnit: Double
     }
@@ -734,11 +735,18 @@ struct LoadTimingForecastEstimator {
         // The cautious run (pv_estimate10, then the dull day) is read only at the
         // safety window's end: history beyond it never makes a start pass.
         let safetyEnd = min(now.addingTimeInterval(Self.forecastWindow), projectionEnd)
-        let cautiousBalances: [String: Double]
-        switch steps.integrate(from: projectionStart, to: safetyEnd, balances: balances, cautious: true) {
-        case .balances(let projected): cautiousBalances = projected
-        case .invalidInput: return unavailable(.invalidInput)
-        case .incompleteCoverage: return unavailable(.incompleteCoverage)
+        // Without grid history a forecast projection ends at midnight tomorrow, so
+        // the safety window would shrink to one day and count none of the days a
+        // bank recovers over. An older server keeps today's behavior: no rule.
+        var cautiousBalances: [String: Double]?
+        if case .forecast(_, let context) = projection, !context.hasGridHistory {
+            cautiousBalances = nil
+        } else {
+            switch steps.integrate(from: projectionStart, to: safetyEnd, balances: balances, cautious: true) {
+            case .balances(let projected): cautiousBalances = projected
+            case .invalidInput: return unavailable(.invalidInput)
+            case .incompleteCoverage: return unavailable(.incompleteCoverage)
+            }
         }
         // The baseline from the end of observed data to now gives each lane's starting balance.
         var nowBalances = balances
@@ -837,8 +845,9 @@ struct LoadTimingForecastEstimator {
     /// draws on it. Each such bank is read in the cautious projection at the
     /// safety window's end, less the bank-covered part of the run's draw before then.
     private static func assess(_ candidate: Candidate, baseBalances: [String: Double],
-                               cautiousBalances: [String: Double]) -> Assessment {
+                               cautiousBalances: [String: Double]?) -> Assessment {
         var worst: (periodKey: String, kwh: Double)?
+        guard let cautiousBalances else { return Assessment(candidate: candidate, worst: nil) }
         for (key, draw) in candidate.draws.sorted(by: { $0.key < $1.key }) where draw > 0 {
             guard let typical = baseBalances[key], typical > 0, let cautious = cautiousBalances[key] else { continue }
             // Only the part the typical bank covers is priced at the sell rate and so

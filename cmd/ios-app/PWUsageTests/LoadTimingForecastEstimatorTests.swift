@@ -850,7 +850,8 @@ extension LoadTimingForecastEstimatorTests {
         profile: LoadProfile
     ) -> LoadTimingForecastEstimator.Result {
         LoadTimingForecastEstimator.evaluate(profile: profile, now: start, timing: timing(tariffs, balances: balances),
-                                             projection: .forecast(intervals: forecast, context: context()),
+                                             // Zero grid history: the rule applies only when history is served.
+                                             projection: .forecast(intervals: forecast, context: historyContext(grid: { _ in 0 })),
                                              balanceSourceTime: start, billingCycleEnd: start.addingTimeInterval(20 * 86_400),
                                              currencyCode: "USD")
     }
@@ -1002,5 +1003,39 @@ extension LoadTimingForecastEstimatorTests {
 
         #expect(result.comparison == nil)
         #expect(result.unavailableReason == .incompleteCoverage)
+    }
+}
+
+// MARK: - Older server (no grid history)
+
+extension LoadTimingForecastEstimatorTests {
+    @Test("Against a server without grid history, Smart Shift keeps today's recommendation")
+    func olderServerKeepsTodaysRecommendation() throws {
+        // Harrison's Sunday: Off-Peak owed, On-Peak +5. Monday's median solar lifts On-Peak to +33 by
+        // midnight; a cloudy Monday (pv_estimate10) adds nothing. Without history the projection ends at
+        // midnight tomorrow, so before the bill-date projection the answer was 4:30 PM tomorrow ($3.38).
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let dayZero = start.addingTimeInterval(-8 * 3600)
+        let sunday = try #require((0..<7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
+        let sundayStart = dayZero.addingTimeInterval(Double(sunday) * 86_400)
+        let now = sundayStart.addingTimeInterval(13.2 * 3600)
+        let mondayStart = sundayStart.addingTimeInterval(86_400)
+        let intervals = (0..<((48 - 13) * 2)).map { index -> SolarForecastInterval in
+            let periodStart = sundayStart.addingTimeInterval(13 * 3600 + Double(index) * 1800)
+            let hour = periodStart.timeIntervalSince(mondayStart) / 3600
+            let onPeakDaylight = (8..<20).contains(hour)
+            return SolarForecastInterval(periodStart: periodStart, periodEnd: periodStart.addingTimeInterval(1800),
+                                         powerKw: onPeakDaylight ? 1 + 28.0 / 12 : 0, cautiousPowerKw: onPeakDaylight ? 1 : 0)
+        }
+        let weekday = { (day: Int) in !calendar.isDateInWeekend(dayZero.addingTimeInterval(Double(day) * 86_400)) }
+        let car = LoadProfile(id: "car", name: "Charge the car", kind: .appliance, energyKwh: 52.7, durationHours: 52.7 / 9, carSettings: nil)
+        let result = evaluate(.forecast(intervals: intervals, context: context(home: 1)), profile: car, now: now,
+                              tariffs: dailyTariffs(days: sunday + 25, onPeakDay: weekday),
+                              balances: ["ON_PEAK": 5, "OFF_PEAK": -64], cycleEnd: now.addingTimeInterval(23 * 86_400))
+
+        let comparison = try #require(result.comparison)
+        #expect(comparison.recommendedStart == mondayStart.addingTimeInterval(16.5 * 3600))
+        #expect(abs(comparison.recommendedCost - (31.5 * 0.04 + 21.2 * 0.10)) < 1e-6)
     }
 }
