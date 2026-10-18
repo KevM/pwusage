@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct LoadProfilesSheet: View {
     @ObservedObject var store: LoadProfileStore
@@ -13,7 +14,7 @@ struct LoadProfilesSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Load Profiles") {
+                Section("Jobs") {
                     ForEach(store.profiles) { profile in
                         profileRow(profile)
                     }
@@ -23,19 +24,19 @@ struct LoadProfilesSheet: View {
                     Button {
                         draft = ProfileDraft.newCustom()
                     } label: {
-                        Label("Add custom load", systemImage: "plus.circle.fill")
+                        Label("Add a Custom Job", systemImage: "plus.circle.fill")
                     }
-                    .accessibilityHint("Creates a named load profile with energy and duration settings")
+                    .accessibilityHint("Creates a named job with energy and duration settings")
                 }
 
                 Section {
-                    Text("Choosing or reordering profiles applies immediately. Profile edits take effect when you save.")
+                    Text("Reordering jobs applies immediately. Edits take effect when you save.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .navigationTitle("Load Profiles")
+            .navigationTitle("Jobs")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -53,14 +54,14 @@ struct LoadProfilesSheet: View {
                 )
             }
             .confirmationDialog(
-                "Delete \(pendingDeletion?.name ?? "custom load")?",
+                "Delete \(pendingDeletion?.name ?? "custom job")?",
                 isPresented: Binding(
                     get: { pendingDeletion != nil },
                     set: { if !$0 { pendingDeletion = nil } }
                 ),
                 titleVisibility: .visible
             ) {
-                Button("Delete Custom Load", role: .destructive) {
+                Button("Delete Custom Job", role: .destructive) {
                     guard let profile = pendingDeletion else { return }
                     do {
                         try store.deleteCustomProfile(id: profile.id)
@@ -71,7 +72,7 @@ struct LoadProfilesSheet: View {
                 }
                 Button("Cancel", role: .cancel) { pendingDeletion = nil }
             } message: {
-                Text("This removes the profile from this device.")
+                Text("This removes the job from this device.")
             }
             .confirmationDialog(
                 "Reset \(pendingReset?.name ?? "profile") to its default settings?",
@@ -92,13 +93,13 @@ struct LoadProfilesSheet: View {
                 }
                 Button("Cancel", role: .cancel) { pendingReset = nil }
             }
-            .alert("Couldn’t update load profiles", isPresented: Binding(
+            .alert("Couldn’t update jobs", isPresented: Binding(
                 get: { validationMessage != nil },
                 set: { if !$0 { validationMessage = nil } }
             )) {
                 Button("OK", role: .cancel) { validationMessage = nil }
             } message: {
-                Text(validationMessage ?? "Check the profile values and try again.")
+                Text(validationMessage ?? "Check the job settings and try again.")
             }
         }
     }
@@ -107,16 +108,9 @@ struct LoadProfilesSheet: View {
     private func profileRow(_ profile: LoadProfile) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Button {
-                do {
-                    try store.selectProfile(id: profile.id)
-                } catch {
-                    validationMessage = message(for: error)
-                }
+                draft = ProfileDraft(profile: profile)
             } label: {
                 HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: store.selectedProfileID == profile.id ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(store.selectedProfileID == profile.id ? .indigo : .secondary)
-                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(profile.name)
                             .font(.body.weight(.medium))
@@ -132,7 +126,7 @@ struct LoadProfilesSheet: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(profileAccessibilitySummary(profile))
-            .accessibilityAddTraits(store.selectedProfileID == profile.id ? .isSelected : [])
+            .accessibilityHint("Edit this job’s settings")
 
             Menu {
                 Button("Edit") { draft = ProfileDraft(profile: profile) }
@@ -154,7 +148,7 @@ struct LoadProfilesSheet: View {
     private func save(_ draft: ProfileDraft) {
         guard draft.isValid else {
             validationMessage = draft.kind == .custom && draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "Enter a name for this custom load."
+                ? "Enter a name for this custom job."
                 : "Energy and duration must be greater than zero. Check the car charge settings too."
             return
         }
@@ -185,7 +179,7 @@ struct LoadProfilesSheet: View {
            let description = loadProfileError.errorDescription {
             return description
         }
-        return "Check the profile values and try again."
+        return "Check the job settings and try again."
     }
 
     private func profileSummary(_ profile: LoadProfile) -> String {
@@ -205,7 +199,7 @@ struct LoadProfilesSheet: View {
     }
 }
 
-private struct ProfileDraft: Identifiable {
+struct ProfileDraft: Identifiable, Equatable {
     var id: String?
     var name: String
     var kind: LoadProfileKind
@@ -235,7 +229,7 @@ private struct ProfileDraft: Identifiable {
 
     private init() {
         id = nil
-        name = "Custom load"
+        name = "Custom job"
         kind = .custom
         energyKwh = 20
         durationHours = 4
@@ -243,13 +237,38 @@ private struct ProfileDraft: Identifiable {
     }
 
     static func newCustom() -> ProfileDraft { ProfileDraft() }
+
+    /// Whether closing the editor now would lose something the person typed.
+    /// A value edited and put back is not a change, so the editor stays one
+    /// swipe away unless there is genuinely something to discard.
+    func hasUnsavedChanges(from original: ProfileDraft) -> Bool { self != original }
 }
 
 private struct ProfileEditorSheet: View {
-    @State var draft: ProfileDraft
+    @State private var draft: ProfileDraft
+    private let original: ProfileDraft
     let onCancel: () -> Void
     let onSave: (ProfileDraft) -> Void
     @FocusState private var nameFocused: Bool
+    @State private var isConfirmingDiscard = false
+
+    init(draft: ProfileDraft, onCancel: @escaping () -> Void, onSave: @escaping (ProfileDraft) -> Void) {
+        _draft = State(initialValue: draft)
+        original = draft
+        self.onCancel = onCancel
+        self.onSave = onSave
+    }
+
+    private var hasUnsavedChanges: Bool { draft.hasUnsavedChanges(from: original) }
+
+    /// Cancel and a swipe down both end here, so neither discards edits silently.
+    private func requestDismiss() {
+        if hasUnsavedChanges {
+            isConfirmingDiscard = true
+        } else {
+            onCancel()
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -259,11 +278,11 @@ private struct ProfileEditorSheet: View {
                         TextField("Load name", text: $draft.name)
                             .textContentType(.name)
                             .focused($nameFocused)
-                            .accessibilityLabel("Custom load name")
+                            .accessibilityLabel("Custom job name")
                     }
                 } else {
-                    Section("Profile") {
-                        LabeledContent("Load", value: draft.name)
+                    Section("Job Details") {
+                        LabeledContent("Job Name", value: draft.name)
                     }
                 }
 
@@ -281,7 +300,7 @@ private struct ProfileEditorSheet: View {
                 }
 
                 if draft.kind != .car {
-                    Section("Load estimate") {
+                    Section("Job Estimate") {
                         decimalStepper("Energy", value: $draft.energyKwh, range: 0.1...500, step: 0.5, unit: "kWh")
                         decimalStepper("Duration", value: $draft.durationHours, range: 0.1...48, step: 0.5, unit: "hours")
                     }
@@ -294,11 +313,11 @@ private struct ProfileEditorSheet: View {
                     }
                 }
             }
-            .navigationTitle(draft.id == nil ? "New Custom Load" : "Edit Profile")
+            .navigationTitle(draft.id == nil ? "New Custom Job" : "Edit Job")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
+                    Button("Cancel", action: requestDismiss)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -313,7 +332,13 @@ private struct ProfileEditorSheet: View {
                 settings.targetStateOfCharge = max(settings.targetStateOfCharge, current)
                 draft.carSettings = settings
             }
+            .confirmationDialog("Discard changes to this job?", isPresented: $isConfirmingDiscard, titleVisibility: .visible) {
+                Button("Discard Changes", role: .destructive, action: onCancel)
+                Button("Keep Editing", role: .cancel) {}
+            }
         }
+        .interactiveDismissDisabled(hasUnsavedChanges)
+        .background(SheetDismissAttemptObserver(onAttempt: requestDismiss))
     }
 
     private func decimalStepper(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, unit: String) -> some View {
@@ -386,4 +411,56 @@ private struct ProfileEditorSheet: View {
     _ = try? store.createCustomProfile(name: "Garden pump", energyKwh: 1.5, durationHours: 0.5)
     return LoadProfilesSheet(store: store)
         .environment(\.dynamicTypeSize, .accessibility3)
+}
+
+/// SwiftUI on iOS 18 has no callback for a swipe-down on a sheet whose dismissal
+/// is disabled, so this listens on UIKit's presentation delegate. SwiftUI relies
+/// on that delegate for its own sheet bookkeeping, so the proxy forwards every
+/// other message to the delegate it replaced.
+private struct SheetDismissAttemptObserver: UIViewControllerRepresentable {
+    let onAttempt: () -> Void
+
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.onAttempt = onAttempt
+    }
+
+    final class Controller: UIViewController {
+        var onAttempt: () -> Void = {}
+        /// The presentation controller holds its delegate weakly, so the proxy
+        /// lives here for as long as the sheet does.
+        private var proxy: Proxy?
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            guard proxy == nil, let presentation = presentationController else { return }
+            let proxy = Proxy(original: presentation.delegate) { [weak self] in self?.onAttempt() }
+            presentation.delegate = proxy
+            self.proxy = proxy
+        }
+    }
+
+    final class Proxy: NSObject, UIAdaptivePresentationControllerDelegate {
+        nonisolated(unsafe) private weak var original: (any UIAdaptivePresentationControllerDelegate)?
+        private let onAttempt: () -> Void
+
+        init(original: (any UIAdaptivePresentationControllerDelegate)?, onAttempt: @escaping () -> Void) {
+            self.original = original
+            self.onAttempt = onAttempt
+        }
+
+        func presentationControllerDidAttemptToDismiss(_ presentationController: UIPresentationController) {
+            onAttempt()
+            original?.presentationControllerDidAttemptToDismiss?(presentationController)
+        }
+
+        override func responds(to aSelector: Selector!) -> Bool {
+            super.responds(to: aSelector) || original?.responds(to: aSelector) == true
+        }
+
+        override func forwardingTarget(for aSelector: Selector!) -> Any? {
+            original?.responds(to: aSelector) == true ? original : super.forwardingTarget(for: aSelector)
+        }
+    }
 }

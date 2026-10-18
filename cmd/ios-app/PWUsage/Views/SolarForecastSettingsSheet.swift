@@ -1,5 +1,25 @@
 import SwiftUI
 
+/// Decides what turning one discovered array on or off does. Every accepted
+/// change is saved straight away: a separate save button below the list was
+/// easy to miss, and leaving without it silently kept the old selection.
+enum SolarForecastArraySelection: Equatable {
+    case save([String])
+    case refuse(String)
+    case unchanged
+
+    static func toggle(_ resourceID: String, on: Bool, current: Set<String>) -> Self {
+        var next = current
+        if on { next.insert(resourceID) } else { next.remove(resourceID) }
+        guard next != current else { return .unchanged }
+        if next.count > 2 { return .refuse("Select at most two arrays.") }
+        if next.isEmpty {
+            return .refuse("Keep at least one array selected, or disconnect Solar forecast to stop requesting forecasts.")
+        }
+        return .save(next.sorted())
+    }
+}
+
 struct SolarForecastSettingsSheet: View {
     @ObservedObject var coordinator: DashboardCoordinator
     @Environment(\.dismiss) private var dismiss
@@ -62,7 +82,7 @@ struct SolarForecastSettingsSheet: View {
 
                 if !discoveredSites.isEmpty {
                     Section("Solar arrays") {
-                        Text("Select one or two arrays. Tags are shown only as hints.")
+                        Text("Select one or two arrays. Each change is saved on this device. Tags are shown only as hints.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                         // A configured connection makes discovery the only route
@@ -84,10 +104,6 @@ struct SolarForecastSettingsSheet: View {
                             }
                             .disabled(isWorking)
                         }
-                        Button("Save array selection") {
-                            Task { await saveSelection(Array(selectedResourceIDs).sorted()) }
-                        }
-                        .disabled(selectedResourceIDs.isEmpty || selectedResourceIDs.count > 2 || isWorking)
                     }
                 }
 
@@ -166,14 +182,13 @@ struct SolarForecastSettingsSheet: View {
         Binding(
             get: { selectedResourceIDs.contains(resourceID) },
             set: { selected in
-                if selected {
-                    guard selectedResourceIDs.count < 2 else {
-                        statusMessage = "Select at most two arrays."
-                        return
-                    }
-                    selectedResourceIDs.insert(resourceID)
-                } else {
-                    selectedResourceIDs.remove(resourceID)
+                switch SolarForecastArraySelection.toggle(resourceID, on: selected, current: selectedResourceIDs) {
+                case .save(let resourceIDs):
+                    Task { await saveSelection(resourceIDs) }
+                case .refuse(let message):
+                    statusMessage = message
+                case .unchanged:
+                    break
                 }
             }
         )
@@ -239,12 +254,17 @@ struct SolarForecastSettingsSheet: View {
         }
         isWorking = true
         defer { isWorking = false }
+        // Show the toggle in its new position while the save runs, and put it
+        // back if the save fails so the list never claims an unsaved selection.
+        let previous = selectedResourceIDs
+        selectedResourceIDs = Set(resourceIDs)
         do {
             try await coordinator.selectSolarArrays(resourceIDs)
             selectedResourceIDs = Set(resourceIDs)
             statusMessage = "Array selection saved on this device."
             await coordinator.loadTimingDetailAppeared()
         } catch {
+            selectedResourceIDs = previous
             await applyStatus(error, operation: .selection)
         }
         budget = await coordinator.solarForecastBudget()

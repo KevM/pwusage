@@ -136,7 +136,7 @@ struct LoadTimingViewTests {
         #expect(card.total == "Estimated $1.92 to start now")
         #expect(card.finish == details.finish)
         #expect(details.energy == "About 4.0 kWh from the wall")
-        #expect(LoadTimingPresentation.runDetailsAccessibilityLabel == "Load run details")
+        #expect(LoadTimingPresentation.runDetailsAccessibilityLabel == "Job Details")
         #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: estimate.hasUnobservedBalance) != nil)
     }
 
@@ -148,16 +148,43 @@ struct LoadTimingViewTests {
 
     @Test("Recommendation copy distinguishes ready, no fit, stale, incomplete, no energy, and empty profiles")
     func recommendationMessagesExplainEachState() {
-        #expect(LoadTimingPresentation.recommendationMessage(for: .ready).title == "Good fit now")
-        #expect(LoadTimingPresentation.recommendationMessage(for: .ready).detail == "Your observed tariff surplus covers this run’s estimated energy.")
-        #expect(LoadTimingPresentation.recommendationMessage(for: .noFit).title == "Your surplus won’t cover a full load.")
+        #expect(LoadTimingPresentation.recommendationMessage(for: .ready).title == "Good time to start")
+        #expect(LoadTimingPresentation.recommendationMessage(for: .ready).detail == "Your export cushion covers this job.")
+        #expect(LoadTimingPresentation.recommendationMessage(for: .noFit).title == "No saved job fits your export cushion.")
         #expect(LoadTimingPresentation.recommendationMessage(for: .noFit, refreshUnavailable: true).detail.contains("refresh failed"))
         #expect(LoadTimingPresentation.recommendationMessage(for: .stale).detail.contains("older than one hour"))
         #expect(LoadTimingPresentation.recommendationMessage(for: .stale, refreshUnavailable: true).detail.contains("refresh failed"))
-        #expect(LoadTimingPresentation.recommendationMessage(for: .incompleteData, hasTariff: false).detail.contains("tariff"))
+        #expect(LoadTimingPresentation.recommendationMessage(for: .incompleteData, hasTariff: false).detail.contains("rate plan"))
         #expect(LoadTimingPresentation.recommendationMessage(for: .incompleteData, hasExpiredCandidate: true).detail.contains("billing cycle"))
         #expect(LoadTimingPresentation.recommendationMessage(for: .noEnergyNeeded).detail.contains("already at its target"))
-        #expect(LoadTimingPresentation.recommendationMessage(for: .noCandidates).detail.contains("Add a load profile"))
+        #expect(LoadTimingPresentation.recommendationMessage(for: .noCandidates).detail.contains("Add a job"))
+    }
+
+    /// `.incompleteData` is aggregated across every job, but the card speaks about
+    /// the selected one. Blaming the selected job's rate plan when another job is
+    /// the one crossing the billing cycle sent people to fix a rate plan that was fine.
+    @Test("Incomplete-data copy names the job that crosses the billing cycle")
+    func incompleteDataCopyNamesTheExpiredJob() {
+        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3.5, durationHours: 2, carSettings: nil)
+        let car = LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 0, durationHours: 0, carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 10, targetStateOfCharge: 90, chargingLevel: .level1))
+        let estimate = LoadTimingEstimator.StartNowEstimate(total: 1, finishTime: .now.addingTimeInterval(7200), batteryKwh: 3.5, wallKwh: 3.5, durationHours: 2, segments: [], hasUnobservedBalance: false)
+        let washerCandidate = LoadTimingRecommendation.Candidate(profile: washer, result: .estimate(estimate), remainingSurplusKwh: 0)
+        let carCandidate = LoadTimingRecommendation.Candidate(profile: car, result: .unavailable(.billingCycleExpired), remainingSurplusKwh: nil)
+        let recommendation = LoadTimingRecommendation(candidates: [washerCandidate, carCandidate], suggested: nil, state: .incompleteData)
+
+        let otherExpired = LoadTimingPresentation.recommendationMessage(for: recommendation, selected: washerCandidate)
+        #expect(otherExpired.title == "No safe recommendation")
+        #expect(otherExpired.detail.contains("Another saved job"))
+
+        let selectedExpired = LoadTimingPresentation.recommendationMessage(for: recommendation, selected: carCandidate)
+        #expect(selectedExpired.detail.hasPrefix("This job would continue beyond the current billing cycle"))
+
+        let incomplete = LoadTimingRecommendation(
+            candidates: [LoadTimingRecommendation.Candidate(profile: washer, result: .unavailable(.incompleteTimeline), remainingSurplusKwh: nil)],
+            suggested: nil,
+            state: .incompleteData
+        )
+        #expect(LoadTimingPresentation.recommendationMessage(for: incomplete, selected: incomplete.candidates[0]).title == "Rate Plan Incomplete")
     }
 
     @Test("Recommendation actions and neutral exploration titles name appliances and cars")
@@ -176,9 +203,9 @@ struct LoadTimingViewTests {
         let estimate = LoadTimingEstimator.StartNowEstimate(total: 1.25, finishTime: .now, batteryKwh: 0, wallKwh: 5, durationHours: 1, segments: [segment], hasUnobservedBalance: false)
         let candidate = LoadTimingRecommendation.Candidate(profile: LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 5, durationHours: 1, carSettings: nil), result: .estimate(estimate), remainingSurplusKwh: 3.5)
         let impact = LoadTimingPresentation.energyImpact(candidate)
-        #expect(impact.surplusConsumed == "Uses 1.5 kWh of observed surplus")
-        #expect(impact.energyBought == "Buys 3.5 kWh at tariff rates")
-        #expect(impact.remainingSurplus == "3.5 kWh surplus remains across the tariff periods used")
+        #expect(impact.surplusConsumed == "1.5 kWh from your export cushion")
+        #expect(impact.energyBought == "3.5 kWh at the grid rate")
+        #expect(impact.remainingSurplus == "3.5 kWh of export cushion remains in these rate periods")
         let unknown = LoadTimingPresentation.energyImpact(LoadTimingRecommendation.Candidate(profile: candidate.profile, result: candidate.result, remainingSurplusKwh: nil))
         #expect(unknown.remainingSurplus == nil)
     }
