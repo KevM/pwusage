@@ -266,25 +266,27 @@ struct LoadTimingView: View {
         let evaluation: SmartShiftEvaluation?
         let timing: LoadTiming
         let now: Date
+        let hint: BetterJobHint?
     }
 
     /// Prices the selected Job with the solar forecast when it's usable and with
     /// balances held still otherwise, then turns that into the card's copy.
     private func smartShiftState(now: Date, timing: LoadTiming, response: MobileBillResponse) -> SmartShiftState {
         let profile = selectedProfile
-        let evaluation = profile.map { profile in
+        let availability = LoadTimingForecastPresentation.forecastAvailability(
+            state: coordinator.solarForecastState,
+            connection: coordinator.solarForecastConnection,
+            cause: coordinator.solarForecastUnavailableCause,
+            reason: coordinator.solarForecastUnavailableReason,
+            forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
+            now: now
+        )
+        func evaluate(_ profile: LoadProfile) -> SmartShiftEvaluation {
             SmartShiftPresentation.evaluate(
                 profile: profile,
                 now: now,
                 timing: timing,
-                forecast: LoadTimingForecastPresentation.forecastAvailability(
-                    state: coordinator.solarForecastState,
-                    connection: coordinator.solarForecastConnection,
-                    cause: coordinator.solarForecastUnavailableCause,
-                    reason: coordinator.solarForecastUnavailableReason,
-                    forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
-                    now: now
-                ),
+                forecast: availability,
                 intervals: coordinator.solarForecastBatch?.intervals,
                 context: coordinator.loadPlanningContext,
                 balanceSourceTime: response.sources.energyDataThrough,
@@ -293,6 +295,7 @@ struct LoadTimingView: View {
                 timeZone: timeZone
             )
         }
+        let evaluation = profile.map(evaluate)
         let screen = SmartShiftPresentation.make(
             profile: profile,
             result: evaluation?.result ?? .init(comparison: nil, unavailableReason: nil),
@@ -304,7 +307,17 @@ struct LoadTimingView: View {
             currencyCode: currencyCode,
             timeZone: timeZone
         )
-        return SmartShiftState(screen: screen, profile: profile, evaluation: evaluation, timing: timing, now: now)
+        // Every saved Job is priced in this same pass, so the hint costs no extra
+        // passes; Jobs with no comparison right now are left out.
+        var hint: BetterJobHint?
+        if let profile, let savings = evaluation?.result.comparison?.savings, !coordinator.bill.isUnavailable {
+            let others = profileStore.profiles.filter { $0.id != profile.id }.compactMap { other in
+                evaluate(other).result.comparison.map { (other, $0.savings) }
+            }
+            hint = SmartShiftPresentation.betterJobHint(selectedID: profile.id, savingsByJob: [(profile, savings)] + others,
+                                                        currencyCode: currencyCode)
+        }
+        return SmartShiftState(screen: screen, profile: profile, evaluation: evaluation, timing: timing, now: now, hint: hint)
     }
 
     private func detailsSnapshot(_ state: SmartShiftState, verdict: SmartShiftVerdict) -> SmartShiftDetailsSnapshot {
@@ -442,7 +455,7 @@ struct LoadTimingView: View {
                     disclosureRow("How this is worked out")
                 }
                 .buttonStyle(.plain)
-                jobRows
+                jobRows(hint: state.hint)
             case .blocked(let message):
                 if let profile = selectedProfile {
                     Text(profile.name)
@@ -453,7 +466,7 @@ struct LoadTimingView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                jobRows
+                jobRows(hint: nil)
             case .noJobs:
                 Text("Add a Job").font(.headline)
                 Text("Add a job to see when it's cheapest to run.").foregroundStyle(.secondary)
@@ -464,7 +477,7 @@ struct LoadTimingView: View {
     }
 
     @ViewBuilder
-    private var jobRows: some View {
+    private func jobRows(hint: BetterJobHint?) -> some View {
         if profileStore.profiles.count > 1 {
             Divider()
             Button {
@@ -473,7 +486,26 @@ struct LoadTimingView: View {
                 disclosureRow("Try another job")
             }
             .buttonStyle(.plain)
+            if let hint {
+                Button {
+                    selectJob(hint.id)
+                } label: {
+                    Label(hint.text, systemImage: "lightbulb")
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+                .accessibilityHint("Switches to this job")
+            }
         }
+    }
+
+    private func selectJob(_ id: String) {
+        exploredProfileID = id
+        try? profileStore.selectProfile(id: id)
     }
 
     private func disclosureRow(_ title: String) -> some View {
@@ -513,8 +545,7 @@ struct LoadTimingView: View {
             List {
                 ForEach(profileStore.profiles) { profile in
                     Button {
-                        exploredProfileID = profile.id
-                        try? profileStore.selectProfile(id: profile.id)
+                        selectJob(profile.id)
                         isJobPickerPresented = false
                     } label: {
                         Text(LoadTimingPresentation.profileChipTitle(profile))

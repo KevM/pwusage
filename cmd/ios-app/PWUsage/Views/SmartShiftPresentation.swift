@@ -78,6 +78,12 @@ struct RunRow: Equatable {
     let bought: String
 }
 
+/// Points at another saved Job that waiting would save more on right now.
+struct BetterJobHint: Equatable {
+    let id: String
+    let text: String
+}
+
 struct SmartShiftScreen: Equatable {
     enum Content: Equatable {
         case verdict(SmartShiftVerdict)
@@ -217,6 +223,21 @@ enum SmartShiftPresentation {
             return RunRow(name: periodTitle(key, timing: timing), fromBank: "\(kwh(fromBank)) kWh from your bank",
                           bought: "\(kwh(drawn - fromBank)) kWh bought")
         }
+    }
+
+    // MARK: - A better Job
+
+    /// "Wash the dishes: save about $2.10 by waiting", when another Job's saving
+    /// beats the selected one's by more than a minor unit; otherwise `nil`.
+    static func betterJobHint(selectedID: String, savingsByJob: [(LoadProfile, Double)], currencyCode: String) -> BetterJobHint? {
+        let selected = savingsByJob.first { $0.0.id == selectedID }?.1 ?? 0
+        let minorUnit = LoadTimingForecastEstimator.currencyMinorUnit(currencyCode)
+        guard let (profile, savings) = savingsByJob
+            .filter({ $0.0.id != selectedID && $0.1.isFinite })
+            .max(by: { $0.1 < $1.1 }),
+              savings > minorUnit, savings - selected > minorUnit else { return nil }
+        return BetterJobHint(id: profile.id,
+                             text: "\(profile.name): save about \(DashboardPresentation.currency(savings, code: currencyCode)) by waiting")
     }
 
     // MARK: - Blocked states

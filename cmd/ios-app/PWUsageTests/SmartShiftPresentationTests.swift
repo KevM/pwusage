@@ -308,4 +308,18 @@ struct SmartShiftPresentationTests {
         #expect(SmartShiftPresentation.runRows(comparison: Self.comparison(lanes: partLanes), profile: pump, timing: Self.timing())
             == [RunRow(name: "Off-Peak", fromBank: "12.0 kWh from your bank", bought: "2.0 kWh bought")])
     }
+
+    // MARK: - A better Job
+
+    @Test func hintsOnlyWhenAnotherJobSavesMore() {
+        let dishes = LoadProfile(id: "dishwasher", name: "Wash the dishes", kind: .appliance, energyKwh: 5, durationHours: 2, carSettings: nil)
+        let hint = SmartShiftPresentation.betterJobHint(selectedID: "car", savingsByJob: [(Self.car, 0.40), (dishes, 2.10)],
+                                                        currencyCode: "USD")
+        #expect(hint == BetterJobHint(id: "dishwasher", text: "Wash the dishes: save about \(Self.money(2.10)) by waiting"))
+        #expect(SmartShiftPresentation.betterJobHint(selectedID: "car", savingsByJob: [(Self.car, 2.50), (dishes, 2.10)],
+                                                     currencyCode: "USD") == nil)
+        // A saving below one cent is not worth pointing at.
+        #expect(SmartShiftPresentation.betterJobHint(selectedID: "car", savingsByJob: [(Self.car, 0), (dishes, 0.004)],
+                                                     currencyCode: "USD") == nil)
+    }
 }
