@@ -303,6 +303,36 @@ describe('EnergyRepo.getDailyCoverage', () => {
     });
 });
 
+describe('EnergyRepo.countAlignedSamples', () => {
+    beforeEach(() => queryMock.mockReset());
+
+    it('counts 5-minute-aligned rows per site window in one query', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ site_id: 'a', n: '4032' }, { site_id: 'b', n: 12 }] });
+        const windows = [
+            { siteId: 'a', start: new Date('2026-10-04T05:00:00Z'), end: new Date('2026-10-18T05:00:00Z') },
+            { siteId: 'b', start: new Date('2026-10-04T07:00:00Z'), end: new Date('2026-10-18T07:00:00Z') },
+        ];
+
+        const counts = await new EnergyRepo().countAlignedSamples(windows);
+
+        expect(counts).toEqual(new Map([['a', 4032], ['b', 12]]));
+        expect(queryMock).toHaveBeenCalledTimes(1);
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('unnest($1::text[], $2::timestamp[], $3::timestamp[])');
+        expect(sql).toContain('% 300 = 0');
+        expect(params).toEqual([
+            ['a', 'b'],
+            ['2026-10-04T05:00:00.000Z', '2026-10-04T07:00:00.000Z'],
+            ['2026-10-18T05:00:00.000Z', '2026-10-18T07:00:00.000Z'],
+        ]);
+    });
+
+    it('skips the query when there are no windows', async () => {
+        await expect(new EnergyRepo().countAlignedSamples([])).resolves.toEqual(new Map());
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+});
+
 describe('EnergyRepo getRawEnergyData column projection', () => {
     beforeEach(() => {
         queryMock.mockReset();

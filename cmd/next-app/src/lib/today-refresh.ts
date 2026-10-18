@@ -143,10 +143,11 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
                 const energyRepo = new EnergyRepo();
                 const importer = new Importer(client);
 
-                const [latest, rows] = await Promise.all([
-                    energyRepo.getLatestEnergyData(siteId),
-                    importer.getTodayData(siteId)
-                ]);
+                // Sequential: the importer needs the latest stored row to decide
+                // whether yesterday's tail (after the last pre-midnight refresh) is missing.
+                const latest = await energyRepo.getLatestEnergyData(siteId);
+                checkIoDeadline();
+                const rows = await importer.getTodayData(siteId, latest?.timestamp ?? null);
 
                 checkIoDeadline();
                 if (rows.length === 0) return { status: 'no-new-rows' };
