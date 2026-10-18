@@ -283,17 +283,16 @@ export class Importer {
 
     async fetchRange(site: SiteWithTariffs, start: Date, end: Date, period: string = "day"): Promise<EnergyDataRow[]> {
         const allRows: EnergyDataRow[] = [];
-        let cursor = new Date(start);
-        const chunkMs = 24 * 60 * 60 * 1000;
 
-        while (cursor < end) {
-            const next = new Date(Math.min(cursor.getTime() + chunkMs, end.getTime()));
-
+        // One request per site-local day: Tesla returns the whole calendar day for
+        // any request inside it, so fixed 24h chunks fetched the 25-hour DST
+        // fall-back day twice and produced duplicate timestamps in one batch.
+        for (const { start: chunkStart, end: chunkEnd } of splitAtSiteMidnight({ start, end }, site.timezone)) {
             const [history, soeHistory] = await Promise.all([
-                this.client.getEnergyHistory(site.id, cursor, next, period, site.timezone),
-                this.client.getSoeHistory(site.id, cursor, next, period, site.timezone)
+                this.client.getEnergyHistory(site.id, chunkStart, chunkEnd, period, site.timezone),
+                this.client.getSoeHistory(site.id, chunkStart, chunkEnd, period, site.timezone)
                     .catch(error => {
-                        console.warn(`[Importer] SOE history fetch failed for ${site.id} (${cursor.toISOString()}-${next.toISOString()})`, error);
+                        console.warn(`[Importer] SOE history fetch failed for ${site.id} (${chunkStart.toISOString()}-${chunkEnd.toISOString()})`, error);
                         return [] as SoeHistoryEntry[];
                     })
             ]);
@@ -302,7 +301,6 @@ export class Importer {
                 const rows = await this.processHistory(site, history, soeHistory);
                 allRows.push(...rows);
             }
-            cursor = next;
         }
         return allRows;
     }
