@@ -58,7 +58,7 @@ struct LoadTimingViewTests {
     func profileChipUsesEditedProfile() {
         let edited = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3.5, durationHours: 2.25, carSettings: nil)
         #expect(LoadTimingPresentation.profileChipTitle(edited) == "Washer · 3.5 kWh")
-        #expect(LoadTimingPresentation.actionTitle(for: edited) == "Run Washer")
+        #expect(LoadTimingPresentation.actionTitle(for: edited) == "Washer")
 
         let editedCar = LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 999, durationHours: 999, carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 10, targetStateOfCharge: 50, chargingLevel: .level1))
         #expect(LoadTimingPresentation.profileChipTitle(editedCar) == "Car · 32 kWh battery")
@@ -187,14 +187,12 @@ struct LoadTimingViewTests {
         #expect(LoadTimingPresentation.recommendationMessage(for: incomplete, selected: incomplete.candidates[0]).title == "Rate Plan Incomplete")
     }
 
-    @Test("Recommendation actions and neutral exploration titles name appliances and cars")
+    @Test("Action titles use the Job's verb-phrase name as-is")
     func recommendationAndExplorationTitlesNameProfileKind() {
-        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3.5, durationHours: 2, carSettings: nil)
-        let car = LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 0, durationHours: 0, carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 10, targetStateOfCharge: 50, chargingLevel: .level2))
-        #expect(LoadTimingPresentation.actionTitle(for: washer) == "Run Washer")
-        #expect(LoadTimingPresentation.actionTitle(for: car) == "Charge Car")
-        #expect(LoadTimingPresentation.explorationTitle(for: washer) == "What if you run Washer?")
-        #expect(LoadTimingPresentation.explorationTitle(for: car) == "What if you charge Car?")
+        let washer = LoadProfile(id: "washer", name: "Wash the laundry", kind: .appliance, energyKwh: 3.5, durationHours: 2, carSettings: nil)
+        let car = LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: 0, durationHours: 0, carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 10, targetStateOfCharge: 50, chargingLevel: .level2))
+        #expect(LoadTimingPresentation.actionTitle(for: washer) == "Wash the laundry")
+        #expect(LoadTimingPresentation.actionTitle(for: car) == "Charge the car")
     }
 
     @Test("Energy impact explains surplus used, buy-rate energy, and known or unknown remaining balance")
@@ -247,7 +245,6 @@ struct LoadTimingViewTests {
     @Test("No-response explorer keeps a neutral selected-load title but withholds estimate and calculation")
     func missingResponseExplorerExplainsUnavailableEstimate() {
         let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
-        #expect(LoadTimingPresentation.explorationTitle(for: washer) == "What if you run Washer?")
         #expect(LoadTimingPresentation.noResponseExplorationMessage.contains("bill response and tariff data"))
         #expect(LoadTimingPresentation.noResponseExplorationMessage.contains("estimate or calculation"))
     }

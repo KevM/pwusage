@@ -52,12 +52,9 @@ enum LoadTimingPresentation {
         return "\(profile.name), \(profile.energyKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours, \(profile.durationHours.formatted(.number.precision(.fractionLength(0...1)))) hours"
     }
 
+    /// Job names are verb phrases ("Charge the car"), so they are used as-is.
     static func actionTitle(for profile: LoadProfile) -> String {
-        "\(profile.kind == .car ? "Charge" : "Run") \(profile.name)"
-    }
-
-    static func explorationTitle(for profile: LoadProfile) -> String {
-        "What if you \(profile.kind == .car ? "charge" : "run") \(profile.name)?"
+        profile.name
     }
 
     /// `.incompleteData` is aggregated across every job while the card speaks
