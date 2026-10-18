@@ -61,11 +61,22 @@ Reference mockups (HTML fragments from the brainstorming session, rendered insid
    - The x-axis starts at **now** and ends at the forecast horizon. Each lane has its own axis with real clock times: now, rate-period switches, and run end times.
    - A dashed vertical line marks each rate-period switch, labelled "← Peak | Off-Peak →" (or the actual period names).
    - Background: green above zero ("banked"), orange below ("owed"), with a zero line.
+   - Each lane labels its **starting value at now**, e.g. "+18 banked now" or "−6 owed now". This keeps each rate period's current bank on the main screen now that the Rate Plan tiles have moved (see below). The owner wants it: knowing each bank now is what builds the mental map.
    - Two lines per lane: the later start (thick, solid, blue) and starting now (thin, dashed, faint). Each ends in its value ("+10", "−9"). If they end at the same value, show one label.
    - With a forecast, lines include projected solar and household use. Without one, they are flat except for the Job's own draw.
 6. **Without a forecast only**: a note under the chart: *"Without a solar forecast, banks are shown as they stand now. Connect Solcast to see today's solar."* "Connect Solcast" opens the existing Solar Forecast Settings sheet. This is the onboarding route for Solcast.
 7. **How this is worked out ›** opens one details view. It merges today's "Energy Details" and "Forecast Details": per-period rates, kWh drawn from each bank or bought, forecast and household-profile freshness, and the assumptions note.
 8. **Try another job ›** stays as a row (the PR #157 picker).
+
+### Which Job opens (decided by the owner)
+
+The screen opens on the **last Job the person looked at**, for a sense of place. Use the persisted `selectedProfileID` in `LoadProfileStore`, and update it when the person picks another Job. Fall back to the first Job when nothing is stored. The old "largest Job that fits" ranking no longer chooses the default.
+
+**Nice to have:** when another saved Job has a larger saving right now, show a one-line hint on the Try another job row, e.g. *"Wash the dishes: save about $2.10 by waiting"*. Tapping it switches to that Job. Leave it out if it complicates the first version.
+
+### Rate Plan tiles (decided by the owner)
+
+The per-period Rate Plan tiles move off the main screen into **How this is worked out**, as a simple list: one row per period with its buy and sell rates and current banked/owed balance. A list handles 2–4 periods evenly. The main screen keeps each bank's current value as the lane start labels (above). Revisit if the main screen loses the mental map without the tiles.
 
 ### Removed from the card
 
