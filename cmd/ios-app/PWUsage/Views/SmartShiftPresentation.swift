@@ -39,7 +39,8 @@ struct LaneDisplay: Equatable {
 
 struct SmartShiftVerdict: Equatable {
     enum Note: Equatable {
-        case connectSolcast
+        /// `usesHistory`: banks followed the site's last four weeks rather than holding still.
+        case connectSolcast(usesHistory: Bool)
         case forecastState(String)
         case unobservedBalance
     }
@@ -114,9 +115,10 @@ struct SmartShiftEvaluation: Equatable {
 /// Every Smart Shift sentence and display decision, kept out of the views so it can be tested.
 enum SmartShiftPresentation {
     /// Prices the Job with the solar forecast when one is ready, otherwise with
-    /// balances held still. A forecast comparison that can't run (its stricter
-    /// 30-minute balance age, say) falls back to the forecast-free one, and the
-    /// card says why in one sentence.
+    /// the site's grid history when the household pattern carries it, otherwise
+    /// with balances held still. A forecast comparison that can't run (its
+    /// stricter 30-minute balance age, say) falls back to the forecast-free one,
+    /// and the card says why in one sentence.
     static func evaluate(
         profile: LoadProfile,
         now: Date,
@@ -166,6 +168,10 @@ enum SmartShiftPresentation {
             } else if forecast == .ready {
                 availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(.incompleteContext))
             }
+            if let context, context.hasGridHistory {
+                let result = LoadTimingForecastEstimator.evaluate(profile: profile, plan: plans.plan(for: .history(context: context)))
+                if result.unavailableReason == nil { return SmartShiftEvaluation(result: result, forecast: availability) }
+            }
             return SmartShiftEvaluation(
                 result: LoadTimingForecastEstimator.evaluate(profile: profile, plan: plans.plan(for: .flat(timeZone: timeZone))),
                 forecast: availability)
@@ -190,6 +196,7 @@ enum SmartShiftPresentation {
     }
 
     static let connectSolcastNote = "Without a solar forecast, banks are shown as they stand now. Connect Solcast to see today's solar."
+    static let connectSolcastHistoryNote = "Without a solar forecast, banks follow your last four weeks. Connect Solcast to see this week's solar."
     static let checkingSolarNote = "Checking today's solar…"
     static let unobservedBalanceNote = "Some rate periods have no balance yet, so they're priced at the full rate."
 
@@ -220,7 +227,7 @@ enum SmartShiftPresentation {
         }
         guard let comparison = result.comparison else { return SmartShiftScreen(content: .blocked(cannotCompareMessage)) }
         let context = Context(profile: profile, comparison: comparison, timing: timing, now: now,
-                              currencyCode: currencyCode, timeZone: timeZone)
+                              billingCycleEnd: billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone)
         return SmartShiftScreen(content: .verdict(context.verdict(forecast: forecast)))
     }
 
@@ -252,12 +259,55 @@ enum SmartShiftPresentation {
     }
 
     /// For each period the recommended run draws on: the part its bank covers and the part bought.
-    /// The lane ends `draw` lower than it would without the run, which gives the bank it drew from.
+    /// Banks are read where the bill is, at the projection end: the lane's bank after
+    /// the run plus the run's draw gives the bank it drew from.
     /// The recommended start's arithmetic, then starting now's (just now's when they're the same).
     static func costBreakdowns(comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
-                               now: Date, currencyCode: String, timeZone: String) -> [CostBreakdown] {
-        Context(profile: profile, comparison: comparison, timing: timing, now: now, currencyCode: currencyCode,
-                timeZone: timeZone).costBreakdowns
+                               now: Date, billingCycleEnd: Date, currencyCode: String, timeZone: String) -> [CostBreakdown] {
+        Context(profile: profile, comparison: comparison, timing: timing, now: now, billingCycleEnd: billingCycleEnd,
+                currencyCode: currencyCode, timeZone: timeZone).costBreakdowns
+    }
+
+    /// "Charging tomorrow at 8:00 AM would be cheaper if the sun holds, but …", when the
+    /// safety rule turned down a cheaper start; otherwise `nil`.
+    static func ruledOutNote(comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
+                             now: Date, timeZone: String) -> String? {
+        guard let ruledOut = comparison.ruledOut else { return nil }
+        let context = Context(profile: profile, comparison: comparison, timing: timing, now: now, billingCycleEnd: nil,
+                              currencyCode: "USD", timeZone: timeZone)
+        let time = ruledOut.start <= comparison.horizonStart ? "now" : context.when(ruledOut.start)
+        return "\(gerund(context.verb)) \(time) would be cheaper if the sun holds, but a cloudy week could leave "
+            + "\(context.name(ruledOut.periodKey)) more than \(shortfallKwh) kWh short by "
+            + "\(shortDate(comparison.safetyEnd, timeZone: timeZone)), so it isn't suggested."
+    }
+
+    /// "3", the most a cloudy week may leave a bank short.
+    static var shortfallKwh: String {
+        LoadTimingForecastEstimator.safetyShortfallKwh.formatted(.number.precision(.fractionLength(0)))
+    }
+
+    /// "Nov 10" in the site's time zone.
+    static func shortDate(_ date: Date, timeZone: String) -> String {
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone(identifier: timeZone) ?? .current
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
+        return formatter.string(from: date)
+    }
+
+    /// "Charge" → "Charging", "Wash" → "Washing", "Start" → "Starting", "Bake" → "Baking".
+    static func gerund(_ verb: String) -> String {
+        let lower = verb.lowercased()
+        if lower.hasSuffix("e"), !lower.hasSuffix("ee"), !lower.hasSuffix("ye"), !lower.hasSuffix("oe"), lower.count > 2 {
+            return String(verb.dropLast()) + "ing"
+        }
+        // A short consonant-vowel-consonant verb doubles its last letter: "Run" → "Running".
+        let vowels = Set("aeiou")
+        let letters = Array(lower)
+        if letters.count == 3, !vowels.contains(letters[0]), vowels.contains(letters[1]),
+           !vowels.contains(letters[2]), !"wxy".contains(letters[2]) {
+            return verb + String(verb.last!) + "ing"
+        }
+        return verb + "ing"
     }
 
     struct Draw {
@@ -395,10 +445,14 @@ enum SmartShiftPresentation {
         let comparison: LoadTimingForecastEstimator.Comparison
         let timing: LoadTiming
         let now: Date
+        /// `nil` where no bill date is shown.
+        let billingCycleEnd: Date?
         let currencyCode: String
         let timeZone: String
 
         var isNow: Bool { comparison.recommendedStart <= comparison.horizonStart }
+
+        func shortDate(_ date: Date) -> String { SmartShiftPresentation.shortDate(date, timeZone: timeZone) }
 
         var verb: String {
             guard profile.kind != .custom, let first = profile.name.split(separator: " ").first else { return "Start" }
@@ -440,10 +494,25 @@ enum SmartShiftPresentation {
             return roundedKwh(kwh) > 0 ? "have \(roundedKwh(kwh)) kWh banked" : "have no bank"
         }
 
+        var headline: String {
+            let time = isNow ? "now" : when(comparison.recommendedStart)
+            switch comparison.safety {
+            case .nowSafe:
+                return isNow
+                    ? "\(profile.name) now: no cheaper time today"
+                    : "\(profile.name) \(time): about \(money(comparison.savings)) cheaper than now"
+            case .nowUnsafe(let key):
+                let more = max(0, comparison.recommendedCost - comparison.costNow)
+                return "\(profile.name) \(time): about \(money(more)) more than now, but it won't leave \(name(key)) short"
+            case .noSafeStart(let key):
+                return "\(profile.name) \(time): the least risky time, but a cloudy week could still leave \(name(key)) short"
+            }
+        }
+
+        /// Shorter is better only when the recommendation is also the cheaper bar.
+        var claimsSaving: Bool { comparison.safety == .nowSafe && !isNow }
+
         func verdict(forecast: ForecastAvailability) -> SmartShiftVerdict {
-            let headline = isNow
-                ? "\(profile.name) now: no cheaper time today"
-                : "\(profile.name) \(when(comparison.recommendedStart)): about \(money(comparison.savings)) cheaper than now"
             let nowBar = CostBar(label: nowLabel, amount: money(comparison.costNow), value: comparison.costNow, isRecommended: isNow)
             let bars = isNow
                 ? [nowBar]
@@ -452,7 +521,7 @@ enum SmartShiftPresentation {
             let lanes = comparison.lanes.map(lane)
             return SmartShiftVerdict(
                 headline: headline,
-                barsCaption: isNow ? "Added to your bill" : "Added to your bill (shorter is better)",
+                barsCaption: claimsSaving ? "Added to your bill (shorter is better)" : "Added to your bill",
                 bars: bars,
                 percentLess: percentLess,
                 why: why,
@@ -483,7 +552,7 @@ enum SmartShiftPresentation {
         }
 
         var percentLess: String? {
-            guard !isNow, comparison.costNow > 0 else { return nil }
+            guard claimsSaving, comparison.costNow > 0 else { return nil }
             let percent = Int(((comparison.costNow - comparison.recommendedCost) / comparison.costNow * 100).rounded())
             return percent > 0 ? "\(percent)% less" : nil
         }
@@ -498,13 +567,15 @@ enum SmartShiftPresentation {
                 let share = energy <= 0 || bank >= energy ? "all" : bank / energy >= 0.5 ? "most" : "some"
                 return "It's \(period), and your \(period) bank covers \(share) of this run."
             }
-            let duration = comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart)
-            let nowEnd = now.addingTimeInterval(duration)
-            let nowDraws = draws(from: now, to: nowEnd, profile: profile, timing: timing,
-                                 laneEnd: { $0.startNow.last?.kwh }, lanes: comparison.lanes)
-            let laterDraws = draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, profile: profile,
-                                   timing: timing, laneEnd: { $0.recommended.last?.kwh }, lanes: comparison.lanes)
+            let nowDraws = self.nowDraws
+            let laterDraws = self.laterDraws
             let time = when(comparison.recommendedStart)
+            if case .nowUnsafe(let key) = comparison.safety {
+                let warning = "Starting now would draw on your \(name(key)) bank, which a cloudy week could leave more than "
+                    + "\(shortfallKwh) kWh short by \(shortDate(comparison.safetyEnd))."
+                guard let laterMain = laterDraws.max(by: { $0.kwh < $1.kwh }) else { return warning }
+                return warning + " " + laterClause(laterMain, total: laterDraws.reduce(0) { $0 + $1.kwh }, time: time)
+            }
             guard let nowMain = nowDraws.max(by: { $0.kwh < $1.kwh }),
                   let laterMain = laterDraws.max(by: { $0.kwh < $1.kwh }) else {
                 return "Starting \(time) costs less than starting now."
@@ -535,16 +606,33 @@ enum SmartShiftPresentation {
             DashboardPresentation.loadRate(rateValue(key, sell: sell), code: currencyCode)
         }
 
-        var costBreakdowns: [CostBreakdown] {
+        /// Starting now's draws, against each bank at the projection end.
+        var nowDraws: [Draw] {
             let duration = comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart)
-            let startNow = breakdown(title: nowLabel, total: comparison.costNow,
-                                     draws: draws(from: now, to: now.addingTimeInterval(duration), profile: profile,
-                                                  timing: timing, laneEnd: { $0.startNow.last?.kwh }, lanes: comparison.lanes))
+            return draws(from: now, to: now.addingTimeInterval(duration), profile: profile, timing: timing,
+                         laneEnd: { $0.projectedAfterStartNowKwh }, lanes: comparison.lanes)
+        }
+
+        /// The recommended start's draws, against each bank at the projection end.
+        var laterDraws: [Draw] {
+            draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, profile: profile, timing: timing,
+                  laneEnd: { $0.projectedAfterRecommendedKwh }, lanes: comparison.lanes)
+        }
+
+        var costBreakdowns: [CostBreakdown] {
+            let startNow = breakdown(title: nowLabel, total: comparison.costNow, draws: nowDraws)
             guard !isNow else { return [startNow] }
             let later = breakdown(title: "\(verb) \(when(comparison.recommendedStart))", total: comparison.recommendedCost,
-                                  draws: draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, profile: profile,
-                                               timing: timing, laneEnd: { $0.recommended.last?.kwh }, lanes: comparison.lanes))
+                                  draws: laterDraws)
             return [later, startNow]
+        }
+
+        /// "by Nov 10 (bill date)", "by Nov 1, when rates change," or "by Oct 20".
+        var projectionEndPhrase: String {
+            let date = shortDate(comparison.projectionEnd)
+            if comparison.projectionEndsAtRateChange { return "by \(date), when rates change," }
+            if let billingCycleEnd, comparison.projectionEnd == billingCycleEnd { return "by \(date) (bill date)," }
+            return "by \(date),"
         }
 
         func breakdown(title: String, total: Double, draws: [Draw]) -> CostBreakdown {
@@ -557,9 +645,10 @@ enum SmartShiftPresentation {
                 if draw.fromBank >= 0.05 {
                     lines.append(CostLine(period: period, detail: "\(kwh(draw.fromBank)) kWh from your bank × \(rate(draw.key, sell: true)) credit",
                                           amount: money(draw.fromBank * (rateValue(draw.key, sell: true) ?? 0))))
-                    let today = startKwh(draw.key) ?? 0
-                    if draw.fromBank > max(today, 0) + 0.5, let projected = draw.bankWithoutRun {
-                        notes.append("\(period) bank: \(startLabel(today)), about \(signedKwh(projected)) kWh with the forecast solar.")
+                    if let projected = draw.bankWithoutRun {
+                        let today = startKwh(draw.key) ?? 0
+                        notes.append("\(period) bank is \(signedKwh(today)) now, projecting \(signedKwh(projected)) "
+                            + "\(projectionEndPhrase) \(signedKwh(projected - draw.kwh)) after this charge.")
                     }
                 }
                 if bought >= 0.05 {
@@ -589,10 +678,12 @@ enum SmartShiftPresentation {
             guard draw.fromBank >= draw.kwh / 2 else {
                 return "\(capitalized(time)) it's \(mostly)bought at the \(period) rate of \(rate(draw.key, sell: false))."
             }
-            let source = draw.fromBank > max(startKwh(draw.key) ?? 0, 0) + 0.5
-                ? "\(period) energy your solar banks before then"
-                : "your \(period) bank"
-            return "\(capitalized(time)) it \(mostly)uses \(source), giving up \(rate(draw.key, sell: true)) in credit."
+            // A bank larger than today's is filled by projected solar across the
+            // days to the projection end, not by tomorrow alone, so say where it stands then.
+            let projected = draw.fromBank > max(startKwh(draw.key) ?? 0, 0) + 0.5
+                ? draw.bankWithoutRun.map { ", projected at \(signedKwh($0)) kWh by \(shortDate(comparison.projectionEnd))" } ?? ""
+                : ""
+            return "\(capitalized(time)) it \(mostly)uses your \(period) bank\(projected), giving up \(rate(draw.key, sell: true)) in credit."
         }
 
         func lane(_ lane: LoadTimingForecastEstimator.BalanceLane) -> LaneDisplay {
@@ -614,7 +705,7 @@ enum SmartShiftPresentation {
         func notes(forecast: ForecastAvailability) -> [SmartShiftVerdict.Note] {
             var notes: [SmartShiftVerdict.Note]
             switch forecast {
-            case .none: notes = [.connectSolcast]
+            case .none: notes = [.connectSolcast(usesHistory: comparison.usesHistory)]
             case .loading: notes = [.forecastState(checkingSolarNote)]
             case .unusable(let message): notes = [.forecastState(message)]
             case .ready: notes = []

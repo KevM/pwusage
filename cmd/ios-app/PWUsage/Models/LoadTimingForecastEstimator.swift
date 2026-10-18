@@ -189,12 +189,14 @@ struct LoadTimingForecastEstimator {
         let safetyEnd: Date
         let safety: Safety
         let ruledOut: RuledOut?
+        /// The site's grid history moved the banks (with or after the forecast).
+        let usesHistory: Bool
 
         init(costNow: Double, recommendedStart: Date, recommendedEnd: Date, recommendedCost: Double, savings: Double,
              bestAlternativeSavings: Double, estimatedSolarContribution: Double, horizonStart: Date, horizonEnd: Date,
              evaluatedStarts: [Date], assumptions: [String], hasUnobservedBalance: Bool, lanes: [BalanceLane],
              periodSwitches: [Date], projectionEnd: Date? = nil, projectionEndsAtRateChange: Bool = false,
-             safetyEnd: Date? = nil, safety: Safety = .nowSafe, ruledOut: RuledOut? = nil) {
+             safetyEnd: Date? = nil, safety: Safety = .nowSafe, ruledOut: RuledOut? = nil, usesHistory: Bool = false) {
             self.costNow = costNow
             self.recommendedStart = recommendedStart
             self.recommendedEnd = recommendedEnd
@@ -214,6 +216,7 @@ struct LoadTimingForecastEstimator {
             self.safetyEnd = safetyEnd ?? projectionEnd ?? horizonEnd
             self.safety = safety
             self.ruledOut = ruledOut
+            self.usesHistory = usesHistory
         }
     }
 
@@ -813,7 +816,8 @@ struct LoadTimingForecastEstimator {
             projectionEndsAtRateChange: prepared.endsAtRateChange,
             safetyEnd: prepared.safetyEnd,
             safety: selection.safety,
-            ruledOut: selection.ruledOut
+            ruledOut: selection.ruledOut,
+            usesHistory: prepared.projection.context?.hasGridHistory ?? false
         ), unavailableReason: nil)
     }
 
@@ -977,16 +981,21 @@ struct LoadTimingForecastEstimator {
         }
     }
 
+    private static let safetyAssumption = "A start that dips into a bank must leave it no more than 3 kWh short after a cloudy week."
+
     private static func assumptions(for projection: Projection) -> [String] {
         let baseline: [String]
         switch projection {
-        case .forecast:
+        case .forecast(_, let context):
             baseline = [
                 "Typical household and battery behavior follows the historical local-time profile.",
                 "Battery behavior is assumed unchanged by this added load."
-            ]
+            ] + (context.hasGridHistory
+                ? ["Solar follows your Solcast forecast for the next 7 days, then your last four weeks through the bill date.",
+                   safetyAssumption]
+                : [])
         case .history:
-            baseline = ["Banks follow your last four weeks of grid use through the bill date."]
+            baseline = ["Banks follow your last four weeks of grid use through the bill date.", safetyAssumption]
         case .flat:
             baseline = ["Balances are held at today's observed values; no solar or household use is projected."]
         }

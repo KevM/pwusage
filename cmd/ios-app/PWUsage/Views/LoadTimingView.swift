@@ -266,6 +266,7 @@ struct LoadTimingView: View {
         let evaluation: SmartShiftEvaluation?
         let timing: LoadTiming
         let now: Date
+        let billingCycleEnd: Date
         let hint: BetterJobHint?
     }
 
@@ -287,7 +288,8 @@ struct LoadTimingView: View {
             timing: timing,
             forecast: availability,
             intervals: coordinator.solarForecastBatch?.intervals,
-            context: coordinator.loadPlanningContext,
+            // Without a usable forecast, the household pattern's grid history still projects the banks.
+            context: coordinator.loadPlanningContext ?? coordinator.householdPattern,
             balanceSourceTime: response.sources.energyDataThrough,
             billingCycleEnd: response.currentBill.cycleEnd,
             currencyCode: currencyCode,
@@ -315,22 +317,28 @@ struct LoadTimingView: View {
             hint = SmartShiftPresentation.betterJobHint(selectedID: profile.id, savingsByJob: [(profile, savings)] + others,
                                                         currencyCode: currencyCode)
         }
-        return SmartShiftState(screen: screen, profile: profile, evaluation: evaluation, timing: timing, now: now, hint: hint)
+        return SmartShiftState(screen: screen, profile: profile, evaluation: evaluation, timing: timing, now: now,
+                               billingCycleEnd: response.currentBill.cycleEnd, hint: hint)
     }
 
     private func detailsSnapshot(_ state: SmartShiftState, verdict: SmartShiftVerdict) -> SmartShiftDetailsSnapshot {
         let comparison = state.evaluation?.result.comparison
         let usedForecast = state.evaluation?.forecast == .ready
         var breakdowns: [CostBreakdown] = []
+        var ruledOutNote: String?
         if let comparison, let profile = state.profile {
             breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: profile, timing: state.timing,
-                                                               now: state.now, currencyCode: currencyCode, timeZone: timeZone)
+                                                               now: state.now, billingCycleEnd: state.billingCycleEnd,
+                                                               currencyCode: currencyCode, timeZone: timeZone)
+            ruledOutNote = SmartShiftPresentation.ruledOutNote(comparison: comparison, profile: profile, timing: state.timing,
+                                                               now: state.now, timeZone: timeZone)
         }
         return SmartShiftDetailsSnapshot(
             verdict: verdict,
             comparison: comparison,
             rows: SmartShiftPresentation.periodRows(timing: state.timing, currencyCode: currencyCode),
             breakdowns: breakdowns,
+            ruledOutNote: ruledOutNote,
             forecastFetchedAt: usedForecast ? coordinator.solarForecastBatch?.fetchedAt : nil,
             contextAsOf: usedForecast ? coordinator.loadPlanningContext?.asOf : nil,
             capturedAt: state.now

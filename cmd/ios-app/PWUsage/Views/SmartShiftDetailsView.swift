@@ -8,6 +8,8 @@ struct SmartShiftDetailsSnapshot: Identifiable {
     let comparison: LoadTimingForecastEstimator.Comparison?
     let rows: [PeriodRow]
     let breakdowns: [CostBreakdown]
+    /// Why a cheaper start isn't suggested, when the safety rule turned one down.
+    var ruledOutNote: String? = nil
     /// Present only when the solar forecast priced this comparison.
     let forecastFetchedAt: Date?
     let contextAsOf: Date?
@@ -65,6 +67,13 @@ struct SmartShiftDetailsView: View {
                         }
                     } footer: {
                         Text("Energy from a bank costs only the export credit you give up. The rest is bought at the period's rate.")
+                    }
+                }
+                if let ruledOut = snapshot.ruledOutNote {
+                    Section {
+                        Text(ruledOut)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 Section("Rate periods") {

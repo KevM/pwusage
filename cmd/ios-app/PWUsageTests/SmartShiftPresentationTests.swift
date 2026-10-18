@@ -101,7 +101,7 @@ struct SmartShiftPresentationTests {
         #expect(verdict.percentLess == "36% less")
         #expect(verdict.laterLabel == "Charge later")
         #expect(verdict.nowLabel == "Charge now")
-        #expect(verdict.notes == [.connectSolcast])
+        #expect(verdict.notes == [.connectSolcast(usesHistory: false)])
         // Now, each run's end, and each rate-period switch.
         #expect(verdict.axisDates == [Self.now, Self.at(14.4), Self.at(16.5), Self.at(22.4), Self.at(31), Self.at(40.5)])
     }
@@ -150,7 +150,7 @@ struct SmartShiftPresentationTests {
         let ready = try Self.verdict(Self.make(result: .init(comparison: comparison, unavailableReason: nil), forecast: .ready))
         #expect(ready.notes == [.unobservedBalance])
         let none = try Self.verdict(Self.make(result: .init(comparison: comparison, unavailableReason: nil), forecast: .none))
-        #expect(none.notes == [.connectSolcast, .unobservedBalance])
+        #expect(none.notes == [.connectSolcast(usesHistory: false), .unobservedBalance])
     }
 
     @Test func forecastStatesBecomeNotes() throws {
@@ -240,7 +240,8 @@ struct SmartShiftPresentationTests {
         let why = Self.normalized(try Self.verdict(screen).why)
         #expect(!why.contains("Off-Peak bank"))
         #expect(why == "Starting now runs during Off-Peak, where you have no bank, so it's bought at \(Self.rate(0.132)). "
-            + "Tomorrow at 4:30 PM it mostly uses On-Peak energy your solar banks before then, giving up \(Self.rate(0.072)) in credit.")
+            + "Tomorrow at 4:30 PM it mostly uses your On-Peak bank, projected at +33 kWh by \(Self.shortDate(Self.horizonEnd)), "
+            + "giving up \(Self.rate(0.072)) in credit.")
     }
 
     @Test func whyLineSaysMostlyWhenTheLaterRunSpansPeriods() throws {
@@ -386,7 +387,7 @@ struct SmartShiftPresentationTests {
     @Test func costBreakdownShowsTheArithmeticForBothStarts() throws {
         let (timing, comparison, now, car) = Self.harrisonSunday()
         let breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: car, timing: timing, now: now,
-                                                                currencyCode: "USD", timeZone: "UTC")
+                                                                billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
         #expect(breakdowns.count == 2)
         let later = try #require(breakdowns.first)
         #expect(Self.normalized(later.title) == "Charge tomorrow at 4:30 PM")
@@ -395,7 +396,8 @@ struct SmartShiftPresentationTests {
             CostLine(period: "On-Peak", detail: "31.5 kWh from your bank × \(Self.rate(0.04)) credit", amount: Self.money(1.26)),
             CostLine(period: "Off-Peak", detail: "21.2 kWh bought × \(Self.rate(0.10))", amount: Self.money(2.12)),
         ])
-        #expect(later.notes == ["On-Peak bank: +5 kWh banked now, about +33 kWh with the forecast solar."])
+        // This fixture's projection ends at the chart edge, not the bill date.
+        #expect(later.notes == ["On-Peak bank is +5 now, projecting +33 by \(Self.shortDate(Self.horizonEnd)), +2 after this charge."])
         let startNow = try #require(breakdowns.last)
         #expect(startNow.title == "Charge now")
         #expect(startNow.total == Self.money(5.27))
@@ -407,7 +409,7 @@ struct SmartShiftPresentationTests {
         // Off-Peak ends at -2 after the 14 kWh run: 12 kWh came from the bank, 2 were bought.
         let partLanes = [Self.lane("Peak", start: -6, later: -6, startNow: -20), Self.lane("Off-Peak", start: 12, later: -2, startNow: 12)]
         let breakdowns = SmartShiftPresentation.costBreakdowns(comparison: Self.comparison(lanes: partLanes), profile: Self.pump,
-            timing: Self.timing(), now: Self.now, currencyCode: "USD", timeZone: "UTC")
+            timing: Self.timing(), now: Self.now, billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
         #expect(try #require(breakdowns.first).lines == [
             CostLine(period: "Off-Peak", detail: "12.0 kWh from your bank × \(Self.rate(0.26)) credit", amount: Self.money(3.12)),
             CostLine(period: "Off-Peak", detail: "2.0 kWh bought × \(Self.rate(0.20))", amount: Self.money(0.40)),
@@ -418,7 +420,8 @@ struct SmartShiftPresentationTests {
         let nowLanes = [Self.lane("Peak", start: -6, later: -20, startNow: -20)]
         let comparison = Self.comparison(costNow: 5.32, recommendedCost: 5.32, savings: 0, recommendedStart: Self.now, lanes: nowLanes)
         let breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: Self.pump, timing: Self.timing(),
-                                                                now: Self.now, currencyCode: "USD", timeZone: "UTC")
+                                                                now: Self.now, billingCycleEnd: Self.at(480), currencyCode: "USD",
+                                                                timeZone: "UTC")
         #expect(breakdowns.map(\.title) == ["Start now"])
     }
 
@@ -434,5 +437,217 @@ struct SmartShiftPresentationTests {
         // A saving below one cent is not worth pointing at.
         #expect(SmartShiftPresentation.betterJobHint(selectedID: "car", savingsByJob: [(Self.car, 0), (dishes, 0.004)],
                                                      currencyCode: "USD") == nil)
+    }
+}
+
+// MARK: - Bill-date projection and the safety rule
+
+extension SmartShiftPresentationTests {
+    static func shortDate(_ date: Date) -> String { SmartShiftPresentation.shortDate(date, timeZone: "UTC") }
+
+    static let cycleEnd = at(24 * 24)
+
+    /// Harrison's tariff and car (52.7 kWh at 9 kW) with the bill-date projection filled in.
+    static func cycleComparison(
+        now: Date,
+        recommendedStart: Date,
+        costNow: Double,
+        recommendedCost: Double,
+        savings: Double,
+        onPeak: (start: Double, later: Double, startNow: Double, projected: Double, afterLater: Double, afterNow: Double),
+        offPeak: (start: Double, later: Double, startNow: Double, projected: Double, afterLater: Double, afterNow: Double),
+        safety: Estimator.Safety = .nowSafe,
+        ruledOut: Estimator.RuledOut? = nil,
+        projectionEnd: Date = cycleEnd,
+        endsAtRateChange: Bool = false,
+        usesHistory: Bool = false
+    ) -> Estimator.Comparison {
+        func lane(_ key: String, _ v: (start: Double, later: Double, startNow: Double, projected: Double, afterLater: Double, afterNow: Double)) -> Estimator.BalanceLane {
+            Estimator.BalanceLane(periodKey: key, startKwh: v.start,
+                                  recommended: [.init(date: now, kwh: v.start), .init(date: horizonEnd, kwh: v.later)],
+                                  startNow: [.init(date: now, kwh: v.start), .init(date: horizonEnd, kwh: v.startNow)],
+                                  projectedKwh: v.projected, projectedAfterRecommendedKwh: v.afterLater,
+                                  projectedAfterStartNowKwh: v.afterNow)
+        }
+        return Estimator.Comparison(
+            costNow: costNow, recommendedStart: recommendedStart, recommendedEnd: recommendedStart.addingTimeInterval(52.7 / 9 * 3600),
+            recommendedCost: recommendedCost, savings: savings, bestAlternativeSavings: savings, estimatedSolarContribution: 0,
+            horizonStart: now, horizonEnd: horizonEnd, evaluatedStarts: [now, recommendedStart], assumptions: [],
+            hasUnobservedBalance: false, lanes: [lane("OFF_PEAK", offPeak), lane("ON_PEAK", onPeak)],
+            periodSwitches: [at(32), at(44)], projectionEnd: projectionEnd, projectionEndsAtRateChange: endsAtRateChange,
+            safetyEnd: now.addingTimeInterval(7 * 86_400), safety: safety, ruledOut: ruledOut, usesHistory: usesHistory)
+    }
+
+    /// Friday 13:12, Off-Peak and owed. Tomorrow's On-Peak (08:00–20:00) bank recovers to +60 by the bill date,
+    /// so charging all of the car in On-Peak tomorrow at 8:00 AM costs 52.7 kWh × 4¢.
+    static func morningDip(safety: Estimator.Safety = .nowSafe, ruledOut: Estimator.RuledOut? = nil,
+                           endsAtRateChange: Bool = false) -> (comparison: Estimator.Comparison, now: Date) {
+        let now = at(13.2)
+        return (cycleComparison(now: now, recommendedStart: at(32), costNow: 5.27, recommendedCost: 2.108, savings: 3.162,
+                                onPeak: (5, -19.7, 33, 60, 7.3, 60), offPeak: (-64, -64, -116.7, -90, -90, -142.7),
+                                safety: safety, ruledOut: ruledOut, endsAtRateChange: endsAtRateChange), now)
+    }
+
+    /// Saturday 08:30 in On-Peak: starting now dips into On-Peak, which a cloudy week leaves short.
+    static func unsafeNow(ruledOut: Estimator.RuledOut? = nil) -> (comparison: Estimator.Comparison, now: Date) {
+        let now = at(32.5)
+        return (cycleComparison(now: now, recommendedStart: at(44), costNow: 2.108, recommendedCost: 5.27, savings: 0,
+                                onPeak: (5, 5, -19.7, 60, 60, 7.3), offPeak: (-64, -100, -64, -90, -142.7, -90),
+                                safety: .nowUnsafe(periodKey: "ON_PEAK"), ruledOut: ruledOut), now)
+    }
+
+    static func cycleVerdict(_ comparison: Estimator.Comparison, now: Date, forecast: ForecastAvailability = .ready,
+                             profile: LoadProfile = harrisonSunday().car) throws -> SmartShiftVerdict {
+        try verdict(SmartShiftPresentation.make(profile: profile, result: .init(comparison: comparison, unavailableReason: nil),
+                                                forecast: forecast, refreshUnavailable: false, timing: harrisonSunday().timing,
+                                                now: now, billingCycleEnd: cycleEnd, currencyCode: "USD", timeZone: "UTC"))
+    }
+
+    @Test func headlineWhenTheSafeStartCostsMoreThanNow() throws {
+        let (comparison, now) = Self.unsafeNow()
+        let verdict = try Self.cycleVerdict(comparison, now: now)
+        #expect(Self.normalized(verdict.headline)
+            == "Charge the car at 8:00 PM: about \(Self.money(3.16)) more than now, but it won't leave On-Peak short")
+        #expect(verdict.barsCaption == "Added to your bill")
+        #expect(verdict.bars.map(\.isRecommended) == [true, false])
+        #expect(verdict.percentLess == nil)
+    }
+
+    @Test func headlineWhenNoStartIsSafe() throws {
+        let (comparison, now) = Self.morningDip(safety: .noSafeStart(periodKey: "ON_PEAK"))
+        let verdict = try Self.cycleVerdict(comparison, now: now)
+        #expect(Self.normalized(verdict.headline)
+            == "Charge the car tomorrow at 8:00 AM: the least risky time, but a cloudy week could still leave On-Peak short")
+        #expect(verdict.barsCaption == "Added to your bill")
+        #expect(verdict.percentLess == nil)
+        #expect(!verdict.headline.contains("cheaper"))
+    }
+
+    @Test func headlineWhenNoStartIsSafeAndNowIsLeastRisky() throws {
+        let (dip, now) = Self.unsafeNow()
+        let comparison = Self.cycleComparison(now: now, recommendedStart: now, costNow: 2.108, recommendedCost: 2.108, savings: 0,
+                                              onPeak: (5, -19.7, -19.7, 60, 7.3, 7.3), offPeak: (-64, -64, -64, -90, -90, -90),
+                                              safety: .noSafeStart(periodKey: "ON_PEAK"))
+        #expect(dip.safety != comparison.safety)
+        let verdict = try Self.cycleVerdict(comparison, now: now)
+        #expect(verdict.headline == "Charge the car now: the least risky time, but a cloudy week could still leave On-Peak short")
+        #expect(verdict.bars.count == 1)
+    }
+
+    @Test func whyLineNamesTheProjectedBankALaterStartUses() throws {
+        let (comparison, now) = Self.morningDip()
+        let verdict = try Self.cycleVerdict(comparison, now: now)
+        #expect(Self.normalized(verdict.why)
+            == "Starting now runs during Off-Peak, where you have no bank, so it's bought at \(Self.rate(0.10)). "
+            + "Tomorrow at 8:00 AM it uses your On-Peak bank, projected at +60 kWh by \(Self.shortDate(Self.cycleEnd)), "
+            + "giving up \(Self.rate(0.04)) in credit.")
+    }
+
+    @Test func whyLineWhenStartingNowIsUnsafe() throws {
+        let (comparison, now) = Self.unsafeNow()
+        let verdict = try Self.cycleVerdict(comparison, now: now)
+        #expect(Self.normalized(verdict.why)
+            == "Starting now would draw on your On-Peak bank, which a cloudy week could leave more than 3 kWh short by "
+            + "\(Self.shortDate(comparison.safetyEnd)). At 8:00 PM it's bought at the Off-Peak rate of \(Self.rate(0.10)).")
+    }
+
+    @Test func bankNoteGivesTheBillDateProjectionBeforeAndAfterTheCharge() throws {
+        let (comparison, now) = Self.morningDip()
+        let (timing, _, _, car) = Self.harrisonSunday()
+        let breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: car, timing: timing, now: now,
+                                                                billingCycleEnd: Self.cycleEnd, currencyCode: "USD", timeZone: "UTC")
+        let later = try #require(breakdowns.first)
+        // Draws use the bill-date bank, not the chart edge (where On-Peak ends at -19.7).
+        #expect(later.lines == [
+            CostLine(period: "On-Peak", detail: "52.7 kWh from your bank × \(Self.rate(0.04)) credit", amount: Self.money(2.11)),
+        ])
+        #expect(later.notes == ["On-Peak bank is +5 now, projecting +60 by \(Self.shortDate(Self.cycleEnd)) (bill date), +7 after this charge."])
+    }
+
+    @Test func bankNoteSaysWhenRatesChange() throws {
+        let (comparison, now) = Self.morningDip(endsAtRateChange: true)
+        let (timing, _, _, car) = Self.harrisonSunday()
+        let breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: car, timing: timing, now: now,
+                                                                billingCycleEnd: Self.at(24 * 30), currencyCode: "USD", timeZone: "UTC")
+        #expect(try #require(breakdowns.first).notes
+            == ["On-Peak bank is +5 now, projecting +60 by \(Self.shortDate(Self.cycleEnd)), when rates change, +7 after this charge."])
+    }
+
+    @Test func ruledOutLineExplainsARejectedCheaperStart() throws {
+        let (comparison, now) = Self.morningDip(ruledOut: .init(start: Self.at(36), cost: 1.5, periodKey: "ON_PEAK"))
+        let (timing, _, _, car) = Self.harrisonSunday()
+        let note = SmartShiftPresentation.ruledOutNote(comparison: comparison, profile: car, timing: timing, now: now, timeZone: "UTC")
+        #expect(note.map(Self.normalized)
+            == "Charging tomorrow at 12:00 PM would be cheaper if the sun holds, but a cloudy week could leave On-Peak "
+            + "more than 3 kWh short by \(Self.shortDate(comparison.safetyEnd)), so it isn't suggested.")
+        let dishes = LoadProfile(id: "dishwasher", name: "Wash the dishes", kind: .appliance, energyKwh: 1.5, durationHours: 2, carSettings: nil)
+        #expect(SmartShiftPresentation.ruledOutNote(comparison: comparison, profile: dishes, timing: timing, now: now, timeZone: "UTC")?
+            .hasPrefix("Washing ") == true)
+        #expect(SmartShiftPresentation.ruledOutNote(comparison: comparison, profile: Self.pump, timing: timing, now: now, timeZone: "UTC")?
+            .hasPrefix("Starting ") == true)
+        #expect(SmartShiftPresentation.ruledOutNote(comparison: Self.morningDip().comparison, profile: car, timing: timing,
+                                                    now: now, timeZone: "UTC") == nil)
+    }
+
+    @Test func noForecastNoteFollowsHistory() throws {
+        let (dip, now) = Self.morningDip()
+        let history = Self.cycleComparison(now: now, recommendedStart: dip.recommendedStart, costNow: dip.costNow,
+                                           recommendedCost: dip.recommendedCost, savings: dip.savings,
+                                           onPeak: (5, -19.7, 33, 60, 7.3, 60), offPeak: (-64, -64, -116.7, -90, -90, -142.7),
+                                           usesHistory: true)
+        #expect(try Self.cycleVerdict(history, now: now, forecast: .none).notes == [.connectSolcast(usesHistory: true)])
+        #expect(try Self.cycleVerdict(dip, now: now, forecast: .none).notes == [.connectSolcast(usesHistory: false)])
+        #expect(SmartShiftPresentation.connectSolcastHistoryNote
+            == "Without a solar forecast, banks follow your last four weeks. Connect Solcast to see this week's solar.")
+        #expect(SmartShiftPresentation.connectSolcastNote
+            == "Without a solar forecast, banks are shown as they stand now. Connect Solcast to see today's solar.")
+    }
+
+    // MARK: Projection choice and assumptions
+
+    static func historyContext(asOf: Date, forecastHours: Bool = false) -> Estimator.PlanningContext {
+        let slots = stride(from: 0, to: 1440, by: 30).map { minute in
+            Estimator.PlanningSlot(localMinute: minute, homeKw: 0.5, batteryNetChargeKw: 0,
+                                   gridNetExportKw: (480..<1200).contains(minute) ? 2 : -0.5,
+                                   cautiousGridNetExportKw: (480..<1200).contains(minute) ? 1 : -0.5)
+        }
+        return .init(timeZone: "UTC", slots: slots, asOf: asOf)
+    }
+
+    @Test func evaluateUsesHistoryWithoutSolcast() throws {
+        let (timing, _, now, car) = Self.harrisonSunday()
+        let evaluation = SmartShiftPresentation.evaluate(
+            profile: car, now: now, timing: timing, forecast: .none, intervals: nil,
+            context: Self.historyContext(asOf: now), balanceSourceTime: now, billingCycleEnd: Self.at(48),
+            currencyCode: "USD", timeZone: "UTC")
+        let comparison = try #require(evaluation.result.comparison)
+        #expect(comparison.usesHistory)
+        #expect(comparison.assumptions.contains("Banks follow your last four weeks of grid use through the bill date."))
+        #expect(comparison.assumptions.contains("A start that dips into a bank must leave it no more than 3 kWh short after a cloudy week."))
+        #expect(evaluation.forecast == ForecastAvailability.none)
+
+        // Without grid history the card still holds banks flat.
+        let slots = stride(from: 0, to: 1440, by: 30).map { Estimator.PlanningSlot(localMinute: $0, homeKw: 0.5, batteryNetChargeKw: 0) }
+        let flat = SmartShiftPresentation.evaluate(
+            profile: car, now: now, timing: timing, forecast: .none, intervals: nil,
+            context: .init(timeZone: "UTC", slots: slots, asOf: now), balanceSourceTime: now, billingCycleEnd: Self.at(48),
+            currencyCode: "USD", timeZone: "UTC")
+        #expect(flat.result.comparison?.usesHistory == false)
+        #expect(flat.result.comparison?.assumptions.contains { $0.contains("held at today's observed values") } == true)
+    }
+
+    @Test func forecastWithHistoryStatesBothSources() throws {
+        let (timing, _, now, car) = Self.harrisonSunday()
+        let intervals = (0..<96).map { index in
+            SolarForecastInterval(periodStart: Self.at(Double(index) / 2), periodEnd: Self.at(Double(index + 1) / 2), powerKw: 1)
+        }
+        let evaluation = SmartShiftPresentation.evaluate(
+            profile: car, now: now, timing: timing, forecast: .ready, intervals: intervals,
+            context: Self.historyContext(asOf: now), balanceSourceTime: now, billingCycleEnd: Self.at(48),
+            currencyCode: "USD", timeZone: "UTC")
+        let assumptions = try #require(evaluation.result.comparison).assumptions
+        #expect(assumptions.contains("Solar follows your Solcast forecast for the next 7 days, then your last four weeks through the bill date."))
+        #expect(assumptions.contains("A start that dips into a bank must leave it no more than 3 kWh short after a cloudy week."))
+        #expect(assumptions.contains("Typical household and battery behavior follows the historical local-time profile."))
     }
 }

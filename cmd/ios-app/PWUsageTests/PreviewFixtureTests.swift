@@ -175,7 +175,7 @@ struct PreviewFixtureTests {
         #expect(try verdict(.laterWithForecast).bars.count == 2)
         #expect(try verdict(.laterWithForecast).notes.isEmpty)
         #expect(try verdict(.laterWithoutForecast).bars.count == 2)
-        #expect(try verdict(.laterWithoutForecast).notes == [.connectSolcast])
+        #expect(try verdict(.laterWithoutForecast).notes == [.connectSolcast(usesHistory: false)])
         #expect(try verdict(.nowIsCheapest).bars.count == 1)
         #expect(try verdict(.threePeriods).lanes.count >= 2)
     }

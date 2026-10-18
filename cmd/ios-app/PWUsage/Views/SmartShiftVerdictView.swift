@@ -30,9 +30,9 @@ struct SmartShiftVerdictView: View {
     @ViewBuilder
     private func noteView(_ note: SmartShiftVerdict.Note) -> some View {
         switch note {
-        case .connectSolcast:
+        case .connectSolcast(let usesHistory):
             VStack(alignment: .leading, spacing: 6) {
-                noteText(SmartShiftPresentation.connectSolcastNote)
+                noteText(usesHistory ? SmartShiftPresentation.connectSolcastHistoryNote : SmartShiftPresentation.connectSolcastNote)
                 Button("Connect Solcast", systemImage: "sun.max", action: onConnectSolcast)
                     .font(.footnote.weight(.semibold))
                     .buttonStyle(.borderless)
