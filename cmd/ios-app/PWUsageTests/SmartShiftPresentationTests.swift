@@ -251,4 +251,61 @@ struct SmartShiftPresentationTests {
             + "Off-Peak bank: +18 kWh banked now; charge later leaves 4 kWh banked, charge now leaves 18 kWh banked.")
     }
 
+    // MARK: - How this is worked out
+
+    /// Raw server keys, listed out of tariff order on purpose.
+    static func rawKeyTiming(hasCycleData: Bool = true) -> LoadTiming {
+        let spans: [(Double, Double, String, Double, Double)] = [
+            (0, 7, "OFF_PEAK", 0.20, 0.26), (7, 16, "ON_PEAK", 0.38, 0.10), (16, 21, "PARTIAL_PEAK", 0.30, 0.12),
+            (21, 31, "OFF_PEAK", 0.20, 0.26),
+        ]
+        let segments = spans.map { LoadTimingTariffSegment(start: at($0.0), end: at($0.1), periodKey: $0.2, name: $0.2,
+                                                          buyRate: $0.3, sellRate: $0.4) }
+        let periods = [("PARTIAL_PEAK", 0.0, 0.30, 0.12), ("ON_PEAK", -6.0, 0.38, 0.10), ("OFF_PEAK", 18.0, 0.20, 0.26)].map {
+            LoadTimingPeriod(name: $0.0, marginalCost: nil, basis: "cycle-net-export", cycleNetExportKwh: $0.1,
+                             isActive: false, nextStartPhrase: nil, buyRate: $0.2, sellRate: $0.3)
+        }
+        return LoadTiming(hasTariff: true, hasCycleData: hasCycleData, activeIsCheapest: false, periods: periods,
+                          pricingPeriods: periods, tariffTimeline: segments, nextCheaper: nil, nextCheaperPhrase: nil,
+                          nextStartPhraseByKey: [:])
+    }
+
+    @Test func periodRowsListEveryPricingPeriod() {
+        let rows = SmartShiftPresentation.periodRows(timing: Self.rawKeyTiming(), currencyCode: "USD")
+        #expect(rows.map(\.name) == ["Off-Peak", "On-Peak", "Partial-Peak"])
+        #expect(rows.map(\.balance) == ["+18 kWh banked", "\u{2212}6 kWh owed", "0 kWh"])
+        #expect(rows[0].buy == DashboardPresentation.loadRate(0.20, code: "USD"))
+        #expect(rows[0].sell == DashboardPresentation.loadRate(0.26, code: "USD"))
+        let noCycle = SmartShiftPresentation.periodRows(timing: Self.rawKeyTiming(hasCycleData: false), currencyCode: "USD")
+        #expect(noCycle.allSatisfy { $0.balance == "No balance yet" })
+    }
+
+    @Test func rawPeriodKeysReadAsTitles() throws {
+        let lanes = [Self.lane("ON_PEAK", start: -6, later: -6, startNow: -20), Self.lane("OFF_PEAK", start: 18, later: 4, startNow: 18)]
+        let screen = SmartShiftPresentation.make(
+            profile: Self.car, result: .init(comparison: Self.comparison(lanes: lanes), unavailableReason: nil),
+            forecast: .ready, refreshUnavailable: false, timing: Self.rawKeyTiming(), now: Self.now,
+            billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
+        let verdict = try Self.verdict(screen)
+        #expect(verdict.lanes.map(\.title) == ["On-Peak bank (kWh)", "Off-Peak bank (kWh)"])
+        #expect(verdict.why.hasPrefix("Starting now runs during On-Peak,"))
+    }
+
+    @Test func runRowsSplitEachBankFromWhatIsBought() {
+        // 14 kWh over 5.9 h from 16:30 runs entirely in Off-Peak; that bank ends at +4, so all 14 came from it.
+        let pump = LoadProfile(id: UUID().uuidString, name: "Pool pump", kind: .custom, energyKwh: 14, durationHours: 5.9, carSettings: nil)
+        let later = SmartShiftPresentation.runRows(comparison: Self.comparison(), profile: pump, timing: Self.timing())
+        #expect(later == [RunRow(name: "Off-Peak", fromBank: "14.0 kWh from your bank", bought: "0.0 kWh bought")])
+
+        // Starting now (08:30) runs entirely in Peak, which is owed, so all of it is bought.
+        let nowLanes = [Self.lane("Peak", start: -6, later: -20, startNow: -20)]
+        let now = Self.comparison(costNow: 5.32, recommendedCost: 5.32, savings: 0, recommendedStart: Self.now, lanes: nowLanes)
+        #expect(SmartShiftPresentation.runRows(comparison: now, profile: pump, timing: Self.timing())
+            == [RunRow(name: "Peak", fromBank: "0.0 kWh from your bank", bought: "14.0 kWh bought")])
+
+        // A bank that covers part of the run: Off-Peak ends at -2 after drawing 14, so 12 came from the bank.
+        let partLanes = [Self.lane("Peak", start: -6, later: -6, startNow: -20), Self.lane("Off-Peak", start: 12, later: -2, startNow: 12)]
+        #expect(SmartShiftPresentation.runRows(comparison: Self.comparison(lanes: partLanes), profile: pump, timing: Self.timing())
+            == [RunRow(name: "Off-Peak", fromBank: "12.0 kWh from your bank", bought: "2.0 kWh bought")])
+    }
 }

@@ -62,6 +62,22 @@ struct SmartShiftVerdict: Equatable {
     let accessibilitySummary: String
 }
 
+/// One rate period in "How this is worked out".
+struct PeriodRow: Equatable {
+    let name: String
+    let buy: String
+    let sell: String
+    /// "+18 kWh banked", "−6 kWh owed", "0 kWh" or "No balance yet".
+    let balance: String
+}
+
+/// How much of the recommended run each bank covers, and how much is bought.
+struct RunRow: Equatable {
+    let name: String
+    let fromBank: String
+    let bought: String
+}
+
 struct SmartShiftScreen: Equatable {
     enum Content: Equatable {
         case verdict(SmartShiftVerdict)
@@ -149,6 +165,58 @@ enum SmartShiftPresentation {
         let context = Context(profile: profile, comparison: comparison, timing: timing, now: now,
                               currencyCode: currencyCode, timeZone: timeZone)
         return SmartShiftScreen(content: .verdict(context.verdict(forecast: forecast)))
+    }
+
+    // MARK: - How this is worked out
+
+    /// "Off-Peak" for a server key like "OFF_PEAK"; tariff names pass through.
+    static func periodTitle(_ key: String, timing: LoadTiming) -> String {
+        DashboardPresentation.tariffPeriodTitle(timing.tariffTimeline.first { $0.periodKey == key }?.name ?? key)
+    }
+
+    /// Every pricing period, in the order the tariff reaches them.
+    static func periodRows(timing: LoadTiming, currencyCode: String) -> [PeriodRow] {
+        var order: [String] = []
+        for segment in timing.tariffTimeline.sorted(by: { $0.start < $1.start }) where !order.contains(segment.periodKey) {
+            order.append(segment.periodKey)
+        }
+        let periods = timing.pricingPeriods.enumerated().sorted { left, right in
+            (order.firstIndex(of: left.element.name) ?? order.count + left.offset)
+                < (order.firstIndex(of: right.element.name) ?? order.count + right.offset)
+        }
+        return periods.map { _, period in
+            PeriodRow(
+                name: periodTitle(period.name, timing: timing),
+                buy: DashboardPresentation.loadRate(period.buyRate, code: currencyCode),
+                sell: DashboardPresentation.loadRate(period.sellRate, code: currencyCode),
+                balance: timing.hasCycleData ? balanceLabel(period.cycleNetExportKwh) : "No balance yet"
+            )
+        }
+    }
+
+    /// For each period the recommended run draws on: the part its bank covers and the part bought.
+    /// The lane ends `draw` lower than it would without the run, which gives the bank it drew from.
+    static func runRows(comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming) -> [RunRow] {
+        let start = comparison.recommendedStart, end = comparison.recommendedEnd
+        let hours = end.timeIntervalSince(start) / 3600
+        guard hours > 0, let energy = energyKwh(of: profile), energy > 0 else { return [] }
+        let powerKw = energy / hours
+        var draws: [(key: String, kwh: Double)] = []
+        for segment in timing.tariffTimeline.sorted(by: { $0.start < $1.start }) where segment.start < end && segment.end > start {
+            let overlap = min(segment.end, end).timeIntervalSince(max(segment.start, start)) / 3600
+            if let index = draws.firstIndex(where: { $0.key == segment.periodKey }) {
+                draws[index].kwh += powerKw * overlap
+            } else {
+                draws.append((segment.periodKey, powerKw * overlap))
+            }
+        }
+        let kwh: (Double) -> String = { $0.formatted(.number.precision(.fractionLength(1))) }
+        return draws.map { key, drawn in
+            let laneEnd = comparison.lanes.first { $0.periodKey == key }?.recommended.last?.kwh
+            let fromBank = laneEnd.map { min(drawn, max($0 + drawn, 0)) } ?? 0
+            return RunRow(name: periodTitle(key, timing: timing), fromBank: "\(kwh(fromBank)) kWh from your bank",
+                          bought: "\(kwh(drawn - fromBank)) kWh bought")
+        }
     }
 
     // MARK: - Blocked states
@@ -257,7 +325,7 @@ enum SmartShiftPresentation {
         }
 
         func name(_ key: String) -> String {
-            timing.tariffTimeline.first { $0.periodKey == key }?.name ?? key
+            periodTitle(key, timing: timing)
         }
 
         func periodKey(at date: Date) -> String? {
@@ -310,8 +378,8 @@ enum SmartShiftPresentation {
 
         var switchMarkers: [SwitchMarker] {
             comparison.periodSwitches.map { date in
-                let before = timing.tariffTimeline.first { $0.end == date }?.name
-                let after = timing.tariffTimeline.first { $0.start == date }?.name
+                let before = timing.tariffTimeline.first { $0.end == date }.map { name($0.periodKey) }
+                let after = timing.tariffTimeline.first { $0.start == date }.map { name($0.periodKey) }
                 let label = [before.map { "\u{2190} \($0)" }, after.map { "\($0) \u{2192}" }]
                     .compactMap { $0 }.joined(separator: " | ")
                 return SwitchMarker(date: date, label: label)

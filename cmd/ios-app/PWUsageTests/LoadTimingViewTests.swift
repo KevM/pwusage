@@ -136,7 +136,6 @@ struct LoadTimingViewTests {
         #expect(card.total == "Estimated $1.92 to start now")
         #expect(card.finish == details.finish)
         #expect(details.energy == "About 4.0 kWh from the wall")
-        #expect(LoadTimingPresentation.runDetailsAccessibilityLabel == "Job Details")
         #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: estimate.hasUnobservedBalance) != nil)
     }
 
@@ -245,65 +244,6 @@ struct LoadTimingViewTests {
         #expect(LoadTimingPresentation.noResponseExplorationMessage.contains("estimate or calculation"))
     }
 
-    @Test("Run details retain the profile, bill, estimate, currency, and captured time from presentation")
-    func detailsSnapshotDoesNotFollowLaterInputs() throws {
-        let firstTime = Date(timeIntervalSince1970: 1_800_000_000)
-        let laterTime = firstTime.addingTimeInterval(3600)
-        let firstProfile = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
-        let changedProfile = LoadProfile(id: "washer", name: "Washer XL", kind: .appliance, energyKwh: 8, durationHours: 2, carSettings: nil)
-        let firstTiming = LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: [], pricingPeriods: [], tariffTimeline: [], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-        let changedTiming = LoadTiming(hasTariff: false, hasCycleData: false, activeIsCheapest: false, periods: [], pricingPeriods: [], tariffTimeline: [], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-        let firstResponse = try Self.billResponse(currency: "USD", estimatedCost: 75)
-        let changedResponse = try Self.billResponse(currency: "EUR", estimatedCost: 125)
-        let firstEstimate = LoadTimingEstimator.StartNowEstimate(total: 1.25, finishTime: firstTime.addingTimeInterval(3600), batteryKwh: 0, wallKwh: 3, durationHours: 1, segments: [], hasUnobservedBalance: false)
-        let laterEstimate = LoadTimingEstimator.StartNowEstimate(total: 4, finishTime: laterTime.addingTimeInterval(7200), batteryKwh: 0, wallKwh: 8, durationHours: 2, segments: [], hasUnobservedBalance: false)
-
-        var profile = firstProfile
-        var timing = firstTiming
-        var response = firstResponse
-        var result: LoadTimingEstimator.StartNowResult = .estimate(firstEstimate)
-        var currencyCode = "USD"
-        var timeZone = "UTC"
-        var capturedAt = firstTime
-        let snapshot = LoadRunDetailsSnapshot(profile: profile, timing: timing, response: response, result: result, currencyCode: currencyCode, timeZone: timeZone, capturedAt: capturedAt)
-
-        profile = changedProfile
-        timing = changedTiming
-        response = changedResponse
-        result = .estimate(laterEstimate)
-        currencyCode = "EUR"
-        timeZone = "Europe/Paris"
-        capturedAt = laterTime
-
-        #expect(profile == changedProfile)
-        #expect(timing == changedTiming)
-        #expect(response.currentBill.currency == "EUR")
-        #expect(response.currentBill.estimatedCost == 125)
-        #expect(result == .estimate(laterEstimate))
-        #expect(currencyCode == "EUR")
-        #expect(timeZone == "Europe/Paris")
-        #expect(capturedAt == laterTime)
-        #expect(snapshot.profile == firstProfile)
-        #expect(snapshot.timing == firstTiming)
-        #expect(snapshot.response?.currentBill.currency == "USD")
-        #expect(snapshot.response?.currentBill.estimatedCost == 75)
-        #expect(snapshot.result == .estimate(firstEstimate))
-        #expect(snapshot.currencyCode == "USD")
-        #expect(snapshot.timeZone == "UTC")
-        #expect(snapshot.capturedAt == firstTime)
-    }
-
-    private static func billResponse(currency: String, estimatedCost: Double) throws -> MobileBillResponse {
-        let json = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC"},"currentBill":{"estimatedCost":\#(estimatedCost),"currency":"\#(currency)","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"loadTiming":null,"sources":{"calculatedAt":"2026-09-26T12:00:00Z","energyDataThrough":"2026-09-26T12:00:00Z"}}"#
-        return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
-    }
-}
-
-/// Forecast-aware presentation is strictly additive: it contributes an enhanced
-/// section and at most one small note. It can never replace or annotate the basic
-/// estimator's own total, breakdown, or selected profile.
-@Suite("Load Timing Forecast Presentation Tests")
-struct LoadTimingForecastPresentationTests {
     static let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     @Test("A later start shows both costs, the saving, the window, solar, and the real horizon")

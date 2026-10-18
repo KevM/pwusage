@@ -146,8 +146,6 @@ enum LoadTimingPresentation {
             : "Estimated \(amount) less than the suggestion"
     }
 
-    static let runDetailsAccessibilityLabel = "Job Details"
-
     static func activeBalanceSummary(_ timing: LoadTiming) -> String? {
         guard timing.hasCycleData, let active = timing.periods.first(where: \.isActive) else { return nil }
         let balance = active.cycleNetExportKwh
@@ -236,6 +234,7 @@ struct LoadTimingView: View {
     @State private var isProfileSheetPresented = false
     @State private var isJobPickerPresented = false
     @State private var isSolarForecastSheetPresented = false
+    @State private var detailsSnapshot: SmartShiftDetailsSnapshot?
     @State private var exploredProfileID: String?
 
     init(coordinator: DashboardCoordinator, site: MobileSite, isSelected: Bool = true, profileStore: LoadProfileStore? = nil, initialExploredProfileID: String? = nil) {
@@ -261,9 +260,17 @@ struct LoadTimingView: View {
             ?? Self.initialJobID(store: profileStore).flatMap { profileStore.profile(id: $0) }
     }
 
+    private struct SmartShiftState {
+        let screen: SmartShiftScreen
+        let profile: LoadProfile?
+        let evaluation: SmartShiftEvaluation?
+        let timing: LoadTiming
+        let now: Date
+    }
+
     /// Prices the selected Job with the solar forecast when it's usable and with
     /// balances held still otherwise, then turns that into the card's copy.
-    private func smartShiftScreen(now: Date, timing: LoadTiming, response: MobileBillResponse) -> SmartShiftScreen {
+    private func smartShiftState(now: Date, timing: LoadTiming, response: MobileBillResponse) -> SmartShiftState {
         let profile = selectedProfile
         let evaluation = profile.map { profile in
             SmartShiftPresentation.evaluate(
@@ -286,7 +293,7 @@ struct LoadTimingView: View {
                 timeZone: timeZone
             )
         }
-        return SmartShiftPresentation.make(
+        let screen = SmartShiftPresentation.make(
             profile: profile,
             result: evaluation?.result ?? .init(comparison: nil, unavailableReason: nil),
             forecast: evaluation?.forecast ?? .none,
@@ -296,6 +303,25 @@ struct LoadTimingView: View {
             billingCycleEnd: response.currentBill.cycleEnd,
             currencyCode: currencyCode,
             timeZone: timeZone
+        )
+        return SmartShiftState(screen: screen, profile: profile, evaluation: evaluation, timing: timing, now: now)
+    }
+
+    private func detailsSnapshot(_ state: SmartShiftState, verdict: SmartShiftVerdict) -> SmartShiftDetailsSnapshot {
+        let comparison = state.evaluation?.result.comparison
+        let usedForecast = state.evaluation?.forecast == .ready
+        var runRows: [RunRow] = []
+        if let comparison, let profile = state.profile {
+            runRows = SmartShiftPresentation.runRows(comparison: comparison, profile: profile, timing: state.timing)
+        }
+        return SmartShiftDetailsSnapshot(
+            verdict: verdict,
+            comparison: comparison,
+            rows: SmartShiftPresentation.periodRows(timing: state.timing, currencyCode: currencyCode),
+            runRows: runRows,
+            forecastFetchedAt: usedForecast ? coordinator.solarForecastBatch?.fetchedAt : nil,
+            contextAsOf: usedForecast ? coordinator.loadPlanningContext?.asOf : nil,
+            capturedAt: state.now
         )
     }
 
@@ -322,7 +348,7 @@ struct LoadTimingView: View {
                         nextCheaperPhrase: nil,
                         nextStartPhraseByKey: [:]
                     )
-                    jobCard(smartShiftScreen(now: Date(), timing: timingForDisplay, response: response))
+                    jobCard(smartShiftState(now: Date(), timing: timingForDisplay, response: response))
                     metadata(response)
                 } else if coordinator.bill.isUnavailable {
                     noResponseJobCard
@@ -373,6 +399,9 @@ struct LoadTimingView: View {
         .sheet(isPresented: $isSolarForecastSheetPresented) {
             SolarForecastSettingsSheet(coordinator: coordinator)
         }
+        .sheet(item: $detailsSnapshot) { snapshot in
+            SmartShiftDetailsView(snapshot: snapshot)
+        }
         .onChange(of: profileStore.profiles) { _, profiles in
             if let exploredProfileID, !profiles.contains(where: { $0.id == exploredProfileID }) {
                 self.exploredProfileID = nil
@@ -399,13 +428,20 @@ struct LoadTimingView: View {
         }
     }
 
-    private func jobCard(_ screen: SmartShiftScreen) -> some View {
+    private func jobCard(_ state: SmartShiftState) -> some View {
         LoadTimingCard {
-            switch screen.content {
+            switch state.screen.content {
             case .verdict(let verdict):
                 SmartShiftVerdictView(verdict: verdict, timeZone: timeZone) {
                     isSolarForecastSheetPresented = true
                 }
+                Divider()
+                Button {
+                    detailsSnapshot = detailsSnapshot(state, verdict: verdict)
+                } label: {
+                    disclosureRow("How this is worked out")
+                }
+                .buttonStyle(.plain)
                 jobRows
             case .blocked(let message):
                 if let profile = selectedProfile {
@@ -567,149 +603,6 @@ private struct LoadTimingFreshnessAnnouncement: ViewModifier {
         } else {
             content
         }
-    }
-}
-
-struct LoadRunDetailsSnapshot: Identifiable {
-    let id = UUID()
-    let profile: LoadProfile
-    let timing: LoadTiming
-    let response: MobileBillResponse?
-    let result: LoadTimingEstimator.StartNowResult
-    let currencyCode: String
-    let timeZone: String
-    let capturedAt: Date
-}
-
-private struct LoadRunDetailsSheet: View {
-    let snapshot: LoadRunDetailsSnapshot
-
-    private var profile: LoadProfile { snapshot.profile }
-    private var timing: LoadTiming { snapshot.timing }
-    private var response: MobileBillResponse? { snapshot.response }
-    private var result: LoadTimingEstimator.StartNowResult { snapshot.result }
-    private var currencyCode: String { snapshot.currencyCode }
-    private var timeZone: String { snapshot.timeZone }
-
-    @Environment(\.dismiss) private var dismiss
-
-    private var observedBalances: [String: Double] { LoadTimingPresentation.observedBalances(timing) }
-    private var unobservedKeys: Set<String> { Set(timing.tariffTimeline.map(\.periodKey)).subtracting(observedBalances.keys) }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text(profile.name)
-                        .font(.title2.weight(.bold))
-                    resultDetails
-                    Text("How the estimate works")
-                        .font(.headline)
-                    Text("The estimate uses your current billing-cycle balance as a snapshot. That balance can change while the job is running.")
-                        .foregroundStyle(.secondary)
-                    if let message = LoadTimingPresentation.cycleObservationMessage(hasCycleData: timing.hasCycleData) {
-                        detailLabel(message, symbol: "info.circle")
-                    }
-                    if let balance = LoadTimingPresentation.activeBalanceSummary(timing) {
-                        detailLabel(balance, symbol: "bolt.circle")
-                    }
-                    if let response {
-                        detailLabel(LoadTimingPresentation.sourceTimeSummary(response.sources.energyDataThrough, timeZone: timeZone), symbol: "clock")
-                    }
-                    if profile.kind == .car, let car = profile.carSettings {
-                        carDetails(car)
-                    }
-                    if let cheaper = timing.nextCheaper {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Cheaper time")
-                                .font(.headline)
-                            Text("Lower grid rate in \(DashboardPresentation.tariffPeriodTitle(cheaper.name)) · \(cheaper.phrase)")
-                                .foregroundStyle(.secondary)
-                            Text("This compares rates only; it does not promise a lower total cost.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .background(SectionTheme.groupedBackground)
-            .navigationTitle("Job Details")
-            .inlineNavigationTitle()
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-    }
-
-    @ViewBuilder
-    private var resultDetails: some View {
-        switch result {
-        case .estimate(let estimate):
-            VStack(alignment: .leading, spacing: 10) {
-                let summary = LoadTimingPresentation.startNowSummary(estimate, currencyCode: currencyCode, timeZone: timeZone)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(summary.total)
-                        .font(.title3.weight(.bold))
-                        .monospacedDigit()
-                    Text(summary.finish)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Text(summary.energy)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                if let note = LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: estimate.hasUnobservedBalance) {
-                    detailLabel(note, symbol: "info.circle")
-                }
-                if !estimate.segments.isEmpty {
-                    Text("Rate breakdown")
-                        .font(.subheadline.weight(.semibold))
-                    ForEach(Array(LoadTimingPresentation.breakdownRows(estimate.segments, currencyCode: currencyCode, unobservedPeriodKeys: unobservedKeys).enumerated()), id: \.offset) { index, row in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Text(DashboardPresentation.tariffPeriodTitle(row.periodKey)).fontWeight(.semibold)
-                                Spacer()
-                                Text(row.total).fontWeight(.bold).monospacedDigit()
-                            }
-                            Text("\(row.wallEnergy) · \(row.balance)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 6)
-                        if index < estimate.segments.count - 1 { Divider() }
-                    }
-                }
-            }
-        case .unavailable(let reason):
-            detailLabel(LoadTimingPresentation.unavailableMessage(reason), symbol: "exclamationmark.triangle")
-        case .noCharge:
-            detailLabel(LoadTimingPresentation.noChargeMessage, symbol: "checkmark.circle.fill")
-        }
-    }
-
-    private func carDetails(_ car: CarLoadSettings) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Car charge")
-                .font(.headline)
-            Text("Current \(car.initialStateOfCharge.formatted(.number.precision(.fractionLength(0...1))))% · target \(car.targetStateOfCharge.formatted(.number.precision(.fractionLength(0...1))))% · Level \(car.chargingLevel == .level1 ? "1" : "2")")
-                .foregroundStyle(.secondary)
-            if let estimate = LoadTimingEstimator.carChargeEstimate(settings: car) {
-                Text("About \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(1)))) kWh added to the battery from \(estimate.wallKwh.formatted(.number.precision(.fractionLength(1)))) kWh at the wall.")
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func detailLabel(_ text: String, symbol: String) -> some View {
-        Label(text, systemImage: symbol)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
