@@ -623,7 +623,11 @@ final class DashboardCoordinator: ObservableObject {
         // §5.5 was filed to remove. This path is the dominant one (pull-to-refresh
         // is the exception), so the omission is the more visible half of the bug.
         let saveFailed = refresh == .failed(.saveFailed)
-        let refreshSucceeded = saveFailed || refresh == .refreshed || refresh == .alreadyFresh
+        // A refused or failed refresh (budget, rate limit, network) doesn't dismiss
+        // a forecast the store still trusts: the store disables it only for
+        // key or array problems, and it ages out after six hours.
+        let usableDespiteRefresh = await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID)
+        let refreshSucceeded = saveFailed || refresh == .refreshed || refresh == .alreadyFresh || usableDespiteRefresh
         // The appearance-driven bill refresh is floored, so a bill fetched
         // moments ago by an earlier appearance, a site switch, or a pull is
         // already fresh. Requiring a brand new success here would drop the
@@ -719,8 +723,8 @@ final class DashboardCoordinator: ObservableObject {
         // memory, so the enhancement stays up behind its own note rather than being
         // torn down behind a "Solar forecast unavailable" sentence.
         let saveFailed = refresh == .failed(.saveFailed)
-        guard saveFailed || refresh == .refreshed || refresh == .alreadyFresh,
-              await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
+        // As on the appearance path, a refused refresh leaves a still-usable forecast in place.
+        guard await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
               let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID) else {
             solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
             solarForecastBatch = nil

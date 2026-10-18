@@ -79,6 +79,29 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.householdPattern != nil)
     }
 
+    @Test("A refused refresh keeps a still-usable cached forecast pricing Smart Shift")
+    func refusedRefreshKeepsUsableForecast() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastState == .enhanced)
+
+        // The Solcast budget is spent, but the saved forecast is still fresh.
+        await forecast.setRefreshResults([.budgetExhausted, .budgetExhausted])
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.solarForecastBatch != nil)
+
+        await coordinator.refreshSolarForecast(manual: true)
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.solarForecastBatch != nil)
+    }
+
     @Test("householdPatternLoadsWithoutSolcast")
     func householdPatternLoadsWithoutSolcast() async {
         let clock = ForecastTestClock()
@@ -162,9 +185,12 @@ struct SolarForecastCoordinatorTests {
 
         await coordinator.loadTimingDetailAppeared()
         #expect(coordinator.solarForecastState == .enhanced)
+        // A failure the store treats as disabling the saved forecast (a rejected key, say).
+        await forecast.setRecommendationUsable(false)
         await coordinator.refreshSolarForecast(manual: true)
         #expect(coordinator.solarForecastState == .failedWithBasic)
         #expect(coordinator.solarForecastBatch == nil)
+        await forecast.setRecommendationUsable(true)
         await coordinator.refreshSolarForecast(manual: true)
         #expect(coordinator.solarForecastState == .enhanced)
     }
@@ -225,6 +251,8 @@ struct SolarForecastCoordinatorTests {
         await coordinator.loadTimingDetailAppeared()
         #expect(coordinator.solarForecastSaveFailure)
 
+        // The second failure disables the saved forecast in the store.
+        await forecast.setRecommendationUsable(false)
         await coordinator.loadTimingDetailAppeared()
 
         // The save-failure note describes a forecast that is on screen and usable.
