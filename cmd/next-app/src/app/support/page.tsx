@@ -31,7 +31,7 @@ export default function SupportPage() {
                 </SectionCard>
                 <SectionCard title="Battery Hold and solar forecasts" bodyClassName="space-y-4">
                     <p>Battery Hold changes your Tesla backup reserve after confirmation. Stopping a hold restores the reserve saved when it started. If status is unavailable, retry before starting another hold. You can also inspect your current reserve in Tesla&apos;s app.</p>
-                    <p>Solcast forecasts are optional and require your own API key and rooftop site. Check the forecast status message for connection, setup, or household-history problems. You can disconnect Solcast without disconnecting Tesla.</p>
+                    <p>Solcast forecasts are optional and require your own API key and rooftop site. Follow the <Link href="/help/solcast" className="text-primary underline">Solcast setup guide</Link> to connect one. Check the forecast status message for connection, setup, or household-history problems. You can disconnect Solcast without disconnecting Tesla.</p>
                 </SectionCard>
                 <SectionCard title="Account and privacy requests" bodyClassName="space-y-4">
                     <p>For an account-data or deletion request, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership before acting on your request. Signing out or uninstalling does not delete your server account. Revoking access in Tesla stops future authorized requests.</p>
