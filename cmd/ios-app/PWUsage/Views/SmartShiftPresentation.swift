@@ -496,11 +496,13 @@ enum SmartShiftPresentation {
 
         var headline: String {
             let time = isNow ? "now" : when(comparison.recommendedStart)
+            // A safe start that is also cheaper than now keeps the saving headline.
+            if claimsSaving {
+                return "\(profile.name) \(time): about \(money(comparison.savings)) cheaper than now"
+            }
             switch comparison.safety {
-            case .nowSafe, .nowUnsafe where claimsSaving:
-                return isNow
-                    ? "\(profile.name) now: no cheaper time today"
-                    : "\(profile.name) \(time): about \(money(comparison.savings)) cheaper than now"
+            case .nowSafe:
+                return "\(profile.name) now: no cheaper time today"
             case .nowUnsafe(let key):
                 let more = max(0, comparison.recommendedCost - comparison.costNow)
                 return "\(profile.name) \(time): about \(money(more)) more than now, but it won't leave \(name(key)) short"
