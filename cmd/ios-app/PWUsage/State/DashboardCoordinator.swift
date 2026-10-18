@@ -798,9 +798,12 @@ final class DashboardCoordinator: ObservableObject {
            requestTime.timeIntervalSince(cached.fetchedAt) >= 0,
            requestTime.timeIntervalSince(cached.fetchedAt) < Self.planningContextLifetime,
            let validated = try? cached.response.validating(siteID: siteID, now: requestTime) {
+            // Only an unavailable profile has a reason; a usable cached one must not
+            // mask why the forecast half failed.
+            let context = validated.estimatorContext
             return PlanningContextOutcome(
-                context: validated.estimatorContext,
-                unavailableReason: Self.enhancementReason(forReason: validated.unavailableReason)
+                context: context,
+                unavailableReason: context == nil ? Self.enhancementReason(forReason: validated.unavailableReason) : nil
             )
         }
         let pending: PlanningContextTask
