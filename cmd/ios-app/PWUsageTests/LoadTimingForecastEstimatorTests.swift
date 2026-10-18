@@ -964,9 +964,10 @@ extension LoadTimingForecastEstimatorTests {
 
     @Test("History after the safety window cannot make a start pass")
     func historyBeyondTheSafetyWindowCannotRescueAStart() throws {
-        // Typical history banks plenty in On-Peak over 20 days; the dull day banks
-        // nothing, so a 6 kWh dip leaves On-Peak 6 short at the seven-day mark.
-        let context = historyContext(grid: { Self.isDaylight($0) ? 3 : 0 }, cautious: { _ in 0 })
+        // Typical history banks plenty in On-Peak over 20 days; the dull day imports
+        // so heavily that even a 1-in-4 week (3 − 13/√7 ≈ −1.9 kW) loses On-Peak, so a
+        // 6 kWh dip leaves it short at the seven-day mark.
+        let context = historyContext(grid: { Self.isDaylight($0) ? 3 : 0 }, cautious: { Self.isDaylight($0) ? -10 : 0 })
         let result = evaluate(.history(context: context), profile: load(6, hours: 1), now: start, tariffs: dailyTariffs(days: 22),
                               balances: ["ON_PEAK": 0, "OFF_PEAK": -10], cycleEnd: start.addingTimeInterval(20 * 86_400))
 
@@ -1067,11 +1068,31 @@ extension LoadTimingForecastEstimatorTests {
 
         // With a dull day that imports in On-Peak, every On-Peak start fails; the
         // ruled-out start must still be the earliest of the equally cheap ones.
-        let dull = historyContext(grid: { Self.isDaylight($0) ? 1.7 : -0.8 }, cautious: { Self.isDaylight($0) ? -0.8 : -0.8 })
+        let dull = historyContext(grid: { Self.isDaylight($0) ? 1.7 : -0.8 }, cautious: { Self.isDaylight($0) ? -8 : -0.8 })
         let rejected = try #require(evaluate(.history(context: dull), profile: car, now: now,
                                              tariffs: dailyTariffs(days: sunday + 25, onPeakDay: weekday),
                                              balances: ["ON_PEAK": 4.615, "OFF_PEAK": -54.653],
                                              cycleEnd: now.addingTimeInterval(23 * 86_400)).comparison)
         #expect(rejected.ruledOut?.start == monday.addingTimeInterval(8 * 3600))
+    }
+}
+
+// MARK: - Cautious history is a 1-in-4 week
+
+extension LoadTimingForecastEstimatorTests {
+    @Test("The cloudy week pulls each typical day toward the dull day by 1/√7, not seven dull days")
+    func cautiousHistoryIsAOneInFourWeek() throws {
+        // On-Peak exports 2 kW on a typical day and imports 1 kW on the dull day. Seven dull
+        // days would leave On-Peak about 84 kWh short; a 1-in-4 week still banks
+        // 12 h × (2 − 3/√7) ≈ 10.4 kWh a day, so a 30 kWh charge now passes.
+        let context = historyContext(grid: { Self.isDaylight($0) ? 2 : 0 }, cautious: { Self.isDaylight($0) ? -1 : 0 })
+        let result = evaluate(.history(context: context), profile: load(30, hours: 3), now: start,
+                              tariffs: dailyTariffs(days: 22), balances: ["ON_PEAK": 0, "OFF_PEAK": -10],
+                              cycleEnd: start.addingTimeInterval(20 * 86_400))
+
+        let comparison = try #require(result.comparison)
+        #expect(comparison.safety == .nowSafe)
+        #expect(comparison.recommendedStart == start)
+        #expect(comparison.ruledOut == nil)
     }
 }

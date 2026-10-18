@@ -344,8 +344,9 @@ struct LoadTimingForecastEstimator {
         let projection: Projection
         let clock: WallClock
         let forecastEnd: Date
-        /// Use `pv_estimate10` and the 1-in-4 dull day instead of the medians.
+        /// Use `pv_estimate10` and the 1-in-4 week instead of the medians.
         let cautious: Bool
+        private static let daysPerWeekRoot = 7.0.squareRoot()
         /// Forecast intervals that drive the flow (those starting before `forecastEnd`).
         let intervals: [SolarForecastInterval]
         private let slots: [Int: PlanningSlot]
@@ -446,8 +447,16 @@ struct LoadTimingForecastEstimator {
                 let solar = cautious ? (interval.cautiousPowerKw ?? interval.powerKw) : interval.powerKw
                 return Flow(netExportKw: solar - home - battery, physicalSurplusKw: solar - home - max(battery, 0))
             }
-            let typical = slot.gridNetExportKw
-            guard let grid = cautious ? (slot.cautiousGridNetExportKw ?? typical) : typical, grid.isFinite else { return nil }
+            guard let typical = slot.gridNetExportKw, typical.isFinite else { return nil }
+            var grid = typical
+            if cautious, let dull = slot.cautiousGridNetExportKw, dull.isFinite {
+                // The server's dull day is a 1-in-4 *day*. Repeating it every day of
+                // the safety window would be a week of dull days in a row, far rarer
+                // than 1 in 4. A 1-in-4 week of roughly independent days falls short
+                // of the typical week by about √7 dull-day gaps, so each day moves
+                // 1/√7 of the way toward the dull day.
+                grid = typical + (dull - typical) / Self.daysPerWeekRoot
+            }
             // History records only what reached the grid; that export is what an added load could use.
             return Flow(netExportKw: grid, physicalSurplusKw: grid)
         }
@@ -732,7 +741,7 @@ struct LoadTimingForecastEstimator {
         case .invalidInput: return unavailable(.invalidInput)
         case .incompleteCoverage: return unavailable(.incompleteCoverage)
         }
-        // The cautious run (pv_estimate10, then the dull day) is read only at the
+        // The cautious run (pv_estimate10, then a 1-in-4 week of history) is read only at the
         // safety window's end: history beyond it never makes a start pass.
         let safetyEnd = min(now.addingTimeInterval(Self.forecastWindow), projectionEnd)
         // Without grid history a forecast projection ends at midnight tomorrow, so
