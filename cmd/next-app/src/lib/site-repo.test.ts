@@ -507,6 +507,7 @@ describe('SiteRepo.getSitesForGapHeal', () => {
 
         await expect(new SiteRepo().getSitesForGapHeal(1_000)).resolves.toEqual([{ id: 'site-1', timezone: 'America/Chicago' }]);
         const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('SELECT s.id, s.timezone, s.installed');
         expect(sql).toContain('s.last_live_refresh_at >= $1');
         expect(params).toEqual([1_000]);
         expect(sql).toContain('u.is_active = true');

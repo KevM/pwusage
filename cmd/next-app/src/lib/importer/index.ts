@@ -8,7 +8,7 @@ import { UserRepo } from '../user-repo';
 import { TariffRepo } from '../tariff-repo';
 import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
-import { planImport, splitAtSiteMidnight, auditDays } from './import-planner';
+import { planImport, splitAtSiteMidnight, auditDays, type DateWindow } from './import-planner';
 import { getSiteMidnight } from '../date-utils';
 import { withImportLock } from '../import-lock';
 
@@ -21,6 +21,34 @@ export type { EnergyDataRow } from './energy-transformer';
 
 
 
+
+/**
+ * Audit stored coverage for [site midnight of `start`, `end`) and return the
+ * day windows planImport says must be fetched. Needs no Tesla client, so a
+ * caller can skip token and site loads when nothing is missing.
+ */
+export async function planMissingWindows(
+    rawRepo: EnergyRepo,
+    site: { id: string; timezone: string; installed: Date | string },
+    start: Date,
+    end: Date,
+    force = false
+): Promise<DateWindow[]> {
+    const auditStartTime = getSiteMidnight(start, site.timezone);
+    const existingCoverage = await createEnergyRepo(site.timezone, rawRepo).getDailyCoverage(
+        site.id,
+        auditStartTime,
+        end,
+        site.timezone
+    );
+    return planImport({
+        requestedRange: { start: auditStartTime, end },
+        existingCoverage,
+        timezone: site.timezone,
+        installationDate: new Date(site.installed),
+        forceRefetch: force,
+    });
+}
 
 export interface EnsureDataResult {
     complete: boolean;
@@ -168,21 +196,7 @@ export class Importer {
                 async () => {
                     logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
 
-                    const auditStartTime = getSiteMidnight(start, site.timezone);
-                    const existingCoverage = await createEnergyRepo(site.timezone,this.repo).getDailyCoverage(
-                        siteId,
-                        auditStartTime,
-                        end,
-                        site.timezone
-                    );
-
-                    const windows = planImport({
-                        requestedRange: { start: auditStartTime, end },
-                        existingCoverage,
-                        timezone: site.timezone,
-                        installationDate: new Date(site.installed),
-                        forceRefetch: force,
-                    });
+                    const windows = await planMissingWindows(this.repo, site, start, end, force);
 
                     // A window cap takes the newest days first (the most useful
                     // to recent-history readers); the rest are re-planned next run.

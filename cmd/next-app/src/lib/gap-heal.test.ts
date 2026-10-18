@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
     getSitesForGapHeal: vi.fn(),
     createTeslaClientForSite: vi.fn(),
     ensureDataForRange: vi.fn(),
+    countAlignedSamples: vi.fn(),
+    planMissingWindows: vi.fn(),
 }));
 
 vi.mock('./site-repo', () => ({
@@ -11,16 +13,24 @@ vi.mock('./site-repo', () => ({
         return { getSitesForGapHeal: mocks.getSitesForGapHeal };
     }),
 }));
+vi.mock('./energy-repo', () => ({
+    EnergyRepo: vi.fn(function EnergyRepo() {
+        return { countAlignedSamples: mocks.countAlignedSamples };
+    }),
+}));
 vi.mock('./tesla-client-factory', () => ({ createTeslaClientForSite: mocks.createTeslaClientForSite }));
 vi.mock('./importer', () => ({
     Importer: vi.fn(function Importer() {
         return { ensureDataForRange: mocks.ensureDataForRange };
     }),
+    planMissingWindows: mocks.planMissingWindows,
 }));
 
 import { healTrailingGaps } from './gap-heal';
 
 const NOW = new Date('2026-10-17T15:00:00Z'); // 10:00 in America/Chicago
+const INSTALLED = new Date('2025-01-01T00:00:00Z');
+const FULL_14_DAYS = 14 * 288;
 
 describe('healTrailingGaps', () => {
     let clock: number;
@@ -29,9 +39,12 @@ describe('healTrailingGaps', () => {
         vi.clearAllMocks();
         clock = 0;
         mocks.getSitesForGapHeal.mockResolvedValue([
-            { id: 'site-a', timezone: 'America/Chicago' },
-            { id: 'site-b', timezone: 'America/Chicago' },
+            { id: 'site-a', timezone: 'America/Chicago', installed: INSTALLED },
+            { id: 'site-b', timezone: 'America/Chicago', installed: INSTALLED },
         ]);
+        // Default: no stored samples, so every site goes through the full heal path.
+        mocks.countAlignedSamples.mockResolvedValue(new Map());
+        mocks.planMissingWindows.mockResolvedValue([{ start: new Date(0), end: new Date(1) }]);
         mocks.createTeslaClientForSite.mockResolvedValue({});
         mocks.ensureDataForRange.mockResolvedValue({ complete: true, rows: [], processedWindows: 0, totalWindows: 0 });
         vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -93,9 +106,9 @@ describe('healTrailingGaps', () => {
     it('skips sites without tokens and isolates per-site failures', async () => {
         mocks.createTeslaClientForSite.mockResolvedValueOnce(null);
         mocks.getSitesForGapHeal.mockResolvedValue([
-            { id: 'site-a', timezone: 'America/Chicago' },
-            { id: 'site-b', timezone: 'America/Chicago' },
-            { id: 'site-c', timezone: 'America/Chicago' },
+            { id: 'site-a', timezone: 'America/Chicago', installed: INSTALLED },
+            { id: 'site-b', timezone: 'America/Chicago', installed: INSTALLED },
+            { id: 'site-c', timezone: 'America/Chicago', installed: INSTALLED },
         ]);
         mocks.ensureDataForRange
             .mockRejectedValueOnce(new Error('tesla down'))
@@ -111,11 +124,63 @@ describe('healTrailingGaps', () => {
     });
 
     it('reports a site whose import lock was busy as skipped', async () => {
-        mocks.getSitesForGapHeal.mockResolvedValue([{ id: 'site-a', timezone: 'America/Chicago' }]);
+        mocks.getSitesForGapHeal.mockResolvedValue([{ id: 'site-a', timezone: 'America/Chicago', installed: INSTALLED }]);
         mocks.ensureDataForRange.mockResolvedValue({ complete: false, rows: [], processedWindows: 0, totalWindows: 0 });
 
         const result = await run();
 
         expect(result.sites).toEqual([{ siteId: 'site-a', status: 'busy' }]);
+    });
+    it('checks every site with one count query and skips sites whose window is fully stored', async () => {
+        mocks.countAlignedSamples.mockResolvedValue(new Map([['site-a', FULL_14_DAYS], ['site-b', FULL_14_DAYS - 1]]));
+
+        const result = await run();
+
+        expect(mocks.countAlignedSamples).toHaveBeenCalledTimes(1);
+        expect(mocks.countAlignedSamples).toHaveBeenCalledWith([
+            { siteId: 'site-a', start: new Date('2026-10-03T05:00:00Z'), end: new Date('2026-10-17T05:00:00Z') },
+            { siteId: 'site-b', start: new Date('2026-10-03T05:00:00Z'), end: new Date('2026-10-17T05:00:00Z') },
+        ]);
+        // The complete site never loads tokens, the site row, the lock or coverage.
+        expect(mocks.createTeslaClientForSite).toHaveBeenCalledTimes(1);
+        expect(mocks.createTeslaClientForSite).toHaveBeenCalledWith('site-b');
+        expect(result.checked).toBe(2);
+        expect(result.sites.map(s => s.siteId)).toEqual(['site-b']);
+    });
+
+    it('expects the real number of slots across a DST change', async () => {
+        // Oct 22 05:00Z (CDT midnight) to Nov 5 06:00Z (CST midnight): 14 days + 1 hour.
+        mocks.countAlignedSamples.mockResolvedValue(new Map([['site-a', 4044], ['site-b', 4043]]));
+
+        const result = await run({ now: () => new Date('2026-11-05T15:00:00Z') });
+
+        expect(result.sites.map(s => s.siteId)).toEqual(['site-b']);
+    });
+
+    it('starts the expected window at the installation day for new sites', async () => {
+        mocks.getSitesForGapHeal.mockResolvedValue([
+            { id: 'site-a', timezone: 'America/Chicago', installed: new Date('2026-10-10T17:00:00Z') },
+        ]);
+        mocks.countAlignedSamples.mockResolvedValue(new Map([['site-a', 7 * 288]]));
+
+        const result = await run();
+
+        expect(mocks.countAlignedSamples.mock.calls[0][0][0].start).toEqual(new Date('2026-10-10T05:00:00Z'));
+        expect(result.sites).toEqual([]);
+    });
+    it('skips tokens, the site load and the lock when short sites have nothing planImport would fetch', async () => {
+        // Sub-threshold gaps (under 30 min) leave the count short but plan no windows.
+        mocks.planMissingWindows.mockResolvedValueOnce([]);
+
+        const result = await run();
+
+        expect(mocks.planMissingWindows).toHaveBeenCalledWith(
+            expect.anything(),
+            { id: 'site-a', timezone: 'America/Chicago', installed: INSTALLED },
+            new Date('2026-10-03T05:00:00Z'),
+            new Date('2026-10-17T05:00:00Z'));
+        expect(mocks.createTeslaClientForSite).toHaveBeenCalledTimes(1);
+        expect(mocks.createTeslaClientForSite).toHaveBeenCalledWith('site-b');
+        expect(result.sites[0]).toEqual({ siteId: 'site-a', status: 'complete', processedWindows: 0, totalWindows: 0 });
     });
 });

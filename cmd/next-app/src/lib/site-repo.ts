@@ -232,9 +232,9 @@ export class SiteRepo {
      * status refresh since `activeSinceMs`: only demand paths set it (web,
      * mobile, TRMNL markup, active battery holds), never the heal itself.
      */
-    async getSitesForGapHeal(activeSinceMs: number): Promise<Array<{ id: string; timezone: string }>> {
-        const { rows } = await pool.query<{ id: string; timezone: string }>(`
-            SELECT s.id, s.timezone
+    async getSitesForGapHeal(activeSinceMs: number): Promise<Array<{ id: string; timezone: string; installed: Date }>> {
+        const { rows } = await pool.query<{ id: string; timezone: string; installed: Date }>(`
+            SELECT s.id, s.timezone, s.installed
             FROM "Site" s
             JOIN "User" u ON u.id = s.user_id
             WHERE u.is_active = true

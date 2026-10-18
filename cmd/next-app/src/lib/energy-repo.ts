@@ -212,6 +212,29 @@ ORDER BY local_day`,
         }));
     }
 
+    /**
+     * Stored samples on a 5-minute mark within each site's [start, end), for all
+     * sites in one query. Rows are unique per (timestamp, site_id), so a count
+     * equal to the number of 5-minute slots means the window has no gaps. Reads
+     * raw rows directly: a pruned (compact) site just counts short and falls
+     * back to the full coverage audit.
+     */
+    async countAlignedSamples(windows: Array<{ siteId: string; start: Date; end: Date }>): Promise<Map<string, number>> {
+        if (windows.length === 0) return new Map();
+        const res = await energyQueryExecutor().query(
+            `SELECT w.site_id, (
+    SELECT COUNT(*)::int FROM "EnergyData" e
+    WHERE e.site_id = w.site_id
+      AND e.timestamp >= w.start_ts
+      AND e.timestamp < w.end_ts
+      AND EXTRACT(EPOCH FROM e.timestamp)::bigint % 300 = 0
+) AS n
+FROM unnest($1::text[], $2::timestamp[], $3::timestamp[]) AS w(site_id, start_ts, end_ts)`,
+            [windows.map(w => w.siteId), windows.map(w => w.start.toISOString()), windows.map(w => w.end.toISOString())]
+        );
+        return new Map(res.rows.map((r: { site_id: string; n: string | number }) => [r.site_id, Number(r.n)]));
+    }
+
     private async usageContext(siteId:string) {
 
         const siteRepo = new SiteRepo();
