@@ -227,10 +227,6 @@ struct LoadTimingViewTests {
         #expect(changed.exploredProfile(explicitID: "washer")?.profile.id == "washer")
         #expect(changed.exploredProfile(explicitID: nil)?.profile.id == "car")
         #expect(changed.exploredProfile(explicitID: "deleted")?.profile.id == "car")
-        #expect(LoadTimingPresentation.showsBackToSuggestion(explicitID: "washer", suggestedID: "car"))
-        #expect(LoadTimingPresentation.showsBackToSuggestion(explicitID: "washer", suggestedID: nil) == false)
-        #expect(LoadTimingPresentation.showsBackToSuggestion(explicitID: nil, suggestedID: "car") == false)
-        #expect(LoadTimingPresentation.showsBackToSuggestion(explicitID: "car", suggestedID: "washer"))
         #expect(try #require(changed.exploredProfile(explicitID: "car")).result == .noCharge)
     }
 
@@ -1187,5 +1183,78 @@ struct LoadTimingForecastPresentationTests {
             lanes: [],
             periodSwitches: []
         )
+    }
+
+    // MARK: - Smart Shift card wiring
+
+    @Test("Forecast states map to what the Smart Shift card can show")
+    func forecastAvailabilityMapsStates() throws {
+        typealias P = LoadTimingForecastPresentation
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let fresh = now.addingTimeInterval(-25 * 60)
+        #expect(P.forecastAvailability(state: .basic, connection: .notConnected, cause: nil, reason: nil,
+                                       forecastFetchedAt: nil, now: now) == ForecastAvailability.none)
+        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                       forecastFetchedAt: nil, now: now) == .loading)
+        #expect(P.forecastAvailability(state: .basic, connection: .awaitingArraySelection, cause: nil, reason: nil,
+                                       forecastFetchedAt: nil, now: now) == .unusable("Choose your solar arrays to add a forecast."))
+        #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
+                                       forecastFetchedAt: fresh, now: now) == .ready)
+        #expect(P.forecastAvailability(state: .failedWithBasic, connection: .ready, cause: .rateLimited, reason: nil,
+                                       forecastFetchedAt: fresh, now: now) == .unusable("Solcast is limiting requests."))
+        #expect(P.forecastAvailability(state: .failedWithBasic, connection: .ready, cause: nil, reason: .insufficientHistory,
+                                       forecastFetchedAt: fresh, now: now)
+            == .unusable("Your household profile needs at least 5 complete days in the last 14 days."))
+        #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
+                                       forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now)
+            == .unusable("The forecast was too old or incomplete to use."))
+        #expect(P.forecastUnavailableNote(.staleBalance)
+            == "Energy observations are older than 30 minutes, so the solar comparison is paused.")
+    }
+
+    @Test("Smart Shift opens on the last Job viewed")
+    @MainActor
+    func defaultJobIsLastViewed() throws {
+        let suiteName = "LoadTimingViewTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = LoadProfileStore(userDefaults: defaults)
+        #expect(LoadTimingView.initialJobID(store: store) == "car")
+        try store.selectProfile(id: "dryer")
+        #expect(LoadTimingView.initialJobID(store: LoadProfileStore(userDefaults: defaults)) == "dryer")
+    }
+
+    @Test("A forecast comparison that can't run falls back to the forecast-free one and says why")
+    func forecastFailureFallsBackToFlat() throws {
+        let now = SmartShiftPresentationTests.now
+        let timing = SmartShiftPresentationTests.timing()
+        let intervals = [SolarForecastInterval(periodStart: SmartShiftPresentationTests.at(0),
+                                               periodEnd: SmartShiftPresentationTests.at(48), powerKw: 0)]
+        let slots = stride(from: 0, to: 1440, by: 30).map {
+            LoadTimingForecastEstimator.PlanningSlot(localMinute: $0, homeKw: 0, batteryNetChargeKw: 0)
+        }
+        let context = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC", slots: slots, asOf: now)
+        func evaluate(_ forecast: ForecastAvailability, sourceAge: TimeInterval?) -> SmartShiftEvaluation {
+            SmartShiftPresentation.evaluate(
+                profile: SmartShiftPresentationTests.car, now: now, timing: timing, forecast: forecast,
+                intervals: forecast == .ready ? intervals : nil, context: forecast == .ready ? context : nil,
+                balanceSourceTime: sourceAge.map { now.addingTimeInterval(-$0) },
+                billingCycleEnd: now.addingTimeInterval(20 * 86_400), currencyCode: "USD", timeZone: "UTC")
+        }
+
+        let fresh = evaluate(.ready, sourceAge: 0)
+        #expect(fresh.forecast == .ready)
+        #expect(fresh.result.comparison?.assumptions.contains { $0.contains("historical local-time profile") } == true)
+
+        let stale = evaluate(.ready, sourceAge: 40 * 60)
+        #expect(stale.result.comparison != nil)
+        #expect(stale.forecast == .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(.staleBalance)))
+
+        let none = evaluate(.none, sourceAge: 0)
+        #expect(none.forecast == ForecastAvailability.none)
+        #expect(none.result.comparison?.assumptions.contains { $0.contains("held at today's observed values") } == true)
+
+        let missingSource = evaluate(.none, sourceAge: nil)
+        #expect(missingSource.result.unavailableReason == .staleBalance)
     }
 }

@@ -72,8 +72,50 @@ struct SmartShiftScreen: Equatable {
     let content: Content
 }
 
+/// The comparison the card shows, and what the forecast layer contributed to it.
+struct SmartShiftEvaluation: Equatable {
+    let result: LoadTimingForecastEstimator.Result
+    let forecast: ForecastAvailability
+}
+
 /// Every Smart Shift sentence and display decision, kept out of the views so it can be tested.
 enum SmartShiftPresentation {
+    /// Prices the Job with the solar forecast when one is ready, otherwise with
+    /// balances held still. A forecast comparison that can't run (its stricter
+    /// 30-minute balance age, say) falls back to the forecast-free one, and the
+    /// card says why in one sentence.
+    static func evaluate(
+        profile: LoadProfile,
+        now: Date,
+        timing: LoadTiming,
+        forecast: ForecastAvailability,
+        intervals: [SolarForecastInterval]?,
+        context: LoadTimingForecastEstimator.PlanningContext?,
+        balanceSourceTime: Date?,
+        billingCycleEnd: Date,
+        currencyCode: String,
+        timeZone: String
+    ) -> SmartShiftEvaluation {
+        guard let balanceSourceTime else {
+            return SmartShiftEvaluation(result: .init(comparison: nil, unavailableReason: .staleBalance), forecast: forecast)
+        }
+        func run(_ projection: LoadTimingForecastEstimator.Projection) -> LoadTimingForecastEstimator.Result {
+            LoadTimingForecastEstimator.evaluate(profile: profile, now: now, timing: timing, projection: projection,
+                                                 balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
+                                                 currencyCode: currencyCode)
+        }
+        var availability = forecast
+        if forecast == .ready, let intervals, let context {
+            let result = run(.forecast(intervals: intervals, context: context))
+            guard let reason = result.unavailableReason else { return SmartShiftEvaluation(result: result, forecast: .ready) }
+            availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(reason))
+        } else if forecast == .ready {
+            availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(.incompleteContext))
+        }
+        return SmartShiftEvaluation(result: run(.flat(timeZone: timeZone)),
+                                    forecast: availability)
+    }
+
     static let connectSolcastNote = "Without a solar forecast, banks are shown as they stand now. Connect Solcast to see today's solar."
     static let checkingSolarNote = "Checking today's solar…"
     static let unobservedBalanceNote = "Some rate periods have no balance yet, so they're priced at the full rate."
