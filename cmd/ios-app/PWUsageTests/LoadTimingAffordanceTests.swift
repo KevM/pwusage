@@ -27,20 +27,20 @@ struct LoadTimingAffordanceTests {
 
     @Test("Missing cycle balance is called out while retaining the estimate")
     func missingBalanceNoteIsExplicit() {
-        #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: true) == "Some tariff periods have no observed billing-cycle balance; those portions are estimated at the buy rate.")
+        #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: true) == "Missing rate-period balances are estimated at the grid rate.")
         #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: false) == nil)
     }
 
     @Test("Unavailable reasons and zero-charge state are clear")
     func unavailableAndZeroChargeStates() {
-        #expect(LoadTimingPresentation.unavailableMessage(.incompleteTimeline) == "Tariff timing is incomplete, so a start-now cost estimate is unavailable.")
-        #expect(LoadTimingPresentation.unavailableMessage(.invalidInput) == "Profile or tariff values are invalid, so a start-now estimate is unavailable.")
+        #expect(LoadTimingPresentation.unavailableMessage(.incompleteTimeline) == "Rate plan timing is incomplete, so a start-now cost estimate is unavailable.")
+        #expect(LoadTimingPresentation.unavailableMessage(.invalidInput) == "Job settings or rate plan values are invalid, so a start-now estimate is unavailable.")
         #expect(LoadTimingPresentation.noChargeMessage == "No charging needed at this target.")
     }
 
     @Test("No cycle observations remain visible as an informational note")
     func noCycleDataNote() {
-        #expect(LoadTimingPresentation.cycleObservationMessage(hasCycleData: false) == "Billing-cycle observations are unavailable. The start-now estimate uses buy rates where no balance has been observed.")
+        #expect(LoadTimingPresentation.cycleObservationMessage(hasCycleData: false) == "Billing-cycle observations are unavailable. The start-now estimate uses grid rates where no balance has been observed.")
         #expect(LoadTimingPresentation.cycleObservationMessage(hasCycleData: true) == nil)
     }
 }

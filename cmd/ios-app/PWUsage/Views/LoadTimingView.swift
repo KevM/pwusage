@@ -60,11 +60,35 @@ enum LoadTimingPresentation {
         "What if you \(profile.kind == .car ? "charge" : "run") \(profile.name)?"
     }
 
+    /// `.incompleteData` is aggregated across every job while the card speaks
+    /// about the selected one, so the expired-cycle copy has to say whose run
+    /// crosses the billing cycle.
+    static func recommendationMessage(
+        for recommendation: LoadTimingRecommendation,
+        selected: LoadTimingRecommendation.Candidate?,
+        refreshUnavailable: Bool = false,
+        hasTariff: Bool = true
+    ) -> RecommendationMessage {
+        let expired = LoadTimingEstimator.StartNowResult.unavailable(.billingCycleExpired)
+        let selectedExpired = selected?.result == expired
+        let otherExpired = recommendation.candidates.contains {
+            $0.profile.id != selected?.profile.id && $0.result == expired
+        }
+        return recommendationMessage(
+            for: recommendation.state,
+            refreshUnavailable: refreshUnavailable,
+            hasTariff: hasTariff,
+            hasExpiredCandidate: selectedExpired,
+            hasOtherExpiredCandidate: otherExpired
+        )
+    }
+
     static func recommendationMessage(
         for state: LoadTimingRecommendation.State,
         refreshUnavailable: Bool = false,
         hasTariff: Bool = true,
-        hasExpiredCandidate: Bool = false
+        hasExpiredCandidate: Bool = false,
+        hasOtherExpiredCandidate: Bool = false
     ) -> RecommendationMessage {
         switch state {
         case .ready:
@@ -80,6 +104,9 @@ enum LoadTimingPresentation {
             }
             if hasExpiredCandidate {
                 return RecommendationMessage(title: "No safe recommendation", detail: "This job would continue beyond the current billing cycle, so its current export cushion cannot be used for the estimate.")
+            }
+            if hasOtherExpiredCandidate {
+                return RecommendationMessage(title: "No safe recommendation", detail: "Another saved job would continue beyond the current billing cycle, so no job can be recommended from the current export cushion.")
             }
             return RecommendationMessage(title: "Rate Plan Incomplete", detail: "Some rate periods or export balances are missing.")
         case .stale:
@@ -437,10 +464,10 @@ struct LoadTimingView: View {
     ) -> some View {
         let candidate = recommendation.exploredProfile(explicitID: exploredProfileID)
         let copy = LoadTimingPresentation.recommendationMessage(
-            for: recommendation.state,
+            for: recommendation,
+            selected: candidate,
             refreshUnavailable: coordinator.bill.isUnavailable,
-            hasTariff: timing.hasTariff,
-            hasExpiredCandidate: candidate?.result == .unavailable(.billingCycleExpired)
+            hasTariff: timing.hasTariff
         )
         // Withhold a frozen forecast if the minute tick changes the selected job.
         let showsForecast = currentPlacement(for: recommendation) == forecastPlacement

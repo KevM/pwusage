@@ -160,6 +160,33 @@ struct LoadTimingViewTests {
         #expect(LoadTimingPresentation.recommendationMessage(for: .noCandidates).detail.contains("Add a job"))
     }
 
+    /// `.incompleteData` is aggregated across every job, but the card speaks about
+    /// the selected one. Blaming the selected job's rate plan when another job is
+    /// the one crossing the billing cycle sent people to fix a rate plan that was fine.
+    @Test("Incomplete-data copy names the job that crosses the billing cycle")
+    func incompleteDataCopyNamesTheExpiredJob() {
+        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3.5, durationHours: 2, carSettings: nil)
+        let car = LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 0, durationHours: 0, carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 10, targetStateOfCharge: 90, chargingLevel: .level1))
+        let estimate = LoadTimingEstimator.StartNowEstimate(total: 1, finishTime: .now.addingTimeInterval(7200), batteryKwh: 3.5, wallKwh: 3.5, durationHours: 2, segments: [], hasUnobservedBalance: false)
+        let washerCandidate = LoadTimingRecommendation.Candidate(profile: washer, result: .estimate(estimate), remainingSurplusKwh: 0)
+        let carCandidate = LoadTimingRecommendation.Candidate(profile: car, result: .unavailable(.billingCycleExpired), remainingSurplusKwh: nil)
+        let recommendation = LoadTimingRecommendation(candidates: [washerCandidate, carCandidate], suggested: nil, state: .incompleteData)
+
+        let otherExpired = LoadTimingPresentation.recommendationMessage(for: recommendation, selected: washerCandidate)
+        #expect(otherExpired.title == "No safe recommendation")
+        #expect(otherExpired.detail.contains("Another saved job"))
+
+        let selectedExpired = LoadTimingPresentation.recommendationMessage(for: recommendation, selected: carCandidate)
+        #expect(selectedExpired.detail.hasPrefix("This job would continue beyond the current billing cycle"))
+
+        let incomplete = LoadTimingRecommendation(
+            candidates: [LoadTimingRecommendation.Candidate(profile: washer, result: .unavailable(.incompleteTimeline), remainingSurplusKwh: nil)],
+            suggested: nil,
+            state: .incompleteData
+        )
+        #expect(LoadTimingPresentation.recommendationMessage(for: incomplete, selected: incomplete.candidates[0]).title == "Rate Plan Incomplete")
+    }
+
     @Test("Recommendation actions and neutral exploration titles name appliances and cars")
     func recommendationAndExplorationTitlesNameProfileKind() {
         let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3.5, durationHours: 2, carSettings: nil)
