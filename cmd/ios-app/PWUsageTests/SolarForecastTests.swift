@@ -100,6 +100,36 @@ struct SolarForecastTests {
         }
     }
 
+    @Test("combineKeepsCautiousSolar")
+    func combineKeepsCautiousSolar() throws {
+        let first = [point("12:30", power: 4, cautious: 1), point("13:00", power: 2, cautious: 0.5)]
+        let second = [point("12:30", power: 1, cautious: 0.25), point("13:00", power: 1, cautious: 0)]
+        let combined = try SolarForecast.combine([first, second])
+        #expect(combined.map(\.powerKw) == [5, 3])
+        #expect(combined.map(\.cautiousPowerKw) == [1.25, 0.5])
+
+        let partial = try SolarForecast.combine([first, [point("12:30", power: 1), point("13:00", power: 1)]])
+        #expect(partial.map(\.cautiousPowerKw) == [nil, nil])
+    }
+
+    @Test("oldBatchDecodesWithoutCautiousSolar")
+    func oldBatchDecodesWithoutCautiousSolar() throws {
+        let stored = Data(#"[{"periodStart":0,"periodEnd":1800,"powerKw":2.5}]"#.utf8)
+        let intervals = try JSONDecoder().decode([SolarForecastInterval].self, from: stored)
+        #expect(intervals.first?.powerKw == 2.5)
+        #expect(intervals.first?.cautiousPowerKw == nil)
+
+        let roundTrip = try JSONDecoder().decode(
+            [SolarForecastInterval].self,
+            from: JSONEncoder().encode([SolarForecastInterval(periodStart: .init(timeIntervalSinceReferenceDate: 0), periodEnd: .init(timeIntervalSinceReferenceDate: 1800), powerKw: 2, cautiousPowerKw: 0.5)])
+        )
+        #expect(roundTrip.first?.cautiousPowerKw == 0.5)
+    }
+
+    private func point(_ end: String, power: Double, cautious: Double) -> SolcastForecastPoint {
+        SolcastForecastPoint(periodEnd: date(end), periodDuration: 1800, pvEstimateKw: power, pvEstimate10Kw: cautious, pvEstimate90Kw: nil)
+    }
+
     private func point(_ end: String, power: Double) -> SolcastForecastPoint {
         let value = SolcastForecastPoint(periodEnd: date(end), periodDuration: 1800, pvEstimateKw: power, pvEstimate10Kw: nil, pvEstimate90Kw: nil)
         return value

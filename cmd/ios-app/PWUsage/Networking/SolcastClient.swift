@@ -63,14 +63,16 @@ struct SolcastClient: Sendable {
 
     func fetchForecast(resourceID: String) async throws -> [SolcastForecastPoint] {
         guard Self.isSafeResourceID(resourceID) else { throw SolcastClientError.invalidResourceID }
-        let data = try await get(path: "/rooftop_sites/\(resourceID)/forecasts")
+        // Seven days: the bill-date projection uses the forecast this far. Still one request.
+        let data = try await get(path: "/rooftop_sites/\(resourceID)/forecasts",
+                                 query: [URLQueryItem(name: "hours", value: "168")])
         do { return try JSONDecoder().decode(SolcastForecastResponse.self, from: data).forecasts }
         catch { throw SolcastClientError.decodingFailure }
     }
 
-    private func get(path: String) async throws -> Data {
+    private func get(path: String, query: [URLQueryItem] = []) async throws -> Data {
         var components = URLComponents(url: Self.origin.appending(path: path), resolvingAgainstBaseURL: false)
-        components?.queryItems = [URLQueryItem(name: "format", value: "json")]
+        components?.queryItems = [URLQueryItem(name: "format", value: "json")] + query
         guard let url = components?.url else { throw SolcastClientError.invalidResponse }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = "GET"

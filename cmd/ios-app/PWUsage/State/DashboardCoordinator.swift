@@ -185,6 +185,9 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
     @Published private(set) var solarForecastBatch: SolarForecastBatch?
     @Published private(set) var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
+    /// The household pattern with grid history, published whether or not Solcast
+    /// is connected, so Smart Shift can project banks from history alone.
+    @Published private(set) var householdPattern: LoadTimingForecastEstimator.PlanningContext?
 
     var pollingTimerIsActive: Bool { timerTask != nil }
 
@@ -464,6 +467,7 @@ final class DashboardCoordinator: ObservableObject {
         bill.isRestored = false
         requiresSignIn = true
         resetForecastEnhancement(state: .basic, connection: .notConnected)
+        householdPattern = nil
     }
 
     func selectSite(_ siteID: String) {
@@ -479,6 +483,9 @@ final class DashboardCoordinator: ObservableObject {
         bill.reset()
         restoreCachedReadings()
         resetForecastEnhancement(state: .basic, connection: .notConnected)
+        // The pattern belongs to the old site; connecting or disconnecting
+        // Solcast leaves it in place.
+        householdPattern = nil
         guard isForeground, canRequestAccountData else { return }
         Task { await refreshDue() }
         // The destination view is not re-inserted on a site switch, so re-run the
@@ -575,6 +582,7 @@ final class DashboardCoordinator: ObservableObject {
             solarForecastUnavailableCause = nil
             solarForecastBatch = nil
             loadPlanningContext = nil
+            await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
             return
         }
         guard !credential.resourceIDs.isEmpty else {
@@ -584,6 +592,7 @@ final class DashboardCoordinator: ObservableObject {
             solarForecastUnavailableCause = nil
             solarForecastBatch = nil
             loadPlanningContext = nil
+            await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
             return
         }
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
@@ -600,6 +609,8 @@ final class DashboardCoordinator: ObservableObject {
         await billRefresh
 
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        // Published even when the forecast half fails, so the card can fall back to history.
+        householdPattern = context
         solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
         // A save failure is not an unavailable forecast, on this path exactly as
         // on `refreshSolarForecast`. The batch is fresh and in memory — the store
@@ -764,6 +775,14 @@ final class DashboardCoordinator: ObservableObject {
     /// Settings text edits and profile comparisons are deliberately local.
     func solarForecastSettingsDidEdit() {}
     func loadProfileDidEdit() {}
+
+    /// The forecast-free path's household pattern: the same cached request the
+    /// Solcast path makes, so the pattern costs at most one request a day.
+    private func loadHouseholdPattern(siteID: String, api: any MobileLoadPlanningDataAPI, operation: Int) async {
+        let outcome = await planningContext(siteID: siteID, api: api)
+        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        householdPattern = outcome.context
+    }
 
     private struct PlanningContextOutcome {
         let context: LoadTimingForecastEstimator.PlanningContext?

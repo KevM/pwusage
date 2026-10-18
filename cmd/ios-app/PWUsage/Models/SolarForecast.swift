@@ -156,6 +156,10 @@ struct SolarForecastInterval: Codable, Equatable, Sendable {
     let periodStart: Date
     let periodEnd: Date
     let powerKw: Double
+    /// Summed `pv_estimate10` across the selected arrays, for the cautious
+    /// projection. `nil` when any array lacks it, and in batches stored by
+    /// builds that did not keep it.
+    var cautiousPowerKw: Double? = nil
     func energyKwh() throws -> Double {
         let duration = periodEnd.timeIntervalSince(periodStart)
         let energy = powerKw * (duration / 3600)
@@ -192,6 +196,7 @@ enum SolarForecast {
         let expectedKeys = Set(firstByInterval.keys)
 
         var summedPower = Dictionary(uniqueKeysWithValues: expectedKeys.map { ($0, 0.0) })
+        var summedCautious: [IntervalKey: Double?] = Dictionary(uniqueKeysWithValues: expectedKeys.map { ($0, 0.0) })
         for array in selectedArrays {
             guard !array.isEmpty else { throw SolarForecastError.incompleteCoverage }
             var points: [IntervalKey: SolcastForecastPoint] = [:]
@@ -212,10 +217,17 @@ enum SolarForecast {
                 let total = summedPower[key, default: 0] + point.pvEstimateKw
                 guard total.isFinite else { throw SolarForecastError.nonFiniteValue }
                 summedPower[key] = total
+                if let cautious = summedCautious[key] ?? nil, let estimate = point.pvEstimate10Kw {
+                    let cautiousTotal = cautious + estimate
+                    summedCautious[key] = cautiousTotal.isFinite ? cautiousTotal : nil
+                } else {
+                    summedCautious[key] = .some(nil)
+                }
             }
         }
         let intervals = summedPower.map { key, power in
-            SolarForecastInterval(periodStart: key.start, periodEnd: key.end, powerKw: power)
+            SolarForecastInterval(periodStart: key.start, periodEnd: key.end, powerKw: power,
+                                  cautiousPowerKw: summedCautious[key] ?? nil)
         }.sorted { $0.periodStart < $1.periodStart }
         for interval in intervals { _ = try interval.energyKwh() }
         return intervals

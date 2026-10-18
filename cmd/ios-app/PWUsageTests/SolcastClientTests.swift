@@ -39,7 +39,7 @@ struct SolcastClientTests {
         let requests = transport.requests
         #expect(requests.count == 2)
         #expect(requests[0].url?.absoluteString == "https://api.solcast.com.au/rooftop_sites?format=json")
-        #expect(requests[1].url?.absoluteString == "https://api.solcast.com.au/rooftop_sites/site-abc_123/forecasts?format=json")
+        #expect(requests[1].url?.absoluteString == "https://api.solcast.com.au/rooftop_sites/site-abc_123/forecasts?format=json&hours=168")
         #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer synthetic-key" })
         #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Cookie") == nil })
     }
@@ -88,8 +88,26 @@ struct SolcastClientTests {
         #expect(url.pathComponents.first == "/")
         #expect(url.pathComponents[1] == "rooftop_sites")
         #expect(url.pathComponents[3] == "forecasts")
-        #expect(url.query == "format=json")
+        #expect(url.query == "format=json&hours=168")
         #expect(url.host == "api.solcast.com.au")
+    }
+
+    @Test("forecastRequestAsksForSevenDays")
+    func forecastRequestAsksForSevenDays() async throws {
+        let transport = RecordingSolcastTransport { request in
+            let body = request.url?.path == "/rooftop_sites" ? #"{"sites":[]}"# : #"{"forecasts":[]}"#
+            return (Data(body.utf8), HTTPURLResponse(url: try #require(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let client = SolcastClient(apiKey: "synthetic-key", transport: transport)
+        _ = try await client.fetchForecast(resourceID: "site-abc_123")
+        _ = try await client.discoverSites()
+
+        let forecastURL = try #require(transport.requests.first?.url)
+        let items = try #require(URLComponents(url: forecastURL, resolvingAgainstBaseURL: false)?.queryItems)
+        #expect(items.contains(URLQueryItem(name: "hours", value: "168")))
+        #expect(items.contains(URLQueryItem(name: "format", value: "json")))
+        // Discovery takes no forecast horizon.
+        #expect(transport.requests.last?.url?.query == "format=json")
     }
 
     @Test("Rejects resource IDs that could escape their single path component")

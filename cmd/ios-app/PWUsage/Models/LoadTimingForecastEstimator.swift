@@ -27,12 +27,19 @@ struct LoadTimingForecastEstimator {
         let localMinute: Int
         let homeKw: Double?
         let batteryNetChargeKw: Double?
+        /// Typical grid net export from the site's history (export positive).
+        var gridNetExportKw: Double? = nil
+        /// The cautious ("dull day") grid net export from the site's history.
+        var cautiousGridNetExportKw: Double? = nil
     }
 
     struct PlanningContext: Equatable {
         let timeZone: String
         let slots: [PlanningSlot]
         let asOf: Date
+
+        /// The server sent grid history (an older server sends none).
+        var hasGridHistory: Bool { slots.contains { $0.gridNetExportKw != nil } }
     }
 
     /// How balances move between now and the end of the search horizon.

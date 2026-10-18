@@ -50,9 +50,53 @@ struct SolarForecastCoordinatorTests {
 
         #expect(coordinator.solarForecastState == .basic)
         #expect(await forecast.refreshCount == 0)
-        #expect(api.contextSiteIDs.isEmpty)
+        // The household pattern also feeds the forecast-free projection, so it
+        // is read without Solcast; nothing else is.
+        #expect(api.contextSiteIDs == ["site-a"])
         #expect(api.billSiteIDs.isEmpty)
         #expect(api.liveSiteIDs.isEmpty)
+    }
+
+    @Test("householdPatternLoadsWithoutSolcast")
+    func householdPatternLoadsWithoutSolcast() async {
+        let clock = ForecastTestClock()
+        let forecast = ForecastManagerSpy()
+        let api = ForecastDashboardAPISpy(now: clock.now)
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { clock.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.householdPattern != nil)
+        #expect(coordinator.householdPattern?.timeZone == "UTC")
+        #expect(coordinator.loadPlanningContext == nil)
+        #expect(coordinator.solarForecastConnection == .notConnected)
+        #expect(await forecast.refreshCount == 0)
+
+        clock.advance(hours: 23)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(api.contextSiteIDs == ["site-a"])
+        #expect(coordinator.householdPattern != nil)
+    }
+
+    @Test("The Solcast path publishes the household pattern from its one request")
+    func solcastPathPublishesHouseholdPattern() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.householdPattern == coordinator.loadPlanningContext)
+        #expect(api.contextSiteIDs == ["site-a"])
     }
 
     @Test("Configured detail progresses from basic through loading to enhanced without live polling")

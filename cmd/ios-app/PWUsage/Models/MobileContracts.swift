@@ -221,6 +221,13 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
         let batteryNetChargeKw: Double?
         let sampleCount: Int
         let coverage: Double
+        /// Grid history over the last 28 days (export positive). Absent from
+        /// older servers, which leaves the projection bounded by the forecast.
+        var gridNetExportKw: Double? = nil
+        /// The 1-in-4 "dull day" grid net export for the cautious projection.
+        var cautiousGridNetExportKw: Double? = nil
+        /// Median solar; not used by the projection yet.
+        var solarKw: Double? = nil
     }
 
     enum ContractError: Error, Equatable {
@@ -256,6 +263,9 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
                       && slot.coverage.isFinite && (0...1).contains(slot.coverage)
                       && slot.homeKw.map(\.isFinite) ?? true
                       && slot.batteryNetChargeKw.map(\.isFinite) ?? true
+                      && slot.gridNetExportKw.map(\.isFinite) ?? true
+                      && slot.cautiousGridNetExportKw.map(\.isFinite) ?? true
+                      && slot.solarKw.map(\.isFinite) ?? true
               }),
               // `coverage` is the share of usable days that voted for the slot. The
               // 90% interval rule is applied server-side before a day/slot may vote,
@@ -279,7 +289,9 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
                 LoadTimingForecastEstimator.PlanningSlot(
                     localMinute: $0.localMinute,
                     homeKw: $0.homeKw,
-                    batteryNetChargeKw: $0.batteryNetChargeKw
+                    batteryNetChargeKw: $0.batteryNetChargeKw,
+                    gridNetExportKw: $0.gridNetExportKw,
+                    cautiousGridNetExportKw: $0.cautiousGridNetExportKw
                 )
             },
             asOf: asOf
