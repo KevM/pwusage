@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct LoadProfilesSheet: View {
     @ObservedObject var store: LoadProfileStore
@@ -198,7 +199,7 @@ struct LoadProfilesSheet: View {
     }
 }
 
-private struct ProfileDraft: Identifiable {
+struct ProfileDraft: Identifiable, Equatable {
     var id: String?
     var name: String
     var kind: LoadProfileKind
@@ -236,13 +237,38 @@ private struct ProfileDraft: Identifiable {
     }
 
     static func newCustom() -> ProfileDraft { ProfileDraft() }
+
+    /// Whether closing the editor now would lose something the person typed.
+    /// A value edited and put back is not a change, so the editor stays one
+    /// swipe away unless there is genuinely something to discard.
+    func hasUnsavedChanges(from original: ProfileDraft) -> Bool { self != original }
 }
 
 private struct ProfileEditorSheet: View {
-    @State var draft: ProfileDraft
+    @State private var draft: ProfileDraft
+    private let original: ProfileDraft
     let onCancel: () -> Void
     let onSave: (ProfileDraft) -> Void
     @FocusState private var nameFocused: Bool
+    @State private var isConfirmingDiscard = false
+
+    init(draft: ProfileDraft, onCancel: @escaping () -> Void, onSave: @escaping (ProfileDraft) -> Void) {
+        _draft = State(initialValue: draft)
+        original = draft
+        self.onCancel = onCancel
+        self.onSave = onSave
+    }
+
+    private var hasUnsavedChanges: Bool { draft.hasUnsavedChanges(from: original) }
+
+    /// Cancel and a swipe down both end here, so neither discards edits silently.
+    private func requestDismiss() {
+        if hasUnsavedChanges {
+            isConfirmingDiscard = true
+        } else {
+            onCancel()
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -291,7 +317,7 @@ private struct ProfileEditorSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
+                    Button("Cancel", action: requestDismiss)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -306,7 +332,13 @@ private struct ProfileEditorSheet: View {
                 settings.targetStateOfCharge = max(settings.targetStateOfCharge, current)
                 draft.carSettings = settings
             }
+            .confirmationDialog("Discard changes to this job?", isPresented: $isConfirmingDiscard, titleVisibility: .visible) {
+                Button("Discard Changes", role: .destructive, action: onCancel)
+                Button("Keep Editing", role: .cancel) {}
+            }
         }
+        .interactiveDismissDisabled(hasUnsavedChanges)
+        .background(SheetDismissAttemptObserver(onAttempt: requestDismiss))
     }
 
     private func decimalStepper(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, unit: String) -> some View {
@@ -379,4 +411,56 @@ private struct ProfileEditorSheet: View {
     _ = try? store.createCustomProfile(name: "Garden pump", energyKwh: 1.5, durationHours: 0.5)
     return LoadProfilesSheet(store: store)
         .environment(\.dynamicTypeSize, .accessibility3)
+}
+
+/// SwiftUI on iOS 18 has no callback for a swipe-down on a sheet whose dismissal
+/// is disabled, so this listens on UIKit's presentation delegate. SwiftUI relies
+/// on that delegate for its own sheet bookkeeping, so the proxy forwards every
+/// other message to the delegate it replaced.
+private struct SheetDismissAttemptObserver: UIViewControllerRepresentable {
+    let onAttempt: () -> Void
+
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.onAttempt = onAttempt
+    }
+
+    final class Controller: UIViewController {
+        var onAttempt: () -> Void = {}
+        /// The presentation controller holds its delegate weakly, so the proxy
+        /// lives here for as long as the sheet does.
+        private var proxy: Proxy?
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            guard proxy == nil, let presentation = presentationController else { return }
+            let proxy = Proxy(original: presentation.delegate) { [weak self] in self?.onAttempt() }
+            presentation.delegate = proxy
+            self.proxy = proxy
+        }
+    }
+
+    final class Proxy: NSObject, UIAdaptivePresentationControllerDelegate {
+        nonisolated(unsafe) private weak var original: (any UIAdaptivePresentationControllerDelegate)?
+        private let onAttempt: () -> Void
+
+        init(original: (any UIAdaptivePresentationControllerDelegate)?, onAttempt: @escaping () -> Void) {
+            self.original = original
+            self.onAttempt = onAttempt
+        }
+
+        func presentationControllerDidAttemptToDismiss(_ presentationController: UIPresentationController) {
+            onAttempt()
+            original?.presentationControllerDidAttemptToDismiss?(presentationController)
+        }
+
+        override func responds(to aSelector: Selector!) -> Bool {
+            super.responds(to: aSelector) || original?.responds(to: aSelector) == true
+        }
+
+        override func forwardingTarget(for aSelector: Selector!) -> Any? {
+            original?.responds(to: aSelector) == true ? original : super.forwardingTarget(for: aSelector)
+        }
+    }
 }
