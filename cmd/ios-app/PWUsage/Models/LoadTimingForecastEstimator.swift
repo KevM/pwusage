@@ -1194,7 +1194,10 @@ struct LoadTimingForecastEstimator {
                   physicalSurplus.isFinite, physicalSurplusPower.isFinite,
                   contribution.isFinite, updatedSolarContribution.isFinite else { return .invalidInput }
             withLoad[periodKey] = loadedBalance
-            if b <= safetyEnd { drawsBySafetyEnd[periodKey, default: 0] += energy }
+            // A step straddling the cutoff counts only its part before it.
+            if a < safetyEnd {
+                drawsBySafetyEnd[periodKey, default: 0] += b <= safetyEnd ? energy : powerKw * safetyEnd.timeIntervalSince(a) / 3600
+            }
             solarContribution = updatedSolarContribution
         }
         var total = 0.0

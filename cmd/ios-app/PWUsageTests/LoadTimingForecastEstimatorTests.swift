@@ -1096,3 +1096,24 @@ extension LoadTimingForecastEstimatorTests {
         #expect(comparison.ruledOut == nil)
     }
 }
+
+// MARK: - Codex review, 2026-10-18
+
+extension LoadTimingForecastEstimatorTests {
+    @Test("A run straddling the safety cutoff counts the draw before it")
+    func drawIsProratedAtTheSafetyCutoff() throws {
+        // 08:10, so the seven-day cutoff falls inside the 08:00–08:30 history step.
+        // History adds 1 kW in both runs; the 2 kW run outlasts the cutoff by 10 minutes,
+        // so 336 kWh is drawn before it and the bank ends 164.9 + 168 − 336 = −3.1 there.
+        // Dropping the straddling step would count only 335.67 kWh and pass at −2.77.
+        let now = start.addingTimeInterval(600)
+        let hours = 7 * 24 + 1.0 / 6
+        let run = LoadProfile(id: "run", name: "Run", kind: .appliance, energyKwh: 2 * hours, durationHours: hours, carSettings: nil)
+        let result = evaluate(.history(context: historyContext(grid: { _ in 1 })), profile: run, now: now,
+                              tariffs: [tariff(0, 20 * 86_400, key: "P", buy: 0.31, sell: 0.04)],
+                              balances: ["P": 164.9], cycleEnd: start.addingTimeInterval(20 * 86_400))
+
+        let comparison = try #require(result.comparison)
+        #expect(comparison.safety != .nowSafe)
+    }
+}

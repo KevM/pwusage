@@ -38,6 +38,23 @@ function mean(values: number[]): number | null {
     return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+/**
+ * The ranked days whose empirical percentile, rank / (n − 1), lies in the
+ * 20th–30th band. When none does (a handful of days), the one day nearest the
+ * band's middle, so a short history never averages in the median day.
+ */
+function cautiousBand(ranked: number[]): number[] {
+    const lastIndex = ranked.length - 1;
+    if (lastIndex <= 0) return ranked.slice(0, 1);
+    const inBand = ranked.filter((_, rank) => {
+        const percentile = rank / lastIndex;
+        return percentile >= CAUTIOUS_BAND_LOW - 1e-9 && percentile <= CAUTIOUS_BAND_HIGH + 1e-9;
+    });
+    if (inBand.length > 0) return inBand;
+    const middle = (CAUTIOUS_BAND_LOW + CAUTIOUS_BAND_HIGH) / 2;
+    return [ranked[Math.round(middle * lastIndex)]];
+}
+
 const hasGridAndSolar = (row: EnergyData) => Number.isFinite(row.grid_power) && Number.isFinite(row.solar_power);
 const netExportWh = (row: EnergyData) => -row.grid_power;
 
@@ -84,11 +101,7 @@ export function buildGridHistory(
         return observed.length === 0 ? 0 : averageKw(observed, netExportWh);
     });
     const ranked = usableDays.map((_, index) => index).sort((a, b) => dayExport[a] - dayExport[b]);
-    const lastIndex = ranked.length - 1;
-    const bandDays = ranked.slice(
-        Math.floor(CAUTIOUS_BAND_LOW * lastIndex),
-        Math.ceil(CAUTIOUS_BAND_HIGH * lastIndex) + 1
-    );
+    const bandDays = cautiousBand(ranked);
 
     const slots: GridHistorySlot[] = slotMinutes.map((minute, slotIndex) => {
         if (!enoughHistory) {

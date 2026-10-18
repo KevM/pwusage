@@ -269,7 +269,11 @@ struct SmartShiftPresentationTests {
 
     @Test func whyLineWhenNowIsCheapest() throws {
         let covered = [Self.lane("Off-Peak", start: 50, later: 10, startNow: 10)]
-        let partly = [Self.lane("Off-Peak", start: 25, later: 0, startNow: 0)]
+        // 25 kWh banked and nothing projected in, so the 40 kWh run leaves it 15 owed.
+        let partly = [Estimator.BalanceLane(periodKey: "Off-Peak", startKwh: 25,
+                                            recommended: [.init(date: Self.now, kwh: 25), .init(date: Self.horizonEnd, kwh: 0)],
+                                            startNow: [.init(date: Self.now, kwh: 25), .init(date: Self.horizonEnd, kwh: 0)],
+                                            projectedKwh: 25, projectedAfterRecommendedKwh: -15, projectedAfterStartNowKwh: -15)]
         let owed = [Self.lane("Off-Peak", start: -2, later: -42, startNow: -42)]
         func why(_ lanes: [Estimator.BalanceLane]) throws -> String {
             // At 18:00 the car (40 kWh from the wall) runs during Off-Peak.
@@ -690,5 +694,24 @@ extension SmartShiftPresentationTests {
         #expect(SmartShiftPresentation.nextRefresh(comparison: nil, now: Self.now) == nil)
         let comparison = Self.comparison(recommendedStart: Self.at(15))
         #expect(SmartShiftPresentation.nextRefresh(comparison: comparison, now: Self.at(50)) == nil)
+    }
+}
+
+extension SmartShiftPresentationTests {
+    @Test func whyLineWhenNowIsCheapestUsesTheBillDateBank() throws {
+        // Off-Peak is empty now but projected to refill to +50 by the bill date, so the
+        // 40 kWh run is priced from the bank; the why line must say so, not "full rate".
+        let refilling = [Estimator.BalanceLane(periodKey: "Off-Peak", startKwh: 0,
+                                               recommended: [.init(date: Self.at(18), kwh: 0), .init(date: Self.horizonEnd, kwh: -40)],
+                                               startNow: [.init(date: Self.at(18), kwh: 0), .init(date: Self.horizonEnd, kwh: -40)],
+                                               projectedKwh: 50, projectedAfterRecommendedKwh: 10, projectedAfterStartNowKwh: 10)]
+        let comparison = Estimator.Comparison(
+            costNow: 1.04, recommendedStart: Self.at(18), recommendedEnd: Self.at(22.4), recommendedCost: 1.04, savings: 0,
+            bestAlternativeSavings: 0, estimatedSolarContribution: 0, horizonStart: Self.at(18), horizonEnd: Self.horizonEnd,
+            evaluatedStarts: [Self.at(18)], assumptions: [], hasUnobservedBalance: false, lanes: refilling, periodSwitches: [])
+        let screen = SmartShiftPresentation.make(profile: Self.car, result: .init(comparison: comparison, unavailableReason: nil),
+            forecast: .ready, refreshUnavailable: false, timing: Self.timing(), now: Self.at(18),
+            billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
+        #expect(try Self.verdict(screen).why == "It's Off-Peak, and your Off-Peak bank covers all of this run.")
     }
 }

@@ -586,11 +586,14 @@ enum SmartShiftPresentation {
             if isNow {
                 guard let key = periodKey(at: now) else { return "" }
                 let period = name(key)
-                let bank = startKwh(key) ?? 0
-                guard roundedKwh(bank) > 0 else { return "It's \(period); this run is bought at the full rate." }
-                let energy = energyKwh(of: profile) ?? 0
-                let share = energy <= 0 || bank >= energy ? "all" : bank / energy >= 0.5 ? "most" : "some"
-                return "It's \(period), and your \(period) bank covers \(share) of this run."
+                // Priced, like the cost, against each bank at the projection end, not today's.
+                let draws = nowDraws
+                let total = draws.reduce(0) { $0 + $1.kwh }
+                let covered = draws.reduce(0) { $0 + $1.fromBank }
+                guard roundedKwh(covered) > 0 else { return "It's \(period); this run is bought at the full rate." }
+                let share = total <= 0 || covered >= total - 0.05 ? "all" : covered / total >= 0.5 ? "most" : "some"
+                let banks = draws.count > 1 ? "your banks cover" : "your \(period) bank covers"
+                return "It's \(period), and \(banks) \(share) of this run."
             }
             let nowDraws = self.nowDraws
             let laterDraws = self.laterDraws

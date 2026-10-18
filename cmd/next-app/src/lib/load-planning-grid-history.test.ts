@@ -80,8 +80,8 @@ describe('buildGridHistory', () => {
 
         const history = buildGridHistory(rows, TIME_ZONE, AS_OF);
 
-        // Sorted indexes floor(0.2*27)=5 … ceil(0.3*27)=9 hold d = 6 … 10.
-        expect(slotAt(history, 720).cautiousGridNetExportKw).toBeCloseTo((6 + 7 + 8 + 9 + 10) / 5, 9);
+        // Ranks whose percentile rank/27 is in [0.2, 0.3] are 6, 7, 8: d = 7, 8, 9.
+        expect(slotAt(history, 720).cautiousGridNetExportKw).toBeCloseTo((7 + 8 + 9) / 3, 9);
         expect(slotAt(history, 780).cautiousGridNetExportKw).toBeCloseTo(0.8, 9);
     });
 
@@ -128,5 +128,19 @@ describe('buildGridHistory', () => {
         expect(history.usableDayCount).toBe(6);
         expect(slotAt(history, 60).gridNetExportKw).toBeCloseTo((4 + 100) / 2, 9);
         expect(slotAt(history, 90).gridNetExportKw).toBeCloseTo((4 + 100) / 2, 9);
+    });
+
+    it('cautiousUsesOnlyTheOneInFourDaysWithFewUsableDays', () => {
+        // Five usable days: sorted percentiles 0, 25, 50, 75, 100. Only the 25th
+        // falls in the 20th–30th band, so the dull day is that one day alone.
+        const exportByDay = [1, 10, 20, 30, 40];
+        const rows = rowsForDays('2026-10-13', 5, {
+            exportKw: (dayIndex, hour) => hour === 12 ? exportByDay[dayIndex] : 0,
+        });
+
+        const history = buildGridHistory(rows, TIME_ZONE, AS_OF);
+
+        expect(history.usableDayCount).toBe(5);
+        expect(slotAt(history, 720).cautiousGridNetExportKw).toBeCloseTo(10, 9);
     });
 });
