@@ -498,3 +498,18 @@ describe('SiteRepo live refresh claim', () => {
     });
 });
 
+
+describe('SiteRepo.getSitesForGapHeal', () => {
+    beforeEach(() => queryMock.mockReset());
+
+    it('lists only sites whose owner can call Tesla, least recently imported first', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 'site-1', timezone: 'America/Chicago' }] });
+
+        await expect(new SiteRepo().getSitesForGapHeal()).resolves.toEqual([{ id: 'site-1', timezone: 'America/Chicago' }]);
+        const [sql] = queryMock.mock.calls[0] as [string];
+        expect(sql).toContain('u.is_active = true');
+        expect(sql).toContain('u.refresh_token IS NOT NULL');
+        expect(sql).toContain(`u.auth_status IS DISTINCT FROM 'revoked'`);
+        expect(sql).toContain('ORDER BY s.last_import_at ASC NULLS FIRST');
+    });
+});

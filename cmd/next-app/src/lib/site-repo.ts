@@ -225,6 +225,24 @@ export class SiteRepo {
         return rows.map((r) => r.id);
     }
 
+    /**
+     * Sites whose owner can still call Tesla (active, has a refresh token, not
+     * revoked), least recently imported first so a time-bounded gap heal
+     * round-robins across runs.
+     */
+    async getSitesForGapHeal(): Promise<Array<{ id: string; timezone: string }>> {
+        const { rows } = await pool.query<{ id: string; timezone: string }>(`
+            SELECT s.id, s.timezone
+            FROM "Site" s
+            JOIN "User" u ON u.id = s.user_id
+            WHERE u.is_active = true
+              AND u.refresh_token IS NOT NULL
+              AND u.auth_status IS DISTINCT FROM 'revoked'
+            ORDER BY s.last_import_at ASC NULLS FIRST, s.id
+        `);
+        return rows;
+    }
+
     async getSites(options?: SiteQueryOptions): Promise<Site[]> {
         const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
         const { rows } = await pool.query(`SELECT ${columns} FROM "Site"`);

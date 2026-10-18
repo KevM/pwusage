@@ -135,10 +135,11 @@ export class Importer {
         start: Date,
         end: Date,
         onProgress?: (msg: string) => void,
-        options?: { force?: boolean; maxTimeMs?: number }
+        options?: { force?: boolean; maxTimeMs?: number; maxWindows?: number }
     ): Promise<EnsureDataResult> {
         const force = options?.force ?? false;
         const maxTimeMs = options?.maxTimeMs;
+        const maxWindows = options?.maxWindows;
 
         if (Importer.pendingSyncs.has(siteId) && !force) {
             logSync(`Skip: Data for range already being synced for site ${siteId}`);
@@ -183,20 +184,26 @@ export class Importer {
                         forceRefetch: force,
                     });
 
+                    // A window cap takes the newest days first (the most useful
+                    // to recent-history readers); the rest are re-planned next run.
+                    const toImport = maxWindows === undefined
+                        ? windows
+                        : [...windows].reverse().slice(0, maxWindows);
+
                     const allRows: EnergyDataRow[] = [];
                     let successCount = 0;
                     let lastError: Error | null = null;
                     let timeBudgetExceeded = false;
                     const startTime = Date.now();
 
-                    for (let i = 0; i < windows.length; i++) {
+                    for (let i = 0; i < toImport.length; i++) {
                         if (maxTimeMs !== undefined && Date.now() - startTime >= maxTimeMs) {
                             logSync(`Time budget reached (${maxTimeMs}ms) after processing ${successCount}/${windows.length} windows`);
                             timeBudgetExceeded = true;
                             break;
                         }
 
-                        const window = windows[i];
+                        const window = toImport[i];
                         const dateStr = window.start.toISOString().split('T')[0];
                         if (onProgress) onProgress(`Importing ${dateStr}...`);
                         logSync(`Importing window: ${window.start.toISOString()} - ${window.end.toISOString()}`);
@@ -211,8 +218,8 @@ export class Importer {
                         }
                     }
 
-                    if (windows.length > 0 && successCount === 0 && !timeBudgetExceeded) {
-                        throw lastError || new Error(`All ${windows.length} import windows failed`);
+                    if (toImport.length > 0 && successCount === 0 && !timeBudgetExceeded) {
+                        throw lastError || new Error(`All ${toImport.length} import windows failed`);
                     }
 
                     // Complete only when every planned window imported. Failed

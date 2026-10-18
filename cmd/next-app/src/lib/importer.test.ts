@@ -394,6 +394,29 @@ describe('Importer Sync Logic', () => {
         vi.spyOn(Date, 'now').mockRestore();
     });
 
+    it('imports only the newest maxWindows planned windows and reports incomplete', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+
+        const start = new Date('2026-01-10T00:00:00Z');
+        const end = new Date('2026-01-15T00:00:00Z');
+
+        const result = await importer.ensureDataForRange('site-123', start, end, undefined, { maxWindows: 2 });
+
+        expect(importSpy.mock.calls.map(c => c[1].toISOString())).toEqual([
+            '2026-01-14T00:00:00.000Z',
+            '2026-01-13T00:00:00.000Z',
+        ]);
+        expect(result.totalWindows).toBe(5);
+        expect(result.processedWindows).toBe(2);
+        expect(result.complete).toBe(false);
+    });
+
     it('returns complete: false when some planned windows fail and others succeed', async () => {
         (importer as unknown as { repo: unknown }).repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
