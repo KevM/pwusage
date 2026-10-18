@@ -53,17 +53,45 @@ export class Importer {
     }
 
 
-    async getTodayData(siteId: string): Promise<EnergyDataRow[]> {
+    /**
+     * Fetch today's rows (site-local midnight → now). When `latestTimestamp`
+     * (the newest stored row) is before today's midnight, also fetch the rest of
+     * yesterday: otherwise the last refresh before midnight (~22:50) leaves
+     * 22:55–23:55 unimported forever, since the next refresh only asks for the
+     * new day. Bounded to one extra day; older gaps are left to planImport.
+     */
+    async getTodayData(siteId: string, latestTimestamp?: Date | null): Promise<EnergyDataRow[]> {
         const site = await this.siteRepo.getSite(siteId);
         if (!site) return [];
 
         const now = new Date();
         const start = EnergyRepo.getSiteMidnight(now, site.timezone);
+        const tailStart = this.previousDayTailStart(latestTimestamp, start, site.timezone);
 
         console.log(`[Importer] Fetching today's data: ${start.toISOString()} to ${now.toISOString()}`);
 
         // We fetch from Tesla. We don't write to DB yet.
-        return this.fetchRange(site, start, now, 'day');
+        const [tail, today] = await Promise.all([
+            tailStart ? this.fetchPreviousDayTail(site, tailStart, start) : Promise.resolve([]),
+            this.fetchRange(site, start, now, 'day'),
+        ]);
+        return [...tail, ...today];
+    }
+
+    private previousDayTailStart(latestTimestamp: Date | null | undefined, todayMidnight: Date, timezone: string): Date | null {
+        if (!latestTimestamp) return null;
+        // The last 5-minute sample of a day is 23:55, so a row within 5 min of midnight means the tail is complete.
+        if (latestTimestamp.getTime() + 5 * 60 * 1000 >= todayMidnight.getTime()) return null;
+        const yesterdayMidnight = EnergyRepo.getSiteMidnight(new Date(todayMidnight.getTime() - 1), timezone);
+        return latestTimestamp > yesterdayMidnight ? latestTimestamp : yesterdayMidnight;
+    }
+
+    private async fetchPreviousDayTail(site: SiteWithTariffs, start: Date, todayMidnight: Date): Promise<EnergyDataRow[]> {
+        console.log(`[Importer] Fetching previous-day tail: ${start.toISOString()} to ${todayMidnight.toISOString()}`);
+        // End 1s before midnight so Tesla stays within yesterday (see loadInterval), and
+        // filter since Tesla returns the whole calendar day regardless of start.
+        const rows = await this.fetchRange(site, start, new Date(todayMidnight.getTime() - 1000), 'day');
+        return rows.filter(r => r.timestamp >= start && r.timestamp < todayMidnight);
     }
 
     async persistHistory(siteId: string, rows: EnergyDataRow[], latestTimestamp: Date | null): Promise<number> {

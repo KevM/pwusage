@@ -1,6 +1,6 @@
 vi.mock('./energy-repo-factory',()=>({createEnergyRepo:(_timezone:string,rawRepo:EnergyRepo)=>rawRepo}));
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Importer } from './importer';
 import { EnergyHistoryEntry, TeslaClient } from './tesla-client';
 import { EnergyRepo } from './energy-repo';
@@ -419,3 +419,97 @@ describe('Importer Sync Logic', () => {
     });
 });
 
+
+describe('Importer.getTodayData previous-day tail', () => {
+    // getSiteMidnight is mocked to floor UTC, so "today" starts 2026-10-16T00:00Z.
+    const NOW = new Date('2026-10-16T01:00:00Z');
+    const TODAY = new Date('2026-10-16T00:00:00Z');
+    const YESTERDAY = new Date('2026-10-15T00:00:00Z');
+
+    let importer: Importer;
+    let mockClient: TeslaClient;
+
+    function entry(timestamp: string): EnergyHistoryEntry {
+        return {
+            timestamp,
+            solar_energy_exported: 0, generator_energy_exported: 0,
+            grid_energy_imported: 10, grid_services_energy_imported: 0, grid_services_energy_exported: 0,
+            grid_energy_exported_from_solar: 0, grid_energy_exported_from_generator: 0,
+            grid_energy_exported_from_battery: 0, battery_energy_exported: 0,
+            battery_energy_imported_from_grid: 0, battery_energy_imported_from_solar: 0,
+            battery_energy_imported_from_generator: 0, consumer_energy_imported_from_grid: 10,
+            consumer_energy_imported_from_solar: 0, consumer_energy_imported_from_battery: 0,
+            consumer_energy_imported_from_generator: 0, total_home_usage: 10,
+            total_solar_generation: 0, total_battery_charge: 0, total_battery_discharge: 0,
+            total_grid_energy_exported: 0,
+        };
+    }
+
+    // Tesla returns the whole calendar day regardless of the requested start time.
+    const yesterdayEntries = ['22:45', '22:50', '22:55', '23:55'].map(t => entry(`2026-10-15T${t}:00.000Z`));
+    const todayEntries = ['00:00', '00:05', '00:55'].map(t => entry(`2026-10-16T${t}:00.000Z`));
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        mockClient = new TeslaClient({ accessToken: 'test' });
+        vi.mocked(mockClient.getEnergyHistory).mockImplementation(async (_id, start) =>
+            start.getTime() < TODAY.getTime() ? yesterdayEntries : todayEntries);
+        vi.mocked(mockClient.getSoeHistory).mockResolvedValue([]);
+        importer = new Importer(mockClient);
+        (importer as unknown as { siteRepo: unknown }).siteRepo = {
+            getSite: vi.fn().mockResolvedValue({
+                id: 'site-123',
+                timezone: 'America/Chicago',
+                installed: new Date('2025-01-01T00:00:00Z'),
+                tariffs: [{ id: 1, site_id: 'site-123', updated: new Date('2025-01-01T00:00:00Z'), name: 'Default Tariff', seasons: [] }],
+            }),
+        };
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const isos = (rows: Array<{ timestamp: Date }>) => rows.map(r => r.timestamp.toISOString());
+
+    it('also fetches the rest of yesterday when the last stored row is before midnight', async () => {
+        const rows = await importer.getTodayData('site-123', new Date('2026-10-15T22:50:00Z'));
+
+        expect(mockClient.getEnergyHistory).toHaveBeenCalledTimes(2);
+        const tailCall = vi.mocked(mockClient.getEnergyHistory).mock.calls.find(c => c[1].getTime() < TODAY.getTime())!;
+        expect(tailCall[1].toISOString()).toBe('2026-10-15T22:50:00.000Z');
+        expect(tailCall[2].getTime()).toBeLessThan(TODAY.getTime());
+        expect(isos(rows)).toEqual([
+            '2026-10-15T22:50:00.000Z',
+            '2026-10-15T22:55:00.000Z',
+            '2026-10-15T23:55:00.000Z',
+            '2026-10-16T00:00:00.000Z',
+            '2026-10-16T00:05:00.000Z',
+            '2026-10-16T00:55:00.000Z',
+        ]);
+    });
+
+    it('bounds the tail to yesterday when the last stored row is older', async () => {
+        const rows = await importer.getTodayData('site-123', new Date('2026-10-13T12:00:00Z'));
+
+        expect(mockClient.getEnergyHistory).toHaveBeenCalledTimes(2);
+        const tailCall = vi.mocked(mockClient.getEnergyHistory).mock.calls.find(c => c[1].getTime() < TODAY.getTime())!;
+        expect(tailCall[1].toISOString()).toBe(YESTERDAY.toISOString());
+        expect(isos(rows)).toContain('2026-10-15T22:45:00.000Z');
+    });
+
+    it.each([
+        ['yesterday is complete', new Date('2026-10-15T23:55:00Z')],
+        ['the latest row is from today', new Date('2026-10-16T00:50:00Z')],
+        ['there is no stored data', null],
+        ['no latest timestamp is passed', undefined],
+    ])('fetches only today when %s', async (_label, latest) => {
+        const rows = await importer.getTodayData('site-123', latest);
+
+        expect(mockClient.getEnergyHistory).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(mockClient.getEnergyHistory).mock.calls[0][1].toISOString()).toBe(TODAY.toISOString());
+        expect(isos(rows)).toEqual(todayEntries.map(e => e.timestamp));
+    });
+});
