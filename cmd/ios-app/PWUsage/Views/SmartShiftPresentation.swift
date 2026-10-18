@@ -17,6 +17,12 @@ struct CostBar: Equatable {
     let isRecommended: Bool
 }
 
+/// A dashed rate-period switch on the chart, labelled "← Peak | Off-Peak →".
+struct SwitchMarker: Equatable {
+    let date: Date
+    let label: String
+}
+
 /// One rate period's "energy weather" lane, from now to the end of the comparison.
 struct LaneDisplay: Equatable {
     /// "Off-Peak bank (kWh)"
@@ -28,7 +34,7 @@ struct LaneDisplay: Equatable {
     let startNow: [LoadTimingForecastEstimator.BalancePoint]?
     /// One label when both plans end at the same rounded value, else `[recommended, now]`.
     let endLabels: [String]
-    let switches: [Date]
+    let switches: [SwitchMarker]
 }
 
 struct SmartShiftVerdict: Equatable {
@@ -50,6 +56,8 @@ struct SmartShiftVerdict: Equatable {
     /// "Charge now"
     let nowLabel: String
     let lanes: [LaneDisplay]
+    /// Clock times for the chart's x-axis: now, each run's end, and each switch.
+    let axisDates: [Date]
     let notes: [Note]
     let accessibilitySummary: String
 }
@@ -252,9 +260,27 @@ enum SmartShiftPresentation {
                 laterLabel: laterLabel,
                 nowLabel: nowLabel,
                 lanes: lanes,
+                axisDates: axisDates,
                 notes: notes(forecast: forecast),
                 accessibilitySummary: accessibilitySummary
             )
+        }
+
+        var switchMarkers: [SwitchMarker] {
+            comparison.periodSwitches.map { date in
+                let before = timing.tariffTimeline.first { $0.end == date }?.name
+                let after = timing.tariffTimeline.first { $0.start == date }?.name
+                let label = [before.map { "\u{2190} \($0)" }, after.map { "\($0) \u{2192}" }]
+                    .compactMap { $0 }.joined(separator: " | ")
+                return SwitchMarker(date: date, label: label)
+            }
+        }
+
+        var axisDates: [Date] {
+            let duration = comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart)
+            let ends = [now.addingTimeInterval(duration), comparison.recommendedEnd]
+            let dates = Set([now] + ends + comparison.periodSwitches)
+            return dates.filter { $0 >= now && $0 <= comparison.horizonEnd }.sorted()
         }
 
         var percentLess: String? {
@@ -275,18 +301,28 @@ enum SmartShiftPresentation {
             }
             let duration = comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart)
             let nowPeriods = periods(from: now, to: now.addingTimeInterval(duration))
-            guard let laterKey = periodKey(at: comparison.recommendedStart), let first = nowPeriods.first else { return "" }
+            let laterPeriods = periods(from: comparison.recommendedStart, to: comparison.recommendedEnd)
+            guard let first = nowPeriods.first, !laterPeriods.isEmpty else { return "" }
             let time = when(comparison.recommendedStart)
-            if first != laterKey {
+            let laterBanks = banks(laterPeriods)
+            if nowPeriods == laterPeriods {
                 return "Starting now runs during \(name(first)), where you \(bankPhrase(first)). "
-                    + "Run at \(time) to use your \(name(laterKey)) bank."
+                    + "By \(time), solar adds to your \(laterBanks)."
             }
-            if let other = nowPeriods.first(where: { $0 != laterKey }) {
+            if first == laterPeriods.first, let other = nowPeriods.first(where: { !laterPeriods.contains($0) }) {
                 return "Starting now runs into \(name(other)), where you \(bankPhrase(other)). "
-                    + "Run at \(time) to stay in your \(name(laterKey)) bank."
+                    + "Run at \(time) to stay in your \(laterBanks)."
             }
             return "Starting now runs during \(name(first)), where you \(bankPhrase(first)). "
-                + "By \(time), solar adds to your \(name(first)) bank."
+                + "Run at \(time) to use your \(laterBanks)."
+        }
+
+        /// "Off-Peak bank", "Peak and Off-Peak banks", "Mid, Peak and Off-Peak banks".
+        func banks(_ keys: [String]) -> String {
+            let names = keys.map(name)
+            guard let last = names.last else { return "bank" }
+            let list = names.count == 1 ? last : "\(names.dropLast().joined(separator: ", ")) and \(last)"
+            return "\(list) \(names.count == 1 ? "bank" : "banks")"
         }
 
         func lane(_ lane: LoadTimingForecastEstimator.BalanceLane) -> LaneDisplay {
@@ -301,7 +337,7 @@ enum SmartShiftPresentation {
                 recommended: lane.recommended,
                 startNow: isNow ? nil : lane.startNow,
                 endLabels: endLabels,
-                switches: comparison.periodSwitches
+                switches: switchMarkers
             )
         }
 

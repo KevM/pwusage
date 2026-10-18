@@ -109,8 +109,8 @@ struct LoadTimingForecastEstimator {
         /// A rate period the runs could touch has no observed balance, so it was
         /// priced from zero (at the buy rate). Only the `.flat` projection allows this.
         let hasUnobservedBalance: Bool
-        /// Periods either run touches plus the period in effect now, ordered by
-        /// first occurrence from now.
+        /// Periods either run touches plus the period in effect now (every period in
+        /// the horizon when starting now wins), ordered by first occurrence from now.
         let lanes: [BalanceLane]
         /// Tariff period changes strictly inside (now, horizonEnd).
         let periodSwitches: [Date]
@@ -365,6 +365,9 @@ struct LoadTimingForecastEstimator {
         }
         var keys = periods(touching: startNow.start, startNow.end).union(periods(touching: recommended.start, recommended.end))
         if let current = tariffs.first(where: { $0.start <= now && now < $0.end }) { keys.insert(current.periodKey) }
+        // When starting now wins, every bank it was compared against keeps a (flat)
+        // lane, so people can see the run doesn't draw on them.
+        if recommended.start == startNow.start { keys.formUnion(periods(touching: now, horizonEnd)) }
         let firstOccurrence = Dictionary(tariffs.filter { $0.end > now && $0.start < horizonEnd }
             .map { ($0.periodKey, max($0.start, now)) }, uniquingKeysWith: min)
 

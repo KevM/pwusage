@@ -241,4 +241,152 @@ private struct SolarForecastPreview: View {
     SolarForecastPreview(mode: .combinedArrays)
         .environment(\.dynamicTypeSize, .accessibility2)
 }
+
+/// Fixture verdicts for the Smart Shift card, built by running the real estimator
+/// and `SmartShiftPresentation.make` on synthetic Chicago inputs.
+enum SmartShiftPreviewFixture: String {
+    case laterWithForecast
+    case laterWithoutForecast
+    case nowIsCheapest
+    case threePeriods
+
+    static let timeZone = SITE_PREVIEW_TIME_ZONE
+    /// 08:30 local, during Peak (or Mid for the three-period plan).
+    static let now = ISO8601DateFormatter().date(from: "2026-10-19T13:30:00Z")!
+
+    private static var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timeZone)!
+        return calendar
+    }
+
+    private static func local(_ hours: Double) -> Date {
+        calendar.startOfDay(for: now).addingTimeInterval(hours * 3600)
+    }
+
+    private struct Span {
+        let from: Double
+        let to: Double
+        let key: String
+        let buy: Double
+        let sell: Double
+    }
+
+    private var spans: [Span] {
+        let day: [Span]
+        switch self {
+        case .threePeriods:
+            day = [Span(from: 0, to: 7, key: "Off-Peak", buy: 0.20, sell: 0.26),
+                   Span(from: 7, to: 15, key: "Mid", buy: 0.30, sell: 0.12),
+                   Span(from: 15, to: 20, key: "Peak", buy: 0.45, sell: 0.10),
+                   Span(from: 20, to: 24, key: "Off-Peak", buy: 0.20, sell: 0.26)]
+        default:
+            day = [Span(from: 0, to: 7, key: "Off-Peak", buy: 0.20, sell: 0.26),
+                   Span(from: 7, to: 16.5, key: "Peak", buy: 0.38, sell: 0.10),
+                   Span(from: 16.5, to: 24, key: "Off-Peak", buy: 0.20, sell: 0.26)]
+        }
+        return [0.0, 24].flatMap { offset in
+            day.map { Span(from: $0.from + offset, to: $0.to + offset, key: $0.key, buy: $0.buy, sell: $0.sell) }
+        }
+    }
+
+    private var balances: [String: Double] {
+        switch self {
+        case .threePeriods: ["Off-Peak": 18, "Mid": -4, "Peak": 6]
+        case .nowIsCheapest: ["Off-Peak": 18, "Peak": 40]
+        // Solar lifts Peak through the day, so it starts deep enough to stay owed.
+        case .laterWithForecast: ["Off-Peak": 30, "Peak": -40]
+        default: ["Off-Peak": 18, "Peak": -6]
+        }
+    }
+
+    private var timing: LoadTiming {
+        let segments = spans.map {
+            LoadTimingTariffSegment(start: Self.local($0.from), end: Self.local($0.to), periodKey: $0.key, name: $0.key,
+                                    buyRate: $0.buy, sellRate: $0.sell)
+        }
+        var seen: Set<String> = []
+        let periods = spans.compactMap { span -> LoadTimingPeriod? in
+            guard seen.insert(span.key).inserted else { return nil }
+            return LoadTimingPeriod(name: span.key, marginalCost: nil, basis: "cycle-net-export",
+                                    cycleNetExportKwh: balances[span.key] ?? 0, isActive: false, nextStartPhrase: nil,
+                                    buyRate: span.buy, sellRate: span.sell)
+        }
+        return LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: periods,
+                          pricingPeriods: periods, tariffTimeline: segments, nextCheaper: nil, nextCheaperPhrase: nil,
+                          nextStartPhraseByKey: [:])
+    }
+
+    private var projection: LoadTimingForecastEstimator.Projection {
+        guard self == .laterWithForecast else { return .flat(timeZone: Self.timeZone) }
+        let intervals = (0..<96).map { index -> SolarForecastInterval in
+            let start = Self.local(Double(index) / 2)
+            let hour = Self.calendar.component(.hour, from: start)
+            let sun = max(0, sin(Double.pi * (Double(hour) - 7) / 11))
+            return SolarForecastInterval(periodStart: start, periodEnd: start.addingTimeInterval(1800), powerKw: 2.6 * sun)
+        }
+        let slots = stride(from: 0, to: 1440, by: 30).map {
+            LoadTimingForecastEstimator.PlanningSlot(localMinute: $0, homeKw: 0.7, batteryNetChargeKw: 0)
+        }
+        return .forecast(intervals: intervals, context: .init(timeZone: Self.timeZone, slots: slots, asOf: Self.now))
+    }
+
+    var screen: SmartShiftScreen {
+        let car = LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: 0, durationHours: 0,
+                              carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 60,
+                                                           targetStateOfCharge: 80, chargingLevel: .level2))
+        let result = LoadTimingForecastEstimator.evaluate(
+            profile: car, now: Self.now, timing: timing, projection: projection, balanceSourceTime: Self.now,
+            billingCycleEnd: Self.now.addingTimeInterval(20 * 86_400), currencyCode: "USD")
+        return SmartShiftPresentation.make(
+            profile: car, result: result, forecast: self == .laterWithForecast ? .ready : .none,
+            refreshUnavailable: false, timing: timing, now: Self.now,
+            billingCycleEnd: Self.now.addingTimeInterval(20 * 86_400), currencyCode: "USD", timeZone: Self.timeZone)
+    }
+}
+
+private struct SmartShiftVerdictPreview: View {
+    let fixture: SmartShiftPreviewFixture
+
+    var body: some View {
+        ScrollView {
+            Group {
+                switch fixture.screen.content {
+                case .verdict(let verdict):
+                    SmartShiftVerdictView(verdict: verdict, timeZone: SmartShiftPreviewFixture.timeZone)
+                case .blocked(let message):
+                    Text(message)
+                case .noJobs:
+                    Text("Add a Job")
+                }
+            }
+            .padding()
+            .background { SectionTheme.loadTiming.cardBackground }
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .padding()
+        }
+        .background { SectionTheme.loadTiming.screenBackground }
+    }
+}
+
+#Preview("Smart Shift · Later start with forecast") {
+    SmartShiftVerdictPreview(fixture: .laterWithForecast)
+}
+
+#Preview("Smart Shift · Later start without forecast") {
+    SmartShiftVerdictPreview(fixture: .laterWithoutForecast)
+}
+
+#Preview("Smart Shift · Now is cheapest") {
+    SmartShiftVerdictPreview(fixture: .nowIsCheapest)
+}
+
+#Preview("Smart Shift · Three rate periods") {
+    SmartShiftVerdictPreview(fixture: .threePeriods)
+}
+
+#Preview("Smart Shift · Later start, dark") {
+    SmartShiftVerdictPreview(fixture: .laterWithoutForecast)
+        .preferredColorScheme(.dark)
+}
 #endif

@@ -102,6 +102,8 @@ struct SmartShiftPresentationTests {
         #expect(verdict.laterLabel == "Charge later")
         #expect(verdict.nowLabel == "Charge now")
         #expect(verdict.notes == [.connectSolcast])
+        // Now, each run's end, and each rate-period switch.
+        #expect(verdict.axisDates == [Self.now, Self.at(14.4), Self.at(16.5), Self.at(22.4), Self.at(31), Self.at(40.5)])
     }
 
     @Test func laterStartTomorrowSaysSo() throws {
@@ -121,6 +123,7 @@ struct SmartShiftPresentationTests {
         #expect(verdict.percentLess == nil)
         #expect(verdict.lanes.allSatisfy { $0.startNow == nil })
         #expect(verdict.lanes.allSatisfy { $0.endLabels.count == 1 })
+        #expect(verdict.axisDates == [Self.now, Self.at(14.4), Self.at(16.5), Self.at(31), Self.at(40.5)])
     }
 
     @Test func startLabelsAndMergedEndLabels() throws {
@@ -135,7 +138,11 @@ struct SmartShiftPresentationTests {
         #expect(verdict.lanes[0].endLabels == ["+4", "+18"])
         #expect(verdict.lanes[1].endLabels == ["+10"])
         #expect(verdict.lanes[2].endLabels == ["0", "\u{2212}3"])
-        #expect(verdict.lanes[0].switches == [Self.at(16.5), Self.at(31), Self.at(40.5)])
+        #expect(verdict.lanes[0].switches == [
+            SwitchMarker(date: Self.at(16.5), label: "\u{2190} Peak | Off-Peak \u{2192}"),
+            SwitchMarker(date: Self.at(31), label: "\u{2190} Off-Peak | Peak \u{2192}"),
+            SwitchMarker(date: Self.at(40.5), label: "\u{2190} Peak | Off-Peak \u{2192}"),
+        ])
     }
 
     @Test func unobservedBalanceNote() throws {
@@ -194,6 +201,14 @@ struct SmartShiftPresentationTests {
         #expect(Self.normalized(verdict.why) == "Starting now runs during Peak, where you have no bank. Run at 4:30 PM to use your Off-Peak bank.")
     }
 
+    @Test func whyLineNamesEveryBankTheLaterRunUses() throws {
+        // 15:00 + 5.9 h runs through the end of Peak and into Off-Peak.
+        let verdict = try Self.verdict(Self.make(result: .init(
+            comparison: Self.comparison(recommendedStart: Self.at(15)), unavailableReason: nil)))
+        #expect(Self.normalized(verdict.why)
+            == "Starting now runs during Peak, where you have no bank. Run at 3:00 PM to use your Peak and Off-Peak banks.")
+    }
+
     @Test func whyLineWhenNowIsCheapest() throws {
         let covered = [Self.lane("Off-Peak", start: 50, later: 10, startNow: 10)]
         let partly = [Self.lane("Off-Peak", start: 25, later: 0, startNow: 0)]
@@ -235,4 +250,5 @@ struct SmartShiftPresentationTests {
         #expect(verdict.accessibilitySummary == "Peak bank: \u{2212}6 kWh owed now; charge later leaves 6 kWh owed, charge now leaves 20 kWh owed. "
             + "Off-Peak bank: +18 kWh banked now; charge later leaves 4 kWh banked, charge now leaves 18 kWh banked.")
     }
+
 }

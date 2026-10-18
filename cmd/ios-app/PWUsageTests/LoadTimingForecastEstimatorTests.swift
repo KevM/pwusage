@@ -627,4 +627,15 @@ struct LoadTimingForecastEstimatorTests {
         #expect(abs(try #require(peak.recommended.last).kwh - (-6 + 3 * 8 + 3 * 9.5)) < 0.000_001)
         #expect(try #require(peak.recommended.last).kwh > peak.startKwh)
     }
+
+    @Test func nowIsCheapestLanesStillShowUntouchedBanks() throws {
+        // Spending the Peak bank now forgoes only 0.10/kWh, so starting now wins,
+        // and Off-Peak still gets a flat lane so people can see the run skips it.
+        let comparison = try #require(evaluateFlat(profile: profile(14, hours: 5.9), now: hours(8.5), tariffs: peakOffPeakTariffs(),
+                                                   balances: ["Peak": 40, "Off-Peak": 18]).comparison)
+        #expect(comparison.recommendedStart == hours(8.5))
+        #expect(comparison.lanes.map(\.periodKey) == ["Peak", "Off-Peak"])
+        let offPeak = try lane("Off-Peak", in: comparison)
+        #expect(offPeak.recommended.allSatisfy { $0.kwh == 18 })
+    }
 }
