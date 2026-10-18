@@ -201,6 +201,14 @@ enum SmartShiftPresentation {
         }
     }
 
+    /// When the card's comparison goes stale on its own: the recommended start
+    /// arriving, or the rate period changing. The comparison is computed once per
+    /// body pass, so the view schedules a pass for then rather than ticking.
+    static func nextRefresh(comparison: LoadTimingForecastEstimator.Comparison?, now: Date) -> Date? {
+        guard let comparison else { return nil }
+        return ([comparison.recommendedStart] + comparison.periodSwitches).filter { $0 > now }.min()
+    }
+
     static let connectSolcastNote = "Without a solar forecast, banks are shown as they stand now. Connect Solcast to see today's solar."
     static let connectSolcastHistoryNote = "Without a solar forecast, banks follow your last four weeks. Connect Solcast to see this week's solar."
     static let checkingSolarNote = "Checking today's solar…"

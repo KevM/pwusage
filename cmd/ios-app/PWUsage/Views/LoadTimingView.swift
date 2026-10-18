@@ -236,6 +236,8 @@ struct LoadTimingView: View {
     @State private var isSolarForecastSheetPresented = false
     @State private var detailsSnapshot: SmartShiftDetailsSnapshot?
     @State private var exploredProfileID: String?
+    /// Bumped when the comparison goes stale on its own (see `nextRefresh`), to run a body pass.
+    @State private var staleRefreshes = 0
 
     init(coordinator: DashboardCoordinator, site: MobileSite, isSelected: Bool = true, profileStore: LoadProfileStore? = nil, initialExploredProfileID: String? = nil) {
         self.coordinator = coordinator
@@ -384,7 +386,18 @@ struct LoadTimingView: View {
                         nextCheaperPhrase: nil,
                         nextStartPhraseByKey: [:]
                     )
-                    jobCard(smartShiftState(now: Date(), timing: timingForDisplay, response: response))
+                    // Read so a scheduled refresh re-runs this pass.
+                    let _ = staleRefreshes
+                    let state = smartShiftState(now: Date(), timing: timingForDisplay, response: response)
+                    jobCard(state)
+                        .task(id: SmartShiftPresentation.nextRefresh(comparison: state.evaluation?.result.comparison, now: state.now)) {
+                            guard let refresh = SmartShiftPresentation.nextRefresh(
+                                comparison: state.evaluation?.result.comparison, now: state.now) else { return }
+                            // A second past the boundary, so the next pass sees it as passed.
+                            let delay = max(0, refresh.timeIntervalSinceNow) + 1
+                            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                            staleRefreshes &+= 1
+                        }
                     metadata(response)
                 } else if coordinator.bill.isUnavailable {
                     noResponseJobCard

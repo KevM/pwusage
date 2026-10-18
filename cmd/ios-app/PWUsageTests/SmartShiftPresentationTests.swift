@@ -665,3 +665,30 @@ extension SmartShiftPresentationTests {
         #expect(verdict.why.hasPrefix("Starting now would draw on your On-Peak bank"))
     }
 }
+
+// MARK: - Recompute when the card goes stale
+
+extension SmartShiftPresentationTests {
+    @Test func nextRefreshIsTheRecommendedStartWhenItComesFirst() {
+        // Recommended at 16:30; the next switch is 16:30 too, then 31:00.
+        let comparison = Self.comparison(recommendedStart: Self.at(15))
+        #expect(SmartShiftPresentation.nextRefresh(comparison: comparison, now: Self.now) == Self.at(15))
+    }
+
+    @Test func nextRefreshIsTheNextRateSwitchOnceTheStartHasPassed() {
+        let comparison = Self.comparison(recommendedStart: Self.at(16.5))
+        // After the recommended start (and the 16:30 switch), the next switch is at 31:00.
+        #expect(SmartShiftPresentation.nextRefresh(comparison: comparison, now: Self.at(17)) == Self.at(31))
+    }
+
+    @Test func nextRefreshWhenStartingNowIsTheNextSwitch() {
+        let comparison = Self.comparison(costNow: 5, recommendedCost: 5, savings: 0, recommendedStart: Self.now)
+        #expect(SmartShiftPresentation.nextRefresh(comparison: comparison, now: Self.now) == Self.at(16.5))
+    }
+
+    @Test func nextRefreshIsNilWithoutAComparisonOrAnythingAhead() {
+        #expect(SmartShiftPresentation.nextRefresh(comparison: nil, now: Self.now) == nil)
+        let comparison = Self.comparison(recommendedStart: Self.at(15))
+        #expect(SmartShiftPresentation.nextRefresh(comparison: comparison, now: Self.at(50)) == nil)
+    }
+}
