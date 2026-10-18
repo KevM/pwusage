@@ -1039,3 +1039,39 @@ extension LoadTimingForecastEstimatorTests {
         #expect(abs(comparison.recommendedCost - (31.5 * 0.04 + 21.2 * 0.10)) < 1e-6)
     }
 }
+
+// MARK: - Device report, 2026-10-18 (Harrison)
+
+extension LoadTimingForecastEstimatorTests {
+    @Test("Equally cheap starts go to the earliest despite floating-point noise")
+    func equallyCheapStartsGoToTheEarliest() throws {
+        // Sunday 17:39 UTC; Monday On-Peak 08:00–20:00 banks plenty, Off-Peak is owed.
+        // The car (73 kWh, 15→80%) costs 52.7 kWh × 4¢ at any start that fits in On-Peak.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let dayZero = start.addingTimeInterval(-8 * 3600)
+        let sunday = try #require((0..<7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
+        let now = dayZero.addingTimeInterval(Double(sunday) * 86_400 + 17 * 3600 + 39 * 60 + 41.869)
+        let monday = dayZero.addingTimeInterval(Double(sunday + 1) * 86_400)
+        let car = LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: 36, durationHours: 4,
+                              carSettings: CarLoadSettings(capacityKwh: 73, initialStateOfCharge: 15, targetStateOfCharge: 80,
+                                                           chargingLevel: .level2))
+        let weekday = { (day: Int) in !calendar.isDateInWeekend(dayZero.addingTimeInterval(Double(day) * 86_400)) }
+        let context = historyContext { Self.isDaylight($0) ? 1.7 : -0.8 }
+        let result = evaluate(.history(context: context), profile: car, now: now,
+                              tariffs: dailyTariffs(days: sunday + 25, onPeakDay: weekday),
+                              balances: ["ON_PEAK": 4.615, "OFF_PEAK": -54.653], cycleEnd: now.addingTimeInterval(23 * 86_400))
+
+        let comparison = try #require(result.comparison)
+        #expect(comparison.recommendedStart == monday.addingTimeInterval(8 * 3600))
+
+        // With a dull day that imports in On-Peak, every On-Peak start fails; the
+        // ruled-out start must still be the earliest of the equally cheap ones.
+        let dull = historyContext(grid: { Self.isDaylight($0) ? 1.7 : -0.8 }, cautious: { Self.isDaylight($0) ? -0.8 : -0.8 })
+        let rejected = try #require(evaluate(.history(context: dull), profile: car, now: now,
+                                             tariffs: dailyTariffs(days: sunday + 25, onPeakDay: weekday),
+                                             balances: ["ON_PEAK": 4.615, "OFF_PEAK": -54.653],
+                                             cycleEnd: now.addingTimeInterval(23 * 86_400)).comparison)
+        #expect(rejected.ruledOut?.start == monday.addingTimeInterval(8 * 3600))
+    }
+}

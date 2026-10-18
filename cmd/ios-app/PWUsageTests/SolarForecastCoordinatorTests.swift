@@ -57,6 +57,28 @@ struct SolarForecastCoordinatorTests {
         #expect(api.liveSiteIDs.isEmpty)
     }
 
+    @Test("A cached household profile does not hide why the forecast is unusable")
+    func cachedContextKeepsTheRealForecastReason() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastState == .enhanced)
+
+        // The profile is now served from the 24-hour cache; the forecast has gone stale.
+        await forecast.setRecommendationUsable(false)
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(api.contextSiteIDs == ["site-a"])
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastUnavailableReason == .forecastNotUsable)
+        #expect(coordinator.householdPattern != nil)
+    }
+
     @Test("householdPatternLoadsWithoutSolcast")
     func householdPatternLoadsWithoutSolcast() async {
         let clock = ForecastTestClock()
