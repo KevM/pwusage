@@ -17,7 +17,7 @@ struct LoadTimingForecastEstimator {
     static let safetyShortfallKwh = 3.0
 
     /// Whether the cautious projection lets the starts dip into banks.
-    enum Safety: Equatable {
+    enum Safety: Codable, Equatable {
         /// Starting now passes (and so does the recommendation).
         case nowSafe
         /// Starting now would leave this bank short; a later start passes and may cost more than now.
@@ -27,14 +27,14 @@ struct LoadTimingForecastEstimator {
     }
 
     /// The cheapest start the safety rule rejected, when it is cheaper than the recommendation.
-    struct RuledOut: Equatable {
+    struct RuledOut: Codable, Equatable {
         let start: Date
         let cost: Double
         /// The bank a cloudy week would leave more than `safetyShortfallKwh` short.
         let periodKey: String
     }
 
-    enum UnavailableReason: Equatable {
+    enum UnavailableReason: String, Codable, Equatable {
         case invalidInput
         case missingTariff
         case incompleteBalance
@@ -45,7 +45,7 @@ struct LoadTimingForecastEstimator {
         case noEnergyNeeded
     }
 
-    struct PlanningSlot: Equatable {
+    struct PlanningSlot: Codable, Equatable {
         let localMinute: Int
         let homeKw: Double?
         let batteryNetChargeKw: Double?
@@ -55,7 +55,7 @@ struct LoadTimingForecastEstimator {
         var cautiousGridNetExportKw: Double? = nil
     }
 
-    struct PlanningContext: Equatable {
+    struct PlanningContext: Codable, Equatable {
         let timeZone: String
         let slots: [PlanningSlot]
         let asOf: Date
@@ -75,6 +75,18 @@ struct LoadTimingForecastEstimator {
         case forecast(intervals: [SolarForecastInterval], context: PlanningContext)
         case history(context: PlanningContext)
         case flat(timeZone: String)
+
+        enum Kind: String, Codable, Equatable {
+            case forecast, history, flat
+        }
+
+        var kind: Kind {
+            switch self {
+            case .forecast: .forecast
+            case .history: .history
+            case .flat: .flat
+            }
+        }
 
         var timeZone: String {
             switch self {
@@ -110,14 +122,14 @@ struct LoadTimingForecastEstimator {
         var projectsFlow: Bool { context != nil }
     }
 
-    struct BalancePoint: Equatable {
+    struct BalancePoint: Codable, Equatable {
         let date: Date
         let kwh: Double
     }
 
     /// One rate period's signed balance from `now` to the horizon end, for the
     /// run starting now and for the recommended run, each on top of the baseline.
-    struct BalanceLane: Equatable {
+    struct BalanceLane: Codable, Equatable {
         let periodKey: String
         /// The projected balance at `now`.
         let startKwh: Double
@@ -144,7 +156,7 @@ struct LoadTimingForecastEstimator {
         }
     }
 
-    struct Comparison: Equatable {
+    struct Comparison: Codable, Equatable {
         /// The **marginal** cost of running the load now against the projected
         /// household baseline — `Σ (cost(withLoad) − cost(baseline))` over the
         /// run's intervals. This is *not* the absolute cost of the energy
@@ -220,7 +232,7 @@ struct LoadTimingForecastEstimator {
         }
     }
 
-    struct Result: Equatable {
+    struct Result: Codable, Equatable {
         let comparison: Comparison?
         let unavailableReason: UnavailableReason?
     }

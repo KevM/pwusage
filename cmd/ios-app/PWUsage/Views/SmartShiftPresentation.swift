@@ -110,6 +110,8 @@ struct SmartShiftScreen: Equatable {
 struct SmartShiftEvaluation: Equatable {
     let result: LoadTimingForecastEstimator.Result
     let forecast: ForecastAvailability
+    /// The projection that priced `result`; `nil` when none could run.
+    var projection: LoadTimingForecastEstimator.Projection.Kind? = nil
 }
 
 /// Every Smart Shift sentence and display decision, kept out of the views so it can be tested.
@@ -163,18 +165,22 @@ enum SmartShiftPresentation {
             if forecast == .ready, let intervals, let context {
                 let result = LoadTimingForecastEstimator.evaluate(
                     profile: profile, plan: plans.plan(for: .forecast(intervals: intervals, context: context)))
-                guard let reason = result.unavailableReason else { return SmartShiftEvaluation(result: result, forecast: .ready) }
+                guard let reason = result.unavailableReason else {
+                    return SmartShiftEvaluation(result: result, forecast: .ready, projection: .forecast)
+                }
                 availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(reason))
             } else if forecast == .ready {
                 availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(.incompleteContext))
             }
             if let context, context.hasGridHistory {
                 let result = LoadTimingForecastEstimator.evaluate(profile: profile, plan: plans.plan(for: .history(context: context)))
-                if result.unavailableReason == nil { return SmartShiftEvaluation(result: result, forecast: availability) }
+                if result.unavailableReason == nil {
+                    return SmartShiftEvaluation(result: result, forecast: availability, projection: .history)
+                }
             }
             return SmartShiftEvaluation(
                 result: LoadTimingForecastEstimator.evaluate(profile: profile, plan: plans.plan(for: .flat(timeZone: timeZone))),
-                forecast: availability)
+                forecast: availability, projection: .flat)
         }
     }
 

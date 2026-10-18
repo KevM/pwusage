@@ -268,6 +268,10 @@ struct LoadTimingView: View {
         let now: Date
         let billingCycleEnd: Date
         let hint: BetterJobHint?
+        /// What the pass was offered, kept so "Copy diagnostics" can record it.
+        let balanceSourceTime: Date?
+        let intervals: [SolarForecastInterval]?
+        let context: LoadTimingForecastEstimator.PlanningContext?
     }
 
     /// Prices the selected Job with the solar forecast when it's usable and with
@@ -283,13 +287,15 @@ struct LoadTimingView: View {
             now: now
         )
         // One evaluator per pass, so every Job shares the projection's plan.
+        let intervals = coordinator.solarForecastBatch?.intervals
+        // Without a usable forecast, the household pattern's grid history still projects the banks.
+        let context = coordinator.loadPlanningContext ?? coordinator.householdPattern
         let evaluate = SmartShiftPresentation.evaluator(
             now: now,
             timing: timing,
             forecast: availability,
-            intervals: coordinator.solarForecastBatch?.intervals,
-            // Without a usable forecast, the household pattern's grid history still projects the banks.
-            context: coordinator.loadPlanningContext ?? coordinator.householdPattern,
+            intervals: intervals,
+            context: context,
             balanceSourceTime: response.sources.energyDataThrough,
             billingCycleEnd: response.currentBill.cycleEnd,
             currencyCode: currencyCode,
@@ -318,7 +324,8 @@ struct LoadTimingView: View {
                                                         currencyCode: currencyCode)
         }
         return SmartShiftState(screen: screen, profile: profile, evaluation: evaluation, timing: timing, now: now,
-                               billingCycleEnd: response.currentBill.cycleEnd, hint: hint)
+                               billingCycleEnd: response.currentBill.cycleEnd, hint: hint,
+                               balanceSourceTime: response.sources.energyDataThrough, intervals: intervals, context: context)
     }
 
     private func detailsSnapshot(_ state: SmartShiftState, verdict: SmartShiftVerdict) -> SmartShiftDetailsSnapshot {
@@ -333,6 +340,14 @@ struct LoadTimingView: View {
             ruledOutNote = SmartShiftPresentation.ruledOutNote(comparison: comparison, profile: profile, timing: state.timing,
                                                                now: state.now, timeZone: timeZone)
         }
+        var diagnostics: SmartShiftDiagnostics?
+        if let profile = state.profile, let evaluation = state.evaluation {
+            diagnostics = SmartShiftDiagnostics(
+                siteId: site.id, app: .current, job: profile, now: state.now, balanceSourceTime: state.balanceSourceTime,
+                billingCycleEnd: state.billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone, timing: state.timing,
+                evaluation: evaluation, intervals: state.intervals, context: state.context,
+                forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt)
+        }
         return SmartShiftDetailsSnapshot(
             verdict: verdict,
             comparison: comparison,
@@ -341,7 +356,8 @@ struct LoadTimingView: View {
             ruledOutNote: ruledOutNote,
             forecastFetchedAt: usedForecast ? coordinator.solarForecastBatch?.fetchedAt : nil,
             contextAsOf: usedForecast ? coordinator.loadPlanningContext?.asOf : nil,
-            capturedAt: state.now
+            capturedAt: state.now,
+            diagnostics: diagnostics
         )
     }
 

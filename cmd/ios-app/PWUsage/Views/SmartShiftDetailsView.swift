@@ -14,6 +14,8 @@ struct SmartShiftDetailsSnapshot: Identifiable {
     let forecastFetchedAt: Date?
     let contextAsOf: Date?
     let capturedAt: Date
+    /// The pass's inputs and result, for "Copy diagnostics"; `nil` without a Job.
+    var diagnostics: SmartShiftDiagnostics? = nil
 }
 
 /// Rate periods, what the run draws from each bank, freshness and assumptions.
@@ -21,6 +23,7 @@ struct SmartShiftDetailsView: View {
     let snapshot: SmartShiftDetailsSnapshot
 
     @Environment(\.dismiss) private var dismiss
+    @State private var copiedDiagnostics = false
 
     var body: some View {
         NavigationStack {
@@ -108,6 +111,20 @@ struct SmartShiftDetailsView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
+                    }
+                }
+                if let diagnostics = snapshot.diagnostics {
+                    Section {
+                        Button {
+                            guard let json = try? diagnostics.json() else { return }
+                            Clipboard.copy(json)
+                            copiedDiagnostics = true
+                        } label: {
+                            Label(copiedDiagnostics ? "Copied" : "Copy diagnostics",
+                                  systemImage: copiedDiagnostics ? "checkmark" : "doc.on.doc")
+                        }
+                    } footer: {
+                        Text("Copies this comparison's inputs and result as JSON, for troubleshooting. It includes your site ID but no keys or passwords.")
                     }
                 }
             }
