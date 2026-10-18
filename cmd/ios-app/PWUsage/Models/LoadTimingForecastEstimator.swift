@@ -4,6 +4,8 @@ import Foundation
 /// solar forecast and the site's historical local-time household/battery profile.
 struct LoadTimingForecastEstimator {
     static let maximumBalanceAge: TimeInterval = 30 * 60
+    /// The forecast-free comparison follows `LoadTimingRecommendation`'s freshness window.
+    static let maximumFlatBalanceAge: TimeInterval = 60 * 60
     /// Each `EnergyData` row holds signed energy for a five-minute interval and
     /// its timestamp marks that interval's start, so the cycle balance already
     /// includes the interval beginning at `balanceSourceTime`. Projecting the
@@ -33,6 +35,36 @@ struct LoadTimingForecastEstimator {
         let asOf: Date
     }
 
+    /// How balances move between now and the end of the search horizon.
+    /// `.forecast` projects solar and typical household use; `.flat` holds each
+    /// period's balance at today's observed value, so only the job moves it.
+    enum Projection: Equatable {
+        case forecast(intervals: [SolarForecastInterval], context: PlanningContext)
+        case flat(timeZone: String)
+
+        var timeZone: String {
+            switch self {
+            case .forecast(_, let context): context.timeZone
+            case .flat(let timeZone): timeZone
+            }
+        }
+
+        var maximumBalanceAge: TimeInterval {
+            switch self {
+            case .forecast: LoadTimingForecastEstimator.maximumBalanceAge
+            case .flat: LoadTimingForecastEstimator.maximumFlatBalanceAge
+            }
+        }
+
+        /// Solar intervals whose edges are integration and candidate boundaries; none for `.flat`.
+        var intervals: [SolarForecastInterval] {
+            switch self {
+            case .forecast(let intervals, _): intervals
+            case .flat: []
+            }
+        }
+    }
+
     struct Comparison: Equatable {
         /// The **marginal** cost of running the load now against the projected
         /// household baseline — `Σ (cost(withLoad) − cost(baseline))` over the
@@ -59,6 +91,9 @@ struct LoadTimingForecastEstimator {
         let horizonEnd: Date
         let evaluatedStarts: [Date]
         let assumptions: [String]
+        /// A rate period the runs could touch has no observed balance, so it was
+        /// priced from zero (at the buy rate). Only the `.flat` projection allows this.
+        let hasUnobservedBalance: Bool
     }
 
     struct Result: Equatable {
@@ -84,6 +119,13 @@ struct LoadTimingForecastEstimator {
         case incompleteCoverage
     }
 
+    /// Household flow at one instant: what the baseline exports to the grid, and the
+    /// solar left over after the home and any battery charging, which an added load can use.
+    private struct Flow {
+        let netExportKw: Double
+        let physicalSurplusKw: Double
+    }
+
     private enum ScoreResult {
         case candidate(Candidate)
         case invalidInput
@@ -100,13 +142,28 @@ struct LoadTimingForecastEstimator {
         billingCycleEnd: Date,
         currencyCode: String
     ) -> Result {
+        evaluate(profile: profile, now: now, timing: timing, projection: .forecast(intervals: forecast, context: context),
+                 balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd, currencyCode: currencyCode)
+    }
+
+    static func evaluate(
+        profile: LoadProfile,
+        now: Date,
+        timing: LoadTiming,
+        projection: Projection,
+        balanceSourceTime: Date,
+        billingCycleEnd: Date,
+        currencyCode: String
+    ) -> Result {
         guard now.timeIntervalSince1970.isFinite, balanceSourceTime.timeIntervalSince1970.isFinite,
-              billingCycleEnd.timeIntervalSince1970.isFinite, context.asOf.timeIntervalSince1970.isFinite,
-              balanceSourceTime <= now else { return unavailable(.invalidInput) }
-        guard now.timeIntervalSince(balanceSourceTime) <= maximumBalanceAge else { return unavailable(.staleBalance) }
+              billingCycleEnd.timeIntervalSince1970.isFinite, balanceSourceTime <= now else { return unavailable(.invalidInput) }
+        if case .forecast(_, let context) = projection, !context.asOf.timeIntervalSince1970.isFinite {
+            return unavailable(.invalidInput)
+        }
+        guard now.timeIntervalSince(balanceSourceTime) <= projection.maximumBalanceAge else { return unavailable(.staleBalance) }
         guard timing.hasTariff, !timing.tariffTimeline.isEmpty else { return unavailable(.missingTariff) }
-        guard timing.hasCycleData else { return unavailable(.incompleteBalance) }
-        guard let zone = TimeZone(identifier: context.timeZone) else { return unavailable(.invalidInput) }
+        if case .forecast = projection, !timing.hasCycleData { return unavailable(.incompleteBalance) }
+        guard let zone = TimeZone(identifier: projection.timeZone) else { return unavailable(.invalidInput) }
         guard let load = loadShape(for: profile) else {
             if profile.kind == .car, let settings = profile.carSettings,
                let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings), estimate.wallKwh == 0 {
@@ -115,7 +172,8 @@ struct LoadTimingForecastEstimator {
             return unavailable(.invalidInput)
         }
         let tariffs = timing.tariffTimeline.sorted { $0.start < $1.start }
-        guard validTariffIntervals(tariffs), validForecast(forecast) else { return unavailable(.invalidInput) }
+        guard validTariffIntervals(tariffs) else { return unavailable(.invalidInput) }
+        if case .forecast(let forecast, _) = projection, !validForecast(forecast) { return unavailable(.invalidInput) }
 
         // The balance already covers observed data through the end of the final
         // five-minute interval, so projection starts there rather than at
@@ -125,7 +183,9 @@ struct LoadTimingForecastEstimator {
         let tomorrowEnd = endOfTomorrow(after: now, timeZone: zone)
         guard let tomorrowEnd, tomorrowEnd > now else { return unavailable(.invalidInput) }
         var horizonEnd = min(tomorrowEnd, billingCycleEnd)
-        horizonEnd = min(horizonEnd, contiguousEnd(of: forecast, startingAt: projectionStart))
+        if case .forecast(let forecast, _) = projection {
+            horizonEnd = min(horizonEnd, contiguousEnd(of: forecast, startingAt: projectionStart))
+        }
         horizonEnd = min(horizonEnd, contiguousTariffEnd(tariffs, startingAt: projectionStart))
         guard horizonEnd > now else { return unavailable(.incompleteCoverage) }
 
@@ -136,8 +196,8 @@ struct LoadTimingForecastEstimator {
         if let boundary = rateSet.incompatibleBoundary { horizonEnd = min(horizonEnd, boundary) }
         guard horizonEnd > now else { return unavailable(.incompleteCoverage) }
 
-        if let contextGap = firstContextGap(from: projectionStart, to: horizonEnd, forecast: forecast,
-                                            tariffs: tariffs, context: context, timeZone: zone) {
+        if let contextGap = firstContextGap(from: projectionStart, to: horizonEnd, projection: projection,
+                                            tariffs: tariffs, timeZone: zone) {
             horizonEnd = min(horizonEnd, contextGap)
             guard horizonEnd > now else { return unavailable(.incompleteContext) }
         }
@@ -146,49 +206,67 @@ struct LoadTimingForecastEstimator {
         guard !finalRateSet.invalid else { return unavailable(.invalidInput) }
         var rates = finalRateSet.rates
 
-        let observedBalances = Dictionary(timing.pricingPeriods.map { ($0.name, $0.cycleNetExportKwh) },
-                                          uniquingKeysWith: { _, latest in latest })
-
-        // A tariff period with no observed balance cannot be projected. If it has
-        // not started yet — a seasonal schedule boundary, for example — end the
-        // shared horizon there instead of discarding the whole comparison. If it
-        // is already under way the baseline is unsound, so reject.
-        if let firstUnbalanced = rates.keys.compactMap({ key -> Date? in
-            guard observedBalances[key] == nil else { return nil }
-            return tariffs.first(where: { $0.periodKey == key && $0.start < horizonEnd })?.start
-        }).min() {
-            guard firstUnbalanced > now else { return unavailable(.incompleteBalance) }
-            horizonEnd = min(horizonEnd, firstUnbalanced)
-            guard horizonEnd > now else { return unavailable(.incompleteCoverage) }
-            let truncated = supportedRates(in: tariffs, from: balanceSourceTime, before: horizonEnd)
-            guard !truncated.invalid else { return unavailable(.invalidInput) }
-            rates = truncated.rates
-        }
+        // Like `LoadTimingRecommendation`, the forecast-free path reads no balances
+        // when the cycle has no data yet, so every period is priced from zero.
+        let observedBalances: [String: Double] = timing.hasCycleData
+            ? Dictionary(timing.pricingPeriods.map { ($0.name, $0.cycleNetExportKwh) }, uniquingKeysWith: { _, latest in latest })
+            : [:]
 
         var balances: [String: Double] = [:]
-        for key in rates.keys {
-            guard let balance = observedBalances[key] else { return unavailable(.incompleteBalance) }
-            guard balance.isFinite else { return unavailable(.incompleteBalance) }
-            balances[key] = balance
+        var hasUnobservedBalance = false
+        switch projection {
+        case .forecast:
+            // A tariff period with no observed balance cannot be projected. If it has
+            // not started yet — a seasonal schedule boundary, for example — end the
+            // shared horizon there instead of discarding the whole comparison. If it
+            // is already under way the baseline is unsound, so reject.
+            if let firstUnbalanced = rates.keys.compactMap({ key -> Date? in
+                guard observedBalances[key] == nil else { return nil }
+                return tariffs.first(where: { $0.periodKey == key && $0.start < horizonEnd })?.start
+            }).min() {
+                guard firstUnbalanced > now else { return unavailable(.incompleteBalance) }
+                horizonEnd = min(horizonEnd, firstUnbalanced)
+                guard horizonEnd > now else { return unavailable(.incompleteCoverage) }
+                let truncated = supportedRates(in: tariffs, from: balanceSourceTime, before: horizonEnd)
+                guard !truncated.invalid else { return unavailable(.invalidInput) }
+                rates = truncated.rates
+            }
+            for key in rates.keys {
+                guard let balance = observedBalances[key] else { return unavailable(.incompleteBalance) }
+                guard balance.isFinite else { return unavailable(.incompleteBalance) }
+                balances[key] = balance
+            }
+        case .flat:
+            // Held still, an unobserved period is simply priced from zero, as
+            // `LoadTimingEstimator.estimateStartNow` does, and flagged for the UI.
+            for key in rates.keys {
+                if let balance = observedBalances[key] {
+                    guard balance.isFinite else { return unavailable(.incompleteBalance) }
+                    balances[key] = balance
+                } else {
+                    balances[key] = 0
+                    hasUnobservedBalance = true
+                }
+            }
         }
         guard !balances.isEmpty else { return unavailable(.incompleteBalance) }
 
         // Forecast/context/tariff coverage from the end of observed data through
         // the shared horizon is needed even when a candidate run starts later.
-        guard completeCoverage(from: projectionStart, to: horizonEnd, forecast: forecast,
+        guard completeCoverage(from: projectionStart, to: horizonEnd, projection: projection,
                                tariffs: tariffs, timeZone: zone) else {
             return unavailable(.incompleteCoverage)
         }
 
         let baseBalances: [String: Double]
         switch integrateBaseline(from: projectionStart, to: horizonEnd, balances: balances,
-                                 forecast: forecast, tariffs: tariffs, context: context, timeZone: zone) {
+                                 projection: projection, tariffs: tariffs, timeZone: zone) {
         case .balances(let projected): baseBalances = projected
         case .invalidInput: return unavailable(.invalidInput)
         case .incompleteCoverage: return unavailable(.incompleteCoverage)
         }
         let candidates = candidateStarts(now: now, horizonEnd: horizonEnd, duration: load.duration,
-                                        forecast: forecast, tariffs: tariffs, timeZone: zone)
+                                        projection: projection, tariffs: tariffs, timeZone: zone)
         var scored: [Candidate] = []
         for candidateStart in candidates {
             let candidateEnd = candidateStart.addingTimeInterval(load.duration)
@@ -197,7 +275,7 @@ struct LoadTimingForecastEstimator {
             guard candidateEnd <= horizonEnd else { continue }
             switch score(start: candidateStart, end: candidateEnd, load: load,
                          baseBalances: baseBalances, rates: rates,
-                         forecast: forecast, tariffs: tariffs, context: context, timeZone: zone) {
+                         projection: projection, tariffs: tariffs, timeZone: zone) {
             case .candidate(let candidate): scored.append(candidate)
             case .invalidInput: return unavailable(.invalidInput)
             case .incompleteCoverage: return unavailable(.incompleteCoverage)
@@ -229,13 +307,26 @@ struct LoadTimingForecastEstimator {
             horizonStart: now,
             horizonEnd: horizonEnd,
             evaluatedStarts: scored.map(\.start).sorted(),
-            assumptions: [
-                "Typical household and battery behavior follows the historical local-time profile.",
-                "Battery behavior is assumed unchanged by this added load.",
-                "Recommendation is the best among evaluated start times, not a continuous-time optimum.",
-                "Estimated cost uses the current signed period balances through the shared horizon."
-            ]
+            assumptions: assumptions(for: projection),
+            hasUnobservedBalance: hasUnobservedBalance
         ), unavailableReason: nil)
+    }
+
+    private static func assumptions(for projection: Projection) -> [String] {
+        let baseline: [String]
+        switch projection {
+        case .forecast:
+            baseline = [
+                "Typical household and battery behavior follows the historical local-time profile.",
+                "Battery behavior is assumed unchanged by this added load."
+            ]
+        case .flat:
+            baseline = ["Balances are held at today's observed values; no solar or household use is projected."]
+        }
+        return baseline + [
+            "Recommendation is the best among evaluated start times, not a continuous-time optimum.",
+            "Estimated cost uses the current signed period balances through the shared horizon."
+        ]
     }
 
     static func currencyMinorUnit(_ currencyCode: String) -> Double {
@@ -344,27 +435,28 @@ struct LoadTimingForecastEstimator {
         return calendar.date(byAdding: .day, value: 2, to: startOfToday)
     }
 
-    private static func completeCoverage(from start: Date, to end: Date, forecast: [SolarForecastInterval],
+    private static func completeCoverage(from start: Date, to end: Date, projection: Projection,
                                          tariffs: [LoadTimingTariffSegment], timeZone: TimeZone) -> Bool {
         guard start < end else { return false }
-        let points = integrationBoundaries(from: start, to: end, forecast: forecast, tariffs: tariffs, timeZone: timeZone)
+        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, timeZone: timeZone)
         guard points.count >= 2 else { return false }
         for index in 0..<(points.count - 1) {
             let a = points[index]
             let b = points[index + 1]
             guard b > a else { return false }
             let midpoint = a.addingTimeInterval(b.timeIntervalSince(a) / 2)
-            guard forecast.contains(where: { $0.periodStart <= midpoint && midpoint < $0.periodEnd }),
-                  tariffs.contains(where: { $0.start <= midpoint && midpoint < $0.end }) else { return false }
+            if case .forecast(let forecast, _) = projection,
+               !forecast.contains(where: { $0.periodStart <= midpoint && midpoint < $0.periodEnd }) { return false }
+            guard tariffs.contains(where: { $0.start <= midpoint && midpoint < $0.end }) else { return false }
         }
         return points.first == start && points.last == end
     }
 
-    private static func firstContextGap(from start: Date, to end: Date, forecast: [SolarForecastInterval],
-                                        tariffs: [LoadTimingTariffSegment], context: PlanningContext,
-                                        timeZone: TimeZone) -> Date? {
+    private static func firstContextGap(from start: Date, to end: Date, projection: Projection,
+                                        tariffs: [LoadTimingTariffSegment], timeZone: TimeZone) -> Date? {
+        guard case .forecast(_, let context) = projection else { return nil }
         guard start < end else { return start }
-        let points = integrationBoundaries(from: start, to: end, forecast: forecast, tariffs: tariffs, timeZone: timeZone)
+        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, timeZone: timeZone)
         guard points.count >= 2 else { return start }
         for index in 0..<(points.count - 1) {
             let midpoint = points[index].addingTimeInterval(points[index + 1].timeIntervalSince(points[index]) / 2)
@@ -373,10 +465,10 @@ struct LoadTimingForecastEstimator {
         return nil
     }
 
-    private static func integrationBoundaries(from start: Date, to end: Date, forecast: [SolarForecastInterval],
+    private static func integrationBoundaries(from start: Date, to end: Date, projection: Projection,
                                               tariffs: [LoadTimingTariffSegment], timeZone: TimeZone) -> [Date] {
         var values: Set<Date> = [start, end]
-        for interval in forecast {
+        for interval in projection.intervals {
             if interval.periodStart > start && interval.periodStart < end { values.insert(interval.periodStart) }
             if interval.periodEnd > start && interval.periodEnd < end { values.insert(interval.periodEnd) }
         }
@@ -410,23 +502,34 @@ struct LoadTimingForecastEstimator {
         return match
     }
 
+    /// `nil` when the forecast or household profile doesn't cover `date`. `.flat` never moves.
+    private static func flow(at date: Date, projection: Projection, timeZone: TimeZone) -> Flow? {
+        switch projection {
+        case .flat:
+            return Flow(netExportKw: 0, physicalSurplusKw: 0)
+        case .forecast(let forecast, let context):
+            guard let solar = forecast.first(where: { $0.periodStart <= date && date < $0.periodEnd })?.powerKw,
+                  let profile = slot(at: date, context: context, timeZone: timeZone),
+                  let home = profile.homeKw, let battery = profile.batteryNetChargeKw else { return nil }
+            return Flow(netExportKw: solar - home - battery, physicalSurplusKw: solar - home - max(battery, 0))
+        }
+    }
+
     private static func integrateBaseline(from start: Date, to end: Date, balances: [String: Double],
-                                          forecast: [SolarForecastInterval], tariffs: [LoadTimingTariffSegment],
-                                          context: PlanningContext, timeZone: TimeZone) -> BaselineResult {
+                                          projection: Projection, tariffs: [LoadTimingTariffSegment],
+                                          timeZone: TimeZone) -> BaselineResult {
         var result = balances
-        let points = integrationBoundaries(from: start, to: end, forecast: forecast, tariffs: tariffs, timeZone: timeZone)
+        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, timeZone: timeZone)
         guard points.count >= 2 else { return .incompleteCoverage }
         for index in 0..<(points.count - 1) {
             let a = points[index], b = points[index + 1]
             let mid = a.addingTimeInterval(b.timeIntervalSince(a) / 2)
-            guard let solarPower = forecast.first(where: { $0.periodStart <= mid && mid < $0.periodEnd })?.powerKw,
+            guard let flow = flow(at: mid, projection: projection, timeZone: timeZone),
                   let tariff = tariffs.first(where: { $0.start <= mid && mid < $0.end }),
-                  let profile = slot(at: mid, context: context, timeZone: timeZone),
-                  let home = profile.homeKw, let battery = profile.batteryNetChargeKw,
                   let old = result[tariff.periodKey] else { return .incompleteCoverage }
             let seconds = b.timeIntervalSince(a)
             let hours = seconds / 3600
-            let netPower = solarPower - home - battery
+            let netPower = flow.netExportKw
             let netExport = netPower * hours
             let updated = old + netExport
             guard seconds.isFinite, hours.isFinite, netPower.isFinite, netExport.isFinite, updated.isFinite else {
@@ -439,27 +542,25 @@ struct LoadTimingForecastEstimator {
 
     private static func score(start: Date, end: Date, load: (energy: Double, duration: TimeInterval),
                               baseBalances: [String: Double], rates: [String: PeriodRate],
-                              forecast: [SolarForecastInterval], tariffs: [LoadTimingTariffSegment],
-                              context: PlanningContext, timeZone: TimeZone) -> ScoreResult {
+                              projection: Projection, tariffs: [LoadTimingTariffSegment],
+                              timeZone: TimeZone) -> ScoreResult {
         var withLoad = baseBalances
         var solarContribution = 0.0
-        let points = integrationBoundaries(from: start, to: end, forecast: forecast, tariffs: tariffs, timeZone: timeZone)
+        let points = integrationBoundaries(from: start, to: end, projection: projection, tariffs: tariffs, timeZone: timeZone)
         guard points.count >= 2 else { return .incompleteCoverage }
         let powerKw = load.energy / (load.duration / 3600)
         guard powerKw.isFinite, powerKw > 0 else { return .invalidInput }
         for index in 0..<(points.count - 1) {
             let a = points[index], b = points[index + 1]
             let mid = a.addingTimeInterval(b.timeIntervalSince(a) / 2)
-            guard let solar = forecast.first(where: { $0.periodStart <= mid && mid < $0.periodEnd })?.powerKw,
+            guard let flow = flow(at: mid, projection: projection, timeZone: timeZone),
                   let tariff = tariffs.first(where: { $0.start <= mid && mid < $0.end }),
-                  let profile = slot(at: mid, context: context, timeZone: timeZone),
-                  let home = profile.homeKw, let battery = profile.batteryNetChargeKw,
                   let balance = withLoad[tariff.periodKey] else { return .incompleteCoverage }
             let seconds = b.timeIntervalSince(a)
             let hours = seconds / 3600
             let energy = powerKw * hours
             let loadedBalance = balance - energy
-            let physicalSurplus = solar - home - max(battery, 0)
+            let physicalSurplus = flow.physicalSurplusKw
             let physicalSurplusPower = max(physicalSurplus, 0)
             let contribution = min(powerKw, physicalSurplusPower) * hours
             let updatedSolarContribution = solarContribution + contribution
@@ -494,10 +595,10 @@ struct LoadTimingForecastEstimator {
     }
 
     private static func candidateStarts(now: Date, horizonEnd: Date, duration: TimeInterval,
-                                        forecast: [SolarForecastInterval], tariffs: [LoadTimingTariffSegment],
+                                        projection: Projection, tariffs: [LoadTimingTariffSegment],
                                         timeZone: TimeZone) -> [Date] {
         var starts: Set<Date> = [now]
-        for interval in forecast {
+        for interval in projection.intervals {
             if interval.periodStart >= now && interval.periodStart < horizonEnd { starts.insert(interval.periodStart) }
             if interval.periodEnd >= now && interval.periodEnd < horizonEnd { starts.insert(interval.periodEnd) }
         }

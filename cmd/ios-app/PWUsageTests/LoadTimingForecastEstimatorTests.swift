@@ -442,4 +442,111 @@ struct LoadTimingForecastEstimatorTests {
         #expect(result.assumptions.contains { $0.localizedCaseInsensitiveContains("typical") })
         #expect(result.assumptions.contains { $0.localizedCaseInsensitiveContains("evaluated") })
     }
+
+    // MARK: - Flat (forecast-free) projection
+
+    /// Local midnight (UTC) on the day of `start`, which is 08:00 UTC.
+    private var day0: Date { start.addingTimeInterval(-8 * 3600) }
+
+    private func hours(_ value: Double) -> Date { day0.addingTimeInterval(value * 3600) }
+
+    /// Peak 07:00–16:30 (buy 0.38, sell 0.10), Off-Peak otherwise (buy 0.20, sell 0.26), for two days.
+    private func peakOffPeakTariffs() -> [LoadTimingTariffSegment] {
+        let peak = (buy: 0.38, sell: 0.10), offPeak = (buy: 0.20, sell: 0.26)
+        let spans: [(Double, Double, String)] = [(0, 7, "Off-Peak"), (7, 16.5, "Peak"), (16.5, 31, "Off-Peak"),
+                                                 (31, 40.5, "Peak"), (40.5, 48, "Off-Peak")]
+        return spans.map { from, to, key in
+            let rate = key == "Peak" ? peak : offPeak
+            return LoadTimingTariffSegment(start: hours(from), end: hours(to), periodKey: key, name: key,
+                                           buyRate: rate.buy, sellRate: rate.sell)
+        }
+    }
+
+    private func evaluateFlat(
+        profile: LoadProfile,
+        now: Date,
+        tariffs: [LoadTimingTariffSegment],
+        balances: [String: Double],
+        pricingBalances: [String: Double]? = nil,
+        balanceSource: Date? = nil,
+        cycleEnd: Date? = nil,
+        timeZone: String = "UTC"
+    ) -> LoadTimingForecastEstimator.Result {
+        LoadTimingForecastEstimator.evaluate(
+            profile: profile, now: now,
+            timing: timing(tariffs, balances: balances, pricingBalances: pricingBalances),
+            projection: .flat(timeZone: timeZone), balanceSourceTime: balanceSource ?? now,
+            billingCycleEnd: cycleEnd ?? now.addingTimeInterval(7 * 86_400), currencyCode: "USD"
+        )
+    }
+
+    @Test func flatProjectionPricesLaterStartFromOffPeakBank() throws {
+        let result = evaluateFlat(profile: profile(14, hours: 5.9), now: hours(8.5), tariffs: peakOffPeakTariffs(),
+                                  balances: ["Peak": -6, "Off-Peak": 18])
+        let comparison = try #require(result.comparison)
+        #expect(comparison.recommendedStart == hours(16.5))
+        #expect(abs(comparison.costNow - 14 * 0.38) < 0.000_001)
+        #expect(abs(comparison.recommendedCost - 14 * 0.26) < 0.000_001)
+        #expect(comparison.estimatedSolarContribution == 0)
+        #expect(comparison.hasUnobservedBalance == false)
+    }
+
+    @Test func flatProjectionAllowsHourOldBalances() throws {
+        let now = hours(8.5)
+        let source = now.addingTimeInterval(-55 * 60)
+        let flat = evaluateFlat(profile: profile(14, hours: 5.9), now: now, tariffs: peakOffPeakTariffs(),
+                                balances: ["Peak": -6, "Off-Peak": 18], balanceSource: source)
+        #expect(flat.comparison != nil)
+
+        let slots = stride(from: 0, to: 1440, by: 30).map {
+            LoadTimingForecastEstimator.PlanningSlot(localMinute: $0, homeKw: 0, batteryNetChargeKw: 0)
+        }
+        let forecast = LoadTimingForecastEstimator.evaluate(
+            profile: profile(14, hours: 5.9), now: now,
+            timing: timing(peakOffPeakTariffs(), balances: ["Peak": -6, "Off-Peak": 18]),
+            projection: .forecast(intervals: [SolarForecastInterval(periodStart: hours(0), periodEnd: hours(48), powerKw: 0)],
+                                  context: .init(timeZone: "UTC", slots: slots, asOf: now)),
+            balanceSourceTime: source, billingCycleEnd: now.addingTimeInterval(7 * 86_400), currencyCode: "USD")
+        #expect(forecast.unavailableReason == .staleBalance)
+    }
+
+    @Test func flatProjectionPricesMissingPeriodAtBuyRate() throws {
+        let result = evaluateFlat(profile: profile(14, hours: 5.9), now: hours(8.5), tariffs: peakOffPeakTariffs(),
+                                  balances: ["Peak": -6], pricingBalances: ["Peak": -6])
+        let comparison = try #require(result.comparison)
+        #expect(comparison.hasUnobservedBalance)
+        #expect(comparison.recommendedStart == hours(16.5))
+        #expect(abs(comparison.recommendedCost - 14 * 0.20) < 0.000_001)
+    }
+
+    @Test func flatProjectionFollowsFallBackWallClock() throws {
+        // America/Chicago falls back at 02:00 CDT on 2026-11-01 (07:00 UTC), so that day lasts 25 hours.
+        let zone = try #require(TimeZone(identifier: "America/Chicago"))
+        let formatter = ISO8601DateFormatter()
+        let now = try #require(formatter.date(from: "2026-11-01T05:10:00Z")) // 00:10 CDT.
+        let switchAt = try #require(formatter.date(from: "2026-11-01T13:00:00Z")) // 07:00 CST.
+        let expectedEnd = try #require(formatter.date(from: "2026-11-03T06:00:00Z")) // Midnight CST after Nov 2.
+        let segments = [
+            LoadTimingTariffSegment(start: now.addingTimeInterval(-3600), end: switchAt, periodKey: "Off-Peak",
+                                    name: "Off-Peak", buyRate: 0.20, sellRate: 0.05),
+            LoadTimingTariffSegment(start: switchAt, end: expectedEnd.addingTimeInterval(86_400), periodKey: "Peak",
+                                    name: "Peak", buyRate: 0.40, sellRate: 0.10),
+        ]
+        let result = evaluateFlat(profile: profile(2, hours: 1), now: now, tariffs: segments,
+                                  balances: ["Off-Peak": 0, "Peak": 0], timeZone: "America/Chicago")
+        let comparison = try #require(result.comparison)
+
+        #expect(comparison.horizonEnd == expectedEnd)
+        let starts = comparison.evaluatedStarts
+        #expect(Set(starts).count == starts.count)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        for start in starts where start != now && start != switchAt {
+            #expect(calendar.component(.minute, from: start).isMultiple(of: 30))
+            #expect(calendar.component(.second, from: start) == 0)
+        }
+        // 01:30 happens twice on the wall clock; both instants are evaluated.
+        #expect(starts.contains(try #require(formatter.date(from: "2026-11-01T06:30:00Z"))))
+        #expect(starts.contains(try #require(formatter.date(from: "2026-11-01T07:30:00Z"))))
+    }
 }
