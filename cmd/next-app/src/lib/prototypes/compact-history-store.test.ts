@@ -487,6 +487,24 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         expect((await reader.getCycleAggregates('site', start, end))[0].grid_power).toBe(5);
         expect((await reader.getCycleAggregates('site', new Date(+start+300000), end))[0].grid_power).toBe(-5);
     });
+    it('keeps full double precision when sessions default to extra_float_digits=0 (Supabase pooler)', async () => {
+        // Supabase's postgresql.conf sets extra_float_digits=0, so text-format float8 reads
+        // round to 15 significant digits unless each transaction raises it.
+        const rounding = new Pool({ host: socket, port: 55439, database, user: process.env.USER, max: 2, options: '-c extra_float_digits=0' });
+        try {
+            expect((await rounding.query('SELECT 7631.409423828125::float8 AS v')).rows[0].v).toBe(7631.40942382812);
+            await pool.query('UPDATE "EnergyData" SET solar_power=$1, load_power=$2 WHERE timestamp=$3', [7631.409423828125, 0.1 + 0.2, start]);
+            const rounded = new CompactHistoryStore(rounding, 15000, async client => { await client.query('SELECT 1'); });
+            expect((await rounded.finalizeDay('site', start, now)).status).toBe('finalized');
+            const reader = new CompactHistoryReader(rounded, 'America/Chicago');
+            const rows = await reader.getRawEnergyData('site', start, end);
+            expect(rows[0].solar_power).toBe(7631.409423828125);
+            expect(rows[0].load_power).toBe(0.1 + 0.2);
+            const snapshot = await rounded.readVerificationSnapshot('site', start, end);
+            expect(snapshot.days[0].summaries[0].solar_power).toBe(7631.409423828125 + 3);
+            expect((await rounded.finalizeDay('site', start, now)).status).toBe('unchanged');
+        } finally { await rounding.end(); }
+    });
     it('invalidates archives on correction, then rebuilds a new revision', async () => {
         const first = await store.finalizeDay('site', start, now);
         await pool.query('UPDATE "EnergyData" SET grid_power=100 WHERE timestamp=$1', [start]);

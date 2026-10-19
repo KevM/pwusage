@@ -3,6 +3,7 @@ import {AsyncLocalStorage} from 'node:async_hooks';
 import type {Pool,PoolClient} from 'pg';
 import {pool} from './db';
 import {hasPrunedHistory} from './compact-history-policy';
+import {beginTransaction} from './pg-transaction';
 
 const rawTransaction=new AsyncLocalStorage<PoolClient>();
 /** Raw repository queries share the transaction that selected their storage backend. */
@@ -13,7 +14,7 @@ export async function withRawEnergyAccess<T>(
 ):Promise<{kind:'raw';value:T}|{kind:'compact'}> {
     const client=await database.connect();
     try {
-        await client.query('BEGIN');
+        await beginTransaction(client);
         await client.query(ioSignal() ? "SET LOCAL statement_timeout='1500ms'" : "SET LOCAL statement_timeout='15s'");
         await client.query(ioSignal() ? "SET LOCAL lock_timeout='1000ms'" : "SET LOCAL lock_timeout='3s'");
         // Trim/restore/import mutation claims use the same per-site key. Selection
