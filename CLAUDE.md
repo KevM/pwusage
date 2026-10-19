@@ -112,7 +112,7 @@ supabase migration up --db-url "postgresql://user:pass@localhost/pwusage"
 ```
 
 **CI/CD Behavior:**
-- On PR: Migrations are tested against a backup of production
+- On PR: Migrations are tested against a fresh copy of production dumped into the Dev DB (not a stored backup); `EnergyData` is copied only as a recent slice
 - On merge to main: Database is backed up to Vercel Blob, then migrations run
 - Migrations must be idempotent (safe to run multiple times)
 - Note: This may invalidate Trmnl devices in dev database

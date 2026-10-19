@@ -1,5 +1,7 @@
--- Dev-only: shrink the prod -> dev copy after CI has verified migrations
--- against full prod-sized data. Keeps the last 45 days of EnergyData.
+-- Dev-only: runs after CI's migrations on the prod -> dev copy. Keeps the last
+-- 45 days of EnergyData. The copy already arrives with only that window
+-- (export-dev-energy-data.sql, which must use the same interval), so this is a
+-- safety net.
 -- Set here, not only in the guard: psql ignores a \set made inside an included
 -- file when deciding whether the including file stops.
 \set ON_ERROR_STOP on

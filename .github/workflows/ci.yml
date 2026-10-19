@@ -218,7 +218,12 @@ jobs:
           supabase db dump --db-url "$DATABASE_URL" -f schema.sql
           # Only public is reset below. Managed auth/storage data can include
           # protected tables (e.g. storage.buckets_vectors) we cannot restore.
-          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public
+          # EnergyData history is most of prod and of its egress, and dev keeps
+          # only a slice of it: skip its data here (unquoted, see
+          # dump-db-backup.sh) and download just that slice.
+          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public -x public.EnergyData
+          psql -X -q -v ON_ERROR_STOP=1 "$DATABASE_URL" -f scripts/export-dev-energy-data.sql > dev-energy-data.csv
+          echo "EnergyData rows for dev: $(( $(wc -l < dev-energy-data.csv) - 1 ))"
           
           # Dump Migration History (using Supabase CLI for reliability)
           # We use "|| true" to prevent failure if the schema doesn't exist yet (soft fail)
@@ -245,7 +250,8 @@ jobs:
           
           # Restore Data and scrub it in one transaction, so beta and the dev
           # pg_cron jobs never see unscrubbed rows. Any error rolls back both.
-          psql -X --single-transaction -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f data.sql -f scripts/sanitize-dev-copy.sql
+          # The EnergyData slice is read from stdin by load-dev-energy-data.sql.
+          psql -X --single-transaction -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f data.sql -f scripts/load-dev-energy-data.sql -f scripts/sanitize-dev-copy.sql < dev-energy-data.csv
           
           # Restore Migration History
           # (We truncate first to remove any stale Dev history, then apply Prod's history)
@@ -288,7 +294,7 @@ jobs:
           MIGRATION_DB_URL=$(echo "$DEV_DATABASE_URL" | sed 's/:6543/:5432/')
           supabase migration up --db-url "$MIGRATION_DB_URL"
 
-      # After migrations were verified on full prod-sized data: shrink the copy.
+      # After migrations. A safety net now: the export already sends only 45 days.
       - name: Prune Dev Copy
         env:
           DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
