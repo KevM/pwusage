@@ -116,10 +116,10 @@ struct SmartShiftDiagnosticsTests {
     }
 
     @Test func recordsTheHistoryFallbackAndWhyTheForecastWasSkipped() throws {
-        // A balance more than 30 minutes old rules out the forecast; grid history still prices the run.
+        // A forecast that doesn't reach the present rules itself out; grid history still prices the run.
         let (_, _, now, _) = Fixtures.harrisonSunday()
-        let (diagnostics, evaluation) = Self.diagnostics(context: Fixtures.historyContext(asOf: now),
-                                                         balanceSourceTime: now.addingTimeInterval(-45 * 60))
+        let (diagnostics, evaluation) = Self.diagnostics(intervals: Self.intervals.filter { $0.periodStart > now.addingTimeInterval(3600) },
+                                                         context: Fixtures.historyContext(asOf: now))
         let decoded = try Self.roundTrip(diagnostics)
         #expect(decoded.projection == .history)
         #expect(decoded.forecastAvailability.state == "unusable")

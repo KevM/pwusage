@@ -48,7 +48,7 @@ This is a historical battery-behavior approximation, not a dispatch or SOC simul
 
 Search starts from now through the end of tomorrow in the site's timezone. Include now, half-hour forecast boundaries, tariff transitions, and tariff transitions minus the run duration where valid. Consider only complete runs within the shared usable horizon. Keep the first version inside the current billing cycle and a single supported rate set per tariff-period balance; truncate at a cycle boundary or incompatible tariff/rate change. The UI states the actual search horizon.
 
-The common horizon H is the earliest of end-of-tomorrow, the end of complete forecast/context/tariff coverage, and the billing-cycle boundary. Every candidate uses the same H, including start-now. Start from observed signed cycle net-export balances B0 at their source time. Require that source time to be no more than 30 minutes old; project the small gap to now with the same baseline when coverage exists, or fall back. Never add forecast for time already included in B0.
+The common horizon H is the earliest of end-of-tomorrow, the end of complete forecast/context/tariff coverage, and the billing-cycle boundary. Every candidate uses the same H, including start-now. Start from observed signed cycle net-export balances B0 at their source time. Require that source time to be no more than 30 minutes old (an hour when the planning context carries grid history, which fills the gap before the forecast's first interval); project the small gap to now with the same baseline when coverage exists, or fall back. Never add forecast for time already included in B0.
 
 For every interval from the balance source time to H, derive baseline net export:
 
