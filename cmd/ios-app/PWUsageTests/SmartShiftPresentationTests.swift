@@ -139,9 +139,9 @@ struct SmartShiftPresentationTests {
         #expect(verdict.lanes[1].endLabels == ["+10"])
         #expect(verdict.lanes[2].endLabels == ["0", "\u{2212}3"])
         #expect(verdict.lanes[0].switches == [
-            SwitchMarker(date: Self.at(16.5), label: "\u{2190} Peak | Off-Peak \u{2192}", shortLabel: "Off-Peak \u{2192}"),
-            SwitchMarker(date: Self.at(31), label: "\u{2190} Off-Peak | Peak \u{2192}", shortLabel: "Peak \u{2192}"),
-            SwitchMarker(date: Self.at(40.5), label: "\u{2190} Peak | Off-Peak \u{2192}", shortLabel: "Off-Peak \u{2192}"),
+            SwitchMarker(date: Self.at(16.5), label: "\u{2190} Peak | Off-Peak \u{2192}", beforeLabel: "\u{2190} Peak", afterLabel: "Off-Peak \u{2192}"),
+            SwitchMarker(date: Self.at(31), label: "\u{2190} Off-Peak | Peak \u{2192}", beforeLabel: "\u{2190} Off-Peak", afterLabel: "Peak \u{2192}"),
+            SwitchMarker(date: Self.at(40.5), label: "\u{2190} Peak | Off-Peak \u{2192}", beforeLabel: "\u{2190} Peak", afterLabel: "Off-Peak \u{2192}"),
         ])
     }
 
