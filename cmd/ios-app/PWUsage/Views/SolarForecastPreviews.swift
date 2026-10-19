@@ -356,6 +356,8 @@ private struct SmartShiftVerdictPreview: View {
                     SmartShiftVerdictView(verdict: verdict, timeZone: SmartShiftPreviewFixture.timeZone)
                 case .blocked(let message):
                     Text(message)
+                case .loading:
+                    ProgressView(SmartShiftPresentation.checkingSolarNote)
                 case .noJobs:
                     Text("Add a Job")
                 }

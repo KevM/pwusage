@@ -213,7 +213,7 @@ enum LoadTimingForecastPresentation {
     ) -> String? {
         // No key on this device means there is nothing to explain.
         switch connection {
-        case .notConnected:
+        case .checking, .notConnected:
             return nil
         case .awaitingArraySelection:
             return awaitingArraySelectionNote
@@ -273,6 +273,7 @@ enum LoadTimingForecastPresentation {
         now: Date
     ) -> ForecastAvailability {
         switch connection {
+        case .checking: return .loading
         case .notConnected: return .none
         case .awaitingArraySelection: return .unusable(firstSentence(awaitingArraySelectionNote))
         case .ready: break

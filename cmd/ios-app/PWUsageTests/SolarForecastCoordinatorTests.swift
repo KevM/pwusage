@@ -150,6 +150,24 @@ struct SolarForecastCoordinatorTests {
         #expect(api.billSiteIDs.count == 1)
     }
 
+    @Test("Solcast's setup reads as checking until the device has looked")
+    func connectionIsCheckingUntilResolved() async {
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: ForecastManagerSpy(), accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        #expect(coordinator.solarForecastConnection == .checking)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastConnection == .notConnected)
+
+        let noStore = DashboardCoordinator(siteID: "site-a", api: api, planningAPI: api, forecastStore: nil,
+                                           accountScopeID: "local-account", now: { api.now }, timerInterval: nil)
+        await noStore.loadTimingDetailAppeared()
+        #expect(noStore.solarForecastConnection == .notConnected)
+    }
+
     @Test("householdPatternLoadsWithoutSolcast")
     func householdPatternLoadsWithoutSolcast() async {
         let clock = ForecastTestClock()

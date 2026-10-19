@@ -34,7 +34,6 @@ The energy weather redesign replaced the old Job card, but left its presentation
 - [ ] **Delete the dead copy and models:** `LoadTimingForecastPresentation.overlay` / `placement` (`Enhanced`, `Overlay`, `Card`, `Placement`), the unused `LoadTimingPresentation` statics (`recommendationMessage`, `energyImpact`, `costDifference`, `startNowSummary`, `runCardSummary`, `breakdownRows`, `missingBalanceNote`, `unavailableMessage`, `noChargeMessage`, `cycleObservationMessage`, `activeBalanceSummary`, `observedBalances`, `noResponseExplorationMessage`), and `LoadTimingRecommendation` if nothing else adopts it. Migrate the ~30 overlay tests in `LoadTimingViewTests` that guard the forecast note copy onto `forecastAvailability` / `forecastUnavailableNote` first, since those reuse the same note details.
 - [ ] **Smart Shift polish from the branch review:**
   - "Covers all of this run" ignores periods the run crosses into.
-  - A connected user can briefly see "Connect Solcast" before the credential resolves.
   - After picking a Job, adding or editing another in Manage Jobs doesn't switch the card to it.
   - "Rate periods" omits a tariff period that has no balance yet.
   - A future energy source time shows the generic "can't compare" sentence.

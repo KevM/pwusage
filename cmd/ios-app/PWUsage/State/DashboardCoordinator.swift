@@ -30,6 +30,8 @@ enum SolarForecastEnhancementState: Equatable {
 /// apart from `SolarForecastEnhancementState` so the UI can stay silent when no
 /// key exists and explain itself when one does.
 enum SolarForecastConnectionState: Equatable {
+    /// The device hasn't read its Solcast setup yet (at launch or after a site switch).
+    case checking
     case notConnected
     case awaitingArraySelection
     case ready
@@ -173,7 +175,7 @@ final class DashboardCoordinator: ObservableObject {
     /// Told about confirmed hold state only; it can never change the hold.
     weak var batteryHoldActivityObserver: (any BatteryHoldActivityObserving)?
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
-    @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
+    @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .checking
     @Published private(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
     /// This device could not write its forecast state. Not a cause: the forecast
     /// on screen is usable, so it must not claim to be unavailable.
@@ -488,7 +490,9 @@ final class DashboardCoordinator: ObservableObject {
         live.reset()
         bill.reset()
         restoreCachedReadings()
-        resetForecastEnhancement(state: .basic, connection: .notConnected)
+        // Checking, not "not connected": the new site's setup is read next, and
+        // until then the card waits rather than showing a forecast-free answer.
+        resetForecastEnhancement(state: .basic, connection: .checking)
         // The pattern belongs to the old site; connecting or disconnecting
         // Solcast leaves it in place.
         householdPattern = nil
@@ -578,6 +582,7 @@ final class DashboardCoordinator: ObservableObject {
         let operation = beginForecastOperation()
         guard let forecastStore, let planningAPI, let accountScopeID else {
             solarForecastState = .basic
+            solarForecastConnection = .notConnected
             return
         }
         let siteID = selectedSiteID
