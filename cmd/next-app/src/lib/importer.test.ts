@@ -443,6 +443,62 @@ describe('Importer Sync Logic', () => {
 });
 
 
+describe('Importer.refetchDays', () => {
+    let importer: Importer;
+    let mockRepo: MockSiteRepo;
+    const day = (iso: string) => ({ start: new Date(iso), end: new Date(+new Date(iso) + 86400000) });
+    const days = [day('2026-05-03T05:00:00Z'), day('2026-07-03T05:00:00Z'), day('2026-08-20T05:00:00Z')];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        importer = new Importer(new TeslaClient({ accessToken: 'test' }));
+        mockRepo = {
+            getSite: vi.fn().mockResolvedValue({ id: 'site-123', timezone: 'America/Chicago', installed: new Date('2025-01-01T00:00:00Z'), tariffs: [] }),
+            acquireImportLock: vi.fn().mockResolvedValue(true),
+            releaseImportLock: vi.fn().mockResolvedValue(true),
+            getImportStatus: vi.fn(),
+        };
+        (importer as unknown as { siteRepo: unknown }).siteRepo = mockRepo;
+    });
+
+    it('re-imports exactly the given days, even if coverage says they are complete, under the normal (non-forced) lock', async () => {
+        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+
+        const result = await importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 30 });
+
+        expect(importSpy.mock.calls.map(c => [c[1], c[2]])).toEqual(days.map(d => [d.start, d.end]));
+        expect(mockRepo.acquireImportLock).toHaveBeenCalledWith(expect.objectContaining({ siteId: 'site-123', force: false }));
+        expect(result).toEqual({ complete: true, rows: [], processedWindows: 3, totalWindows: 3 });
+    });
+
+    it('returns 0/0 without importing when the import lock is busy', async () => {
+        mockRepo.acquireImportLock.mockResolvedValue(false);
+        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+
+        await expect(importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 30 }))
+            .resolves.toEqual({ complete: false, rows: [], processedWindows: 0, totalWindows: 0 });
+        expect(importSpy).not.toHaveBeenCalled();
+    });
+
+    it('caps a call at maxWindows and reports incomplete', async () => {
+        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+
+        const result = await importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 2 });
+
+        expect(importSpy).toHaveBeenCalledTimes(2);
+        expect(result).toMatchObject({ complete: false, processedWindows: 2, totalWindows: 3 });
+    });
+
+    it('reports incomplete when some days fail, and throws when all fail', async () => {
+        vi.spyOn(importer, 'importRange').mockResolvedValueOnce([]).mockRejectedValue(new Error('Tesla flaked'));
+        await expect(importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 30 }))
+            .resolves.toMatchObject({ complete: false, processedWindows: 1, totalWindows: 3 });
+
+        vi.spyOn(importer, 'importRange').mockRejectedValue(new Error('Tesla down'));
+        await expect(importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 30 })).rejects.toThrow('Tesla down');
+    });
+});
+
 describe('Importer.getTodayData previous-day tail', () => {
     // getSiteMidnight is mocked to floor UTC, so "today" starts 2026-10-16T00:00Z.
     const NOW = new Date('2026-10-16T01:00:00Z');

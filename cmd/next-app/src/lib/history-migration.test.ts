@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { addDaysInSiteTimezone, formatSiteDate, parseSiteLocalDateToMidnight } from './date-utils';
-import { archiveSiteHistory, backfillSiteHistory, isMigrationComplete, localDayChunks, migrateSiteHistory, parseMigrationArgs, type ArchiveSummary, type BackfillDeps, type BackfillSummary, type MigrationSite, type SiteMigrationReport } from './history-migration';
+import { archiveSiteHistory, backfillSiteHistory, isMigrationComplete, repairSiteDays, localDayChunks, migrateSiteHistory, parseMigrationArgs, type ArchiveSummary, type BackfillDeps, type BackfillSummary, type MigrationSite, type SiteMigrationReport } from './history-migration';
 import type { DateWindow } from './importer/import-planner';
 import type { EnsureDataResult } from './importer';
 import type { MaintenanceDay, MaintenanceOptions, MaintenanceReport, MaintenanceStore } from './prototypes/compact-history-maintenance';
@@ -77,6 +77,17 @@ describe('archiveSiteHistory', () => {
         expect(summary.archived).toEqual(['2025-01-01', '2025-01-08']);
     });
 
+    it('lists repairable days: stored samples that are short, gappy or not fully attributed, never empty days', async () => {
+        const maintain = fakeMaintain(report([
+            day('2025-01-01', 'finalized', { needsRepair: true, samples: 280 }),
+            day('2025-01-02', 'finalized', { attributionComplete: false }),
+            day('2025-01-03', 'empty', { needsRepair: true, samples: 0, attributionComplete: null }),
+            day('2025-01-04', 'finalized'),
+        ]));
+        const summary = await archiveSiteHistory(store, args('2025-01-01', '2025-01-05', true), maintain);
+        expect(summary.repairable).toEqual(['2025-01-01', '2025-01-02']);
+    });
+
     it('collects needsRepair and incompleteAttribution dates', async () => {
         const maintain = fakeMaintain(report([
             day('2025-01-01', 'finalized', { needsRepair: true, samples: 280 }),
@@ -141,7 +152,8 @@ function fakeBackfill(plans: DateWindow[][], results: EnsureDataResult[] = []) {
     for (const r of results) ensure.mockResolvedValueOnce(r);
     const pause = vi.fn<BackfillDeps['pause']>().mockResolvedValue(undefined);
     const recordBackfillFrom = vi.fn<BackfillDeps['recordBackfillFrom']>().mockResolvedValue(undefined);
-    return { plan, ensure, pause, recordBackfillFrom };
+    const refetch = vi.fn<BackfillDeps['refetch']>();
+    return { plan, ensure, pause, recordBackfillFrom, refetch };
 }
 
 describe('backfillSiteHistory', () => {
@@ -409,11 +421,12 @@ describe('migrateSiteHistory', () => {
 
 describe('parseMigrationArgs', () => {
     it('defaults to preview with both steps', () => {
-        expect(parseMigrationArgs(['--site-id', 'abc'])).toEqual({ siteId: 'abc', apply: false, skipBackfill: false, skipArchive: false });
+        expect(parseMigrationArgs(['--site-id', 'abc'])).toEqual({ siteId: 'abc', apply: false, skipBackfill: false, skipArchive: false, repair: false });
     });
 
     it('accepts --apply, --skip-backfill and --skip-archive', () => {
-        expect(parseMigrationArgs(['--apply', '--site-id', 'abc', '--skip-backfill'])).toEqual({ siteId: 'abc', apply: true, skipBackfill: true, skipArchive: false });
+        expect(parseMigrationArgs(['--apply', '--site-id', 'abc', '--skip-backfill'])).toEqual({ siteId: 'abc', apply: true, skipBackfill: true, skipArchive: false, repair: false });
+        expect(parseMigrationArgs(['--site-id', 'abc', '--apply', '--repair'])).toMatchObject({ apply: true, repair: true });
         expect(parseMigrationArgs(['--site-id', 'abc', '--skip-archive'])).toMatchObject({ skipArchive: true, skipBackfill: false });
     });
 
@@ -428,6 +441,8 @@ describe('parseMigrationArgs', () => {
         [['--site-id', 'abc', '--site-id', 'def']],
         [['--site-id', 'abc', '--apply', '--apply']],
         [['--site-id', 'abc', '--skip-backfill', '--skip-archive']],
+        [['--site-id', 'abc', '--repair', '--skip-archive']],
+        [['--site-id', 'abc', '--repair', '--repair']],
     ])('rejects %j', (args) => {
         expect(() => parseMigrationArgs(args)).toThrow(Error);
     });
@@ -435,9 +450,9 @@ describe('parseMigrationArgs', () => {
 
 describe('isMigrationComplete', () => {
     const backfill = (stopped: BackfillSummary['stopped']): BackfillSummary => ({ passes: 1, windowsImported: 0, missingDays: [], stopped, backfillFrom: null });
-    const archive = (stopped: ArchiveSummary['stopped']): ArchiveSummary => ({ chunks: 1, archived: [], alreadyArchived: 0, empty: 0, needsRepair: [], incompleteAttribution: [], remaining: [], stopped });
+    const archive = (stopped: ArchiveSummary['stopped']): ArchiveSummary => ({ chunks: 1, archived: [], alreadyArchived: 0, empty: 0, needsRepair: [], incompleteAttribution: [], repairable: [], remaining: [], stopped });
     const report = (b: SiteMigrationReport['backfill'], a: SiteMigrationReport['archive'], mode: SiteMigrationReport['mode'] = 'apply'): SiteMigrationReport =>
-        ({ mode, installed: '2023-11-14', cutoff: '2026-10-17', backfill: b, archive: a, rawDeletionPerformed: false });
+        ({ mode, installed: '2023-11-14', cutoff: '2026-10-17', backfill: b, archive: a, repair: 'skipped', rawDeletionPerformed: false });
 
     it.each([
         ['backfill complete', backfill('complete')],
@@ -456,5 +471,112 @@ describe('isMigrationComplete', () => {
         ['archive was skipped', report(backfill('complete'), 'skipped')],
     ])('is not complete for %s', (_, r) => {
         expect(isMigrationComplete(r)).toBe(false);
+    });
+});
+
+describe('repairSiteDays', () => {
+    const dates = (n: number) => Array.from({ length: n }, (_, i) => formatSiteDate(addDaysInSiteTimezone(la('2025-02-01'), i, LA), LA));
+
+    it('previews the planned days without refetching', async () => {
+        const deps = fakeBackfill([]);
+        const summary = await repairSiteDays(deps, site, ['2025-02-01', '2025-02-03'], false);
+        expect(deps.refetch).not.toHaveBeenCalled();
+        expect(summary).toEqual({ planned: ['2025-02-01', '2025-02-03'], refetched: 0, stopped: 'preview', stillNeedsRepair: [] });
+    });
+
+    it('nothing-to-do with no days', async () => {
+        const summary = await repairSiteDays(fakeBackfill([]), site, [], true);
+        expect(summary.stopped).toBe('nothing-to-do');
+    });
+
+    it('refetches site-local day windows in batches of 30, pausing between batches', async () => {
+        const order: string[] = [];
+        const deps = fakeBackfill([]);
+        deps.refetch.mockImplementation(async (_id, days) => { order.push(`refetch:${days.length}`); return ensured(days.length, days.length, true); });
+        deps.pause.mockImplementation(async () => { order.push('pause'); });
+        const planned = dates(31);
+        const summary = await repairSiteDays(deps, site, planned, true);
+        expect(order).toEqual(['refetch:30', 'pause', 'refetch:1']);
+        expect(deps.refetch.mock.calls[0][1][0]).toEqual({ start: la('2025-02-01'), end: la('2025-02-02') });
+        expect(deps.refetch.mock.calls[0][2]).toEqual({ maxTimeMs: 45000, maxWindows: 30 });
+        expect(summary).toMatchObject({ refetched: 31, stopped: 'complete' });
+    });
+
+    it('retries a busy batch after a pause, then stops busy after 3', async () => {
+        const deps = fakeBackfill([]);
+        deps.refetch.mockResolvedValueOnce(ensured(0, 0)).mockResolvedValueOnce(ensured(2, 2, true));
+        expect(await repairSiteDays(deps, site, dates(2), true)).toMatchObject({ refetched: 2, stopped: 'complete' });
+        expect(deps.pause).toHaveBeenCalledTimes(1);
+
+        const busy = fakeBackfill([]);
+        busy.refetch.mockResolvedValue(ensured(0, 0));
+        expect(await repairSiteDays(busy, site, dates(2), true)).toMatchObject({ refetched: 0, stopped: 'busy' });
+        expect(busy.refetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('is incomplete when a batch had failed days, but keeps going', async () => {
+        const deps = fakeBackfill([]);
+        deps.refetch.mockResolvedValueOnce(ensured(29, 30)).mockResolvedValueOnce(ensured(1, 1, true));
+        const summary = await repairSiteDays(deps, site, dates(31), true);
+        expect(deps.refetch).toHaveBeenCalledTimes(2);
+        expect(summary).toMatchObject({ refetched: 30, stopped: 'incomplete' });
+    });
+});
+
+describe('migrateSiteHistory --repair', () => {
+    const migrateNow = new Date('2025-03-20T19:00:00Z');
+    const full = 288;
+
+    /** Store whose coverage comes from per-day sample counts; finalize always succeeds. */
+    function countingStore(counts: Map<string, number>): MaintenanceStore {
+        return {
+            getMaintenanceSnapshot: vi.fn(async (_siteId: string, from: string, before: string) => {
+                const coverage = [...counts].filter(([d]) => d >= from && d < before).map(([d, n]) => {
+                    const first = la(d);
+                    return { localDayKey: d, count: n, first, last: new Date(+first + (full - 1) * 300000), maxInteriorGapMs: n === full ? 300000 : 0 };
+                });
+                return { timezone: LA, start: la(from), end: la(before), coverage, archives: [] };
+            }),
+            finalizeDay: vi.fn(async () => ({ status: 'finalized' as const, attributionComplete: true })),
+        };
+    }
+
+    it('refetches short days on or after the backfill start, skips unfillable and gap days, then re-archives', async () => {
+        // 01-01..01-02: pre-provisioning gap (backfillFrom 01-03); 02-10 unfillable (still planned by backfill).
+        const counts = new Map([['2025-01-01', 5], ['2025-01-03', full], ['2025-02-05', 280], ['2025-02-10', 100], ['2025-03-01', 287]]);
+        const gapSite = { ...site, backfillFrom: la('2025-01-03') };
+        const backfill = fakeBackfill([windows('2025-02-10'), windows('2025-02-10')], [ensured(1, 1, true)]);
+        backfill.refetch.mockImplementation(async (_id, days) => {
+            for (const d of days) counts.set(formatSiteDate(d.start, LA), full);
+            return ensured(days.length, days.length, true);
+        });
+        const report = await migrateSiteHistory({ site: gapSite, backfill, store: countingStore(counts) }, { apply: true, now: migrateNow, repair: true });
+
+        expect(backfill.refetch.mock.calls[0][1]).toEqual(windows('2025-02-05', '2025-03-01'));
+        expect(report.repair).toEqual({ planned: ['2025-02-05', '2025-03-01'], refetched: 2, stopped: 'complete', stillNeedsRepair: [] });
+        expect(report.archive).toMatchObject({ stopped: 'caught-up' });
+        if (report.archive === 'skipped') throw new Error('archive skipped');
+        expect(report.archive.repairable).toEqual(['2025-01-01', '2025-02-10']);
+    });
+
+    it('reports days Tesla still could not complete', async () => {
+        const counts = new Map([['2025-02-05', 280]]);
+        const backfill = fakeBackfill([[]]);
+        backfill.refetch.mockResolvedValue(ensured(1, 1, true));
+        const report = await migrateSiteHistory({ site, backfill, store: countingStore(counts) }, { apply: true, now: migrateNow, repair: true });
+        expect(report.repair).toMatchObject({ refetched: 1, stillNeedsRepair: ['2025-02-05'] });
+    });
+
+    it('previews the days it would refetch', async () => {
+        const counts = new Map([['2025-02-05', 280]]);
+        const backfill = fakeBackfill([[]]);
+        const report = await migrateSiteHistory({ site, backfill, store: countingStore(counts) }, { apply: false, now: migrateNow, repair: true });
+        expect(backfill.refetch).not.toHaveBeenCalled();
+        expect(report.repair).toMatchObject({ planned: ['2025-02-05'], stopped: 'preview' });
+    });
+
+    it('is skipped unless requested', async () => {
+        const report = await migrateSiteHistory({ site, backfill: fakeBackfill([[]]), store: countingStore(new Map()) }, { apply: true, now: migrateNow });
+        expect(report.repair).toBe('skipped');
     });
 });
