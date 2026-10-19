@@ -59,11 +59,36 @@ struct EnergyWeatherChart: View {
     }
 }
 
+/// Which switch labels fit along the top of a lane without overlapping: each
+/// label is centred on its switch and pinned inside the chart, as the chart
+/// does, and falls back to its short form, then to none, when it would touch
+/// the label before it.
+enum SwitchLabelLayout {
+    enum Form: Equatable { case full, short, hidden }
+
+    static let gap: CGFloat = 6
+
+    static func place(xs: [CGFloat], fullWidths: [CGFloat], shortWidths: [CGFloat], chartWidth: CGFloat) -> [Form] {
+        var lastRight = -CGFloat.infinity
+        return xs.indices.map { index in
+            for (form, width) in [(Form.full, fullWidths[index]), (.short, shortWidths[index])] where width <= chartWidth {
+                let left = min(max(xs[index] - width / 2, 0), chartWidth - width)
+                if left >= lastRight + gap {
+                    lastRight = left + width
+                    return form
+                }
+            }
+            return .hidden
+        }
+    }
+}
+
 private struct LaneChart: View {
     let lane: LaneDisplay
     let axisDates: [Date]
     let timeZone: String
     let showsSwitchLabels: Bool
+    @State private var chartWidth: CGFloat = 0
 
     private var allPoints: [LoadTimingForecastEstimator.BalancePoint] { lane.recommended + (lane.startNow ?? []) }
 
@@ -88,15 +113,27 @@ private struct LaneChart: View {
         return (low - pad)...(high + topPad)
     }
 
-    /// Switch labels are wide, so only label a switch with room after the last labelled one.
-    private var labelledSwitches: Set<Date> {
+    /// The label each switch can show at the chart's current width (see `SwitchLabelLayout`).
+    private var switchLabels: [Date: String] {
         let span = xDomain.upperBound.timeIntervalSince(xDomain.lowerBound)
-        var labelled: [Date] = []
-        for marker in lane.switches {
-            if let last = labelled.last, marker.date.timeIntervalSince(last) < span * 0.4 { continue }
-            labelled.append(marker.date)
+        guard chartWidth > 0, span > 0 else { return [:] }
+        let font = UIFont.preferredFont(forTextStyle: .caption2)
+        func width(_ text: String) -> CGFloat { ceil((text as NSString).size(withAttributes: [.font: font]).width) }
+        let markers = lane.switches
+        let forms = SwitchLabelLayout.place(
+            xs: markers.map { CGFloat($0.date.timeIntervalSince(xDomain.lowerBound) / span) * chartWidth },
+            fullWidths: markers.map { width($0.label) },
+            shortWidths: markers.map { width($0.shortLabel) },
+            chartWidth: chartWidth)
+        var labels: [Date: String] = [:]
+        for (marker, form) in zip(markers, forms) {
+            switch form {
+            case .full: labels[marker.date] = marker.label
+            case .short: labels[marker.date] = marker.shortLabel
+            case .hidden: break
+            }
         }
-        return Set(labelled)
+        return labels
     }
 
     private func clock(_ date: Date) -> String {
@@ -115,11 +152,14 @@ private struct LaneChart: View {
             }
             chart
                 .frame(height: showsSwitchLabels ? 130 : 110)
+                // The y axis is hidden, so the plot spans the chart's width.
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { chartWidth = $0 }
         }
     }
 
     private var chart: some View {
         let x = xDomain, y = yDomain
+        let labels = showsSwitchLabels ? switchLabels : [:]
         return Chart {
             RectangleMark(xStart: .value("Start", x.lowerBound), xEnd: .value("End", x.upperBound),
                           yStart: .value("Zero", 0), yEnd: .value("Top", y.upperBound))
@@ -137,8 +177,8 @@ private struct LaneChart: View {
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     .annotation(position: .overlay, alignment: .top, spacing: 2,
                                 overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
-                        if showsSwitchLabels && labelledSwitches.contains(marker.date) {
-                            Text(marker.label)
+                        if let label = labels[marker.date] {
+                            Text(label)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .fixedSize()
