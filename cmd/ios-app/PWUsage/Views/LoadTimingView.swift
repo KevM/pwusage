@@ -52,12 +52,9 @@ enum LoadTimingPresentation {
         return "\(profile.name), \(profile.energyKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours, \(profile.durationHours.formatted(.number.precision(.fractionLength(0...1)))) hours"
     }
 
+    /// Job names are verb phrases ("Charge the car"), so they are used as-is.
     static func actionTitle(for profile: LoadProfile) -> String {
-        "\(profile.kind == .car ? "Charge" : "Run") \(profile.name)"
-    }
-
-    static func explorationTitle(for profile: LoadProfile) -> String {
-        "What if you \(profile.kind == .car ? "charge" : "run") \(profile.name)?"
+        profile.name
     }
 
     /// `.incompleteData` is aggregated across every job while the card speaks
@@ -149,13 +146,6 @@ enum LoadTimingPresentation {
             : "Estimated \(amount) less than the suggestion"
     }
 
-    static func showsBackToSuggestion(explicitID: String?, suggestedID: String?) -> Bool {
-        guard let explicitID, let suggestedID else { return false }
-        return explicitID != suggestedID
-    }
-
-    static let runDetailsAccessibilityLabel = "Job Details"
-
     static func activeBalanceSummary(_ timing: LoadTiming) -> String? {
         guard timing.hasCycleData, let active = timing.periods.first(where: \.isActive) else { return nil }
         let balance = active.cycleNetExportKwh
@@ -240,13 +230,14 @@ struct LoadTimingView: View {
     let site: MobileSite
     let isSelected: Bool
 
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var profileStore: LoadProfileStore
     @State private var isProfileSheetPresented = false
     @State private var isJobPickerPresented = false
     @State private var isSolarForecastSheetPresented = false
-    @State private var runDetailsSnapshot: LoadRunDetailsSnapshot?
+    @State private var detailsSnapshot: SmartShiftDetailsSnapshot?
     @State private var exploredProfileID: String?
+    /// Bumped when the comparison goes stale on its own (see `nextRefresh`), to run a body pass.
+    @State private var staleRefreshes = 0
 
     init(coordinator: DashboardCoordinator, site: MobileSite, isSelected: Bool = true, profileStore: LoadProfileStore? = nil, initialExploredProfileID: String? = nil) {
         self.coordinator = coordinator
@@ -261,58 +252,122 @@ struct LoadTimingView: View {
     private var currencyCode: String { response?.currentBill.currency ?? "USD" }
     private var timeZone: String { response?.site.timezone ?? "UTC" }
 
-    /// The forecast overlay is derived fresh from coordinator state. It can only
-    /// add an enhanced section and one note; the basic estimate below is rendered
-    /// regardless, and is never replaced by a forecast value.
-    private func forecastOverlay(
-        now: Date,
-        timing: LoadTiming,
-        response: MobileBillResponse,
-        profile: LoadProfile?
-    ) -> LoadTimingForecastPresentation.Overlay {
-        let enhancedState = coordinator.solarForecastState
-        let result: LoadTimingForecastEstimator.Result
-        if enhancedState == .enhanced,
-           let profile,
-           let batch = coordinator.solarForecastBatch,
-           let context = coordinator.loadPlanningContext,
-           let balanceSourceTime = response.sources.energyDataThrough {
-            result = LoadTimingForecastEstimator.evaluate(
-                profile: profile,
-                now: now,
-                timing: timing,
-                forecast: batch.intervals,
-                context: context,
-                balanceSourceTime: balanceSourceTime,
-                billingCycleEnd: response.currentBill.cycleEnd,
-                currencyCode: currencyCode
-            )
-        } else {
-            // Nothing to evaluate. Leave the reason unset so the overlay explains
-            // the device's own request state rather than a fabricated one.
-            result = LoadTimingForecastEstimator.Result(comparison: nil, unavailableReason: nil)
-        }
-        return LoadTimingForecastPresentation.overlay(
-            enhancement: enhancedState,
+    /// The Job on screen: one picked here, else the last one viewed.
+    static func initialJobID(store: LoadProfileStore) -> String? {
+        store.profile(id: store.selectedProfileID)?.id ?? store.profiles.first?.id
+    }
+
+    private var selectedProfile: LoadProfile? {
+        exploredProfileID.flatMap { profileStore.profile(id: $0) }
+            ?? Self.initialJobID(store: profileStore).flatMap { profileStore.profile(id: $0) }
+    }
+
+    private struct SmartShiftState {
+        let screen: SmartShiftScreen
+        let profile: LoadProfile?
+        let evaluation: SmartShiftEvaluation?
+        let timing: LoadTiming
+        let now: Date
+        let billingCycleEnd: Date
+        let hint: BetterJobHint?
+        /// What the pass was offered, kept so "Copy diagnostics" can record it.
+        let balanceSourceTime: Date?
+        let intervals: [SolarForecastInterval]?
+        let context: LoadTimingForecastEstimator.PlanningContext?
+    }
+
+    /// Prices the selected Job with the solar forecast when it's usable and with
+    /// balances held still otherwise, then turns that into the card's copy.
+    private func smartShiftState(now: Date, timing: LoadTiming, response: MobileBillResponse) -> SmartShiftState {
+        let profile = selectedProfile
+        let availability = LoadTimingForecastPresentation.forecastAvailability(
+            state: coordinator.solarForecastState,
             connection: coordinator.solarForecastConnection,
             cause: coordinator.solarForecastUnavailableCause,
-            saveFailed: coordinator.solarForecastSaveFailure,
-            enhancementReason: coordinator.solarForecastUnavailableReason,
-            result: result,
+            reason: coordinator.solarForecastUnavailableReason,
             forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
-            contextAsOf: coordinator.loadPlanningContext?.asOf,
-            currencyCode: currencyCode,
-            timeZone: timeZone,
             now: now
+        )
+        // One evaluator per pass, so every Job shares the projection's plan.
+        let intervals = coordinator.solarForecastBatch?.intervals
+        // Without a usable forecast, the household pattern's grid history still projects the banks.
+        let context = coordinator.loadPlanningContext ?? coordinator.householdPattern
+        let evaluate = SmartShiftPresentation.evaluator(
+            now: now,
+            timing: timing,
+            forecast: availability,
+            intervals: intervals,
+            context: context,
+            balanceSourceTime: response.sources.energyDataThrough,
+            billingCycleEnd: response.currentBill.cycleEnd,
+            currencyCode: currencyCode,
+            timeZone: timeZone
+        )
+        let evaluation = profile.map(evaluate)
+        let screen = SmartShiftPresentation.make(
+            profile: profile,
+            result: evaluation?.result ?? .init(comparison: nil, unavailableReason: nil),
+            forecast: evaluation?.forecast ?? .none,
+            refreshUnavailable: coordinator.bill.isUnavailable,
+            timing: timing,
+            now: now,
+            billingCycleEnd: response.currentBill.cycleEnd,
+            currencyCode: currencyCode,
+            timeZone: timeZone
+        )
+        // Every saved Job is priced in this same pass, so the hint costs no extra
+        // passes; Jobs with no comparison right now are left out.
+        var hint: BetterJobHint?
+        if let profile, let savings = evaluation?.result.comparison?.savings, !coordinator.bill.isUnavailable {
+            let others = profileStore.profiles.filter { $0.id != profile.id }.compactMap { other in
+                evaluate(other).result.comparison.map { (other, $0.savings) }
+            }
+            hint = SmartShiftPresentation.betterJobHint(selectedID: profile.id, savingsByJob: [(profile, savings)] + others,
+                                                        currencyCode: currencyCode)
+        }
+        return SmartShiftState(screen: screen, profile: profile, evaluation: evaluation, timing: timing, now: now,
+                               billingCycleEnd: response.currentBill.cycleEnd, hint: hint,
+                               balanceSourceTime: response.sources.energyDataThrough, intervals: intervals, context: context)
+    }
+
+    private func detailsSnapshot(_ state: SmartShiftState, verdict: SmartShiftVerdict) -> SmartShiftDetailsSnapshot {
+        let comparison = state.evaluation?.result.comparison
+        let usedForecast = state.evaluation?.forecast == .ready
+        var breakdowns: [CostBreakdown] = []
+        var ruledOutNote: String?
+        if let comparison, let profile = state.profile {
+            breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: profile, timing: state.timing,
+                                                               now: state.now, billingCycleEnd: state.billingCycleEnd,
+                                                               currencyCode: currencyCode, timeZone: timeZone)
+            ruledOutNote = SmartShiftPresentation.ruledOutNote(comparison: comparison, profile: profile, timing: state.timing,
+                                                               now: state.now, timeZone: timeZone)
+        }
+        var diagnostics: SmartShiftDiagnostics?
+        if let profile = state.profile, let evaluation = state.evaluation {
+            diagnostics = SmartShiftDiagnostics(
+                siteId: site.id, app: .current, job: profile, now: state.now, balanceSourceTime: state.balanceSourceTime,
+                billingCycleEnd: state.billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone, timing: state.timing,
+                evaluation: evaluation, intervals: state.intervals, context: state.context,
+                forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt)
+        }
+        return SmartShiftDetailsSnapshot(
+            verdict: verdict,
+            comparison: comparison,
+            rows: SmartShiftPresentation.periodRows(timing: state.timing, currencyCode: currencyCode),
+            breakdowns: breakdowns,
+            ruledOutNote: ruledOutNote,
+            forecastFetchedAt: usedForecast ? coordinator.solarForecastBatch?.fetchedAt : nil,
+            contextAsOf: usedForecast ? coordinator.loadPlanningContext?.asOf : nil,
+            capturedAt: state.now,
+            diagnostics: diagnostics
         )
     }
 
-    /// The minute tick reaches two things on this screen: the freshness labels,
-    /// and the verdict with its figures. Both are cheap to re-derive. The
-    /// forecast overlay is not — it is a multi-candidate search over the
-    /// horizon — so it is resolved once per body pass, outside any timeline.
-    /// The scroll view and its refresh control sit outside a timeline too, so
-    /// neither the estimator nor a pull-to-refresh is at the mercy of the tick.
+    /// The comparison is a multi-candidate search over the horizon, so it is
+    /// resolved once per body pass, outside any timeline: only the freshness
+    /// label moves with the minute tick. The scroll view and its refresh control
+    /// sit outside a timeline too, so neither the estimator nor a pull-to-refresh
+    /// is at the mercy of the tick.
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -331,49 +386,18 @@ struct LoadTimingView: View {
                         nextCheaperPhrase: nil,
                         nextStartPhraseByKey: [:]
                     )
-                    observedPeriods(timingForDisplay)
-                    // Placement identifies the selected job, and the
-                    // forecast is the expensive thing on this screen. Both are
-                    // resolved here so the minute tick never repeats the forecast search.
-                    let placement = LoadTimingForecastPresentation.placement(
-                        recommendation: LoadTimingRecommendation.evaluate(
-                            profiles: profileStore.profiles,
-                            start: Date(),
-                            timing: timingForDisplay,
-                            energyDataThrough: response.sources.energyDataThrough,
-                            cycleEnd: response.currentBill.cycleEnd,
-                            refreshUnavailable: coordinator.bill.isUnavailable
-                        ),
-                        explicitExploredID: exploredProfileID
-                    )
-                    let overlay = placement.map {
-                        forecastOverlay(now: Date(), timing: timingForDisplay, response: response, profile: $0.profile)
-                    }
-                    // Re-deriving the verdict on every tick costs one
-                    // estimator-free recommendation pass, and keeps the headline
-                    // consistent with the freshness label beside it. The overlay
-                    // is frozen, so each card re-checks that the tick still
-                    // places the forecast on the same load and withholds it
-                    // otherwise: a stale forecast is never worth showing against
-                    // a different profile.
-                    TimelineView(.everyMinute) { context in
-                        let tickRecommendation = LoadTimingRecommendation.evaluate(
-                            profiles: profileStore.profiles,
-                            start: context.date,
-                            timing: timingForDisplay,
-                            energyDataThrough: response.sources.energyDataThrough,
-                            cycleEnd: response.currentBill.cycleEnd,
-                            refreshUnavailable: coordinator.bill.isUnavailable
-                        )
-                        jobCard(
-                            tickRecommendation,
-                            timing: timingForDisplay,
-                            response: response,
-                            overlay: overlay,
-                            forecastPlacement: placement,
-                            now: context.date
-                        )
-                    }
+                    // Read so a scheduled refresh re-runs this pass.
+                    let _ = staleRefreshes
+                    let state = smartShiftState(now: Date(), timing: timingForDisplay, response: response)
+                    jobCard(state)
+                        .task(id: SmartShiftPresentation.nextRefresh(comparison: state.evaluation?.result.comparison, now: state.now)) {
+                            guard let refresh = SmartShiftPresentation.nextRefresh(
+                                comparison: state.evaluation?.result.comparison, now: state.now) else { return }
+                            // A second past the boundary, so the next pass sees it as passed.
+                            let delay = max(0, refresh.timeIntervalSinceNow) + 1
+                            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                            staleRefreshes &+= 1
+                        }
                     metadata(response)
                 } else if coordinator.bill.isUnavailable {
                     noResponseJobCard
@@ -424,8 +448,8 @@ struct LoadTimingView: View {
         .sheet(isPresented: $isSolarForecastSheetPresented) {
             SolarForecastSettingsSheet(coordinator: coordinator)
         }
-        .sheet(item: $runDetailsSnapshot) { snapshot in
-            LoadRunDetailsSheet(snapshot: snapshot)
+        .sheet(item: $detailsSnapshot) { snapshot in
+            SmartShiftDetailsView(snapshot: snapshot, solarForecast: { await coordinator.solarForecastDiagnostics() })
         }
         .onChange(of: profileStore.profiles) { _, profiles in
             if let exploredProfileID, !profiles.contains(where: { $0.id == exploredProfileID }) {
@@ -453,135 +477,88 @@ struct LoadTimingView: View {
         }
     }
 
-    /// One selected job owns both the current estimate and its forecast.
-    private func jobCard(
-        _ recommendation: LoadTimingRecommendation,
-        timing: LoadTiming,
-        response: MobileBillResponse,
-        overlay: LoadTimingForecastPresentation.Overlay?,
-        forecastPlacement: LoadTimingForecastPresentation.Placement?,
-        now: Date
-    ) -> some View {
-        let candidate = recommendation.exploredProfile(explicitID: exploredProfileID)
-        let copy = LoadTimingPresentation.recommendationMessage(
-            for: recommendation,
-            selected: candidate,
-            refreshUnavailable: coordinator.bill.isUnavailable,
-            hasTariff: timing.hasTariff
-        )
-        // Withhold a frozen forecast if the minute tick changes the selected job.
-        let showsForecast = currentPlacement(for: recommendation) == forecastPlacement
-        return LoadTimingCard {
-            if let candidate {
-                if recommendation.suggested?.profile.id == candidate.profile.id {
-                    Label("Recommended Now", systemImage: "checkmark.circle")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+    private func jobCard(_ state: SmartShiftState) -> some View {
+        LoadTimingCard {
+            switch state.screen.content {
+            case .verdict(let verdict):
+                SmartShiftVerdictView(verdict: verdict, timeZone: timeZone) {
+                    isSolarForecastSheetPresented = true
                 }
-                selectedCandidate(candidate, recommendation: recommendation, timing: timing, response: response, now: now)
-                if recommendation.state == .ready {
-                    if candidate.fitsSurplus {
-                        Text("Your export cushion covers this job.")
-                            .font(.subheadline)
-                    }
-                } else {
-                    Text(copy.title)
-                        .font(.subheadline.bold())
-                    Text(copy.detail)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                Divider()
+                Button {
+                    detailsSnapshot = detailsSnapshot(state, verdict: verdict)
+                } label: {
+                    disclosureRow("How this is worked out")
                 }
-                forecastSection(showsForecast ? overlay : nil)
-                if profileStore.profiles.count > 1 {
-                    Button("Try Another Job", systemImage: "arrow.left.arrow.right") {
-                        isJobPickerPresented = true
-                    }
-                    .frame(minHeight: 44)
+                .buttonStyle(.plain)
+                jobRows(hint: state.hint)
+            case .blocked(let message):
+                if let profile = selectedProfile {
+                    Text(profile.name)
+                        .font(.title3.weight(.bold))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-            } else {
-                Text(copy.title).font(.headline)
-                Text(copy.detail).foregroundStyle(.secondary)
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                jobRows(hint: nil)
+            case .noJobs:
+                Text("Add a Job").font(.headline)
+                Text("Add a job to see when it's cheapest to run.").foregroundStyle(.secondary)
                 Button("Add a Job", systemImage: "plus") { isProfileSheetPresented = true }
                     .frame(minHeight: 44)
             }
         }
     }
 
-    private func currentPlacement(
-        for recommendation: LoadTimingRecommendation
-    ) -> LoadTimingForecastPresentation.Placement? {
-        LoadTimingForecastPresentation.placement(
-            recommendation: recommendation, explicitExploredID: exploredProfileID
-        )
-    }
-
     @ViewBuilder
-    private func forecastSection(_ overlay: LoadTimingForecastPresentation.Overlay?) -> some View {
-        if let overlay {
-            if let note = overlay.note {
-                Label(note, systemImage: "sun.max.trianglebadge.exclamationmark")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+    private func jobRows(hint: BetterJobHint?) -> some View {
+        if profileStore.profiles.count > 1 {
+            Divider()
+            Button {
+                isJobPickerPresented = true
+            } label: {
+                disclosureRow("Try another job")
             }
-            if let enhanced = overlay.enhanced {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Solar forecast")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(enhanced.headline)
-                        .font(.subheadline.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(enhanced.recommendedCost)
-                        .font(.headline)
-                        .monospacedDigit()
-                        .fixedSize(horizontal: false, vertical: true)
-                    if enhanced.costNow != enhanced.recommendedCost {
-                        Text(enhanced.costNow)
-                            .font(.subheadline)
-                            .monospacedDigit()
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let savings = enhanced.savings {
-                        Text(savings)
-                            .font(.subheadline)
-                            .foregroundStyle(.green)
-                            .monospacedDigit()
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Text(enhanced.window)
+            .buttonStyle(.plain)
+            if let hint {
+                Button {
+                    selectJob(hint.id)
+                } label: {
+                    Label(hint.text, systemImage: "lightbulb")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(enhanced.solarContribution)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    DisclosureGroup("Forecast Details") {
-                        Text(enhanced.horizon)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        ForEach(enhanced.sourceAges, id: \.self) { age in
-                            Text(age)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Text(overlay.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
-                .padding(.top, 4)
-
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+                .accessibilityHint("Switches to this job")
             }
         }
     }
 
+    private func selectJob(_ id: String) {
+        exploredProfileID = id
+        try? profileStore.selectProfile(id: id)
+    }
+
+    private func disclosureRow(_ title: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .foregroundStyle(.tint)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
     private var noResponseJobCard: some View {
-        let selected = exploredProfileID.flatMap { profileStore.profile(id: $0) } ?? profileStore.profiles.first
+        let selected = selectedProfile
         return LoadTimingCard {
             if let selected {
                 Text(selected.name).font(.title2.bold())
@@ -604,7 +581,7 @@ struct LoadTimingView: View {
             List {
                 ForEach(profileStore.profiles) { profile in
                     Button {
-                        exploredProfileID = profile.id
+                        selectJob(profile.id)
                         isJobPickerPresented = false
                     } label: {
                         Text(LoadTimingPresentation.profileChipTitle(profile))
@@ -625,103 +602,6 @@ struct LoadTimingView: View {
         .presentationDragIndicator(.visible)
     }
 
-    @ViewBuilder
-    private func selectedCandidate(_ candidate: LoadTimingRecommendation.Candidate, recommendation: LoadTimingRecommendation, timing: LoadTiming, response: MobileBillResponse, now: Date) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(candidate.profile.name)
-                .font(.title3.weight(.bold))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 4)
-            Button {
-                runDetailsSnapshot = LoadRunDetailsSnapshot(
-                    profile: candidate.profile,
-                    timing: timing,
-                    response: response,
-                    result: candidate.result,
-                    currencyCode: currencyCode,
-                    timeZone: timeZone,
-                    capturedAt: now
-                )
-            } label: {
-                Image(systemName: "info.circle")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(LoadTimingPresentation.runDetailsAccessibilityLabel)
-            .accessibilityHint("Shows the estimate and rate calculation details")
-        }
-
-        switch candidate.result {
-        case .estimate(let estimate):
-            let summary = LoadTimingPresentation.runCardSummary(estimate, currencyCode: currencyCode, timeZone: timeZone)
-            Text(summary.total)
-                .font(.title3.weight(.bold))
-                .monospacedDigit()
-            Text(summary.finish)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            let impact = LoadTimingPresentation.energyImpact(candidate)
-            DisclosureGroup("Energy Details") {
-                Text(impact.surplusConsumed)
-                Text(impact.energyBought)
-                if let remaining = impact.remainingSurplus { Text(remaining) }
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            if estimate.hasUnobservedBalance, let note = LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: true) {
-                Text(note)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        case .unavailable(let reason):
-            Label(LoadTimingPresentation.unavailableMessage(reason), systemImage: "exclamationmark.triangle")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        case .noCharge:
-            Label(LoadTimingPresentation.noChargeMessage, systemImage: "checkmark.circle")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-
-        if let suggested = recommendation.suggested,
-           LoadTimingPresentation.showsBackToSuggestion(explicitID: exploredProfileID, suggestedID: suggested.profile.id) {
-            if let alternativeEstimate = candidate.estimate, let suggestedEstimate = suggested.estimate,
-               let difference = LoadTimingPresentation.costDifference(alternativeCost: alternativeEstimate.total, suggestedCost: suggestedEstimate.total, currencyCode: currencyCode) {
-                Text(difference)
-                    .font(.subheadline.weight(.medium))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Button("Back to Recommended") { exploredProfileID = nil }
-                .font(.body.weight(.semibold))
-                .frame(minHeight: 44)
-                .accessibilityHint("Return to the currently recommended job")
-        }
-    }
-
-    private func observedPeriods(_ timing: LoadTiming) -> some View {
-        LoadTimingCard(title: "Rate Plans", symbol: "chart.bar.fill") {
-            if !timing.hasTariff {
-                Text("No active rate plan is configured for this site.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else if timing.periods.isEmpty {
-                Text("Rate-period balances are unavailable.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                adaptiveGrid(timing.periods.map { LoadTimingPeriodTile(period: $0, currencyCode: currencyCode) })
-            }
-        }
-    }
-
     private func metadata(_ response: MobileBillResponse) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Billing cycle \(DashboardPresentation.date(response.currentBill.cycleStart, timeZoneIdentifier: timeZone, dateStyle: .short)) – \(DashboardPresentation.date(response.currentBill.cycleEnd, timeZoneIdentifier: timeZone, dateStyle: .short))")
@@ -737,14 +617,6 @@ struct LoadTimingView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
         .accessibilityElement(children: .combine)
-    }
-
-    private func adaptiveGrid(_ tiles: [LoadTimingPeriodTile]) -> some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            AnyView(VStack(spacing: 9) { ForEach(tiles.indices, id: \.self) { tiles[$0] } })
-        } else {
-            AnyView(LazyVGrid(columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)], spacing: 9) { ForEach(tiles.indices, id: \.self) { tiles[$0] } })
-        }
     }
 }
 
@@ -798,190 +670,6 @@ private struct LoadTimingFreshnessAnnouncement: ViewModifier {
         } else {
             content
         }
-    }
-}
-
-struct LoadRunDetailsSnapshot: Identifiable {
-    let id = UUID()
-    let profile: LoadProfile
-    let timing: LoadTiming
-    let response: MobileBillResponse?
-    let result: LoadTimingEstimator.StartNowResult
-    let currencyCode: String
-    let timeZone: String
-    let capturedAt: Date
-}
-
-private struct LoadRunDetailsSheet: View {
-    let snapshot: LoadRunDetailsSnapshot
-
-    private var profile: LoadProfile { snapshot.profile }
-    private var timing: LoadTiming { snapshot.timing }
-    private var response: MobileBillResponse? { snapshot.response }
-    private var result: LoadTimingEstimator.StartNowResult { snapshot.result }
-    private var currencyCode: String { snapshot.currencyCode }
-    private var timeZone: String { snapshot.timeZone }
-
-    @Environment(\.dismiss) private var dismiss
-
-    private var observedBalances: [String: Double] { LoadTimingPresentation.observedBalances(timing) }
-    private var unobservedKeys: Set<String> { Set(timing.tariffTimeline.map(\.periodKey)).subtracting(observedBalances.keys) }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text(profile.name)
-                        .font(.title2.weight(.bold))
-                    resultDetails
-                    Text("How the estimate works")
-                        .font(.headline)
-                    Text("The estimate uses your current billing-cycle balance as a snapshot. That balance can change while the job is running.")
-                        .foregroundStyle(.secondary)
-                    if let message = LoadTimingPresentation.cycleObservationMessage(hasCycleData: timing.hasCycleData) {
-                        detailLabel(message, symbol: "info.circle")
-                    }
-                    if let balance = LoadTimingPresentation.activeBalanceSummary(timing) {
-                        detailLabel(balance, symbol: "bolt.circle")
-                    }
-                    if let response {
-                        detailLabel(LoadTimingPresentation.sourceTimeSummary(response.sources.energyDataThrough, timeZone: timeZone), symbol: "clock")
-                    }
-                    if profile.kind == .car, let car = profile.carSettings {
-                        carDetails(car)
-                    }
-                    if let cheaper = timing.nextCheaper {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Cheaper time")
-                                .font(.headline)
-                            Text("Lower grid rate in \(DashboardPresentation.tariffPeriodTitle(cheaper.name)) · \(cheaper.phrase)")
-                                .foregroundStyle(.secondary)
-                            Text("This compares rates only; it does not promise a lower total cost.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .background(SectionTheme.groupedBackground)
-            .navigationTitle("Job Details")
-            .inlineNavigationTitle()
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-    }
-
-    @ViewBuilder
-    private var resultDetails: some View {
-        switch result {
-        case .estimate(let estimate):
-            VStack(alignment: .leading, spacing: 10) {
-                let summary = LoadTimingPresentation.startNowSummary(estimate, currencyCode: currencyCode, timeZone: timeZone)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(summary.total)
-                        .font(.title3.weight(.bold))
-                        .monospacedDigit()
-                    Text(summary.finish)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Text(summary.energy)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                if let note = LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: estimate.hasUnobservedBalance) {
-                    detailLabel(note, symbol: "info.circle")
-                }
-                if !estimate.segments.isEmpty {
-                    Text("Rate breakdown")
-                        .font(.subheadline.weight(.semibold))
-                    ForEach(Array(LoadTimingPresentation.breakdownRows(estimate.segments, currencyCode: currencyCode, unobservedPeriodKeys: unobservedKeys).enumerated()), id: \.offset) { index, row in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Text(DashboardPresentation.tariffPeriodTitle(row.periodKey)).fontWeight(.semibold)
-                                Spacer()
-                                Text(row.total).fontWeight(.bold).monospacedDigit()
-                            }
-                            Text("\(row.wallEnergy) · \(row.balance)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 6)
-                        if index < estimate.segments.count - 1 { Divider() }
-                    }
-                }
-            }
-        case .unavailable(let reason):
-            detailLabel(LoadTimingPresentation.unavailableMessage(reason), symbol: "exclamationmark.triangle")
-        case .noCharge:
-            detailLabel(LoadTimingPresentation.noChargeMessage, symbol: "checkmark.circle.fill")
-        }
-    }
-
-    private func carDetails(_ car: CarLoadSettings) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Car charge")
-                .font(.headline)
-            Text("Current \(car.initialStateOfCharge.formatted(.number.precision(.fractionLength(0...1))))% · target \(car.targetStateOfCharge.formatted(.number.precision(.fractionLength(0...1))))% · Level \(car.chargingLevel == .level1 ? "1" : "2")")
-                .foregroundStyle(.secondary)
-            if let estimate = LoadTimingEstimator.carChargeEstimate(settings: car) {
-                Text("About \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(1)))) kWh added to the battery from \(estimate.wallKwh.formatted(.number.precision(.fractionLength(1)))) kWh at the wall.")
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func detailLabel(_ text: String, symbol: String) -> some View {
-        Label(text, systemImage: symbol)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-private struct LoadTimingPeriodTile: View {
-    let period: LoadTimingPeriod
-    let currencyCode: String
-
-    private var balanceKwh: Double { -period.cycleNetExportKwh }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(DashboardPresentation.tariffPeriodTitle(period.name))
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(2)
-                Spacer(minLength: 4)
-                if period.isActive {
-                    Text("ACTIVE")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.indigo)
-                }
-            }
-            Text(DashboardPresentation.loadRate(period.marginalCost, code: currencyCode))
-                .font(.title3.weight(.bold))
-                .foregroundStyle(period.marginalCost == nil ? .secondary : .primary)
-                .minimumScaleFactor(0.75)
-                .lineLimit(1)
-            Text(DashboardPresentation.loadBalance(balanceKwh))
-                .font(.caption)
-                .foregroundStyle(balanceKwh < 0 ? .green : (balanceKwh > 0 ? .orange : .secondary))
-            if let phrase = period.nextStartPhrase {
-                Text("Next starts \(phrase)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
-        .padding(12)
-        .background(Color.indigo.opacity(0.06), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(DashboardPresentation.tariffPeriodTitle(period.name))\(period.isActive ? ", active period" : ""), \(DashboardPresentation.loadRateAccessibilityLabel(period.marginalCost, code: currencyCode)), \(DashboardPresentation.loadBalanceAccessibilityLabel(balanceKwh))\(period.nextStartPhrase.map { ", next starts \($0)" } ?? "")")
     }
 }
 

@@ -27,6 +27,29 @@ Audit and evidence: [multiplatform readiness audit](docs/superpowers/specs/2026-
 - [ ] **tvOS device-code login spec (item 13), blocked on a product decision:** `ASWebAuthenticationSession` is unavailable on tvOS. Spec a QR plus short-code flow reusing the `MobileLoginHandoff` PKCE exchange (`/api/mobile/device`, `/login/device`, poll, `/auth/tesla-callback` branch) and Keychain-stored session token. Needs a security decision on session storage before building.
 - [ ] **Revisit if we pursue Mac or TV (items 9–12, 14):** storage abstraction, `Shared/` reorganisation, `PWUsageCore` Swift package, native macOS target (menu bar extra, widgets), tvOS app. Unverified until then: tvOS cookie persistence, macOS app-group id format, `ControlCenter` macOS 26 requirement.
 
+## iOS: delete the pre-redesign Smart Shift card code (2026-10-18, branch `claude/smart-shift-energy-weather-5de814`)
+
+The energy weather redesign replaced the old Job card, but left its presentation code in place, now unreachable from any view. It still ships "export cushion" / "grid rate" copy.
+
+- [ ] **Delete the dead copy and models:** `LoadTimingForecastPresentation.overlay` / `placement` (`Enhanced`, `Overlay`, `Card`, `Placement`), the unused `LoadTimingPresentation` statics (`recommendationMessage`, `energyImpact`, `costDifference`, `startNowSummary`, `runCardSummary`, `breakdownRows`, `missingBalanceNote`, `unavailableMessage`, `noChargeMessage`, `cycleObservationMessage`, `activeBalanceSummary`, `observedBalances`, `noResponseExplorationMessage`), and `LoadTimingRecommendation` if nothing else adopts it. Migrate the ~30 overlay tests in `LoadTimingViewTests` that guard the forecast note copy onto `forecastAvailability` / `forecastUnavailableNote` first, since those reuse the same note details.
+- [ ] **Smart Shift polish from the branch review:**
+  - "Covers all of this run" ignores periods the run crosses into.
+  - A connected user can briefly see "Connect Solcast" before the credential resolves.
+  - After picking a Job, adding or editing another in Manage Jobs doesn't switch the card to it.
+  - "Rate periods" omits a tariff period that has no balance yet.
+  - A future energy source time shows the generic "can't compare" sentence.
+  - VoiceOver reads "plus 18 kWh banked now".
+  - At accessibility text sizes the cost bars can be squeezed out.
+  - Six Jobs per pass now cost about 10 ms on the simulator (forecast, history or flat) since one plan is shared across the pass (branch `claude/smart-shift-bill-date-projection-2f834d`); cache per-Job savings only if devices still show hitches.
+
+## Smart Shift bill-date projection follow-ups (2026-10-18, branch `claude/smart-shift-bill-date-projection-2f834d`)
+
+Smart Shift now projects rate-period banks to the bill date from 7 days of Solcast and the site's last 28 days of grid history. See the [design](docs/superpowers/specs/2026-10-18-smart-shift-cycle-projection-design.md).
+
+- [ ] **Backfill and per-slot rollups:** the projection reads whatever raw 5-minute history a site has (28 days, about 835 KB per read for Harrison, memoised per site per day). A new or patchy site gets flat banks or a noisy dull day until history fills in. Do this as part of the rollup-storage migration, and read the household pattern from rollups once they exist.
+- [ ] **A measured 1-in-4 cloudy *week* for the cautious history:** the phone approximates one by moving each typical slot 1/√7 of the way toward the server's 1-in-4 dull day, which assumes days are independent (real cloudy spells cluster). Replace it with weeks ranked from months of history once backfill lands.
+- [ ] **14-day projected-bill views using `pv_estimate10`:** a separate PR. The per-slot solar history (`solarKw`) added here is meant to feed it and to compare Solcast against what the roof actually did.
+
 ## DB egress: remaining reduction candidates
 
 The July 2026 Supabase egress spike was traced to site queries duplicating wide

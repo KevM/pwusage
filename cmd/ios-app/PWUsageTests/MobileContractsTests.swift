@@ -279,6 +279,58 @@ struct MobileContractsTests {
         }
     }
 
+    private static func planningContextJSON(slot: (Int) -> String) -> Data {
+        let slots = (0..<48).map(slot).joined(separator: ",")
+        return Data(#"{"version":1,"site":{"id":"site-a","timezone":"America/Chicago"},"units":{"power":"kW","localMinute":"minute-of-day"},"asOf":"2026-10-18T15:00:00Z","availability":"available","usableDayCount":14,"historyStart":"2026-10-04T05:00:00Z","historyEnd":"2026-10-18T05:00:00Z","slots":[\#(slots)]}"#.utf8)
+    }
+
+    @Test("planningContextDecodesGridHistory")
+    func planningContextDecodesGridHistory() throws {
+        let data = Self.planningContextJSON { index in
+            #"{"localMinute":\#(index * 30),"homeKw":1,"batteryNetChargeKw":0,"sampleCount":14,"coverage":1,"gridNetExportKw":2.5,"cautiousGridNetExportKw":1.25,"solarKw":3}"#
+        }
+        let response = try MobileContractDecoder.make().decode(MobileLoadPlanningContextResponse.self, from: data)
+        let validated = try response.validating(siteID: "site-a", now: try #require(ISO8601DateFormatter.parse("2026-10-18T15:01:00Z")))
+
+        #expect(validated.slots[0].gridNetExportKw == 2.5)
+        #expect(validated.slots[0].cautiousGridNetExportKw == 1.25)
+        #expect(validated.slots[0].solarKw == 3)
+        let context = try #require(validated.estimatorContext)
+        #expect(context.hasGridHistory)
+        #expect(context.slots[0].gridNetExportKw == 2.5)
+        #expect(context.slots[0].cautiousGridNetExportKw == 1.25)
+    }
+
+    @Test("planningContextWithoutGridHistoryStillDecodes")
+    func planningContextWithoutGridHistoryStillDecodes() throws {
+        let data = Self.planningContextJSON { index in
+            #"{"localMinute":\#(index * 30),"homeKw":1,"batteryNetChargeKw":0,"sampleCount":14,"coverage":1}"#
+        }
+        let response = try MobileContractDecoder.make().decode(MobileLoadPlanningContextResponse.self, from: data)
+        let validated = try response.validating(siteID: "site-a", now: try #require(ISO8601DateFormatter.parse("2026-10-18T15:01:00Z")))
+
+        #expect(validated.slots[0].gridNetExportKw == nil)
+        let context = try #require(validated.estimatorContext)
+        #expect(!context.hasGridHistory)
+    }
+
+    @Test("A non-finite grid history value is rejected")
+    func planningContextRejectsNonFiniteGridHistory() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let response = Self.makePlanningContext(
+            siteID: "site-a",
+            asOf: now.addingTimeInterval(-60),
+            slot: { index in
+                var slot = MobileLoadPlanningContextResponse.Slot(localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: 14, coverage: 1)
+                slot.cautiousGridNetExportKw = index == 3 ? .infinity : 1
+                return slot
+            }
+        )
+        #expect(throws: MobileLoadPlanningContextResponse.ContractError.invalidSource) {
+            try response.validating(siteID: "site-a", now: now)
+        }
+    }
+
     /// Satisfies every clause of `validating`, so a test can vary `asOf` alone.
     /// `DashboardCoordinatorTests` needs the same fixture but keeps its own copy.
     private static func makePlanningContext(

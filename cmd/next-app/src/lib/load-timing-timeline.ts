@@ -1,3 +1,4 @@
+import { Temporal } from '@js-temporal/polyfill';
 import type { Schedule } from './schedule';
 import { periodKey } from './next-cheaper-period';
 
@@ -18,13 +19,46 @@ interface ResolvedPeriod {
     sellRate: number;
 }
 
-const MINUTE_MS = 60_000;
+/**
+ * Instants in (startMs, endMs) where the tariff could switch: every schedule
+ * window edge and midnight on each local day (both occurrences of a repeated
+ * fall-back time), plus every zone transition. Between two consecutive
+ * instants the local date and the minute-of-day window are fixed, so the
+ * resolved period is too.
+ */
+function candidateInstants(schedule: Schedule, startMs: number, endMs: number): number[] {
+    const timeZone = schedule.siteTimeZone;
+    const minutes = schedule.boundaryMinutes();
+    const instants = new Set<number>();
+    const add = (ms: number) => { if (ms > startMs && ms < endMs) instants.add(ms); };
+    const startZoned = Temporal.Instant.fromEpochMilliseconds(startMs).toZonedDateTimeISO(timeZone);
+    const lastDate = Temporal.Instant.fromEpochMilliseconds(endMs).toZonedDateTimeISO(timeZone).toPlainDate();
+    for (let date = startZoned.toPlainDate(); Temporal.PlainDate.compare(date, lastDate) <= 0; date = date.add({ days: 1 })) {
+        for (const minute of minutes) {
+            const local = date.toPlainDateTime({ hour: Math.floor(minute / 60), minute: minute % 60 });
+            add(local.toZonedDateTime(timeZone, { disambiguation: 'earlier' }).epochMilliseconds);
+            add(local.toZonedDateTime(timeZone, { disambiguation: 'later' }).epochMilliseconds);
+        }
+    }
+    for (let transition = startZoned.getTimeZoneTransition('next');
+        transition && transition.epochMilliseconds < endMs;
+        transition = transition.getTimeZoneTransition('next')) {
+        add(transition.epochMilliseconds);
+    }
+    return [...instants].sort((a, b) => a - b);
+}
 
-/** Build a compact tariff timeline by sampling local tariff rules at UTC minute boundaries. */
+/**
+ * Build a compact tariff timeline by resolving the tariff at every instant
+ * its rules could switch. A tariff gap before `requiredEnd` yields no
+ * timeline; a gap after it ends the timeline there (the app treats that as
+ * the end of coverage).
+ */
 export function buildLoadTimingTimeline(
     schedule: Schedule,
     now: Date,
-    horizonEnd: Date
+    horizonEnd: Date,
+    requiredEnd: Date = horizonEnd
 ): LoadTimingTimelineSegment[] {
     const startMs = now.getTime();
     const endMs = horizonEnd.getTime();
@@ -36,17 +70,13 @@ export function buildLoadTimingTimeline(
     const segments: LoadTimingTimelineSegment[] = [];
     let segmentStart = startMs;
     let current = first;
-    let sampleAt = Math.floor(startMs / MINUTE_MS) * MINUTE_MS + MINUTE_MS;
-
-    while (sampleAt < endMs) {
-        const resolved = resolvePeriod(schedule, new Date(sampleAt));
-        if (!resolved) return [];
-        if (!samePeriod(current, resolved)) {
-            segments.push(toSegment(segmentStart, sampleAt, current));
-            segmentStart = sampleAt;
-            current = resolved;
-        }
-        sampleAt += MINUTE_MS;
+    for (const at of candidateInstants(schedule, startMs, endMs)) {
+        const resolved = resolvePeriod(schedule, new Date(at));
+        if (resolved && samePeriod(current, resolved)) continue;
+        segments.push(toSegment(segmentStart, at, current));
+        if (!resolved) return at >= requiredEnd.getTime() ? segments : [];
+        segmentStart = at;
+        current = resolved;
     }
 
     segments.push(toSegment(segmentStart, endMs, current));

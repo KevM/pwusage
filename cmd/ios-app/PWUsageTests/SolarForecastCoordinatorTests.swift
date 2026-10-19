@@ -50,9 +50,98 @@ struct SolarForecastCoordinatorTests {
 
         #expect(coordinator.solarForecastState == .basic)
         #expect(await forecast.refreshCount == 0)
-        #expect(api.contextSiteIDs.isEmpty)
+        // The household pattern also feeds the forecast-free projection, so it
+        // is read without Solcast; nothing else is.
+        #expect(api.contextSiteIDs == ["site-a"])
         #expect(api.billSiteIDs.isEmpty)
         #expect(api.liveSiteIDs.isEmpty)
+    }
+
+    @Test("A cached household profile does not hide why the forecast is unusable")
+    func cachedContextKeepsTheRealForecastReason() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastState == .enhanced)
+
+        // The profile is now served from the 24-hour cache; the forecast has gone stale.
+        await forecast.setRecommendationUsable(false)
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(api.contextSiteIDs == ["site-a"])
+        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.solarForecastUnavailableReason == .forecastNotUsable)
+        #expect(coordinator.householdPattern != nil)
+    }
+
+    @Test("A refused refresh keeps a still-usable cached forecast pricing Smart Shift")
+    func refusedRefreshKeepsUsableForecast() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastState == .enhanced)
+
+        // The Solcast budget is spent, but the saved forecast is still fresh.
+        await forecast.setRefreshResults([.budgetExhausted, .budgetExhausted])
+        await coordinator.loadTimingDetailAppeared()
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.solarForecastBatch != nil)
+
+        await coordinator.refreshSolarForecast(manual: true)
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.solarForecastBatch != nil)
+    }
+
+    @Test("householdPatternLoadsWithoutSolcast")
+    func householdPatternLoadsWithoutSolcast() async {
+        let clock = ForecastTestClock()
+        let forecast = ForecastManagerSpy()
+        let api = ForecastDashboardAPISpy(now: clock.now)
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { clock.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.householdPattern != nil)
+        #expect(coordinator.householdPattern?.timeZone == "UTC")
+        #expect(coordinator.loadPlanningContext == nil)
+        #expect(coordinator.solarForecastConnection == .notConnected)
+        #expect(await forecast.refreshCount == 0)
+
+        clock.advance(hours: 23)
+        await coordinator.loadTimingDetailAppeared()
+        #expect(api.contextSiteIDs == ["site-a"])
+        #expect(coordinator.householdPattern != nil)
+    }
+
+    @Test("The Solcast path publishes the household pattern from its one request")
+    func solcastPathPublishesHouseholdPattern() async {
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { api.now }, timerInterval: nil
+        )
+
+        await coordinator.loadTimingDetailAppeared()
+
+        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.householdPattern == coordinator.loadPlanningContext)
+        #expect(api.contextSiteIDs == ["site-a"])
     }
 
     @Test("Configured detail progresses from basic through loading to enhanced without live polling")
@@ -96,9 +185,12 @@ struct SolarForecastCoordinatorTests {
 
         await coordinator.loadTimingDetailAppeared()
         #expect(coordinator.solarForecastState == .enhanced)
+        // A failure the store treats as disabling the saved forecast (a rejected key, say).
+        await forecast.setRecommendationUsable(false)
         await coordinator.refreshSolarForecast(manual: true)
         #expect(coordinator.solarForecastState == .failedWithBasic)
         #expect(coordinator.solarForecastBatch == nil)
+        await forecast.setRecommendationUsable(true)
         await coordinator.refreshSolarForecast(manual: true)
         #expect(coordinator.solarForecastState == .enhanced)
     }
@@ -159,6 +251,8 @@ struct SolarForecastCoordinatorTests {
         await coordinator.loadTimingDetailAppeared()
         #expect(coordinator.solarForecastSaveFailure)
 
+        // The second failure disables the saved forecast in the store.
+        await forecast.setRecommendationUsable(false)
         await coordinator.loadTimingDetailAppeared()
 
         // The save-failure note describes a forecast that is on screen and usable.

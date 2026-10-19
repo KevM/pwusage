@@ -15,6 +15,13 @@ const HOLD_MIGRATIONS = [
 // Schema migrations for BatteryHoldActivity, oldest first; the pg_cron schedule needs Supabase and is excluded.
 const ACTIVITY_SCHEMA_MIGRATION = /_battery_hold_activit(?:ies|y_ended_token)\.sql$/;
 
+/** Creates each role if it is missing; the cluster-wide CREATE ROLE races between parallel suites. */
+export async function ensureRoles(pool: Pool, roles: string[]): Promise<void> {
+  for (const role of roles) {
+    await pool.query(`DO $$ BEGIN CREATE ROLE ${role}; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;`);
+  }
+}
+
 /** Creates a fresh database with the hold and activity schema, applying each activity migration twice (idempotency). */
 export async function createActivityTestDatabase(database: string): Promise<Pool> {
   const admin = new Pool({ host: activityTestSocket, port: 55440, user: process.env.USER, database: 'postgres', max: 1 });
@@ -22,9 +29,7 @@ export async function createActivityTestDatabase(database: string): Promise<Pool
   await admin.query(`CREATE DATABASE ${database}`);
   await admin.end();
   const pool = new Pool({ host: activityTestSocket, port: 55440, user: process.env.USER, database, max: 5 });
-  for (const role of ['anon', 'authenticated', 'service_role']) {
-    await pool.query(`DO $$ BEGIN CREATE ROLE ${role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`);
-  }
+  await ensureRoles(pool, ['anon', 'authenticated', 'service_role']);
   await pool.query(`CREATE TABLE "User" (id text PRIMARY KEY, is_active boolean DEFAULT true, roles text[])`);
   await pool.query(`CREATE TABLE "Site" (id text PRIMARY KEY, user_id text REFERENCES "User"(id))`);
   for (const migration of HOLD_MIGRATIONS) await pool.query(await readFile(`db-migrations/${migration}`, 'utf8'));

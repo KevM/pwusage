@@ -275,7 +275,7 @@ private struct ProfileEditorSheet: View {
             Form {
                 if draft.kind == .custom {
                     Section("Name") {
-                        TextField("Load name", text: $draft.name)
+                        TextField("Bake bread", text: $draft.name)
                             .textContentType(.name)
                             .focused($nameFocused)
                             .accessibilityLabel("Custom job name")

@@ -163,4 +163,20 @@ struct PreviewFixtureTests {
         #expect(enhanced.recommendedCost.contains("$"))
         #expect(!enhanced.horizon.isEmpty)
     }
+    @Test("Smart Shift preview fixtures render the states they are named for")
+    func smartShiftPreviewFixturesMatchTheirNames() throws {
+        func verdict(_ fixture: SmartShiftPreviewFixture) throws -> SmartShiftVerdict {
+            guard case .verdict(let verdict) = fixture.screen.content else {
+                Issue.record("\(fixture) did not produce a verdict: \(fixture.screen.content)")
+                throw CancellationError()
+            }
+            return verdict
+        }
+        #expect(try verdict(.laterWithForecast).bars.count == 2)
+        #expect(try verdict(.laterWithForecast).notes.isEmpty)
+        #expect(try verdict(.laterWithoutForecast).bars.count == 2)
+        #expect(try verdict(.laterWithoutForecast).notes == [.connectSolcast(usesHistory: false)])
+        #expect(try verdict(.nowIsCheapest).bars.count == 1)
+        #expect(try verdict(.threePeriods).lanes.count >= 2)
+    }
 }

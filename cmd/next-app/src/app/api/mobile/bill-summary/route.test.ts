@@ -181,7 +181,7 @@ describe('mobile bill summary route', () => {
             end: '2026-09-19T03:00:00.000Z',
             periodKey: 'Peak', name: 'Peak', buyRate: 0.4, sellRate: 0.05,
         });
-        expect(body.loadTiming.tariffTimeline.at(-1)?.end).toBe('2026-09-26T02:00:00.000Z');
+        expect(body.loadTiming.tariffTimeline.at(-1)?.end).toBe(body.currentBill.cycleEnd);
         expect(body.loadTiming.tariffTimeline[1]).toMatchObject({
             start: '2026-09-19T03:00:00.000Z', periodKey: 'Off peak', name: 'Off peak', buyRate: 0.1, sellRate: 0.03,
         });
@@ -190,6 +190,65 @@ describe('mobile bill summary route', () => {
         expect(currencyMock).toHaveBeenCalledTimes(1);
         expect(JSON.stringify(body)).not.toContain('tariff_content_v2');
         expect(JSON.stringify(body)).not.toContain('gridUsage');
+        vi.useRealTimers();
+    });
+
+    it('tariffTimelineReachesBillDate', async () => {
+        // Billing day 9: on 2026-09-19 the cycle ends 2026-10-09, 20 days out.
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 9,
+            tariffs: [tariff()],
+        });
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 2.4, gridUsage: 6000, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: tariff(), touName: 'Peak', buyRate: 0.4, sellRate: 0.05 },
+        ]);
+
+        const startedAt = performance.now();
+        const body = await (await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'))).json();
+        const elapsedMs = performance.now() - startedAt;
+
+        expect(body.currentBill.cycleEnd).toBe('2026-10-09T07:00:00.000Z');
+        expect(body.loadTiming.tariffTimeline.at(-1)?.end).toBe('2026-10-09T07:00:00.000Z');
+        // The walk crosses the Summer → Winter season change on Oct 1.
+        expect(body.loadTiming.tariffTimeline.at(-1)?.name).toBe('Winter peak');
+        console.info(`[bill-summary] 20-day timeline built in ${elapsedMs.toFixed(1)} ms`);
+        vi.useRealTimers();
+    });
+
+    it('keeps a seven-day tariff timeline when the bill date is sooner', async () => {
+        // Billing day 22: on 2026-09-19 the cycle ends 2026-09-22, 3 days out.
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 22,
+            tariffs: [tariff()],
+        });
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 2.4, gridUsage: 6000, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: tariff(), touName: 'Peak', buyRate: 0.4, sellRate: 0.05 },
+        ]);
+
+        const body = await (await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'))).json();
+
+        expect(body.currentBill.cycleEnd).toBe('2026-09-22T07:00:00.000Z');
+        expect(body.loadTiming.tariffTimeline.at(-1)?.end).toBe('2026-09-26T02:00:00.000Z');
+        vi.useRealTimers();
+    });
+
+    it('covers the hour-old balance the forecast-free card still accepts', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
+            tariffs: [tariff()],
+        });
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 2.4, gridUsage: 6000, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: tariff(), touName: 'Peak', buyRate: 0.4, sellRate: 0.05 },
+        ]);
+        // 45 minutes old: inside the app's 60-minute forecast-free window.
+        latestMock.mockResolvedValue(new Date('2026-09-19T01:15:00Z'));
+
+        const body = await (await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'))).json();
+
+        expect(body.loadTiming.tariffTimeline[0].start).toBe('2026-09-19T01:15:00.000Z');
         vi.useRealTimers();
     });
 
@@ -212,8 +271,8 @@ describe('mobile bill summary route', () => {
         // The reported source is still the true last sample; only the walk is
         // bounded, so the app sees the staleness for itself.
         expect(body.sources.energyDataThrough).toBe('2026-01-19T02:00:00.000Z');
-        expect(body.loadTiming.tariffTimeline[0].start).toBe('2026-09-19T01:30:00.000Z');
-        expect(body.loadTiming.tariffTimeline.at(-1)?.end).toBe('2026-09-26T02:00:00.000Z');
+        expect(body.loadTiming.tariffTimeline[0].start).toBe('2026-09-19T01:00:00.000Z');
+        expect(body.loadTiming.tariffTimeline.at(-1)?.end).toBe(body.currentBill.cycleEnd);
         vi.useRealTimers();
     });
 

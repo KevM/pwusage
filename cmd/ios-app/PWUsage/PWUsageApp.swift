@@ -74,7 +74,7 @@ struct PWUsageApp: App {
                     title: "pwusage can’t start",
                     message: message,
                     actionTitle: "Copy details",
-                    action: { UIPasteboard.general.string = message }
+                    action: { Clipboard.copy(message) }
                 )
             }
         }

@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 final class LoadProfileStore: ObservableObject {
     static let storageKey = "pwusage.loadProfiles.v1"
-    static let schemaVersion = 1
+    static let schemaVersion = 2
 
     // All seeded example values live here so the defaults remain easy to review and adjust.
     enum Defaults {
@@ -140,9 +140,12 @@ final class LoadProfileStore: ObservableObject {
     private static func loadCollection(from userDefaults: UserDefaults) -> PersistedCollection? {
         guard let data = userDefaults.data(forKey: storageKey),
               let saved = try? JSONDecoder().decode(PersistedCollection.self, from: data),
-              saved.version == schemaVersion else { return nil }
+              (1...schemaVersion).contains(saved.version) else { return nil }
 
         var profiles = saved.profiles
+        if saved.version == 1 {
+            profiles = profiles.map(renamedForVersionTwo)
+        }
         for index in profiles.indices where profiles[index].kind == .car {
             guard var settings = profiles[index].carSettings,
                   settings.capacityKwh > LoadProfile.maximumCarCapacityKwh,
@@ -150,9 +153,26 @@ final class LoadProfileStore: ObservableObject {
             settings.capacityKwh = LoadProfile.maximumCarCapacityKwh
             profiles[index].carSettings = settings
         }
-        let normalized = PersistedCollection(version: saved.version, profiles: profiles, selectedProfileID: saved.selectedProfileID)
+        let normalized = PersistedCollection(version: schemaVersion, profiles: profiles, selectedProfileID: saved.selectedProfileID)
         return isValidCollection(normalized) ? normalized : nil
     }
+
+    /// Version 2 names Jobs as verb phrases ("Charge the car"). Built-ins can't be renamed, so they
+    /// always take the new default name; custom Jobs keep theirs, except the seeded example while it
+    /// still carries its seeded name.
+    private static func renamedForVersionTwo(_ profile: LoadProfile) -> LoadProfile {
+        var renamed = profile
+        if profile.kind != .custom, let defaults = defaultProfiles.first(where: { $0.id == profile.id }) {
+            renamed.name = defaults.name
+        } else if profile.id == customExampleID, profile.name == versionOneCustomExampleName,
+                  let defaults = defaultProfiles.first(where: { $0.id == customExampleID }) {
+            renamed.name = defaults.name
+        }
+        return renamed
+    }
+
+    private static let customExampleID = "custom-example"
+    private static let versionOneCustomExampleName = "Custom"
 
     private static func isValidCollection(_ collection: PersistedCollection) -> Bool {
         let ids = collection.profiles.map(\.id)
@@ -195,11 +215,11 @@ final class LoadProfileStore: ObservableObject {
     }
 
     private static let defaultProfiles: [LoadProfile] = [
-        LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: Defaults.carEnergyKwh, durationHours: Defaults.carDurationHours, carSettings: CarLoadSettings(capacityKwh: Defaults.carCapacityKwh, initialStateOfCharge: Defaults.carInitialSOC, targetStateOfCharge: Defaults.carTargetSOC, chargingLevel: Defaults.carLevel)),
-        LoadProfile(id: "dishwasher", name: "Dishwasher", kind: .appliance, energyKwh: Defaults.dishwasherKwh, durationHours: Defaults.dishwasherHours, carSettings: nil),
-        LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: Defaults.washerKwh, durationHours: Defaults.washerHours, carSettings: nil),
-        LoadProfile(id: "dryer", name: "Dryer", kind: .appliance, energyKwh: Defaults.dryerKwh, durationHours: Defaults.dryerHours, carSettings: nil),
-        LoadProfile(id: "washer-dryer-combo", name: "Washer–Dryer Combo", kind: .appliance, energyKwh: Defaults.comboKwh, durationHours: Defaults.comboHours, carSettings: nil),
-        LoadProfile(id: "custom-example", name: "Custom", kind: .custom, energyKwh: Defaults.customExampleKwh, durationHours: Defaults.customExampleHours, carSettings: nil),
+        LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: Defaults.carEnergyKwh, durationHours: Defaults.carDurationHours, carSettings: CarLoadSettings(capacityKwh: Defaults.carCapacityKwh, initialStateOfCharge: Defaults.carInitialSOC, targetStateOfCharge: Defaults.carTargetSOC, chargingLevel: Defaults.carLevel)),
+        LoadProfile(id: "dishwasher", name: "Wash the dishes", kind: .appliance, energyKwh: Defaults.dishwasherKwh, durationHours: Defaults.dishwasherHours, carSettings: nil),
+        LoadProfile(id: "washer", name: "Wash the laundry", kind: .appliance, energyKwh: Defaults.washerKwh, durationHours: Defaults.washerHours, carSettings: nil),
+        LoadProfile(id: "dryer", name: "Dry the laundry", kind: .appliance, energyKwh: Defaults.dryerKwh, durationHours: Defaults.dryerHours, carSettings: nil),
+        LoadProfile(id: "washer-dryer-combo", name: "Wash and dry the laundry", kind: .appliance, energyKwh: Defaults.comboKwh, durationHours: Defaults.comboHours, carSettings: nil),
+        LoadProfile(id: customExampleID, name: "Bake bread", kind: .custom, energyKwh: Defaults.customExampleKwh, durationHours: Defaults.customExampleHours, carSettings: nil),
     ]
 }

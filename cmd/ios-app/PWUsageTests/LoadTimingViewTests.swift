@@ -58,7 +58,7 @@ struct LoadTimingViewTests {
     func profileChipUsesEditedProfile() {
         let edited = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3.5, durationHours: 2.25, carSettings: nil)
         #expect(LoadTimingPresentation.profileChipTitle(edited) == "Washer · 3.5 kWh")
-        #expect(LoadTimingPresentation.actionTitle(for: edited) == "Run Washer")
+        #expect(LoadTimingPresentation.actionTitle(for: edited) == "Washer")
 
         let editedCar = LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 999, durationHours: 999, carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 10, targetStateOfCharge: 50, chargingLevel: .level1))
         #expect(LoadTimingPresentation.profileChipTitle(editedCar) == "Car · 32 kWh battery")
@@ -136,7 +136,6 @@ struct LoadTimingViewTests {
         #expect(card.total == "Estimated $1.92 to start now")
         #expect(card.finish == details.finish)
         #expect(details.energy == "About 4.0 kWh from the wall")
-        #expect(LoadTimingPresentation.runDetailsAccessibilityLabel == "Job Details")
         #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: estimate.hasUnobservedBalance) != nil)
     }
 
@@ -187,14 +186,12 @@ struct LoadTimingViewTests {
         #expect(LoadTimingPresentation.recommendationMessage(for: incomplete, selected: incomplete.candidates[0]).title == "Rate Plan Incomplete")
     }
 
-    @Test("Recommendation actions and neutral exploration titles name appliances and cars")
+    @Test("Action titles use the Job's verb-phrase name as-is")
     func recommendationAndExplorationTitlesNameProfileKind() {
-        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3.5, durationHours: 2, carSettings: nil)
-        let car = LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 0, durationHours: 0, carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 10, targetStateOfCharge: 50, chargingLevel: .level2))
-        #expect(LoadTimingPresentation.actionTitle(for: washer) == "Run Washer")
-        #expect(LoadTimingPresentation.actionTitle(for: car) == "Charge Car")
-        #expect(LoadTimingPresentation.explorationTitle(for: washer) == "What if you run Washer?")
-        #expect(LoadTimingPresentation.explorationTitle(for: car) == "What if you charge Car?")
+        let washer = LoadProfile(id: "washer", name: "Wash the laundry", kind: .appliance, energyKwh: 3.5, durationHours: 2, carSettings: nil)
+        let car = LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: 0, durationHours: 0, carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 10, targetStateOfCharge: 50, chargingLevel: .level2))
+        #expect(LoadTimingPresentation.actionTitle(for: washer) == "Wash the laundry")
+        #expect(LoadTimingPresentation.actionTitle(for: car) == "Charge the car")
     }
 
     @Test("Energy impact explains surplus used, buy-rate energy, and known or unknown remaining balance")
@@ -229,10 +226,6 @@ struct LoadTimingViewTests {
         #expect(changed.exploredProfile(explicitID: "washer")?.profile.id == "washer")
         #expect(changed.exploredProfile(explicitID: nil)?.profile.id == "car")
         #expect(changed.exploredProfile(explicitID: "deleted")?.profile.id == "car")
-        #expect(LoadTimingPresentation.showsBackToSuggestion(explicitID: "washer", suggestedID: "car"))
-        #expect(LoadTimingPresentation.showsBackToSuggestion(explicitID: "washer", suggestedID: nil) == false)
-        #expect(LoadTimingPresentation.showsBackToSuggestion(explicitID: nil, suggestedID: "car") == false)
-        #expect(LoadTimingPresentation.showsBackToSuggestion(explicitID: "car", suggestedID: "washer"))
         #expect(try #require(changed.exploredProfile(explicitID: "car")).result == .noCharge)
     }
 
@@ -247,70 +240,10 @@ struct LoadTimingViewTests {
     @Test("No-response explorer keeps a neutral selected-load title but withholds estimate and calculation")
     func missingResponseExplorerExplainsUnavailableEstimate() {
         let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
-        #expect(LoadTimingPresentation.explorationTitle(for: washer) == "What if you run Washer?")
         #expect(LoadTimingPresentation.noResponseExplorationMessage.contains("bill response and tariff data"))
         #expect(LoadTimingPresentation.noResponseExplorationMessage.contains("estimate or calculation"))
     }
 
-    @Test("Run details retain the profile, bill, estimate, currency, and captured time from presentation")
-    func detailsSnapshotDoesNotFollowLaterInputs() throws {
-        let firstTime = Date(timeIntervalSince1970: 1_800_000_000)
-        let laterTime = firstTime.addingTimeInterval(3600)
-        let firstProfile = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
-        let changedProfile = LoadProfile(id: "washer", name: "Washer XL", kind: .appliance, energyKwh: 8, durationHours: 2, carSettings: nil)
-        let firstTiming = LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: [], pricingPeriods: [], tariffTimeline: [], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-        let changedTiming = LoadTiming(hasTariff: false, hasCycleData: false, activeIsCheapest: false, periods: [], pricingPeriods: [], tariffTimeline: [], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-        let firstResponse = try Self.billResponse(currency: "USD", estimatedCost: 75)
-        let changedResponse = try Self.billResponse(currency: "EUR", estimatedCost: 125)
-        let firstEstimate = LoadTimingEstimator.StartNowEstimate(total: 1.25, finishTime: firstTime.addingTimeInterval(3600), batteryKwh: 0, wallKwh: 3, durationHours: 1, segments: [], hasUnobservedBalance: false)
-        let laterEstimate = LoadTimingEstimator.StartNowEstimate(total: 4, finishTime: laterTime.addingTimeInterval(7200), batteryKwh: 0, wallKwh: 8, durationHours: 2, segments: [], hasUnobservedBalance: false)
-
-        var profile = firstProfile
-        var timing = firstTiming
-        var response = firstResponse
-        var result: LoadTimingEstimator.StartNowResult = .estimate(firstEstimate)
-        var currencyCode = "USD"
-        var timeZone = "UTC"
-        var capturedAt = firstTime
-        let snapshot = LoadRunDetailsSnapshot(profile: profile, timing: timing, response: response, result: result, currencyCode: currencyCode, timeZone: timeZone, capturedAt: capturedAt)
-
-        profile = changedProfile
-        timing = changedTiming
-        response = changedResponse
-        result = .estimate(laterEstimate)
-        currencyCode = "EUR"
-        timeZone = "Europe/Paris"
-        capturedAt = laterTime
-
-        #expect(profile == changedProfile)
-        #expect(timing == changedTiming)
-        #expect(response.currentBill.currency == "EUR")
-        #expect(response.currentBill.estimatedCost == 125)
-        #expect(result == .estimate(laterEstimate))
-        #expect(currencyCode == "EUR")
-        #expect(timeZone == "Europe/Paris")
-        #expect(capturedAt == laterTime)
-        #expect(snapshot.profile == firstProfile)
-        #expect(snapshot.timing == firstTiming)
-        #expect(snapshot.response?.currentBill.currency == "USD")
-        #expect(snapshot.response?.currentBill.estimatedCost == 75)
-        #expect(snapshot.result == .estimate(firstEstimate))
-        #expect(snapshot.currencyCode == "USD")
-        #expect(snapshot.timeZone == "UTC")
-        #expect(snapshot.capturedAt == firstTime)
-    }
-
-    private static func billResponse(currency: String, estimatedCost: Double) throws -> MobileBillResponse {
-        let json = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC"},"currentBill":{"estimatedCost":\#(estimatedCost),"currency":"\#(currency)","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"loadTiming":null,"sources":{"calculatedAt":"2026-09-26T12:00:00Z","energyDataThrough":"2026-09-26T12:00:00Z"}}"#
-        return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
-    }
-}
-
-/// Forecast-aware presentation is strictly additive: it contributes an enhanced
-/// section and at most one small note. It can never replace or annotate the basic
-/// estimator's own total, breakdown, or selected profile.
-@Suite("Load Timing Forecast Presentation Tests")
-struct LoadTimingForecastPresentationTests {
     static let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     @Test("A later start shows both costs, the saving, the window, solar, and the real horizon")
@@ -1185,7 +1118,116 @@ struct LoadTimingForecastPresentationTests {
             horizonStart: Date(timeIntervalSince1970: 1_800_000_000),
             horizonEnd: Date(timeIntervalSince1970: 1_800_036_000),
             evaluatedStarts: [Date(timeIntervalSince1970: 1_800_000_000), recommendedStart],
-            assumptions: []
+            assumptions: [],
+            hasUnobservedBalance: false,
+            lanes: [],
+            periodSwitches: []
         )
+    }
+
+    // MARK: - Smart Shift card wiring
+
+    @Test("Forecast states map to what the Smart Shift card can show")
+    func forecastAvailabilityMapsStates() throws {
+        typealias P = LoadTimingForecastPresentation
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let fresh = now.addingTimeInterval(-25 * 60)
+        #expect(P.forecastAvailability(state: .basic, connection: .notConnected, cause: nil, reason: nil,
+                                       forecastFetchedAt: nil, now: now) == ForecastAvailability.none)
+        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                       forecastFetchedAt: nil, now: now) == .loading)
+        // A refresh keeps the previous batch in memory; while it is still fresh it keeps
+        // pricing the card, so the verdict doesn't flip to the forecast-free answer and back.
+        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                       forecastFetchedAt: fresh, now: now) == .ready)
+        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                       forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now) == .loading)
+        #expect(P.forecastAvailability(state: .basic, connection: .awaitingArraySelection, cause: nil, reason: nil,
+                                       forecastFetchedAt: nil, now: now) == .unusable("Choose your solar arrays to add a forecast."))
+        #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
+                                       forecastFetchedAt: fresh, now: now) == .ready)
+        #expect(P.forecastAvailability(state: .failedWithBasic, connection: .ready, cause: .rateLimited, reason: nil,
+                                       forecastFetchedAt: fresh, now: now) == .unusable("Solcast is limiting requests."))
+        #expect(P.forecastAvailability(state: .failedWithBasic, connection: .ready, cause: nil, reason: .insufficientHistory,
+                                       forecastFetchedAt: fresh, now: now)
+            == .unusable("Your household profile needs at least 5 complete days in the last 14 days."))
+        #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
+                                       forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now)
+            == .unusable("The forecast was too old or incomplete to use."))
+        #expect(P.forecastUnavailableNote(.staleBalance)
+            == "Energy observations are older than 30 minutes, so the solar comparison is paused.")
+    }
+
+    @Test("Smart Shift opens on the last Job viewed")
+    @MainActor
+    func defaultJobIsLastViewed() throws {
+        let suiteName = "LoadTimingViewTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = LoadProfileStore(userDefaults: defaults)
+        #expect(LoadTimingView.initialJobID(store: store) == "car")
+        try store.selectProfile(id: "dryer")
+        #expect(LoadTimingView.initialJobID(store: LoadProfileStore(userDefaults: defaults)) == "dryer")
+    }
+
+    @Test("A forecast comparison that can't run falls back to the forecast-free one and says why")
+    func forecastFailureFallsBackToFlat() throws {
+        let now = SmartShiftPresentationTests.now
+        let timing = SmartShiftPresentationTests.timing()
+        let intervals = [SolarForecastInterval(periodStart: SmartShiftPresentationTests.at(0),
+                                               periodEnd: SmartShiftPresentationTests.at(48), powerKw: 0)]
+        let slots = stride(from: 0, to: 1440, by: 30).map {
+            LoadTimingForecastEstimator.PlanningSlot(localMinute: $0, homeKw: 0, batteryNetChargeKw: 0)
+        }
+        let context = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC", slots: slots, asOf: now)
+        func evaluate(_ forecast: ForecastAvailability, sourceAge: TimeInterval?) -> SmartShiftEvaluation {
+            SmartShiftPresentation.evaluate(
+                profile: SmartShiftPresentationTests.car, now: now, timing: timing, forecast: forecast,
+                intervals: forecast == .ready ? intervals : nil, context: forecast == .ready ? context : nil,
+                balanceSourceTime: sourceAge.map { now.addingTimeInterval(-$0) },
+                billingCycleEnd: now.addingTimeInterval(20 * 86_400), currencyCode: "USD", timeZone: "UTC")
+        }
+
+        let fresh = evaluate(.ready, sourceAge: 0)
+        #expect(fresh.forecast == .ready)
+        #expect(fresh.result.comparison?.assumptions.contains { $0.contains("historical local-time profile") } == true)
+
+        let stale = evaluate(.ready, sourceAge: 40 * 60)
+        #expect(stale.result.comparison != nil)
+        #expect(stale.forecast == .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(.staleBalance)))
+
+        let none = evaluate(.none, sourceAge: 0)
+        #expect(none.forecast == ForecastAvailability.none)
+        #expect(none.result.comparison?.assumptions.contains { $0.contains("held at today's observed values") } == true)
+
+        let missingSource = evaluate(.none, sourceAge: nil)
+        #expect(missingSource.result.unavailableReason == .staleBalance)
+    }
+
+    @Test("One pass's evaluator prices every Job exactly as evaluating each alone")
+    func passEvaluatorMatchesPerJobEvaluation() {
+        let now = SmartShiftPresentationTests.now
+        let timing = SmartShiftPresentationTests.timing()
+        let intervals = [SolarForecastInterval(periodStart: SmartShiftPresentationTests.at(0),
+                                               periodEnd: SmartShiftPresentationTests.at(48), powerKw: 2)]
+        let slots = stride(from: 0, to: 1440, by: 30).map {
+            LoadTimingForecastEstimator.PlanningSlot(localMinute: $0, homeKw: 0.5, batteryNetChargeKw: 0)
+        }
+        let context = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC", slots: slots, asOf: now)
+        let jobs = [SmartShiftPresentationTests.car, SmartShiftPresentationTests.pump,
+                    LoadProfile(id: "kettle", name: "Boil the kettle", kind: .appliance, energyKwh: 0.2, durationHours: 0.1, carSettings: nil)]
+        for (forecast, sourceAge) in [(ForecastAvailability.ready, 0.0), (.ready, 40.0 * 60), (.none, 0)] {
+            let evaluate = SmartShiftPresentation.evaluator(
+                now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
+                balanceSourceTime: now.addingTimeInterval(-sourceAge), billingCycleEnd: now.addingTimeInterval(20 * 86_400),
+                currencyCode: "USD", timeZone: "UTC")
+            for job in jobs {
+                let alone = SmartShiftPresentation.evaluate(
+                    profile: job, now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
+                    balanceSourceTime: now.addingTimeInterval(-sourceAge), billingCycleEnd: now.addingTimeInterval(20 * 86_400),
+                    currencyCode: "USD", timeZone: "UTC")
+                #expect(evaluate(job) == alone)
+            }
+        }
     }
 }

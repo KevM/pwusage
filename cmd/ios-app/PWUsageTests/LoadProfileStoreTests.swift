@@ -154,6 +154,56 @@ struct LoadProfileStoreTests {
         #expect(throws: LoadProfileError.self) { try store.updateProfile(car) }
     }
 
+    @Test("Fresh installs name every Job as a verb phrase")
+    @MainActor
+    func freshInstallUsesVerbNames() {
+        let store = Fixture().store
+        #expect(store.profiles.map(\.name) == ["Charge the car", "Wash the dishes", "Wash the laundry", "Dry the laundry", "Wash and dry the laundry", "Bake bread"])
+    }
+
+    @Test("Version 1 built-in names migrate to verb phrases without touching custom Jobs or settings")
+    @MainActor
+    func migratesVersionOneBuiltInNames() throws {
+        let defaults = Fixture.emptyDefaults()
+        let poolPumpID = UUID().uuidString
+        let car = CarLoadSettings(capacityKwh: 75, initialStateOfCharge: 30, targetStateOfCharge: 90, chargingLevel: .level1)
+        let saved = VersionOneCollection(version: 1, profiles: [
+            LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 36, durationHours: 4, carSettings: car),
+            LoadProfile(id: "dishwasher", name: "Dishwasher", kind: .appliance, energyKwh: 6, durationHours: 3, carSettings: nil),
+            LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 2, durationHours: 1.5, carSettings: nil),
+            LoadProfile(id: "dryer", name: "Dryer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil),
+            LoadProfile(id: "washer-dryer-combo", name: "Washer–Dryer Combo", kind: .appliance, energyKwh: 8, durationHours: 3, carSettings: nil),
+            LoadProfile(id: poolPumpID, name: "Pool pump", kind: .custom, energyKwh: 4, durationHours: 2, carSettings: nil),
+        ], selectedProfileID: "dryer")
+        defaults.set(try JSONEncoder().encode(saved), forKey: LoadProfileStore.storageKey)
+
+        let store = LoadProfileStore(userDefaults: defaults)
+
+        #expect(store.profiles.map(\.name) == ["Charge the car", "Wash the dishes", "Wash the laundry", "Dry the laundry", "Wash and dry the laundry", "Pool pump"])
+        #expect(store.selectedProfileID == "dryer")
+        #expect(store.profile(id: "car")?.carSettings == car)
+        #expect(store.profile(id: "dishwasher")?.energyKwh == 6)
+        #expect(store.profile(id: "dishwasher")?.durationHours == 3)
+        let persisted = try #require(defaults.data(forKey: LoadProfileStore.storageKey))
+        #expect(try JSONDecoder().decode(VersionOneCollection.self, from: persisted).version == 2)
+    }
+
+    @Test("The seeded Custom example is renamed only while it keeps its seeded name")
+    @MainActor
+    func renamesSeededCustomExampleOnlyWhileUnchanged() throws {
+        for (savedName, expected) in [("Custom", "Bake bread"), ("Hot tub", "Hot tub")] {
+            let defaults = Fixture.emptyDefaults()
+            let saved = VersionOneCollection(version: 1, profiles: VersionOneCollection.builtIns + [
+                LoadProfile(id: "custom-example", name: savedName, kind: .custom, energyKwh: 20, durationHours: 4, carSettings: nil),
+            ], selectedProfileID: nil)
+            defaults.set(try JSONEncoder().encode(saved), forKey: LoadProfileStore.storageKey)
+
+            let store = LoadProfileStore(userDefaults: defaults)
+
+            #expect(store.profile(id: "custom-example")?.name == expected)
+        }
+    }
+
     @Test("Describes every profile failure in user-facing language")
     func describesProfileErrors() {
         let cases: [(LoadProfileError, String)] = [
@@ -180,4 +230,27 @@ private struct Fixture {
         defaults.removePersistentDomain(forName: suiteName)
         store = LoadProfileStore(userDefaults: defaults)
     }
+
+    /// A fixture whose defaults hold nothing yet, so a test can seed saved data before the store reads it.
+    static func emptyDefaults() -> UserDefaults {
+        let suiteName = "LoadProfileStoreTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
+    }
+}
+
+/// The persisted shape written by schema version 1, before Jobs were named as verb phrases.
+private struct VersionOneCollection: Codable {
+    let version: Int
+    let profiles: [LoadProfile]
+    let selectedProfileID: String?
+
+    static let builtIns: [LoadProfile] = [
+        LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 36, durationHours: 4, carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level2)),
+        LoadProfile(id: "dishwasher", name: "Dishwasher", kind: .appliance, energyKwh: 5, durationHours: 2, carSettings: nil),
+        LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 2, durationHours: 1.5, carSettings: nil),
+        LoadProfile(id: "dryer", name: "Dryer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil),
+        LoadProfile(id: "washer-dryer-combo", name: "Washer–Dryer Combo", kind: .appliance, energyKwh: 8, durationHours: 3, carSettings: nil),
+    ]
 }

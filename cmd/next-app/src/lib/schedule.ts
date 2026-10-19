@@ -66,6 +66,32 @@ export class Schedule {
         return result;
     }
 
+    get siteTimeZone(): string {
+        return this.timeZone;
+    }
+
+    /**
+     * Local minutes of the day where any schedule window starts or ends, plus
+     * midnight (where the date, weekday, season and holidays change). Within a
+     * local day the resolved period can only change at one of these minutes.
+     */
+    boundaryMinutes(): number[] {
+        const minutes = new Set<number>([0]);
+        for (const tariff of this.tariffs) {
+            for (const season of tariff.seasons ?? []) {
+                for (const schedule of season.schedules ?? []) {
+                    if (schedule.from_hour !== null && schedule.from_hour !== undefined) {
+                        minutes.add((schedule.from_hour * 60 + (schedule.from_minute ?? 0)) % 1440);
+                    }
+                    if (schedule.to_hour !== null && schedule.to_hour !== undefined) {
+                        minutes.add((schedule.to_hour * 60 + (schedule.to_minute ?? 0)) % 1440);
+                    }
+                }
+            }
+        }
+        return [...minutes].sort((a, b) => a - b);
+    }
+
     getTariffPeriod(t: Date): TariffPeriod | null {
         const local = this.getLocalParts(t);
         return this.getTariffPeriodByComponents(local.month, local.day, local.hour, local.weekday, t, local.year, local.minute);

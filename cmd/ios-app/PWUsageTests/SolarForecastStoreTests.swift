@@ -187,7 +187,8 @@ struct SolarForecastStoreTests {
         await h.transport.failResourceID("west")
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.requestFailed))
         #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a") == previous)
-        #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
+        // A failed request doesn't dismiss the forecast already saved.
+        #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
     }
 
     @Test("Account and site switches cannot read another association or cache")
@@ -426,8 +427,9 @@ struct SolarForecastStoreTests {
         let h = Harness()
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
-        await h.transport.failNext(1)
-        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.requestFailed))
+        // A failure that disables the forecast (the array is unknown to Solcast).
+        await h.transport.nextStatusCode(404)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.unknownResource))
         _ = try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a")
         #expect(await h.store.credential(accountScopeID: "account-a", siteID: "site-a")?.resourceIDs == ["east"])
         #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
@@ -551,6 +553,9 @@ struct SolarForecastStoreTests {
             try await transportHarness.store.discoverSites(accountScopeID: "account-a", siteID: "site-a", manual: true)
         }
         #expect(await transportHarness.store.lastErrorDescription == "Forecast network request failed")
+        let managed: any SolarForecastManaging = transportHarness.store
+        #expect(await managed.lastErrorDescription == "Forecast network request failed",
+                "The store's own description must back the protocol, not the extension's nil.")
 
         let invalidHarness = Harness()
         try await invalidHarness.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: [])
@@ -736,7 +741,7 @@ struct SolarForecastStoreTests {
         #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
     }
 
-    @Test("Refresh budget exhaustion disables retained cache across restart")
+    @Test("Refresh budget exhaustion keeps a retained fresh cache usable across restart")
     func refreshBudgetExhaustionDisablesCache() async throws {
         let h = Harness()
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
@@ -748,10 +753,10 @@ struct SolarForecastStoreTests {
 
         let restarted = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
         await restarted.activateAccountScope("account-a")
-        #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
+        #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
     }
 
-    @Test("Automatic budget exhaustion disables a retained fresh cache across restart")
+    @Test("Automatic budget exhaustion keeps a retained fresh cache usable across restart")
     func automaticBudgetExhaustionDisablesCache() async throws {
         let h = Harness(now: SolarForecastStoreTests.date("2026-09-27T01:00:00Z"))
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east", "west"])
@@ -765,10 +770,10 @@ struct SolarForecastStoreTests {
 
         let restarted = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
         await restarted.activateAccountScope("account-a")
-        #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
+        #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
     }
 
-    @Test("Discovery budget exhaustion disables retained cache across restart")
+    @Test("Discovery budget exhaustion keeps a retained fresh cache usable across restart")
     func discoveryBudgetExhaustionDisablesCache() async throws {
         let h = Harness()
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
@@ -783,7 +788,7 @@ struct SolarForecastStoreTests {
 
         let restarted = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
         await restarted.activateAccountScope("account-a")
-        #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
+        #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
     }
 
     @Test("Composite account and site scopes cannot collide on delimiters")
@@ -837,6 +842,56 @@ struct SolarForecastStoreTests {
         await #expect(throws: SolarForecastStore.StoreError.cleanupFailed) { try await h.store.signOut() }
         #expect(await h.keychain.count == 1)
         #expect(await h.store.credential(accountScopeID: "account-a", siteID: "site-a") == nil)
+    }
+
+    // MARK: A current forecast is not dismissed over a refused or failed request
+
+    @Test("A rate-limited refresh keeps the fresh cached forecast usable")
+    func rateLimitKeepsFreshCache() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+        await h.transport.nextStatusCode(429)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.rateLimited))
+        #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
+    }
+
+    @Test("A network failure keeps the fresh cached forecast usable")
+    func networkFailureKeepsFreshCache() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+        await h.transport.failNext(1)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.requestFailed))
+        #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
+    }
+
+    @Test("Budget exhaustion keeps the fresh cached forecast usable, across restart")
+    func budgetExhaustionKeepsFreshCache() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        for _ in 0..<SolarForecastStore.totalAttemptsPerUTCDay {
+            #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .refreshed)
+        }
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .budgetExhausted)
+        #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
+
+        let restarted = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
+        await restarted.activateAccountScope("account-a")
+        #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
+        // It still ages out like any forecast.
+        h.clock.advance(by: SolarForecastStore.recommendationFreshness + 1)
+        #expect(await restarted.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
+    }
+
+    @Test("An array Solcast no longer knows still disables the cached forecast")
+    func unknownArrayStillDisablesCache() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
+        await h.transport.nextStatusCode(404)
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.unknownResource))
+        #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a") == false)
     }
 
     static func date(_ value: String) -> Date {

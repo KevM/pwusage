@@ -1,0 +1,102 @@
+<h2>Cost bars first, with the gap labelled</h2>
+<p class="subtitle">Charging later really does leave less in the Off-Peak bank. It's still cheaper, because banked Off-Peak energy is only worth the sell rate, while Peak energy is bought at the full price. Both versions put dollars in front so the lanes can't mislead. Made-up rates: Off-Peak credit is worth $0.26/kWh and Peak energy costs $0.38/kWh.</p>
+
+<style>
+  .phone { width: 360px; max-width: 100%; box-sizing: border-box; background: #fff; color: #111; border-radius: 22px; padding: 16px; box-shadow: 0 2px 10px rgba(0,0,0,.12); font: 14px -apple-system, system-ui, sans-serif; }
+  .phone .verdict { font-size: 19px; font-weight: 700; line-height: 1.25; }
+  .phone .why { color: #555; margin: 6px 0 10px; line-height: 1.35; }
+  .phone .key { display: flex; gap: 14px; font-size: 12px; margin: 4px 0 2px; }
+  .phone .key i { display: inline-block; width: 16px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+  .phone .more { color: #0a66d1; margin-top: 10px; font-size: 13px; }
+  .cost { margin: 4px 0 12px; }
+  .cost .row { display: grid; grid-template-columns: 84px 1fr 46px; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+  .cost .bar { height: 16px; border-radius: 4px; }
+  .cost .amt { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+  .cost .cap { font-size: 11px; color: #666; }
+  .cards .card { max-width: 400px; }
+</style>
+
+<div class="cards">
+  <div class="card" data-choice="x-cost-bars" onclick="toggleSelect(this)">
+    <div class="card-image"><div class="phone">
+      <div class="verdict">Charge the car at 4:30 PM: about $1.89 cheaper than now</div>
+      <div class="cost">
+        <div class="cap">Added to your bill (shorter is better)</div>
+        <div class="row"><b style="color:#1c7ed6">Charge later</b><div style="display:flex;align-items:center"><div class="bar" style="width:64%;background:#1c7ed6"></div><div style="flex:1;margin-left:4px;height:16px;border:1px dashed #74c0fc;border-left:none;border-radius:0 4px 4px 0;font-size:10px;font-weight:700;color:#1864ab;white-space:nowrap;display:flex;align-items:center;justify-content:center">36% less</div></div><span class="amt" style="color:#1c7ed6">$3.38</span></div>
+        <div class="row"><span style="color:#e8590c">Charge now</span><div class="bar" style="width:100%;background:#ffc9c9"></div><span class="amt" style="color:#e8590c;font-weight:500">$5.27</span></div>
+      </div>
+      <div class="why">Why: charging now runs during Peak, where you have no bank, so it's bought at the full price. At 4:30 PM it uses your Off-Peak bank, which costs only the credit you give up.</div>
+      <div class="key"><span><i style="background:#1c7ed6;height:4px"></i><b>Charge later</b></span><span style="color:#888"><i style="background:#ff8787;height:2px"></i>Charge now</span></div>
+      <svg id="x" viewBox="0 0 328 212" style="width:100%;height:auto"></svg>
+      <div class="more">How this is worked out ›</div>
+    </div></div>
+    <div class="card-body"><h3>X · Cost bars first</h3><p>A small "added to your bill" comparison sits above the chart. Shorter is better, which is how everyone already reads a bill. The lanes below explain why.</p></div>
+  </div>
+
+  <div class="card" data-choice="y-price-tags" onclick="toggleSelect(this)">
+    <div class="card-image"><div class="phone">
+      <div class="verdict">Charge the car at 4:30 PM: about $1.89 cheaper than now</div>
+      <div class="why">Charging now runs during Peak, where you have no bank. Run at 4:30 PM to use your Off-Peak bank.</div>
+      <div class="key"><span><i style="background:#1c7ed6;height:4px"></i><b>Charge later</b></span><span style="color:#888"><i style="background:#ff8787;height:2px"></i>Charge now</span></div>
+      <svg id="y" viewBox="0 0 328 212" style="width:100%;height:auto"></svg>
+      <div class="more">How this is worked out ›</div>
+    </div></div>
+    <div class="card-body"><h3>Y · Price tags on the lanes</h3><p>No extra chart. Each lane gets a price tag on the gap the car makes: what using that bank costs. "−13 kWh = $3.38" next to "−14 kWh = $5.27" makes the smaller number win.</p></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const start = 0, end = 15.5, now = 0, step = 0.5;
+  const local = h => ((8.5 + h) % 24 + 24) % 24;
+  const isPeak = h => { const t = local(h); return t >= 7 && t < 16.5; };
+  const net = h => { const t = local(h); const sun = Math.max(0, Math.sin(Math.PI * (t - 7.2) / 11)); return (2.6 * sun - 0.7 - (t > 17 && t < 22 ? 0.6 : 0)) * step; };
+  const kw = 14 / 5.9, plans = { later: [8, 13.9], now: [0, 5.9] };
+  const draws = (plan, h) => (h > plans[plan][0] && h <= plans[plan][1] + 1e-9) ? kw * step : 0;
+  const pts = []; let peak = -6.5 - 4.3, off = 29.5 - 6.2; const s = { later: {}, now: {} };
+  for (let h = start; h <= end + 1e-9; h += step) {
+    const n = net(h); if (h > start) { if (isPeak(h)) peak += n; else off += n; }
+    if (h === now) for (const p in s) { s[p].peak = peak; s[p].off = off; }
+    const row = { h, peak, off };
+    for (const p in s) { if (h > now) { const d = draws(p, h); if (isPeak(h)) s[p].peak += n - d; else s[p].off += n - d; } row[p + 'peak'] = s[p].peak; row[p + 'off'] = s[p].off; }
+    pts.push(row);
+  }
+  function draw(id, tags) {
+    const svg = document.getElementById(id), NS = 'http://www.w3.org/2000/svg', W = 328, padL = 4, padR = tags ? 92 : 40;
+    const x = h => padL + (h - start) / (end - start) * (W - padL - padR);
+    const el = (tag, a, t) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); if (t) e.textContent = t; svg.appendChild(e); return e; };
+    const fmt = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(0);
+    function lane(top, bottom, name, key, tag) {
+      const vals = pts.flatMap(p => [p['later' + key], p['now' + key]]);
+      const lo = Math.min(0, ...vals) - 4, hi = Math.max(0, ...vals) + 5;
+      const y = v => top + (hi - v) / (hi - lo) * (bottom - top);
+      el('text', { x: padL, y: top - 5, 'font-size': 11, 'font-weight': 600, fill: '#111' }, name);
+      el('rect', { x: padL, y: top, width: x(end) - padL, height: y(0) - top, fill: '#ebfbee' });
+      el('rect', { x: padL, y: y(0), width: x(end) - padL, height: bottom - y(0), fill: '#fff4e6' });
+      el('line', { x1: padL, x2: x(end), y1: y(0), y2: y(0), stroke: '#555', 'stroke-width': .8 });
+      el('text', { x: padL + 2, y: top + 9, 'font-size': 9, fill: '#2b8a3e' }, 'banked');
+      el('text', { x: padL + 2, y: bottom - 3, 'font-size': 9, fill: '#c2410c' }, 'owed');
+      [[0, 'now'], [8, '4:30p'], [13.9, '10:24p']].forEach(([h, t]) => el('text', { x: x(h), y: bottom + 12, 'font-size': 9, fill: '#555', 'text-anchor': h === 0 ? 'start' : 'middle' }, t));
+      el('line', { x1: x(8), x2: x(8), y1: top, y2: bottom, stroke: '#1864ab', 'stroke-width': .8, 'stroke-dasharray': '3 2' });
+      el('text', { x: x(8) + 3, y: bottom - 3, 'font-size': 8, fill: '#1864ab' }, 'Off-Peak →');
+      el('text', { x: x(8) - 3, y: bottom - 3, 'font-size': 8, fill: '#c2410c', 'text-anchor': 'end' }, '← Peak');
+      const line = (p, c, w, d) => el('polyline', { points: pts.map(r => x(r.h) + ',' + y(r[p + key])).join(' '), fill: 'none', stroke: c, 'stroke-width': w, 'stroke-dasharray': d, 'stroke-linejoin': 'round' });
+      line('now', '#ff8787', 1.6, '4 3'); line('later', '#1c7ed6', 3.4, '');
+      const last = pts[pts.length - 1], a = y(last['later' + key]), b = y(last['now' + key]);
+      if (Math.abs(a - b) > 4) {
+        el('text', { x: x(end) + 3, y: a + 3, 'font-size': 10, fill: '#1c7ed6', 'font-weight': 700 }, fmt(last['later' + key]));
+        el('text', { x: x(end) + 3, y: b + 3, 'font-size': 9.5, fill: '#e8590c' }, fmt(last['now' + key]));
+      }
+      if (tags && tag) {
+        const top2 = Math.min(a, b), bot2 = Math.max(a, b), bx = x(end) + 24;
+        el('path', { d: `M${bx - 4},${top2} h4 v${bot2 - top2} h-4`, fill: 'none', stroke: tag.color, 'stroke-width': 1.2 });
+        el('text', { x: bx + 4, y: (top2 + bot2) / 2 - 2, 'font-size': 10, fill: tag.color, 'font-weight': 700 }, tag.kwh);
+        el('text', { x: bx + 4, y: (top2 + bot2) / 2 + 10, 'font-size': 10, fill: tag.color, 'font-weight': 700 }, '= ' + tag.cost);
+      }
+    }
+    lane(16, 92, 'Off-Peak bank (kWh)', 'off', { color: '#1c7ed6', kwh: '−13 kWh', cost: '$3.38' });
+    lane(124, 192, 'Peak bank (kWh)', 'peak', { color: '#e8590c', kwh: '−14 kWh', cost: '$5.27' });
+  }
+  draw('x', false); draw('y', true);
+})();
+</script>

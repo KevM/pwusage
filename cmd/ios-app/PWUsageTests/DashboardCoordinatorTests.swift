@@ -380,6 +380,30 @@ struct DashboardCoordinatorTests {
                 "Past the floor an appearance requests again.")
     }
 
+    @Test("Smart Shift diagnostics gather the forecast store's bookkeeping")
+    func diagnosticsGatherTheForecastStoresBookkeeping() async throws {
+        let clock = TestClock()
+        let api = DashboardAPISpy()
+        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+        )
+        #expect(await coordinator.solarForecastDiagnostics()?.lastRefreshResult == nil)
+
+        await coordinator.loadTimingDetailAppeared()
+        let diagnostics = try #require(await coordinator.solarForecastDiagnostics())
+        #expect(diagnostics.fetchedAt == Date(timeIntervalSince1970: 1_800_000_000))
+        #expect(diagnostics.intervalCount == 1)
+        #expect(diagnostics.recommendationUsable)
+        #expect(diagnostics.budget?.totalAttempts == 1)
+        #expect(diagnostics.budget?.totalLimit == SolarForecastStore.totalAttemptsPerUTCDay)
+        #expect(diagnostics.lastErrorDescription == "Forecast request failed")
+        #expect(diagnostics.lastRefreshResult == "refreshed")
+        #expect(diagnostics.connection == "ready")
+        #expect(diagnostics.state == "enhanced")
+    }
+
     @Test("Reopening the detail inside the bill floor keeps the enhancement")
     func reopeningInsideTheBillFloorKeepsTheEnhancement() async {
         let clock = TestClock()
@@ -817,6 +841,7 @@ private actor DashboardForecastStoreSpy: SolarForecastManaging {
             utcDay: Date(timeIntervalSince1970: 1_800_000_000), totalAttempts: 1, automaticAttempts: 1, deferredUntil: nil
         )
     }
+    var lastErrorDescription: String? { "Forecast request failed" }
     func disconnect(accountScopeID: String, siteID: String) throws {}
     func signOut() async throws {}
 }

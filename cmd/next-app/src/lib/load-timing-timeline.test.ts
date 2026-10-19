@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Tariff } from './db-types';
 import { Schedule } from './schedule';
 import { buildLoadTimingTimeline } from './load-timing-timeline';
@@ -54,5 +54,81 @@ describe('buildLoadTimingTimeline', () => {
             { start: '2026-10-01T06:59:00.000Z', end: '2026-10-01T07:00:00.000Z', periodKey: 'Summer all day', name: 'Summer all day', buyRate: 0.4, sellRate: 0.05 },
             { start: '2026-10-01T07:00:00.000Z', end: '2026-10-01T07:02:00.000Z', periodKey: 'Winter all day', name: 'Winter all day', buyRate: 0.8, sellRate: 0.02 },
         ]);
+    });
+
+    it('ends at a tariff gap past the required horizon instead of dropping the timeline', () => {
+        // Summer covers June–September only, so October has no tariff.
+        const seasons: NonNullable<Tariff['seasons']> = [
+            { id: 2, tariff_id: 1, name: 'Summer', from_month: 6, from_day: 1, to_month: 9, to_day: 30, buy_rate: 0.4, sell_rate: 0.05,
+                schedules: [{ id: 3, season_id: 2, name: 'Summer all day', buy_rate: 0.4, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }] },
+        ];
+        const schedule = makeSchedule({ seasons });
+        const now = new Date('2026-09-20T07:00:00Z');
+
+        const reaching = buildLoadTimingTimeline(schedule, now, new Date('2026-10-15T07:00:00Z'), new Date('2026-09-27T07:00:00Z'));
+        const required = buildLoadTimingTimeline(schedule, now, new Date('2026-10-15T07:00:00Z'), new Date('2026-10-05T07:00:00Z'));
+
+        expect(reaching.at(-1)?.end).toBe('2026-10-01T07:00:00.000Z');
+        expect(required).toEqual([]);
+    });
+
+    it('lands quarter-hour and off-quarter switches on their minute', () => {
+        const now = new Date('2026-07-08T18:00:00Z'); // 11:00 in Los Angeles
+        const end = new Date('2026-07-09T18:00:00Z');
+
+        const quarter = buildLoadTimingTimeline(makeSchedule({ switchMinute: 45 }), now, end);
+        const offQuarter = buildLoadTimingTimeline(makeSchedule({ switchMinute: 10 }), now, end);
+
+        expect(quarter.map(({ start, name }) => ({ start, name }))).toEqual([
+            { start: '2026-07-08T18:00:00.000Z', name: 'Day' },
+            { start: '2026-07-08T19:45:00.000Z', name: 'Night' },
+            { start: '2026-07-09T07:00:00.000Z', name: 'Day' },
+        ]);
+        expect(offQuarter.map(({ start, name }) => ({ start, name }))).toEqual([
+            { start: '2026-07-08T18:00:00.000Z', name: 'Day' },
+            { start: '2026-07-08T19:10:00.000Z', name: 'Night' },
+            { start: '2026-07-09T07:00:00.000Z', name: 'Day' },
+        ]);
+    });
+
+    it('keeps a minute-level period that starts and ends between quarter hours', () => {
+        const seasons: NonNullable<Tariff['seasons']> = [
+            { id: 2, tariff_id: 1, name: 'All year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0.2, sell_rate: 0.05,
+                schedules: [
+                    { id: 3, season_id: 2, name: 'Spike', buy_rate: 0.9, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 12, from_minute: 2, to_hour: 12, to_minute: 8 },
+                    { id: 4, season_id: 2, name: 'Base', buy_rate: 0.2, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: null, from_minute: null, to_hour: null, to_minute: null },
+                ] },
+        ];
+        const timeline = buildLoadTimingTimeline(makeSchedule({ seasons }), new Date('2026-07-08T18:00:00Z'), new Date('2026-07-08T21:00:00Z'));
+
+        expect(timeline.map(({ start, end, name }) => ({ start, end, name }))).toEqual([
+            { start: '2026-07-08T18:00:00.000Z', end: '2026-07-08T19:02:00.000Z', name: 'Base' },
+            { start: '2026-07-08T19:02:00.000Z', end: '2026-07-08T19:08:00.000Z', name: 'Spike' },
+            { start: '2026-07-08T19:08:00.000Z', end: '2026-07-08T21:00:00.000Z', name: 'Base' },
+        ]);
+    });
+
+    it('follows the repeated fall-back hour', () => {
+        // 01:30 switch on 2026-11-01 in Los Angeles happens in both 01:00 hours.
+        const timeline = buildLoadTimingTimeline(makeSchedule({ switchHour: 1, switchMinute: 30 }),
+            new Date('2026-11-01T07:00:00Z'), new Date('2026-11-01T11:00:00Z'));
+
+        expect(timeline.map(({ start, name }) => ({ start, name }))).toEqual([
+            { start: '2026-11-01T07:00:00.000Z', name: 'Day' },    // 00:00 PDT
+            { start: '2026-11-01T08:30:00.000Z', name: 'Night' },  // 01:30 PDT
+            { start: '2026-11-01T09:00:00.000Z', name: 'Day' },    // 01:00 PST again
+            { start: '2026-11-01T09:30:00.000Z', name: 'Night' },  // 01:30 PST
+        ]);
+    });
+
+    it('resolves a 31-day horizon from rule boundaries, not by sampling', () => {
+        const schedule = makeSchedule();
+        const resolve = vi.spyOn(schedule, 'getTariffPeriod');
+        const timeline = buildLoadTimingTimeline(schedule, new Date('2026-10-18T05:00:00Z'), new Date('2026-11-18T06:00:00Z'));
+
+        expect(timeline.at(-1)?.end).toBe('2026-11-18T06:00:00.000Z');
+        // Two switches a day for 31 days; a quarter-hour walk would resolve ~3,000 instants.
+        expect(timeline).toHaveLength(63);
+        expect(resolve.mock.calls.length).toBeLessThan(400);
     });
 });

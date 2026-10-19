@@ -184,7 +184,12 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var solarForecastSaveFailure = false
     @Published private(set) var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
     @Published private(set) var solarForecastBatch: SolarForecastBatch?
+    /// The last forecast refresh's outcome, kept for Smart Shift diagnostics only.
+    private(set) var solarForecastLastRefresh: SolarForecastRefreshResult?
     @Published private(set) var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
+    /// The household pattern with grid history, published whether or not Solcast
+    /// is connected, so Smart Shift can project banks from history alone.
+    @Published private(set) var householdPattern: LoadTimingForecastEstimator.PlanningContext?
 
     var pollingTimerIsActive: Bool { timerTask != nil }
 
@@ -464,6 +469,7 @@ final class DashboardCoordinator: ObservableObject {
         bill.isRestored = false
         requiresSignIn = true
         resetForecastEnhancement(state: .basic, connection: .notConnected)
+        householdPattern = nil
     }
 
     func selectSite(_ siteID: String) {
@@ -479,6 +485,9 @@ final class DashboardCoordinator: ObservableObject {
         bill.reset()
         restoreCachedReadings()
         resetForecastEnhancement(state: .basic, connection: .notConnected)
+        // The pattern belongs to the old site; connecting or disconnecting
+        // Solcast leaves it in place.
+        householdPattern = nil
         guard isForeground, canRequestAccountData else { return }
         Task { await refreshDue() }
         // The destination view is not re-inserted on a site switch, so re-run the
@@ -575,6 +584,7 @@ final class DashboardCoordinator: ObservableObject {
             solarForecastUnavailableCause = nil
             solarForecastBatch = nil
             loadPlanningContext = nil
+            await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
             return
         }
         guard !credential.resourceIDs.isEmpty else {
@@ -584,6 +594,7 @@ final class DashboardCoordinator: ObservableObject {
             solarForecastUnavailableCause = nil
             solarForecastBatch = nil
             loadPlanningContext = nil
+            await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
             return
         }
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
@@ -600,6 +611,9 @@ final class DashboardCoordinator: ObservableObject {
         await billRefresh
 
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        solarForecastLastRefresh = refresh
+        // Published even when the forecast half fails, so the card can fall back to history.
+        householdPattern = context
         solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
         // A save failure is not an unavailable forecast, on this path exactly as
         // on `refreshSolarForecast`. The batch is fresh and in memory — the store
@@ -609,7 +623,11 @@ final class DashboardCoordinator: ObservableObject {
         // §5.5 was filed to remove. This path is the dominant one (pull-to-refresh
         // is the exception), so the omission is the more visible half of the bug.
         let saveFailed = refresh == .failed(.saveFailed)
-        let refreshSucceeded = saveFailed || refresh == .refreshed || refresh == .alreadyFresh
+        // A refused or failed refresh (budget, rate limit, network) doesn't dismiss
+        // a forecast the store still trusts: the store disables it only for
+        // key or array problems, and it ages out after six hours.
+        let usableDespiteRefresh = await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID)
+        let refreshSucceeded = saveFailed || refresh == .refreshed || refresh == .alreadyFresh || usableDespiteRefresh
         // The appearance-driven bill refresh is floored, so a bill fetched
         // moments ago by an earlier appearance, a site switch, or a pull is
         // already fresh. Requiring a brand new success here would drop the
@@ -648,6 +666,23 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastSaveFailure = saveFailed
     }
 
+    /// The forecast store's view of this site, for Smart Shift's "Copy
+    /// diagnostics". It reads the store's cached batch rather than
+    /// `solarForecastBatch`, which is cleared whenever the card can't use it.
+    func solarForecastDiagnostics() async -> SmartShiftDiagnostics.SolarForecast? {
+        guard let forecastStore, let accountScopeID else { return nil }
+        let siteID = selectedSiteID
+        let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID)
+        return SmartShiftDiagnostics.SolarForecast(
+            batch: batch, now: now(),
+            recommendationUsable: await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
+            budget: await forecastStore.budget(for: accountScopeID, siteID: siteID),
+            lastErrorDescription: await forecastStore.lastErrorDescription,
+            lastRefresh: solarForecastLastRefresh, unavailableCause: solarForecastUnavailableCause,
+            connection: solarForecastConnection, state: solarForecastState,
+            unavailableReason: solarForecastUnavailableReason)
+    }
+
     func refreshSolarForecast(manual: Bool) async {
         guard canRequestAccountData else { return }
         let operation = beginForecastOperation()
@@ -667,6 +702,7 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastState = .loadingWithBasic
         let refresh = await forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: manual)
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        solarForecastLastRefresh = refresh
         if loadPlanningContext == nil {
             solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
             solarForecastBatch = nil
@@ -687,8 +723,8 @@ final class DashboardCoordinator: ObservableObject {
         // memory, so the enhancement stays up behind its own note rather than being
         // torn down behind a "Solar forecast unavailable" sentence.
         let saveFailed = refresh == .failed(.saveFailed)
-        guard saveFailed || refresh == .refreshed || refresh == .alreadyFresh,
-              await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
+        // As on the appearance path, a refused refresh leaves a still-usable forecast in place.
+        guard await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
               let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID) else {
             solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
             solarForecastBatch = nil
@@ -765,6 +801,14 @@ final class DashboardCoordinator: ObservableObject {
     func solarForecastSettingsDidEdit() {}
     func loadProfileDidEdit() {}
 
+    /// The forecast-free path's household pattern: the same cached request the
+    /// Solcast path makes, so the pattern costs at most one request a day.
+    private func loadHouseholdPattern(siteID: String, api: any MobileLoadPlanningDataAPI, operation: Int) async {
+        let outcome = await planningContext(siteID: siteID, api: api)
+        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        householdPattern = outcome.context
+    }
+
     private struct PlanningContextOutcome {
         let context: LoadTimingForecastEstimator.PlanningContext?
         let unavailableReason: SolarForecastEnhancementUnavailableReason?
@@ -779,9 +823,12 @@ final class DashboardCoordinator: ObservableObject {
            requestTime.timeIntervalSince(cached.fetchedAt) >= 0,
            requestTime.timeIntervalSince(cached.fetchedAt) < Self.planningContextLifetime,
            let validated = try? cached.response.validating(siteID: siteID, now: requestTime) {
+            // Only an unavailable profile has a reason; a usable cached one must not
+            // mask why the forecast half failed.
+            let context = validated.estimatorContext
             return PlanningContextOutcome(
-                context: validated.estimatorContext,
-                unavailableReason: Self.enhancementReason(forReason: validated.unavailableReason)
+                context: context,
+                unavailableReason: context == nil ? Self.enhancementReason(forReason: validated.unavailableReason) : nil
             )
         }
         let pending: PlanningContextTask
@@ -895,6 +942,7 @@ final class DashboardCoordinator: ObservableObject {
         solarForecastUnavailableCause = nil
         solarForecastUnavailableReason = nil
         solarForecastSaveFailure = false
+        solarForecastLastRefresh = nil
     }
 
     private func launchBillTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int, followsLive: Bool) {
