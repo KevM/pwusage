@@ -121,5 +121,9 @@ schemes:
     run:
       debugEnabled: false
     test:
+      environmentVariables:
+        PWUSAGE_FUZZ: "$(PWUSAGE_FUZZ)"
+        PWUSAGE_FUZZ_STRESS: "$(PWUSAGE_FUZZ_STRESS)"
+        PWUSAGE_FUZZ_SEED: "$(PWUSAGE_FUZZ_SEED)"
       targets:
         - PWUsageTests
