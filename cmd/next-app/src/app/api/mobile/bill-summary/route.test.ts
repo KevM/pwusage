@@ -234,6 +234,24 @@ describe('mobile bill summary route', () => {
         vi.useRealTimers();
     });
 
+    it('covers the hour-old balance the forecast-free card still accepts', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        siteMock.mockResolvedValue({
+            id: 'site-a', name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15,
+            tariffs: [tariff()],
+        });
+        usageMock.mockResolvedValue([
+            { start: new Date('2026-09-18T23:00:00Z'), cost: 2.4, gridUsage: 6000, homeUsage: 0, solarProduction: 0, batteryChange: 0, tariff: tariff(), touName: 'Peak', buyRate: 0.4, sellRate: 0.05 },
+        ]);
+        // 45 minutes old: inside the app's 60-minute forecast-free window.
+        latestMock.mockResolvedValue(new Date('2026-09-19T01:15:00Z'));
+
+        const body = await (await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a'))).json();
+
+        expect(body.loadTiming.tariffTimeline[0].start).toBe('2026-09-19T01:15:00.000Z');
+        vi.useRealTimers();
+    });
+
     it('clamps the tariff timeline start to the usable freshness window for a stale site', async () => {
         vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
         siteMock.mockResolvedValue({
@@ -253,7 +271,7 @@ describe('mobile bill summary route', () => {
         // The reported source is still the true last sample; only the walk is
         // bounded, so the app sees the staleness for itself.
         expect(body.sources.energyDataThrough).toBe('2026-01-19T02:00:00.000Z');
-        expect(body.loadTiming.tariffTimeline[0].start).toBe('2026-09-19T01:30:00.000Z');
+        expect(body.loadTiming.tariffTimeline[0].start).toBe('2026-09-19T01:00:00.000Z');
         expect(body.loadTiming.tariffTimeline.at(-1)?.end).toBe(body.currentBill.cycleEnd);
         vi.useRealTimers();
     });

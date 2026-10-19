@@ -15,12 +15,13 @@ export const dynamic = 'force-dynamic';
 
 /**
  * The tariff timeline is consumed only for forward planning from the balance
- * snapshot, and the iOS estimator rejects a balance older than 30 minutes. The
- * timeline is built by walking UTC minutes, so a site that last reported months
+ * snapshot. The iOS estimator accepts a balance up to 60 minutes old for its
+ * forecast-free (history or flat) card, and 30 minutes with a solar forecast,
+ * so the timeline must reach back an hour. A site that last reported months
  * ago would otherwise make this request resolve tariffs across the entire gap
  * between its final sample and now. Clamp the start to that usable window.
  */
-const TIMELINE_LOOKBACK_MS = 30 * 60 * 1000;
+const TIMELINE_LOOKBACK_MS = 60 * 60 * 1000;
 
 export async function GET(request: Request) {
     return withRequestContext(async () => {
