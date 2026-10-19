@@ -183,10 +183,15 @@ export async function backfillSiteHistory(
     const summary: BackfillSummary = { passes: 0, windowsImported: 0, missingDays: [], stopped: 'nothing-to-do', backfillFrom: null };
     if (start >= end) return summary;
 
-    let planned = await deps.plan(site, start, end);
+    // ensure imports the newest windows first, so a stuck newest batch would
+    // hide older fillable days. Such a batch is set aside and the range ends
+    // before it; set-aside days are still reported as missing.
+    let passEnd = end;
+    const setAside: DateWindow[] = [];
+    let planned = await deps.plan(site, start, passEnd);
     const finish = (stopped: BackfillSummary['stopped']) => ({
         ...summary,
-        missingDays: planned.map(w => formatSiteDate(w.start, site.timezone)),
+        missingDays: [...planned, ...setAside].sort((a, b) => +a.start - +b.start).map(w => formatSiteDate(w.start, site.timezone)),
         stopped,
     });
     if (!apply) return finish('preview');
@@ -195,7 +200,7 @@ export async function backfillSiteHistory(
     while (planned.length > 0) {
         if (summary.passes >= maxPasses) return finish('no-progress');
         if (summary.passes > 0) await deps.pause();
-        const result = await deps.ensure(site.id, start, end, BACKFILL_BUDGET);
+        const result = await deps.ensure(site.id, start, passEnd, BACKFILL_BUDGET);
         summary.passes++;
         summary.windowsImported += result.processedWindows;
         // 0/0 with work outstanding means the site's import lock is held elsewhere.
@@ -204,23 +209,30 @@ export async function backfillSiteHistory(
             continue;
         }
         busy = 0;
-        const next = await deps.plan(site, start, end);
+        const next = await deps.plan(site, start, passEnd);
         const progressed = next.length < planned.length;
         planned = next;
-        if (!progressed) {
-            // Every planned window was attempted and imported without error, yet
-            // the leading days stay empty: Tesla has nothing before provisioning.
-            // Remember that so later runs don't re-fetch (and re-archive) them.
-            const confirmed = result.processedWindows === result.totalWindows && result.totalWindows <= BACKFILL_BUDGET.maxWindows;
-            const from = confirmed ? afterLeadingRun(planned, start, end) : null;
-            if (from) {
-                await deps.recordBackfillFrom(site.id, from);
-                summary.backfillFrom = formatSiteDate(from, site.timezone);
-            }
-            return finish('no-progress');
+        if (progressed) continue;
+        if (planned.length > BACKFILL_BUDGET.maxWindows) {
+            const sorted = [...planned].sort((a, b) => +a.start - +b.start);
+            const keep = sorted.length - BACKFILL_BUDGET.maxWindows;
+            setAside.push(...sorted.slice(keep));
+            planned = sorted.slice(0, keep);
+            passEnd = sorted[keep].start;
+            continue;
         }
+        // Every planned window was attempted and imported without error, yet
+        // the leading days stay empty: Tesla has nothing before provisioning.
+        // Remember that so later runs don't re-fetch (and re-archive) them.
+        const confirmed = result.processedWindows === result.totalWindows && result.totalWindows <= BACKFILL_BUDGET.maxWindows;
+        const from = confirmed ? afterLeadingRun(planned, start, passEnd) : null;
+        if (from) {
+            await deps.recordBackfillFrom(site.id, from);
+            summary.backfillFrom = formatSiteDate(from, site.timezone);
+        }
+        return finish('no-progress');
     }
-    return finish('complete');
+    return finish(setAside.length > 0 ? 'no-progress' : 'complete');
 }
 
 export interface SiteMigrationReport {

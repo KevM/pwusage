@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { addDaysInSiteTimezone, parseSiteLocalDateToMidnight } from './date-utils';
+import { addDaysInSiteTimezone, formatSiteDate, parseSiteLocalDateToMidnight } from './date-utils';
 import { archiveSiteHistory, backfillSiteHistory, localDayChunks, migrateSiteHistory, parseMigrationArgs, type BackfillDeps, type MigrationSite } from './history-migration';
 import type { DateWindow } from './importer/import-planner';
 import type { EnsureDataResult } from './importer';
@@ -229,6 +229,49 @@ describe('backfillSiteHistory', () => {
     });
 });
 
+describe('backfillSiteHistory stalled newest batch', () => {
+    const end = la('2025-03-01');
+    const day = (i: number) => ({ start: addDaysInSiteTimezone(installMidnight, i, LA), end: addDaysInSiteTimezone(installMidnight, i + 1, LA) });
+    const days = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => day(from + i));
+
+    it('sets aside a stuck newest batch and backfills older days', async () => {
+        // Days 0-1 are fillable; the newest 30 (days 2-31) never fill.
+        const deps = fakeBackfill([days(0, 32), days(0, 32), []], [ensured(30, 32), ensured(2, 2, true)]);
+        const summary = await backfillSiteHistory(deps, site, end, true);
+        expect(deps.ensure).toHaveBeenCalledTimes(2);
+        expect(deps.ensure.mock.calls[1].slice(0, 3)).toEqual(['site-1', installMidnight, day(2).start]);
+        expect(deps.plan.mock.calls[2]).toEqual([site, installMidnight, day(2).start]);
+        expect(summary.stopped).toBe('no-progress');
+        expect(summary.windowsImported).toBe(32);
+        expect(summary.missingDays).toEqual(days(2, 32).map(w => formatSiteDate(w.start, LA)));
+    });
+
+    it('does not set aside a stuck batch when one pass attempts every planned window', async () => {
+        const deps = fakeBackfill([days(5, 10), days(5, 10)], [ensured(5, 5, true)]);
+        const summary = await backfillSiteHistory(deps, site, end, true);
+        expect(deps.ensure).toHaveBeenCalledTimes(1);
+        expect(summary).toMatchObject({ stopped: 'no-progress', missingDays: days(5, 10).map(w => formatSiteDate(w.start, LA)) });
+    });
+
+    it('does not record a gap when every planned day is stuck', async () => {
+        const deps = fakeBackfill([days(0, 31), days(0, 31), [day(0)]], [ensured(30, 31), ensured(1, 1, true)]);
+        const summary = await backfillSiteHistory(deps, site, end, true);
+        expect(deps.recordBackfillFrom).not.toHaveBeenCalled();
+        expect(summary).toMatchObject({ stopped: 'no-progress', backfillFrom: null });
+        expect(summary.missingDays).toHaveLength(31);
+    });
+
+    it('can still record the pre-provisioning gap after setting a batch aside', async () => {
+        // Days 0-1 are the gap, day 2 has data, days 3-32 never fill.
+        const stuckOld = [day(0), day(1)];
+        const deps = fakeBackfill([[...stuckOld, ...days(3, 33)], [...stuckOld, ...days(3, 33)], stuckOld, stuckOld], [ensured(30, 32), ensured(2, 2, true)]);
+        const summary = await backfillSiteHistory(deps, site, end, true);
+        expect(deps.recordBackfillFrom).toHaveBeenCalledWith('site-1', day(2).start);
+        expect(summary.backfillFrom).toBe(formatSiteDate(day(2).start, LA));
+        expect(summary.missingDays).toHaveLength(32);
+    });
+});
+
 describe('backfillSiteHistory pre-provisioning gap', () => {
     // Tesla's installation date is the hardware install; data only starts once
     // the utility provisions the site, so the first days after install never fill.
@@ -254,7 +297,6 @@ describe('backfillSiteHistory pre-provisioning gap', () => {
         ['a window failed in the stuck pass', windows('2025-01-01', '2025-01-02'), ensured(1, 2)],
         ['the stuck days do not start at the backfill start', windows('2025-01-05', '2025-01-06'), ensured(2, 2, true)],
         ['the gap runs all the way to the end (no data at all)', windows('2025-02-27', '2025-02-28'), ensured(2, 2, true)],
-        ['more windows were planned than one pass attempts', Array.from({ length: 31 }, (_, i) => ({ start: addDaysInSiteTimezone(installMidnight, i, LA), end: addDaysInSiteTimezone(installMidnight, i + 1, LA) })), ensured(30, 31)],
     ])('does not record when %s', async (_, stuck, result) => {
         const deps = fakeBackfill([stuck, stuck], [result]);
         const siteForCase = _ === 'the gap runs all the way to the end (no data at all)' ? { ...site, installed: la('2025-02-27') } : site;
