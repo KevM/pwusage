@@ -21,6 +21,8 @@ struct CostBar: Equatable {
 struct SwitchMarker: Equatable {
     let date: Date
     let label: String
+    /// "Off-Peak →": the period starting here, for when the full label doesn't fit.
+    let shortLabel: String
 }
 
 /// One rate period's "energy weather" lane, from now to the end of the comparison.
@@ -565,7 +567,7 @@ enum SmartShiftPresentation {
                 let after = timing.tariffTimeline.first { $0.start == date }.map { name($0.periodKey) }
                 let label = [before.map { "\u{2190} \($0)" }, after.map { "\($0) \u{2192}" }]
                     .compactMap { $0 }.joined(separator: " | ")
-                return SwitchMarker(date: date, label: label)
+                return SwitchMarker(date: date, label: label, shortLabel: after.map { "\($0) \u{2192}" } ?? label)
             }
         }
 
