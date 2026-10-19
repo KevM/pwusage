@@ -102,6 +102,54 @@ struct SolarForecastCoordinatorTests {
         #expect(coordinator.solarForecastBatch != nil)
     }
 
+    @Test("Smart Shift fetches fresher energy data before the forecast comparison would pause")
+    func agingEnergyDataRefreshesTheBillEarly() async {
+        let clock = ForecastTestClock()
+        let forecast = ForecastManagerSpy(configuredSiteID: "site-a")
+        let api = ForecastDashboardAPISpy(now: clock.now)
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account",
+            now: { clock.now }, timerInterval: nil
+        )
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.loadTimingDetailAppeared()
+        await coordinator.refreshDue()
+        #expect(api.billSiteIDs.count == 1)
+
+        // Energy data through 07:55 is 21 minutes old at 08:16: well inside the 30-minute
+        // bill cadence, but close to the 30 minutes the forecast comparison allows.
+        clock.advance(seconds: 16 * 60)
+        await coordinator.refreshDue()
+        #expect(api.billSiteIDs.count == 2)
+
+        // Still old (the server has nothing newer), but never more than every five minutes.
+        clock.advance(seconds: 2 * 60)
+        await coordinator.refreshDue()
+        #expect(api.billSiteIDs.count == 2)
+        clock.advance(seconds: 4 * 60)
+        await coordinator.refreshDue()
+        #expect(api.billSiteIDs.count == 3)
+    }
+
+    @Test("Without Solcast, aging energy data waits for the usual bill cadence")
+    func agingEnergyDataWithoutSolcastKeepsTheCadence() async {
+        let clock = ForecastTestClock()
+        let api = ForecastDashboardAPISpy(now: clock.now)
+        let coordinator = DashboardCoordinator(
+            siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: ForecastManagerSpy(), accountScopeID: "local-account",
+            now: { clock.now }, timerInterval: nil
+        )
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        #expect(api.billSiteIDs.count == 1)
+
+        clock.advance(seconds: 16 * 60)
+        await coordinator.refreshDue()
+        #expect(api.billSiteIDs.count == 1)
+    }
+
     @Test("householdPatternLoadsWithoutSolcast")
     func householdPatternLoadsWithoutSolcast() async {
         let clock = ForecastTestClock()
@@ -978,6 +1026,7 @@ private final class ForecastDashboardAPISpy: MobileDashboardDataAPI, MobileLoadP
     var contextResponseSiteID = "site-a"
     var contextTimeZone = "UTC"
     var billTimeZone = "UTC"
+    var energyDataThrough = "2027-01-15T07:55:00Z"
     var now: Date
     var contextAsOf: Date?
     var contextUsableDayCount = 14
@@ -1001,7 +1050,7 @@ private final class ForecastDashboardAPISpy: MobileDashboardDataAPI, MobileLoadP
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
         billSiteIDs.append(siteID)
         if let billError { throw billError }
-        let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"\#(billTimeZone)"},"currentBill":{"estimatedCost":1,"currency":"USD","cycleStart":"2026-01-01T00:00:00Z","cycleEnd":"2030-01-01T00:00:00Z","periods":[]},"sources":{"calculatedAt":"2027-01-15T08:00:00Z","energyDataThrough":"2027-01-15T07:55:00Z"}}"#
+        let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"\#(billTimeZone)"},"currentBill":{"estimatedCost":1,"currency":"USD","cycleStart":"2026-01-01T00:00:00Z","cycleEnd":"2030-01-01T00:00:00Z","periods":[]},"sources":{"calculatedAt":"2027-01-15T08:00:00Z","energyDataThrough":"\#(energyDataThrough)"}}"#
         return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
     }
 

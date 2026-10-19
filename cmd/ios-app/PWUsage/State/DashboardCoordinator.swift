@@ -145,6 +145,10 @@ final class DashboardCoordinator: ObservableObject {
     /// Floor under appearance-driven bill refreshes, so opening the Load timing
     /// screen twice in a row does not bill twice but still feels fresh.
     static let billMinimumInterval: TimeInterval = 5 * 60
+    /// With Solcast set up, the bill is fetched early once its energy data is this
+    /// old, so Smart Shift's forecast comparison (which needs data under 30 minutes
+    /// old) doesn't pause between the 30-minute fetches or after the app returns.
+    static let forecastEnergyDataRefreshAge: TimeInterval = 20 * 60
     static let planningContextLifetime: TimeInterval = 24 * 60 * 60
 
     @Published private(set) var selectedSiteID: String
@@ -954,6 +958,8 @@ final class DashboardCoordinator: ObservableObject {
             due = isDue(lastAttempt: bill.lastAttempt, interval: Self.billMinimumInterval, at: requestTime)
         case .scheduled:
             due = isDue(lastAttempt: bill.lastAttempt, interval: Self.billInterval, at: requestTime)
+                || (energyDataIsAgingForForecast(at: requestTime)
+                    && isDue(lastAttempt: bill.lastAttempt, interval: Self.billMinimumInterval, at: requestTime))
         }
         guard due else { return }
         bill.lastAttempt = requestTime
@@ -972,6 +978,13 @@ final class DashboardCoordinator: ObservableObject {
         // error and nothing on screen to explain it.
         guard elapsed.isFinite else { return true }
         return elapsed < 0 || elapsed >= interval
+    }
+
+    /// Solcast is set up and the bill's energy data is nearly too old for the forecast comparison.
+    private func energyDataIsAgingForForecast(at date: Date) -> Bool {
+        guard solarForecastConnection == .ready,
+              let through = bill.response?.sources.energyDataThrough else { return false }
+        return date.timeIntervalSince(through) >= Self.forecastEnergyDataRefreshAge
     }
 
     /// Whether the bill response on hand was fetched inside the appearance floor.
