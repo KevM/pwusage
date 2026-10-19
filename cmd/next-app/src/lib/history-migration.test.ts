@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { addDaysInSiteTimezone, formatSiteDate, parseSiteLocalDateToMidnight } from './date-utils';
-import { archiveSiteHistory, backfillSiteHistory, localDayChunks, migrateSiteHistory, parseMigrationArgs, type BackfillDeps, type MigrationSite } from './history-migration';
+import { archiveSiteHistory, backfillSiteHistory, isMigrationComplete, localDayChunks, migrateSiteHistory, parseMigrationArgs, type ArchiveSummary, type BackfillDeps, type BackfillSummary, type MigrationSite, type SiteMigrationReport } from './history-migration';
 import type { DateWindow } from './importer/import-planner';
 import type { EnsureDataResult } from './importer';
 import type { MaintenanceDay, MaintenanceOptions, MaintenanceReport, MaintenanceStore } from './prototypes/compact-history-maintenance';
@@ -415,5 +415,30 @@ describe('parseMigrationArgs', () => {
         [['--site-id', 'abc', '--skip-backfill', '--skip-archive']],
     ])('rejects %j', (args) => {
         expect(() => parseMigrationArgs(args)).toThrow(Error);
+    });
+});
+
+describe('isMigrationComplete', () => {
+    const backfill = (stopped: BackfillSummary['stopped']): BackfillSummary => ({ passes: 1, windowsImported: 0, missingDays: [], stopped, backfillFrom: null });
+    const archive = (stopped: ArchiveSummary['stopped']): ArchiveSummary => ({ chunks: 1, archived: [], alreadyArchived: 0, empty: 0, needsRepair: [], incompleteAttribution: [], remaining: [], stopped });
+    const report = (b: SiteMigrationReport['backfill'], a: SiteMigrationReport['archive'], mode: SiteMigrationReport['mode'] = 'apply'): SiteMigrationReport =>
+        ({ mode, installed: '2023-11-14', cutoff: '2026-10-17', backfill: b, archive: a, rawDeletionPerformed: false });
+
+    it.each([
+        ['backfill complete', backfill('complete')],
+        ['backfill stopped on days Tesla cannot fill', backfill('no-progress')],
+        ['nothing to backfill', backfill('nothing-to-do')],
+    ])('is complete when archive caught up and %s', (_, b) => {
+        expect(isMigrationComplete(report(b, archive('caught-up')))).toBe(true);
+    });
+
+    it.each([
+        ['a preview', report(backfill('preview'), archive('preview'), 'preview')],
+        ['backfill was busy', report(backfill('busy'), archive('caught-up'))],
+        ['backfill was skipped', report('skipped', archive('caught-up'))],
+        ['archive was busy', report(backfill('complete'), archive('busy'))],
+        ['archive was skipped', report(backfill('complete'), 'skipped')],
+    ])('is not complete for %s', (_, r) => {
+        expect(isMigrationComplete(r)).toBe(false);
     });
 });

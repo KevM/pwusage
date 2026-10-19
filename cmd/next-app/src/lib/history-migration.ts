@@ -280,6 +280,17 @@ export async function migrateSiteHistory(
     };
 }
 
+/**
+ * Whether an apply run fully migrated the site: backfill ran to the end of
+ * what Tesla can fill and every archivable day is archived. Busy or skipped
+ * steps don't count, so a --skip-backfill re-run never marks a site migrated.
+ */
+export function isMigrationComplete(report: SiteMigrationReport): boolean {
+    if (report.mode !== 'apply' || report.backfill === 'skipped' || report.archive === 'skipped') return false;
+    return ['complete', 'no-progress', 'nothing-to-do'].includes(report.backfill.stopped)
+        && ['caught-up', 'nothing-to-do'].includes(report.archive.stopped);
+}
+
 const MIGRATION_FLAGS = ['--apply', '--skip-backfill', '--skip-archive'];
 
 /** Parse `--site-id <id> [--apply] [--skip-backfill | --skip-archive]`. */
