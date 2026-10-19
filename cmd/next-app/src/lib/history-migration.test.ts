@@ -567,6 +567,14 @@ describe('migrateSiteHistory --repair', () => {
         expect(report.repair).toMatchObject({ refetched: 1, stillNeedsRepair: ['2025-02-05'] });
     });
 
+    it('keeps every planned day unresolved when the import lock stays busy', async () => {
+        const counts = new Map([['2025-02-05', 280], ['2025-03-01', 287]]);
+        const backfill = fakeBackfill([[]]);
+        backfill.refetch.mockResolvedValue(ensured(0, 0, false));
+        const report = await migrateSiteHistory({ site, backfill, store: countingStore(counts) }, { apply: true, now: migrateNow, repair: true });
+        expect(report.repair).toMatchObject({ refetched: 0, stopped: 'busy', stillNeedsRepair: ['2025-02-05', '2025-03-01'] });
+    });
+
     it('previews the days it would refetch', async () => {
         const counts = new Map([['2025-02-05', 280]]);
         const backfill = fakeBackfill([[]]);

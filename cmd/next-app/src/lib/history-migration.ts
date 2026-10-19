@@ -346,6 +346,9 @@ export async function migrateSiteHistory(
             const rebuilt = await runArchive();
             repair.stillNeedsRepair = planned.filter(date => rebuilt.repairable.includes(date));
             archive = rebuilt;
+        } else if (options.apply) {
+            // Nothing was rewritten (lock busy or every refetch failed), so every planned day is still unresolved.
+            repair.stillNeedsRepair = planned;
         }
     }
     return {
