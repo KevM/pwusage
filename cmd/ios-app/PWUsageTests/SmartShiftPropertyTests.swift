@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PWUsage
 
-@Suite(.enabled(if: ProcessInfo.processInfo.environment["PWUSAGE_FUZZ"] == "1"))
+@Suite
 struct SmartShiftPropertyTests {
     @Test(arguments: Array(UInt64(0)..<500))
     func generatedScenario(seed: UInt64) throws {

@@ -22,3 +22,4 @@
 
 - User preference update: all generated/property tests are opt-in via PWUSAGE_FUZZ=1; only the small pinned regression remains in normal test runs. Stress and replay retain separate opt-in flags.
 - Verified final opt-in behavior: default targeted run skipped all generated suites and ran the pinned regression in 6 ms; PWUSAGE_FUZZ=1 ran the 500-case corpus and all nine property tests successfully in 2.8 seconds.
+- Later change (2026-10-19): the 500-case `SmartShiftPropertyTests` corpus now runs by default (about 2.5 seconds); `PWUSAGE_FUZZ` is removed. Stress and replay stay opt-in.

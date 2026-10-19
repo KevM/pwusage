@@ -1,6 +1,6 @@
 # Smart Shift generated tests
 
-`SmartShiftPropertyTests` is opt-in and checks 500 stable seeds plus explicit
+`SmartShiftPropertyTests` runs in the normal suite (about 2.5 seconds) and checks 500 stable seeds plus explicit
 freshness, rate-change, missing-context, forecast-gap,
 serialization, tariff-order, and accounting-anchor cases. A coverage assertion
 requires every projection mode and all three safety outcomes to be exercised.
@@ -9,13 +9,13 @@ Every valid generated case must return a comparison; unavailable is not a pass.
 From `cmd/ios-app`:
 
 ```sh
-PWUSAGE_FUZZ=1 ./run-tests.sh SmartShiftPropertyTests
+./run-tests.sh SmartShiftPropertyTests
 PWUSAGE_FUZZ_STRESS=1 ./run-tests.sh SmartShiftStressTests
 PWUSAGE_FUZZ_SEED=4610 ./run-tests.sh SmartShiftReplayTests
 ```
 
-The generated suite is disabled in normal runs, including in Xcode. Only the
-small pinned `SmartShiftRegressionTests` test runs by default.
+The 500-case generated suite and the pinned `SmartShiftRegressionTests` run by
+default, including in Xcode, so estimator changes are checked on every run.
 
 The stress suite adds 10,000 cases (seeds 500–10499) and is disabled by default,
 including in Xcode. The replay suite is also disabled unless a seed is supplied.
