@@ -894,7 +894,10 @@ struct LoadTimingForecastEstimator {
         var worst: (periodKey: String, kwh: Double)?
         guard let cautiousBalances else { return Assessment(candidate: candidate, worst: nil) }
         for (key, draw) in candidate.draws.sorted(by: { $0.key < $1.key }) where draw > 0 {
-            guard let typical = baseBalances[key], typical > 0, let cautious = cautiousBalances[key] else { continue }
+            // Integration can leave a mathematically empty bank a few ULPs above
+            // zero. That is no export cushion: it must not activate the safety
+            // rule against a potentially large cautious deficit.
+            guard let typical = baseBalances[key], typical > 1e-9, let cautious = cautiousBalances[key] else { continue }
             // Only the part the typical bank covers is priced at the sell rate and so
             // at risk in a cloudy week; an overdraw is already priced at the buy rate.
             let covered = min(candidate.drawsBySafetyEnd[key] ?? 0, typical)
