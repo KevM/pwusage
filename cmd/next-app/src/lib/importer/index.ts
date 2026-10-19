@@ -166,9 +166,51 @@ export class Importer {
         options?: { force?: boolean; maxTimeMs?: number; maxWindows?: number }
     ): Promise<EnsureDataResult> {
         const force = options?.force ?? false;
-        const maxTimeMs = options?.maxTimeMs;
         const maxWindows = options?.maxWindows;
+        return this.withSiteSync(siteId, force, async site => {
+            logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
+            if (onProgress) onProgress(`Checking data coverage...`);
 
+            const windows = await planMissingWindows(this.repo, site, start, end, force);
+
+            // A window cap takes the newest days first (the most useful
+            // to recent-history readers); the rest are re-planned next run.
+            const toImport = maxWindows === undefined
+                ? windows
+                : [...windows].reverse().slice(0, maxWindows);
+
+            return this.importWindows(siteId, toImport, windows.length, options?.maxTimeMs, onProgress);
+        });
+    }
+
+    /**
+     * Re-import exactly these site-local day windows, even when stored
+     * coverage says they are complete (e.g. a few missing samples or rows
+     * attributed before a tariff existed). Same lock as ensureDataForRange,
+     * never forced, so the app's own imports are not interrupted; the upsert
+     * fills missing rows and corrects existing ones.
+     */
+    async refetchDays(
+        siteId: string,
+        days: DateWindow[],
+        options: { maxTimeMs?: number; maxWindows?: number }
+    ): Promise<EnsureDataResult> {
+        const toImport = options.maxWindows === undefined ? days : days.slice(0, options.maxWindows);
+        return this.withSiteSync(siteId, false, async () => {
+            logSync(`Refetch Start: ${siteId}, ${toImport.length}/${days.length} days`);
+            return this.importWindows(siteId, toImport, days.length, options.maxTimeMs);
+        });
+    }
+
+    /**
+     * Run `work` holding the per-process and DB import locks for the site.
+     * A busy lock returns an empty 0/0 result instead of running.
+     */
+    private async withSiteSync(
+        siteId: string,
+        force: boolean,
+        work: (site: SiteWithTariffs) => Promise<EnsureDataResult>
+    ): Promise<EnsureDataResult> {
         if (Importer.pendingSyncs.has(siteId) && !force) {
             logSync(`Skip: Data for range already being synced for site ${siteId}`);
             return { complete: false, rows: [], processedWindows: 0, totalWindows: 0 };
@@ -181,7 +223,6 @@ export class Importer {
         }
 
         try {
-            if (onProgress) onProgress(`Checking data coverage...`);
             const site = await this.siteRepo.getSite(siteId);
             if (!site) throw new Error(`Site ${siteId} not found in database`);
 
@@ -193,63 +234,7 @@ export class Importer {
                     force,
                     logLabel: 'Importer',
                 },
-                async () => {
-                    logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
-
-                    const windows = await planMissingWindows(this.repo, site, start, end, force);
-
-                    // A window cap takes the newest days first (the most useful
-                    // to recent-history readers); the rest are re-planned next run.
-                    const toImport = maxWindows === undefined
-                        ? windows
-                        : [...windows].reverse().slice(0, maxWindows);
-
-                    const allRows: EnergyDataRow[] = [];
-                    let successCount = 0;
-                    let lastError: Error | null = null;
-                    let timeBudgetExceeded = false;
-                    const startTime = Date.now();
-
-                    for (let i = 0; i < toImport.length; i++) {
-                        if (maxTimeMs !== undefined && Date.now() - startTime >= maxTimeMs) {
-                            logSync(`Time budget reached (${maxTimeMs}ms) after processing ${successCount}/${windows.length} windows`);
-                            timeBudgetExceeded = true;
-                            break;
-                        }
-
-                        const window = toImport[i];
-                        const dateStr = window.start.toISOString().split('T')[0];
-                        if (onProgress) onProgress(`Importing ${dateStr}...`);
-                        logSync(`Importing window: ${window.start.toISOString()} - ${window.end.toISOString()}`);
-                        try {
-                            const rows = await this.importRange(siteId, window.start, window.end, 'day');
-                            allRows.push(...rows);
-                            successCount++;
-                        } catch (error) {
-                            console.error(`[Importer] Failed to import window ${window.start.toISOString()} - ${window.end.toISOString()}:`, error);
-                            if (onProgress) onProgress(`Error importing ${dateStr}: ${error instanceof Error ? error.message : String(error)}`);
-                            lastError = error instanceof Error ? error : new Error(String(error));
-                        }
-                    }
-
-                    if (toImport.length > 0 && successCount === 0 && !timeBudgetExceeded) {
-                        throw lastError || new Error(`All ${toImport.length} import windows failed`);
-                    }
-
-                    // Complete only when every planned window imported. Failed
-                    // windows stay missing in the DB, so the next audit re-plans
-                    // them; reporting complete on partial success made the sync
-                    // client stop early and silently leave gaps. (windows.length
-                    // === 0 is complete: 0 === 0 with no time budget spent.)
-                    const isComplete = !timeBudgetExceeded && successCount === windows.length;
-
-                    return {
-                        complete: isComplete,
-                        rows: allRows,
-                        processedWindows: successCount,
-                        totalWindows: windows.length
-                    };
-                }
+                () => work(site)
             );
 
             if (lockResult.status === 'not-acquired') {
@@ -263,6 +248,61 @@ export class Importer {
                 Importer.pendingSyncs.delete(siteId);
             }
         }
+    }
+
+    /** Import `toImport` one day window at a time within an optional time budget. */
+    private async importWindows(
+        siteId: string,
+        toImport: DateWindow[],
+        totalWindows: number,
+        maxTimeMs?: number,
+        onProgress?: (msg: string) => void
+    ): Promise<EnsureDataResult> {
+        const allRows: EnergyDataRow[] = [];
+        let successCount = 0;
+        let lastError: Error | null = null;
+        let timeBudgetExceeded = false;
+        const startTime = Date.now();
+
+        for (let i = 0; i < toImport.length; i++) {
+            if (maxTimeMs !== undefined && Date.now() - startTime >= maxTimeMs) {
+                logSync(`Time budget reached (${maxTimeMs}ms) after processing ${successCount}/${totalWindows} windows`);
+                timeBudgetExceeded = true;
+                break;
+            }
+
+            const window = toImport[i];
+            const dateStr = window.start.toISOString().split('T')[0];
+            if (onProgress) onProgress(`Importing ${dateStr}...`);
+            logSync(`Importing window: ${window.start.toISOString()} - ${window.end.toISOString()}`);
+            try {
+                const rows = await this.importRange(siteId, window.start, window.end, 'day');
+                allRows.push(...rows);
+                successCount++;
+            } catch (error) {
+                console.error(`[Importer] Failed to import window ${window.start.toISOString()} - ${window.end.toISOString()}:`, error);
+                if (onProgress) onProgress(`Error importing ${dateStr}: ${error instanceof Error ? error.message : String(error)}`);
+                lastError = error instanceof Error ? error : new Error(String(error));
+            }
+        }
+
+        if (toImport.length > 0 && successCount === 0 && !timeBudgetExceeded) {
+            throw lastError || new Error(`All ${toImport.length} import windows failed`);
+        }
+
+        // Complete only when every planned window imported. Failed
+        // windows stay missing in the DB, so the next audit re-plans
+        // them; reporting complete on partial success made the sync
+        // client stop early and silently leave gaps. (totalWindows
+        // === 0 is complete: 0 === 0 with no time budget spent.)
+        const isComplete = !timeBudgetExceeded && successCount === totalWindows;
+
+        return {
+            complete: isComplete,
+            rows: allRows,
+            processedWindows: successCount,
+            totalWindows
+        };
     }
 
     async importRange(siteId: string, start: Date, end: Date, period: string = 'day', onProgress?: (date: Date) => void): Promise<EnergyDataRow[]> {

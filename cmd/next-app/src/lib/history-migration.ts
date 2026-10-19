@@ -4,7 +4,7 @@
  * Deletes nothing. Kept free of CLI/process concerns so a cron route can reuse
  * it for new-site onboarding (see the 2026-10-19 history migration spec).
  */
-import { addDaysInSiteTimezone, formatSiteDate, getSiteMidnight } from './date-utils';
+import { addDaysInSiteTimezone, formatSiteDate, getSiteMidnight, parseSiteLocalDateToMidnight } from './date-utils';
 import { archiveCutoff } from './history-archive-service';
 import type { EnsureDataResult } from './importer';
 import type { DateWindow } from './importer/import-planner';
@@ -47,6 +47,8 @@ export interface ArchiveSummary {
     empty: number;
     needsRepair: string[];
     incompleteAttribution: string[];
+    /** Days with stored samples that are short, gappy or not fully attributed (never empty days). */
+    repairable: string[];
     remaining: string[];
     stopped: 'caught-up' | 'busy' | 'preview' | 'nothing-to-do';
 }
@@ -109,6 +111,7 @@ export async function archiveSiteHistory(
         empty: all.filter(d => d.status === 'empty').length,
         needsRepair: dates(d => d.needsRepair),
         incompleteAttribution: dates(d => d.attributionComplete === false),
+        repairable: dates(d => d.status !== 'empty' && d.samples > 0 && (d.needsRepair || d.attributionComplete === false)),
         remaining,
         stopped,
     };
@@ -137,6 +140,8 @@ export interface BackfillDeps {
     pause(): Promise<void>;
     /** Persist the first day after the pre-provisioning gap (see MigrationSite.backfillFrom). */
     recordBackfillFrom(siteId: string, from: Date): Promise<void>;
+    /** Re-import exactly these days, even if stored coverage looks complete (Importer.refetchDays). */
+    refetch(siteId: string, days: DateWindow[], budget: { maxTimeMs: number; maxWindows: number }): Promise<EnsureDataResult>;
 }
 
 export interface BackfillSummary {
@@ -245,12 +250,58 @@ export async function backfillSiteHistory(
     return finish(setAsideConfirmed ? 'no-progress' : 'incomplete');
 }
 
+export interface RepairSummary {
+    /** Local dates selected for re-fetch. */
+    planned: string[];
+    refetched: number;
+    stopped: 'complete' | 'incomplete' | 'busy' | 'preview' | 'nothing-to-do';
+    /** Planned dates still repairable after re-fetching and re-archiving. */
+    stillNeedsRepair: string[];
+}
+
+/**
+ * Re-fetch the given local dates from Tesla in budgeted batches, pausing
+ * between batches (as backfill does) so today-refresh keeps the lock.
+ */
+export async function repairSiteDays(
+    deps: Pick<BackfillDeps, 'refetch' | 'pause'>,
+    site: MigrationSite,
+    dates: string[],
+    apply: boolean
+): Promise<RepairSummary> {
+    const summary: RepairSummary = { planned: dates, refetched: 0, stopped: 'complete', stillNeedsRepair: [] };
+    if (dates.length === 0) return { ...summary, stopped: 'nothing-to-do' };
+    if (!apply) return { ...summary, stopped: 'preview' };
+
+    const windows = dates.map(date => {
+        const start = parseSiteLocalDateToMidnight(date, site.timezone);
+        return { start, end: addDaysInSiteTimezone(start, 1, site.timezone) };
+    });
+    let calls = 0;
+    for (let i = 0; i < windows.length; i += BACKFILL_BUDGET.maxWindows) {
+        const batch = windows.slice(i, i + BACKFILL_BUDGET.maxWindows);
+        for (let busy = 0; ; ) {
+            if (calls++ > 0) await deps.pause();
+            const result = await deps.refetch(site.id, batch, BACKFILL_BUDGET);
+            if (result.processedWindows === 0 && result.totalWindows === 0) {
+                if (++busy >= MAX_BUSY_ATTEMPTS) return { ...summary, stopped: 'busy' };
+                continue;
+            }
+            summary.refetched += result.processedWindows;
+            if (result.processedWindows < batch.length) summary.stopped = 'incomplete';
+            break;
+        }
+    }
+    return summary;
+}
+
 export interface SiteMigrationReport {
     mode: 'preview' | 'apply';
     installed: string;
     cutoff: string;
     backfill: BackfillSummary | 'skipped';
     archive: ArchiveSummary | 'skipped';
+    repair: RepairSummary | 'skipped';
     rawDeletionPerformed: false;
 }
 
@@ -263,29 +314,54 @@ export interface SiteMigrationReport {
  */
 export async function migrateSiteHistory(
     deps: { site: MigrationSite; backfill: BackfillDeps; store: MaintenanceStore },
-    options: { apply: boolean; now: Date; skipBackfill?: boolean; skipArchive?: boolean }
+    options: { apply: boolean; now: Date; skipBackfill?: boolean; skipArchive?: boolean; repair?: boolean }
 ): Promise<SiteMigrationReport> {
     const { site } = deps;
     const cutoff = archiveCutoff(options.now, site.timezone, ARCHIVE_FLOOR_DAYS);
     const backfill = options.skipBackfill
         ? 'skipped'
         : await backfillSiteHistory(deps.backfill, site, cutoff, options.apply);
-    const archive = options.skipArchive
-        ? 'skipped'
-        : await archiveSiteHistory(deps.store, {
-            siteId: site.id,
-            start: getSiteMidnight(site.installed, site.timezone),
-            end: cutoff,
-            timezone: site.timezone,
-            apply: options.apply,
-            now: options.now,
-        });
+    const runArchive = () => archiveSiteHistory(deps.store, {
+        siteId: site.id,
+        start: getSiteMidnight(site.installed, site.timezone),
+        end: cutoff,
+        timezone: site.timezone,
+        apply: options.apply,
+        now: options.now,
+    });
+    let archive: ArchiveSummary | 'skipped' = options.skipArchive ? 'skipped' : await runArchive();
+
+    let repair: RepairSummary | 'skipped' = 'skipped';
+    if (options.repair && archive !== 'skipped') {
+        // Only days with real data worth re-fetching: on or after the backfill
+        // start (never the pre-provisioning gap) and not ones Tesla can't fill.
+        const installDate = formatSiteDate(site.installed, site.timezone);
+        const from = [installDate, site.backfillFrom ? formatSiteDate(site.backfillFrom, site.timezone) : '',
+            backfill === 'skipped' ? '' : backfill.backfillFrom ?? ''].reduce((a, b) => (b > a ? b : a));
+        const unfillable = new Set(backfill === 'skipped' ? [] : backfill.missingDays);
+        const planned = archive.repairable.filter(date => date >= from && !unfillable.has(date));
+        repair = await repairSiteDays(deps.backfill, site, planned, options.apply);
+        if (options.apply && repair.refetched > 0) {
+            // Rewriting raw rows dropped those days' archives; rebuild them.
+            const rebuilt = await runArchive();
+            // An incomplete rebuild never audited the chunks it didn't reach, so a
+            // day only counts as repaired once this pass rebuilt it cleanly.
+            const repaired = (date: string) => !rebuilt.repairable.includes(date)
+                && (rebuilt.stopped === 'caught-up' || rebuilt.archived.includes(date));
+            repair.stillNeedsRepair = planned.filter(date => !repaired(date));
+            archive = rebuilt;
+        } else if (options.apply) {
+            // Nothing was rewritten (lock busy or every refetch failed), so every planned day is still unresolved.
+            repair.stillNeedsRepair = planned;
+        }
+    }
     return {
         mode: options.apply ? 'apply' : 'preview',
         installed: formatSiteDate(site.installed, site.timezone),
         cutoff: formatSiteDate(cutoff, site.timezone),
         backfill,
         archive,
+        repair,
         rawDeletionPerformed: false,
     };
 }
@@ -301,10 +377,10 @@ export function isMigrationComplete(report: SiteMigrationReport): boolean {
         && ['caught-up', 'nothing-to-do'].includes(report.archive.stopped);
 }
 
-const MIGRATION_FLAGS = ['--apply', '--skip-backfill', '--skip-archive'];
+const MIGRATION_FLAGS = ['--apply', '--skip-backfill', '--skip-archive', '--repair'];
 
-/** Parse `--site-id <id> [--apply] [--skip-backfill | --skip-archive]`. */
-export function parseMigrationArgs(args: string[]): { siteId: string; apply: boolean; skipBackfill: boolean; skipArchive: boolean } {
+/** Parse `--site-id <id> [--apply] [--skip-backfill | --skip-archive] [--repair]`. */
+export function parseMigrationArgs(args: string[]): { siteId: string; apply: boolean; skipBackfill: boolean; skipArchive: boolean; repair: boolean } {
     const seen = new Set<string>();
     let siteId = '';
     for (let i = 0; i < args.length; i++) {
@@ -319,5 +395,8 @@ export function parseMigrationArgs(args: string[]): { siteId: string; apply: boo
     const skipBackfill = seen.has('--skip-backfill');
     const skipArchive = seen.has('--skip-archive');
     if (skipBackfill && skipArchive) throw new Error('Nothing to do with both steps skipped');
-    return { siteId, apply: seen.has('--apply'), skipBackfill, skipArchive };
+    const repair = seen.has('--repair');
+    // Repair picks its days from the archive step's report.
+    if (repair && skipArchive) throw new Error('--repair needs the archive step');
+    return { siteId, apply: seen.has('--apply'), skipBackfill, skipArchive, repair };
 }

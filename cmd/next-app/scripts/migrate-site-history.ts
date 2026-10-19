@@ -3,7 +3,7 @@
  * archive every finished day before the 2-day floor. Preview by default;
  * `--apply` writes. Deletes nothing.
  *
- *   npx tsx scripts/migrate-site-history.ts --site-id <id> [--apply] [--skip-backfill | --skip-archive]
+ *   npx tsx scripts/migrate-site-history.ts --site-id <id> [--apply] [--skip-backfill | --skip-archive] [--repair]
  *
  * Backfill pauses between passes so the site's own today-refresh can still take
  * the import lock; a multi-year site takes over an hour. The days between the
@@ -11,6 +11,11 @@
  * confirms that gap it records Site.history_backfill_from, and later runs
  * start there instead of re-fetching it. A complete --apply run stamps
  * Site.history_migrated_at, which the admin Sites tab shows.
+ *
+ * --repair re-fetches days whose stored samples are short, gappy or not fully
+ * tariff-attributed (the archive report's `repairable`), on or after the
+ * backfill start, then re-archives them. Tesla usually still has those days
+ * complete; the app's own imports had missed a few samples.
  */
 import 'dotenv/config';
 import {pool} from '../src/lib/db';
@@ -42,7 +47,7 @@ async function run():Promise<void> {
         const site=await loadSite(siteRepo,options.siteId);
         const energyRepo=new EnergyRepo();
         let importer:Importer|null=null;
-        if(options.apply&&!options.skipBackfill) {
+        if(options.apply&&(!options.skipBackfill||options.repair)) {
             const client=await createTeslaClientForSite(site.id);
             if(!client)throw new OperatorError('No Tesla credentials for site; re-authenticate via /login');
             importer=new Importer(client);
@@ -55,6 +60,10 @@ async function run():Promise<void> {
             },
             pause:()=>new Promise(resolve=>setTimeout(resolve,PASS_PAUSE_MS)),
             recordBackfillFrom:(siteId,from)=>siteRepo.setHistoryBackfillFrom(siteId,from),
+            refetch:(siteId,days,budget)=>{
+                if(!importer)throw new Error('Repair requires --apply');
+                return importer.refetchDays(siteId,days,budget);
+            },
         };
         const report=await migrateSiteHistory({site,backfill,store:new CompactHistoryStore(pool)},{...options,now:new Date()});
         // Shown on the admin Sites tab.
