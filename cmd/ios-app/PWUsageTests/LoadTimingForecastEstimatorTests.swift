@@ -1180,3 +1180,26 @@ extension LoadTimingForecastEstimatorTests {
         #expect(abs(comparison.recommendedCost - 52.7 * 0.04) < 1e-6)
     }
 }
+
+// MARK: - Device report, 2026-10-19 06:37 (a fresh forecast starting after the energy data)
+
+extension LoadTimingForecastEstimatorTests {
+    @Test("A forecast that starts after the energy data still prices the card, with history filling the gap")
+    func historyFillsTheGapBeforeTheForecastStarts() throws {
+        // Energy data through 08:20, so the projection starts at 08:25; a forecast fetched
+        // at 08:36 starts at 08:30. History's 6 kW fills the 5 minutes between, then the
+        // forecast's 3 kW of solar against a 1 kW home runs to the end of the tariff.
+        let source = start.addingTimeInterval(20 * 60), now = start.addingTimeInterval(40 * 60)
+        let intervals = (1..<4).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+        let result = Estimator.evaluate(profile: profile(0.5, hours: 0.5), now: now,
+                                        timing: timing([tariff(0, 7200)], balances: ["p": 2]),
+                                        projection: .forecast(intervals: intervals, context: historyContext(home: 1, grid: { _ in 6 })),
+                                        balanceSourceTime: source, billingCycleEnd: start.addingTimeInterval(86_400),
+                                        currencyCode: "USD")
+
+        let comparison = try #require(result.comparison, "\(String(describing: result.unavailableReason))")
+        #expect(comparison.assumptions.contains { $0.hasPrefix("Solar follows your Solcast forecast") })
+        let lane = try #require(comparison.lanes.first { $0.periodKey == "p" })
+        #expect(abs(lane.projectedKwh - (2 + 6 * 5.0 / 60 + 2 * 1.5)) < 1e-9)
+    }
+}
