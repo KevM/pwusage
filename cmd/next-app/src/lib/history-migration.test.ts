@@ -212,7 +212,14 @@ describe('backfillSiteHistory', () => {
         const deps = fakeBackfill([windows('2025-01-04', '2025-01-05', '2025-01-06'), windows('2025-01-05', '2025-01-06'), windows('2025-01-06')], [ensured(1, 3), ensured(1, 2)]);
         const summary = await backfillSiteHistory(deps, site, end, true, 2);
         expect(deps.ensure).toHaveBeenCalledTimes(2);
-        expect(summary).toMatchObject({ passes: 2, stopped: 'no-progress', missingDays: ['2025-01-06'] });
+        // Days were still shrinking: fetchable history may remain, so this is not a clean stop.
+        expect(summary).toMatchObject({ passes: 2, stopped: 'incomplete', missingDays: ['2025-01-06'] });
+    });
+
+    it('is incomplete, not no-progress, when the stuck pass had failed or unattempted windows', async () => {
+        const deps = fakeBackfill([windows('2025-01-05', '2025-01-06'), windows('2025-01-05', '2025-01-06')], [ensured(1, 2)]);
+        const summary = await backfillSiteHistory(deps, site, end, true);
+        expect(summary).toMatchObject({ passes: 1, stopped: 'incomplete', missingDays: ['2025-01-05', '2025-01-06'] });
     });
 
     it('plans and ensures [installed site midnight, end)', async () => {
@@ -244,6 +251,14 @@ describe('backfillSiteHistory stalled newest batch', () => {
         expect(summary.stopped).toBe('no-progress');
         expect(summary.windowsImported).toBe(32);
         expect(summary.missingDays).toEqual(days(2, 32).map(w => formatSiteDate(w.start, LA)));
+    });
+
+    it('is incomplete when a set-aside batch had failed or unattempted windows', async () => {
+        const deps = fakeBackfill([days(0, 32), days(0, 32), []], [ensured(29, 32), ensured(2, 2, true)]);
+        const summary = await backfillSiteHistory(deps, site, end, true);
+        expect(deps.ensure).toHaveBeenCalledTimes(2);
+        expect(summary.stopped).toBe('incomplete');
+        expect(summary.missingDays).toHaveLength(30);
     });
 
     it('does not set aside a stuck batch when one pass attempts every planned window', async () => {
@@ -294,14 +309,14 @@ describe('backfillSiteHistory pre-provisioning gap', () => {
     });
 
     it.each([
-        ['a window failed in the stuck pass', windows('2025-01-01', '2025-01-02'), ensured(1, 2)],
-        ['the stuck days do not start at the backfill start', windows('2025-01-05', '2025-01-06'), ensured(2, 2, true)],
-        ['the gap runs all the way to the end (no data at all)', windows('2025-02-27', '2025-02-28'), ensured(2, 2, true)],
-    ])('does not record when %s', async (_, stuck, result) => {
+        ['a window failed in the stuck pass', windows('2025-01-01', '2025-01-02'), ensured(1, 2), 'incomplete'],
+        ['the stuck days do not start at the backfill start', windows('2025-01-05', '2025-01-06'), ensured(2, 2, true), 'no-progress'],
+        ['the gap runs all the way to the end (no data at all)', windows('2025-02-27', '2025-02-28'), ensured(2, 2, true), 'no-progress'],
+    ])('does not record when %s', async (_, stuck, result, stopped) => {
         const deps = fakeBackfill([stuck, stuck], [result]);
         const siteForCase = _ === 'the gap runs all the way to the end (no data at all)' ? { ...site, installed: la('2025-02-27') } : site;
         const summary = await backfillSiteHistory(deps, siteForCase, end, true);
-        expect(summary.stopped).toBe('no-progress');
+        expect(summary.stopped).toBe(stopped);
         expect(deps.recordBackfillFrom).not.toHaveBeenCalled();
         expect(summary.backfillFrom).toBeNull();
     });
@@ -435,6 +450,7 @@ describe('isMigrationComplete', () => {
     it.each([
         ['a preview', report(backfill('preview'), archive('preview'), 'preview')],
         ['backfill was busy', report(backfill('busy'), archive('caught-up'))],
+        ['backfill stopped with fetchable days left', report(backfill('incomplete'), archive('caught-up'))],
         ['backfill was skipped', report('skipped', archive('caught-up'))],
         ['archive was busy', report(backfill('complete'), archive('busy'))],
         ['archive was skipped', report(backfill('complete'), 'skipped')],
