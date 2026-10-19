@@ -59,24 +59,30 @@ struct EnergyWeatherChart: View {
     }
 }
 
-/// Which switch labels fit along the top of a lane without overlapping: each
-/// label is centred on its switch and pinned inside the chart, as the chart
-/// does, and falls back to its short form, then to none, when it would touch
-/// the label before it.
+/// Which halves of each switch label fit along the top of a lane. "← Off-Peak"
+/// ends just left of its dashed line and "On-Peak →" starts just right of it, so
+/// the boundary is the line itself. A half that would leave the chart or touch
+/// the label before it is dropped, never shifted away from its line.
 enum SwitchLabelLayout {
-    enum Form: Equatable { case full, short, hidden }
+    enum Form: Equatable { case both, before, after, hidden }
 
+    /// Space between a half and its line.
+    static let inset: CGFloat = 3
+    /// Space between neighbouring labels.
     static let gap: CGFloat = 6
 
-    static func place(xs: [CGFloat], fullWidths: [CGFloat], shortWidths: [CGFloat], chartWidth: CGFloat) -> [Form] {
+    static func place(xs: [CGFloat], beforeWidths: [CGFloat], afterWidths: [CGFloat], chartWidth: CGFloat) -> [Form] {
         var lastRight = -CGFloat.infinity
         return xs.indices.map { index in
-            for (form, width) in [(Form.full, fullWidths[index]), (.short, shortWidths[index])] where width <= chartWidth {
-                let left = min(max(xs[index] - width / 2, 0), chartWidth - width)
-                if left >= lastRight + gap {
-                    lastRight = left + width
-                    return form
-                }
+            let x = xs[index]
+            let before = (x - inset - beforeWidths[index])...(x - inset)
+            let after = (x + inset)...(x + inset + afterWidths[index])
+            let options: [(Form, [ClosedRange<CGFloat>])] = [(.both, [before, after]), (.after, [after]), (.before, [before])]
+            for (form, parts) in options {
+                guard parts.allSatisfy({ $0.lowerBound >= 0 && $0.upperBound <= chartWidth }),
+                      let first = parts.first, let last = parts.last, first.lowerBound >= lastRight + gap else { continue }
+                lastRight = last.upperBound
+                return form
             }
             return .hidden
         }
@@ -113,27 +119,39 @@ private struct LaneChart: View {
         return (low - pad)...(high + topPad)
     }
 
-    /// The label each switch can show at the chart's current width (see `SwitchLabelLayout`).
-    private var switchLabels: [Date: String] {
+    /// The halves of each switch's label that fit at the chart's current width (see `SwitchLabelLayout`).
+    private var switchLabels: [Date: (before: String?, after: String?)] {
         let span = xDomain.upperBound.timeIntervalSince(xDomain.lowerBound)
         guard chartWidth > 0, span > 0 else { return [:] }
         let font = UIFont.preferredFont(forTextStyle: .caption2)
-        func width(_ text: String) -> CGFloat { ceil((text as NSString).size(withAttributes: [.font: font]).width) }
+        func width(_ text: String?) -> CGFloat {
+            guard let text else { return .infinity }
+            return ceil((text as NSString).size(withAttributes: [.font: font]).width)
+        }
         let markers = lane.switches
         let forms = SwitchLabelLayout.place(
             xs: markers.map { CGFloat($0.date.timeIntervalSince(xDomain.lowerBound) / span) * chartWidth },
-            fullWidths: markers.map { width($0.label) },
-            shortWidths: markers.map { width($0.shortLabel) },
+            beforeWidths: markers.map { width($0.beforeLabel) },
+            afterWidths: markers.map { width($0.afterLabel) },
             chartWidth: chartWidth)
-        var labels: [Date: String] = [:]
+        var labels: [Date: (before: String?, after: String?)] = [:]
         for (marker, form) in zip(markers, forms) {
             switch form {
-            case .full: labels[marker.date] = marker.label
-            case .short: labels[marker.date] = marker.shortLabel
+            case .both: labels[marker.date] = (marker.beforeLabel, marker.afterLabel)
+            case .before: labels[marker.date] = (marker.beforeLabel, nil)
+            case .after: labels[marker.date] = (nil, marker.afterLabel)
             case .hidden: break
             }
         }
         return labels
+    }
+
+    private func switchText(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize()
+            .padding(.top, 2)
     }
 
     private func clock(_ date: Date) -> String {
@@ -175,14 +193,17 @@ private struct LaneChart: View {
                 RuleMark(x: .value("Switch", marker.date))
                     .foregroundStyle(EnergyWeatherChart.ruleColor)
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .annotation(position: .overlay, alignment: .top, spacing: 2,
-                                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
-                        if let label = labels[marker.date] {
-                            Text(label)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .fixedSize()
-                                .padding(.top, 2)
+                    // "← Off-Peak" ends at the line and "On-Peak →" starts at it.
+                    .annotation(position: .overlay, alignment: .topTrailing, spacing: 0,
+                                overflowResolution: .init(x: .disabled, y: .fit(to: .chart))) {
+                        if let before = labels[marker.date]?.before {
+                            switchText(before).padding(.trailing, SwitchLabelLayout.inset)
+                        }
+                    }
+                    .annotation(position: .overlay, alignment: .topLeading, spacing: 0,
+                                overflowResolution: .init(x: .disabled, y: .fit(to: .chart))) {
+                        if let after = labels[marker.date]?.after {
+                            switchText(after).padding(.leading, SwitchLabelLayout.inset)
                         }
                     }
             }
