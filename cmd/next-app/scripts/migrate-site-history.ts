@@ -6,9 +6,10 @@
  *   npx tsx scripts/migrate-site-history.ts --site-id <id> [--apply] [--skip-backfill | --skip-archive]
  *
  * Backfill pauses between passes so the site's own today-refresh can still take
- * the import lock; a multi-year site takes over an hour. Days Tesla never fills
- * (usually right after install) are re-fetched on every backfill run, so later
- * runs that only archive newly finished days should pass --skip-backfill.
+ * the import lock; a multi-year site takes over an hour. The days between the
+ * hardware install and utility provisioning never have data: once a run
+ * confirms that gap it records Site.history_backfill_from, and later runs
+ * start there instead of re-fetching it.
  */
 import 'dotenv/config';
 import {pool} from '../src/lib/db';
@@ -25,18 +26,19 @@ const PASS_PAUSE_MS=REFRESH_MIN_INTERVAL_MS+5000;
 
 class OperatorError extends Error {}
 
-async function loadSite(siteId:string):Promise<MigrationSite> {
-    const site=await new SiteRepo().getSite(siteId);
+async function loadSite(siteRepo:SiteRepo,siteId:string):Promise<MigrationSite> {
+    const site=await siteRepo.getSite(siteId);
     if(!site)throw new OperatorError('Site not found');
     // Migration must fail rather than fall back to UTC day boundaries.
     if(!site.timezone)throw new OperatorError('Site has no timezone');
-    return {id:site.id,timezone:site.timezone,installed:new Date(site.installed)};
+    return {id:site.id,timezone:site.timezone,installed:new Date(site.installed),backfillFrom:await siteRepo.getHistoryBackfillFrom(site.id)};
 }
 
 async function run():Promise<void> {
     const options=parseMigrationArgs(process.argv.slice(2));
     try {
-        const site=await loadSite(options.siteId);
+        const siteRepo=new SiteRepo();
+        const site=await loadSite(siteRepo,options.siteId);
         const energyRepo=new EnergyRepo();
         let importer:Importer|null=null;
         if(options.apply&&!options.skipBackfill) {
@@ -51,6 +53,7 @@ async function run():Promise<void> {
                 return importer.ensureDataForRange(siteId,start,end,undefined,budget);
             },
             pause:()=>new Promise(resolve=>setTimeout(resolve,PASS_PAUSE_MS)),
+            recordBackfillFrom:(siteId,from)=>siteRepo.setHistoryBackfillFrom(siteId,from),
         };
         const report=await migrateSiteHistory({site,backfill,store:new CompactHistoryStore(pool)},{...options,now:new Date()});
         // No IDs, tokens, tariffs or sample arrays in operator output.

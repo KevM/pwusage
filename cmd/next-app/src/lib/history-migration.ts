@@ -118,6 +118,12 @@ export interface MigrationSite {
     id: string;
     timezone: string;
     installed: Date;
+    /**
+     * Recorded first day worth backfilling (site-local midnight). Tesla's
+     * installation date is the hardware install; data only starts once the
+     * utility provisions the site, and the days between never fill.
+     */
+    backfillFrom?: Date | null;
 }
 
 export interface BackfillDeps {
@@ -129,6 +135,8 @@ export interface BackfillDeps {
      * today-refresh (it needs the lock free and its min interval elapsed).
      */
     pause(): Promise<void>;
+    /** Persist the first day after the pre-provisioning gap (see MigrationSite.backfillFrom). */
+    recordBackfillFrom(siteId: string, from: Date): Promise<void>;
 }
 
 export interface BackfillSummary {
@@ -137,6 +145,23 @@ export interface BackfillSummary {
     /** Local dates of day windows still planned (missing or incomplete) at the end. */
     missingDays: string[];
     stopped: 'complete' | 'no-progress' | 'busy' | 'preview' | 'nothing-to-do';
+    /** Local date recorded this run as the new backfill start, if a pre-provisioning gap was confirmed. */
+    backfillFrom: string | null;
+}
+
+/**
+ * The day after the run of planned windows that starts exactly at `start`,
+ * or null when there is no such run or it reaches `end` (no data at all).
+ */
+function afterLeadingRun(planned: DateWindow[], start: Date, end: Date): Date | null {
+    const sorted = [...planned].sort((a, b) => +a.start - +b.start);
+    if (sorted.length === 0 || +sorted[0].start !== +start) return null;
+    let next = sorted[0].end;
+    for (const window of sorted.slice(1)) {
+        if (+window.start !== +next) break;
+        next = window.end;
+    }
+    return next < end ? next : null;
 }
 
 /**
@@ -153,8 +178,9 @@ export async function backfillSiteHistory(
     apply: boolean,
     maxPasses = 200
 ): Promise<BackfillSummary> {
-    const start = getSiteMidnight(site.installed, site.timezone);
-    const summary: BackfillSummary = { passes: 0, windowsImported: 0, missingDays: [], stopped: 'nothing-to-do' };
+    const installMidnight = getSiteMidnight(site.installed, site.timezone);
+    const start = site.backfillFrom && site.backfillFrom > installMidnight ? site.backfillFrom : installMidnight;
+    const summary: BackfillSummary = { passes: 0, windowsImported: 0, missingDays: [], stopped: 'nothing-to-do', backfillFrom: null };
     if (start >= end) return summary;
 
     let planned = await deps.plan(site, start, end);
@@ -181,7 +207,18 @@ export async function backfillSiteHistory(
         const next = await deps.plan(site, start, end);
         const progressed = next.length < planned.length;
         planned = next;
-        if (!progressed) return finish('no-progress');
+        if (!progressed) {
+            // Every planned window was attempted and imported without error, yet
+            // the leading days stay empty: Tesla has nothing before provisioning.
+            // Remember that so later runs don't re-fetch (and re-archive) them.
+            const confirmed = result.processedWindows === result.totalWindows && result.totalWindows <= BACKFILL_BUDGET.maxWindows;
+            const from = confirmed ? afterLeadingRun(planned, start, end) : null;
+            if (from) {
+                await deps.recordBackfillFrom(site.id, from);
+                summary.backfillFrom = formatSiteDate(from, site.timezone);
+            }
+            return finish('no-progress');
+        }
     }
     return finish('complete');
 }

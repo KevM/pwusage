@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parseSiteLocalDateToMidnight } from './date-utils';
+import { addDaysInSiteTimezone, parseSiteLocalDateToMidnight } from './date-utils';
 import { archiveSiteHistory, backfillSiteHistory, localDayChunks, migrateSiteHistory, parseMigrationArgs, type BackfillDeps, type MigrationSite } from './history-migration';
 import type { DateWindow } from './importer/import-planner';
 import type { EnsureDataResult } from './importer';
@@ -130,7 +130,7 @@ describe('archiveSiteHistory', () => {
 
 const site: MigrationSite = { id: 'site-1', timezone: LA, installed: new Date('2025-01-01T15:30:00Z') };
 const installMidnight = la('2025-01-01');
-const windows = (...dates: string[]): DateWindow[] => dates.map(d => ({ start: la(d), end: la(d) }));
+const windows = (...dates: string[]): DateWindow[] => dates.map(d => ({ start: la(d), end: addDaysInSiteTimezone(la(d), 1, LA) }));
 const ensured = (processedWindows: number, totalWindows: number, complete = false): EnsureDataResult => ({ complete, rows: [], processedWindows, totalWindows });
 
 function fakeBackfill(plans: DateWindow[][], results: EnsureDataResult[] = []) {
@@ -140,7 +140,8 @@ function fakeBackfill(plans: DateWindow[][], results: EnsureDataResult[] = []) {
     const ensure = vi.fn<BackfillDeps['ensure']>();
     for (const r of results) ensure.mockResolvedValueOnce(r);
     const pause = vi.fn<BackfillDeps['pause']>().mockResolvedValue(undefined);
-    return { plan, ensure, pause };
+    const recordBackfillFrom = vi.fn<BackfillDeps['recordBackfillFrom']>().mockResolvedValue(undefined);
+    return { plan, ensure, pause, recordBackfillFrom };
 }
 
 describe('backfillSiteHistory', () => {
@@ -151,7 +152,7 @@ describe('backfillSiteHistory', () => {
         const summary = await backfillSiteHistory(deps, site, end, false);
         expect(deps.plan).toHaveBeenCalledTimes(1);
         expect(deps.ensure).not.toHaveBeenCalled();
-        expect(summary).toEqual({ passes: 0, windowsImported: 0, missingDays: ['2025-01-05', '2025-01-06'], stopped: 'preview' });
+        expect(summary).toEqual({ passes: 0, windowsImported: 0, missingDays: ['2025-01-05', '2025-01-06'], stopped: 'preview', backfillFrom: null });
     });
 
     it('apply loops ensure with {maxTimeMs:45000, maxWindows:30} until complete', async () => {
@@ -160,7 +161,7 @@ describe('backfillSiteHistory', () => {
         const summary = await backfillSiteHistory(deps, site, end, true);
         expect(deps.ensure).toHaveBeenCalledTimes(2);
         expect(deps.ensure).toHaveBeenCalledWith('site-1', installMidnight, end, { maxTimeMs: 45000, maxWindows: 30 });
-        expect(summary).toEqual({ passes: 2, windowsImported: 45, missingDays: [], stopped: 'complete' });
+        expect(summary).toEqual({ passes: 2, windowsImported: 45, missingDays: [], stopped: 'complete', backfillFrom: null });
     });
 
     it('no-progress when the planned set stops shrinking', async () => {
@@ -197,7 +198,7 @@ describe('backfillSiteHistory', () => {
         const deps = fakeBackfill([]);
         const summary = await backfillSiteHistory(deps, site, installMidnight, true);
         expect(deps.plan).not.toHaveBeenCalled();
-        expect(summary).toEqual({ passes: 0, windowsImported: 0, missingDays: [], stopped: 'nothing-to-do' });
+        expect(summary).toEqual({ passes: 0, windowsImported: 0, missingDays: [], stopped: 'nothing-to-do', backfillFrom: null });
     });
 
     it('complete without calling ensure when nothing is planned', async () => {
@@ -225,6 +226,62 @@ describe('backfillSiteHistory', () => {
         const deps = fakeBackfill([windows('2025-01-05')]);
         deps.ensure.mockRejectedValueOnce(new Error('All 1 import windows failed'));
         await expect(backfillSiteHistory(deps, site, end, true)).rejects.toThrow('All 1 import windows failed');
+    });
+});
+
+describe('backfillSiteHistory pre-provisioning gap', () => {
+    // Tesla's installation date is the hardware install; data only starts once
+    // the utility provisions the site, so the first days after install never fill.
+    const end = la('2025-03-01');
+
+    it('records the leading gap after a pass where every attempted window imported but nothing filled', async () => {
+        const gap = windows('2025-01-01', '2025-01-02', '2025-01-03');
+        const deps = fakeBackfill([gap, gap], [ensured(3, 3, true)]);
+        const summary = await backfillSiteHistory(deps, site, end, true);
+        expect(deps.recordBackfillFrom).toHaveBeenCalledWith('site-1', la('2025-01-04'));
+        expect(summary).toMatchObject({ stopped: 'no-progress', backfillFrom: '2025-01-04', missingDays: ['2025-01-01', '2025-01-02', '2025-01-03'] });
+    });
+
+    it('records only the leading run, not later unfillable days', async () => {
+        const stuck = windows('2025-01-01', '2025-01-02', '2025-01-10');
+        const deps = fakeBackfill([stuck, stuck], [ensured(3, 3, true)]);
+        const summary = await backfillSiteHistory(deps, site, end, true);
+        expect(deps.recordBackfillFrom).toHaveBeenCalledWith('site-1', la('2025-01-03'));
+        expect(summary.backfillFrom).toBe('2025-01-03');
+    });
+
+    it.each([
+        ['a window failed in the stuck pass', windows('2025-01-01', '2025-01-02'), ensured(1, 2)],
+        ['the stuck days do not start at the backfill start', windows('2025-01-05', '2025-01-06'), ensured(2, 2, true)],
+        ['the gap runs all the way to the end (no data at all)', windows('2025-02-27', '2025-02-28'), ensured(2, 2, true)],
+        ['more windows were planned than one pass attempts', Array.from({ length: 31 }, (_, i) => ({ start: addDaysInSiteTimezone(installMidnight, i, LA), end: addDaysInSiteTimezone(installMidnight, i + 1, LA) })), ensured(30, 31)],
+    ])('does not record when %s', async (_, stuck, result) => {
+        const deps = fakeBackfill([stuck, stuck], [result]);
+        const siteForCase = _ === 'the gap runs all the way to the end (no data at all)' ? { ...site, installed: la('2025-02-27') } : site;
+        const summary = await backfillSiteHistory(deps, siteForCase, end, true);
+        expect(summary.stopped).toBe('no-progress');
+        expect(deps.recordBackfillFrom).not.toHaveBeenCalled();
+        expect(summary.backfillFrom).toBeNull();
+    });
+
+    it('starts planning and importing at a recorded backfillFrom', async () => {
+        const deps = fakeBackfill([[]]);
+        const summary = await backfillSiteHistory(deps, { ...site, backfillFrom: la('2025-01-15') }, end, true);
+        expect(deps.plan).toHaveBeenCalledWith(expect.anything(), la('2025-01-15'), end);
+        expect(summary.stopped).toBe('complete');
+        expect(deps.recordBackfillFrom).not.toHaveBeenCalled();
+    });
+
+    it('ignores a backfillFrom before install midnight', async () => {
+        const deps = fakeBackfill([[]]);
+        await backfillSiteHistory(deps, { ...site, backfillFrom: la('2024-12-01') }, end, true);
+        expect(deps.plan).toHaveBeenCalledWith(expect.anything(), installMidnight, end);
+    });
+
+    it('never records in preview', async () => {
+        const deps = fakeBackfill([windows('2025-01-01')]);
+        await backfillSiteHistory(deps, site, end, false);
+        expect(deps.recordBackfillFrom).not.toHaveBeenCalled();
     });
 });
 

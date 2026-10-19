@@ -413,6 +413,27 @@ export class SiteRepo {
         this.invalidateCache(siteId);
     }
 
+    /**
+     * First site-local day worth backfilling from Tesla. `installed` is the
+     * hardware install; the days before utility provisioning never have data.
+     * Kept out of SITE_BASE_COLUMNS: only history backfill reads it.
+     */
+    async getHistoryBackfillFrom(siteId: string): Promise<Date | null> {
+        const { rows } = await pool.query<{ history_backfill_from: Date | null }>(
+            'SELECT history_backfill_from FROM "Site" WHERE id = $1',
+            [siteId]
+        );
+        return rows[0]?.history_backfill_from ?? null;
+    }
+
+    async setHistoryBackfillFrom(siteId: string, from: Date): Promise<void> {
+        await pool.query(`
+            UPDATE "Site"
+            SET history_backfill_from = $2
+            WHERE id = $1 AND (history_backfill_from IS NULL OR history_backfill_from < $2)
+        `, [siteId, from]);
+    }
+
     // Utility
     invalidateCache(siteId: string) {
         siteCache.delete(siteId);
