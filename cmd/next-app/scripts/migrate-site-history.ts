@@ -4,6 +4,11 @@
  * `--apply` writes. Deletes nothing.
  *
  *   npx tsx scripts/migrate-site-history.ts --site-id <id> [--apply] [--skip-backfill | --skip-archive]
+ *
+ * Backfill pauses between passes so the site's own today-refresh can still take
+ * the import lock; a multi-year site takes over an hour. Days Tesla never fills
+ * (usually right after install) are re-fetched on every backfill run, so later
+ * runs that only archive newly finished days should pass --skip-backfill.
  */
 import 'dotenv/config';
 import {pool} from '../src/lib/db';
@@ -13,6 +18,10 @@ import {Importer,planMissingWindows} from '../src/lib/importer';
 import {CompactHistoryStore} from '../src/lib/prototypes/compact-history-store';
 import {SiteRepo} from '../src/lib/site-repo';
 import {createTeslaClientForSite} from '../src/lib/tesla-client-factory';
+import {REFRESH_MIN_INTERVAL_MS} from '../src/lib/today-refresh';
+
+/** Longer than today-refresh's min interval since our last import-lock stamp. */
+const PASS_PAUSE_MS=REFRESH_MIN_INTERVAL_MS+5000;
 
 class OperatorError extends Error {}
 
@@ -41,6 +50,7 @@ async function run():Promise<void> {
                 if(!importer)throw new Error('Backfill requires --apply');
                 return importer.ensureDataForRange(siteId,start,end,undefined,budget);
             },
+            pause:()=>new Promise(resolve=>setTimeout(resolve,PASS_PAUSE_MS)),
         };
         const report=await migrateSiteHistory({site,backfill,store:new CompactHistoryStore(pool)},{...options,now:new Date()});
         // No IDs, tokens, tariffs or sample arrays in operator output.

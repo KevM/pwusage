@@ -18,7 +18,7 @@ import {
 const BACKFILL_BUDGET = { maxTimeMs: 45000, maxWindows: 30 };
 /** The archive's floor: the two most recent finished days stay raw-only. */
 const ARCHIVE_FLOOR_DAYS = 2;
-/** Consecutive non-shrinking (busy) maintenance calls tolerated per chunk. */
+/** Consecutive busy attempts tolerated: per archive chunk, and per backfill pass. */
 const MAX_BUSY_ATTEMPTS = 3;
 
 /**
@@ -123,6 +123,12 @@ export interface MigrationSite {
 export interface BackfillDeps {
     plan(site: MigrationSite, start: Date, end: Date): Promise<DateWindow[]>;
     ensure(siteId: string, start: Date, end: Date, budget: { maxTimeMs: number; maxWindows: number }): Promise<EnsureDataResult>;
+    /**
+     * Wait between passes. Each pass takes the site import lock and stamps
+     * `last_import_at`, so back-to-back passes would starve the app's
+     * today-refresh (it needs the lock free and its min interval elapsed).
+     */
+    pause(): Promise<void>;
 }
 
 export interface BackfillSummary {
@@ -159,13 +165,19 @@ export async function backfillSiteHistory(
     });
     if (!apply) return finish('preview');
 
+    let busy = 0;
     while (planned.length > 0) {
         if (summary.passes >= maxPasses) return finish('no-progress');
+        if (summary.passes > 0) await deps.pause();
         const result = await deps.ensure(site.id, start, end, BACKFILL_BUDGET);
         summary.passes++;
         summary.windowsImported += result.processedWindows;
         // 0/0 with work outstanding means the site's import lock is held elsewhere.
-        if (result.processedWindows === 0 && result.totalWindows === 0) return finish('busy');
+        if (result.processedWindows === 0 && result.totalWindows === 0) {
+            if (++busy >= MAX_BUSY_ATTEMPTS) return finish('busy');
+            continue;
+        }
+        busy = 0;
         const next = await deps.plan(site, start, end);
         const progressed = next.length < planned.length;
         planned = next;
