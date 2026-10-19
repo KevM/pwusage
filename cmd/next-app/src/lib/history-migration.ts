@@ -144,7 +144,12 @@ export interface BackfillSummary {
     windowsImported: number;
     /** Local dates of day windows still planned (missing or incomplete) at the end. */
     missingDays: string[];
-    stopped: 'complete' | 'no-progress' | 'busy' | 'preview' | 'nothing-to-do';
+    /**
+     * 'no-progress': every missing day came back from Tesla cleanly but still
+     * empty or partial (nothing more to fetch). 'incomplete': stopped with days
+     * that failed, were never attempted, or hit the pass limit; re-run.
+     */
+    stopped: 'complete' | 'no-progress' | 'incomplete' | 'busy' | 'preview' | 'nothing-to-do';
     /** Local date recorded this run as the new backfill start, if a pre-provisioning gap was confirmed. */
     backfillFrom: string | null;
 }
@@ -197,8 +202,9 @@ export async function backfillSiteHistory(
     if (!apply) return finish('preview');
 
     let busy = 0;
+    let setAsideConfirmed = true;
     while (planned.length > 0) {
-        if (summary.passes >= maxPasses) return finish('no-progress');
+        if (summary.passes >= maxPasses) return finish('incomplete');
         if (summary.passes > 0) await deps.pause();
         const result = await deps.ensure(site.id, start, passEnd, BACKFILL_BUDGET);
         summary.passes++;
@@ -213,7 +219,10 @@ export async function backfillSiteHistory(
         const progressed = next.length < planned.length;
         planned = next;
         if (progressed) continue;
+        // The pass imported every window it took without error or timeout.
+        const confirmed = result.processedWindows === Math.min(result.totalWindows, BACKFILL_BUDGET.maxWindows);
         if (planned.length > BACKFILL_BUDGET.maxWindows) {
+            setAsideConfirmed &&= confirmed;
             const sorted = [...planned].sort((a, b) => +a.start - +b.start);
             const keep = sorted.length - BACKFILL_BUDGET.maxWindows;
             setAside.push(...sorted.slice(keep));
@@ -221,18 +230,19 @@ export async function backfillSiteHistory(
             passEnd = sorted[keep].start;
             continue;
         }
+        if (!confirmed) return finish('incomplete');
         // Every planned window was attempted and imported without error, yet
         // the leading days stay empty: Tesla has nothing before provisioning.
         // Remember that so later runs don't re-fetch (and re-archive) them.
-        const confirmed = result.processedWindows === result.totalWindows && result.totalWindows <= BACKFILL_BUDGET.maxWindows;
-        const from = confirmed ? afterLeadingRun(planned, start, passEnd) : null;
+        const from = afterLeadingRun(planned, start, passEnd);
         if (from) {
             await deps.recordBackfillFrom(site.id, from);
             summary.backfillFrom = formatSiteDate(from, site.timezone);
         }
-        return finish('no-progress');
+        return finish(setAsideConfirmed ? 'no-progress' : 'incomplete');
     }
-    return finish(setAside.length > 0 ? 'no-progress' : 'complete');
+    if (setAside.length === 0) return finish('complete');
+    return finish(setAsideConfirmed ? 'no-progress' : 'incomplete');
 }
 
 export interface SiteMigrationReport {
@@ -278,6 +288,17 @@ export async function migrateSiteHistory(
         archive,
         rawDeletionPerformed: false,
     };
+}
+
+/**
+ * Whether an apply run fully migrated the site: backfill ran to the end of
+ * what Tesla can fill and every archivable day is archived. Busy or skipped
+ * steps don't count, so a --skip-backfill re-run never marks a site migrated.
+ */
+export function isMigrationComplete(report: SiteMigrationReport): boolean {
+    if (report.mode !== 'apply' || report.backfill === 'skipped' || report.archive === 'skipped') return false;
+    return ['complete', 'no-progress', 'nothing-to-do'].includes(report.backfill.stopped)
+        && ['caught-up', 'nothing-to-do'].includes(report.archive.stopped);
 }
 
 const MIGRATION_FLAGS = ['--apply', '--skip-backfill', '--skip-archive'];

@@ -2,6 +2,7 @@
 import { redirect } from 'next/navigation';
 import { isUserAdmin } from '@/lib/auth-checks';
 import { UserRepo } from '@/lib/user-repo';
+import { SiteRepo } from '@/lib/site-repo';
 import { AdminDashboard } from './AdminDashboard';
 
 export const dynamic = 'force-dynamic';
@@ -15,9 +16,9 @@ export default async function AdminPage() {
     const userRepo = new UserRepo();
     // Assuming getAllUsers returns something compatible with the interface defined in AdminDashboard
     // If not, we might need to map it, but it looked compatible from the previous read.
-    const users = await userRepo.getAllUsers();
+    const [users, sites] = await Promise.all([userRepo.getAllUsers(), new SiteRepo().getHistoryOverview()]);
 
     return (
-        <AdminDashboard users={users} />
+        <AdminDashboard users={users} sites={sites} />
     );
 }

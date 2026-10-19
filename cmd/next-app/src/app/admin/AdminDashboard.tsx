@@ -9,6 +9,7 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { SystemAnnouncementsManager } from './SystemAnnouncementsManager';
+import { SiteHistoryTable, type SiteHistoryRow } from './SiteHistoryTable';
 
 // Define minimal user type based on usage in page.tsx
 interface AdminUser {
@@ -28,22 +29,26 @@ interface AdminUser {
 
 interface AdminDashboardProps {
     users: AdminUser[];
+    sites: SiteHistoryRow[];
 }
 
-export function AdminDashboard({ users }: AdminDashboardProps) {
-    const [activeTab, setActiveTab] = useState<'users' | 'announcements'>('users');
+type AdminTab = 'users' | 'sites' | 'announcements';
+
+export function AdminDashboard({ users, sites }: AdminDashboardProps) {
+    const [activeTab, setActiveTab] = useState<AdminTab>('users');
 
     return (
         <PageShell maxWidth="7xl" padding="default">
             <div className="space-y-6">
                 <PageHeader
                     title="Admin Dashboard"
-                    description="Manage user access visibility and publish system announcements."
+                    description="Manage user access visibility, site history migration and system announcements."
                 />
 
-                <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'users' | 'announcements')} className="space-y-6">
+                <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as AdminTab)} className="space-y-6">
                     <TabsList>
                         <TabsTrigger value="users">Users</TabsTrigger>
+                        <TabsTrigger value="sites">Sites</TabsTrigger>
                         <TabsTrigger value="announcements">System Announcements</TabsTrigger>
                     </TabsList>
 
@@ -122,6 +127,16 @@ export function AdminDashboard({ users }: AdminDashboardProps) {
                                     ))}
                                 </TableBody>
                             </Table>
+                        </SectionCard>
+                    </TabsContent>
+
+                    <TabsContent value="sites">
+                        <SectionCard
+                            title={`Sites (${sites.length})`}
+                            description="History migration status. Run the migrate command from cmd/next-app with a production DATABASE_URL; preview first, then add --apply."
+                            bodyClassName="p-0"
+                        >
+                            <SiteHistoryTable sites={sites} />
                         </SectionCard>
                     </TabsContent>
 
