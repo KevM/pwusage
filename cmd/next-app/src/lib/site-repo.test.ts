@@ -516,3 +516,32 @@ describe('SiteRepo.getSitesForGapHeal', () => {
         expect(sql).toContain('ORDER BY s.last_import_at ASC NULLS FIRST');
     });
 });
+
+describe('SiteRepo history backfill start', () => {
+    beforeEach(() => queryMock.mockReset());
+
+    it('reads history_backfill_from, null when unset or the site is missing', async () => {
+        const from = new Date('2023-11-29T06:00:00Z');
+        queryMock.mockResolvedValueOnce({ rows: [{ history_backfill_from: from }] })
+            .mockResolvedValueOnce({ rows: [{ history_backfill_from: null }] })
+            .mockResolvedValueOnce({ rows: [] });
+        const repo = new SiteRepo();
+
+        await expect(repo.getHistoryBackfillFrom('site-1')).resolves.toEqual(from);
+        await expect(repo.getHistoryBackfillFrom('site-1')).resolves.toBeNull();
+        await expect(repo.getHistoryBackfillFrom('site-1')).resolves.toBeNull();
+        expect(queryMock.mock.calls[0]).toEqual([expect.stringContaining('SELECT history_backfill_from FROM "Site" WHERE id = $1'), ['site-1']]);
+    });
+
+    it('only moves history_backfill_from forward', async () => {
+        queryMock.mockResolvedValueOnce({ rowCount: 1 });
+        const from = new Date('2023-11-29T06:00:00Z');
+
+        await new SiteRepo().setHistoryBackfillFrom('site-1', from);
+
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('SET history_backfill_from = $2');
+        expect(sql).toContain('history_backfill_from IS NULL OR history_backfill_from < $2');
+        expect(params).toEqual(['site-1', from]);
+    });
+});

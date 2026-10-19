@@ -21,7 +21,7 @@ interface RefreshState {
     lastLiveRefreshAt: number;
 }
 
-const REFRESH_MIN_INTERVAL_MS = 60 * 1000; // 1 minute: matches Tesla's 5-min data rate, leaves headroom.
+export const REFRESH_MIN_INTERVAL_MS = 60 * 1000; // 1 minute: matches Tesla's 5-min data rate, leaves headroom.
 const TESLA_FETCH_TIMEOUT_MS = 8 * 1000;   // bound the await so the page never hangs on a slow Tesla.
 const LIVE_STATUS_CACHE_TTL_MS = 16 * 60 * 1000;
 const LIVE_STATUS_REFRESH_MIN_INTERVAL_MS = 14 * 60 * 1000;
