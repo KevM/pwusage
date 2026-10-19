@@ -148,8 +148,9 @@ final class DashboardCoordinator: ObservableObject {
     /// screen twice in a row does not bill twice but still feels fresh.
     static let billMinimumInterval: TimeInterval = 5 * 60
     /// With Solcast set up, the bill is fetched early once its energy data is this
-    /// old, so Smart Shift's forecast comparison (which needs data under 30 minutes
-    /// old) doesn't pause between the 30-minute fetches or after the app returns.
+    /// old, so Smart Shift's forecast comparison (which needs data under an hour
+    /// old, or 30 minutes without grid history) doesn't pause between the 30-minute
+    /// fetches or after the app returns.
     static let forecastEnergyDataRefreshAge: TimeInterval = 20 * 60
     static let planningContextLifetime: TimeInterval = 24 * 60 * 60
 

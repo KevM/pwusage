@@ -1203,3 +1203,29 @@ extension LoadTimingForecastEstimatorTests {
         #expect(abs(lane.projectedKwh - (2 + 6 * 5.0 / 60 + 2 * 1.5)) < 1e-9)
     }
 }
+
+// MARK: - Device report, 2026-10-19 06:53 (energy data 33 minutes old)
+
+extension LoadTimingForecastEstimatorTests {
+    @Test("With grid history filling the gap, the forecast card takes energy data up to an hour old")
+    func forecastWithGridHistoryAllowsHourOldEnergyData() throws {
+        // Energy data through 00:00, read at 00:33: the server's data lagged, and a
+        // 30-minute limit swapped the forecast card for history. History's 6 kW
+        // fills 00:05–00:30, then the forecast's 3 kW of solar against a 1 kW home.
+        let intervals = (1..<4).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+        func run(ageMinutes: Double) -> Estimator.Result {
+            Estimator.evaluate(profile: profile(0.5, hours: 0.5), now: start.addingTimeInterval(ageMinutes * 60),
+                               timing: timing([tariff(0, 7200)], balances: ["p": 2]),
+                               projection: .forecast(intervals: intervals, context: historyContext(home: 1, grid: { _ in 6 })),
+                               balanceSourceTime: start, billingCycleEnd: start.addingTimeInterval(86_400),
+                               currencyCode: "USD")
+        }
+
+        let comparison = try #require(run(ageMinutes: 33).comparison, "\(String(describing: run(ageMinutes: 33).unavailableReason))")
+        #expect(comparison.assumptions.contains { $0.hasPrefix("Solar follows your Solcast forecast") })
+        let lane = try #require(comparison.lanes.first { $0.periodKey == "p" })
+        #expect(abs(lane.projectedKwh - (2 + 6 * 25.0 / 60 + 2 * 1.5)) < 1e-9)
+
+        #expect(run(ageMinutes: 61).unavailableReason == .staleBalance)
+    }
+}

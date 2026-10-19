@@ -103,6 +103,9 @@ struct LoadTimingForecastEstimator {
 
         var maximumBalanceAge: TimeInterval {
             switch self {
+            // Grid history fills the gap between the energy data and the forecast's
+            // first interval, so only a forecast without it needs the 30-minute limit.
+            case .forecast(_, let context) where context.hasGridHistory: LoadTimingForecastEstimator.maximumFlatBalanceAge
             case .forecast: LoadTimingForecastEstimator.maximumBalanceAge
             // Like `.flat`, the forecast-free card follows `LoadTimingRecommendation`'s window.
             case .history, .flat: LoadTimingForecastEstimator.maximumFlatBalanceAge

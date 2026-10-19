@@ -241,7 +241,7 @@ enum LoadTimingForecastPresentation {
         case .noEnergyNeeded:
             return nil
         case .staleBalance:
-            return "Energy observations are older than 30 minutes, so the solar comparison is paused."
+            return "Energy observations are too old for the solar comparison, so it's paused."
         case .incompleteBalance:
             return "Some billing-period balances are missing, so the solar comparison is paused."
         case .noFittingRun:
