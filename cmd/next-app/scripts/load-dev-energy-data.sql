@@ -13,11 +13,23 @@
 -- HEADER MATCH refuses an export whose columns differ from the dev table.
 SET session_replication_role = replica;
 \copy public."EnergyData" FROM pstdin WITH (FORMAT csv, HEADER MATCH)
+-- The export runs just before the data dump, in its own transaction, so a Site,
+-- Tariff or TariffSchedule deleted on prod in between can be referenced here but
+-- missing from data.sql. Paused triggers skip the foreign-key checks, so apply
+-- EnergyData's own ON DELETE actions (CASCADE, CASCADE, SET NULL) by hand.
+-- Keep these in step with EnergyData's foreign keys.
+DELETE FROM public."EnergyData" e
+WHERE NOT EXISTS (SELECT 1 FROM public."Site" s WHERE s.id = e.site_id)
+   OR (e.tariff_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public."Tariff" t WHERE t.id = e.tariff_id));
+UPDATE public."EnergyData" e SET tariff_schedule_id = NULL
+WHERE e.tariff_schedule_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM public."TariffSchedule" ts WHERE ts.id = e.tariff_schedule_id);
 -- Back on, so the archive deletes below cascade to EnergyDaySummary.
 RESET session_replication_role;
 
--- Archive days whose raw rows were not copied: drop them, as deleting those raw
--- rows would have (invalidate_compact_energy_day). Without this, a later write
+-- Archive days whose raw rows were not copied, or changed on prod between the
+-- export and the dump: drop them, as deleting those raw rows would have
+-- (invalidate_compact_energy_day). Without this, a later write
 -- to such a day fails with "Raw archive source incomplete". Archive-only days
 -- (raw_pruned) never had raw rows to copy and stay.
 DO $$

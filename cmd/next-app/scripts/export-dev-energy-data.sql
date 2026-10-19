@@ -2,6 +2,10 @@
 -- stdout, the only EnergyData the dev copy keeps. The data dump excludes
 -- EnergyData (-x public.EnergyData), so its full history is never downloaded
 -- just to be pruned; scripts/load-dev-energy-data.sql loads this file on dev.
+-- CI runs it BEFORE the data dump: supabase db dump cannot share a snapshot
+-- with it, and exporting first means every Site and Tariff a row references
+-- was created before data.sql was taken. The load handles rows whose parents
+-- were deleted in between.
 --
 -- Kept: the last 45 days (the window scripts/prune-dev-copy.sql keeps) for the
 -- 5 sites with the most recent live status refresh, plus Harrison, the site used

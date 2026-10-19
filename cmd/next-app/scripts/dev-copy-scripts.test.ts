@@ -12,10 +12,16 @@ const PORT = 55442;
 // The parts of the real schema the dev-only scripts touch.
 const SCHEMA = `
 CREATE TABLE public."Site" (id text PRIMARY KEY, last_live_refresh_at bigint DEFAULT 0);
+CREATE TABLE public."Tariff" (id serial PRIMARY KEY);
+CREATE TABLE public."TariffSchedule" (id serial PRIMARY KEY);
+INSERT INTO public."Tariff" VALUES (1);
+INSERT INTO public."TariffSchedule" VALUES (1);
 CREATE TABLE public."EnergyData" (
     id serial PRIMARY KEY,
     "timestamp" timestamptz NOT NULL,
     site_id text NOT NULL REFERENCES public."Site"(id) ON DELETE CASCADE,
+    tariff_id integer REFERENCES public."Tariff"(id) ON DELETE CASCADE,
+    tariff_schedule_id integer REFERENCES public."TariffSchedule"(id) ON DELETE SET NULL,
     load_power double precision
 );
 CREATE TABLE public."MobileLoginHandoff" (attempt_id uuid PRIMARY KEY, user_id text NOT NULL);
@@ -165,7 +171,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         // Read-only and unguarded: it runs against prod, which has no dev marker.
         const result = await run('psql', [targetUrl(), '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', 'scripts/export-dev-energy-data.sql']);
         const [header, ...lines] = result.stdout.trim().split('\n');
-        expect(header).toBe('id,timestamp,site_id,load_power');
+        expect(header).toBe('id,timestamp,site_id,tariff_id,tariff_schedule_id,load_power');
         const sites = lines.map((line) => line.split(',')[2]).sort();
         expect(sites).toEqual([PINNED_SITE, 'live3', 'live4', 'live5', 'live6', 'live7']);
         expect(lines.every((line) => line.endsWith(',10'))).toBe(true);
@@ -181,10 +187,10 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
                 ('s1', '2026-10-02T00:00Z', '2026-10-03T00:00Z', 5, false),
                 ('s1', '2026-09-01T00:00Z', '2026-09-02T00:00Z', 288, true),
                 ('s2', '2026-10-01T00:00Z', '2026-10-02T00:00Z', 3, false);`);
-        const csv = 'id,timestamp,site_id,load_power\n'
-            + '7,2026-10-01 01:00:00+00,s1,1.5\n'
-            + '8,2026-10-01 02:00:00+00,s1,2.5\n'
-            + '9,2026-10-02 01:00:00+00,s1,3.5\n';
+        const csv = 'id,timestamp,site_id,tariff_id,tariff_schedule_id,load_power\n'
+            + '7,2026-10-01 01:00:00+00,s1,1,1,1.5\n'
+            + '8,2026-10-01 02:00:00+00,s1,1,1,2.5\n'
+            + '9,2026-10-02 01:00:00+00,s1,1,1,3.5\n';
         const result = await psqlWithInput(csv, '--single-transaction', '-v', 'ON_ERROR_STOP=1', '-f', 'scripts/load-dev-energy-data.sql');
         expect(result.code, result.out).toBe(0);
         expect(await rows(`SELECT id, load_power FROM public."EnergyData" ORDER BY id`))
@@ -198,12 +204,31 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
             .toEqual([{ id: 's1', t: 500 }, { id: 's2', t: 0 }]);
     });
 
+    it('applies prod\'s foreign-key actions to rows whose parents were deleted before the data dump', async () => {
+        await target!.query(`${MARK_DEV} DELETE FROM public."EnergyData";`);
+        // The export runs first; anything deleted on prod in between is missing from data.sql.
+        const csv = 'id,timestamp,site_id,tariff_id,tariff_schedule_id,load_power\n'
+            + '1,2026-10-01 01:00:00+00,s1,1,1,1\n'
+            + '2,2026-10-01 01:05:00+00,gone,1,1,2\n'
+            + '3,2026-10-01 01:10:00+00,s1,99,1,3\n'
+            + '4,2026-10-01 01:15:00+00,s1,1,99,4\n'
+            + '5,2026-10-01 01:20:00+00,s1,,,5\n';
+        const result = await psqlWithInput(csv, '--single-transaction', '-v', 'ON_ERROR_STOP=1', '-f', 'scripts/load-dev-energy-data.sql');
+        expect(result.code, result.out).toBe(0);
+        // Missing Site or Tariff: deleted (ON DELETE CASCADE). Missing TariffSchedule: nulled (SET NULL).
+        expect(await rows(`SELECT id, tariff_id, tariff_schedule_id FROM public."EnergyData" ORDER BY id`)).toEqual([
+            { id: 1, tariff_id: 1, tariff_schedule_id: 1 },
+            { id: 4, tariff_id: 1, tariff_schedule_id: null },
+            { id: 5, tariff_id: null, tariff_schedule_id: null },
+        ]);
+    });
+
     it('loads the subset without firing EnergyData triggers', async () => {
         await target!.query(`${MARK_DEV}
             DELETE FROM public."EnergyData";
             CREATE FUNCTION public.refuse() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'trigger fired'; END $$;
             CREATE TRIGGER refuse BEFORE INSERT ON public."EnergyData" FOR EACH ROW EXECUTE FUNCTION public.refuse();`);
-        const result = await psqlWithInput('id,timestamp,site_id,load_power\n1,2026-10-01 01:00:00+00,s1,1\n',
+        const result = await psqlWithInput('id,timestamp,site_id,tariff_id,tariff_schedule_id,load_power\n1,2026-10-01 01:00:00+00,s1,1,1,1\n',
             '-v', 'ON_ERROR_STOP=1', '-f', 'scripts/load-dev-energy-data.sql');
         expect(result.code, result.out).toBe(0);
         expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyData"`)).toEqual([{ n: 1 }]);
@@ -211,7 +236,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
 
     it('refuses an export whose columns do not match the dev table', async () => {
         await target!.query(`${MARK_DEV} DELETE FROM public."EnergyData";`);
-        const result = await psqlWithInput('id,site_id,timestamp,load_power\n1,s1,2026-10-01 01:00:00+00,1\n',
+        const result = await psqlWithInput('id,site_id,timestamp,tariff_id,tariff_schedule_id,load_power\n1,s1,2026-10-01 01:00:00+00,1,1,1\n',
             '-v', 'ON_ERROR_STOP=1', '-f', 'scripts/load-dev-energy-data.sql');
         expect(result.code).not.toBe(0);
         expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyData"`)).toEqual([{ n: 0 }]);

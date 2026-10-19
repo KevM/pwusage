@@ -219,11 +219,13 @@ jobs:
           # Only public is reset below. Managed auth/storage data can include
           # protected tables (e.g. storage.buckets_vectors) we cannot restore.
           # EnergyData history is most of prod and of its egress, and dev keeps
-          # only a slice of it: skip its data here (unquoted, see
-          # dump-db-backup.sh) and download just that slice.
-          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public -x public.EnergyData
+          # only a slice of it: download just that slice, then skip its data in
+          # the dump (unquoted, see dump-db-backup.sh). The slice goes first, so
+          # every row it references is already in data.sql; the two cannot share
+          # a snapshot (see export-dev-energy-data.sql).
           psql -X -q -v ON_ERROR_STOP=1 "$DATABASE_URL" -f scripts/export-dev-energy-data.sql > dev-energy-data.csv
           echo "EnergyData rows for dev: $(( $(wc -l < dev-energy-data.csv) - 1 ))"
+          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public -x public.EnergyData
           
           # Dump Migration History (using Supabase CLI for reliability)
           # We use "|| true" to prevent failure if the schema doesn't exist yet (soft fail)

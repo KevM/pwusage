@@ -87,6 +87,8 @@ describe('dev-only database scripts stay away from prod', () => {
         // Unquoted: the CLI reads -x as a CSV list (see dump-db-backup.sh).
         expect(data).toMatch(/ -x public\.EnergyData(?:\s|$)/);
         expect(dump).toMatch(/-f scripts\/export-dev-energy-data\.sql > dev-energy-data\.csv/);
+        // Exported first, so every Site and Tariff a row references is already in data.sql.
+        expect(dump.indexOf('export-dev-energy-data.sql')).toBeLessThan(dump.indexOf('-f data.sql'));
     });
 
     it('keeps the export read-only and unguarded, since it runs against prod', () => {

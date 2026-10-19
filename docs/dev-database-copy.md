@@ -22,8 +22,10 @@ egress, since a full copy was downloaded only for most of it to be deleted.
    protected tables such as `storage.buckets_vectors` cannot be restored by
    `postgres`. Migration history is dumped separately from `supabase_migrations`.
    The data dump skips `EnergyData` rows (`-x public.EnergyData`; its sequence is
-   kept). `scripts/export-dev-energy-data.sql`, which is read-only, then writes
-   `dev-energy-data.csv` with just the rows dev keeps: the last 45 days for the
+   kept). Just before it, `scripts/export-dev-energy-data.sql`, which is
+   read-only, writes `dev-energy-data.csv` with just the rows dev keeps. The two
+   cannot share a snapshot, so the export goes first: every `Site` and `Tariff`
+   a row references then already exists when `data.sql` is taken. The rows kept are the last 45 days for the
    5 sites with the most recent live status refresh, plus Harrison (the site used
    for live tests). Measured 2026-10-19: about 63k rows (4.4 MB) instead of 1.19M
    rows (about 87 MB).
@@ -36,9 +38,12 @@ egress, since a full copy was downloaded only for most of it to be deleted.
    leaves the data tables empty instead of half-loaded.
    `load-dev-energy-data.sql` loads the `EnergyData` slice from stdin with
    triggers paused, as the dump's own load does, and refuses a CSV whose columns
-   differ from the table (`HEADER MATCH`). It then:
+   differ from the table (`HEADER MATCH`). Because paused triggers also skip
+   foreign-key checks, it applies `EnergyData`'s own `ON DELETE` actions by hand
+   to rows whose `Site`, `Tariff` or `TariffSchedule` was deleted on prod between
+   the export and the dump. It then:
    - drops the `EnergyDayArchive` days (and, by cascade, their `EnergyDaySummary`
-     rows) whose raw rows were not copied, as the `invalidate_compact_energy_day`
+     rows) whose raw rows were not copied or changed in that gap, as the `invalidate_compact_energy_day`
      trigger does when raw rows are deleted. Otherwise a later write to such a
      day would fail with "Raw archive source incomplete". Archive-only days
      (`raw_pruned`) have no raw rows to copy and stay;
