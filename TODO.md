@@ -49,6 +49,18 @@ Smart Shift now projects rate-period banks to the bill date from 7 days of Solca
 - [ ] **A measured 1-in-4 cloudy *week* for the cautious history:** the phone approximates one by moving each typical slot 1/√7 of the way toward the server's 1-in-4 dull day, which assumes days are independent (real cloudy spells cluster). Replace it with weeks ranked from months of history once backfill lands.
 - [ ] **14-day projected-bill views using `pv_estimate10`:** a separate PR. The per-slot solar history (`solarKw`) added here is meant to feed it and to compare Solcast against what the roof actually did.
 
+## Compact-archive migration (2026-10-19)
+
+Phase 1 (`scripts/migrate-site-history.ts`, `src/lib/history-migration.ts`) backfills a site's raw history to `Site.installed` and archives every finished day before the 2-day floor, deleting nothing. See [the spec](docs/superpowers/specs/2026-10-19-history-backfill-and-archive-migration-design.md).
+
+- [ ] **Production rollout:** one explicit site ID per run (preview, then `--apply`), oldest-installed first. Re-run later to archive days finished since.
+- [ ] **Enable `COMPACT_HISTORY_READS_ENABLED`** in production.
+- [ ] **Archive cron trim mode** for migrated sites (`control-history-archive.ts trim …`).
+- [ ] **Archive-aware gap-heal:** count archived days as covered, and when it heals a day older than the retention cutoff, finalize that day into the archive instead of leaving raw rows. Without this, gap-heal (`GAP_HEAL_DAYS = 14`, raw-only `countAlignedSamples`) sees trimmed days as holes, re-fetches from Tesla, rewrites raw rows, and the invalidation trigger drops the archive: a churn loop.
+- [ ] **Lower `DATA_RETENTION_DAYS` in steps** (365 → 30 → 7). The archive cutoff floors at 2 days (`GREATEST(retention, 2)` in `archiveCutoff` and `HistoryArchiveRepo.next`); going lower needs a change there.
+- [ ] **Re-check raw-only reads with a short raw window:** `today-refresh.ts` (latest raw row), `battery-hold-monitor-service.ts` (last 30 min raw), `user-repo.ts` admin `last_data_import` (MAX raw timestamp).
+- [ ] **New-site history onboarding:** automatic, budgeted backfill for new sites so Smart Shift gets years of history without an operator run. Likely a pg_cron-driven route (60 s Hobby cap) reusing `migrateSiteHistory` with a per-run window cap and per-site progress (e.g. `history_backfilled_through`), stopping at the 2-day floor. Needs its own design (spec "Follow-up" section).
+
 ## DB egress: remaining reduction candidates
 
 The July 2026 Supabase egress spike was traced to site queries duplicating wide

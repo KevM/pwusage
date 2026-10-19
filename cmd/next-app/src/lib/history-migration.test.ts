@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseSiteLocalDateToMidnight } from './date-utils';
-import { archiveSiteHistory, backfillSiteHistory, localDayChunks, migrateSiteHistory, type BackfillDeps, type MigrationSite } from './history-migration';
+import { archiveSiteHistory, backfillSiteHistory, localDayChunks, migrateSiteHistory, parseMigrationArgs, type BackfillDeps, type MigrationSite } from './history-migration';
 import type { DateWindow } from './importer/import-planner';
 import type { EnsureDataResult } from './importer';
 import type { MaintenanceDay, MaintenanceOptions, MaintenanceReport, MaintenanceStore } from './prototypes/compact-history-maintenance';
@@ -272,5 +272,31 @@ describe('migrateSiteHistory', () => {
         expect(report.backfill).toMatchObject({ stopped: 'nothing-to-do' });
         expect(report.archive).toMatchObject({ stopped: 'nothing-to-do' });
         expect(store.getMaintenanceSnapshot).not.toHaveBeenCalled();
+    });
+});
+
+describe('parseMigrationArgs', () => {
+    it('defaults to preview with both steps', () => {
+        expect(parseMigrationArgs(['--site-id', 'abc'])).toEqual({ siteId: 'abc', apply: false, skipBackfill: false, skipArchive: false });
+    });
+
+    it('accepts --apply, --skip-backfill and --skip-archive', () => {
+        expect(parseMigrationArgs(['--apply', '--site-id', 'abc', '--skip-backfill'])).toEqual({ siteId: 'abc', apply: true, skipBackfill: true, skipArchive: false });
+        expect(parseMigrationArgs(['--site-id', 'abc', '--skip-archive'])).toMatchObject({ skipArchive: true, skipBackfill: false });
+    });
+
+    it.each([
+        [[]],
+        [['--site-id']],
+        [['--site-id', '']],
+        [['--site-id', '  ']],
+        [['--site-id', '--apply']],
+        [['--site-id', 'abc', '--rebuild']],
+        [['--site-id', 'abc', 'extra']],
+        [['--site-id', 'abc', '--site-id', 'def']],
+        [['--site-id', 'abc', '--apply', '--apply']],
+        [['--site-id', 'abc', '--skip-backfill', '--skip-archive']],
+    ])('rejects %j', (args) => {
+        expect(() => parseMigrationArgs(args)).toThrow(Error);
     });
 });

@@ -218,3 +218,24 @@ export async function migrateSiteHistory(
         rawDeletionPerformed: false,
     };
 }
+
+const MIGRATION_FLAGS = ['--apply', '--skip-backfill', '--skip-archive'];
+
+/** Parse `--site-id <id> [--apply] [--skip-backfill | --skip-archive]`. */
+export function parseMigrationArgs(args: string[]): { siteId: string; apply: boolean; skipBackfill: boolean; skipArchive: boolean } {
+    const seen = new Set<string>();
+    let siteId = '';
+    for (let i = 0; i < args.length; i++) {
+        const key = args[i];
+        if (seen.has(key)) throw new Error('Duplicate argument');
+        seen.add(key);
+        if (MIGRATION_FLAGS.includes(key)) continue;
+        if (key !== '--site-id' || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error('Unknown or missing argument');
+        siteId = args[++i].trim();
+    }
+    if (!siteId || siteId.length > 200) throw new Error('Explicit site ID required');
+    const skipBackfill = seen.has('--skip-backfill');
+    const skipArchive = seen.has('--skip-archive');
+    if (skipBackfill && skipArchive) throw new Error('Nothing to do with both steps skipped');
+    return { siteId, apply: seen.has('--apply'), skipBackfill, skipArchive };
+}
