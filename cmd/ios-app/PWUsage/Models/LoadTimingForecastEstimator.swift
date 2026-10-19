@@ -361,6 +361,8 @@ struct LoadTimingForecastEstimator {
     fileprivate struct FlowModel {
         let projection: Projection
         let clock: WallClock
+        /// The forecast drives the flow over [forecastStart, forecastEnd); history elsewhere.
+        let forecastStart: Date
         let forecastEnd: Date
         /// Use `pv_estimate10` and the 1-in-4 week instead of the medians.
         let cautious: Bool
@@ -372,16 +374,18 @@ struct LoadTimingForecastEstimator {
         /// interval edges, the switch to history, tariff edges and local half hours.
         private let boundaries: [Date]
 
-        init(projection: Projection, clock: WallClock, forecastEnd: Date, tariffs: [LoadTimingTariffSegment],
-             cautious: Bool = false) {
+        init(projection: Projection, clock: WallClock, forecastStart: Date = .distantPast, forecastEnd: Date,
+             tariffs: [LoadTimingTariffSegment], cautious: Bool = false) {
             self.projection = projection
             self.clock = clock
+            self.forecastStart = forecastStart
             self.forecastEnd = forecastEnd
             self.cautious = cautious
             intervals = projection.intervals.filter { $0.periodStart < forecastEnd }.sorted { $0.periodStart < $1.periodStart }
             // Each source is already in order, so a merge is cheaper than hashing and sorting.
             var edges = Array(clock.halfHours(after: .distantPast, before: .distantFuture))
             edges.append(contentsOf: intervals.flatMap { [$0.periodStart, $0.periodEnd] })
+            edges.append(forecastStart)
             edges.append(forecastEnd)
             edges.append(contentsOf: tariffs.flatMap { [$0.start, $0.end] })
             edges.sort()
@@ -401,6 +405,7 @@ struct LoadTimingForecastEstimator {
         private init(cautiousCopyOf model: FlowModel) {
             projection = model.projection
             clock = model.clock
+            forecastStart = model.forecastStart
             forecastEnd = model.forecastEnd
             cautious = true
             intervals = model.intervals
@@ -433,7 +438,7 @@ struct LoadTimingForecastEstimator {
         }
 
         private func usesForecast(at date: Date) -> Bool {
-            if case .forecast = projection { return date < forecastEnd }
+            if case .forecast = projection { return date >= forecastStart && date < forecastEnd }
             return false
         }
 
@@ -660,16 +665,22 @@ struct LoadTimingForecastEstimator {
         guard let tomorrowEnd, tomorrowEnd > now else { return unavailable(.invalidInput) }
         var projectionEnd = billingCycleEnd
         var endsAtRateChange = false
+        var forecastStart = projectionStart
         var forecastEnd = projectionStart
         if case .forecast(let forecast, let context) = projection {
-            let coverageEnd = contiguousEnd(of: forecast, startingAt: projectionStart)
-            // A forecast that doesn't reach now can't price anything; without this,
-            // history would stand in silently under the forecast's name.
-            guard coverageEnd > now else { return unavailable(.incompleteCoverage) }
             if context.hasGridHistory {
-                // History fills in after the forecast window, or where the forecast falls short of it.
-                forecastEnd = min(coverageEnd, now.addingTimeInterval(Self.forecastWindow))
+                // The forecast must cover now, or history would stand in silently under
+                // its name. A fresh batch starts at the current half hour, often after
+                // the latest energy data, so history fills that short gap before it,
+                // and after the forecast window or wherever the forecast falls short.
+                guard let block = contiguousBlock(of: forecast, containing: now) else {
+                    return unavailable(.incompleteCoverage)
+                }
+                forecastStart = max(block.start, projectionStart)
+                forecastEnd = min(block.end, now.addingTimeInterval(Self.forecastWindow))
             } else {
+                let coverageEnd = contiguousEnd(of: forecast, startingAt: projectionStart)
+                guard coverageEnd > now else { return unavailable(.incompleteCoverage) }
                 // Without history there is nothing to project past the forecast, and
                 // an older server's context keeps today's horizon exactly.
                 forecastEnd = coverageEnd
@@ -679,7 +690,8 @@ struct LoadTimingForecastEstimator {
         projectionEnd = min(projectionEnd, contiguousTariffEnd(tariffs, startingAt: projectionStart))
         guard projectionEnd > now else { return unavailable(.incompleteCoverage) }
         let clock = WallClock(timeZone: zone, from: projectionStart, to: projectionEnd)
-        let model = FlowModel(projection: projection, clock: clock, forecastEnd: forecastEnd, tariffs: tariffs)
+        let model = FlowModel(projection: projection, clock: clock, forecastStart: forecastStart, forecastEnd: forecastEnd,
+                              tariffs: tariffs)
 
         // A rate change for one billing-period balance ends the shared projection.
         // Rates outside the projection do not participate in validation.
@@ -1132,6 +1144,14 @@ struct LoadTimingForecastEstimator {
             end = interval.periodEnd
         }
         return end
+    }
+
+    /// The run of back-to-back forecast intervals that contains `date`, if any.
+    private static func contiguousBlock(of forecast: [SolarForecastInterval], containing date: Date) -> (start: Date, end: Date)? {
+        let intervals = forecast.sorted { $0.periodStart < $1.periodStart }
+        guard var index = intervals.firstIndex(where: { $0.periodStart <= date && $0.periodEnd > date }) else { return nil }
+        while index > 0, intervals[index - 1].periodEnd == intervals[index].periodStart { index -= 1 }
+        return (intervals[index].periodStart, contiguousEnd(of: forecast, startingAt: date))
     }
 
     private static func contiguousTariffEnd(_ tariffs: [LoadTimingTariffSegment], startingAt source: Date) -> Date {
