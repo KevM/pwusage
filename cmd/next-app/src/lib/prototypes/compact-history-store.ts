@@ -11,6 +11,7 @@ import { auditTariffAttribution } from './compact-tariff-audit';
 import { decodeDay, encodeDay, rollupDay, type DayRollup } from './compact-energy';
 import {buildLatestMetadata,verifyLatestMetadata,type LatestMetadata,type LatestSample} from './compact-latest-metadata';
 import { buildDayMetadata } from './compact-day-metadata';
+import {beginTransaction} from '../pg-transaction';
 import type { ScalarHistorySnapshot, AggregateHistorySnapshot, HistorySnapshot, HistorySnapshotStore } from './compact-history-reader';
 
 type RawRecord = { site_id: string; timestamp: Date; tariff_id: number; tariff_schedule_id: number | null;
@@ -74,7 +75,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         if (start >= end) return { raw: [], days: [] };
         const client = await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+            await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');
             await client.query("SET LOCAL statement_timeout = '15s'");
             const archives = await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive"
                 WHERE site_id=$1 AND day_start < $3 AND day_end > $2 ORDER BY day_start`, [siteId,start,end]);
@@ -104,7 +105,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         if(!siteId||!Number.isSafeInteger(+asOf))throw new Error('Invalid latest energy window');
         const client=await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
+            await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
             const rawRow=(await client.query<RawRecord>(`SELECT ${columns} FROM "EnergyData" WHERE site_id=$1 AND timestamp<=$2 ORDER BY timestamp DESC LIMIT 1`,[siteId,asOf])).rows[0];
             let result:LatestEnergySnapshot|null=rawRow?{timestamp:new Date(rawRow.timestamp),batterySoc:rawRow.battery_soc===null?null:Number(rawRow.battery_soc),batteryPower:Number(rawRow.battery_power),solarPower:Number(rawRow.solar_power),gridPower:Number(rawRow.grid_power),loadPower:Number(rawRow.load_power)}:null;
             const archives=(await client.query<LatestArchiveRecord>(`SELECT ${latestColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2
@@ -131,7 +132,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         if(since>now)return null;
         const client=await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
+            await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
             const rawRow=(await client.query<{timestamp:Date;battery_soc:number}>(`SELECT timestamp,battery_soc FROM "EnergyData" WHERE site_id=$1 AND timestamp>=$2 AND timestamp<=$3 AND battery_soc IS NOT NULL ORDER BY timestamp DESC LIMIT 1`,[siteId,since,now])).rows[0];
             const guard=(await client.query<{verified:boolean;legacy:boolean}>(`SELECT COALESCE(bool_and(CASE WHEN latest_metadata IS NOT NULL THEN public.verify_compact_latest_metadata(site_id,day_start) ELSE true END),true) AS verified,
                 COALESCE(bool_or(latest_metadata IS NULL),false) AS legacy FROM "EnergyDayArchive" WHERE site_id=$1 AND day_end>$2 AND day_start<=$3`,[siteId,since,now])).rows[0];
@@ -154,7 +155,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         if(!siteId) throw new Error('Invalid site');
         const client=await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+            await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');
             await client.query("SET LOCAL statement_timeout='15s'");
             const rawLatest=(await client.query<{timestamp:Date}>(`SELECT timestamp FROM "EnergyData"
                 WHERE site_id=$1 AND timestamp<=CURRENT_TIMESTAMP ORDER BY timestamp DESC LIMIT 1`,[siteId])).rows[0]?.timestamp;
@@ -202,7 +203,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         if(!this.mutationGuard)throw new Error('A mutation guard is required to trim or restore an archive');
         const client=await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+            await beginTransaction(client,'ISOLATION LEVEL READ COMMITTED');
             await this.boundTransaction(client);
             await client.query("SET LOCAL statement_timeout='15s'");await client.query("SET LOCAL lock_timeout='3s'");
             await this.mutationGuard(client);
@@ -286,7 +287,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         if(+last-+first>7*27*3600000)throw new Error('Energy batch range exceeds seven days');
         const client=await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+            await beginTransaction(client,'ISOLATION LEVEL READ COMMITTED');
             await client.query("SET LOCAL statement_timeout='15s'");await client.query("SET LOCAL lock_timeout='3s'");
             for(const site of sites)if(!await this.claimMutation(client,site))throw new Error('Energy mutation claim busy');
             const candidates=(await client.query<{site_id:string;day_start:Date}>(`SELECT a.site_id,a.day_start FROM "EnergyDayArchive" a WHERE raw_pruned AND a.site_id=ANY($3::text[]) AND a.day_start<=$5 AND a.day_end>$4 AND
@@ -308,7 +309,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         if(!siteId?.trim()||siteId.length>200||!Number.isSafeInteger(+now))throw new Error('Invalid maintenance request');
         const client=await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+            await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');
             await client.query("SET LOCAL statement_timeout='15s'");
             const site=(await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1',[siteId])).rows[0];
             if(!site)throw new Error('Site not found');
@@ -356,7 +357,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         if(!Number.isSafeInteger(+cutoff))throw new Error('Invalid cleanup cutoff');
         const client=await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+            await beginTransaction(client,'ISOLATION LEVEL READ COMMITTED');
             await client.query("SET LOCAL statement_timeout='15s'");
             const claim=await client.query<{acquired:boolean}>("SELECT pg_try_advisory_xact_lock(hashtextextended('compact-energy-maintenance',0)) AS acquired");
             if(!claim.rows[0].acquired) {await client.query('ROLLBACK');return {skipped:true};}
@@ -384,7 +385,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         if (start>=end) return {timezone:null,fullDays:[],detail:{raw:[],days:[]}};
         const client=await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+            await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');
             await client.query("SET LOCAL statement_timeout='15s'");
             const site=await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1',[siteId]);
             // Deliberately omit payload: complete modern days require only scalar metadata.
@@ -416,7 +417,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         if(start>=end) return {timezone:null,aggregates:[],coverage:[],detail:{raw:[],days:[]}};
         const client=await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
+            await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
             const site=await client.query<{timezone:string;has_detail:boolean;has_raw:boolean;verified:boolean;attribution_complete:boolean}>(`SELECT timezone,
                 EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2
                     AND NOT(a.day_start >= $2 AND a.day_end <= $3 AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL)) AS has_detail,
@@ -468,7 +469,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
     async finalizeDay(siteId: string, start: Date, now = new Date()): Promise<FinalizationResult> {
         const client = await this.pool.connect();
         try {
-            await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+            await beginTransaction(client,'ISOLATION LEVEL READ COMMITTED');
             await this.boundTransaction(client);
             await client.query("SET LOCAL statement_timeout = '15s'");
             await client.query("SET LOCAL lock_timeout = '3s'");
