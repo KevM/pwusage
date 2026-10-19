@@ -27,6 +27,7 @@ export interface SiteHistoryOverview {
     archived_days: number;
     first_archived_day: Date | null;
     last_archived_day: Date | null;
+    last_energy_at: Date | null;
 }
 
 const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode, sankey_renderer, last_live_refresh_at, last_live_claim_at, live_status_cache';
@@ -453,17 +454,20 @@ export class SiteRepo {
     }
 
     /**
-     * Admin view of each site's history migration: owner, migration marker and
-     * compact-archive coverage, unmigrated sites first and oldest install first
-     * within each group (the migration's work queue). The archive aggregate reads only the
-     * (site_id, day_start) primary key, never the archive payloads.
+     * Admin view of each site's history migration: owner, migration marker,
+     * compact-archive coverage and latest energy sample. Ordered as the
+     * migration's work queue: unmigrated sites with data in the last 7 days
+     * first, then unmigrated sites gone quiet, then migrated sites; oldest
+     * install first within each group. The archive aggregate reads only the
+     * (site_id, day_start) primary key, never the archive payloads; the latest
+     * sample is one idx_energy_site_ts lookup per site.
      */
     async getHistoryOverview(): Promise<SiteHistoryOverview[]> {
         const { rows } = await pool.query<SiteHistoryOverview>(`
             SELECT s.id, s.name, s.timezone, s.installed, u.email AS owner_email,
                 s.history_backfill_from, s.history_migrated_at,
                 COALESCE(a.archived_days, 0)::int AS archived_days,
-                a.first_archived_day, a.last_archived_day
+                a.first_archived_day, a.last_archived_day, e.last_energy_at
             FROM "Site" s
             LEFT JOIN "User" u ON u.id = s.user_id
             LEFT JOIN (
@@ -471,7 +475,12 @@ export class SiteRepo {
                     min(day_start) AS first_archived_day, max(day_start) AS last_archived_day
                 FROM "EnergyDayArchive" GROUP BY site_id
             ) a ON a.site_id = s.id
-            ORDER BY s.history_migrated_at IS NOT NULL, s.installed ASC, s.id
+            LEFT JOIN LATERAL (
+                SELECT max(timestamp) AS last_energy_at FROM "EnergyData" WHERE site_id = s.id
+            ) e ON true
+            ORDER BY s.history_migrated_at IS NOT NULL,
+                (e.last_energy_at >= now() - interval '7 days') IS NOT TRUE,
+                s.installed ASC, s.id
         `);
         return rows;
     }

@@ -563,6 +563,7 @@ describe('SiteRepo history migration status', () => {
             id: 'site-1', name: 'Home', timezone: 'America/Chicago', installed: new Date('2023-11-14T17:09:47Z'),
             owner_email: 'a@example.com', history_backfill_from: null, history_migrated_at: null,
             archived_days: 0, first_archived_day: null, last_archived_day: null,
+            last_energy_at: new Date('2026-10-19T20:00:00Z'),
         };
         queryMock.mockResolvedValueOnce({ rows: [row] });
 
@@ -575,12 +576,23 @@ describe('SiteRepo history migration status', () => {
         expect(sql).not.toMatch(/token|json|live_status_cache/);
     });
 
-    it('lists unmigrated sites first, oldest install first within each group', async () => {
+    it('reads each site\'s latest energy sample through the (site_id, timestamp) index', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
 
         await new SiteRepo().getHistoryOverview();
 
         const [sql] = queryMock.mock.calls[0] as [string];
-        expect(sql).toMatch(/ORDER BY s\.history_migrated_at IS NOT NULL, s\.installed ASC, s\.id/);
+        expect(sql).toMatch(/LEFT JOIN LATERAL \(\s*SELECT max\(timestamp\) AS last_energy_at FROM "EnergyData" WHERE site_id = s\.id\s*\) e ON true/);
+    });
+
+    it('lists active unmigrated sites first, then inactive unmigrated, then migrated; oldest install first within each', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+
+        await new SiteRepo().getHistoryOverview();
+
+        const [sql] = queryMock.mock.calls[0] as [string];
+        expect(sql.replace(/\s+/g, ' ')).toContain(
+            "ORDER BY s.history_migrated_at IS NOT NULL, (e.last_energy_at >= now() - interval '7 days') IS NOT TRUE, s.installed ASC, s.id",
+        );
     });
 });

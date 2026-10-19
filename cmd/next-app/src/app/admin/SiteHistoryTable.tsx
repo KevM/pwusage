@@ -19,6 +19,7 @@ export interface SiteHistoryRow {
     archived_days: number;
     first_archived_day: DateLike | null;
     last_archived_day: DateLike | null;
+    last_energy_at: DateLike | null;
 }
 
 export function siteHistoryStatus(site: SiteHistoryRow): { status: string; label: string } {
@@ -101,6 +102,11 @@ export function SiteHistoryTable({ sites }: { sites: SiteHistoryRow[] }) {
                                             Data from {siteDate(site.history_backfill_from, site.timezone)}
                                         </span>
                                     )}
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                        {site.last_energy_at
+                                            ? `Last data ${siteDate(site.last_energy_at, site.timezone)}`
+                                            : 'No energy data'}
+                                    </span>
                                 </div>
                             </TableCell>
                             <TableCell className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">

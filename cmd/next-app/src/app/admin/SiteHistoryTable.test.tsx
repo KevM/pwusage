@@ -13,6 +13,7 @@ const base: SiteHistoryRow = {
     archived_days: 0,
     first_archived_day: null,
     last_archived_day: null,
+    last_energy_at: null,
 };
 
 describe('siteHistoryStatus', () => {
@@ -62,5 +63,15 @@ describe('SiteHistoryTable', () => {
         expect(html).toContain('Installed 2023-11-14');
         expect(html).toContain('2026-10-01 → 2026-10-03');
         expect(html).toContain('Partial');
+    });
+
+    it('shows the latest energy sample date, or that the site has none', () => {
+        const html = renderToStaticMarkup(<SiteHistoryTable sites={[
+            { ...base, last_energy_at: '2026-10-19T04:30:00.000Z' },
+            { ...base, id: 'site-2', last_energy_at: null },
+        ]} />);
+
+        expect(html).toContain('Last data 2026-10-18');
+        expect(html).toContain('No energy data');
     });
 });
