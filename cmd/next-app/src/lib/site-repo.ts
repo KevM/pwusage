@@ -454,7 +454,8 @@ export class SiteRepo {
 
     /**
      * Admin view of each site's history migration: owner, migration marker and
-     * compact-archive coverage. The archive aggregate reads only the
+     * compact-archive coverage, unmigrated sites first and oldest install first
+     * within each group (the migration's work queue). The archive aggregate reads only the
      * (site_id, day_start) primary key, never the archive payloads.
      */
     async getHistoryOverview(): Promise<SiteHistoryOverview[]> {
@@ -470,7 +471,7 @@ export class SiteRepo {
                     min(day_start) AS first_archived_day, max(day_start) AS last_archived_day
                 FROM "EnergyDayArchive" GROUP BY site_id
             ) a ON a.site_id = s.id
-            ORDER BY s.installed ASC
+            ORDER BY s.history_migrated_at IS NOT NULL, s.installed ASC, s.id
         `);
         return rows;
     }

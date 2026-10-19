@@ -574,4 +574,13 @@ describe('SiteRepo history migration status', () => {
         // Admin-only and wide: never select tokens, Site.json or the live status cache.
         expect(sql).not.toMatch(/token|json|live_status_cache/);
     });
+
+    it('lists unmigrated sites first, oldest install first within each group', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+
+        await new SiteRepo().getHistoryOverview();
+
+        const [sql] = queryMock.mock.calls[0] as [string];
+        expect(sql).toMatch(/ORDER BY s\.history_migrated_at IS NOT NULL, s\.installed ASC, s\.id/);
+    });
 });
