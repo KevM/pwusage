@@ -21,6 +21,10 @@ struct CostBar: Equatable {
 struct SwitchMarker: Equatable {
     let date: Date
     let label: String
+    /// "← Peak": the period ending here, drawn just left of the line.
+    let beforeLabel: String?
+    /// "Off-Peak →": the period starting here, drawn just right of the line.
+    let afterLabel: String?
 }
 
 /// One rate period's "energy weather" lane, from now to the end of the comparison.
@@ -99,6 +103,8 @@ struct BetterJobHint: Equatable {
 struct SmartShiftScreen: Equatable {
     enum Content: Equatable {
         case verdict(SmartShiftVerdict)
+        /// The solar forecast is still loading and nothing fresh is on hand.
+        case loading
         case blocked(String)
         case noJobs
     }
@@ -239,6 +245,8 @@ enum SmartShiftPresentation {
                                         timing: timing, now: now, billingCycleEnd: billingCycleEnd) {
             return SmartShiftScreen(content: .blocked(message))
         }
+        // A verdict priced without the forecast would flash, then change when it lands.
+        if forecast == .loading { return SmartShiftScreen(content: .loading) }
         guard let comparison = result.comparison else { return SmartShiftScreen(content: .blocked(cannotCompareMessage)) }
         let context = Context(profile: profile, comparison: comparison, timing: timing, now: now,
                               billingCycleEnd: billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone)
@@ -563,9 +571,9 @@ enum SmartShiftPresentation {
             comparison.periodSwitches.map { date in
                 let before = timing.tariffTimeline.first { $0.end == date }.map { name($0.periodKey) }
                 let after = timing.tariffTimeline.first { $0.start == date }.map { name($0.periodKey) }
-                let label = [before.map { "\u{2190} \($0)" }, after.map { "\($0) \u{2192}" }]
-                    .compactMap { $0 }.joined(separator: " | ")
-                return SwitchMarker(date: date, label: label)
+                let beforeLabel = before.map { "\u{2190} \($0)" }, afterLabel = after.map { "\($0) \u{2192}" }
+                let label = [beforeLabel, afterLabel].compactMap { $0 }.joined(separator: " | ")
+                return SwitchMarker(date: date, label: label, beforeLabel: beforeLabel, afterLabel: afterLabel)
             }
         }
 

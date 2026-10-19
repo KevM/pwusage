@@ -63,6 +63,8 @@ python3 - "$timeout_seconds" xcodebuild \
   -derivedDataPath "$artifacts_dir/DerivedData" \
   -resultBundlePath "$artifacts_dir/TestResults.xcresult" \
   CODE_SIGNING_ALLOWED=NO \
+  "PWUSAGE_FUZZ_STRESS=${PWUSAGE_FUZZ_STRESS:-0}" \
+  "PWUSAGE_FUZZ_SEED=${PWUSAGE_FUZZ_SEED:-}" \
   ${test_filter_args[@]+"${test_filter_args[@]}"} \
   test <<'PY'
 import os

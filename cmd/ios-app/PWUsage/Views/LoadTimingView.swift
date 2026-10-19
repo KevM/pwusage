@@ -214,10 +214,10 @@ enum LoadTimingPresentation {
 
     /// One hour is deliberate and matches `LoadTimingRecommendation.detailFreshnessWindow`,
     /// so the verdict and this label age out on the same tick. It is *not* the
-    /// same policy as `LoadTimingForecastEstimator.maximumBalanceAge` (30
-    /// minutes), which gates whether a forecast may be produced at all: a
-    /// forecast that policy already rejects can keep being described here for
-    /// up to another 30 minutes. The two are separate on purpose — one is
+    /// same policy as `LoadTimingForecastEstimator.Projection.maximumBalanceAge`
+    /// (30 minutes for a forecast without grid history), which gates whether a
+    /// forecast may be produced at all: a forecast that policy already rejects
+    /// can keep being described here for up to another 30 minutes. The two are separate on purpose — one is
     /// "can we still trust the basic estimate", the other is "may we forecast".
     static func sourceStatus(isUnavailable: Bool, energyDataThrough: Date?, now: Date = .now) -> String {
         let freshness = DashboardPresentation.freshness(energyDataThrough, now: now, staleAfter: 60 * 60)
@@ -503,6 +503,12 @@ struct LoadTimingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 jobRows(hint: nil)
+            case .loading:
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text(SmartShiftPresentation.checkingSolarNote).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
             case .noJobs:
                 Text("Add a Job").font(.headline)
                 Text("Add a job to see when it's cheapest to run.").foregroundStyle(.secondary)

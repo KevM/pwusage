@@ -213,7 +213,7 @@ enum LoadTimingForecastPresentation {
     ) -> String? {
         // No key on this device means there is nothing to explain.
         switch connection {
-        case .notConnected:
+        case .checking, .notConnected:
             return nil
         case .awaitingArraySelection:
             return awaitingArraySelectionNote
@@ -241,7 +241,7 @@ enum LoadTimingForecastPresentation {
         case .noEnergyNeeded:
             return nil
         case .staleBalance:
-            return "Energy observations are older than 30 minutes, so the solar comparison is paused."
+            return "Energy observations are too old for the solar comparison, so it's paused."
         case .incompleteBalance:
             return "Some billing-period balances are missing, so the solar comparison is paused."
         case .noFittingRun:
@@ -273,6 +273,7 @@ enum LoadTimingForecastPresentation {
         now: Date
     ) -> ForecastAvailability {
         switch connection {
+        case .checking: return .loading
         case .notConnected: return .none
         case .awaitingArraySelection: return .unusable(firstSentence(awaitingArraySelectionNote))
         case .ready: break

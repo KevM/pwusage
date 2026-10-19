@@ -139,9 +139,9 @@ struct SmartShiftPresentationTests {
         #expect(verdict.lanes[1].endLabels == ["+10"])
         #expect(verdict.lanes[2].endLabels == ["0", "\u{2212}3"])
         #expect(verdict.lanes[0].switches == [
-            SwitchMarker(date: Self.at(16.5), label: "\u{2190} Peak | Off-Peak \u{2192}"),
-            SwitchMarker(date: Self.at(31), label: "\u{2190} Off-Peak | Peak \u{2192}"),
-            SwitchMarker(date: Self.at(40.5), label: "\u{2190} Peak | Off-Peak \u{2192}"),
+            SwitchMarker(date: Self.at(16.5), label: "\u{2190} Peak | Off-Peak \u{2192}", beforeLabel: "\u{2190} Peak", afterLabel: "Off-Peak \u{2192}"),
+            SwitchMarker(date: Self.at(31), label: "\u{2190} Off-Peak | Peak \u{2192}", beforeLabel: "\u{2190} Off-Peak", afterLabel: "Peak \u{2192}"),
+            SwitchMarker(date: Self.at(40.5), label: "\u{2190} Peak | Off-Peak \u{2192}", beforeLabel: "\u{2190} Peak", afterLabel: "Off-Peak \u{2192}"),
         ])
     }
 
@@ -155,7 +155,6 @@ struct SmartShiftPresentationTests {
 
     @Test func forecastStatesBecomeNotes() throws {
         #expect(try Self.verdict(Self.make(forecast: .ready)).notes.isEmpty)
-        #expect(try Self.verdict(Self.make(forecast: .loading)).notes == [.forecastState(SmartShiftPresentation.checkingSolarNote)])
         #expect(try Self.verdict(Self.make(forecast: .unusable("Solcast is limiting requests."))).notes
             == [.forecastState("Solcast is limiting requests.")])
     }
@@ -713,5 +712,20 @@ extension SmartShiftPresentationTests {
             forecast: .ready, refreshUnavailable: false, timing: Self.timing(), now: Self.at(18),
             billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
         #expect(try Self.verdict(screen).why == "It's Off-Peak, and your Off-Peak bank covers all of this run.")
+    }
+}
+
+extension SmartShiftPresentationTests {
+    @Test func aLoadingForecastShowsNoVerdictYet() {
+        // Priced from history first and the forecast a moment later, the card would flash
+        // one answer and then another, so it waits for the forecast instead.
+        #expect(Self.make(forecast: .loading).content == .loading)
+        // Blocking problems still show at once.
+        #expect(Self.make(forecast: .loading, refreshUnavailable: true).content == .blocked(SmartShiftPresentation.refreshFailedMessage))
+    }
+
+    @Test func anUnresolvedSolcastSetupIsStillLoading() {
+        #expect(LoadTimingForecastPresentation.forecastAvailability(
+            state: .basic, connection: .checking, cause: nil, reason: nil, forecastFetchedAt: nil, now: Self.now) == .loading)
     }
 }

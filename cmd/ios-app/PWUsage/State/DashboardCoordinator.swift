@@ -30,6 +30,8 @@ enum SolarForecastEnhancementState: Equatable {
 /// apart from `SolarForecastEnhancementState` so the UI can stay silent when no
 /// key exists and explain itself when one does.
 enum SolarForecastConnectionState: Equatable {
+    /// The device hasn't read its Solcast setup yet (at launch or after a site switch).
+    case checking
     case notConnected
     case awaitingArraySelection
     case ready
@@ -145,6 +147,11 @@ final class DashboardCoordinator: ObservableObject {
     /// Floor under appearance-driven bill refreshes, so opening the Load timing
     /// screen twice in a row does not bill twice but still feels fresh.
     static let billMinimumInterval: TimeInterval = 5 * 60
+    /// With Solcast set up, the bill is fetched early once its energy data is this
+    /// old, so Smart Shift's forecast comparison (which needs data under an hour
+    /// old, or 30 minutes without grid history) doesn't pause between the 30-minute
+    /// fetches or after the app returns.
+    static let forecastEnergyDataRefreshAge: TimeInterval = 20 * 60
     static let planningContextLifetime: TimeInterval = 24 * 60 * 60
 
     @Published private(set) var selectedSiteID: String
@@ -169,7 +176,7 @@ final class DashboardCoordinator: ObservableObject {
     /// Told about confirmed hold state only; it can never change the hold.
     weak var batteryHoldActivityObserver: (any BatteryHoldActivityObserving)?
     @Published private(set) var solarForecastState: SolarForecastEnhancementState = .basic
-    @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .notConnected
+    @Published private(set) var solarForecastConnection: SolarForecastConnectionState = .checking
     @Published private(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
     /// This device could not write its forecast state. Not a cause: the forecast
     /// on screen is usable, so it must not claim to be unavailable.
@@ -484,7 +491,9 @@ final class DashboardCoordinator: ObservableObject {
         live.reset()
         bill.reset()
         restoreCachedReadings()
-        resetForecastEnhancement(state: .basic, connection: .notConnected)
+        // Checking, not "not connected": the new site's setup is read next, and
+        // until then the card waits rather than showing a forecast-free answer.
+        resetForecastEnhancement(state: .basic, connection: .checking)
         // The pattern belongs to the old site; connecting or disconnecting
         // Solcast leaves it in place.
         householdPattern = nil
@@ -574,6 +583,7 @@ final class DashboardCoordinator: ObservableObject {
         let operation = beginForecastOperation()
         guard let forecastStore, let planningAPI, let accountScopeID else {
             solarForecastState = .basic
+            solarForecastConnection = .notConnected
             return
         }
         let siteID = selectedSiteID
@@ -954,6 +964,8 @@ final class DashboardCoordinator: ObservableObject {
             due = isDue(lastAttempt: bill.lastAttempt, interval: Self.billMinimumInterval, at: requestTime)
         case .scheduled:
             due = isDue(lastAttempt: bill.lastAttempt, interval: Self.billInterval, at: requestTime)
+                || (energyDataIsAgingForForecast(at: requestTime)
+                    && isDue(lastAttempt: bill.lastAttempt, interval: Self.billMinimumInterval, at: requestTime))
         }
         guard due else { return }
         bill.lastAttempt = requestTime
@@ -972,6 +984,13 @@ final class DashboardCoordinator: ObservableObject {
         // error and nothing on screen to explain it.
         guard elapsed.isFinite else { return true }
         return elapsed < 0 || elapsed >= interval
+    }
+
+    /// Solcast is set up and the bill's energy data is nearly too old for the forecast comparison.
+    private func energyDataIsAgingForForecast(at date: Date) -> Bool {
+        guard solarForecastConnection == .ready,
+              let through = bill.response?.sources.energyDataThrough else { return false }
+        return date.timeIntervalSince(through) >= Self.forecastEnergyDataRefreshAge
     }
 
     /// Whether the bill response on hand was fetched inside the appearance floor.

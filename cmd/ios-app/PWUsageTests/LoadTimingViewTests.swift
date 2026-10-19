@@ -1155,7 +1155,7 @@ struct LoadTimingViewTests {
                                        forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now)
             == .unusable("The forecast was too old or incomplete to use."))
         #expect(P.forecastUnavailableNote(.staleBalance)
-            == "Energy observations are older than 30 minutes, so the solar comparison is paused.")
+            == "Energy observations are too old for the solar comparison, so it's paused.")
     }
 
     @Test("Smart Shift opens on the last Job viewed")
