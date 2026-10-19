@@ -344,7 +344,11 @@ export async function migrateSiteHistory(
         if (options.apply && repair.refetched > 0) {
             // Rewriting raw rows dropped those days' archives; rebuild them.
             const rebuilt = await runArchive();
-            repair.stillNeedsRepair = planned.filter(date => rebuilt.repairable.includes(date));
+            // An incomplete rebuild never audited the chunks it didn't reach, so a
+            // day only counts as repaired once this pass rebuilt it cleanly.
+            const repaired = (date: string) => !rebuilt.repairable.includes(date)
+                && (rebuilt.stopped === 'caught-up' || rebuilt.archived.includes(date));
+            repair.stillNeedsRepair = planned.filter(date => !repaired(date));
             archive = rebuilt;
         } else if (options.apply) {
             // Nothing was rewritten (lock busy or every refetch failed), so every planned day is still unresolved.

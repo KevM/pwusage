@@ -575,6 +575,26 @@ describe('migrateSiteHistory --repair', () => {
         expect(report.repair).toMatchObject({ refetched: 0, stopped: 'busy', stillNeedsRepair: ['2025-02-05', '2025-03-01'] });
     });
 
+    it('keeps days the rebuild never reached unresolved when it stops busy', async () => {
+        // Chunks from 2025-01-01: 02-05 is in the second, 03-10 in the third.
+        const counts = new Map([['2025-02-05', 280], ['2025-03-10', 287]]);
+        const backfill = fakeBackfill([[]]);
+        let refetched = false;
+        backfill.refetch.mockImplementation(async (_id, days) => {
+            for (const d of days) counts.set(formatSiteDate(d.start, LA), full);
+            refetched = true;
+            return ensured(days.length, days.length, true);
+        });
+        const store = countingStore(counts);
+        vi.mocked(store.finalizeDay).mockImplementation(async (_siteId, start) =>
+            refetched && formatSiteDate(start, LA) === '2025-03-10'
+                ? { status: 'busy' as const }
+                : { status: 'finalized' as const, attributionComplete: true });
+        const report = await migrateSiteHistory({ site, backfill, store }, { apply: true, now: migrateNow, repair: true });
+        expect(report.archive).toMatchObject({ stopped: 'busy' });
+        expect(report.repair).toMatchObject({ refetched: 2, stillNeedsRepair: ['2025-03-10'] });
+    });
+
     it('previews the days it would refetch', async () => {
         const counts = new Map([['2025-02-05', 280]]);
         const backfill = fakeBackfill([[]]);
