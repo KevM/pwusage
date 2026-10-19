@@ -80,7 +80,7 @@ cmd/next-app/
 ├── supabase/               # Supabase config and migrations
 ├── scripts/                # Maintenance scripts (run via npx tsx)
 ├── public/                 # Static assets
-└── vitest.config.ts
+└── vitest.config.mts
 ```
 
 ## Key Data Models
