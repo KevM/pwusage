@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 const run = promisify(execFile);
 const WORKFLOWS = '../../.github/workflows';
-const DEV_ONLY_SCRIPTS = ['assert-dev-database.sql', 'sanitize-dev-copy.sql', 'prune-dev-copy.sql', 'check-dev-database-url.sh'];
+const DEV_ONLY_SCRIPTS = ['assert-dev-database.sql', 'load-dev-energy-data.sql', 'sanitize-dev-copy.sql', 'prune-dev-copy.sql', 'check-dev-database-url.sh'];
 
 // Splits a workflow into top-level jobs, and a job into its steps. Indentation
 // follows the repo's workflows: jobs at two spaces, steps at six.
@@ -75,10 +75,32 @@ describe('dev-only database scripts stay away from prod', () => {
         expect(restore.indexOf('psql')).toBe(restore.indexOf('psql -X -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f scripts/assert-dev-database.sql'));
     });
 
-    it('restores data and sanitizes it in one transaction that stops on errors', () => {
+    it('restores data, the EnergyData subset and the scrub in one transaction that stops on errors', () => {
         expect(stepNamed(verifyDb, 'Restore to Dev DB')).toMatch(
-            /psql -X --single-transaction -v ON_ERROR_STOP=1 "\$DEV_DATABASE_URL" -f data\.sql -f scripts\/sanitize-dev-copy\.sql/,
+            /psql -X --single-transaction -v ON_ERROR_STOP=1 "\$DEV_DATABASE_URL" -f data\.sql -f scripts\/load-dev-energy-data\.sql -f scripts\/sanitize-dev-copy\.sql < dev-energy-data\.csv/,
         );
+    });
+
+    it('downloads only the EnergyData subset dev keeps, not the full history', () => {
+        const dump = stepNamed(verifyDb, 'Dump Production DB');
+        const data = dump.split('\n').find((line) => line.includes('-f data.sql'));
+        // Unquoted: the CLI reads -x as a CSV list (see dump-db-backup.sh).
+        expect(data).toMatch(/ -x public\.EnergyData(?:\s|$)/);
+        expect(dump).toMatch(/-f scripts\/export-dev-energy-data\.sql > dev-energy-data\.csv/);
+        // Exported first, so every Site and Tariff a row references is already in data.sql.
+        expect(dump.indexOf('export-dev-energy-data.sql')).toBeLessThan(dump.indexOf('-f data.sql'));
+    });
+
+    it('keeps the export read-only and unguarded, since it runs against prod', () => {
+        const exportSql = readFileSync('scripts/export-dev-energy-data.sql', 'utf8').replace(/--.*$/gm, '');
+        expect(exportSql).not.toContain('assert-dev-database');
+        expect(exportSql).not.toMatch(/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE)\b/i);
+    });
+
+    it('exports the same EnergyData window that the prune keeps', () => {
+        const windowOf = (file: string) => readFileSync(file, 'utf8').match(/interval '(\d+ days)'/)?.[1];
+        expect(windowOf('scripts/export-dev-energy-data.sql')).toBeDefined();
+        expect(windowOf('scripts/export-dev-energy-data.sql')).toBe(windowOf('scripts/prune-dev-copy.sql'));
     });
 
     it('copies only public data, keeping managed Supabase tables out of dev restores', () => {
@@ -95,7 +117,7 @@ describe('dev-only database scripts stay away from prod', () => {
         for (const dump of dumps) expect(dump).toMatch(/--schema public(?:\s|$)/);
     });
 
-    it('prunes only after migrations were verified on full data', () => {
+    it('prunes only after migrations ran', () => {
         const prune = stepIndex(verifyDb, 'Prune Dev Copy');
         expect(stepNamed(verifyDb, 'Prune Dev Copy')).toContain('-f scripts/prune-dev-copy.sql');
         expect(prune).toBeGreaterThan(stepIndex(verifyDb, 'Run Migrations on Dev'));
