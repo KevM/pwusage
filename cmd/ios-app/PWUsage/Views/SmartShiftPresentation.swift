@@ -103,6 +103,8 @@ struct BetterJobHint: Equatable {
 struct SmartShiftScreen: Equatable {
     enum Content: Equatable {
         case verdict(SmartShiftVerdict)
+        /// The solar forecast is still loading and nothing fresh is on hand.
+        case loading
         case blocked(String)
         case noJobs
     }
@@ -243,6 +245,8 @@ enum SmartShiftPresentation {
                                         timing: timing, now: now, billingCycleEnd: billingCycleEnd) {
             return SmartShiftScreen(content: .blocked(message))
         }
+        // A verdict priced without the forecast would flash, then change when it lands.
+        if forecast == .loading { return SmartShiftScreen(content: .loading) }
         guard let comparison = result.comparison else { return SmartShiftScreen(content: .blocked(cannotCompareMessage)) }
         let context = Context(profile: profile, comparison: comparison, timing: timing, now: now,
                               billingCycleEnd: billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone)
