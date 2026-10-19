@@ -15,6 +15,12 @@ struct LoadTimingForecastEstimator {
     static let forecastWindow: TimeInterval = 7 * 86_400
     /// How far below zero a cloudy week may leave a bank a start dips into.
     static let safetyShortfallKwh = 3.0
+    /// How far each forecast interval moves from `pv_estimate` toward `pv_estimate10`
+    /// in the cautious run, so the safety window as a whole is a 1-in-4 week rather
+    /// than seven 1-in-10 days in a row. The weekly 25th percentile falls short of
+    /// the median by z(0.25)·σ·√7, the daily 10th percentile by z(0.10)·σ, so each
+    /// interval moves (0.6745 / 1.2816) / √7 ≈ 20% of the way (days taken as independent).
+    static let forecastCautiousWeight = (0.6745 / 1.2816) / 7.0.squareRoot()
 
     /// Whether the cautious projection lets the starts dip into banks.
     enum Safety: Codable, Equatable {
@@ -456,7 +462,10 @@ struct LoadTimingForecastEstimator {
                 guard let interval = interval(at: date),
                       let home = slot.homeKw, let battery = slot.batteryNetChargeKw,
                       home.isFinite, battery.isFinite else { return nil }
-                let solar = cautious ? (interval.cautiousPowerKw ?? interval.powerKw) : interval.powerKw
+                var solar = interval.powerKw
+                if cautious, let dull = interval.cautiousPowerKw, dull.isFinite {
+                    solar += (dull - solar) * LoadTimingForecastEstimator.forecastCautiousWeight
+                }
                 return Flow(netExportKw: solar - home - battery, physicalSurplusKw: solar - home - max(battery, 0))
             }
             guard let typical = slot.gridNetExportKw, typical.isFinite else { return nil }
