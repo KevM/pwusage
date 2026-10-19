@@ -9,12 +9,13 @@
  * the import lock; a multi-year site takes over an hour. The days between the
  * hardware install and utility provisioning never have data: once a run
  * confirms that gap it records Site.history_backfill_from, and later runs
- * start there instead of re-fetching it.
+ * start there instead of re-fetching it. A complete --apply run stamps
+ * Site.history_migrated_at, which the admin Sites tab shows.
  */
 import 'dotenv/config';
 import {pool} from '../src/lib/db';
 import {EnergyRepo} from '../src/lib/energy-repo';
-import {migrateSiteHistory,parseMigrationArgs,type BackfillDeps,type MigrationSite} from '../src/lib/history-migration';
+import {isMigrationComplete,migrateSiteHistory,parseMigrationArgs,type BackfillDeps,type MigrationSite} from '../src/lib/history-migration';
 import {Importer,planMissingWindows} from '../src/lib/importer';
 import {CompactHistoryStore} from '../src/lib/prototypes/compact-history-store';
 import {SiteRepo} from '../src/lib/site-repo';
@@ -56,8 +57,11 @@ async function run():Promise<void> {
             recordBackfillFrom:(siteId,from)=>siteRepo.setHistoryBackfillFrom(siteId,from),
         };
         const report=await migrateSiteHistory({site,backfill,store:new CompactHistoryStore(pool)},{...options,now:new Date()});
+        // Shown on the admin Sites tab.
+        const markedMigrated=isMigrationComplete(report);
+        if(markedMigrated)await siteRepo.setHistoryMigratedAt(site.id,new Date());
         // No IDs, tokens, tariffs or sample arrays in operator output.
-        console.log(JSON.stringify(report,null,2));
+        console.log(JSON.stringify({...report,markedMigrated},null,2));
     } finally {await pool.end();}
 }
 run().catch(error=>{

@@ -16,6 +16,19 @@ export interface SiteQueryOptions {
     includeTokens?: boolean;
 }
 
+export interface SiteHistoryOverview {
+    id: string;
+    name: string;
+    timezone: string;
+    installed: Date;
+    owner_email: string | null;
+    history_backfill_from: Date | null;
+    history_migrated_at: Date | null;
+    archived_days: number;
+    first_archived_day: Date | null;
+    last_archived_day: Date | null;
+}
+
 const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode, sankey_renderer, last_live_refresh_at, last_live_claim_at, live_status_cache';
 const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
 
@@ -432,6 +445,34 @@ export class SiteRepo {
             SET history_backfill_from = $2
             WHERE id = $1 AND (history_backfill_from IS NULL OR history_backfill_from < $2)
         `, [siteId, from]);
+    }
+
+    /** Stamped by scripts/migrate-site-history.ts after a complete --apply run. */
+    async setHistoryMigratedAt(siteId: string, at: Date): Promise<void> {
+        await pool.query('UPDATE "Site" SET history_migrated_at = $2 WHERE id = $1', [siteId, at]);
+    }
+
+    /**
+     * Admin view of each site's history migration: owner, migration marker and
+     * compact-archive coverage. The archive aggregate reads only the
+     * (site_id, day_start) primary key, never the archive payloads.
+     */
+    async getHistoryOverview(): Promise<SiteHistoryOverview[]> {
+        const { rows } = await pool.query<SiteHistoryOverview>(`
+            SELECT s.id, s.name, s.timezone, s.installed, u.email AS owner_email,
+                s.history_backfill_from, s.history_migrated_at,
+                COALESCE(a.archived_days, 0)::int AS archived_days,
+                a.first_archived_day, a.last_archived_day
+            FROM "Site" s
+            LEFT JOIN "User" u ON u.id = s.user_id
+            LEFT JOIN (
+                SELECT site_id, count(*) AS archived_days,
+                    min(day_start) AS first_archived_day, max(day_start) AS last_archived_day
+                FROM "EnergyDayArchive" GROUP BY site_id
+            ) a ON a.site_id = s.id
+            ORDER BY s.installed ASC
+        `);
+        return rows;
     }
 
     // Utility
