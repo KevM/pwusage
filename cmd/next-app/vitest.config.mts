@@ -9,7 +9,7 @@ export default defineConfig({
         setupFiles: ['./vitest.setup.ts'],
         exclude: [...configDefaults.exclude, '**/.next/**', '**/.vercel/**'],
         alias: {
-            '@': path.resolve(__dirname, './src')
+            '@': path.resolve(import.meta.dirname, './src')
         }
     },
 });
