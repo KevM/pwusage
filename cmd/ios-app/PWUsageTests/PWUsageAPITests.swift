@@ -267,7 +267,8 @@ final class PWUsageAPITests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = TodayEnergySnapshotStore(fileURL: directory.appendingPathComponent("widget.json"))
-        let now = Date()
+        // Keep the offline check an hour later within the same UTC day.
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-10-20T12:00:00Z"))
         var saved = TodayEnergySnapshot.sample(at: now.addingTimeInterval(-3600))
         saved.energy.homeKwh = 1
         try store.save(saved)
