@@ -102,8 +102,8 @@ struct TodayEnergySnapshot: Codable, Equatable, Sendable {
     }
 }
 
-/// Single app writer, atomic replacement, read-only widget. Missing entitlement fails closed.
-struct TodayEnergySnapshotStore {
+/// The app owns selection; the widget reads this seed and keeps its refresh cache separately.
+struct TodayEnergySnapshotStore: Sendable {
     let fileURL: URL
 
     static func shared() -> Self? {
@@ -124,7 +124,12 @@ struct TodayEnergySnapshotStore {
         try JSONEncoder().encode(value).write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
+    var refreshFileURL: URL {
+        fileURL.deletingLastPathComponent().appendingPathComponent("today-energy-widget-refresh.json")
+    }
+
     func clear() {
+        try? FileManager.default.removeItem(at: refreshFileURL)
         // Write a tombstone atomically before removal, so a failed removal cannot expose old data.
         try? Data("{}".utf8).write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         try? FileManager.default.removeItem(at: fileURL)

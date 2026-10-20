@@ -81,6 +81,7 @@ targets:
       properties:
         CFBundleDisplayName: Today's Energy
         PWUSAGE_APP_GROUP: "$(PWUSAGE_APP_GROUP)"
+        PWUSAGE_API_ORIGIN: "$(PWUSAGE_API_ORIGIN)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
@@ -99,6 +100,9 @@ targets:
       configs:
         Debug:
           PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
+          PWUSAGE_API_ORIGIN: https://pwusagebeta.fm.rodeo
+        Release:
+          PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
   PWUsageTests:
     type: bundle.unit-test
     platform: iOS

@@ -43,8 +43,8 @@ struct TodayEnergyMetricProvider: AppIntentTimelineProvider {
     }
 
     func timeline(for configuration: TodayEnergyMetricConfiguration, in context: Context) async -> Timeline<TodayEnergyMetricEntry> {
+        let snapshot = await TodayEnergyWidgetRefresh.current()
         let now = Date()
-        let snapshot = TodayEnergySnapshotStore.shared()?.load()
         let entries = TodayEnergySnapshot.timelineDates(for: snapshot, at: now).map {
             TodayEnergyMetricEntry(date: $0, snapshot: snapshot, metric: configuration.metric)
         }
