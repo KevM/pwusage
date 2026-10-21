@@ -46,16 +46,19 @@ struct BatteryHoldLockScreenView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // Text stays primary: the system can draw this card as translucent glass over
+            // the wallpaper, where accent-colored text over the gauge fill loses contrast.
             HStack(spacing: 6) {
                 BatteryHoldGlyph(size: 17)
+                    .foregroundStyle(Color.accentColor)
                 Text(attributes.siteName)
+                    .foregroundStyle(.secondary)
             }
             .font(.footnote.weight(.semibold))
-            .foregroundStyle(Color.accentColor)
             .lineLimit(1)
             Text(BatteryHoldActivityPresentation.headline(state))
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             BatteryHoldActivitySummary(attributes: attributes, state: state, isStale: isStale)

@@ -100,7 +100,7 @@ struct BatteryGaugeView: View {
             ZStack(alignment: .topLeading) {
                 if let fill = g.fill, fill.width > 0 {
                     Path(fill)
-                        .fill((isStale ? Color.secondary : Color.green).opacity((style == .card ? 0.18 : 0.55) * (isFinal ? 0.5 : 1)))
+                        .fill(fillStyle)
                         .clipShape(Path(roundedRect: g.inner, cornerRadius: max(0, g.cornerRadius - g.lineWidth), style: .continuous))
                 }
                 Path(roundedRect: g.body, cornerRadius: g.cornerRadius, style: .continuous)
@@ -121,5 +121,18 @@ struct BatteryGaugeView: View {
                 }
             }
         }
+    }
+
+    /// A subtle left-to-right gradient that deepens toward the live charge edge, so the
+    /// card's text sits over the faintest part. Stale charge stays a flat gray.
+    private var fillStyle: AnyShapeStyle {
+        let fade = isFinal ? 0.5 : 1.0
+        guard !isStale else {
+            return AnyShapeStyle(Color.secondary.opacity((style == .card ? 0.18 : 0.55) * fade))
+        }
+        let (start, end) = style == .card ? (0.06, 0.30) : (0.40, 0.70)
+        return AnyShapeStyle(LinearGradient(
+            colors: [Color.green.opacity(start * fade), Color.green.opacity(end * fade)],
+            startPoint: .leading, endPoint: .trailing))
     }
 }
