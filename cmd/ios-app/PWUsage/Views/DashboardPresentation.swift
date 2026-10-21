@@ -106,6 +106,7 @@ enum DashboardPresentation {
         let message: String?
         let freshness: String?
         let accessibilityLabel: String
+        var isBanked = false
     }
 
     enum BatteryDirection: Equatable {
@@ -188,7 +189,7 @@ enum DashboardPresentation {
     }
 
     static func tariffBalance(_ netGridKwh: Double) -> String {
-        let status = netGridKwh < 0 ? "Surplus" : (netGridKwh > 0 ? "Deficit" : "Balanced")
+        let status = netGridKwh < 0 ? "Export cushion" : (netGridKwh > 0 ? "Import gap" : "Even")
         return "\(status) \(energy(abs(netGridKwh)))"
     }
 
@@ -214,26 +215,26 @@ enum DashboardPresentation {
     }
 
     static func loadBalance(_ balanceKwh: Double?) -> String {
-        guard let balanceKwh else { return "No balance yet" }
-        let status = balanceKwh < 0 ? "Surplus" : (balanceKwh > 0 ? "Deficit" : "Balanced")
+        guard let balanceKwh else { return "No bank yet" }
+        let status = balanceKwh < 0 ? "Banked" : (balanceKwh > 0 ? "Owed" : "Even")
         return "\(status) \(loadEnergyNumber(abs(balanceKwh))) kWh"
     }
 
     static func liveLoadBalance(_ cycleNetExportKwh: Double?) -> String {
-        guard let cycleNetExportKwh else { return "No balance yet" }
-        let status = cycleNetExportKwh > 0 ? "Surplus" : (cycleNetExportKwh < 0 ? "Deficit" : "Balanced")
+        guard let cycleNetExportKwh else { return "No bank yet" }
+        let status = cycleNetExportKwh > 0 ? "Banked" : (cycleNetExportKwh < 0 ? "Owed" : "Even")
         return "\(status) \(loadEnergyNumber(abs(cycleNetExportKwh))) kWh"
     }
 
     static func loadBalanceAccessibilityLabel(_ balanceKwh: Double?) -> String {
-        guard let balanceKwh else { return "No balance yet" }
-        let status = balanceKwh < 0 ? "Surplus" : (balanceKwh > 0 ? "Deficit" : "Balanced")
+        guard let balanceKwh else { return "No bank yet" }
+        let status = balanceKwh < 0 ? "Banked" : (balanceKwh > 0 ? "Owed" : "Even")
         return "\(status) \(loadEnergyNumber(abs(balanceKwh))) kilowatt-hours"
     }
 
     static func liveLoadBalanceAccessibilityLabel(_ cycleNetExportKwh: Double?) -> String {
-        guard let cycleNetExportKwh else { return "No balance yet" }
-        let status = cycleNetExportKwh > 0 ? "Surplus" : (cycleNetExportKwh < 0 ? "Deficit" : "Balanced")
+        guard let cycleNetExportKwh else { return "No bank yet" }
+        let status = cycleNetExportKwh > 0 ? "Banked" : (cycleNetExportKwh < 0 ? "Owed" : "Even")
         return "\(status) \(loadEnergyNumber(abs(cycleNetExportKwh))) kilowatt-hours"
     }
 
@@ -254,23 +255,24 @@ enum DashboardPresentation {
         currencyCode: String? = nil
     ) -> LoadTimingSummary {
         guard hasTariff else {
-            return LoadTimingSummary(title: "Load timing unavailable", rate: nil, balance: nil, message: "No active tariff is configured", freshness: nil, accessibilityLabel: "Load timing unavailable. No active tariff is configured")
+            return LoadTimingSummary(title: "Smart Shift unavailable", rate: nil, balance: nil, message: "No rate plan is set up", freshness: nil, accessibilityLabel: "Smart Shift unavailable. No rate plan is set up")
         }
         guard let timing else {
-            return LoadTimingSummary(title: "Load timing unavailable", rate: nil, balance: nil, message: "Load timing is unavailable", freshness: nil, accessibilityLabel: "Load timing unavailable")
+            return LoadTimingSummary(title: "Smart Shift unavailable", rate: nil, balance: nil, message: "No live summary is available", freshness: nil, accessibilityLabel: "Smart Shift unavailable. No live summary is available")
         }
 
         let title = tariffPeriodTitle(timing.periodName)
         let isUnobserved = timing.basis == "unobserved"
         let rateValue = isUnobserved ? timing.buyRate : timing.marginalCost
         let rate = currencyCode.map { loadRate(rateValue, code: $0) }
-        let balance = isUnobserved ? "No balance yet" : (timing.balanceKwh.map(liveLoadBalance) ?? "Balance unavailable")
+        let balance = isUnobserved ? "No bank yet" : (timing.balanceKwh.map(liveLoadBalance) ?? "No bank data")
         let freshness = isStale ? "Showing the last successful live summary" : nil
         let spokenRate = currencyCode.map { loadRateAccessibilityLabel(rateValue, code: $0) }
-        let label = [title, spokenRate, isUnobserved ? "No balance yet" : liveLoadBalanceAccessibilityLabel(timing.balanceKwh), freshness]
+        let label = [title, spokenRate, isUnobserved ? "No bank yet" : liveLoadBalanceAccessibilityLabel(timing.balanceKwh), freshness]
             .compactMap { $0 }
             .joined(separator: ", ")
-        return LoadTimingSummary(title: title, rate: rate, balance: balance, message: nil, freshness: freshness, accessibilityLabel: label)
+        let isBanked = !isUnobserved && (timing.balanceKwh ?? 0) > 0
+        return LoadTimingSummary(title: title, rate: rate, balance: balance, message: nil, freshness: freshness, accessibilityLabel: label, isBanked: isBanked)
     }
 
     /// Whether the Load timing card must say it is showing a stale summary.
