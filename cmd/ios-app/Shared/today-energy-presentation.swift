@@ -47,10 +47,10 @@ enum TodayEnergyPresentation {
             MetricTile(title: "Home", value: energy(homeKwh), symbol: "house.fill", tint: .blue, compact: compact),
             MetricTile(title: "Solar", value: energy(solarKwh), symbol: "sun.max.fill", tint: .orange, compact: compact),
             MetricTile(title: "Grid", value: signedEnergy(gridNetKwh),
-                       detail: gridNetKwh > 0 ? "Net import" : (gridNetKwh < 0 ? "Net export" : "Balanced"),
+                       detail: gridNetKwh > 0 ? "Net import" : (gridNetKwh < 0 ? "Net export" : "Even"),
                        symbol: "powerplug", tint: .gray, compact: compact),
             MetricTile(title: "Battery", value: signedEnergy(batteryNetKwh),
-                       detail: batteryNetKwh > 0 ? "Net discharge" : (batteryNetKwh < 0 ? "Net charge" : "Balanced"),
+                       detail: batteryNetKwh > 0 ? "Net discharge" : (batteryNetKwh < 0 ? "Net charge" : "Even"),
                        symbol: showsStateOfCharge ? batterySymbol(stateOfCharge) : "battery.100percent",
                        tint: .green, compact: compact,
                        symbolPrefix: showsStateOfCharge ? stateOfCharge.map { "\(Int($0.rounded()))%" } : nil,
@@ -153,7 +153,7 @@ struct TodayEnergyWidgetContent: View {
                 Text(TodayEnergyPresentation.todayCostDetail(cost))
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                     .lineLimit(1).minimumScaleFactor(0.65)
-                    .accessibilityLabel("Import charges \(TodayEnergyPresentation.money(cost.importCharges, currency: cost.currency)). Export credits \(TodayEnergyPresentation.money(cost.exportCredits, currency: cost.currency)). Netted by tariff period.")
+                    .accessibilityLabel("Import charges \(TodayEnergyPresentation.money(cost.importCharges, currency: cost.currency)). Export credits \(TodayEnergyPresentation.money(cost.exportCredits, currency: cost.currency)). Netted by rate period.")
             }
             Text("Estimated").font(.caption2).foregroundStyle(.secondary)
         }

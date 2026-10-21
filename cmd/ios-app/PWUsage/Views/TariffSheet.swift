@@ -49,14 +49,14 @@ struct TariffSheet: View {
                         }
                     }
                     if response.tariffs.isEmpty {
-                        ContentUnavailableView("No tariffs", systemImage: "tag", description: Text("No tariffs are configured for this site."))
+                        ContentUnavailableView("No rate plans", systemImage: "tag", description: Text("No rate plans are set up for this site."))
                     }
                 } else if isLoading {
-                    HStack { Spacer(); ProgressView("Loading tariffs…"); Spacer() }
+                    HStack { Spacer(); ProgressView("Loading rate plans…"); Spacer() }
                 }
                 if failed {
                     Section {
-                        Text(response == nil ? "Tariffs could not be loaded." : "Showing previously loaded rates. Current activity could not be refreshed.")
+                        Text(response == nil ? "Rate plans could not be loaded." : "Showing previously loaded rates. Current activity could not be refreshed.")
                             .foregroundStyle(.secondary)
                         Button("Retry") { Task { await refresh() } }.disabled(isLoading)
                     }

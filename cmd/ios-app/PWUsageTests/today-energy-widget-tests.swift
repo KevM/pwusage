@@ -145,6 +145,9 @@ struct TodayEnergyWidgetTests {
         #expect(unknown[3].symbol == "battery.0percent")
         #expect(unknown[3].spokenRole == "Battery charge unknown")
         #expect(unknown[3].symbolPrefix == nil)
+        let even = TodayEnergyPresentation.tiles(homeKwh: 12, solarKwh: 18, gridNetKwh: 0, batteryNetKwh: 0)
+        #expect(even[2].detail == "Even")
+        #expect(even[3].detail == "Even")
         let appTiles = TodayEnergyPresentation.tiles(homeKwh: 12, solarKwh: 18, gridNetKwh: -6, batteryNetKwh: -2,
                                                      stateOfCharge: 78)
         #expect(appTiles[3].symbolPrefix == nil)

@@ -65,6 +65,13 @@ and simplify the sentence.
 - **Capitalization:** title case for navigation titles, tab labels and buttons
   ("Smart Shift", "Start Job", "Turn Off Battery Saver"); sentence case for
   body text, captions and VoiceOver hints.
+- **Smart Shift's energy weather uses "bank".** On the Smart Shift screen and
+  its dashboard summary, the projected kWh in a rate period is a **bank**:
+  positive is **banked**, negative is **owed** ("+18 kWh banked now",
+  "−6 kWh owed now"), and energy the bank cannot cover is bought at the
+  **full rate**. These are deliberate Smart Shift terms; do not replace them
+  with "export cushion", "import gap" or "grid rate" there. Everywhere else,
+  use the word list.
 - **No dashes as separators in sentences.** Use a middle dot (·) for compact
   metadata ("Off-Peak · $0.12/kWh") or a new sentence.
 

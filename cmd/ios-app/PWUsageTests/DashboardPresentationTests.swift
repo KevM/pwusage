@@ -187,11 +187,11 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.signedBatteryEnergy(-2) == "↑ 2.0 kWh")
     }
 
-    @Test("Tariff balance names surplus and deficit from net grid energy")
-    func tariffBalanceNamesSurplusAndDeficitFromNetGridEnergy() {
-        #expect(DashboardPresentation.tariffBalance(-42.34) == "Surplus 42.3 kWh")
-        #expect(DashboardPresentation.tariffBalance(17.06) == "Deficit 17.1 kWh")
-        #expect(DashboardPresentation.tariffBalance(0) == "Balanced 0.0 kWh")
+    @Test("Rate period total names export cushion and import gap from net grid energy")
+    func ratePeriodTotalNamesExportCushionAndImportGap() {
+        #expect(DashboardPresentation.tariffBalance(-42.34) == "Export cushion 42.3 kWh")
+        #expect(DashboardPresentation.tariffBalance(17.06) == "Import gap 17.1 kWh")
+        #expect(DashboardPresentation.tariffBalance(0) == "Even 0.0 kWh")
     }
 
     @Test("Freshness uses the supplied source time and shows missing and stale states")
@@ -217,11 +217,11 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.loadRate(0.14, code: "USD", locale: Locale(identifier: "en_US")) == "14¢/kWh")
         #expect(DashboardPresentation.loadRate(0.12345, code: "USD", locale: Locale(identifier: "en_US")) == "12.34¢/kWh")
         #expect(DashboardPresentation.loadRate(0.04, code: "GBP", locale: Locale(identifier: "en_GB")) == "£0.04/kWh")
-        #expect(DashboardPresentation.loadBalance(-3.25) == "Surplus 3.3 kWh")
-        #expect(DashboardPresentation.loadBalance(4) == "Deficit 4.0 kWh")
-        #expect(DashboardPresentation.loadBalance(0) == "Balanced 0.0 kWh")
-        #expect(DashboardPresentation.loadBalance(nil) == "No balance yet")
-        #expect(DashboardPresentation.loadBalanceAccessibilityLabel(-3.25) == "Surplus 3.3 kilowatt-hours")
+        #expect(DashboardPresentation.loadBalance(-3.25) == "Banked 3.3 kWh")
+        #expect(DashboardPresentation.loadBalance(4) == "Owed 4.0 kWh")
+        #expect(DashboardPresentation.loadBalance(0) == "Even 0.0 kWh")
+        #expect(DashboardPresentation.loadBalance(nil) == "No bank yet")
+        #expect(DashboardPresentation.loadBalanceAccessibilityLabel(-3.25) == "Banked 3.3 kilowatt-hours")
         #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12, code: "USD", locale: Locale(identifier: "en_US")) == "12 cents per kilowatt-hour")
         #expect(DashboardPresentation.loadRateAccessibilityLabel(0.01, code: "USD", locale: Locale(identifier: "en_US")) == "1 cent per kilowatt-hour")
         #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12345, code: "USD", locale: Locale(identifier: "en_US")) == "12.34 cents per kilowatt-hour")
