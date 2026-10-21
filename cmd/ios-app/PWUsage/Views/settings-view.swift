@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The Settings tab: which site you're on, its Rate Plans, About, and Sign Out.
+/// The Settings tab: site, Rate Plans, Solar Forecast, About, and Sign Out.
 /// It has no stack of its own; the tab's `NavigationStack` hosts the pushes.
 struct SettingsView: View {
     let site: MobileSite
@@ -9,6 +9,7 @@ struct SettingsView: View {
     let onSignOut: () -> Void
 
     @State private var isConfirmingSignOut = false
+    @State private var isSolarForecastSheetPresented = false
 
     var body: some View {
         List {
@@ -35,6 +36,11 @@ struct SettingsView: View {
                 NavigationLink(value: SettingsDestination.ratePlans) {
                     Label("Rate Plans", systemImage: "list.bullet.rectangle")
                 }
+                Button {
+                    isSolarForecastSheetPresented = true
+                } label: {
+                    Label("Solar Forecast", systemImage: "sun.max")
+                }
                 NavigationLink(value: SettingsDestination.about) {
                     Label("About", systemImage: "info.circle")
                 }
@@ -49,6 +55,9 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .inlineNavigationTitle()
+        .sheet(isPresented: $isSolarForecastSheetPresented) {
+            SolarForecastSettingsSheet(coordinator: coordinator)
+        }
         .navigationDestination(for: SettingsDestination.self) { destination in
             switch destination {
             case .ratePlans:

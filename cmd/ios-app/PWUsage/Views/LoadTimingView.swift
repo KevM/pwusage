@@ -423,10 +423,6 @@ struct LoadTimingView: View {
         .navigationTitle("Smart Shift")
         .inlineNavigationTitle()
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("Solar Forecast Settings", systemImage: "sun.max") { isSolarForecastSheetPresented = true }
-                    .accessibilityLabel("Solar forecast settings")
-            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     coordinator.isBatteryHoldSheetPresented = true
