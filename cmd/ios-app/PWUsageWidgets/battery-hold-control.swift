@@ -28,7 +28,7 @@ struct BatteryHoldControl: ControlWidget {
             }
         }
         .displayName("pwusage Battery Saver")
-        .description("Open pwusage to turn on Battery Saver or manage it. Sign in to the app first to choose a site.")
+        .description("Saves your Powerwall charge for when rates spike. Opens pwusage to turn Battery Saver on or off. Sign in to the app first to choose a site.")
         .promptsForUserConfiguration()
     }
 }

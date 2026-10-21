@@ -265,12 +265,12 @@ its snapshot. Xcode previews include all four small selections plus stale, unkno
 and unavailable states. Check **Edit Widget** selection and multiple independent widgets
 on a device; simulator builds verify App Intents metadata and layout, not the full picker UI.
 
-### Battery Hold in Control Center (iOS 18+)
+### Battery Saver in Control Center (iOS 18+)
 
 Open pwusage and sign in so the app can load your sites. In Control Center, choose
-**Add a Control → pwusage → pwusage Battery Hold**, then select its **Site**. Each control
+**Add a Control → pwusage → pwusage Battery Saver**, then select its **Site**. Each control
 keeps its own site, independently of the dashboard selection. Tap it to open the
-existing Battery Hold sheet and choose a reserve/duration or review an active hold.
+existing Battery Saver sheet and choose a reserve/duration or review an active hold.
 Adding or tapping the control does not send a Tesla command.
 
 The launcher is included in both app and extension intent metadata. Its OpenIntent
@@ -279,7 +279,7 @@ The app reloads the authorized site list before presenting the sheet. Sign-in an
 connection retries retain the request; a removed site or malformed link shows a
 message instead of opening another site's controls. Explicit sign-out discards a
 pending request. Valid external launches reset the dashboard navigation and its
-other sheets before opening Battery Hold; the normal toolbar retains navigation.
+other sheets before opening Battery Saver; the normal toolbar retains navigation.
 The existing sheet refreshes hold status and controls all writes.
 
 The existing App Group carries a separate protected, atomically replaced picker
@@ -296,10 +296,11 @@ start/restore a real hold without explicit Tesla command test authorization.
 Simulator tests/builds validate routing and intent metadata, not Control Center's
 device handoff or signed provisioning.
 
-The Battery Hold control's icon is the system symbol `bolt.batteryblock`
+The Battery Saver control's icon is the system symbol `bolt.batteryblock`
 (`BatteryHoldControlIdentity.symbolName`). Its main label is **pwusage**, with the
 configured site as the secondary label; the gallery name is **pwusage Battery
-Hold**. Existing controls keep their kind and site configuration.
+Saver** (it was **pwusage Battery Hold**; Control Center may show the old
+name until the device restarts). Existing controls keep their kind and site configuration.
 
 **Don't swap in a custom symbol without a device test, and restart the device
 between tests.** Control Center caches the last artwork it drew for a control
@@ -320,7 +321,7 @@ Control Center draws the resting tile from the button's **label**
 `ControlWidgetButton(action:label:actionLabel:)`); the action label is only the
 transient state while the action runs and carries the site name.
 
-Opening the app asks the system to reload configured Battery Hold controls, but
+Opening the app asks the system to reload configured Battery Saver controls, but
 that does not refresh cached artwork. After an icon change: remove the control,
 install, restart the device, then re-add the control.
 
