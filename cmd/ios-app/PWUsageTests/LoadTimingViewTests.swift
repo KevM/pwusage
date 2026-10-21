@@ -1208,7 +1208,9 @@ struct LoadTimingViewTests {
 
         let none = evaluate(.none, sourceAge: 0)
         #expect(none.forecast == ForecastAvailability.none)
-        #expect(none.result.comparison?.assumptions.contains { $0.contains("held at today's observed values") } == true)
+        #expect(none.result.comparison?.assumptions.contains { $0 == "Banks are held at today's observed values; no solar or household use is projected." } == true)
+        #expect(none.result.comparison?.assumptions.contains { $0 == "Estimated cost uses each period's current bank through the shared horizon." } == true)
+        #expect(none.result.comparison?.assumptions.contains { $0.localizedCaseInsensitiveContains("balance") } == false)
 
         let missingSource = evaluate(.none, sourceAge: nil)
         #expect(missingSource.result.unavailableReason == .staleBalance)

@@ -153,6 +153,11 @@ struct SmartShiftPresentationTests {
         #expect(none.notes == [.connectSolcast(usesHistory: false), .unobservedBalance])
     }
 
+    @Test func fallbackCopyUsesBankTerms() {
+        #expect(SmartShiftPresentation.unobservedBalanceNote == "Some rate periods have no bank yet, so they're priced at the full rate.")
+        #expect(SmartShiftPresentation.incompleteBalanceMessage == "Some rate periods or bank data are missing, so costs can't be compared.")
+    }
+
     @Test func forecastStatesBecomeNotes() throws {
         #expect(try Self.verdict(Self.make(forecast: .ready)).notes.isEmpty)
         #expect(try Self.verdict(Self.make(forecast: .unusable("Solcast is limiting requests."))).notes
