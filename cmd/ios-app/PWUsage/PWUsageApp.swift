@@ -366,7 +366,7 @@ final class PWUsageAppModel: ObservableObject {
         guard let siteID = BatteryHoldLink.siteID(from: url) else {
             pendingBatteryHoldSiteID = nil
             dismissCompetingPresentations()
-            batteryHoldNavigationMessage = "Choose a site in the Battery Hold control’s configuration, then try again."
+            batteryHoldNavigationMessage = "Choose a site in the Battery Saver control’s configuration, then try again."
             return
         }
         await openBatteryHold(siteID: siteID)
@@ -649,7 +649,7 @@ private struct PWUsageRootView: View {
                     .padding()
             }
         }
-        .alert("Battery Hold", isPresented: Binding(
+        .alert("Battery Saver", isPresented: Binding(
             get: { model.batteryHoldNavigationMessage != nil },
             // Only the buttons dismiss this alert; "OK" is what abandons the
             // request, so the binding must not cancel out from under "Try Again".

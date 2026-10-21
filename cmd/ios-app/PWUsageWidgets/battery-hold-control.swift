@@ -3,9 +3,9 @@ import SwiftUI
 import WidgetKit
 
 struct BatteryHoldControlConfiguration: ControlConfigurationIntent {
-    static let title: LocalizedStringResource = "pwusage Battery Hold"
+    static let title: LocalizedStringResource = "pwusage Battery Saver"
     @Parameter(title: "Site") var site: BatteryHoldControlSite?
-    static var parameterSummary: some ParameterSummary { Summary("Open Battery Hold for \(\.$site)") }
+    static var parameterSummary: some ParameterSummary { Summary("Open Battery Saver for \(\.$site)") }
 }
 
 struct BatteryHoldControlProvider: AppIntentControlValueProvider {
@@ -27,8 +27,8 @@ struct BatteryHoldControl: ControlWidget {
                 Text(site.name)
             }
         }
-        .displayName("pwusage Battery Hold")
-        .description("Open pwusage to choose a battery hold or manage an active hold. Sign in to the app first to choose a site.")
+        .displayName("pwusage Battery Saver")
+        .description("Open pwusage to turn on Battery Saver or manage it. Sign in to the app first to choose a site.")
         .promptsForUserConfiguration()
     }
 }

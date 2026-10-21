@@ -67,7 +67,7 @@ struct BatteryHoldCoordinatorTests {
         await coordinator.sendBatteryHoldCommand(.park(.init(mode: .auto)))
         #expect(coordinator.batteryHold.failure == .reserveSyncPending)
         #expect(coordinator.batteryHold.isCurrent)
-        #expect(coordinator.batteryHold.failure?.message.contains("previous hold") == true)
+        #expect(coordinator.batteryHold.failure?.message.contains("last Battery Saver") == true)
         api.error = nil
         api.commandResult = .init(status: .ok, hold: try Self.hold(), current: nil)
         api.response = .init(hold: try Self.hold(), notice: nil)

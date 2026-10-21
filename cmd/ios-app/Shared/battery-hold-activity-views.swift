@@ -103,7 +103,7 @@ struct BatteryHoldActivitySummary: View {
                 }
                 if let home = BatteryHoldActivityPresentation.homeLoadText(state) {
                     figure(home, symbol: "house.fill", tint: .secondary)
-                        .accessibilityLabel("Home load \(home)")
+                        .accessibilityLabel("Home use \(home)")
                 }
                 if let peak = BatteryHoldActivityPresentation.peakText(state) {
                     Text(peak).foregroundStyle(.secondary)
