@@ -280,7 +280,7 @@ struct PWUsageAppModelTests {
         // Losing access to a site clears its activity from the Lock Screen.
         api.sites = [Self.site("site-1")]
         await model.reloadSitesAfterSignIn()
-        await eventually { host.handles[1].ends.count == 1 }
+        try await eventually { host.handles[1].ends.count == 1 }
         #expect(host.handles[1].ends.first?.immediately == true)
         #expect(host.handles[0].ends.isEmpty)
 
