@@ -279,20 +279,20 @@ final class PWUsageAppModel: ObservableObject {
         } catch let error as PWUsageAPIError {
             guard generation == siteInstallGeneration else { return }
             if error == .signInRequired {
-                await invalidateSession(message: "Sign-in expired. Please try again.")
+                await invalidateSession(message: "Sign-in expired. Try again.")
             } else if authService.isAuthenticated {
                 screenState = .unavailable
                 signInMessage = "You’re signed in, but pwusage could not load your sites. Check your connection and try again."
             } else {
                 screenState = .signedOut
-                signInMessage = "Could not complete sign-in. Please try again."
+                signInMessage = "Could not complete sign-in. Try again."
             }
         } catch let error as MobileAuthService.AuthError {
             screenState = .signedOut
-            signInMessage = error == .cancelled ? nil : "Could not complete sign-in. Please try again."
+            signInMessage = error == .cancelled ? nil : "Could not complete sign-in. Try again."
         } catch {
             screenState = .signedOut
-            signInMessage = "Could not connect to pwusage. Please try again."
+            signInMessage = "Could not connect to pwusage. Try again."
         }
     }
 
@@ -315,7 +315,7 @@ final class PWUsageAppModel: ObservableObject {
             // even though it does not clear the existing dashboard cookie.
             if wasAuthenticated { authService.restoreAuthenticatedSession() }
             signInMessage = (error as? MobileAuthService.AuthError) == .cancelled
-                ? nil : "Could not reconnect Tesla. Please try again."
+                ? nil : "Could not reconnect Tesla. Try again."
             return
         }
         guard generation == siteInstallGeneration else { return }
@@ -441,7 +441,7 @@ final class PWUsageAppModel: ObservableObject {
         clearSelectedTab()
         await clearAccountScopeID()
         screenState = .signedOut
-        signInMessage = cleanupFailed ? "Could not clear local solar forecast data. Please try again." : nil
+        signInMessage = cleanupFailed ? "Could not clear local solar forecast data. Try again." : nil
     }
 
     func sessionExpired() async {
@@ -466,7 +466,7 @@ final class PWUsageAppModel: ObservableObject {
         await clearAccountScopeID()
         screenState = .signedOut
         signInMessage = cleanupFailed
-            ? "Could not clear local solar forecast data. Please try again."
+            ? "Could not clear local solar forecast data. Try again."
             : message
     }
 

@@ -52,13 +52,13 @@ enum SolarForecastSettingsStatus {
             return providerFailure(hasCredential: hasCredential, operation: operation)
         case .cleanupFailed where operation == .disconnect:
             return SolarForecastSettingsPresentation(
-                message: "Disconnect could not finish safely. Your connection is still present; please retry.",
+                message: "Disconnect could not finish safely. Your connection is still saved. Try again.",
                 isConnected: hasCredential,
                 allowsManualIDs: false
             )
         case .persistenceFailed where operation == .connection:
             return SolarForecastSettingsPresentation(
-                message: "This device could not safely save the Solcast connection. Please try again.",
+                message: "This device could not safely save the Solcast connection. Try again.",
                 isConnected: hasCredential,
                 allowsManualIDs: false
             )
@@ -83,7 +83,7 @@ enum SolarForecastSettingsStatus {
              // right message for it.
              .discoveryFailed(.storageFailure), .discoveryFailed(.cleanupFailure), .discoveryFailed(.saveFailed):
             return SolarForecastSettingsPresentation(
-                message: "This device could not safely save the change. Please try again.",
+                message: "This device could not safely save the change. Try again.",
                 isConnected: hasCredential,
                 allowsManualIDs: false
             )

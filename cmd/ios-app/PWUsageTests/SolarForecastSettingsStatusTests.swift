@@ -60,7 +60,7 @@ struct SolarForecastSettingsStatusTests {
 
         #expect(!status.isConnected)
         #expect(!status.allowsManualIDs)
-        #expect(status.message == "This device could not safely save the Solcast connection. Please try again.")
+        #expect(status.message == "This device could not safely save the Solcast connection. Try again.")
     }
 
     @Test("Cleanup failure retains connected state and gives retry guidance")
@@ -73,6 +73,6 @@ struct SolarForecastSettingsStatusTests {
 
         #expect(status.isConnected)
         #expect(!status.allowsManualIDs)
-        #expect(status.message == "Disconnect could not finish safely. Your connection is still present; please retry.")
+        #expect(status.message == "Disconnect could not finish safely. Your connection is still saved. Try again.")
     }
 }
