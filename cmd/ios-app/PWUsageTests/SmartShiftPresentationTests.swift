@@ -180,8 +180,8 @@ struct SmartShiftPresentationTests {
     }
 
     @Test func missingRatePlanBlocks() throws {
-        #expect(try Self.blocked(Self.make(timing: Self.timing(hasTariff: false))).contains("Rate Plan"))
-        #expect(try Self.blocked(Self.make(result: .init(comparison: nil, unavailableReason: .missingTariff))).contains("Rate Plan"))
+        #expect(try Self.blocked(Self.make(timing: Self.timing(hasTariff: false))).localizedCaseInsensitiveContains("rate plan"))
+        #expect(try Self.blocked(Self.make(result: .init(comparison: nil, unavailableReason: .missingTariff))).localizedCaseInsensitiveContains("rate plan"))
         #expect(try Self.blocked(Self.make(result: .init(comparison: nil, unavailableReason: .incompleteBalance))).contains("missing"))
     }
 
@@ -340,7 +340,7 @@ struct SmartShiftPresentationTests {
         #expect(rows[0].buy == DashboardPresentation.loadRate(0.20, code: "USD"))
         #expect(rows[0].sell == DashboardPresentation.loadRate(0.26, code: "USD"))
         let noCycle = SmartShiftPresentation.periodRows(timing: Self.rawKeyTiming(hasCycleData: false), currencyCode: "USD")
-        #expect(noCycle.allSatisfy { $0.balance == "No balance yet" })
+        #expect(noCycle.allSatisfy { $0.balance == "No bank yet" })
     }
 
     @Test func rawPeriodKeysReadAsTitles() throws {

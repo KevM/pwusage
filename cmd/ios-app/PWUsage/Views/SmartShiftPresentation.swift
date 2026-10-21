@@ -275,7 +275,7 @@ enum SmartShiftPresentation {
                 name: periodTitle(period.name, timing: timing),
                 buy: DashboardPresentation.loadRate(period.buyRate, code: currencyCode),
                 sell: DashboardPresentation.loadRate(period.sellRate, code: currencyCode),
-                balance: timing.hasCycleData ? balanceLabel(period.cycleNetExportKwh) : "No balance yet"
+                balance: timing.hasCycleData ? balanceLabel(period.cycleNetExportKwh) : "No bank yet"
             )
         }
     }

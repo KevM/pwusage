@@ -67,7 +67,7 @@ struct BillView: View {
     }
 
     private func periodsSection(_ response: MobileBillResponse) -> some View {
-        BillInformationCard(title: "Tariff period balances", symbol: "chart.bar.fill") {
+        BillInformationCard(title: "Rate period totals", symbol: "chart.bar.fill") {
             if response.currentBill.periods.isEmpty {
                 Text("No period totals are available for this cycle yet.")
                     .font(.subheadline)

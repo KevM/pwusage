@@ -76,7 +76,7 @@ enum LoadTimingForecastPresentation {
         return Placement(card: card, profile: profile)
     }
 
-    static let unavailableNotePrefix = "Solar forecast unavailable — using tariff and balance data."
+    static let unavailableNotePrefix = "Solar forecast unavailable. Using your rate plan and bank data."
     /// Deliberately does not reuse `unavailableNotePrefix`: the forecast is
     /// available here, it just did not reach the disk.
     /// Shown when the device could not write its forecast state, which has two sites:
@@ -167,10 +167,10 @@ enum LoadTimingForecastPresentation {
         // household baseline, not the absolute cost of the energy involved. Say so
         // in the copy: rendered as a bare "$X" the near-zero case (the load is
         // served by already-paid-for stored surplus) reads as a total.
-        let costNow = "Start now — adds \(money(comparison.costNow)) to your projected bill"
+        let costNow = "Start now. Adds \(money(comparison.costNow)) to your projected bill"
         let recommendedCost = startNow
             ? costNow
-            : "Start at \(clock(comparison.recommendedStart)) — adds \(money(comparison.recommendedCost)) to your projected bill"
+            : "Start at \(clock(comparison.recommendedStart)). Adds \(money(comparison.recommendedCost)) to your projected bill"
 
         let headline: String
         let savings: String?
@@ -178,9 +178,9 @@ enum LoadTimingForecastPresentation {
             // Anything below one minor unit renders as $0.00 and reads as noise.
             let alternative = comparison.bestAlternativeSavings
             if alternative > LoadTimingForecastEstimator.currencyMinorUnit(currencyCode) {
-                headline = "Start now — waiting would save about \(money(alternative)), which is not worth delaying"
+                headline = "Start now. Waiting would save about \(money(alternative)), which is not worth delaying"
             } else {
-                headline = "Start now — no cheaper start was found"
+                headline = "Start now. No cheaper start was found"
             }
             savings = nil
         } else {
@@ -243,13 +243,13 @@ enum LoadTimingForecastPresentation {
         case .staleBalance:
             return "Energy observations are too old for the solar comparison, so it's paused."
         case .incompleteBalance:
-            return "Some billing-period balances are missing, so the solar comparison is paused."
+            return "Some billing period bank data is missing, so the solar comparison is paused."
         case .noFittingRun:
             return "This load is longer than the search horizon. Try a smaller charge or a faster charging level."
         case .incompleteContext:
             return "There is not enough household history yet to estimate expected usage."
         case .missingTariff:
-            return "An active tariff is needed before costs can be compared."
+            return "An active rate plan is needed before costs can be compared."
         case .incompleteCoverage, .invalidInput:
             // These also stand in for "the view had nothing to evaluate", so the
             // device's own request bookkeeping is the better explanation.

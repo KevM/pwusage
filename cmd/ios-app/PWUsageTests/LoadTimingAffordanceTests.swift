@@ -27,7 +27,7 @@ struct LoadTimingAffordanceTests {
 
     @Test("Missing cycle balance is called out while retaining the estimate")
     func missingBalanceNoteIsExplicit() {
-        #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: true) == "Missing rate-period balances are estimated at the grid rate.")
+        #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: true) == "Missing rate period bank data is estimated at the full rate.")
         #expect(LoadTimingPresentation.missingBalanceNote(hasUnobservedBalance: false) == nil)
     }
 
@@ -40,7 +40,7 @@ struct LoadTimingAffordanceTests {
 
     @Test("No cycle observations remain visible as an informational note")
     func noCycleDataNote() {
-        #expect(LoadTimingPresentation.cycleObservationMessage(hasCycleData: false) == "Billing-cycle observations are unavailable. The start-now estimate uses grid rates where no balance has been observed.")
+        #expect(LoadTimingPresentation.cycleObservationMessage(hasCycleData: false) == "Billing cycle observations are unavailable. The start-now estimate uses the full rate where no bank has been observed.")
         #expect(LoadTimingPresentation.cycleObservationMessage(hasCycleData: true) == nil)
     }
 }

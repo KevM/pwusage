@@ -169,7 +169,7 @@ struct DashboardView: View {
                             Divider()
                             VStack(alignment: .leading, spacing: 6) {
                                 if live?.activeTariff == nil {
-                                    Label("No active tariff is configured", systemImage: "info.circle")
+                                    Label("No rate plan is set up", systemImage: "info.circle")
                                 }
                                 if live?.todayComplete == false {
                                     Label("Some energy intervals are missing", systemImage: "exclamationmark.triangle")
@@ -179,7 +179,7 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                         }
                         if let tariff = live?.activeTariff {
-                            Label("Active tariff · \(tariff)", systemImage: "tag")
+                            Label("Rate plan · \(tariff)", systemImage: "tag")
                                 .font(.footnote.weight(.medium))
                                 .foregroundStyle(.secondary)
                                 .accessibilityElement(children: .combine)
@@ -245,7 +245,7 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeading("Smart Shift", subtitle: live.map {
                 "Live summary · \(DashboardPresentation.freshness($0.activeLoadTiming?.energyDataThrough ?? $0.sources.energyDataThrough, staleAfter: 30 * 60).replacingOccurrences(of: "Updated ", with: ""))"
-            } ?? "Waiting for active tariff")
+            } ?? "Waiting for rate plan")
             let summarySource = live?.activeLoadTiming?.energyDataThrough ?? live?.sources.energyDataThrough
             let summaryIsStale = coordinator.live.isUnavailable || DashboardPresentation.loadTimingSummaryIsStale(source: summarySource)
             let summary = DashboardPresentation.loadTimingSummary(
@@ -275,7 +275,7 @@ struct DashboardView: View {
                             if let balance = summary.balance {
                                 Text(balance)
                                     .font(.footnote)
-                                    .foregroundStyle(balance.hasPrefix("Surplus") ? .green : .secondary)
+                                    .foregroundStyle(summary.isBanked ? .green : .secondary)
                             }
                             if let message = summary.message {
                                 Text(message)
