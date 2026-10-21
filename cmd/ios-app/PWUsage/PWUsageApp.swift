@@ -421,6 +421,8 @@ final class PWUsageAppModel: ObservableObject {
         await liveActivities?.signOut()
         pendingBatteryHoldSiteID = nil
         batteryHoldNavigationMessage = nil
+        screenState = .signedOut
+        signInMessage = nil
         teardownCoordinator()
         var cleanupFailed = false
         do { try await authService.logout() }

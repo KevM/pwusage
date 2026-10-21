@@ -568,6 +568,23 @@ struct PWUsageAppModelTests {
         #expect(api.billSiteIDs.count == billBeforeSignOut)
     }
 
+    @Test("Signing out does not flash an expired-session message during cleanup")
+    func signOutDoesNotFlashExpiredSessionMessage() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        api.holdLogout = true
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+
+        let signOut = Task { await model.signOut() }
+        try await waitUntil { api.logoutStarted }
+
+        #expect(model.screenState == .signedOut)
+        #expect(model.signInMessage == nil)
+
+        api.resumeLogout()
+        await signOut.value
+    }
+
     @Test("A live response that lands after sign-out does not repopulate the coordinator")
     func lateLiveResponseAfterSignOutDoesNotRepopulateState() async throws {
         let clock = AppTestClock()
@@ -995,6 +1012,9 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldD
     var holdSites = false
     private var sitesContinuations: [CheckedContinuation<[MobileSite], Error>] = []
     var holdLive = false
+    var holdLogout = false
+    private(set) var logoutStarted = false
+    private var logoutContinuation: CheckedContinuation<Void, Never>?
     private(set) var siteFetchCount = 0
     private(set) var liveSiteIDs: [String] = []
     private(set) var billSiteIDs: [String] = []
@@ -1066,7 +1086,17 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldD
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {
         if let exchangeError { throw exchangeError }
     }
-    func logout() async throws {}
+    func logout() async throws {
+        logoutStarted = true
+        if holdLogout {
+            await withCheckedContinuation { logoutContinuation = $0 }
+        }
+    }
+    func resumeLogout() {
+        holdLogout = false
+        logoutContinuation?.resume()
+        logoutContinuation = nil
+    }
     func clearSiteAuthCookie() async { cookieClearCount += 1 }
 
     private static func liveResponse(siteID: String) throws -> MobileLiveResponse {
