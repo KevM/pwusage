@@ -50,13 +50,28 @@ struct BatteryGaugeGeometryTests {
         #expect(try #require(geometry(charge: nil, hold: 0).holdLine).minX >= g.inner.minX)
     }
 
-    @Test("The mini hold mark is a tick that pokes out above and below the outline, within the frame")
+    @Test("A hold line near either end stays inside the rounded corners", arguments: [0, 1, 99, 100])
+    func holdLineInsideCorners(_ hold: Int) throws {
+        for (style, size) in [(BatteryGaugeStyle.card, card), (.bar, CGSize(width: 300, height: 26)),
+                              (.mini, CGSize(width: 30, height: 21))] {
+            let g = geometry(style, size: size, charge: nil, hold: hold)
+            let line = try #require(g.holdLine)
+            let r = max(0, g.cornerRadius - g.lineWidth)
+            let inside = Path(roundedRect: g.inner, cornerRadius: r, style: .circular)
+            #expect(inside.contains(CGPoint(x: line.midX, y: line.minY + 0.01)), "\(style) \(hold)% top")
+            #expect(inside.contains(CGPoint(x: line.midX, y: line.maxY - 0.01)), "\(style) \(hold)% bottom")
+            #expect(line.height >= g.inner.height * 0.4 - 0.001)
+        }
+        let mid = geometry(charge: nil, hold: 50)
+        #expect(try #require(mid.holdLine).minY == mid.inner.minY)
+    }
+
+    @Test("The mini hold mark is a solid tick inside the outline, within the frame")
     func miniTick() throws {
         let size = CGSize(width: 30, height: 21)
         let g = geometry(.mini, size: size, charge: 82, hold: 74)
         let tick = try #require(g.holdLine)
-        #expect(tick.minY < g.body.minY && tick.maxY > g.body.maxY)
-        #expect(tick.minY >= 0 && tick.maxY <= size.height)
+        #expect(tick.minY >= g.inner.minY && tick.maxY <= g.inner.maxY)
         #expect(g.nub.maxX <= size.width)
         #expect(BatteryGaugeStyle.mini.dashedHoldLine == false)
         #expect(BatteryGaugeStyle.card.dashedHoldLine && BatteryGaugeStyle.bar.dashedHoldLine)

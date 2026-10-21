@@ -3,7 +3,7 @@ import Foundation
 /// Copy for the battery hold Live Activity, kept glanceable: a headline, one
 /// line of figures, and a status line only when something needs saying. Shows
 /// only what the server confirmed: absolute deadline times rather than
-/// live-counting timers, "home load" rather than any claim about a car, and an
+/// live-counting timers, "home use" rather than any claim about a car, and an
 /// explicit overdue state once updates stop arriving.
 enum BatteryHoldActivityPresentation {
     typealias State = BatteryHoldActivityAttributes.ContentState
@@ -47,10 +47,10 @@ enum BatteryHoldActivityPresentation {
     static func headline(_ state: State) -> String {
         switch state.status {
         case .active:
-            isRestoring(state) ? "Restoring \(state.originalReserve)% reserve" : "Holding at \(state.targetReserve)%"
+            isRestoring(state) ? "Restoring \(state.originalReserve)% reserve" : "Saving at \(state.targetReserve)%"
         case .restored: "Reserve restored to \(state.originalReserve)%"
-        case .cancelled: "Battery hold cancelled"
-        case .ended, .unknown: "Battery hold ended"
+        case .cancelled: "Battery Saver stopped"
+        case .ended, .unknown: "Battery Saver ended"
         }
     }
 
@@ -61,7 +61,7 @@ enum BatteryHoldActivityPresentation {
         switch state.status {
         case .restored:
             switch state.restoreReason {
-            case .loadEnded: return info("Load finished")
+            case .loadEnded: return info("Job finished")
             case .manual: return info("Stopped in pwusage")
             case .safetyTimeout: return info("8-hour safety limit")
             case .timerElapsed: return info("Stop time reached")
@@ -79,7 +79,7 @@ enum BatteryHoldActivityPresentation {
         switch state.phase {
         case .waitingForData: return Status(text: "Usage data delayed", isWarning: true)
         case .checkFailed: return Status(text: "Last check failed", isWarning: true)
-        case .confirmingEnd: return info("Load dropped, confirming")
+        case .confirmingEnd: return info("Home use dropped, confirming")
         case nil where state.mode == .auto: return info("Waiting for first check")
         default: break
         }

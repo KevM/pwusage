@@ -64,7 +64,7 @@ struct BatteryHoldTests {
     @Test("Automatic and timer holds explain restoration without assuming it happened")
     func restorationCopy() throws {
         let hold = try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(Self.holdJSON.utf8))
-        #expect(BatteryHoldPresentation.restorationText(hold, timeZone: "UTC", at: hold.createdAt) == "Automatically restores battery reserve when we detect that the load is done.")
+        #expect(BatteryHoldPresentation.restorationText(hold, timeZone: "UTC", at: hold.createdAt) == "Restores your backup reserve automatically when the job finishes.")
         #expect(BatteryHoldPresentation.safetyText(hold, timeZone: "UTC").contains("eight hours"))
         let timer = try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(Self.holdJSON.replacingOccurrences(of: "\"auto\"", with: "\"timer\"").utf8))
         #expect(BatteryHoldPresentation.restorationText(timer, timeZone: "UTC", at: timer.createdAt).contains("Scheduled"))
@@ -84,19 +84,23 @@ struct BatteryHoldTests {
         #expect(message.contains("20%"))
         #expect(message.contains("replaces"))
         #expect(message.contains("Tesla"))
+        #expect(message.hasPrefix("Turning off Battery Saver"))
     }
     @Test("Monitoring countdown expires honestly and load text uses kW")
     func monitoringCopy() {
         let now = Date(timeIntervalSince1970: 1000)
         let monitoring = BatteryHoldMonitoring(phase: .loadRunning, checkedAt: now, nextCheckAt: now.addingTimeInterval(480), sampledAt: now, estimatedLoadW: 9000)
         #expect(BatteryHoldPresentation.monitoringText(monitoring, at: now).contains("9 kW"))
-        #expect(BatteryHoldPresentation.loadSummary(monitoring, at: now) == "Detected load: about 9 kW")
+        #expect(BatteryHoldPresentation.loadSummary(monitoring, at: now) == "Detected job: about 9 kW")
         #expect(BatteryHoldPresentation.loadSummary(monitoring, at: now.addingTimeInterval(1300)) == nil)
         let waiting = BatteryHoldMonitoring(phase: .waitingForData, checkedAt: now, nextCheckAt: now.addingTimeInterval(480), sampledAt: nil, estimatedLoadW: nil)
         #expect(BatteryHoldPresentation.loadSummary(waiting, at: now) == nil)
         #expect(BatteryHoldPresentation.nextCheckText(monitoring, at: now) == "Checking again in 8 minutes")
         #expect(BatteryHoldPresentation.nextCheckText(monitoring, at: now.addingTimeInterval(481)) == "Waiting for the next check")
         #expect(BatteryHoldPresentation.monitoringText(monitoring, at: now.addingTimeInterval(1300)).contains("updated usage data"))
+        #expect(BatteryHoldPresentation.monitoringText(monitoring, at: now.addingTimeInterval(1300)).hasSuffix("Battery Saver is still on."))
+        let watching = BatteryHoldMonitoring(phase: .watching, checkedAt: now, nextCheckAt: now.addingTimeInterval(480), sampledAt: now, estimatedLoadW: nil)
+        #expect(BatteryHoldPresentation.monitoringText(watching, at: now) == "Waiting for a job to finish.")
     }
 
     @Test("Monitoring decodes alongside an existing hold and remains optional")
