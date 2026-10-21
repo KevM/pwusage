@@ -7,6 +7,18 @@ enum TodayEnergyPresentation {
         return direction + energy(abs(kWh))
     }
 
+    static func money(_ amount: Double, currency: String, locale: Locale = .current) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currency
+        return formatter.string(from: NSNumber(value: amount == 0 ? 0 : amount)) ?? "—"
+    }
+
+    static func todayCostDetail(_ cost: TodayEnergyCost, locale: Locale = .current) -> String {
+        "Import \(money(cost.importCharges, currency: cost.currency, locale: locale)) · Export \(money(cost.exportCredits, currency: cost.currency, locale: locale))"
+    }
+
     static func tile(for metric: TodayEnergyMetric, snapshot: TodayEnergySnapshot?, at date: Date) -> MetricTile? {
         guard let snapshot, snapshot.availability(at: date) != .missing else { return nil }
         return tiles(homeKwh: snapshot.energy.homeKwh, solarKwh: snapshot.energy.solarKwh,
@@ -128,20 +140,20 @@ struct TodayEnergyWidgetContent: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if let cost = snapshot.todayCost, cost.isValid {
-                    Text(money(cost.netCost, currency: cost.currency))
+                    Text(TodayEnergyPresentation.money(cost.netCost, currency: cost.currency))
                         .font(.title2.weight(.bold)).monospacedDigit()
                         .lineLimit(1).minimumScaleFactor(0.6)
-                        .accessibilityLabel("Estimated net cost \(money(cost.netCost, currency: cost.currency))")
+                        .accessibilityLabel("Estimated net cost \(TodayEnergyPresentation.money(cost.netCost, currency: cost.currency))")
                 } else {
                     Text("—").font(.title2.weight(.bold))
                         .accessibilityLabel("Cost unavailable")
                 }
             }
             if let cost = snapshot.todayCost, cost.isValid {
-                Text("Import \(money(cost.importCharges, currency: cost.currency)) · Export \(money(-cost.exportCredits, currency: cost.currency))")
+                Text(TodayEnergyPresentation.todayCostDetail(cost))
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                     .lineLimit(1).minimumScaleFactor(0.65)
-                    .accessibilityLabel("Import charges \(money(cost.importCharges, currency: cost.currency)). Export credits \(money(cost.exportCredits, currency: cost.currency)). Netted by rate period.")
+                    .accessibilityLabel("Import charges \(TodayEnergyPresentation.money(cost.importCharges, currency: cost.currency)). Export credits \(TodayEnergyPresentation.money(cost.exportCredits, currency: cost.currency)). Netted by rate period.")
             }
             Text("Estimated").font(.caption2).foregroundStyle(.secondary)
         }
@@ -149,13 +161,6 @@ struct TodayEnergyWidgetContent: View {
         .background(Color(uiColor: .tertiarySystemGroupedBackground),
                     in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .combine)
-    }
-
-    private func money(_ amount: Double, currency: String) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = currency
-        return formatter.string(from: NSNumber(value: amount == 0 ? 0 : amount)) ?? "—"
     }
 
     @ViewBuilder
