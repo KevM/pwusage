@@ -311,6 +311,14 @@ cookies being shared between `ASWebAuthenticationSession` and the app's
    and `/api/mobile/bill-summary`; those routes continue to call
    `verifySiteAccess`.
 
+The iOS app and its widget extension share the persistent `site_auth` cookie via
+Foundation's App Group cookie store (separate Debug and Release groups). The app
+migrates an existing app-private session once and removes the old copy, so logout
+cannot restore it. Widget timeline requests use the same site authorization checks
+as the app. The extension only requests the app-selected site, discards in-flight
+results after that selection is cleared/changed, and hides data on HTTP 401/403.
+Credentials remain in the system cookie store, outside the presentation JSON files.
+
 Handoff rows are used only during login. Creating a handoff deletes at most 100
 expired rows, keeping cleanup bounded and preventing indefinite table growth
 during normal login activity. Dashboard polls

@@ -26,10 +26,16 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
 
     init(configuration: AppConfiguration, session: URLSession? = nil) {
         origin = configuration.apiOrigin
-        self.session = session ?? Self.makeCookieSession()
+        if let session {
+            self.session = session
+        } else {
+            let storage = SharedWebSession.cookieStorage()
+            SharedWebSession.migrateSession(for: origin, from: .shared, to: storage)
+            self.session = Self.makeCookieSession(cookieStorage: storage)
+        }
     }
 
-    static func makeCookieSession(cookieStorage: HTTPCookieStorage = .shared) -> URLSession {
+    static func makeCookieSession(cookieStorage: HTTPCookieStorage = SharedWebSession.cookieStorage()) -> URLSession {
         let configuration = URLSessionConfiguration.default
         configuration.httpCookieStorage = cookieStorage
         configuration.httpShouldSetCookies = true

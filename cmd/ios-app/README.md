@@ -175,28 +175,33 @@ flows or billing-cycle totals. Missing pricing shows “Cost unavailable”; old
 responses and snapshots remain readable. Small and Medium layouts are unchanged.
 
 Deploy the additive `todayCost` field in `/api/site-live-data?view=mobile` to populate
-real costs. Mobile refreshes add a daily tariff usage query and currency lookup, while
-the widget itself makes no network requests and adds no Tesla requests. Today energy
-is **net** for Grid/Battery, with the app's arrows and sign conventions.
+real costs. Mobile and widget refreshes use the existing authenticated mobile endpoint,
+including its server-side Tesla refresh throttling. Today energy is **net** for
+Grid/Battery, with the app's arrows and sign conventions.
 
-The app writes only presentation totals, daily cost and timestamped SOC to an atomic, versioned
-JSON file in its App Group, with protection until the device's first unlock. No cookies,
-account credentials, Solcast keys, or battery commands enter this container. The
-extension only reads it. Debug and Release use separate groups. App-private caches and
-polling behavior are preserved. Site changes, revoked access, logout and session expiry
-clear or replace shared data and request a WidgetKit reload; an in-flight invalidated
-app request cannot repopulate it. WidgetKit may retain a previously rendered view until
-it honors the reload request.
+The app publishes the selected site's presentation totals, daily cost and timestamped
+SOC to an atomic, versioned JSON file in its App Group, protected until first unlock.
+Both widget timeline providers independently fetch `/api/site-live-data?view=mobile`
+for that selected site. The app and extension use Foundation's persistent App Group
+cookie store for `site_auth`; existing app-private sessions migrate once on launch.
+No Tesla tokens, Solcast keys or battery commands are shared. Debug and Release use
+separate groups and matching API origins.
 
-The app publishes after normal successful live refreshes (normally five minutes while
-foregrounded, or an explicit refresh). WidgetKit is asked to reread the cache after 30
-minutes, with scheduled entries for energy staleness, SOC expiry and site-local midnight.
-Energy older than 30 minutes is labeled stale, matching the app's Today section. SOC
-expires independently after two hours, matching the app's existing source validation.
-Prior-day, future-dated, corrupt, unsupported or missing snapshots show unavailable.
-The revised snapshot is version 2; old snapshots fail closed. Open the app to refresh.
-WidgetKit refresh dates are requests, not guaranteed deadlines; the displayed source
-time makes delayed updates visible. There is no new background polling promise.
+The extension keeps its last successful response in a separate protected cache tied
+to the exact app-published selection and API origin. Nearby timeline requests reuse
+that response for up to five minutes. Network/server failures preserve the reading
+and its original source timestamps; rejected authentication/access hides it. Logout,
+session expiry, revoked sites and site changes clear or replace the app's selection
+and request a WidgetKit reload. Results from an invalidated selection are discarded,
+and the extension never rewrites the selection. WidgetKit can retain a previously
+rendered view until it honors the reload.
+
+The app also publishes after successful foreground refreshes. WidgetKit is asked to
+fetch again after 30 minutes, with scheduled entries for energy staleness, SOC expiry
+and site-local midnight. Energy older than 30 minutes is labeled stale. SOC expires
+independently after two hours. Prior-day, future-dated, corrupt, unsupported or missing
+snapshots show unavailable. Snapshot version 2 is retained. WidgetKit refresh dates
+are requests, not guaranteed deadlines; the source time makes delayed updates visible.
 See [Apple's refresh guidance](https://developer.apple.com/documentation/widgetkit/keeping-a-widget-up-to-date).
 
 ### Apple and Xcode setup
@@ -250,8 +255,8 @@ Add **Today's Metric** in the widget gallery for the small size. Home is the def
 Long-press it, choose **Edit Widget**, and select **Metric → Home, Solar, Grid, or Battery**.
 Each small widget has its own selection, so you can add several with different metrics.
 Grid and Battery retain the same net-energy arrows as the app; Battery uses the SOC glyph.
-Small widgets use the same protected cache, selected site, staleness/SOC expiry and
-midnight schedule as the larger widgets, without additional network requests.
+Small widgets use the same refresh path, protected cache, selected site, staleness/SOC
+expiry and midnight schedule as the larger widgets.
 
 This is a separate App Intents configuration and widget kind in the existing extension.
 Existing medium/large widget kinds and configuration remain intact; no new signing,

@@ -11,12 +11,14 @@ struct TodayEnergyProvider: TimelineProvider {
     func getSnapshot(in context: Context, completion: @escaping (TodayEnergyEntry) -> Void) {
         completion(context.isPreview ? sample() : TodayEnergyEntry(date: .now, snapshot: TodayEnergySnapshotStore.shared()?.load()))
     }
-    func getTimeline(in context: Context, completion: @escaping (Timeline<TodayEnergyEntry>) -> Void) {
-        let now = Date()
-        let snapshot = TodayEnergySnapshotStore.shared()?.load()
-        let dates = TodayEnergySnapshot.timelineDates(for: snapshot, at: now)
-        completion(Timeline(entries: dates.sorted().map { TodayEnergyEntry(date: $0, snapshot: snapshot) },
-                            policy: .after(now.addingTimeInterval(30 * 60))))
+    func getTimeline(in context: Context, completion: @escaping @Sendable (Timeline<TodayEnergyEntry>) -> Void) {
+        Task {
+            let snapshot = await TodayEnergyWidgetRefresh.current()
+            let now = Date()
+            let dates = TodayEnergySnapshot.timelineDates(for: snapshot, at: now)
+            completion(Timeline(entries: dates.map { TodayEnergyEntry(date: $0, snapshot: snapshot) },
+                                policy: .after(now.addingTimeInterval(30 * 60))))
+        }
     }
     private func sample() -> TodayEnergyEntry {
         let now = Date()
