@@ -43,6 +43,7 @@ struct BatteryHoldLockScreenView: View {
     let attributes: BatteryHoldActivityAttributes
     let state: BatteryHoldActivityAttributes.ContentState
     let isStale: Bool
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -71,7 +72,11 @@ struct BatteryHoldLockScreenView: View {
                              isStale: isStale, isFinal: state.isFinal)
                 .accessibilityHidden(true)
         }
-        .activityBackgroundTint(Color(uiColor: .secondarySystemBackground))
+        // Fixed sRGB values (secondarySystemBackground's) rather than the dynamic system
+        // color, so the card stays solid instead of rendering as translucent glass.
+        .activityBackgroundTint(colorScheme == .dark
+            ? Color(.sRGB, red: 0.110, green: 0.110, blue: 0.118, opacity: 1)
+            : Color(.sRGB, red: 0.949, green: 0.949, blue: 0.969, opacity: 1))
     }
 }
 
