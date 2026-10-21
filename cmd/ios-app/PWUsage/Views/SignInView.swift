@@ -33,23 +33,17 @@ struct SignInView: View {
     }
 
     private var brandMark: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(LinearGradient(
-                    colors: [accent.opacity(0.20), .teal.opacity(0.12)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .strokeBorder(accent.opacity(0.16), lineWidth: 1)
-                }
-            Image(systemName: "bolt.house.fill")
-                .font(.system(size: 38, weight: .semibold))
-                .foregroundStyle(accent)
-        }
-        .frame(width: 88, height: 88)
-        .accessibilityHidden(true)
+        Image("PWUsageLogo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: 96, height: 96)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(.primary.opacity(colorScheme == .dark ? 0.10 : 0.08), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.16), radius: 12, y: 6)
+            .accessibilityHidden(true)
     }
 
     private var heading: some View {
@@ -130,7 +124,7 @@ struct SignInView: View {
 
     private var legalLinks: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 4) {
+            HStack(spacing: 8) {
                 privacyLink
                 Text("·")
                     .foregroundStyle(.tertiary)
@@ -143,15 +137,24 @@ struct SignInView: View {
             }
         }
         .font(.footnote)
-        .padding(.vertical, 10)
     }
 
     private var privacyLink: some View {
-        Link("Privacy Policy", destination: AppConfiguration.defaultAPIOrigin.appendingPathComponent("privacy"))
+        Link(destination: AppConfiguration.defaultAPIOrigin.appendingPathComponent("privacy")) {
+            Text("Privacy Policy")
+                .padding(.horizontal, 10)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
     }
 
     private var supportLink: some View {
-        Link("Support", destination: AppConfiguration.defaultAPIOrigin.appendingPathComponent("support"))
+        Link(destination: AppConfiguration.defaultAPIOrigin.appendingPathComponent("support")) {
+            Text("Support")
+                .padding(.horizontal, 10)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
     }
 
     private var trustNote: some View {
