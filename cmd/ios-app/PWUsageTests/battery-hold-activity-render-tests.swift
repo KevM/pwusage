@@ -29,6 +29,7 @@ struct BatteryHoldActivityRenderTests {
         restored.endedAt = .now
         return [
             ("above-hold", active(charge: 95, hold: 80, home: 1800, peak: 1810), false),
+            ("full-hold", active(charge: 100, hold: 100, home: 1800, peak: 1810), false),
             ("load-running", active(phase: .loadRunning, charge: 74, home: 7000), false),
             ("no-data", active(phase: .waitingForData, charge: nil), false),
             ("stale", active(charge: 82), true),
