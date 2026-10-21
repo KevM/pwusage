@@ -10,7 +10,7 @@ struct SolarForecastStoreTests {
         try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east", "west"])
         await h.transport.holdResponses()
         async let first = h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
-        await h.transport.waitUntilRequestsStarted(1)
+        try await h.transport.waitUntilRequestsStarted(1)
         async let second = h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
         await h.transport.resumeResponses()
         let results = await (first, second)
@@ -79,7 +79,7 @@ struct SolarForecastStoreTests {
         let h = Harness()
         try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east", "west"])
         let refresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") }
-        await h.transport.waitUntilRequestsStarted(1)
+        try await h.transport.waitUntilRequestsStarted(1)
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == 2)
         await h.transport.resumeResponses()
         #expect(await refresh.value == .refreshed)
@@ -148,7 +148,7 @@ struct SolarForecastStoreTests {
         try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         await h.transport.holdResponses()
         let request = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") }
-        await h.transport.waitUntilRequestsStarted(1)
+        try await h.transport.waitUntilRequestsStarted(1)
         try await h.store.disconnect(accountScopeID: "account-a", siteID: "site-a")
         await h.transport.resumeResponses()
         #expect(await request.value == .cancelled)
@@ -161,7 +161,7 @@ struct SolarForecastStoreTests {
         try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         await h.transport.holdResponses()
         let request = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") }
-        await h.transport.waitUntilRequestsStarted(1)
+        try await h.transport.waitUntilRequestsStarted(1)
         await h.store.activateAccountScope("account-b")
         await h.transport.resumeResponses()
         #expect(await request.value == .cancelled)
@@ -225,7 +225,7 @@ struct SolarForecastStoreTests {
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         await h.transport.holdResponses()
         let oldRefresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) }
-        await h.transport.waitUntilRequestsStarted(1)
+        try await h.transport.waitUntilRequestsStarted(1)
 
         try await h.store.connect(apiKey: "key-b", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["west"])
         let newRefresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) }
@@ -244,7 +244,7 @@ struct SolarForecastStoreTests {
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         await h.transport.holdResponses()
         let oldRefresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) }
-        await h.transport.waitUntilRequestsStarted(1)
+        try await h.transport.waitUntilRequestsStarted(1)
 
         try await h.store.selectArrays(["west"], accountScopeID: "account-a", siteID: "site-a")
         let newRefresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) }
@@ -311,7 +311,7 @@ struct SolarForecastStoreTests {
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: [])
         await h.transport.holdResponses()
         let discovery = Task { try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a") }
-        await h.transport.waitUntilRequestsStarted(1)
+        try await h.transport.waitUntilRequestsStarted(1)
         try await h.store.disconnect(accountScopeID: "account-a", siteID: "site-a")
         await h.transport.resumeResponses()
         await #expect(throws: SolarForecastStore.StoreError.cancelled) { try await discovery.value }
@@ -324,7 +324,7 @@ struct SolarForecastStoreTests {
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: [])
         await h.transport.holdResponses()
         let discovery = Task { try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a") }
-        await h.transport.waitUntilRequestsStarted(1)
+        try await h.transport.waitUntilRequestsStarted(1)
         await h.store.activateAccountScope("account-b")
         await h.transport.resumeResponses()
         await #expect(throws: SolarForecastStore.StoreError.cancelled) { try await discovery.value }
@@ -471,7 +471,7 @@ struct SolarForecastStoreTests {
         let budgetBefore = await h.store.budget(for: "account-a", siteID: "site-a")
         await h.files.holdNextSave()
         let mutation = Task { try await h.store.connect(apiKey: "key-b", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["west"]) }
-        await h.files.waitUntilSaveIsHeld()
+        try await h.files.waitUntilSaveIsHeld()
 
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .cancelled)
         #expect(await h.transport.requestCount == 0)
@@ -487,7 +487,7 @@ struct SolarForecastStoreTests {
         let budgetBefore = await h.store.budget(for: "account-a", siteID: "site-a")
         await h.files.holdNextSave()
         let mutation = Task { try await h.store.selectArrays(["west"], accountScopeID: "account-a", siteID: "site-a") }
-        await h.files.waitUntilSaveIsHeld()
+        try await h.files.waitUntilSaveIsHeld()
 
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .cancelled)
         #expect(await h.transport.requestCount == 0)
@@ -503,7 +503,7 @@ struct SolarForecastStoreTests {
         let budgetBefore = await h.store.budget(for: "account-a", siteID: "site-a")
         await h.keychain.holdNextDelete()
         let mutation = Task { try await h.store.disconnect(accountScopeID: "account-a", siteID: "site-a") }
-        await h.keychain.waitUntilDeleteIsHeld()
+        try await h.keychain.waitUntilDeleteIsHeld()
 
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .cancelled)
         #expect(await h.transport.requestCount == 0)
@@ -538,7 +538,7 @@ struct SolarForecastStoreTests {
         await h.transport.nextStatusCode(401)
         await h.transport.holdResponses()
         let discovery = Task { try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a", manual: true) }
-        await h.transport.waitUntilRequestsStarted(1)
+        try await h.transport.waitUntilRequestsStarted(1)
         await h.files.failNextSave()
         await h.transport.resumeResponses()
         await #expect(throws: SolarForecastStore.StoreError.persistenceFailed) { _ = try await discovery.value }
@@ -819,7 +819,7 @@ struct SolarForecastStoreTests {
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         await h.transport.holdResponses()
         let refresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") }
-        await h.transport.waitUntilRequestsStarted(1)
+        try await h.transport.waitUntilRequestsStarted(1)
         let auth = MobileAuthService(
             configuration: try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true),
             api: NoopMobileAuthAPI(),
@@ -953,7 +953,16 @@ private actor TestCredentialKeychain: SolcastCredentialKeychain {
     func failDeleteAll() { shouldFailDeleteAll = true }
     func failSaveAfter(successfulSaves: Int) { successfulSavesBeforeFailure = successfulSaves }
     func holdNextDelete() { shouldHoldNextDelete = true }
-    func waitUntilDeleteIsHeld() async { while heldDelete == nil { await Task.yield() } }
+    func waitUntilDeleteIsHeld() async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while heldDelete == nil {
+            guard clock.now < deadline else {
+                throw TestWaitTimeout(message: "Timed out waiting for delete to be held")
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
     func resumeHeldDelete() { heldDelete?.resume(); heldDelete = nil }
 }
 
@@ -997,7 +1006,16 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
         successfulSavesBeforeConsecutiveFailure = afterSuccessfulSaves
     }
     func holdNextSave() { shouldHoldNextSave = true }
-    func waitUntilSaveIsHeld() async { while heldSave == nil { await Task.yield() } }
+    func waitUntilSaveIsHeld() async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while heldSave == nil {
+            guard clock.now < deadline else {
+                throw TestWaitTimeout(message: "Timed out waiting for save to be held")
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
     func resumeHeldSave() { heldSave?.resume(); heldSave = nil }
     func setFetchedAt(_ date: Date, accountScopeID: String, siteID: String) {
         let key = SolarForecastScope.key(accountScopeID, siteID)
@@ -1008,6 +1026,8 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
 }
 
 private enum TestFileError: Error { case failedWrite }
+
+private struct TestWaitTimeout: Error { let message: String }
 
 @MainActor
 private struct NoopMobileAuthAPI: MobileAuthAPI {
@@ -1050,8 +1070,15 @@ private actor TestSolcastTransport: SolcastTransport {
         return (Data(body.utf8), response)
     }
 
-    func waitUntilRequestsStarted(_ count: Int) async {
-        while requestCount < count { await Task.yield() }
+    func waitUntilRequestsStarted(_ count: Int) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while requestCount < count {
+            guard clock.now < deadline else {
+                throw TestWaitTimeout(message: "Timed out waiting for \(count) requests to start")
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
     func resumeResponses() { hold = false; let pending = waiters; waiters.removeAll(); pending.forEach { $0.resume() } }
 }
