@@ -97,7 +97,7 @@ struct TodayEnergyWidgetTests {
 
     @Test func todayCostDetailShowsExportCreditsAsPositive() {
         let cost = TodayEnergyCost(netCost: 2.47, importCharges: 3.12, exportCredits: 0.65, currency: "USD")
-        #expect(TodayEnergyPresentation.todayCostDetail(cost) == "Import $3.12 · Export $0.65")
+        #expect(TodayEnergyPresentation.todayCostDetail(cost, locale: Locale(identifier: "en_US")) == "Import $3.12 · Export $0.65")
     }
 
     @Test func daylightSavingMidnightUsesSiteTimezone() throws {

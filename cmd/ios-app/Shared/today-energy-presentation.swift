@@ -7,15 +7,16 @@ enum TodayEnergyPresentation {
         return direction + energy(abs(kWh))
     }
 
-    static func money(_ amount: Double, currency: String) -> String {
+    static func money(_ amount: Double, currency: String, locale: Locale = .current) -> String {
         let formatter = NumberFormatter()
+        formatter.locale = locale
         formatter.numberStyle = .currency
         formatter.currencyCode = currency
         return formatter.string(from: NSNumber(value: amount == 0 ? 0 : amount)) ?? "—"
     }
 
-    static func todayCostDetail(_ cost: TodayEnergyCost) -> String {
-        "Import \(money(cost.importCharges, currency: cost.currency)) · Export \(money(cost.exportCredits, currency: cost.currency))"
+    static func todayCostDetail(_ cost: TodayEnergyCost, locale: Locale = .current) -> String {
+        "Import \(money(cost.importCharges, currency: cost.currency, locale: locale)) · Export \(money(cost.exportCredits, currency: cost.currency, locale: locale))"
     }
 
     static func tile(for metric: TodayEnergyMetric, snapshot: TodayEnergySnapshot?, at date: Date) -> MetricTile? {
