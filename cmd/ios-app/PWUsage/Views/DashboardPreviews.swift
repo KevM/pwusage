@@ -285,10 +285,6 @@ private struct LoadTimingPreview: View {
     DashboardPreview(mode: .error)
 }
 
-#Preview("Sign in") {
-    SignInView(isWorking: false, message: nil, onSignIn: {})
-}
-
 #Preview("Current bill") {
     BillPreview()
 }
