@@ -95,6 +95,11 @@ struct TodayEnergyWidgetTests {
         #expect(!cost.isValid)
     }
 
+    @Test func todayCostDetailShowsExportCreditsAsPositive() {
+        let cost = TodayEnergyCost(netCost: 2.47, importCharges: 3.12, exportCredits: 0.65, currency: "USD")
+        #expect(TodayEnergyPresentation.todayCostDetail(cost, locale: Locale(identifier: "en_US")) == "Import $3.12 · Export $0.65")
+    }
+
     @Test func daylightSavingMidnightUsesSiteTimezone() throws {
         let start = try #require(ISO8601DateFormatter().date(from: "2026-11-01T05:00:00Z"))
         let source = start.addingTimeInterval(24 * 3600)
