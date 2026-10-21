@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SignInView: View {
     let isWorking: Bool
+    var workingTitle: String = "Connecting…"
     let message: String?
     let onSignIn: () -> Void
 
@@ -107,7 +108,7 @@ struct SignInView: View {
                         .controlSize(.small)
                         .tint(buttonForeground)
                 }
-                Text(isWorking ? "Connecting…" : "Sign in")
+                Text(isWorking ? workingTitle : "Sign in")
                     .font(.headline)
             }
             .frame(maxWidth: .infinity, minHeight: 54)
@@ -211,6 +212,10 @@ private struct SignInButtonStyle: ButtonStyle {
 
 #Preview("Sign in · Connecting") {
     SignInView(isWorking: true, message: nil, onSignIn: {})
+}
+
+#Preview("Sign in · Signing out") {
+    SignInView(isWorking: true, workingTitle: "Signing out…", message: nil, onSignIn: {})
 }
 
 #Preview("Sign in · Error") {

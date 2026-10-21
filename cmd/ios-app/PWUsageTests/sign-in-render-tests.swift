@@ -12,6 +12,7 @@ struct SignInRenderTests {
         case light
         case dark
         case connecting
+        case signingOut
         case error
         case accessibility
         case smallScreen
@@ -34,7 +35,11 @@ struct SignInRenderTests {
         }
 
         var isWorking: Bool {
-            self == .connecting
+            self == .connecting || self == .signingOut
+        }
+
+        var workingTitle: String {
+            self == .signingOut ? "Signing out…" : "Connecting…"
         }
 
         var message: String? {
@@ -51,6 +56,7 @@ struct SignInRenderTests {
     func render(_ variant: Variant) throws {
         let view = SignInView(
             isWorking: variant.isWorking,
+            workingTitle: variant.workingTitle,
             message: variant.message,
             onSignIn: {}
         )

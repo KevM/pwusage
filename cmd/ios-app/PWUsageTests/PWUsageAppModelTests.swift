@@ -578,11 +578,64 @@ struct PWUsageAppModelTests {
         let signOut = Task { await model.signOut() }
         try await waitUntil { api.logoutStarted }
 
+        #expect(model.isSigningOut)
         #expect(model.screenState == .signedOut)
         #expect(model.signInMessage == nil)
 
         api.resumeLogout()
         await signOut.value
+
+        #expect(!model.isSigningOut)
+        #expect(model.screenState == .signedOut)
+        #expect(model.signInMessage == nil)
+    }
+
+    @Test("Sign-in is blocked while sign-out cleanup is still running")
+    func signInBlockedWhileSigningOut() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        api.holdLogout = true
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+
+        let signOut = Task { await model.signOut() }
+        try await waitUntil { api.logoutStarted }
+
+        #expect(model.isSigningOut)
+        #expect(model.screenState == .signedOut)
+
+        let initialSiteFetches = api.siteFetchCount
+        await model.signIn()
+
+        #expect(model.isSigningOut)
+        #expect(!model.isSigningIn)
+        #expect(api.siteFetchCount == initialSiteFetches)
+
+        api.resumeLogout()
+        await signOut.value
+
+        #expect(!model.isSigningOut)
+        #expect(model.screenState == .signedOut)
+        #expect(model.coordinator == nil)
+    }
+
+    @Test("Session expiry notifications are suppressed while sign-out cleanup is running")
+    func sessionExpirySuppressedWhileSigningOut() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        api.holdLogout = true
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+
+        let signOut = Task { await model.signOut() }
+        try await waitUntil { api.logoutStarted }
+
+        await model.sessionExpired()
+
+        #expect(model.signInMessage == nil)
+
+        api.resumeLogout()
+        await signOut.value
+
+        #expect(model.signInMessage == nil)
     }
 
     @Test("A live response that lands after sign-out does not repopulate the coordinator")

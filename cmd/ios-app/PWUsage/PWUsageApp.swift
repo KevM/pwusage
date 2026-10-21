@@ -114,7 +114,7 @@ private struct PWUsageCommands: Commands {
                     await model.signOut()
                 }
             }
-            .disabled(model.screenState != .signedIn)
+            .disabled(model.screenState != .signedIn || model.isSigningOut)
         }
     }
 }
@@ -134,6 +134,7 @@ final class PWUsageAppModel: ObservableObject {
     @Published private(set) var selectedSiteID: String?
     @Published private(set) var coordinator: DashboardCoordinator?
     @Published private(set) var isSigningIn = false
+    @Published private(set) var isSigningOut = false
     @Published private(set) var signInMessage: String?
     @Published var isSitePickerPresented = false
     @Published private(set) var accountScopeID: String?
@@ -264,7 +265,7 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func signIn() async {
-        guard !isSigningIn else { return }
+        guard !isSigningIn, !isSigningOut else { return }
         isSigningIn = true
         signInMessage = nil
         defer { isSigningIn = false }
@@ -417,6 +418,9 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func signOut() async {
+        guard !isSigningOut else { return }
+        isSigningOut = true
+        defer { isSigningOut = false }
         // First, while the session cookie can still unregister this device's pushes.
         await liveActivities?.signOut()
         pendingBatteryHoldSiteID = nil
@@ -441,10 +445,12 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func sessionExpired() async {
+        guard !isSigningOut else { return }
         await invalidateSession(message: "Your session expired. Sign in to continue.")
     }
 
     private func invalidateSession(message: String?) async {
+        guard !isSigningOut else { return }
         teardownCoordinator()
         await liveActivities?.sessionInvalidated()
         var cleanupFailed = false
@@ -606,14 +612,22 @@ private struct PWUsageRootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(SectionTheme.groupedBackground)
             case .signedOut:
-                SignInView(isWorking: model.isSigningIn, message: model.signInMessage) {
+                SignInView(
+                    isWorking: model.isSigningIn || model.isSigningOut,
+                    workingTitle: model.isSigningOut ? "Signing out…" : "Connecting…",
+                    message: model.signInMessage
+                ) {
                     Task { await model.signIn() }
                 }
             case .signedIn:
                 if let coordinator = model.coordinator,
                    let site = model.sites.first(where: { $0.id == model.selectedSiteID }) {
                     if coordinator.requiresSignIn {
-                        SignInView(isWorking: model.isSigningIn, message: "Your session expired. Sign in to continue.") {
+                        SignInView(
+                            isWorking: model.isSigningIn || model.isSigningOut,
+                            workingTitle: model.isSigningOut ? "Signing out…" : "Connecting…",
+                            message: "Your session expired. Sign in to continue."
+                        ) {
                             Task { await model.signIn() }
                         }
                     } else {
