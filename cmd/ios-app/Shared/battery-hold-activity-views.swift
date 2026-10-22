@@ -80,6 +80,46 @@ struct BatteryHoldLockScreenView: View {
     }
 }
 
+/// The `.small` family, shown in CarPlay and the watch Smart Stack: the headline over a
+/// full-width battery with its charge. Without it the system reuses the compact island views.
+struct BatteryHoldSmallView: View {
+    let attributes: BatteryHoldActivityAttributes
+    let state: BatteryHoldActivityAttributes.ContentState
+    let isStale: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                BatteryHoldGlyph(size: 15)
+                    .foregroundStyle(Color.accentColor)
+                Text("Battery Saver")
+                Spacer(minLength: 4)
+                Text(attributes.siteName)
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+            Text(BatteryHoldActivityPresentation.headline(state))
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            HStack(spacing: 8) {
+                BatteryHoldGauge(style: .bar, state: state, isStale: isStale)
+                    .frame(height: 20)
+                if let battery = BatteryHoldActivityPresentation.batteryText(state) {
+                    Text(battery)
+                        .font(.headline)
+                        .monospacedDigit()
+                        .foregroundStyle(isStale ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                        .accessibilityHidden(true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .padding(12)
+    }
+}
+
 /// The expanded Dynamic Island's bottom region: the full-width battery, then the figures.
 struct BatteryHoldExpandedBottom: View {
     let attributes: BatteryHoldActivityAttributes
