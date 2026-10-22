@@ -26,14 +26,17 @@ struct BillOutlookChart: View {
     let now: Date
     let timeZone: String
     let currency: String
+    /// The bill's rate-period totals so far; lane headers show these until a day is selected.
+    let totals: [Period]
     @State private var selectedDate: Date?
+    @State private var scrubDate: Date?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var points: [BillOutlookPoint] {
         history.points.filter(\.complete) + projected.dropFirst()
     }
     private var selection: BillOutlookPoint? {
-        BillOutlookPresentation.selection(in: points, date: selectedDate)
+        selectedDate.flatMap { BillOutlookPresentation.selection(in: points, date: $0) }
     }
     private var periods: [BillOutlookPeriod] {
         var values: [String: BillOutlookPeriod] = [:]
@@ -48,16 +51,18 @@ struct BillOutlookChart: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Bill outlook").font(.headline)
-            HStack(spacing: 16) {
-                legend("Recorded", dashed: false)
-                if !projected.isEmpty { legend("Estimated", dashed: true) }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) { Text("Bill outlook").font(.headline); Spacer(minLength: 0); legends }
+                VStack(alignment: .leading, spacing: 8) { Text("Bill outlook").font(.headline); HStack(spacing: 16) { legends } }
             }
-            Text("Green: export cushion · Orange: import gap")
-                .font(.caption).foregroundStyle(.secondary)
             ForEach(periods, id: \.key) { period in
                 lane(period)
             }
+            HStack {
+                Text(date(cycleStart))
+                Spacer()
+                Text(date(cycleEnd))
+            }.font(.caption2).foregroundStyle(.secondary).padding(.top, -10)
             if let selection {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
@@ -68,24 +73,24 @@ struct BillOutlookChart: View {
                     }
                     Text(selection.date > history.observedThrough ? "Estimated from expected energy use" : "Estimated from recorded energy")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    HStack {
-                        Button("Previous day", systemImage: "chevron.left") { step(-1) }
-                            .disabled(points.first?.date == selection.date)
-                        Spacer()
-                        Button("Next day", systemImage: "chevron.right") { step(1) }
-                            .disabled(points.last?.date == selection.date)
-                    }.font(.caption).labelStyle(.iconOnly)
+                    Button("Show totals so far") { selectedDate = nil }
+                        .font(.caption)
                 }
             }
-            Text("Cycle ends \(date(cycleEnd)). Tap or drag to explore the daily estimates.")
-                .font(.caption).foregroundStyle(.secondary)
             if !history.complete {
                 Text("Some recorded energy is missing. A full-cycle forecast is unavailable.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+        .onChange(of: scrubDate) { _, value in
+            if let value { selectedDate = value }
+        }
         .padding(17)
         .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20))
+    }
+    @ViewBuilder private var legends: some View {
+        legend("Recorded", dashed: false)
+        if !projected.isEmpty { legend("Estimated", dashed: true) }
     }
     private func legend(_ label: String, dashed: Bool) -> some View {
         HStack(spacing: 5) {
@@ -96,16 +101,21 @@ struct BillOutlookChart: View {
         }
     }
     private func step(_ direction: Int) {
-        guard let selection, let index = points.firstIndex(where: { $0.date == selection.date }), !points.isEmpty else { return }
-        selectedDate = points[min(max(index + direction, 0), points.count - 1)].date
+        // With no day selected, stepping starts from the latest recorded day.
+        let current = selection ?? history.points.last(where: \.complete)
+        guard let current, let index = points.firstIndex(where: { $0.date == current.date }) else { return }
+        selectedDate = points[min(max(index + (selection == nil ? 0 : direction), 0), points.count - 1)].date
     }
     private func laneTitle(_ period: BillOutlookPeriod) -> some View {
         Text(DashboardPresentation.tariffPeriodTitle(period.periodName)).font(.caption.weight(.semibold))
             .fixedSize(horizontal: false, vertical: true)
     }
     @ViewBuilder private func laneBalance(_ period: BillOutlookPeriod) -> some View {
-        if let selection {
-            Text(BillOutlookPresentation.balance(-energy(selection, key: period.key))).font(.caption)
+        let selected = selection.map { point in
+            point.periods.first { $0.key == period.key } ?? .init(tariffName: period.tariffName, periodName: period.periodName, netGridKwh: 0)
+        }
+        if let summary = BillOutlookPresentation.laneSummary(period: period, totals: totals, selected: selected, currency: currency) {
+            Text(summary).font(.caption).monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -158,14 +168,16 @@ struct BillOutlookChart: View {
             .chartYAxis(.hidden)
             .chartXAxis(.hidden)
             .chartLegend(.hidden)
-            .chartXSelection(value: $selectedDate)
+            .chartXSelection(value: $scrubDate)
             .frame(height: 125)
             .accessibilityLabel("\(period.periodName) export cushion and import gap in kilowatt-hours")
-            HStack {
-                Text(date(cycleStart))
-                Spacer()
-                Text(date(cycleEnd))
-            }.font(.caption2).foregroundStyle(.secondary)
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: step(1)
+                case .decrement: step(-1)
+                @unknown default: break
+                }
+            }
         }
     }
 }

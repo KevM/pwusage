@@ -18,11 +18,9 @@ struct BillView: View {
                     AvailabilityBanner(message: "The estimate could not be refreshed. Any amount shown keeps its original calculation time.", symbol: "clock.badge.exclamationmark")
                 }
                 if let response {
-                    estimateCard(response)
                     TimelineView(.periodic(from: .now, by: 60)) { _ in
                         outlook(response, now: .now)
                     }
-                    periodsSection(response)
                     billMetadata(response)
                 } else if state.isUnavailable {
                     EmptyCard(symbol: "doc.text.magnifyingglass", title: "Bill estimate unavailable", message: "The server could not provide a current estimate. Try again when your connection is available.")
@@ -70,57 +68,64 @@ struct BillView: View {
                                        cycleEnd: response.currentBill.cycleEnd)
         }()
         let projected = result.points
-        if let end = projected.last {
-            BillInformationCard(title: BillOutlookPresentation.endTitle(projectedEnd: end.date,
-                cycleEnd: response.currentBill.cycleEnd, timeZone: timeZone), symbol: "chart.xyaxis.line") {
-                Text("About " + DashboardPresentation.currency(end.estimatedCost, code: response.currentBill.currency))
-                    .font(.system(.title2, design: .rounded, weight: .bold)).monospacedDigit()
-                Text(result.usesSolar
-                    ? (result.usesHistory ? "Solar forecast and typical home use, with recent grid history outside forecast coverage." : "Based on the solar forecast and typical home use.")
-                    : "Based on your recent grid history.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        if let deadline = BillOutlookPresentation.deadline(now: now, end: response.currentBill.cycleEnd, timeZone: timeZone) {
-            BillInformationCard(title: deadline, symbol: "calendar") {
-                if projected.last?.date == response.currentBill.cycleEnd,
-                   let guidance = BillOutlookPresentation.guidance(observed: response.outlook?.points.last, projected: projected.last) {
-                    Text(guidance).font(.subheadline)
-                }
-                if let onOpenSmartShift { Button("Open Smart Shift", action: onOpenSmartShift) }
-            }
-        }
+        estimateCard(response, result: result, now: now)
         if let history = response.outlook, !history.points.isEmpty {
             BillOutlookChart(history: history, projected: projected, cycleStart: response.currentBill.cycleStart,
-                cycleEnd: response.currentBill.cycleEnd, now: now, timeZone: timeZone, currency: response.currentBill.currency)
+                cycleEnd: response.currentBill.cycleEnd, now: now, timeZone: timeZone, currency: response.currentBill.currency,
+                totals: response.currentBill.periods)
             if projected.isEmpty && history.complete {
                 Text("Forecast unavailable. Showing recorded energy with its original calculation time.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        } else {
+            periodsSection(response)
         }
     }
 
-    private func estimateCard(_ response: MobileBillResponse) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
+    private func estimateCard(_ response: MobileBillResponse, result: BillOutlook.ProjectionResult, now: Date) -> some View {
+        let bill = response.currentBill
+        let projected = result.points
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text("So far")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.indigo)
-                Text(site.name)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Text(DashboardPresentation.currency(bill.estimatedCost, code: bill.currency))
+                    .font(.system(.title, design: .rounded, weight: .bold))
+                    .monospacedDigit()
+                    .minimumScaleFactor(0.75)
+                    .lineLimit(1)
             }
-            Spacer(minLength: 8)
-            Text(DashboardPresentation.currency(response.currentBill.estimatedCost, code: response.currentBill.currency))
-                .font(.system(.title2, design: .rounded, weight: .bold))
-                .monospacedDigit()
-                .minimumScaleFactor(0.75)
-                .lineLimit(1)
+            .accessibilityElement(children: .combine)
+            if let end = projected.last {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(BillOutlookPresentation.projection(cost: end.estimatedCost, currency: bill.currency,
+                                                            projectedEnd: end.date, timeZone: timeZone))
+                        .font(.headline).monospacedDigit()
+                    Text(result.usesSolar
+                        ? (result.usesHistory ? "Solar forecast and typical home use, with recent grid history where the forecast ends." : "Based on the solar forecast and typical home use.")
+                        : "Based on your recent grid history.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            if let deadline = BillOutlookPresentation.deadline(now: now, end: bill.cycleEnd, timeZone: timeZone) {
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(deadline, systemImage: "calendar").font(.subheadline.weight(.semibold))
+                    if projected.last?.date == bill.cycleEnd,
+                       let guidance = BillOutlookPresentation.guidance(observed: response.outlook?.points.last, projected: projected.last) {
+                        Text(guidance).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let onOpenSmartShift { Button("Open Smart Shift", action: onOpenSmartShift).font(.subheadline) }
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
+        .padding(17)
         .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .accessibilityElement(children: .combine)
     }
 
     private func periodsSection(_ response: MobileBillResponse) -> some View {
@@ -170,7 +175,7 @@ struct BillView: View {
     private func billMetadata(_ response: MobileBillResponse) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("Estimates cover energy charges and credits.")
-            Text("Billing cycle \(DashboardPresentation.date(response.currentBill.cycleStart, timeZoneIdentifier: timeZone, dateStyle: .short))–\(DashboardPresentation.date(response.currentBill.cycleEnd, timeZoneIdentifier: timeZone, dateStyle: .short))")
+            Text("\(site.name) · Billing cycle \(DashboardPresentation.date(response.currentBill.cycleStart, timeZoneIdentifier: timeZone, dateStyle: .short))–\(DashboardPresentation.date(response.currentBill.cycleEnd, timeZoneIdentifier: timeZone, dateStyle: .short))")
             if let energyDataThrough = response.sources.energyDataThrough {
                 Text("Energy through \(DashboardPresentation.date(energyDataThrough, timeZoneIdentifier: timeZone, dateStyle: .short, timeStyle: .short))")
             }

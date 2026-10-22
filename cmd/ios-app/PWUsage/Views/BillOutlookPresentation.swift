@@ -21,9 +21,18 @@ enum BillOutlookPresentation {
         if days == 0 { return "Cycle ends today" }
         return "Cycle ends in \(days) \(days == 1 ? "day" : "days")"
     }
-    static func endTitle(projectedEnd: Date, cycleEnd: Date, timeZone: String) -> String {
-        if projectedEnd == cycleEnd { return "At cycle end" }
-        return "By " + DashboardPresentation.date(projectedEnd, timeZoneIdentifier: timeZone, dateStyle: .short)
+    static func projection(cost: Double, currency: String, projectedEnd: Date, timeZone: String,
+                           locale: Locale = .current) -> String {
+        "About \(DashboardPresentation.currency(cost, code: currency, locale: locale)) by "
+            + DashboardPresentation.date(projectedEnd, timeZoneIdentifier: timeZone, dateStyle: .short)
+    }
+    /// Lane header: the bill's total so far, or the selected day's running balance while exploring.
+    static func laneSummary(period: BillOutlookPeriod, totals: [Period], selected: BillOutlookPeriod?,
+                            currency: String, locale: Locale = .current) -> String? {
+        if let selected { return balance(selected.netGridKwh) }
+        guard let total = totals.first(where: { $0.tariffName == period.tariffName && $0.periodName == period.periodName })
+        else { return nil }
+        return balance(total.netGridKwh) + " · " + DashboardPresentation.currency(total.cost, code: currency, locale: locale)
     }
     static func guidance(observed: BillOutlookPoint?, projected: BillOutlookPoint?) -> String? {
         guard let observed, let projected else { return nil }
