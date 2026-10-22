@@ -32,7 +32,7 @@ struct BillView: View {
                 }
             }
             .padding(20)
-            .frame(maxWidth: 760)
+            .frame(maxWidth: SectionTheme.maxContentWidth)
             .frame(maxWidth: .infinity)
         }
         .refreshable {

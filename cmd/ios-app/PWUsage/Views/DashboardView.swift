@@ -32,14 +32,16 @@ struct DashboardView: View {
                 if usesTwoColumns {
                     Grid(alignment: .topLeading, horizontalSpacing: 22, verticalSpacing: 22) {
                         GridRow {
-                            liveSection.frame(maxWidth: .infinity, alignment: .topLeading)
-                            todaySection.frame(maxWidth: .infinity, alignment: .topLeading)
+                            liveSection.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            todaySection.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         }
                         GridRow {
-                            billNavigation.frame(maxWidth: .infinity, alignment: .topLeading)
-                            loadTimingNavigation.frame(maxWidth: .infinity, alignment: .topLeading)
+                            billNavigation.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            loadTimingNavigation.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         }
                     }
+                    // Side-by-side cards share a top and bottom edge.
+                    .environment(\.dashboardCardsFillHeight, true)
                 } else {
                     liveSection
                     todaySection
@@ -87,9 +89,7 @@ struct DashboardView: View {
             DashboardPresentation.liveFreshnessNotice($0.sources.liveStatusAt, now: now) == nil
         } == true
         return VStack(alignment: .leading, spacing: 12) {
-            Text("Live power")
-                .font(.title3.weight(.bold))
-                .accessibilityAddTraits(.isHeader)
+            sectionHeading("Live power", subtitle: nil)
             if let live {
                 StatusCard {
                     VStack(alignment: .leading, spacing: 18) {
@@ -137,13 +137,14 @@ struct DashboardView: View {
                             sourceTime: live.sources.liveStatusAt,
                             isUnavailable: coordinator.live.isUnavailable, now: now
                         ))
+                        // Inside the card, so side-by-side cards still share a bottom edge.
+                        if let notice = DashboardPresentation.liveFreshnessNotice(live.sources.liveStatusAt, now: now) {
+                            Label(notice, systemImage: "clock.badge.exclamationmark")
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+                                .accessibilityElement(children: .combine)
+                        }
                     }
-                }
-                if let notice = DashboardPresentation.liveFreshnessNotice(live.sources.liveStatusAt, now: now) {
-                    Label(notice, systemImage: "clock.badge.exclamationmark")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                        .accessibilityElement(children: .combine)
                 }
             } else if coordinator.live.isUnavailable {
                 EmptyCard(symbol: "bolt.slash", title: "Live readings unavailable", message: "Try again when your connection is available.")
@@ -165,6 +166,8 @@ struct DashboardView: View {
                             homeKwh: today.homeKwh, solarKwh: today.solarKwh,
                             gridNetKwh: today.gridNetKwh, batteryNetKwh: today.batteryNetKwh
                         ))
+                        // Keeps the footer at the bottom when the card is stretched to its row.
+                        Spacer(minLength: 0)
                         if live?.activeTariff == nil || live?.todayComplete == false {
                             Divider()
                             VStack(alignment: .leading, spacing: 6) {
@@ -197,7 +200,7 @@ struct DashboardView: View {
             sectionHeading("Current Bill", subtitle: bill.map { "Calculated · \(DashboardPresentation.freshness($0.sources.calculatedAt, staleAfter: 60 * 60).replacingOccurrences(of: "Updated ", with: ""))" } ?? "Waiting for estimate")
             if let bill {
                 Button { onOpenTab(.bill) } label: {
-                    StatusCard(theme: .bill) {
+                    StatusCard(theme: .bill, fillAlignment: .leading) {
                         HStack(spacing: 16) {
                             Image(systemName: "dollarsign.circle.fill")
                                 .font(.title2.weight(.semibold))
@@ -255,7 +258,7 @@ struct DashboardView: View {
                 currencyCode: bill?.currentBill.currency
             )
             Button { onOpenTab(.smartShift) } label: {
-                StatusCard(theme: .loadTiming) {
+                StatusCard(theme: .loadTiming, fillAlignment: .leading) {
                     HStack(spacing: 14) {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.title2.weight(.semibold))
@@ -319,25 +322,39 @@ struct DashboardView: View {
         }
     }
 
-    private func sectionHeading(_ title: String, subtitle: String) -> some View {
+    private func sectionHeading(_ title: String, subtitle: String?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.title3.weight(.bold))
                 .accessibilityAddTraits(.isHeader)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if usesTwoColumns {
+                // Holds the subtitle line so this card's top lines up with its neighbour's.
+                Text(" ").font(.caption).hidden()
+            }
         }
     }
 
 }
 
+extension EnvironmentValues {
+    /// Set by the two-column layout so cards stretch to the tallest card in their row.
+    @Entry var dashboardCardsFillHeight = false
+}
+
 private struct StatusCard<Content: View>: View {
     var theme: SectionTheme? = nil
+    /// Where the content sits when the card is stretched to fill its row.
+    var fillAlignment: Alignment = .topLeading
     @ViewBuilder let content: Content
+    @Environment(\.dashboardCardsFillHeight) private var fillsHeight
     var body: some View {
         content
             .padding(16)
+            .frame(maxHeight: fillsHeight ? .infinity : nil, alignment: fillAlignment)
             .background {
                 Group {
                     if let theme {

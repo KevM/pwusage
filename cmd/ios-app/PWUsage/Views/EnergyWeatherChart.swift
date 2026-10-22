@@ -162,7 +162,7 @@ private struct LaneChart: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 Text(lane.title)
-                    .font(.caption.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                 Spacer()
                 Text(lane.startLabel)
                     .font(.caption)
