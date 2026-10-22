@@ -64,7 +64,7 @@ struct TodayEnergyMetricWidget: Widget {
                                intent: TodayEnergyMetricConfiguration.self, provider: TodayEnergyMetricProvider()) { entry in
             TodayEnergyWidgetFamilyContent(snapshot: entry.snapshot, date: entry.date,
                                            family: .systemSmall, metric: entry.metric)
-                .widgetURL(URL(string: "pwusage://dashboard"))
+                .widgetURL(TodayEnergySnapshot.dashboardURL)
                 .privacySensitive()
                 .containerBackground(Color(uiColor: .secondarySystemGroupedBackground), for: .widget)
         }

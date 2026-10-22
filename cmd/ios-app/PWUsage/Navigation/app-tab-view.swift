@@ -12,11 +12,11 @@ struct AppTabView: View {
         TabView(selection: Binding(get: { model.selectedTab }, set: { model.selectTab($0) })) {
             ForEach(AppTab.allCases) { tab in
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    // An external Battery Saver launch rebuilds each tab's stack to
-                    // drop old paths and modals. The id goes here, never on the
+                    // An external launch (widget or Battery Saver control) rebuilds
+                    // each tab's stack to drop old paths and modals. The id goes here, never on the
                     // TabView, so the sidebar keeps its shown/collapsed state.
                     NavigationStack { content(for: tab) }
-                        .id(model.batteryHoldNavigationID)
+                        .id(model.externalNavigationID)
                 }
             }
         }
