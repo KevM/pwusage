@@ -263,7 +263,11 @@ actor SolarForecastStore {
             throw StoreError.persistenceFailed
         }
         guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID,
-              state.credentials[scope]?.credentialID == credential.credentialID else { throw StoreError.cancelled }
+              state.credentials[scope]?.credentialID == credential.credentialID else {
+            // Invalidated while the reservation was being saved: nothing was sent.
+            await refundCancelledRequests(1, credentialID: credential.credentialID, manual: manual, scope: scope)
+            throw StoreError.cancelled
+        }
         do {
             let sites = try await SolcastClient(apiKey: storedKey.key, transport: transport).discoverSites()
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID,
@@ -487,7 +491,11 @@ actor SolarForecastStore {
             return .failed(.saveFailed)
         }
         guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID,
-              state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
+              state.credentials[scope]?.credentialID == credential.credentialID else {
+            // Invalidated while the reservation was being saved: nothing was sent.
+            await refundCancelledRequests(requestCount, credentialID: credential.credentialID, manual: manual, scope: scope)
+            return .cancelled
+        }
         let client = SolcastClient(apiKey: storedKey.key, transport: transport)
         let intervals: [SolarForecastInterval]
         var arrays: [[SolcastForecastPoint]] = []

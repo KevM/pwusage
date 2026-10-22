@@ -129,6 +129,40 @@ struct SolarForecastStoreTests {
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == before + 1)
     }
 
+    @Test("A refresh invalidated while its budget save is held is not charged")
+    func refreshInvalidatedBeforeDispatchIsRefunded() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        let before = await h.store.budget(for: "account-a", siteID: "site-a")
+        await h.files.holdNextSave()
+        let refresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) }
+        try await h.files.waitUntilSaveIsHeld()
+        try await h.store.selectArrays(["west"], accountScopeID: "account-a", siteID: "site-a")
+        await h.files.resumeHeldSave()
+
+        #expect(await refresh.value == .cancelled)
+        #expect(await h.transport.requestCount == 0)
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a") == before)
+        let saved = try await h.files.loadState()
+        #expect(saved.budgets.values.allSatisfy { $0.totalAttempts == before.totalAttempts })
+    }
+
+    @Test("A discovery invalidated while its budget save is held is not charged")
+    func discoveryInvalidatedBeforeDispatchIsRefunded() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        let before = await h.store.budget(for: "account-a", siteID: "site-a")
+        await h.files.holdNextSave()
+        let discovery = Task { try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a", manual: true) }
+        try await h.files.waitUntilSaveIsHeld()
+        try await h.store.selectArrays(["west"], accountScopeID: "account-a", siteID: "site-a")
+        await h.files.resumeHeldSave()
+
+        await #expect(throws: SolarForecastStore.StoreError.cancelled) { _ = try await discovery.value }
+        #expect(await h.transport.requestCount == 0)
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a") == before)
+    }
+
     @Test("A cancelled discovery is not charged")
     func cancelledDiscoveryLeavesBudgetUnchanged() async throws {
         let h = Harness()

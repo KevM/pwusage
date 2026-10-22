@@ -858,7 +858,7 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Location:** `PWUsage/Networking/SolcastClient.swift:81-84`; `PWUsage/State/SolarForecastStore.swift:500-508` (catch arms), `:632-642` (`reserveRequests`)
 - **What:** The client folded `CancellationError` and `URLError(.cancelled)` into `.transportFailure`, so the store persisted "Forecast network request failed" and kept the reservation it had charged before the call.
 - **Why:** A refresh invalidated by sign-out, disconnect or an array change looked like a network fault and spent budget for requests that never completed.
-- **Fix:** The client rethrows cancellation as `CancellationError`. `performRefresh` and `discoverSites` handle it before the `SolcastClientError` arm, record no failure, and refund the reservation for requests that did not complete (a request that finished before the cancellation stays charged; a reservation from an earlier UTC day is not touched). A failed save of the refund is queued for retry, since overcharging is the safe direction. Coalescing is unchanged.
+- **Fix:** The client rethrows cancellation as `CancellationError`. `performRefresh` and `discoverSites` handle it before the `SolcastClientError` arm, record no failure, and refund the reservation for requests that did not complete — including a refresh or discovery invalidated while its reservation was still being saved, before anything was sent (a request that finished before the cancellation stays charged; a reservation from an earlier UTC day is not touched). A failed save of the refund is queued for retry, since overcharging is the safe direction. Coalescing is unchanged.
 - **Severity:** Important
 - **Status:** FIXED (PR pending)
 
