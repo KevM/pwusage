@@ -89,7 +89,8 @@ final class DashboardCache {
         // Only routine snapshot updates consume the throttled refresh budget.
         let reloadIsDue = lastPublishedAt.map { date.timeIntervalSince($0) >= 15 * 60 } ?? true
         guard removedSnapshot || reloadIsDue else { return }
-        lastPublishedAt = date
+        // The first replacement must invalidate the empty timeline immediately.
+        lastPublishedAt = removedSnapshot ? nil : date
         reloadTimelines(TodayEnergySnapshot.widgetKind)
         reloadTimelines(TodayEnergySnapshot.metricWidgetKind)
     }
