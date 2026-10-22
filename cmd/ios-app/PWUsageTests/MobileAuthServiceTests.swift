@@ -1,8 +1,8 @@
 import AuthenticationServices
 import CryptoKit
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @MainActor
 @Suite("Mobile Auth Service Tests", .serialized)
@@ -254,39 +254,33 @@ final class MobileAuthServiceTests {
         #expect(!service.isAuthenticated)
     }
 
-    @Test("A late failed exchange cannot sign out a newer successful sign-in")
-    func lateFailedExchangeCannotSignOutNewerSuccessfulSignIn() async throws {
+    @Test("A newer sign-in waits for a superseded failed exchange before succeeding")
+    func newerSignInWaitsForSupersededFailedExchange() async throws {
         let api = FakeMobileAuthAPI()
         api.holdExchange = true
+        api.rejectedExchangeCodes = ["first"]
         let service = try makeService(api: api)
-
-        // The first sign-in's exchange is detached from `signIn()`, so cancelling the
-        // sign-in does not stop it: it can still report a failure after the user has
-        // signed in again.
         let first = Task { try await service.signIn() }
-        try #require(await waitUpTo { fakeSession.startCount == 1 })
+        defer { first.cancel(); api.resumeExchange() }
+        try await eventually { self.fakeSession.startCount == 1 }
         let firstState = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
-        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=first&attempt=\(Self.attemptID)&state=\(firstState)")!)
-        try #require(await waitUpTo { api.exchangeStartedCount == 1 })
-
+        fakeSession.complete(url: try Self.callbackURL(code: "first", state: firstState))
+        try await eventually { api.exchangeStartedCount == 1 }
         first.cancel()
-        try #require(await waitUpTo { !service.pendingContinuationForTesting })
+        try await eventually { !service.pendingContinuationForTesting }
         _ = try? await Self.boundedValue(of: first)
 
         api.holdExchange = false
         let second = Task { try await service.signIn() }
-        try #require(await waitUpTo { fakeSession.startCount == 2 })
+        defer { second.cancel() }
+        try await eventually { self.fakeSession.startCount == 2 }
         let secondState = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
-        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=second&attempt=\(Self.attemptID)&state=\(secondState)")!)
-        try await Self.boundedValue(of: second)
-        #expect(service.isAuthenticated)
-        let completedBeforeFailure = api.exchangeCompletedCount
-
-        api.exchangeError = TestExchangeError.rejected
+        fakeSession.complete(url: try Self.callbackURL(code: "second", state: secondState))
+        try await staysTrue { api.exchanges.count == 1 && !service.isAuthenticated }
         api.resumeExchange()
-        try #require(await waitUpTo { api.exchangeCompletedCount > completedBeforeFailure })
-
-        #expect(service.isAuthenticated)
+        try await eventually { api.exchangeCompletedCount == 2 && service.isAuthenticated }
+        try await Self.boundedValue(of: second)
+        #expect(api.siteAuthCookieCode == "second")
     }
 
     @Test("A late failed exchange cannot disturb a newer pending sign-in")
@@ -346,6 +340,84 @@ final class MobileAuthServiceTests {
             try await task.value
         }
         #expect(!service.isAuthenticated)
+    }
+
+    @Test("A new exchange waits for the old session response and its cookie cleanup",
+          arguments: [false, true], [false, true])
+    func newerExchangeWaitsForStaleCookieCleanup(invalidate: Bool, exchangeFails: Bool) async throws {
+        let api = FakeMobileAuthAPI()
+        api.holdExchange = true
+        if exchangeFails { api.rejectedExchangeCodes = ["first"] }
+        let service = try makeService(api: api)
+        var firstCancelled = false
+        let first = Task {
+            do {
+                try await service.signIn()
+            } catch {
+                firstCancelled = (error as? MobileAuthService.AuthError) == .cancelled
+            }
+        }
+        defer { first.cancel(); api.resumeExchange(); api.resumeCookieClear() }
+        try await eventually { self.fakeSession.startCount == 1 }
+        let firstState = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
+        fakeSession.complete(url: try Self.callbackURL(code: "first", state: firstState))
+        try await eventually { api.exchangeStartedCount == 1 }
+        if invalidate {
+            try await service.invalidateAuthenticatedSession()
+        } else {
+            try await service.logout()
+        }
+        try await eventually { firstCancelled }
+
+        api.holdExchange = false
+        api.holdCookieClear = true
+        let second = Task { try await service.signIn() }
+        defer { second.cancel() }
+        try await eventually { self.fakeSession.startCount == 2 }
+        let secondState = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
+        fakeSession.complete(url: try Self.callbackURL(code: "second", state: secondState))
+        // Even a cancellation-ignoring response must finish before the next exchange.
+        try await staysTrue { api.exchanges.count == 1 && !service.isAuthenticated }
+        api.resumeExchange()
+        try await eventually { api.cookieClearStartedCount == 2 }
+        #expect(api.siteAuthCookieCode == "first")
+        // Waiting just for the response is insufficient: cleanup can also suspend.
+        try await staysTrue { api.exchanges.count == 1 && !service.isAuthenticated }
+        api.resumeCookieClear()
+        try await eventually { service.isAuthenticated && api.exchangeCompletedCount == 2 }
+        try await Self.boundedValue(of: second)
+        #expect(api.siteAuthCookieCode == "second")
+        #expect(api.cookieEvents == ["clear", "set", "clear", "set"])
+    }
+
+    @Test("Logout also revokes an exchange queued behind an old response")
+    func logoutRevokesQueuedExchange() async throws {
+        let api = FakeMobileAuthAPI()
+        api.holdExchange = true
+        let service = try makeService(api: api)
+        let first = Task { try await service.signIn() }
+        defer { first.cancel(); api.resumeExchange() }
+        try await eventually { self.fakeSession.startCount == 1 }
+        let firstState = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
+        fakeSession.complete(url: try Self.callbackURL(code: "first", state: firstState))
+        try await eventually { api.exchangeStartedCount == 1 }
+        try await service.logout()
+        _ = try? await Self.boundedValue(of: first)
+        let second = Task { try await service.signIn() }
+        defer { second.cancel() }
+        try await eventually { self.fakeSession.startCount == 2 }
+        let secondState = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
+        fakeSession.complete(url: try Self.callbackURL(code: "second", state: secondState))
+        try await staysTrue { api.exchanges.count == 1 }
+        try await service.logout()
+        await #expect(throws: MobileAuthService.AuthError.cancelled) {
+            try await Self.boundedValue(of: second)
+        }
+        api.holdExchange = false
+        api.resumeExchange()
+        try await eventually { api.cookieClearCount == 3 }
+        try await staysTrue { api.exchanges.count == 1 && !service.isAuthenticated }
+        #expect(!api.hasSiteAuthCookie)
     }
 
     @Test("Ending a session cancels its browser and ignores the later callback", arguments: [false, true])
@@ -513,6 +585,10 @@ final class MobileAuthServiceTests {
         )
     }
 
+    private static func callbackURL(code: String, state: String) throws -> URL {
+        try #require(URL(string: "pwusage://auth/callback?code=\(code)&attempt=\(attemptID)&state=\(state)"))
+    }
+
     private static func pendingState(in sessionURL: URL?) -> String? {
         guard let sessionURL,
               let components = URLComponents(url: sessionURL, resolvingAgainstBaseURL: false) else { return nil }
@@ -629,10 +705,15 @@ private final class FakeWebAuthenticationSession: MobileAuthWebSession {
 private final class FakeMobileAuthAPI: MobileAuthAPI {
     private(set) var exchanges: [MobileSessionExchange] = []
     var exchangeError: Error?
+    var rejectedExchangeCodes: Set<String> = []
     private(set) var logoutCount = 0
     var logoutError: Error?
     private(set) var cookieClearCount = 0
     private(set) var hasSiteAuthCookie = false
+    private(set) var siteAuthCookieCode: String?
+    var holdCookieClear = false
+    private(set) var cookieClearStartedCount = 0
+    private var pendingCookieClear: CheckedContinuation<Void, Never>?
     private(set) var cookieEvents: [String] = []
     var holdExchange = false
     private(set) var exchangeStartedCount = 0
@@ -648,9 +729,11 @@ private final class FakeMobileAuthAPI: MobileAuthAPI {
             }
         }
         hasSiteAuthCookie = true
+        siteAuthCookieCode = exchange.code
         cookieEvents.append("set")
         exchangeCompletedCount += 1
         if let exchangeError { throw exchangeError }
+        if rejectedExchangeCodes.contains(exchange.code) { throw TestExchangeError.rejected }
     }
 
     func resumeExchange() {
@@ -664,9 +747,21 @@ private final class FakeMobileAuthAPI: MobileAuthAPI {
         if let logoutError { throw logoutError }
     }
 
+    func resumeCookieClear() {
+        holdCookieClear = false
+        let continuation = pendingCookieClear
+        pendingCookieClear = nil
+        continuation?.resume()
+    }
+
     func clearSiteAuthCookie() async {
+        cookieClearStartedCount += 1
+        if holdCookieClear {
+            await withCheckedContinuation { pendingCookieClear = $0 }
+        }
         cookieClearCount += 1
         hasSiteAuthCookie = false
+        siteAuthCookieCode = nil
         cookieEvents.append("clear")
     }
 }

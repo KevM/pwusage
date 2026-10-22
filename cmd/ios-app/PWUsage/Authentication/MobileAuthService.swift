@@ -213,7 +213,8 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
     private func endLocalSession() {
         sessionEpoch += 1
         exchangeTask?.cancel()
-        exchangeTask = nil
+        // Keep the tail: a cancelled request can still persist Set-Cookie. A new
+        // exchange must wait for its response AND its stale-cookie cleanup.
         let pending = pendingSignIn
         pendingSignIn = nil
         activeAttempt = nil
@@ -269,7 +270,13 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
                 state: callback.state
             )
             let epoch = sessionEpoch
+            let previousExchange = exchangeTask
             exchangeTask = Task { @MainActor in
+                await previousExchange?.value
+                // Cancellation/logout may have happened while waiting in the queue.
+                guard sessionEpoch == epoch,
+                      pendingSignIn?.generation == generation,
+                      !Task.isCancelled else { return }
                 do {
                     try await api.exchangeSession(exchange)
                     guard sessionEpoch == epoch else {

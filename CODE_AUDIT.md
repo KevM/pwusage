@@ -917,14 +917,14 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Location:** `cmd/ios-app/PWUsage/Authentication/MobileAuthService.swift` — `logout`, `invalidateAuthenticatedSession`, and the session exchange task.
 - **What:** Ending a session left the pending sign-in and exchange alive; a late response could persist a new cookie and authenticate again.
 - **Why:** Attempt-generation guards (§3.12–3.14) protect continuation ownership, but do not revoke an attempt when the user signs out.
-- **Fix:** Advance a monotonic session epoch before suspension, cancel the retained exchange, clear attempt/session state, and resume the pending caller with cancellation. Both exchange result paths compare the captured epoch and clear cookies again after a late response.
+- **Fix:** Advance a monotonic session epoch before suspension, cancel the retained exchange, clear attempt/session state, and resume the pending caller with cancellation. Both exchange result paths compare the captured epoch and clear cookies again after a late response. Exchanges retain and await their predecessor through stale-cookie cleanup, then recheck ownership/cancellation before issuing a request, so cleanup cannot erase a newer session.
 - **Status:** FIXED (PR pending)
 
 ### 15.2 Orphaned Keychain credentials survive app deletion
 - **Location:** `cmd/ios-app/PWUsage/PWUsageApp.swift` — launch initialization; `Authentication/app-launch-maintenance.swift`.
 - **What:** Reinstall removes forecast metadata but leaves generic-password credentials in Keychain.
 - **Why:** Without the deleted metadata, account-scoped cleanup cannot discover orphaned credentials.
-- **Fix:** Before creating the app model, sweep the app's bundle-identifier service with `kSecAttrSynchronizableAny`, guarded by a sandbox UserDefaults installation flag. Mark completion only after success (including item-not-found); a failed sweep prevents startup and retries next launch.
+- **Fix:** Before creating the app model, sweep the app's bundle-identifier service with `kSecAttrSynchronizableAny`, guarded by a sandbox UserDefaults installation flag. On upgrade, existing forecast metadata preserves valid credentials and migrates the flag without sweeping; sandbox read errors fail closed. Mark completion only after success (including item-not-found); a failed sweep prevents startup and retries next launch.
 - **Status:** FIXED (PR pending)
 
 ### 15.3 Control templates rebuilt on every cold launch

@@ -30,6 +30,9 @@ struct PWUsageApp: App {
             try await AppLaunchMaintenance.run(
                 defaults: .standard,
                 buildVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+                hasPersistedForecastState: {
+                    try DeviceSolarForecastPersistence.hasPersistedState()
+                },
                 sweepCredentials: {
                     try await DeviceSolcastCredentialStore.shared.deleteAllCredentials()
                 },

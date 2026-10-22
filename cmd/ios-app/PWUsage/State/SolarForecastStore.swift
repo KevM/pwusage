@@ -762,9 +762,23 @@ actor DeviceSolarForecastPersistence: SolarForecastPersistence {
     private var cached: SolarForecastPersistedState?
 
     init(fileManager: FileManager = .default) {
+        fileURL = Self.stateFileURL(fileManager: fileManager)
+    }
+
+    nonisolated static func hasPersistedState(fileManager: FileManager = .default) throws -> Bool {
+        do {
+            _ = try fileManager.attributesOfItem(atPath: stateFileURL(fileManager: fileManager).path)
+            return true
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            return false
+        }
+        // Other errors, including a locked sandbox, must not trigger credential deletion.
+    }
+
+    private nonisolated static func stateFileURL(fileManager: FileManager) -> URL {
         let directory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("SolarForecast", isDirectory: true)
-        fileURL = directory.appendingPathComponent("state.json", isDirectory: false)
+        return directory.appendingPathComponent("state.json", isDirectory: false)
     }
 
     func loadState() throws -> SolarForecastPersistedState {
