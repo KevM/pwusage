@@ -112,12 +112,17 @@ private enum BatteryHoldActivityPreviews {
 }
 
 #Preview("Small (CarPlay, watch)") {
-    BatteryHoldSmallView(attributes: BatteryHoldActivityPreviews.attributes,
-                         state: BatteryHoldActivityPreviews.atHold, isStale: false)
-        .frame(width: 170, height: 84)
-        .background(Color(uiColor: .secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .padding()
+    // The smallest documented small-family heights: CarPlay 78pt, Apple Watch 69.5pt.
+    VStack {
+        ForEach([CGSize(width: 170, height: 78), CGSize(width: 155, height: 69.5)], id: \.height) { size in
+            BatteryHoldSmallView(attributes: BatteryHoldActivityPreviews.attributes,
+                                 state: BatteryHoldActivityPreviews.atHold, isStale: false)
+                .frame(width: size.width, height: size.height)
+                .background(Color(uiColor: .secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
+    }
+    .padding()
 }
 
 #Preview("Island expanded", as: .dynamicIsland(.expanded), using: BatteryHoldActivityPreviews.attributes) {
