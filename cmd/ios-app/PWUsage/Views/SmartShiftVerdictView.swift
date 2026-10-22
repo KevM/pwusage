@@ -8,23 +8,55 @@ struct SmartShiftVerdictView: View {
     let timeZone: String
     var onConnectSolcast: () -> Void = {}
 
+    /// Bar column width beside the why line: about a phone's worth, so a small
+    /// saving still shows as a visible gap.
+    static let sideBySideBars: ClosedRange<CGFloat> = 300...380
+    /// Narrowest the why line gets beside the bars; below this they stack.
+    static let sideBySideWhyMinWidth: CGFloat = 420
+    static let sideBySideSpacing: CGFloat = 24
+
+    @State private var width: CGFloat = 0
+
+    /// Wide enough for a prose column with the bars beside it, where
+    /// full-width bars would stretch a small saving into an unreadable sliver.
+    private var barsBesideWhy: Bool {
+        width >= Self.sideBySideWhyMinWidth + Self.sideBySideSpacing + Self.sideBySideBars.lowerBound
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(verdict.headline)
                 .font(.title3.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            SmartShiftCostBars(verdict: verdict)
-            Text(verdict.why)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if barsBesideWhy {
+                HStack(alignment: .top, spacing: Self.sideBySideSpacing) {
+                    why
+                    SmartShiftCostBars(verdict: verdict)
+                        .frame(minWidth: Self.sideBySideBars.lowerBound, maxWidth: Self.sideBySideBars.upperBound)
+                        // Bars before the why line, as when stacked.
+                        .accessibilitySortPriority(1)
+                }
+                .accessibilityElement(children: .contain)
+            } else {
+                SmartShiftCostBars(verdict: verdict)
+                why
+            }
             EnergyWeatherLegend(verdict: verdict)
             EnergyWeatherChart(verdict: verdict, timeZone: timeZone)
             ForEach(Array(verdict.notes.enumerated()), id: \.offset) { _, note in
                 noteView(note)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+
+    private var why: some View {
+        Text(verdict.why)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: SectionTheme.maxProseWidth, alignment: .leading)
     }
 
     @ViewBuilder
@@ -49,5 +81,6 @@ struct SmartShiftVerdictView: View {
             .font(.footnote)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: SectionTheme.maxProseWidth, alignment: .leading)
     }
 }

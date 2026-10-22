@@ -45,4 +45,12 @@ extension SectionTheme {
         Color.secondary.opacity(0.1)
         #endif
     }
+
+    /// Widest a section screen's content column grows. Wide enough to fill an
+    /// unfolded iPhone Duo; still caps line length on iPad and Mac.
+    static let maxContentWidth: CGFloat = 900
+
+    /// Widest a paragraph grows inside that column, so prose keeps a phone-like
+    /// line length while charts and bars use the full width.
+    static let maxProseWidth: CGFloat = 560
 }
