@@ -34,7 +34,10 @@ protocol BatteryHoldActivityAPI: Sendable {
     func unregisterBatteryHoldActivity(siteID: String, registrationID: UUID) async throws
 }
 
-enum BatteryHoldActivityLifecycle: Equatable, Sendable { case active, stale, ended, dismissed }
+/// `pending` is an activity iOS has accepted but not yet shown (iOS 26 scheduled
+/// starts). The app never schedules one, so it is neither tracked as live nor
+/// ended: a later reconcile adopts it once it is active.
+enum BatteryHoldActivityLifecycle: Equatable, Sendable { case pending, active, stale, ended, dismissed }
 
 /// One running Live Activity. ActivityKit in the app; a fake in tests.
 @MainActor
@@ -510,6 +513,8 @@ final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
                 _ = untrack(handle.id)
                 await handle.end(nil, immediately: true)
                 await unregister(attributes)
+            } else if handle.lifecycle == .pending {
+                continue
             } else if handle.lifecycle == .active || handle.lifecycle == .stale {
                 track(handle)
                 // Retries a registration that gave up, or a token rotated while suspended.

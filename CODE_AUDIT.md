@@ -844,6 +844,32 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 
 ---
 
+## 13. Widgets and Live Activities
+
+### 13.6 A frozen Live Activity never declares itself stale
+- **Location:** `cmd/ios-app/Shared/battery-hold-activity-attributes.swift` — `ContentState.staleDate`; both `ActivityContent` call sites in `PWUsage/State/battery-hold-activity-host.swift`.
+- **What:** `staleDate` was nil until the first monitoring snapshot set `nextCheckAt`, so `context.isStale` never turned true and the Lock Screen could show the first figures for up to eight hours with no "Update overdue".
+- **Why:** The rule mirrored the server's `next_check_at + 10 min` and had no floor for the pre-check state.
+- **Fix:** `staleDate(activityStartedAt:)` keeps `nextCheckAt + 10 min` and otherwise uses activity start + 15 min (the server's check interval, so a first check is always due by then) + the same 10 min grace. Start and update share the function.
+- **Status:** FIXED (PR pending)
+
+### 13.7 iOS 26's `ActivityState.pending` is reported as `.active`
+- **Location:** `cmd/ios-app/PWUsage/State/battery-hold-activity-host.swift` — `ActivityKitBatteryHoldHandle.lifecycle`; `battery-hold-activity-coordinator.swift` — `BatteryHoldActivityLifecycle`, reconcile.
+- **What:** `default: .active` tracked and reconciled an activity that had not started as live.
+- **Why:** The switch predated the iOS 26 case.
+- **Fix:** New `.pending` lifecycle (mapped under `#available(iOS 26, *)`; `@unknown default` maps to `.pending` too). Reconcile skips it — no tracking, ending or unregistering — and adopts it on a later pass once active. The app never schedules activities, so this is defensive.
+- **Status:** FIXED (PR pending)
+
+### 13.8 Live Activity copy disagrees with the voice guide and the app
+- **Location:** `cmd/ios-app/Shared/battery-hold-activity-presentation.swift` — `headline`, `status`.
+- **What:** "Saving at 80%" didn't say Battery Saver is about the Powerwall; "Job finished" used bare "job"; "reserve" / "Reserve restored" differed from the app's "backup reserve".
+- **Fix:** "Saving your Powerwall at 80%", "Restoring 20% backup reserve", "Backup reserve restored to 20%", "Home use dropped" (load ended), "Backup reserve set to 45% / changed outside pwusage". Compact and minimal island presentations show no text; the expanded island headline keeps its `lineLimit(1)` + `minimumScaleFactor(0.8)`.
+- **Status:** FIXED (PR pending)
+
+---
+
+Verification for §13.6–13.8: `./run-tests.sh` passes (747 tests); new tests cover both stale-date rules, final states, the `.pending` mapping (availability-guarded) and reconcile adoption, and the exact new strings. Lock Screen card checked in the render test PNG. Not checked on a device or simulator Lock Screen/Dynamic Island.
+
 ## 14. Test runner and CI tooling
 
 *Filed after the original audit, from a review of `run-tests.sh`, `.github/workflows/ios.yml` and the widget target's packaging — the build-and-test plumbing §11 had listed as unaudited. Numbered §14 so no existing number moves; it sits here because it is a code-level section, ahead of the cross-cutting recommendations.*
