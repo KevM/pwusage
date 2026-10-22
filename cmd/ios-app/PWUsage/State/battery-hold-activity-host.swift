@@ -19,7 +19,7 @@ final class ActivityKitBatteryHoldHost: BatteryHoldActivityHost {
         // offered in the app rather than appearing on its own.
         let activity = try Activity.request(
             attributes: attributes,
-            content: ActivityContent(state: state, staleDate: state.staleDate),
+            content: ActivityContent(state: state, staleDate: state.staleDate(activityStartedAt: attributes.activityStartedAt)),
             pushType: .token
         )
         return ActivityKitBatteryHoldHandle(activity)
@@ -65,7 +65,7 @@ final class ActivityKitBatteryHoldHandle: BatteryHoldActivityHandle {
     // any context; the handle only ever passes it to them.
     func update(_ state: BatteryHoldActivityAttributes.ContentState) async {
         nonisolated(unsafe) let activity = activity
-        await activity.update(ActivityContent(state: state, staleDate: state.staleDate))
+        await activity.update(ActivityContent(state: state, staleDate: state.staleDate(activityStartedAt: activity.attributes.activityStartedAt)))
     }
 
     func end(_ state: BatteryHoldActivityAttributes.ContentState?, immediately: Bool) async {
@@ -74,12 +74,15 @@ final class ActivityKitBatteryHoldHandle: BatteryHoldActivityHandle {
                            dismissalPolicy: immediately ? .immediate : .default)
     }
 
-    nonisolated private static func lifecycle(_ state: ActivityState) -> BatteryHoldActivityLifecycle {
+    nonisolated static func lifecycle(_ state: ActivityState) -> BatteryHoldActivityLifecycle {
+        if #available(iOS 26, *), state == .pending { return .pending }
         switch state {
-        case .stale: .stale
-        case .ended: .ended
-        case .dismissed: .dismissed
-        default: .active
+        case .active: return .active
+        case .stale: return .stale
+        case .ended: return .ended
+        case .dismissed: return .dismissed
+        // A state a later iOS adds is not known to be on screen, so it is not treated as live.
+        @unknown default: return .pending
         }
     }
 }

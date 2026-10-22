@@ -92,11 +92,21 @@ struct BatteryHoldActivityAttributes: ActivityAttributes {
         /// A state with an older data time never replaces a newer one.
         var dataTime: Date { max(startedAt, checkedAt ?? .distantPast, endedAt ?? .distantPast) }
 
+        /// How long past a due check the server's `stale-date` waits before a state is out of date.
+        static let staleGrace: TimeInterval = 10 * 60
+        /// The server checks every hold on a 15-minute boundary, so a first check
+        /// is due within this long of any activity starting.
+        static let firstCheckInterval: TimeInterval = 15 * 60
+
         /// When a non-final state should be treated as out of date: ten minutes
         /// past the next scheduled check, as the server's `stale-date` does.
-        var staleDate: Date? {
-            guard status == .active, let nextCheckAt else { return nil }
-            return nextCheckAt.addingTimeInterval(10 * 60)
+        /// Before the first check there is no `nextCheckAt`, so the activity's
+        /// start stands in for the last check; without a date ActivityKit would
+        /// never mark it stale and a frozen activity would never say so.
+        func staleDate(activityStartedAt: Date) -> Date? {
+            guard status == .active else { return nil }
+            return (nextCheckAt ?? activityStartedAt.addingTimeInterval(Self.firstCheckInterval))
+                .addingTimeInterval(Self.staleGrace)
         }
 
         var isFinal: Bool { status != .active }

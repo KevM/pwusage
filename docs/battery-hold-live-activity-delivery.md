@@ -64,6 +64,9 @@ restored or cancelled. The APNs `timestamp` is the snapshot's data time
 (`max(created_at, monitoring.checked_at, restored_at)`), not the send time, so an
 older version delivered late can't replace a newer one. Updates carry
 `stale-date = next_check_at + 10 min`. `apns-expiration` is the registration's expiry.
+The app applies the same rule to the content it sets itself; before the first
+check (no `nextCheckAt`) it uses the activity's start + 15 min (one check
+interval) + 10 min, so a Live Activity that never receives a push still turns stale.
 
 `content-state` keys are camelCase and dates are **seconds since
 2001-01-01T00:00:00Z**, because ActivityKit decodes with Swift's default
