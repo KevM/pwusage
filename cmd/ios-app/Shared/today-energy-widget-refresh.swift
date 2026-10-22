@@ -33,6 +33,7 @@ struct TodayEnergyWidgetRefresh: Sendable {
         let configuration = URLSessionConfiguration.default
         configuration.httpCookieStorage = SharedWebSession.cookieStorage()
         configuration.httpShouldSetCookies = true
+        configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 8
         configuration.timeoutIntervalForResource = 12
