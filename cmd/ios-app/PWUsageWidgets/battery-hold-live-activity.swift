@@ -8,7 +8,7 @@ import WidgetKit
 struct BatteryHoldLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: BatteryHoldActivityAttributes.self) { context in
-            BatteryHoldLockScreenView(attributes: context.attributes, state: context.state, isStale: context.isStale)
+            BatteryHoldActivityContent(context: context)
                 .widgetURL(BatteryHoldLink.url(siteID: context.attributes.siteID))
         } dynamicIsland: { context in
             DynamicIsland {
@@ -45,6 +45,22 @@ struct BatteryHoldLiveActivity: Widget {
                     .frame(width: 24, height: 17)
             }
             .widgetURL(BatteryHoldLink.url(siteID: context.attributes.siteID))
+        }
+        .supplementalActivityFamilies([.small])
+    }
+}
+
+/// Picks the Lock Screen card or the `.small` layout (CarPlay, watch Smart Stack).
+private struct BatteryHoldActivityContent: View {
+    let context: ActivityViewContext<BatteryHoldActivityAttributes>
+    @Environment(\.activityFamily) private var family
+
+    var body: some View {
+        switch family {
+        case .small:
+            BatteryHoldSmallView(attributes: context.attributes, state: context.state, isStale: context.isStale)
+        default:
+            BatteryHoldLockScreenView(attributes: context.attributes, state: context.state, isStale: context.isStale)
         }
     }
 }
@@ -93,6 +109,20 @@ private enum BatteryHoldActivityPreviews {
         .background(Color(uiColor: .secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 22))
         .padding()
+}
+
+#Preview("Small (CarPlay, watch)") {
+    // The smallest documented small-family heights: CarPlay 78pt, Apple Watch 69.5pt.
+    VStack {
+        ForEach([CGSize(width: 170, height: 78), CGSize(width: 155, height: 69.5)], id: \.height) { size in
+            BatteryHoldSmallView(attributes: BatteryHoldActivityPreviews.attributes,
+                                 state: BatteryHoldActivityPreviews.atHold, isStale: false)
+                .frame(width: size.width, height: size.height)
+                .background(Color(uiColor: .secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
+    }
+    .padding()
 }
 
 #Preview("Island expanded", as: .dynamicIsland(.expanded), using: BatteryHoldActivityPreviews.attributes) {

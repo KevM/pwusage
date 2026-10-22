@@ -80,6 +80,58 @@ struct BatteryHoldLockScreenView: View {
     }
 }
 
+/// The `.small` family, shown in CarPlay and the watch Smart Stack: "Battery Saver" and the
+/// site, the headline, then a full-width battery with its charge. Without it the system reuses
+/// the compact island views. Small heights run as low as 69.5pt (watch) and 78pt (CarPlay), so
+/// the label line drops out when all three rows don't fit.
+struct BatteryHoldSmallView: View {
+    let attributes: BatteryHoldActivityAttributes
+    let state: BatteryHoldActivityAttributes.ContentState
+    let isStale: Bool
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            rows(showingLabel: true)
+            rows(showingLabel: false)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    private func rows(showingLabel: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if showingLabel {
+                HStack(spacing: 5) {
+                    BatteryHoldGlyph(size: 13)
+                        .foregroundStyle(Color.accentColor)
+                    Text("Battery Saver")
+                    Spacer(minLength: 4)
+                    Text(attributes.siteName)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+            }
+            Text(BatteryHoldActivityPresentation.headline(state))
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            HStack(spacing: 6) {
+                BatteryHoldGauge(style: .bar, state: state, isStale: isStale)
+                    .frame(height: 14)
+                if let battery = BatteryHoldActivityPresentation.batteryText(state) {
+                    Text(battery)
+                        .font(.subheadline.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(isStale ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                        .accessibilityHidden(true)
+                }
+            }
+        }
+    }
+}
+
 /// The expanded Dynamic Island's bottom region: the full-width battery, then the figures.
 struct BatteryHoldExpandedBottom: View {
     let attributes: BatteryHoldActivityAttributes
