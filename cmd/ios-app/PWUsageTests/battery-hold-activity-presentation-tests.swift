@@ -75,11 +75,11 @@ struct BatteryHoldActivityPresentationTests {
     func transitions() {
         #expect(status(state(phase: .confirmingEnd)) == .init(text: "Home use dropped, confirming", isWarning: false))
         #expect(status(state(phase: .restoring))?.text == "Confirming with Tesla")
-        #expect(P.headline(state(phase: .loadRunning)) == "Saving at 100%")
+        #expect(P.headline(state(phase: .loadRunning)) == "Saving your Powerwall at 100%")
         var reason = state(phase: .loadRunning)
         reason.restoreReason = .loadEnded
         #expect(P.isRestoring(reason))
-        #expect(P.headline(reason) == "Restoring 20% reserve")
+        #expect(P.headline(reason) == "Restoring 20% backup reserve")
         #expect(status(reason)?.text == "Confirming with Tesla")
         #expect(status(state())?.text == "Waiting for first check")
         for phase: P.State.Phase in [.watching, .loadRunning, .confirmingEnd, .waitingForData, .checkFailed, .timer, .restoring, .unknown] {
@@ -105,10 +105,10 @@ struct BatteryHoldActivityPresentationTests {
     func finalStates() {
         var restored = state(status: .restored)
         restored.restoreReason = .manual
-        #expect(P.headline(restored) == "Reserve restored to 20%")
+        #expect(P.headline(restored) == "Backup reserve restored to 20%")
         #expect(status(restored)?.text == "Stopped in pwusage")
         restored.restoreReason = .loadEnded
-        #expect(status(restored)?.text == "Job finished")
+        #expect(status(restored)?.text == "Home use dropped")
         restored.restoreReason = .safetyTimeout
         #expect(status(restored)?.text == "8-hour safety limit")
         restored.restoreReason = .timerElapsed
@@ -116,12 +116,50 @@ struct BatteryHoldActivityPresentationTests {
         var cancelled = state(status: .cancelled)
         #expect(P.headline(cancelled) == "Battery Saver stopped")
         cancelled.cancelledObservedReserve = 45
-        #expect(status(cancelled)?.text == "Reserve set to 45% outside pwusage")
+        #expect(status(cancelled)?.text == "Backup reserve set to 45% outside pwusage")
         cancelled.cancelledObservedReserve = nil
-        #expect(status(cancelled)?.text == "Reserve changed outside pwusage")
+        #expect(status(cancelled)?.text == "Backup reserve changed outside pwusage")
         let ended = state(status: .ended)
         #expect(P.headline(ended) == "Battery Saver ended")
         #expect(status(ended) == .init(text: "Open pwusage for details", isWarning: false))
+    }
+
+    @Test("Copy follows the voice guide: Powerwall named first, backup reserve in full, no bare job")
+    func voice() {
+        var restored = state(status: .restored)
+        restored.restoreReason = .loadEnded
+        var restoring = state(phase: .restoring)
+        restoring.restoreReason = .loadEnded
+        let texts = [P.headline(state(phase: .watching)), P.headline(restoring), P.headline(restored), status(restored)?.text ?? ""]
+        #expect(texts[0].contains("Powerwall"))
+        for text in texts {
+            #expect(!text.lowercased().contains("job"))
+            if text.lowercased().contains("reserve") { #expect(text.lowercased().contains("backup reserve")) }
+        }
+    }
+
+    @Test("A state goes stale ten minutes after its next check is due")
+    func staleAfterNextCheck() {
+        let watching = state(phase: .watching)
+        #expect(watching.staleDate(activityStartedAt: start) == start.addingTimeInterval(1800 + 600))
+        // The activity's start doesn't matter once a check is scheduled.
+        #expect(watching.staleDate(activityStartedAt: start.addingTimeInterval(3600)) == start.addingTimeInterval(1800 + 600))
+    }
+
+    @Test("Before the first check, a state goes stale one check interval plus ten minutes after the activity started")
+    func staleBeforeFirstCheck() {
+        let first = state()
+        #expect(first.nextCheckAt == nil)
+        let activityStart = start.addingTimeInterval(120)
+        #expect(first.staleDate(activityStartedAt: activityStart) == activityStart.addingTimeInterval(25 * 60))
+    }
+
+    @Test("Final states never go stale")
+    func finalNeverStale() {
+        for status: P.State.Status in [.restored, .cancelled, .ended, .unknown] {
+            #expect(state(phase: .watching, status: status).staleDate(activityStartedAt: start) == nil)
+            #expect(state(status: status).staleDate(activityStartedAt: start) == nil)
+        }
     }
 
     @Test("Times on another day name the weekday")

@@ -353,6 +353,35 @@ struct BatteryHoldActivityCoordinatorTests {
         #expect(coordinator.offer(forHoldID: 7) == .showing)
     }
 
+    @Test("ActivityKit's states map to the coordinator's lifecycle; iOS 26's pending is not live")
+    func lifecycleMapping() {
+        #expect(ActivityKitBatteryHoldHandle.lifecycle(.active) == .active)
+        #expect(ActivityKitBatteryHoldHandle.lifecycle(.stale) == .stale)
+        #expect(ActivityKitBatteryHoldHandle.lifecycle(.ended) == .ended)
+        #expect(ActivityKitBatteryHoldHandle.lifecycle(.dismissed) == .dismissed)
+        if #available(iOS 26, *) {
+            #expect(ActivityKitBatteryHoldHandle.lifecycle(.pending) == .pending)
+        }
+    }
+
+    @Test("Reconcile leaves a pending activity alone, then adopts it once it is active")
+    func pendingNotTracked() async throws {
+        let pending = FakeActivityHandle(
+            attributes: .init(siteID: "site-1", siteName: "Home", holdID: 7, registrationID: UUID(),
+                              timeZoneIdentifier: "UTC", activityStartedAt: start),
+            state: .init(hold: hold()))
+        pending.lifecycle = .pending
+        pending.pushToken = Data(repeating: 1, count: 32)
+        host.handles.append(pending)
+        api.holdResponses["site-1"] = .init(hold: hold(checkedAt: 300), notice: nil)
+        let coordinator = makeCoordinator()
+        try await staysTrue { pending.updates.isEmpty && pending.ends.isEmpty && api.registrations.isEmpty }
+        pending.lifecycle = .active
+        coordinator.reconcileInBackground()
+        try await eventually { pending.updates.count == 1 && api.registrations.count == 1 }
+        #expect(pending.ends.isEmpty)
+    }
+
     @Test("Sign-out unregisters, then clears every activity from the Lock Screen")
     func signOut() async throws {
         let coordinator = makeCoordinator()

@@ -47,8 +47,8 @@ enum BatteryHoldActivityPresentation {
     static func headline(_ state: State) -> String {
         switch state.status {
         case .active:
-            isRestoring(state) ? "Restoring \(state.originalReserve)% reserve" : "Saving at \(state.targetReserve)%"
-        case .restored: "Reserve restored to \(state.originalReserve)%"
+            isRestoring(state) ? "Restoring \(state.originalReserve)% backup reserve" : "Saving your Powerwall at \(state.targetReserve)%"
+        case .restored: "Backup reserve restored to \(state.originalReserve)%"
         case .cancelled: "Battery Saver stopped"
         case .ended, .unknown: "Battery Saver ended"
         }
@@ -61,14 +61,14 @@ enum BatteryHoldActivityPresentation {
         switch state.status {
         case .restored:
             switch state.restoreReason {
-            case .loadEnded: return info("Job finished")
+            case .loadEnded: return info("Home use dropped")
             case .manual: return info("Stopped in pwusage")
             case .safetyTimeout: return info("8-hour safety limit")
             case .timerElapsed: return info("Stop time reached")
             default: return nil
             }
         case .cancelled:
-            return info(state.cancelledObservedReserve.map { "Reserve set to \($0)% outside pwusage" } ?? "Reserve changed outside pwusage")
+            return info(state.cancelledObservedReserve.map { "Backup reserve set to \($0)% outside pwusage" } ?? "Backup reserve changed outside pwusage")
         case .ended, .unknown:
             return info("Open pwusage for details")
         case .active:
