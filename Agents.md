@@ -88,7 +88,9 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - Set `PWUSAGE_SIMULATOR_ID` to target a specific simulator, or `PWUSAGE_TEST_TIMEOUT_SECONDS` to change the deadline. A failed or timed-out run prints the retained test-artifact path.
 - If a run times out, inspect the retained artifacts and simulator state before changing app code. Avoid overlapping test runs.
 - **Framework**: All iOS tests must use Swift Testing (`SwiftTest` via `import Testing`, `@Suite`, `@Test`, `#expect`, `#require`). Do not use legacy `XCTest`.
-- **Targeting Specific Tests**: Target individual suites/fixtures (e.g., `./run-tests.sh AppConfigurationTests`) or specific test methods (e.g., `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin`). The script automatically normalizes the target prefix and method parentheses.
+- **Targeting Specific Tests**: Target individual suites/fixtures (e.g., `./run-tests.sh AppConfigurationTests`) or specific test methods (e.g., `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin`). The script automatically normalizes the target prefix and method parentheses. `./run-tests.sh PWUsageTests` runs the whole bundle. A run that executes zero tests (for example a misspelled suite) exits non-zero even though `xcodebuild` prints `TEST SUCCEEDED`. After changing the script, run `./test-run-tests.sh`.
+- **Waiting in tests**: Never assert after a fixed `Task.sleep`. Use `eventually` for a state that must be reached and `staysTrue` for one that must not change, both in `PWUsageTests/test-waits.swift`.
+- **Lint**: `swiftlint --strict` from the repository root uses `.swiftlint.yml`. CI runs it as a non-blocking step until the baseline in `CODE_AUDIT.md` §14.4 is cleared; do not add new violations.
 
 ## Communication Style
 - **Task Management**: Use `task.md` to track huge chunks of work.

@@ -5,6 +5,20 @@ import Testing
 @MainActor
 @Suite("Solar Forecast Coordinator Tests", .serialized)
 struct SolarForecastCoordinatorTests {
+    @Test("Billing loads history without live Tesla refresh and reuses planning context")
+    func billingReusesPlanningContext() async {
+        let forecast = ForecastManagerSpy()
+        let api = ForecastDashboardAPISpy()
+        let coordinator = DashboardCoordinator(siteID: "site-a", api: api, planningAPI: api,
+            forecastStore: forecast, accountScopeID: "local-account", now: { api.now }, timerInterval: nil)
+        await coordinator.billOutlookAppeared()
+        await coordinator.billOutlookAppeared()
+        #expect(api.billSiteIDs == ["site-a"])
+        #expect(api.contextSiteIDs == ["site-a"])
+        #expect(api.liveSiteIDs.isEmpty)
+        #expect(await forecast.refreshCount == 0)
+    }
+
     @Test("A retained Smart Shift tab skips foreground requests while another tab is selected")
     func hiddenDetailSkipsForegroundRefresh() async {
         let forecast = ForecastManagerSpy(configuredSiteID: "site-a")

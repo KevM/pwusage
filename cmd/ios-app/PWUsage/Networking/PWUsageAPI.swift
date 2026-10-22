@@ -58,7 +58,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
-        let url = try makeURL(path: "/api/mobile/bill-summary", siteID: siteID)
+        let url = try makeURL(path: "/api/mobile/bill-summary", siteID: siteID, extra: [URLQueryItem(name: "outlook", value: "1")])
         let data = try await request(url: url)
         do {
             return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: data).validating(siteID: siteID)

@@ -37,3 +37,16 @@ describe('bill pricing across multiple historical rate buckets', () => {
         expect(usage[0].cost).toBe(-0.04);
     });
 });
+
+import outlookFixtures from './test-support/bill-outlook-fixtures.json';
+for (const fixture of outlookFixtures) {
+    it(`bill outlook parity: ${fixture.name}`, () => {
+        const usage = fixture.buckets.map(bucket => ({
+            tariff: { name: bucket.tariffName }, touName: bucket.periodName,
+            gridUsage: bucket.netGridKwh * 1000, buyRate: bucket.buyRate,
+            sellRate: bucket.sellRate, cost: 0,
+        }));
+        priceBillUsage(usage);
+        expect(usage.reduce((sum, row) => sum + row.cost, 0)).toBeCloseTo(fixture.expectedCost, 10);
+    });
+}

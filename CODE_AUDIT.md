@@ -6,7 +6,7 @@
 
 *`FIXED (PR pending)` is the form every entry on this branch uses: the finding is fixed and verified in-tree, but the PR number and commit are stamped once the branch merges. Once merged, replace it with `FIXED (PR #N, commit <sha>)`. Do not mix the two forms in one file.*
 
-**Progress:** 77 findings tracked. 24 fixed. **Merged onto `main`:** this branch was rebased onto `origin/main` after PR #117 landed, and one collision had to be resolved by hand — see the note above §3.16. Two batches are now closed. The first, on `fix/ios-audit-high-findings`, was the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`), and §8.18 was filed after that batch's whole-branch review. The second, on `fix/ios-audit-correctness-tail` (see `docs/superpowers/specs/2026-09-30-ios-audit-correctness-tail-design.md`), fixed five more — §5.5, §5.7 parts (a) and (b), §5.8, §5.12, §8.18 — recorded §5.6 as `WON'T FIX` with a condition for revisiting, and filed §3.16 (originally numbered §3.15; renumbered on merge because PR #117 had independently claimed that number) so §5.7's deferred part (c) is not lost behind a `FIXED` status.
+**Progress:** 83 findings tracked. 30 fixed (§14's six, filed and fixed together on `chore/ios-test-runner-ci`, are included). **Merged onto `main`:** this branch was rebased onto `origin/main` after PR #117 landed, and one collision had to be resolved by hand — see the note above §3.16. Two batches are now closed. The first, on `fix/ios-audit-high-findings`, was the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`), and §8.18 was filed after that batch's whole-branch review. The second, on `fix/ios-audit-correctness-tail` (see `docs/superpowers/specs/2026-09-30-ios-audit-correctness-tail-design.md`), fixed five more — §5.5, §5.7 parts (a) and (b), §5.8, §5.12, §8.18 — recorded §5.6 as `WON'T FIX` with a condition for revisiting, and filed §3.16 (originally numbered §3.15; renumbered on merge because PR #117 had independently claimed that number) so §5.7's deferred part (c) is not lost behind a `FIXED` status.
 
 **Branch gate, re-run at this reconciliation's own commit** (the ledger commit, `docs(ios): reconcile the audit ledger with the correctness tail`): `cd cmd/ios-app && ./run-tests.sh` exits **0** with **380 tests in 21 suites** passing at the reconciliation commit, and **390 in 21 suites** after the commits the two review passes added, and `xcodebuild … -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` prints **BUILD SUCCEEDED** with `grep -c "warning:"` = **1** on a clean build, and the single hit is the `appintentsmetadataprocessor` "Metadata extraction skipped" line that :28 documents as the sole permitted exemption — the same figure the header claims. **An incremental build may report 0 instead**, because the metadata processor does not re-run when nothing has changed; that is a DerivedData artifact, not a stricter result, so a reader seeing 0 should not read it as "the expected warning is gone". Zero *Swift* compiler warnings is the durable claim and it holds either way; §5.12's earlier `373 tests in 21 suites` figures are time-scoped to that commit and have since grown with the tests later commits added.
 
@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | OPEN | 52 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §3.15, §3.16, §5.1, §5.2, §5.3, §5.4, §5.5, §5.6, §5.7, §5.8, §5.9, §5.10, §5.11, §5.12, §6.1, §6.2, §6.4, §7.1, §7.7, §8.18 |
 | IN PROGRESS | 0 | — |
-| FIXED | 24 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §3.15, §5.1, §5.2, §5.3, §5.4, §5.5, §5.7, §5.8, §5.9, §5.10, §5.11, §5.12, §6.1, §6.2, §6.4, §7.1, §7.7, §8.18 (§4.6 is a recorded negative result, not a finding) |
+| FIXED | 30 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §3.15, §5.1, §5.2, §5.3, §5.4, §5.5, §5.7, §5.8, §5.9, §5.10, §5.11, §5.12, §6.1, §6.2, §6.4, §7.1, §7.7, §8.18, §14.1, §14.2, §14.3, §14.4, §14.5, §14.6 (§4.6 is a recorded negative result, not a finding) |
 | WON'T FIX | 1 | §5.6 |
 
 ---
@@ -844,6 +844,73 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 
 ---
 
+## 14. Test runner and CI tooling
+
+*Filed after the original audit, from a review of `run-tests.sh`, `.github/workflows/ios.yml` and the widget target's packaging — the build-and-test plumbing §11 had listed as unaudited. Numbered §14 so no existing number moves; it sits here because it is a code-level section, ahead of the cross-cutting recommendations.*
+
+### 14.1 The runner can report success with zero tests
+- **Location:** `cmd/ios-app/run-tests.sh` (target normalization; post-run test-count guard; tool preflight); `cmd/ios-app/test-run-tests.sh`
+- **What:** A bare `PWUsageTests` argument was rewritten to `-only-testing:PWUsageTests/PWUsageTests()`, which matches no suite. `./run-tests.sh PWUsageTests` printed "Executed 0 tests" and `** TEST SUCCEEDED **`. Any misspelled suite did the same, because `xcodebuild` exits 0 when a filter matches nothing. A machine without `xcodegen` exited 127 from `generate.sh` with no hint.
+- **Why:** The one documented way to run the suite could report green while running nothing, so every "tests pass" claim made through a filter was unverifiable.
+- **Action:** Pass a bare target through as `-only-testing:PWUsageTests`; fail when the result bundle shows zero executed tests; preflight the required tools with install hints.
+- **Severity:** Critical
+- **Status:** FIXED (PR pending)
+- **Confidence:** High — reproduced before the fix.
+- **Fix:** A bare `PWUsageTests` (or `PWUsageTests/`) now becomes `-only-testing:PWUsageTests`. After a 0 exit, the runner reads `xcrun xcresulttool get test-results summary` and sums `passedTests + failedTests + expectedFailures`; zero, or an unreadable bundle, turns the run into exit 1 with "executed 0 tests; check the test filter spelling" and keeps the artifacts. The guard runs on every invocation, not only filtered ones, since a zero-test run is never a pass. A preflight checks `xcodegen`, `xcodebuild`, `xcrun` and `python3` and exits 127 listing each missing tool with its install command. `test-run-tests.sh` covers the bare target, a zero-test filtered run, a zero-test unfiltered run and a missing `xcodegen`; each new assertion was mutation-checked by reverting its fix and watching the script fail. Against the real toolchain, `./run-tests.sh NoSuchSuiteTests` now prints `** TEST SUCCEEDED **` from `xcodebuild` and then exits 1.
+
+### 14.2 Simulator selection ignores the runtime version
+- **Location:** `cmd/ios-app/run-tests.sh` (simulator selection)
+- **What:** The picker kept any available device whose name started with `iPhone`, from any runtime, preferring a booted one. On a machine with iOS 17 runtimes it could pick a device below the iOS 18 deployment target (`project.yml` `deploymentTarget`).
+- **Why:** The run then fails to install, or tests a runtime the app does not support.
+- **Action:** Keep only iOS runtimes at or above the deployment target and prefer the newest; keep `PWUSAGE_SIMULATOR_ID` as the override.
+- **Severity:** Important
+- **Status:** FIXED (PR pending)
+- **Confidence:** High
+- **Fix:** The deployment target is read from `project.yml`, so the two cannot drift. Runtimes are matched on their `.iOS-<major>-<minor>` identifier (watchOS/tvOS/visionOS runtimes are skipped even if a device name starts with `iPhone`), filtered to `>=` the target, and sorted newest first, then booted first within a runtime. No eligible device exits 2 naming the minimum version. `test-run-tests.sh` pins all of it with a fixture holding a booted iOS 17.5 iPhone, a booted iOS 18.0 iPhone, a booted iPad and a booted watchOS device beside a shut-down iOS 27 iPhone, which must win.
+
+### 14.3 CI uploads the whole DerivedData tree on failure
+- **Location:** `.github/workflows/ios.yml` (`Upload Test Artifacts`); `cmd/ios-app/run-tests.sh` (`-collect-test-diagnostics`)
+- **What:** The failure upload took `/tmp/pwusage-ios-tests.*`, which holds DerivedData (gigabytes), and `-collect-test-diagnostics never` meant the result bundle carried no crash logs anyway.
+- **Why:** Slow, storage-heavy uploads of build products nobody reads, without the diagnostics that would explain a crash.
+- **Action:** Upload only the result bundle; collect diagnostics on failure.
+- **Severity:** Important
+- **Status:** FIXED (PR pending)
+- **Confidence:** High
+- **Fix:** The upload path is `/tmp/pwusage-ios-tests.*/**/TestResults.xcresult`, and the runner passes `-collect-test-diagnostics on-failure` (pinned by `test-run-tests.sh`).
+
+### 14.4 No SwiftLint configuration exists
+- **Location:** `.swiftlint.yml` (repository root); `.github/workflows/ios.yml` (`SwiftLint`)
+- **What:** There was no lint configuration, so style rules (`force_unwrapping`, `sorted_imports`, …) were enforced by nobody.
+- **Why:** Without a recorded baseline, violations grow silently and cannot be burned down.
+- **Action:** Add a root config scoped to `cmd/ios-app`, with the default rules plus `sorted_imports`, `empty_count`, `force_unwrapping` and `unhandled_throwing_task`; size limits raised to fit the largest existing files; a `swiftlint --strict` CI step, non-blocking while the baseline is large.
+- **Severity:** Important
+- **Status:** FIXED (PR pending) — config and non-blocking CI step landed; the baseline below is still open work.
+- **Confidence:** High
+- **Fix:** `file_length` is 1350/1500 (largest file: `LoadTimingForecastEstimator.swift`, 1300 lines) and `type_body_length` 1100/1250 (largest bodies: `LoadTimingViewTests` 1084, `LoadTimingForecastEstimator` 1009), so neither fires today; lower them as §9.8/§9.9-style splits land. The CI step installs SwiftLint if the runner lacks it and runs `swiftlint lint --strict --reporter github-actions-logging` with `continue-on-error: true`.
+- **Baseline (SwiftLint 0.65.1, `swiftlint lint --strict` from the repository root, at this branch's commit):** **1413 violations**, of which 198 are errors even without `--strict`. By rule: `line_length` 1011, `identifier_name` 125, `force_unwrapping` 53, `sorted_imports` 44, `trailing_comma` 32, `implicit_optional_initialization` 29, `statement_position` 20, `function_parameter_count` 20, `cyclomatic_complexity` 16, `large_tuple` 15, `function_body_length` 14, `empty_count` 9, `non_optional_string_data_conversion` 6, `nesting` 6, `optional_data_string_conversion` 4, `type_name` 3, `static_over_final_class` 2, and one each of `vertical_whitespace`, `redundant_discardable_let`, `force_try`, `control_statement`. Make the step blocking (drop `continue-on-error`) once this reaches zero, or adopt a SwiftLint `baseline` file to block only new violations first.
+
+### 14.5 The widget extension has no privacy manifest
+- **Location:** `cmd/ios-app/PWUsageWidgets/PrivacyInfo.xcprivacy` (new); `cmd/ios-app/project.yml` (`PWUsageWidgets.info.properties`)
+- **What:** Only `PWUsage/PrivacyInfo.xcprivacy` existed. The widget target's generated `Info.plist` also held literal `CFBundleShortVersionString` `1.0` / `CFBundleVersion` `1`, masked only because `GENERATE_INFOPLIST_FILE` fills them from build settings.
+- **Why:** Each bundle that ships code should carry its own manifest; and an extension whose version keys drift from its host app is rejected at upload.
+- **Action:** Add a widget manifest and mirror the app's version keys into the widget target.
+- **Severity:** Important
+- **Status:** FIXED (PR pending)
+- **Confidence:** High
+- **Fix:** `PWUsageWidgets/PrivacyInfo.xcprivacy` declares no tracking, no collected data types and **no accessed-API categories**. The review prompt asked for `NSPrivacyAccessedAPICategoryUserDefaults` with reason `1C8F.1`, but that would be a false declaration: the widget and `Shared/` sources never touch `UserDefaults` — they share state through files in the App Group container (`FileManager.containerURL(forSecurityApplicationGroupIdentifier:)` in `Shared/today-energy-snapshot.swift` and `Shared/battery-hold-control-site.swift`) — and a scan of both trees for the other required-reason APIs (file timestamps, system boot time, disk space, active keyboards) found none. Add the category if widget code ever reads `UserDefaults(suiteName:)`. The file needs no explicit `project.yml` entry: the target's existing `path: PWUsageWidgets` source already places it in the widget's Resources phase (checked in the generated `project.pbxproj`). The widget's `info.properties` now sets `CFBundleShortVersionString: "$(MARKETING_VERSION)"` and `CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"`, matching the app; the `Info.plist` files themselves are generated and git-ignored, so `project.yml` is the only place this can be fixed.
+
+### 14.6 A test flakes on a fixed sleep
+- **Location:** `cmd/ios-app/PWUsageTests/test-waits.swift` (new); `cmd/ios-app/PWUsageTests/battery-hold-activity-coordinator-tests.swift`
+- **What:** Twelve tests slept 10–30 ms and then asserted state at one instant — sometimes that nothing had changed, sometimes that a state had been reached (`offer == .disabled`). One failed in a full run and passed 3/3 in isolation.
+- **Why:** Under load a 20 ms sleep is neither long enough for a positive result nor a meaningful window for a negative one: the positive checks flake, and the negative ones pass vacuously when the work has not run yet.
+- **Action:** Replace each with a bounded wait — `eventually` for a state that must be reached, an inverted wait for one that must not change — from one shared helper file.
+- **Severity:** Important
+- **Status:** FIXED (PR pending)
+- **Confidence:** Medium — the original failure was not reproduced; the fix removes the timing assumption it depended on.
+- **Fix:** `test-waits.swift` now owns `eventually` (moved out of the coordinator test file; `PWUsageAppModelTests` also uses it) and adds `staysTrue(for:_:)`, which polls through a 100 ms window and throws `InvariantBroken` the moment its condition fails. Each sleep site was split by what it was checking: reached states (`deniedActivities`' two offers, `staleRegistration`'s immediate end) wait with `eventually`; "nothing else happened" checks hold with `staysTrue`. `signOutDrainsRegistration`'s sleep-before-resume became `staysTrue { !done.value }`, which turns an untested pause into an assertion that sign-out does wait for the in-flight registration. The helpers have their own tests (`TestWaitTests`), including that `staysTrue` fails on the first broken poll rather than at the end of its window. Other test files still keep private polling helpers (`waitUntil` in `PWUsageAppModelTests` and `SolarForecastCoordinatorTests`, `waitUpTo` in `MobileAuthServiceTests`); folding them into `test-waits.swift` is left to §9.14-style test cleanup.
+
+---
+
 ## 10. Cross-cutting recommendations
 
 1. **Centralize the freshness windows.** Twelve-plus magic numbers (§8.5) and three sites doing string surgery on a freshness string (§8.6) are the highest-leverage cleanup. A `DataFreshness` enum with named windows, passed into a structured-result `freshness(...)`, would fix §8.5, §8.6, and part of §8.7 at once.
@@ -872,7 +939,7 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Test coverage assessment.** A quick scan confirmed Swift Testing is used exclusively and identified duplication issues (§9.12-9.14), but no coverage analysis was performed.
 - **Performance profiling.** §7 identifies potential hot paths; no Instruments traces were run. The §7.1 severity is based on arithmetic, not measurement.
 - **Localization correctness.** Untranslated strings were not assessed.
-- **Build settings, scheme configuration, Xcode project structure** beyond what is visible in `project.yml` and the generated `Info.plist`.
+- **Build settings, scheme configuration, Xcode project structure** beyond what is visible in `project.yml` and the generated `Info.plist`. *Partly superseded:* §14 later reviewed the test runner, the iOS CI workflow, lint configuration, and the widget target's privacy manifest and version keys. Signing, entitlements and the remaining build settings are still unaudited.
 - **The `Observed` interval-count claim in the README** ("a recent last-known battery charge may be shown with its source age") was traced into code and matches §5.4, but real-device cookie renewal and logout checks remain release gates per the README and were not exercised.
 
 ---

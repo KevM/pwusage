@@ -62,15 +62,13 @@ struct BatteryHoldActivityCoordinatorTests {
         host.activitiesEnabled = false
         let coordinator = makeCoordinator()
         coordinator.batteryHoldConfirmed(.started(hold()), siteID: "site-1", timeZone: nil)
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(host.handles.isEmpty)
-        #expect(coordinator.offer(forHoldID: 7) == .disabled)
+        try await eventually { coordinator.offer(forHoldID: 7) == .disabled }
+        try await staysTrue { host.handles.isEmpty }
         host.activitiesEnabled = true
         host.startError = URLError(.unknown)
         coordinator.batteryHoldConfirmed(.started(hold()), siteID: "site-1", timeZone: nil)
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(host.handles.isEmpty)
-        #expect(coordinator.offer(forHoldID: 7) == .available)
+        try await eventually { coordinator.offer(forHoldID: 7) == .available }
+        try await staysTrue { host.handles.isEmpty }
     }
 
     @Test("Each push token is registered with its true environment; rotation re-registers")
@@ -90,8 +88,7 @@ struct BatteryHoldActivityCoordinatorTests {
         handle.emit(token: Data([0xAB, 0x01] + Array(repeating: 0, count: 30)))
         handle.emit(token: Data(repeating: 0xCD, count: 32))
         try await eventually { api.registrations.count == 2 }
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(api.registrations.count == 2)
+        try await staysTrue { api.registrations.count == 2 }
         #expect(api.registrations.last?.registration.pushToken.hasPrefix("cdcd") == true)
     }
 
@@ -100,8 +97,7 @@ struct BatteryHoldActivityCoordinatorTests {
         let coordinator = makeCoordinator(environment: nil)
         let handle = try await started(coordinator, hold())
         handle.emit(token: Data(repeating: 1, count: 32))
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(api.registrations.isEmpty)
+        try await staysTrue { api.registrations.isEmpty }
     }
 
     @Test("Temporary registration failures retry; rejections stop")
@@ -116,8 +112,7 @@ struct BatteryHoldActivityCoordinatorTests {
         api.registerErrors = [PWUsageAPIError.requestRejected(statusCode: 429, message: "registration_limit")]
         handle.emit(token: Data(repeating: 2, count: 32))
         try await eventually { api.registerAttempts == 4 }
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(api.registerAttempts == 4)
+        try await staysTrue { api.registerAttempts == 4 }
         #expect(handle.lifecycle == .active)
     }
 
@@ -142,9 +137,8 @@ struct BatteryHoldActivityCoordinatorTests {
         try await eventually { api.isPaused }
         await coordinator.sessionInvalidated()
         api.resume()
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(BatteryHoldActivityRegistrationStore(defaults: defaults).entries.isEmpty)
-        #expect(handle.ends.first?.immediately == true)
+        try await eventually { handle.ends.first?.immediately == true }
+        try await staysTrue { BatteryHoldActivityRegistrationStore(defaults: defaults).entries.isEmpty }
     }
 
     @Test("Refreshed server state updates, cancels and ends without regressing")
@@ -155,9 +149,7 @@ struct BatteryHoldActivityCoordinatorTests {
         coordinator.batteryHoldConfirmed(.refreshed(.init(hold: hold(checkedAt: 0), notice: nil)), siteID: "site-1", timeZone: nil)
         // Another site's state never touches this site's activity.
         coordinator.batteryHoldConfirmed(.refreshed(.init(hold: nil, notice: nil)), siteID: "site-2", timeZone: nil)
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(handle.updates.isEmpty)
-        #expect(handle.ends.isEmpty)
+        try await staysTrue { handle.updates.isEmpty && handle.ends.isEmpty }
         coordinator.batteryHoldConfirmed(.refreshed(.init(hold: hold(checkedAt: 1800), notice: nil)), siteID: "site-1", timeZone: nil)
         try await eventually { handle.updates.count == 1 }
 
@@ -268,8 +260,7 @@ struct BatteryHoldActivityCoordinatorTests {
         handle.emit(token: Data(repeating: 0xAA, count: 32))
         try await eventually { api.isPaused }
         handle.emit(token: Data(repeating: 0xBB, count: 32))
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(api.registerAttempts == 1)
+        try await staysTrue { api.registerAttempts == 1 }
         api.resume()
         try await eventually { api.registrations.count == 2 }
         #expect(api.registrations.map { String($0.registration.pushToken.prefix(2)) } == ["aa", "bb"])
@@ -278,8 +269,7 @@ struct BatteryHoldActivityCoordinatorTests {
         coordinator.stopObserving()
         let relaunched = makeCoordinator()
         _ = relaunched
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(api.registrations.count == 2)
+        try await staysTrue { api.registrations.count == 2 }
     }
 
     @Test("A registration still in flight at sign-out is removed after it lands")
@@ -289,8 +279,10 @@ struct BatteryHoldActivityCoordinatorTests {
         api.pauseRegistration = true
         handle.emit(token: Data(repeating: 1, count: 32))
         try await eventually { api.isPaused }
-        let signOut = Task { await coordinator.signOut() }
-        try await Task.sleep(for: .milliseconds(20))
+        let done = Flag()
+        let signOut = Task { await coordinator.signOut(); done.value = true }
+        // Sign-out waits for the in-flight registration instead of racing past it.
+        try await staysTrue { !done.value }
         api.resume()
         await signOut.value
         #expect(api.events == ["register", "remove"])
@@ -320,7 +312,7 @@ struct BatteryHoldActivityCoordinatorTests {
         try await eventually { api.isPaused }
         // The rotated token's registration queues behind the stalled one.
         handle.emit(token: Data(repeating: 2, count: 32))
-        try await Task.sleep(for: .milliseconds(10))
+        try await staysTrue { api.registerAttempts == 1 }
         let done = Flag()
         Task { await coordinator.signOut(); done.value = true }
         try await eventually { done.value }
@@ -344,9 +336,7 @@ struct BatteryHoldActivityCoordinatorTests {
         try await eventually { old.ends.count == 1 }
         api.holdResponses["site-1"] = .init(hold: hold(id: 8), notice: nil)
         api.resumeFetch()
-        try await Task.sleep(for: .milliseconds(30))
-        #expect(new.ends.isEmpty)
-        #expect(coordinator.offer(forHoldID: 8) == .showing)
+        try await staysTrue { new.ends.isEmpty && coordinator.offer(forHoldID: 8) == .showing }
     }
 
     @Test("A start before relaunch reconcile reaches an existing activity adopts it")
@@ -376,33 +366,8 @@ struct BatteryHoldActivityCoordinatorTests {
         #expect(other.ends.first?.immediately == true)
         #expect(BatteryHoldActivityRegistrationStore(defaults: defaults).entries.isEmpty)
         coordinator.batteryHoldConfirmed(.started(hold(id: 10)), siteID: "site-1", timeZone: nil)
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(host.handles.count == 2)
+        try await staysTrue { host.handles.count == 2 }
     }
-
-    @Test("The eventually helper fails rather than returning after its deadline")
-    func eventuallyTimesOut() async {
-        await #expect(throws: TestWaitTimeout.self) {
-            try await eventually(timeout: .milliseconds(50)) { false }
-        }
-    }
-}
-
-private struct TestWaitTimeout: Error { let message: String }
-
-@MainActor
-func eventually(
-    timeout: Duration = .seconds(2),
-    _ condition: @MainActor () -> Bool
-) async throws {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
-    while clock.now < deadline {
-        if condition() { return }
-        try await Task.sleep(for: .milliseconds(10))
-    }
-    if condition() { return }
-    throw TestWaitTimeout(message: "Timed out after \(timeout) waiting for condition")
 }
 
 @MainActor
