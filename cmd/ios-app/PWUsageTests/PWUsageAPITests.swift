@@ -401,6 +401,17 @@ final class PWUsageAPITests {
         #expect(try await api.fetchLive(siteID: "site-1").site.id == "site-1")
     }
 
+    @Test("A bill whose load timing omits nextStartPhraseByKey still decodes")
+    func billWithoutNextStartPhrasesDecodes() async throws {
+        StubURLProtocol.requestHandler = { request in
+            let fixture = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC"},"currentBill":{"estimatedCost":2,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":true,"periods":[],"pricingPeriods":[],"nextCheaper":null,"nextCheaperPhrase":null},"sources":{"calculatedAt":"2026-09-23T12:34:56.123Z","energyDataThrough":null}}"#
+            return (try Self.response(request, status: 200), Data(fixture.utf8))
+        }
+        let bill = try await api.fetchBill(siteID: "site-1")
+        #expect(bill.loadTiming?.nextStartPhraseByKey == [:])
+        #expect(bill.loadTiming?.activeIsCheapest == true)
+    }
+
     @Test("The app session uses the shared no-cache, bounded-timeout policy")
     func appSessionUsesSharedPolicy() throws {
         let defaultAPI = PWUsageAPI(
