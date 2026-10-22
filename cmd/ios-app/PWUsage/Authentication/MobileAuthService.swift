@@ -67,6 +67,8 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
     private var pendingSignIn: PendingSignIn?
     /// Monotonic sign-in attempt counter. Bumped once per `signIn()` and never reused.
     private var signInGeneration = 0
+    private var sessionEpoch = 0
+    private var exchangeTask: Task<Void, Never>?
     private var activeAttempt: PKCEMaterial?
 
     init(
@@ -184,6 +186,7 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
     }
 
     func logout() async throws {
+        endLocalSession()
         var serverError: Error?
         do { try await api.logout() } catch { serverError = error }
         await api.clearSiteAuthCookie()
@@ -200,9 +203,25 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
 
     /// End the local session after an API request reports that the cookie expired.
     func invalidateAuthenticatedSession() async throws {
+        endLocalSession()
         await api.clearSiteAuthCookie()
         isAuthenticated = false
         do { try await forecastCleanup.signOut() } catch { throw AuthError.forecastCleanupFailed }
+    }
+
+    /// Revoke ownership before any suspension or web-session cancellation callback.
+    private func endLocalSession() {
+        sessionEpoch += 1
+        exchangeTask?.cancel()
+        exchangeTask = nil
+        let pending = pendingSignIn
+        pendingSignIn = nil
+        activeAttempt = nil
+        let session = webSession
+        webSession = nil
+        isAuthenticated = false
+        pending?.continuation.resume(throwing: AuthError.cancelled)
+        session?.cancel()
     }
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
@@ -249,13 +268,26 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
                 verifier: material.verifier,
                 state: callback.state
             )
-            Task { @MainActor in
+            let epoch = sessionEpoch
+            exchangeTask = Task { @MainActor in
                 do {
                     try await api.exchangeSession(exchange)
+                    guard sessionEpoch == epoch else {
+                        // URLSession may already have persisted Set-Cookie, even when
+                        // cancellation was requested. Revoke that late credential too.
+                        await api.clearSiteAuthCookie()
+                        return
+                    }
+                    if pendingSignIn?.generation == generation { exchangeTask = nil }
                     if completeSignIn(generation: generation, continuation, with: .success(())) {
                         isAuthenticated = true
                     }
                 } catch {
+                    guard sessionEpoch == epoch else {
+                        await api.clearSiteAuthCookie()
+                        return
+                    }
+                    if pendingSignIn?.generation == generation { exchangeTask = nil }
                     if completeSignIn(generation: generation, continuation, with: .failure(error)) {
                         isAuthenticated = false
                     }

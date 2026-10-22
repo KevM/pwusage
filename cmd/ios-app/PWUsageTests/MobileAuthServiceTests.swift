@@ -348,6 +348,69 @@ final class MobileAuthServiceTests {
         #expect(!service.isAuthenticated)
     }
 
+    @Test("Ending a session cancels its browser and ignores the later callback", arguments: [false, true])
+    func endingSessionCancelsBrowser(invalidate: Bool) async throws {
+        let service = try makeService(isAuthenticated: true)
+        var cancelled = false
+        let attempt = Task {
+            do { try await service.signIn() }
+            catch { cancelled = (error as? MobileAuthService.AuthError) == .cancelled }
+        }
+        defer { attempt.cancel() }
+        try #require(await waitUpTo { fakeSession.startCount == 1 })
+        let callback = try #require(fakeSession.takeCompletion())
+        if invalidate { try await service.invalidateAuthenticatedSession() }
+        else { try await service.logout() }
+        #expect(await waitUpTo { cancelled })
+        #expect(fakeSession.cancelCount == 1)
+        #expect(!service.pendingContinuationForTesting)
+        #expect(!service.hasWebSessionForTesting)
+        callback(nil, ASWebAuthenticationSessionError(.canceledLogin))
+        #expect(!service.isAuthenticated)
+        #expect(fakeAPI.exchanges.isEmpty)
+    }
+
+    @Test("Ending a session rejects a parked exchange and clears its late cookie",
+          arguments: [false, true], [false, true])
+    func endingSessionRejectsLateExchange(invalidate: Bool, exchangeFails: Bool) async throws {
+        fakeAPI.holdExchange = true
+        let service = try makeService(isAuthenticated: true)
+        var attemptSucceeded: Bool?
+        let attempt = Task {
+            do {
+                try await service.signIn()
+                attemptSucceeded = true
+            } catch {
+                attemptSucceeded = false
+            }
+        }
+        defer { attempt.cancel() }
+        try #require(await waitUpTo { fakeSession.startCount == 1 })
+        let state = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
+        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)")!)
+        try #require(await waitUpTo { fakeAPI.exchangeStartedCount == 1 })
+
+        if invalidate {
+            try await service.invalidateAuthenticatedSession()
+        } else {
+            try await service.logout()
+        }
+        #expect(!service.isAuthenticated)
+        #expect(!service.pendingContinuationForTesting)
+        #expect(!service.hasWebSessionForTesting)
+        #expect(fakeAPI.cookieClearCount == 1)
+
+        // Simulate URLSession applying Set-Cookie even though cancellation was requested.
+        if exchangeFails { fakeAPI.exchangeError = TestExchangeError.rejected }
+        fakeAPI.resumeExchange()
+        try #require(await waitUpTo { fakeAPI.exchangeCompletedCount == 1 && attemptSucceeded != nil })
+        #expect(await waitUpTo { fakeAPI.cookieClearCount == 2 })
+        #expect(!service.isAuthenticated)
+        #expect(attemptSucceeded == false)
+        #expect(!fakeAPI.hasSiteAuthCookie)
+        #expect(fakeAPI.cookieEvents == ["clear", "set", "clear"])
+    }
+
     @Test("Logout clears cookie even when server request fails")
     func logoutClearsCookieEvenWhenServerRequestFails() async throws {
         fakeAPI.logoutError = PWUsageAPIError.recoverableServerError(statusCode: 503)
@@ -464,7 +527,7 @@ final class MobileAuthServiceTests {
         let deadline = clock.now.advanced(by: timeout)
         while clock.now < deadline {
             if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(10))
+            await Task.yield()
         }
         return condition()
     }
@@ -569,6 +632,8 @@ private final class FakeMobileAuthAPI: MobileAuthAPI {
     private(set) var logoutCount = 0
     var logoutError: Error?
     private(set) var cookieClearCount = 0
+    private(set) var hasSiteAuthCookie = false
+    private(set) var cookieEvents: [String] = []
     var holdExchange = false
     private(set) var exchangeStartedCount = 0
     private(set) var exchangeCompletedCount = 0
@@ -582,6 +647,8 @@ private final class FakeMobileAuthAPI: MobileAuthAPI {
                 pendingExchange = continuation
             }
         }
+        hasSiteAuthCookie = true
+        cookieEvents.append("set")
         exchangeCompletedCount += 1
         if let exchangeError { throw exchangeError }
     }
@@ -599,5 +666,7 @@ private final class FakeMobileAuthAPI: MobileAuthAPI {
 
     func clearSiteAuthCookie() async {
         cookieClearCount += 1
+        hasSiteAuthCookie = false
+        cookieEvents.append("clear")
     }
 }

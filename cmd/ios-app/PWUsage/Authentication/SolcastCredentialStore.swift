@@ -127,7 +127,7 @@ actor DeviceSolcastCredentialStore: SolcastCredentialKeychain {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrSynchronizable as String: false,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError.status(status) }

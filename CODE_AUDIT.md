@@ -844,6 +844,33 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 
 ---
 
+## 15. Session integrity and launch maintenance
+
+### 15.1 Sign-out can be undone by an in-flight session exchange
+- **Location:** `cmd/ios-app/PWUsage/Authentication/MobileAuthService.swift` — `logout`, `invalidateAuthenticatedSession`, and the session exchange task.
+- **What:** Ending a session left the pending sign-in and exchange alive; a late response could persist a new cookie and authenticate again.
+- **Why:** Attempt-generation guards (§3.12–3.14) protect continuation ownership, but do not revoke an attempt when the user signs out.
+- **Fix:** Advance a monotonic session epoch before suspension, cancel the retained exchange, clear attempt/session state, and resume the pending caller with cancellation. Both exchange result paths compare the captured epoch and clear cookies again after a late response.
+- **Status:** FIXED (PR pending)
+
+### 15.2 Orphaned Keychain credentials survive app deletion
+- **Location:** `cmd/ios-app/PWUsage/PWUsageApp.swift` — launch initialization; `Authentication/app-launch-maintenance.swift`.
+- **What:** Reinstall removes forecast metadata but leaves generic-password credentials in Keychain.
+- **Why:** Without the deleted metadata, account-scoped cleanup cannot discover orphaned credentials.
+- **Fix:** Before creating the app model, sweep the app's bundle-identifier service with `kSecAttrSynchronizableAny`, guarded by a sandbox UserDefaults installation flag. Mark completion only after success (including item-not-found); a failed sweep prevents startup and retries next launch.
+- **Status:** FIXED (PR pending)
+
+### 15.3 Control templates rebuilt on every cold launch
+- **Location:** `cmd/ios-app/PWUsage/PWUsageApp.swift` — launch initialization; `Authentication/app-launch-maintenance.swift`.
+- **What:** `reloadControls(ofKind:)` ran unconditionally despite its update-only comment.
+- **Why:** Every launch unnecessarily rebuilt the user's configured control templates.
+- **Fix:** Compare the stored control build with `CFBundleVersion`, reload once per changed build, and preserve saved control-site configuration.
+- **Status:** FIXED (PR pending)
+
+---
+
+Verification for §15: regression tests cover parked exchange responses (success and failure) after logout/invalidation, browser cancellation, first/second launch, build changes, and sweep retry. Targeted and full `./run-tests.sh` were attempted but CoreSimulator access is denied in this sandbox, so neither ran. Pre-fix failure and post-fix passes remain unverified. Standalone iOS builds are also blocked by sandboxed compiler macro execution.
+
 ## 10. Cross-cutting recommendations
 
 1. **Centralize the freshness windows.** Twelve-plus magic numbers (§8.5) and three sites doing string surgery on a freshness string (§8.6) are the highest-leverage cleanup. A `DataFreshness` enum with named windows, passed into a structured-result `freshness(...)`, would fix §8.5, §8.6, and part of §8.7 at once.
