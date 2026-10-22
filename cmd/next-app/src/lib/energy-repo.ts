@@ -1,3 +1,4 @@
+import { buildBillOutlookHistory, type BillOutlookHistory, type BillOutlookDay } from './bill-outlook-history';
 import {energyQueryExecutor,withRawEnergyAccess} from './energy-storage-access';
 import type {EnergyWrite} from './prototypes/compact-energy-recovery';
 import { pool, Tariff, EnergyData, TariffSchedule } from './db';
@@ -136,7 +137,7 @@ export interface EnergyHistoryReader {
     getDailyCoverage?(siteId: string, start: Date, end: Date, timezone: string): Promise<DailyCoverageStat[]>;
     hasData?(siteId: string): Promise<boolean>;
     getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]>;
-    getCycleAggregates(siteId: string, start: Date, end: Date): Promise<CycleAggregateRow[]>;
+    getCycleAggregates(siteId: string, start: Date, end: Date, timezone?: string): Promise<CycleAggregateRow[]>;
     getBucketedEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]>;
 }
 
@@ -153,7 +154,7 @@ export class EnergyRepo {
 // === Queries ===
     async getCycleAggregatesAndCoverage(siteId:string,start:Date,end:Date,timezone:string):Promise<CycleAggregatesAndCoverage> {
         if (this.historyReader?.getCycleAggregatesAndCoverage) return this.historyReader.getCycleAggregatesAndCoverage(siteId,start,end,timezone);
-        const [aggregates,coverage]=await Promise.all([this.getCycleAggregates(siteId,start,end),this.getDailyCoverage(siteId,start,end,timezone)]);
+        const [aggregates,coverage]=await Promise.all([this.getCycleAggregates(siteId,start,end,timezone),this.getDailyCoverage(siteId,start,end,timezone)]);
         return {aggregates,coverage};
     }
 
@@ -277,6 +278,43 @@ FROM unnest($1::text[], $2::timestamp[], $3::timestamp[]) AS w(site_id, start_ts
         return EnergyRepo.aggregateUsageByTOU({
             ...context,start,priorAggregates,todayRaw
         });
+    }
+
+    /** One bounded read for recorded bill history and the current total. No Tesla requests. */
+    async getBillOutlook(siteId: string, start: Date, end: Date): Promise<{ usage: UsageData[]; outlook: BillOutlookHistory | null }> {
+        const context = await this.usageContext(siteId);
+        if (!context) return { usage: [], outlook: null };
+        const now = new Date();
+        const stop = new Date(Math.min(+now, +end));
+        const split = new Date(Math.max(+start, Math.min(+EnergyRepo.getSiteMidnight(now, context.timezone), +stop)));
+        const [prior, raw] = await Promise.all([
+            start < split ? this.getCycleAggregatesAndCoverage(siteId, start, split, context.timezone)
+                : Promise.resolve({ aggregates: [], coverage: [] }),
+            split < stop ? this.getRawEnergyData(siteId, split, stop) : Promise.resolve([]),
+        ]);
+        const usage = EnergyRepo.aggregateUsageByTOU({ ...context, start, priorAggregates: prior.aggregates, todayRaw: raw });
+        const last = Math.max(...prior.coverage.flatMap(day => day.last ? [+day.last] : []), ...raw.map(row => +row.timestamp));
+        if (!Number.isFinite(last) || last < +start) return { usage, outlook: null };
+        const cutoff = new Date(Math.min(last + 300_000, +end));
+        const days: BillOutlookDay[] = [{ date: start.toISOString(), buckets: [], complete: true }];
+        for (let day = start; day < cutoff;) {
+            // 36 hours from local midnight always falls on the following local day, including DST.
+            const next = EnergyRepo.getSiteMidnight(new Date(+day + 36 * 3600_000), context.timezone);
+            const through = new Date(Math.min(+next, +cutoff));
+            const aggregates = prior.aggregates.filter(row => row.day >= day && row.day < through);
+            const rows = raw.filter(row => row.timestamp >= day && row.timestamp < through);
+            const coverage = prior.coverage.find(row => row.first && row.first >= day && row.first < through);
+            const expected = Math.round((+through - +day) / 300_000);
+            const count = day < split ? coverage?.count ?? 0 : new Set(rows.map(row => +row.timestamp)).size;
+            const totals = EnergyRepo.aggregateUsageByTOU({ ...context, start, priorAggregates: aggregates, todayRaw: rows });
+            days.push({ date: through.toISOString(), complete: count === expected && expected > 0
+                && (coverage?.maxInteriorGapMs ?? 0) <= 300_000,
+                buckets: totals.map(row => ({ tariffName: row.tariff.name || 'Unknown', periodName: row.touName || 'Unknown',
+                    netGridKwh: row.gridUsage / 1000, buyRate: row.buyRate ?? 0, sellRate: row.sellRate ?? 0 })) });
+            day = next;
+        }
+        const points = buildBillOutlookHistory(days);
+        return { usage, outlook: { points, observedThrough: cutoff.toISOString(), complete: points.at(-1)?.complete ?? false } };
     }
 
     /**
@@ -518,13 +556,13 @@ FROM unnest($1::text[], $2::timestamp[], $3::timestamp[]) AS w(site_id, start_ts
     }
 
     async getCycleAggregates(
-        siteId: string, start: Date, end: Date
+        siteId: string, start: Date, end: Date, timezone?: string
     ): Promise<CycleAggregateRow[]> {
-        if (this.historyReader) return this.historyReader.getCycleAggregates(siteId, start, end);
+        if (this.historyReader) return this.historyReader.getCycleAggregates(siteId, start, end, timezone);
         const queryStart = Date.now();
         const res = await energyQueryExecutor().query(`
             SELECT
-                date_trunc('day', timestamp) AS day,
+                ${timezone ? "date_trunc('day', timestamp, $4::text)" : "date_trunc('day', timestamp)"} AS day,
                 tariff_id,
                 tariff_schedule_id,
                 SUM(load_power) AS load_power,
@@ -535,7 +573,7 @@ FROM unnest($1::text[], $2::timestamp[], $3::timestamp[]) AS w(site_id, start_ts
             WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
             GROUP BY day, tariff_id, tariff_schedule_id
             ORDER BY day ASC
-        `, [siteId, start, end]);
+        `, timezone ? [siteId, start, end, getValidTimezone(timezone)] : [siteId, start, end]);
         const queryDuration = Date.now() - queryStart;
         console.log(`[EnergyRepo] getCycleAggregates: Query = ${queryDuration}ms, Rows = ${res.rows.length}`);
 

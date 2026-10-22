@@ -1,3 +1,5 @@
+import type { BillOutlookHistory } from './bill-outlook-history';
+import type { LoadTimingTimelineSegment } from './load-timing-timeline';
 import type { EnergySiteLiveStatus } from './tesla-client';
 import { sumTodayRows, type TodayTotals } from './energy-repo';
 import type { EnergyData } from './db-types';
@@ -53,10 +55,15 @@ export interface MobileBillPeriod {
     cost: number;
 }
 
+export interface MobileBillOutlook extends BillOutlookHistory {
+    tariffTimeline: (LoadTimingTimelineSegment & { tariffName: string; periodName: string })[];
+}
+
 export interface MobileBillSummary {
     version: number;
     site: { id: string; name: string; timezone: string };
     currentBill: MobileCurrentBill;
+    outlook?: MobileBillOutlook | null;
     loadTiming?: LoadTimingView | null;
     sources: { calculatedAt: string; energyDataThrough: string | null };
 }

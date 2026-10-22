@@ -17,7 +17,7 @@ export function createEnergyRepo(timezone:string,rawRepo?:EnergyRepo):EnergyRepo
     };
     const reader:EnergyHistoryReader={
         getRawEnergyData:async(site,start,end)=>read(site,()=>raw.getRawEnergyData(site,start,end),()=>compact.getRawEnergyData(site,start,end)),
-        getCycleAggregates:async(site,start,end)=>read(site,()=>raw.getCycleAggregates(site,start,end),()=>compact.getCycleAggregates(site,start,end)),
+        getCycleAggregates:async(site,start,end,tz)=>read(site,()=>raw.getCycleAggregates(site,start,end,tz),()=>compact.getCycleAggregates(site,start,end)),
         getBucketedEnergyData:async(site,start,end)=>read(site,()=>raw.getBucketedEnergyData(site,start,end),()=>compact.getBucketedEnergyData(site,start,end)),
         getDailyCoverage:async(site,start,end,tz)=>read(site,()=>raw.getDailyCoverage(site,start,end,tz),()=>compact.getDailyCoverage(site,start,end,tz)),
         getCycleAggregatesAndCoverage:async(site,start,end,tz)=>read(site,()=>raw.getCycleAggregatesAndCoverage(site,start,end,tz),()=>compact.getCycleAggregatesAndCoverage(site,start,end,tz)),

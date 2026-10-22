@@ -3,6 +3,9 @@ import SwiftUI
 struct BillView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
+    var isSelected = true
+    var onOpenSmartShift: (() -> Void)? = nil
+    @Environment(\.scenePhase) private var scenePhase
 
     private var state: DashboardEndpointState<MobileBillResponse> { coordinator.bill }
     private var response: MobileBillResponse? { coordinator.bill.response }
@@ -16,6 +19,9 @@ struct BillView: View {
                 }
                 if let response {
                     estimateCard(response)
+                    TimelineView(.periodic(from: .now, by: 60)) { _ in
+                        outlook(response, now: .now)
+                    }
                     periodsSection(response)
                     billMetadata(response)
                 } else if state.isUnavailable {
@@ -37,16 +43,67 @@ struct BillView: View {
         }
         .refreshable {
             await coordinator.refreshBill(trigger: .userGesture)
+            await coordinator.billOutlookAppeared()
+        }
+        .task(id: "\(site.id)-\(isSelected)") {
+            if isSelected { await coordinator.billOutlookAppeared() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active && isSelected { Task { await coordinator.billOutlookAppeared() } }
         }
         .background { SectionTheme.bill.screenBackground }
         .navigationTitle("Current Bill")
         .inlineNavigationTitle()
     }
 
+    @ViewBuilder private func outlook(_ response: MobileBillResponse, now: Date) -> some View {
+        let context = coordinator.loadPlanningContext ?? coordinator.householdPattern
+        let batch = coordinator.solarForecastBatch
+        let usesSolar = coordinator.solarForecastState == .enhanced && batch.map {
+            now.timeIntervalSince($0.fetchedAt) >= 0 && now.timeIntervalSince($0.fetchedAt) <= LoadTimingForecastPresentation.maximumForecastAge
+        } == true
+        let forecast = usesSolar ? batch?.intervals ?? [] : []
+        let result: BillOutlook.ProjectionResult = {
+            guard let history = response.outlook, let context, context.timeZone == timeZone,
+                  !state.isUnavailable else { return .empty }
+            return BillOutlook.evaluate(history: history, context: context, forecast: forecast, now: now,
+                                       cycleEnd: response.currentBill.cycleEnd)
+        }()
+        let projected = result.points
+        if let end = projected.last {
+            BillInformationCard(title: BillOutlookPresentation.endTitle(projectedEnd: end.date,
+                cycleEnd: response.currentBill.cycleEnd, timeZone: timeZone), symbol: "chart.xyaxis.line") {
+                Text("About " + DashboardPresentation.currency(end.estimatedCost, code: response.currentBill.currency))
+                    .font(.system(.title2, design: .rounded, weight: .bold)).monospacedDigit()
+                Text(result.usesSolar
+                    ? (result.usesHistory ? "Solar forecast and typical home use, with recent grid history outside forecast coverage." : "Based on the solar forecast and typical home use.")
+                    : "Based on your recent grid history.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        if let deadline = BillOutlookPresentation.deadline(now: now, end: response.currentBill.cycleEnd, timeZone: timeZone) {
+            BillInformationCard(title: deadline, symbol: "calendar") {
+                if projected.last?.date == response.currentBill.cycleEnd,
+                   let guidance = BillOutlookPresentation.guidance(observed: response.outlook?.points.last, projected: projected.last) {
+                    Text(guidance).font(.subheadline)
+                }
+                if let onOpenSmartShift { Button("Open Smart Shift", action: onOpenSmartShift) }
+            }
+        }
+        if let history = response.outlook, !history.points.isEmpty {
+            BillOutlookChart(history: history, projected: projected, cycleStart: response.currentBill.cycleStart,
+                cycleEnd: response.currentBill.cycleEnd, now: now, timeZone: timeZone, currency: response.currentBill.currency)
+            if projected.isEmpty && history.complete {
+                Text("Forecast unavailable. Showing recorded energy with its original calculation time.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private func estimateCard(_ response: MobileBillResponse) -> some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Estimated bill")
+                Text("So far")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.indigo)
                 Text(site.name)
@@ -67,7 +124,7 @@ struct BillView: View {
     }
 
     private func periodsSection(_ response: MobileBillResponse) -> some View {
-        BillInformationCard(title: "Tariff period balances", symbol: "chart.bar.fill") {
+        BillInformationCard(title: "Rate period balances", symbol: "chart.bar.fill") {
             if response.currentBill.periods.isEmpty {
                 Text("No period totals are available for this cycle yet.")
                     .font(.subheadline)
@@ -89,7 +146,7 @@ struct BillView: View {
                                     .monospacedDigit()
                                     .multilineTextAlignment(.trailing)
                             }
-                            Text(DashboardPresentation.tariffBalance(period.netGridKwh))
+                            Text(BillOutlookPresentation.balance(period.netGridKwh))
                                 .font(.system(.title2, design: .rounded, weight: .bold))
                                 .monospacedDigit()
                                 .foregroundStyle(balanceColor(period.netGridKwh))
@@ -102,7 +159,7 @@ struct BillView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 11)
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(DashboardPresentation.tariffPeriodTitle(period.periodName)), \(multipleTariffs ? "\(period.tariffName), " : "")\(DashboardPresentation.tariffBalance(period.netGridKwh)), estimated cost \(DashboardPresentation.currency(period.cost, code: response.currentBill.currency))")
+                        .accessibilityLabel("\(DashboardPresentation.tariffPeriodTitle(period.periodName)), \(multipleTariffs ? "\(period.tariffName), " : "")\(BillOutlookPresentation.balance(period.netGridKwh)), estimated cost \(DashboardPresentation.currency(period.cost, code: response.currentBill.currency))")
                         if index < response.currentBill.periods.count - 1 { Divider() }
                     }
                 }
@@ -112,6 +169,7 @@ struct BillView: View {
 
     private func billMetadata(_ response: MobileBillResponse) -> some View {
         VStack(alignment: .leading, spacing: 3) {
+            Text("Estimates cover energy charges and credits.")
             Text("Billing cycle \(DashboardPresentation.date(response.currentBill.cycleStart, timeZoneIdentifier: timeZone, dateStyle: .short))–\(DashboardPresentation.date(response.currentBill.cycleEnd, timeZoneIdentifier: timeZone, dateStyle: .short))")
             if let energyDataThrough = response.sources.energyDataThrough {
                 Text("Energy through \(DashboardPresentation.date(energyDataThrough, timeZoneIdentifier: timeZone, dateStyle: .short, timeStyle: .short))")

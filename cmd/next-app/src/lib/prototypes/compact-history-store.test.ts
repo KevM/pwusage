@@ -1,3 +1,4 @@
+import {EnergyRepo} from '../energy-repo';
 import {withRawEnergyAccess,energyQueryExecutor} from '../energy-storage-access';
 import {HistoryArchiveRecoveryRepo,parseRestorePlan,restoreHistoryPlan} from '../history-archive-recovery';
 import {IncompleteTariffAttributionError,readBillingAvailability} from '../billing-availability';
@@ -69,6 +70,27 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         if (admin) { try { await admin.query(`DROP DATABASE IF EXISTS ${database}`); } finally { await admin.end(); } }
     });
     const jobOptions={now:new Date('2026-01-10T12:00:00Z'),retentionDays:3,maxDays:2,maxTimeMs:30000,maxEstimatedBytes:4*1024*1024,readsEnabled:true};
+    it('raw and compact billing history agree on local days across DST in another session timezone', async () => {
+        const from = new Date('2026-11-01T05:00:00Z');
+        const until = new Date('2026-11-02T06:10:00Z');
+        await pool.query(`INSERT INTO "EnergyData"
+            SELECT 'site', time, 1, 2, 20, 3, 10, -2, null
+            FROM generate_series($1::timestamptz, $2::timestamptz - interval '5 minutes', interval '5 minutes') time`, [from, until]);
+        const raw = await withRawEnergyAccess(['site'], 'read', async () => {
+            await energyQueryExecutor().query("SET LOCAL TIME ZONE 'Pacific/Auckland'");
+            return new EnergyRepo().getCycleAggregatesAndCoverage('site', from, until, 'America/Chicago');
+        }, pool);
+        expect(raw.kind).toBe('raw');
+        if (raw.kind !== 'raw') throw new Error('Expected unpruned synthetic history');
+        const compact = await new CompactHistoryReader(store, 'America/Chicago')
+            .getCycleAggregatesAndCoverage('site', from, until, 'America/Chicago');
+        expect(raw.value).toEqual(compact);
+        expect(raw.value.aggregates.map(row => [row.day.toISOString(), row.grid_power])).toEqual([
+            ['2026-11-01T05:00:00.000Z', 3000], ['2026-11-02T06:00:00.000Z', 20],
+        ]);
+        expect(raw.value.coverage.map(row => row.count)).toEqual([300, 2]);
+    });
+
     it('archives and trims exact gaps through the daily job, preserving tags and tariffs',async()=>{
         await pool.query('INSERT INTO "LoadTag" VALUES ($1)',[end]);
         await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');

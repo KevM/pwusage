@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { verifyAccessMock, siteMock, currencyMock, usageMock, latestMock } = vi.hoisted(() => ({
-    verifyAccessMock: vi.fn(), siteMock: vi.fn(), currencyMock: vi.fn(), usageMock: vi.fn(), latestMock: vi.fn(),
+const { verifyAccessMock, siteMock, currencyMock, usageMock, latestMock, outlookMock } = vi.hoisted(() => ({
+    verifyAccessMock: vi.fn(), siteMock: vi.fn(), currencyMock: vi.fn(), usageMock: vi.fn(), latestMock: vi.fn(), outlookMock: vi.fn(),
 }));
 
 vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock }));
@@ -10,6 +10,7 @@ vi.mock('@/lib/energy-repo', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/lib/energy-repo')>();
     return { ...actual, EnergyRepo: class extends actual.EnergyRepo {
         getUsageByTOU = usageMock;
+        getBillOutlook = outlookMock;
         getLatestTimestamp = latestMock;
     } };
 });
@@ -441,3 +442,22 @@ it('returns missing pricing without a numeric bill or load timing when attributi
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({currentBill:{status:'incomplete-attribution',estimatedCost:null,periods:[]},loadTiming:null});
 });
+
+ it('serves opt-in outlook from the same bounded read as the bill', async () => {
+    verifyAccessMock.mockResolvedValue(true);
+    siteMock.mockResolvedValue({ id: 'site-a', name: 'Home', timezone: 'UTC', billing_start_day: 1, tariffs: [tariff()] });
+    currencyMock.mockResolvedValue('USD');
+    latestMock.mockResolvedValue(new Date());
+    const usage = calculate([-27.471, 18.243]).usage;
+    outlookMock.mockResolvedValue({ usage, outlook: {
+        points: [], observedThrough: new Date().toISOString(), complete: true,
+    } });
+    usageMock.mockClear();
+    const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a&outlook=1'));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.currentBill.estimatedCost).toBeCloseTo(-0.36912);
+    expect(body.outlook.complete).toBe(true);
+    expect(body.outlook.tariffTimeline[0].tariffName).toBe('Seasonal utility');
+    expect(usageMock).not.toHaveBeenCalled();
+ });

@@ -282,7 +282,7 @@ struct LoadTimingForecastEstimator {
     /// search. Integration and candidate starts both need those boundaries, and
     /// re-scanning them minute by minute for every candidate run dominated the
     /// cost of an evaluation, so they are scanned once.
-    fileprivate struct WallClock {
+    struct WallClock {
         /// Gregorian, in the site's time zone, for instants outside the scanned range.
         let calendar: Calendar
         private let halfHourBoundaries: [Date]
@@ -353,7 +353,7 @@ struct LoadTimingForecastEstimator {
 
     /// Household flow at one instant: what the baseline exports to the grid, and the
     /// solar left over after the home and any battery charging, which an added load can use.
-    fileprivate struct Flow {
+    struct Flow {
         let netExportKw: Double
         let physicalSurplusKw: Double
     }
@@ -361,7 +361,7 @@ struct LoadTimingForecastEstimator {
     /// Where the household flow at an instant comes from: the solar forecast
     /// with the household pattern before `forecastEnd`, the site's grid history
     /// after it (and throughout `.history`), or nothing for `.flat`.
-    fileprivate struct FlowModel {
+    struct FlowModel {
         let projection: Projection
         let clock: WallClock
         /// The forecast drives the flow over [forecastStart, forecastEnd); history elsewhere.
