@@ -11,23 +11,39 @@ protocol PWUsageApplicationAPI: MobileDashboardDataAPI, MobileLoadPlanningDataAP
 
 @main
 struct PWUsageApp: App {
-    /// Resolved once, at launch. Either a model to run or a build misconfiguration
-    /// to report. It never changes, so no observation is needed to hold on to it.
+    /// Startup maintenance finishes before any model can read persisted credentials.
     private enum Launch {
+        case starting
         case ready(PWUsageAppModel)
         case misconfigured(String)
     }
 
-    private let launch: Launch
+    @State private var launch: Launch = .starting
+    private let launchTask: Task<Launch, Never>
 
     init() {
-        // Ask the system to rebuild configured control templates from this
-        // extension version after an app update. Keep saved site configuration.
-        ControlCenter.shared.reloadControls(ofKind: BatteryHoldControlIdentity.kind)
+        launchTask = Task { @MainActor in await Self.prepareLaunch() }
+    }
+
+    private static func prepareLaunch() async -> Launch {
         do {
+            try await AppLaunchMaintenance.run(
+                defaults: .standard,
+                buildVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+                hasPersistedForecastState: {
+                    try DeviceSolarForecastPersistence.hasPersistedState()
+                },
+                sweepCredentials: {
+                    try await DeviceSolcastCredentialStore.shared.deleteAllCredentials()
+                },
+                reloadControls: {
+                    // Rebuild templates only after an update; retain saved site configuration.
+                    ControlCenter.shared.reloadControls(ofKind: BatteryHoldControlIdentity.kind)
+                }
+            )
             let configuration = try AppConfiguration.fromBundle()
             let api = PWUsageAPI(configuration: configuration)
-            launch = .ready(
+            return .ready(
                 PWUsageAppModel(
                     configuration: configuration,
                     api: api,
@@ -45,14 +61,14 @@ struct PWUsageApp: App {
             // A Release build with an unusable origin has no server worth talking
             // to, so refuse rather than guess. Building a client here is exactly
             // the failure this replaces: it silently became a production client.
-            launch = .misconfigured(
+            PWUsageApp.reportMisconfiguration(error)
+            return .misconfigured(
                 "This build of pwusage was misconfigured and cannot choose a server. "
                     + "The bundled API origin was rejected as invalid."
             )
-            PWUsageApp.reportMisconfiguration(error)
         } catch {
-            launch = .misconfigured("This build of pwusage was misconfigured and cannot choose a server.")
             PWUsageApp.reportMisconfiguration(error)
+            return .misconfigured("pwusage could not finish secure startup. Close the app and try again.")
         }
     }
 
@@ -64,6 +80,9 @@ struct PWUsageApp: App {
     var body: some Scene {
         WindowGroup {
             switch launch {
+            case .starting:
+                ProgressView("Starting pwusage…")
+                    .task { launch = await launchTask.value }
             case .ready(let model):
                 PWUsageRootView()
                     .environmentObject(model)
