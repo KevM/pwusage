@@ -844,6 +844,51 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 
 ---
 
+## 16. HTTP and wire-contract boundary
+
+### 16.1 The app's URLSession has no timeout or cache policy
+- **Location:** `PWUsage/Networking/PWUsageAPI.swift:38-44` (`makeCookieSession`); contrast `Shared/shared-web-session.swift:24-31` (`SharedWebSession.makeSession`)
+- **What:** The app session was a plain `URLSessionConfiguration.default`: 60 s request timeout, 7-day resource timeout, shared `URLCache`. The widget's session already had 20/25 s and `.reloadIgnoringLocalCacheData`.
+- **Why:** A stalled request held the dashboard for a minute, and an authenticated response could be cached beyond the session that fetched it.
+- **Fix:** `PWUsageAPI` now builds its session with `SharedWebSession.makeSession(cookieStorage:)`, the single policy for app and widget, which also sets `urlCache = nil`. `makeCookieSession` is gone; cookie storage wiring and the legacy-cookie migration are unchanged.
+- **Severity:** Important
+- **Status:** FIXED (PR pending)
+
+### 16.2 Cancelling a Solcast refresh is recorded as a network failure and charged to the budget
+- **Location:** `PWUsage/Networking/SolcastClient.swift:81-84`; `PWUsage/State/SolarForecastStore.swift:500-508` (catch arms), `:632-642` (`reserveRequests`)
+- **What:** The client folded `CancellationError` and `URLError(.cancelled)` into `.transportFailure`, so the store persisted "Forecast network request failed" and kept the reservation it had charged before the call.
+- **Why:** A refresh invalidated by sign-out, disconnect or an array change looked like a network fault and spent budget for requests that never completed.
+- **Fix:** The client rethrows cancellation as `CancellationError`. `performRefresh` and `discoverSites` handle it before the `SolcastClientError` arm, record no failure, and refund the reservation for requests that did not complete (a request that finished before the cancellation stays charged; a reservation from an earlier UTC day is not touched). A failed save of the refund is queued for retry, since overcharging is the safe direction. Coalescing is unchanged.
+- **Severity:** Important
+- **Status:** FIXED (PR pending)
+
+### 16.3 `MobileLiveResponse` is never validated against the requested site
+- **Location:** `Shared/mobile-live-contract.swift`; `PWUsage/Networking/PWUsageAPI.swift:52-58` (`fetchLive`); `PWUsage/State/DashboardCoordinator.swift:1003-1020` (`performLive`)
+- **What:** Every other response type has `validating(siteID:)`; the live response was decoded and returned as is.
+- **Why:** A payload for another site was displayed under the current one and cached under the other site's key.
+- **Fix:** Added `MobileLiveResponse.validating(siteID:)`, mirroring `MobileBillResponse.validating`, and call it in `fetchLive`. `ContractError.siteMismatch` passes through the existing contract-error arm rather than becoming `.invalidResponse`. The coordinator's `response.site.id == selectedSiteID` check stays.
+- **Severity:** Important
+- **Status:** FIXED (PR pending)
+
+### 16.4 One optional field fails the whole bill response
+- **Location:** `PWUsage/Models/MobileContracts.swift:223-234` (`LoadTiming.init(from:)`)
+- **What:** `nextStartPhraseByKey` was decoded as required while every optional sibling used `decodeIfPresent`.
+- **Why:** A server that omitted the map made the whole bill `.invalidResponse`.
+- **Fix:** `decodeIfPresent(...) ?? [:]`.
+- **Severity:** Important
+- **Status:** FIXED (PR pending)
+
+### 16.5 Money and rates are `Double` with no range validation
+- **Location:** `PWUsage/Models/MobileContracts.swift:23`, `:244-245`, `:252-253`; `PWUsage/Models/MobileTariffs.swift:32-33`; `Shared/mobile-live-contract.swift:66`
+- **What:** `estimatedCost`, `cost`, `marginalCost`, `buyRate` and `sellRate` were accepted without checks.
+- **Why:** A non-finite amount would flow into formatting and the load-timing estimators.
+- **Fix (part 1):** The bill, live and tariff `validating(siteID:)` methods reject a non-finite cost, marginal cost or rate (`ContractError.invalidAmount` for bill and live, `.invalidResponse` for tariffs, matching their existing errors). Rates are deliberately **not** bounded below: the server prices negative buy and sell rates (`cmd/next-app/src/lib/bill-calculation.test.ts`, `bill-pricing.test.ts`), so `rate >= 0` would blank a real bill. JSON cannot carry NaN or infinity, so this guards a non-conforming source rather than a wire value.
+- **Open (part 2):** Migrating these fields to `Decimal` fans out beyond the contract files into `LoadTimingEstimator.swift`, `LoadTimingForecastEstimator.swift` (arithmetic) and `BillView`, `DashboardPresentation`, `DashboardView`, `SmartShiftPresentation`, `TariffSheet` and two preview files (formatting), so it was not done here.
+- **Severity:** Important
+- **Status:** PARTIAL — validation FIXED (PR pending); `Decimal` migration OPEN
+
+---
+
 ## 10. Cross-cutting recommendations
 
 1. **Centralize the freshness windows.** Twelve-plus magic numbers (§8.5) and three sites doing string surgery on a freshness string (§8.6) are the highest-leverage cleanup. A `DataFreshness` enum with named windows, passed into a structured-result `freshness(...)`, would fix §8.5, §8.6, and part of §8.7 at once.
