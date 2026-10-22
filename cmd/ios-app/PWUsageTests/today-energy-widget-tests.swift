@@ -16,6 +16,7 @@ struct TodayEnergyWidgetTests {
         defer { session.invalidateAndCancel() }
         #expect(session.configuration.timeoutIntervalForRequest == 8)
         #expect(session.configuration.timeoutIntervalForResource == 12)
+        #expect(session.configuration.urlCache == nil)
     }
 
     @Test func freshAppSnapshotAvoidsNetwork() async throws {
@@ -110,21 +111,25 @@ struct TodayEnergyWidgetTests {
         #expect(reloads.count == 6, "Removing a selection bypasses the reload floor.")
         cache.selectWidgetSite("home")
         #expect(store.load() != nil)
+        #expect(reloads.count == 8, "The first replacement reloads immediately.")
         cache.storeSites([])
         #expect(store.load() == nil)
-        #expect(reloads.count == 8, "Revocation immediately invalidates both timelines.")
+        #expect(reloads.count == 10, "Revocation immediately invalidates both timelines.")
         cache.storeLive(live, at: now)
         #expect(store.load() == nil)
         cache.storeSites([MobileSite(id: "home", name: "Home", utility: "Utility")])
         cache.storeLive(live, at: clock)
         cache.selectWidgetSite("home")
         #expect(store.load() != nil)
-        #expect(reloads.count == 8, "Routine writes remain throttled after removal.")
+        #expect(reloads.count == 12, "Restored access reloads the replacement immediately.")
+        clock = clock.addingTimeInterval(1)
+        cache.storeLive(live, at: clock)
+        #expect(reloads.count == 12, "Later routine updates remain throttled.")
         cache.clear()
         #expect(store.load() == nil)
-        #expect(reloads.count == 10, "Logout or session expiry immediately invalidates both timelines.")
+        #expect(reloads.count == 14, "Logout or session expiry immediately invalidates both timelines.")
         cache.clear()
-        #expect(reloads.count == 10, "An already empty store needs no further reload.")
+        #expect(reloads.count == 14, "An already empty store needs no further reload.")
     }
 
     @Test func optionalCostSurvivesLegacySnapshotsAndRejectsInvalidAmounts() throws {
