@@ -42,6 +42,17 @@ jobs:
             HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install xcodegen
           fi
 
+      # Non-blocking until the baseline (CODE_AUDIT.md §14.4) is burned down;
+      # then drop continue-on-error so new violations fail the build.
+      - name: SwiftLint
+        continue-on-error: true
+        working-directory: .
+        run: |
+          if ! command -v swiftlint &> /dev/null; then
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install swiftlint
+          fi
+          swiftlint lint --strict --reporter github-actions-logging
+
       - name: Run iOS Tests
         env:
           TMPDIR: /tmp
@@ -52,5 +63,6 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ios-test-artifacts
-          path: /tmp/pwusage-ios-tests.*
+          # Only the result bundle (with on-failure diagnostics); DerivedData is gigabytes.
+          path: /tmp/pwusage-ios-tests.*/**/TestResults.xcresult
           if-no-files-found: ignore
