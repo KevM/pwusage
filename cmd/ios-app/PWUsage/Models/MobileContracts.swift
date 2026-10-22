@@ -25,6 +25,10 @@ struct MobileBillResponse: Codable, Equatable {
         let cycleStart: Date
         let cycleEnd: Date
         let periods: [Period]
+
+        var hasFiniteAmounts: Bool {
+            (estimatedCost?.isFinite ?? true) && periods.allSatisfy(\.hasFiniteAmounts)
+        }
     }
 
     struct Sources: Codable, Equatable {
@@ -35,6 +39,7 @@ struct MobileBillResponse: Codable, Equatable {
     enum ContractError: Error, Equatable {
         case unsupportedVersion(Int)
         case siteMismatch(expected: String, actual: String)
+        case invalidAmount
     }
 
     private enum CodingKeys: String, CodingKey { case version, site, currentBill, loadTiming, sources }
@@ -50,9 +55,13 @@ struct MobileBillResponse: Codable, Equatable {
         sources = try container.decode(Sources.self, forKey: .sources)
     }
 
+    /// Finiteness only, as for `MobileLiveResponse.validating`: negative rates are real.
     func validating(siteID: String) throws -> Self {
         guard site.id == siteID else {
             throw ContractError.siteMismatch(expected: siteID, actual: site.id)
+        }
+        guard currentBill.hasFiniteAmounts, loadTiming?.hasFiniteAmounts ?? true else {
+            throw ContractError.invalidAmount
         }
         return self
     }
@@ -232,6 +241,12 @@ struct LoadTiming: Codable, Equatable {
         nextCheaperPhrase = try container.decodeIfPresent(String.self, forKey: .nextCheaperPhrase)
         nextStartPhraseByKey = try container.decodeIfPresent([String: String].self, forKey: .nextStartPhraseByKey) ?? [:]
     }
+
+    var hasFiniteAmounts: Bool {
+        periods.allSatisfy(\.hasFiniteAmounts) && pricingPeriods.allSatisfy(\.hasFiniteAmounts)
+            && tariffTimeline.allSatisfy { $0.buyRate.isFinite && $0.sellRate.isFinite }
+            && (nextCheaper?.marginalCost.isFinite ?? true)
+    }
 }
 
 struct LoadTimingTariffSegment: Codable, Equatable {
@@ -252,6 +267,10 @@ struct LoadTimingPeriod: Codable, Equatable {
     let nextStartPhrase: String?
     let buyRate: Double
     let sellRate: Double
+
+    var hasFiniteAmounts: Bool {
+        buyRate.isFinite && sellRate.isFinite && (marginalCost?.isFinite ?? true)
+    }
 }
 
 struct NextCheaperPeriod: Codable, Equatable {

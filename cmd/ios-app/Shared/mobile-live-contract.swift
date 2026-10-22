@@ -68,6 +68,10 @@ struct MobileLiveResponse: Codable, Equatable {
         let cycleStart: Date
         let cycleEnd: Date
         let periods: [Period]
+
+        var hasFiniteAmounts: Bool {
+            (estimatedCost?.isFinite ?? true) && periods.allSatisfy(\.hasFiniteAmounts)
+        }
     }
 
     struct Sources: Codable, Equatable {
@@ -79,6 +83,7 @@ struct MobileLiveResponse: Codable, Equatable {
     enum ContractError: Error, Equatable {
         case unsupportedVersion(Int)
         case siteMismatch(expected: String, actual: String)
+        case invalidAmount
     }
 
     private enum CodingKeys: String, CodingKey { case version, site, live, stateOfCharge, activeTariff, activeLoadTiming, today, todayCost, todayComplete, currentBill, sources }
@@ -106,10 +111,16 @@ struct MobileLiveResponse: Codable, Equatable {
         self.sources = sources
     }
 
+    /// Money and rates are checked for finiteness only. JSON cannot carry NaN or infinity, so
+    /// this guards against a non-conforming source rather than a wire value. Rates are not
+    /// bounded below on purpose: the server prices negative buy and sell rates, and rejecting
+    /// them would blank a real bill.
     func validating(siteID: String) throws -> Self {
         guard site.id == siteID else {
             throw ContractError.siteMismatch(expected: siteID, actual: site.id)
         }
+        guard currentBill?.hasFiniteAmounts ?? true,
+              activeLoadTiming?.hasFiniteAmounts ?? true else { throw ContractError.invalidAmount }
         return self
     }
 
@@ -133,6 +144,10 @@ struct ActiveLoadTiming: Codable, Equatable {
     let basis: String
     let balanceKwh: Double?
     let energyDataThrough: Date?
+
+    var hasFiniteAmounts: Bool {
+        buyRate.isFinite && sellRate.isFinite && (marginalCost?.isFinite ?? true)
+    }
 }
 
 struct Period: Codable, Equatable {
@@ -140,6 +155,8 @@ struct Period: Codable, Equatable {
     let periodName: String
     let netGridKwh: Double
     let cost: Double
+
+    var hasFiniteAmounts: Bool { cost.isFinite }
 }
 
 enum MobileContractDecoder {

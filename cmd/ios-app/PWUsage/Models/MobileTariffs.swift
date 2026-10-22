@@ -35,7 +35,13 @@ struct MobileTariffsResponse: Codable, Equatable {
     }
 
     func validating(siteID: String) throws -> Self {
-        guard version == 1, site.id == siteID, TimeZone(identifier: site.timezone) != nil else {
+        let ratesAreFinite = tariffs.allSatisfy { tariff in
+            tariff.seasons.allSatisfy { season in
+                season.periods.allSatisfy { ($0.buyRate?.isFinite ?? true) && ($0.sellRate?.isFinite ?? true) }
+            }
+        }
+        // Finiteness only: negative rates are real tariffs.
+        guard version == 1, site.id == siteID, TimeZone(identifier: site.timezone) != nil, ratesAreFinite else {
             throw PWUsageAPIError.invalidResponse
         }
         return self
