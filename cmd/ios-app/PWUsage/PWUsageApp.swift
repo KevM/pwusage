@@ -363,6 +363,11 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func openNavigationURL(_ url: URL) async {
+        if url == TodayEnergySnapshot.dashboardURL {
+            dismissCompetingPresentations()
+            selectTab(.home)
+            return
+        }
         guard url.scheme == "pwusage", url.host == "battery-hold" else { return }
         guard let siteID = BatteryHoldLink.siteID(from: url) else {
             pendingBatteryHoldSiteID = nil

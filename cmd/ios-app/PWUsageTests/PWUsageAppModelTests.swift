@@ -358,6 +358,20 @@ struct PWUsageAppModelTests {
         #expect(api.siteFetchCount == 1)
     }
 
+    @Test("Energy widget links open the Home tab")
+    func dashboardLinkOpensHome() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        model.selectTab(.settings)
+        model.isSitePickerPresented = true
+        await model.openNavigationURL(TodayEnergySnapshot.dashboardURL)
+        #expect(model.selectedTab == .home)
+        #expect(model.isSitePickerPresented == false)
+        #expect(model.batteryHoldNavigationMessage == nil)
+        #expect(api.siteFetchCount == 1)
+    }
+
     @Test("Failed site loading preserves the request for retry")
     func controlSiteLoadingRetry() async throws {
         let api = ApplicationAPISpy(sites: [], sitesError: PWUsageAPIError.recoverableServerError(statusCode: 503))

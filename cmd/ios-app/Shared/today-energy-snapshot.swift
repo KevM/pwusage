@@ -30,6 +30,8 @@ struct TodayEnergyCost: Codable, Equatable, Sendable {
 struct TodayEnergySnapshot: Codable, Equatable, Sendable {
     static let widgetKind = "TodayEnergy"
     static let metricWidgetKind = "TodayEnergyMetric"
+    /// Where tapping an energy widget lands in the app.
+    static let dashboardURL = URL(string: "pwusage://dashboard")!
     static let staleAfter: TimeInterval = 30 * 60
     var version = 2
     let siteID: String
