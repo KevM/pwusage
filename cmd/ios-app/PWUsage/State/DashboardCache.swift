@@ -61,6 +61,7 @@ final class DashboardCache {
     private func publishWidget() {
         guard let widgetStore else { return }
         let previous = widgetStore.load()
+        var removedSnapshot = false
         if let siteID = widgetSiteID, let reading = snapshot.live[siteID] {
             let response = reading.response
             let site = response.site
@@ -74,14 +75,20 @@ final class DashboardCache {
                                             batteryStateOfCharge: response.stateOfCharge,
                                             batteryStateOfChargeAt: response.sources.stateOfChargeAt)
             guard value != previous else { return }
-            do { try widgetStore.save(value) }
-            catch { widgetStore.clear() }
+            do { try widgetStore.save(value) } catch {
+                widgetStore.clear()
+                removedSnapshot = true
+            }
         } else {
             guard previous != nil else { return }
             widgetStore.clear()
+            removedSnapshot = true
         }
         let date = now()
-        guard lastPublishedAt.map({ date.timeIntervalSince($0) >= 15 * 60 }) ?? true else { return }
+        // Removal invalidates already-rendered account/site data immediately.
+        // Only routine snapshot updates consume the throttled refresh budget.
+        let reloadIsDue = lastPublishedAt.map { date.timeIntervalSince($0) >= 15 * 60 } ?? true
+        guard removedSnapshot || reloadIsDue else { return }
         lastPublishedAt = date
         reloadTimelines(TodayEnergySnapshot.widgetKind)
         reloadTimelines(TodayEnergySnapshot.metricWidgetKind)
