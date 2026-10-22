@@ -1,5 +1,4 @@
 import AppIntents
-import Combine
 import Foundation
 
 enum BatteryHoldControlIdentity {
@@ -19,29 +18,11 @@ struct OpenBatteryHoldIntent: OpenIntent {
     init() {}
     init(site: BatteryHoldControlSite) { target = site }
 
+    var destinationURL: URL { BatteryHoldLink.url(siteID: target.id) }
+
     @MainActor
-    func perform() async throws -> some IntentResult {
-        BatteryHoldNavigationInbox.shared.send(BatteryHoldLink.url(siteID: target.id))
-        return .result()
-    }
-}
-
-/// A mailbox handles intents arriving before the root view appears, including cold launch.
-@MainActor
-final class BatteryHoldNavigationInbox: ObservableObject {
-    struct Request {
-        let id = UUID()
-        let url: URL
-    }
-    static let shared = BatteryHoldNavigationInbox()
-    @Published private(set) var request: Request?
-    private var consumedID: UUID?
-
-    func send(_ url: URL) { request = Request(url: url) }
-    func take() -> URL? {
-        guard let request, consumedID != request.id else { return nil }
-        consumedID = request.id
-        return request.url
+    func perform() async throws -> some IntentResult & OpensIntent {
+        return .result(opensIntent: OpenURLIntent(destinationURL))
     }
 }
 
@@ -63,4 +44,8 @@ enum BatteryHoldLink {
               !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return id
     }
+}
+
+enum DashboardLink {
+    static let url = URL(string: "pwusage://dashboard")!
 }

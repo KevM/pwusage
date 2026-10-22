@@ -384,7 +384,7 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func openNavigationURL(_ url: URL) async {
-        if url == TodayEnergySnapshot.dashboardURL {
+        if url == DashboardLink.url {
             dismissCompetingPresentations()
             externalNavigationID = UUID()
             selectTab(.home)

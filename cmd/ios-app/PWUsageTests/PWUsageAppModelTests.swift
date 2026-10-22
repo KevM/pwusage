@@ -366,10 +366,12 @@ struct PWUsageAppModelTests {
         model.selectTab(.settings)
         model.isSitePickerPresented = true
         let before = model.externalNavigationID
-        await model.openNavigationURL(TodayEnergySnapshot.dashboardURL)
+        let selectedSite = model.selectedSiteID
+        await model.openNavigationURL(DashboardLink.url)
         #expect(model.selectedTab == .home)
         // Tab-local modals survive a tab switch, so the stacks must be rebuilt.
         #expect(model.externalNavigationID != before)
+        #expect(model.selectedSiteID == selectedSite)
         #expect(model.isSitePickerPresented == false)
         #expect(model.batteryHoldNavigationMessage == nil)
         #expect(api.siteFetchCount == 1)

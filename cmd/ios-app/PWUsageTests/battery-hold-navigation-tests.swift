@@ -36,8 +36,7 @@ struct BatteryHoldNavigationTests {
     @Test("The app navigation intent only queues its explicit site")
     func intentRouting() async throws {
         let intent = OpenBatteryHoldIntent(site: .init(id: "site-2", name: "Second home"))
-        _ = try await intent.perform()
-        #expect(BatteryHoldNavigationInbox.shared.take() == BatteryHoldLink.url(siteID: "site-2"))
+        #expect(intent.destinationURL == BatteryHoldLink.url(siteID: "site-2"))
     }
 
     @Test("Picker metadata replaces removed sites and clears on logout")

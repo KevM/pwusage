@@ -31,7 +31,7 @@ struct TodayEnergyWidgetView: View {
     @Environment(\.widgetFamily) private var family
     var body: some View {
         TodayEnergyWidgetFamilyContent(snapshot: entry.snapshot, date: entry.date, family: family)
-            .widgetURL(TodayEnergySnapshot.dashboardURL)
+            .widgetURL(DashboardLink.url)
             .privacySensitive()
             .containerBackground(Color(uiColor: .secondarySystemGroupedBackground), for: .widget)
     }
