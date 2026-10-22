@@ -387,6 +387,20 @@ final class PWUsageAPITests {
         }
     }
 
+    @Test("Live response for another site is rejected, not displayed under the requested one")
+    func liveSiteMismatchIsRejected() async throws {
+        StubURLProtocol.requestHandler = { request in
+            (try Self.response(request, status: 200), Data(Self.liveFixture(siteID: "other-site").utf8))
+        }
+        await #expect(throws: MobileLiveResponse.ContractError.siteMismatch(expected: "site-1", actual: "other-site")) {
+            _ = try await api.fetchLive(siteID: "site-1")
+        }
+        StubURLProtocol.requestHandler = { request in
+            (try Self.response(request, status: 200), Data(Self.liveFixture(siteID: "site-1").utf8))
+        }
+        #expect(try await api.fetchLive(siteID: "site-1").site.id == "site-1")
+    }
+
     @Test("The app session uses the shared no-cache, bounded-timeout policy")
     func appSessionUsesSharedPolicy() throws {
         let defaultAPI = PWUsageAPI(
@@ -403,6 +417,15 @@ final class PWUsageAPITests {
             #expect(configuration.httpShouldSetCookies)
             #expect(configuration.httpCookieAcceptPolicy == .always)
         }
+    }
+
+    private static func liveFixture(siteID: String) -> String {
+        """
+        {"version":1,"site":{"id":"\(siteID)","name":"Home","timezone":"UTC","localDate":"2026-10-20"},
+        "live":{"solarPower":0,"loadPower":0,"batteryPower":0,"gridPower":0},
+        "today":{"homeKwh":1,"solarKwh":1,"gridNetKwh":0,"batteryNetKwh":0},"todayComplete":false,
+        "stateOfCharge":null,"sources":{"energyDataThrough":null,"stateOfChargeAt":null}}
+        """
     }
 
     private static func response(_ request: URLRequest, status: Int) throws -> HTTPURLResponse {

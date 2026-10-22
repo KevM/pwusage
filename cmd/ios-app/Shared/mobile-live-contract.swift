@@ -78,6 +78,7 @@ struct MobileLiveResponse: Codable, Equatable {
 
     enum ContractError: Error, Equatable {
         case unsupportedVersion(Int)
+        case siteMismatch(expected: String, actual: String)
     }
 
     private enum CodingKeys: String, CodingKey { case version, site, live, stateOfCharge, activeTariff, activeLoadTiming, today, todayCost, todayComplete, currentBill, sources }
@@ -103,6 +104,13 @@ struct MobileLiveResponse: Codable, Equatable {
         todayComplete = try container.decode(Bool.self, forKey: .todayComplete)
         currentBill = try container.decodeIfPresent(Bill.self, forKey: .currentBill)
         self.sources = sources
+    }
+
+    func validating(siteID: String) throws -> Self {
+        guard site.id == siteID else {
+            throw ContractError.siteMismatch(expected: siteID, actual: site.id)
+        }
+        return self
     }
 
     /// A reading that cannot be dated, or that is out of range, is unknown rather than wrong.
