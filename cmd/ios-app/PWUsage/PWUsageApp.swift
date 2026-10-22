@@ -150,7 +150,9 @@ final class PWUsageAppModel: ObservableObject {
     private let api: any PWUsageApplicationAPI
     private let userDefaults: UserDefaults
     private let cache: DashboardCache?
-    @Published private(set) var batteryHoldNavigationID: UUID?
+    /// Replaced on each external route (widget, Battery Saver control) so every
+    /// tab rebuilds its stack, dropping old paths and tab-local modals.
+    @Published private(set) var externalNavigationID: UUID?
     @Published private(set) var pendingBatteryHoldSiteID: String?
     @Published var batteryHoldNavigationMessage: String?
     private let controlSiteStore: BatteryHoldControlSiteStore?
@@ -363,6 +365,12 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func openNavigationURL(_ url: URL) async {
+        if url == TodayEnergySnapshot.dashboardURL {
+            dismissCompetingPresentations()
+            externalNavigationID = UUID()
+            selectTab(.home)
+            return
+        }
         guard url.scheme == "pwusage", url.host == "battery-hold" else { return }
         guard let siteID = BatteryHoldLink.siteID(from: url) else {
             pendingBatteryHoldSiteID = nil
@@ -407,7 +415,7 @@ final class PWUsageAppModel: ObservableObject {
         selectSite(site)
         // Rebuild only for an external route: this drops the old navigation path
         // and every dashboard/detail modal before the new host opens the sheet.
-        batteryHoldNavigationID = UUID()
+        externalNavigationID = UUID()
         selectedTab = .smartShift
         coordinator?.isBatteryHoldSheetPresented = true
     }

@@ -147,14 +147,14 @@ struct PWUsageAppModelTests {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
         let model = try makeModel(api: api)
         await model.bootstrap()
-        #expect(model.batteryHoldNavigationID == nil)
+        #expect(model.externalNavigationID == nil)
         await model.openBatteryHold(siteID: "site-1")
-        let first = try #require(model.batteryHoldNavigationID)
+        let first = try #require(model.externalNavigationID)
         await model.openBatteryHold(siteID: "site-1")
-        #expect(model.batteryHoldNavigationID != first)
-        let latest = model.batteryHoldNavigationID
+        #expect(model.externalNavigationID != first)
+        let latest = model.externalNavigationID
         await model.openBatteryHold(siteID: "removed")
-        #expect(model.batteryHoldNavigationID == latest)
+        #expect(model.externalNavigationID == latest)
         #expect(model.coordinator?.isBatteryHoldSheetPresented == false)
     }
 
@@ -355,6 +355,23 @@ struct PWUsageAppModelTests {
             #expect(model.coordinator?.isBatteryHoldSheetPresented != true)
             #expect(model.batteryHoldNavigationMessage != nil)
         }
+        #expect(api.siteFetchCount == 1)
+    }
+
+    @Test("Energy widget links open the Home tab")
+    func dashboardLinkOpensHome() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        model.selectTab(.settings)
+        model.isSitePickerPresented = true
+        let before = model.externalNavigationID
+        await model.openNavigationURL(TodayEnergySnapshot.dashboardURL)
+        #expect(model.selectedTab == .home)
+        // Tab-local modals survive a tab switch, so the stacks must be rebuilt.
+        #expect(model.externalNavigationID != before)
+        #expect(model.isSitePickerPresented == false)
+        #expect(model.batteryHoldNavigationMessage == nil)
         #expect(api.siteFetchCount == 1)
     }
 
