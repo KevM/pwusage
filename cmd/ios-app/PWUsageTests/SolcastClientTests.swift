@@ -120,6 +120,24 @@ struct SolcastClientTests {
         #expect(transport.requests.isEmpty)
     }
 
+    @Test("Cancellation is reported as cancellation, not as a network failure")
+    func cancellationIsNotATransportFailure() async {
+        for error in [URLError(.cancelled) as any Error, CancellationError()] {
+            let transport = RecordingSolcastTransport { _ in throw error }
+            let client = SolcastClient(apiKey: "synthetic-key", transport: transport)
+            await #expect(throws: CancellationError.self) {
+                _ = try await client.fetchForecast(resourceID: "east")
+            }
+            await #expect(throws: CancellationError.self) {
+                _ = try await client.discoverSites()
+            }
+        }
+        let offline = SolcastClient(apiKey: "synthetic-key", transport: RecordingSolcastTransport { _ in throw URLError(.notConnectedToInternet) })
+        await #expect(throws: SolcastClientError.transportFailure) {
+            _ = try await offline.fetchForecast(resourceID: "east")
+        }
+    }
+
     @Test("Maps provider errors without exposing response bodies")
     func mapsProviderErrorsWithoutBody() async throws {
         let transport = RecordingSolcastTransport { request in

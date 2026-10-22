@@ -95,6 +95,88 @@ struct SolarForecastStoreTests {
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").automaticAttempts == 3)
     }
 
+    @Test("A cancelled refresh is not a network failure and is not charged")
+    func cancelledRefreshLeavesBudgetUnchanged() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        let before = await h.store.budget(for: "account-a", siteID: "site-a")
+        await h.transport.cancelNext()
+
+        let result = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true)
+
+        #expect(result == .cancelled)
+        #expect(await h.transport.requestCount == 1)
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a") == before)
+        #expect(await h.store.lastErrorDescription == nil)
+        // The refund reaches disk, so a relaunch does not count the cancelled attempt either.
+        let saved = try await h.files.loadState()
+        #expect(saved.budgets.values.allSatisfy { $0.totalAttempts == before.totalAttempts })
+        // The next refresh is a normal one.
+        #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .refreshed)
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == before.totalAttempts + 1)
+    }
+
+    @Test("A cancelled two-array refresh is charged only for the request that completed")
+    func cancelledSecondArrayRefundsOnlyUnfinishedRequest() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east", "west"])
+        let before = await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts
+        await h.transport.cancelRequest(number: 2)
+
+        let result = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true)
+
+        #expect(result == .cancelled)
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == before + 1)
+    }
+
+    @Test("A refresh invalidated while its budget save is held is not charged")
+    func refreshInvalidatedBeforeDispatchIsRefunded() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        let before = await h.store.budget(for: "account-a", siteID: "site-a")
+        await h.files.holdNextSave()
+        let refresh = Task { await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) }
+        try await h.files.waitUntilSaveIsHeld()
+        try await h.store.selectArrays(["west"], accountScopeID: "account-a", siteID: "site-a")
+        await h.files.resumeHeldSave()
+
+        #expect(await refresh.value == .cancelled)
+        #expect(await h.transport.requestCount == 0)
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a") == before)
+        let saved = try await h.files.loadState()
+        #expect(saved.budgets.values.allSatisfy { $0.totalAttempts == before.totalAttempts })
+    }
+
+    @Test("A discovery invalidated while its budget save is held is not charged")
+    func discoveryInvalidatedBeforeDispatchIsRefunded() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        let before = await h.store.budget(for: "account-a", siteID: "site-a")
+        await h.files.holdNextSave()
+        let discovery = Task { try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a", manual: true) }
+        try await h.files.waitUntilSaveIsHeld()
+        try await h.store.selectArrays(["west"], accountScopeID: "account-a", siteID: "site-a")
+        await h.files.resumeHeldSave()
+
+        await #expect(throws: SolarForecastStore.StoreError.cancelled) { _ = try await discovery.value }
+        #expect(await h.transport.requestCount == 0)
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a") == before)
+    }
+
+    @Test("A cancelled discovery is not charged")
+    func cancelledDiscoveryLeavesBudgetUnchanged() async throws {
+        let h = Harness()
+        try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
+        let before = await h.store.budget(for: "account-a", siteID: "site-a")
+        await h.transport.cancelNext()
+
+        await #expect(throws: SolarForecastStore.StoreError.cancelled) {
+            _ = try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a", manual: true)
+        }
+        #expect(await h.store.budget(for: "account-a", siteID: "site-a") == before)
+        #expect(await h.store.lastErrorDescription == nil)
+    }
+
     @Test("401 disables the failed refresh without exposing the key")
     func unauthorizedDoesNotExposeKey() async throws {
         let h = Harness()
@@ -1040,6 +1122,7 @@ private actor TestSolcastTransport: SolcastTransport {
     private(set) var requestCount = 0
     private var hold = false
     private var failures = 0
+    private var cancelledRequest: Int?
     private var statusCode: Int?
     private var rateLimitDelay: TimeInterval?
     private var failedID: String?
@@ -1048,6 +1131,8 @@ private actor TestSolcastTransport: SolcastTransport {
 
     func holdResponses() { hold = true }
     func failNext(_ count: Int) { failures = count }
+    func cancelNext() { cancelledRequest = requestCount + 1 }
+    func cancelRequest(number: Int) { cancelledRequest = number }
     func nextStatusCode(_ value: Int) { statusCode = value }
     func nextRateLimitDelay(_ value: TimeInterval) { rateLimitDelay = value }
     func failResourceID(_ value: String) { failedID = value }
@@ -1057,6 +1142,7 @@ private actor TestSolcastTransport: SolcastTransport {
         requestCount += 1
         if hold { await withCheckedContinuation { waiters.append($0) } }
         if failures > 0 { failures -= 1; throw URLError(.timedOut) }
+        if requestCount == cancelledRequest { cancelledRequest = nil; throw URLError(.cancelled) }
         let resourceID = request.url?.pathComponents.last(where: { $0 != "forecasts" })
         let status = resourceID == failedID ? 500 : (statusCode ?? (rateLimitDelay == nil ? 200 : 429))
         statusCode = nil

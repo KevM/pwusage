@@ -81,7 +81,12 @@ struct SolcastClient: Sendable {
         let data: Data
         let response: URLResponse
         do { (data, response) = try await transport.data(for: request) }
-        catch { throw SolcastClientError.transportFailure }
+        catch {
+            // A cancelled request is not a network failure: it must not be recorded
+            // against the forecast or charged to the request budget.
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+            throw SolcastClientError.transportFailure
+        }
         guard let http = response as? HTTPURLResponse,
               http.url?.scheme == "https", http.url?.host == "api.solcast.com.au" else {
             throw SolcastClientError.invalidResponse

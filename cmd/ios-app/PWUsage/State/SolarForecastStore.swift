@@ -263,12 +263,19 @@ actor SolarForecastStore {
             throw StoreError.persistenceFailed
         }
         guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID,
-              state.credentials[scope]?.credentialID == credential.credentialID else { throw StoreError.cancelled }
+              state.credentials[scope]?.credentialID == credential.credentialID else {
+            // Invalidated while the reservation was being saved: nothing was sent.
+            await refundCancelledRequests(1, credentialID: credential.credentialID, manual: manual, scope: scope)
+            throw StoreError.cancelled
+        }
         do {
             let sites = try await SolcastClient(apiKey: storedKey.key, transport: transport).discoverSites()
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID,
                   state.credentials[scope]?.credentialID == credential.credentialID else { throw StoreError.cancelled }
             return sites
+        } catch is CancellationError {
+            await refundCancelledRequests(1, credentialID: credential.credentialID, manual: manual, scope: scope)
+            throw StoreError.cancelled
         } catch let error as SolcastClientError {
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == accountScopeID else { throw StoreError.cancelled }
             recordRateLimit(error, credentialID: credential.credentialID)
@@ -484,11 +491,15 @@ actor SolarForecastStore {
             return .failed(.saveFailed)
         }
         guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID,
-              state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
+              state.credentials[scope]?.credentialID == credential.credentialID else {
+            // Invalidated while the reservation was being saved: nothing was sent.
+            await refundCancelledRequests(requestCount, credentialID: credential.credentialID, manual: manual, scope: scope)
+            return .cancelled
+        }
         let client = SolcastClient(apiKey: storedKey.key, transport: transport)
         let intervals: [SolarForecastInterval]
+        var arrays: [[SolcastForecastPoint]] = []
         do {
-            var arrays: [[SolcastForecastPoint]] = []
             for resourceID in credential.resourceIDs {
                 try Task.checkCancellation()
                 arrays.append(try await client.fetchForecast(resourceID: resourceID))
@@ -497,6 +508,11 @@ actor SolarForecastStore {
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID,
                   state.credentials[scope]?.credentialID == credential.credentialID else { return .cancelled }
             intervals = try SolarForecast.combine(arrays)
+        } catch is CancellationError {
+            // Checked first: cancellation is not a Solcast failure, so it records no
+            // failure description and charges only the requests that completed.
+            await refundCancelledRequests(requestCount - arrays.count, credentialID: credential.credentialID, manual: manual, scope: scope)
+            return .cancelled
         } catch let error as SolcastClientError {
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID else { return .cancelled }
             recordRateLimit(error, credentialID: credential.credentialID)
@@ -506,8 +522,6 @@ actor SolarForecastStore {
             }
             let outcome = await persistFailureState(scope: scope, credential: credential, description: Self.safeDescription(error))
             return outcome == .persisted ? Self.refreshFailure(error) : Self.refreshResult(for: outcome, ordinaryResult: Self.refreshFailure(error))
-        } catch is CancellationError {
-            return .cancelled
         } catch {
             guard (generations[scope] ?? 0) == generation, activeAccountScopeID == credential.accountScopeID else { return .cancelled }
             // A new response that can't be combined says nothing against the forecast already saved.
@@ -639,6 +653,20 @@ actor SolarForecastStore {
         if !manual { budget.automaticAttempts += count }
         state.budgets[credentialID] = budget
         return true
+    }
+
+    /// Returns the part of a reservation that never produced a response. A request
+    /// that completed before the cancellation stays charged, and a reservation made
+    /// on an earlier UTC day is already gone. Overcharging is the safe direction, so
+    /// a failed save is only queued for retry rather than escalated.
+    private func refundCancelledRequests(_ count: Int, credentialID: String, manual: Bool, scope: String) async {
+        guard count > 0, let stored = state.budgets[credentialID] else { return }
+        var budget = normalizedBudget(stored, at: clock.now())
+        guard budget.utcDay == stored.utcDay else { return }
+        budget.totalAttempts = max(0, budget.totalAttempts - count)
+        if !manual { budget.automaticAttempts = max(0, budget.automaticAttempts - count) }
+        state.budgets[credentialID] = budget
+        do { try await persist() } catch { dirtyScopes.insert(scope) }
     }
 
     private func recordRateLimit(_ error: SolcastClientError, credentialID: String) {

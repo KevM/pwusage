@@ -194,6 +194,57 @@ struct MobileContractsTests {
         }
     }
 
+    /// JSON cannot carry NaN or infinity, so a decoder that reads them from strings
+    /// stands in for any non-conforming source the validation exists to catch.
+    private static func nonConformingDecoder() -> JSONDecoder {
+        let decoder = MobileContractDecoder.make()
+        decoder.nonConformingFloatDecodingStrategy = .convertFromString(positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
+        return decoder
+    }
+
+    private static let billBase = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC"},"sources":{"calculatedAt":"2026-09-23T12:34:56Z","energyDataThrough":null},"currentBill":{"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","#
+
+    @Test("A bill with a non-finite cost or rate is rejected", arguments: [
+        billBase + #""estimatedCost":"nan","periods":[]}}"#,
+        billBase + #""estimatedCost":1,"periods":[{"tariffName":"R","periodName":"Peak","netGridKwh":1,"cost":"inf"}]}}"#,
+        billBase + #""estimatedCost":1,"periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":false,"periods":[{"name":"Peak","marginalCost":"-inf","basis":"buy","cycleNetExportKwh":0,"isActive":true,"nextStartPhrase":null,"buyRate":0.3,"sellRate":0.1}],"pricingPeriods":[]}}"#,
+        billBase + #""estimatedCost":1,"periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":false,"periods":[],"pricingPeriods":[{"name":"Peak","marginalCost":0.3,"basis":"buy","cycleNetExportKwh":0,"isActive":true,"nextStartPhrase":null,"buyRate":"nan","sellRate":0.1}]}}"#,
+        billBase + #""estimatedCost":1,"periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":false,"periods":[],"pricingPeriods":[],"tariffTimeline":[{"start":"2026-09-23T23:30:00Z","end":"2026-09-24T00:00:00Z","periodKey":"p","name":"Peak","buyRate":0.3,"sellRate":"inf"}]}}"#,
+        billBase + #""estimatedCost":1,"periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":false,"periods":[],"pricingPeriods":[],"nextCheaper":{"name":"Off","marginalCost":"nan","phrase":"soon"}}}"#,
+    ])
+    func rejectsNonFiniteBillAmounts(fixture: String) throws {
+        let response = try Self.nonConformingDecoder().decode(MobileBillResponse.self, from: Data(fixture.utf8))
+        #expect(throws: MobileBillResponse.ContractError.invalidAmount) { try response.validating(siteID: "site-1") }
+    }
+
+    @Test("Negative rates and costs are valid: the server prices negative buy and sell rates")
+    func acceptsNegativeRatesAndCosts() throws {
+        let bill = Self.billBase + #""estimatedCost":-4.5,"periods":[{"tariffName":"R","periodName":"Export","netGridKwh":-3,"cost":-0.3}]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":true,"periods":[{"name":"Export","marginalCost":-0.1,"basis":"sell","cycleNetExportKwh":3,"isActive":true,"nextStartPhrase":null,"buyRate":-0.1,"sellRate":-0.04}],"pricingPeriods":[]}}"#
+        let response = try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(bill.utf8))
+        #expect(try response.validating(siteID: "site-1") == response)
+        let tariffs = try MobileContractDecoder.make().decode(MobileTariffsResponse.self, from: Data(TariffSheetTests.fixture.replacingOccurrences(of: #""buyRate":0.3"#, with: #""buyRate":-0.3"#).utf8))
+        #expect(try tariffs.validating(siteID: "a") == tariffs)
+    }
+
+    @Test("A live response with a non-finite bill amount or rate is rejected", arguments: [
+        #""currentBill":{"estimatedCost":"inf","currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]}"#,
+        #""currentBill":{"estimatedCost":1,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[{"tariffName":"R","periodName":"Peak","netGridKwh":1,"cost":"nan"}]}"#,
+        #""activeLoadTiming":{"periodName":"Peak","buyRate":"nan","sellRate":0.1,"marginalCost":null,"basis":"buy","balanceKwh":null,"energyDataThrough":null}"#,
+        #""activeLoadTiming":{"periodName":"Peak","buyRate":0.3,"sellRate":0.1,"marginalCost":"-inf","basis":"buy","balanceKwh":null,"energyDataThrough":null}"#,
+    ])
+    func rejectsNonFiniteLiveAmounts(field: String) throws {
+        let fixture = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC","localDate":"2026-09-23"},"live":{"solarPower":0,"loadPower":0,"batteryPower":0,"gridPower":0},"today":{"homeKwh":1,"solarKwh":1,"gridNetKwh":0,"batteryNetKwh":0},"todayComplete":false,"sources":{"energyDataThrough":null},"# + field + "}"
+        let response = try Self.nonConformingDecoder().decode(MobileLiveResponse.self, from: Data(fixture.utf8))
+        #expect(throws: MobileLiveResponse.ContractError.invalidAmount) { try response.validating(siteID: "site-1") }
+    }
+
+    @Test("A tariff period with a non-finite rate is rejected")
+    func rejectsNonFiniteTariffRate() throws {
+        let fixture = TariffSheetTests.fixture.replacingOccurrences(of: #""sellRate":0.1"#, with: #""sellRate":"nan""#)
+        let response = try Self.nonConformingDecoder().decode(MobileTariffsResponse.self, from: Data(fixture.utf8))
+        #expect(throws: PWUsageAPIError.invalidResponse) { try response.validating(siteID: "a") }
+    }
+
     @Test("A planning context stamped ahead of a slow device clock still validates")
     func planningContextToleratesClockBehindServer() throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
