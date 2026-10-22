@@ -218,12 +218,12 @@ enum SmartShiftPresentation {
     static let connectSolcastNote = "Without a solar forecast, banks are shown as they stand now. Connect Solcast to see today's solar."
     static let connectSolcastHistoryNote = "Without a solar forecast, banks follow your last four weeks. Connect Solcast to see this week's solar."
     static let checkingSolarNote = "Checking today's solar…"
-    static let unobservedBalanceNote = "Some rate periods have no balance yet, so they're priced at the full rate."
+    static let unobservedBalanceNote = "Some rate periods have no bank yet, so they're priced at the full rate."
 
     static let refreshFailedMessage = "The latest refresh failed, so this saved estimate may be old and no recommendation is offered."
     static let staleMessage = "Energy observations are older than one hour or have no valid source time, so no recommendation is offered."
     static let missingRatePlanMessage = "Add a Rate Plan so Smart Shift can compare costs."
-    static let incompleteBalanceMessage = "Some rate periods or balances are missing from your Rate Plan, so costs can't be compared."
+    static let incompleteBalanceMessage = "Some rate periods or bank data are missing, so costs can't be compared."
     static let billingCycleMessage = "This job would continue beyond the current billing cycle, so its current bank can't be used for the estimate."
     static let tooLongMessage = "This job is longer than the time Smart Shift can compare right now."
     static let noEnergyMessage = "This car is already at its target charge, so no energy is needed right now."
@@ -275,7 +275,7 @@ enum SmartShiftPresentation {
                 name: periodTitle(period.name, timing: timing),
                 buy: DashboardPresentation.loadRate(period.buyRate, code: currencyCode),
                 sell: DashboardPresentation.loadRate(period.sellRate, code: currencyCode),
-                balance: timing.hasCycleData ? balanceLabel(period.cycleNetExportKwh) : "No balance yet"
+                balance: timing.hasCycleData ? balanceLabel(period.cycleNetExportKwh) : "No bank yet"
             )
         }
     }

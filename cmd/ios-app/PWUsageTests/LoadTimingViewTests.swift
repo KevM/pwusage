@@ -14,7 +14,8 @@ struct LoadTimingViewTests {
         )
         #expect(summary.title == "Off peak")
         #expect(summary.rate == "12¢/kWh")
-        #expect(summary.balance == "Surplus 10.0 kWh")
+        #expect(summary.balance == "Banked 10.0 kWh")
+        #expect(summary.isBanked)
     }
 
     @Test("Unobserved active period shows its configured buy rate and no balance")
@@ -26,13 +27,14 @@ struct LoadTimingViewTests {
             currencyCode: "USD"
         )
         #expect(summary.rate == "48¢/kWh")
-        #expect(summary.balance == "No balance yet")
+        #expect(summary.balance == "No bank yet")
+        #expect(!summary.isBanked)
     }
 
     @Test("Live tariff summary preserves missing tariff and stale source cues")
     func dashboardSummaryRetainsUnavailableAndStaleStates() {
-        #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: false, isStale: false).message == "No active tariff is configured")
-        #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: true, isStale: false).message == "Load timing is unavailable")
+        #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: false, isStale: false).message == "No rate plan is set up")
+        #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: true, isStale: false).message == "No live summary is available")
         let stale = DashboardPresentation.loadTimingSummary(
             .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.48, basis: "buy", balanceKwh: -4, energyDataThrough: nil),
             hasTariff: true,
@@ -40,7 +42,15 @@ struct LoadTimingViewTests {
             currencyCode: "USD"
         )
         #expect(stale.freshness == "Showing the last successful live summary")
-        #expect(stale.balance == "Deficit 4.0 kWh")
+        #expect(stale.balance == "Owed 4.0 kWh")
+        #expect(!stale.isBanked)
+        let unobservedWithBalance = DashboardPresentation.loadTimingSummary(
+            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: nil, basis: "unobserved", balanceKwh: 5, energyDataThrough: nil),
+            hasTariff: true,
+            isStale: false
+        )
+        #expect(unobservedWithBalance.balance == "No bank yet")
+        #expect(!unobservedWithBalance.isBanked)
     }
 
     @Test("Live rate stays hidden until bill currency is known")
@@ -69,7 +79,7 @@ struct LoadTimingViewTests {
     func currentBalanceAndSourceTimeAreExplained() {
         let active = LoadTimingPeriod(name: "Peak", marginalCost: 0.48, basis: "buy", cycleNetExportKwh: 4.2, isActive: true, nextStartPhrase: nil, buyRate: 0.48, sellRate: 0.12)
         let timing = LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: [active], pricingPeriods: [active], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-        #expect(LoadTimingPresentation.activeBalanceSummary(timing) == "Current Peak billing-cycle balance: 4.2 kWh surplus.")
+        #expect(LoadTimingPresentation.activeBalanceSummary(timing) == "Current Peak bank: 4.2 kWh banked.")
 
         let sourceTime = Date(timeIntervalSince1970: 1_800_000_000)
         let summary = LoadTimingPresentation.sourceTimeSummary(sourceTime, timeZone: "UTC")
@@ -87,7 +97,7 @@ struct LoadTimingViewTests {
         #expect(rows.map(\.periodKey) == ["peak", "off-peak"])
         #expect(rows.map(\.wallEnergy) == ["4.0 kWh", "4.0 kWh"])
         #expect(rows.map(\.total) == ["$1.92", "$0.48"])
-        #expect(rows[1].balance == "2.0 kWh observed surplus · 2.0 kWh at buy rate")
+        #expect(rows[1].balance == "2.0 kWh from your bank · 2.0 kWh at the full rate")
     }
 
     @Test("Observed positive surplus prices at sell rate and a deficit prices at buy rate")
@@ -116,7 +126,7 @@ struct LoadTimingViewTests {
     func breakdownMarksUnobservedPeriod() {
         let segment = LoadTimingEstimator.StartNowSegment(periodKey: "overnight", start: .now, end: .now.addingTimeInterval(3600), wallKwh: 2, surplusKwh: 0, boughtKwh: 2, total: 0.96)
         let row = LoadTimingPresentation.breakdownRows([segment], currencyCode: "USD", unobservedPeriodKeys: ["overnight"]).first
-        #expect(row?.balance == "No observed balance · estimated at buy rate")
+        #expect(row?.balance == "No bank observed · priced at the full rate")
     }
 
     @Test("Run card summary stays focused while details retain energy estimate")
@@ -148,8 +158,8 @@ struct LoadTimingViewTests {
     @Test("Recommendation copy distinguishes ready, no fit, stale, incomplete, no energy, and empty profiles")
     func recommendationMessagesExplainEachState() {
         #expect(LoadTimingPresentation.recommendationMessage(for: .ready).title == "Good time to start")
-        #expect(LoadTimingPresentation.recommendationMessage(for: .ready).detail == "Your export cushion covers this job.")
-        #expect(LoadTimingPresentation.recommendationMessage(for: .noFit).title == "No saved job fits your export cushion.")
+        #expect(LoadTimingPresentation.recommendationMessage(for: .ready).detail == "Your bank covers this job.")
+        #expect(LoadTimingPresentation.recommendationMessage(for: .noFit).title == "No saved job fits your bank.")
         #expect(LoadTimingPresentation.recommendationMessage(for: .noFit, refreshUnavailable: true).detail.contains("refresh failed"))
         #expect(LoadTimingPresentation.recommendationMessage(for: .stale).detail.contains("older than one hour"))
         #expect(LoadTimingPresentation.recommendationMessage(for: .stale, refreshUnavailable: true).detail.contains("refresh failed"))
@@ -183,7 +193,7 @@ struct LoadTimingViewTests {
             suggested: nil,
             state: .incompleteData
         )
-        #expect(LoadTimingPresentation.recommendationMessage(for: incomplete, selected: incomplete.candidates[0]).title == "Rate Plan Incomplete")
+        #expect(LoadTimingPresentation.recommendationMessage(for: incomplete, selected: incomplete.candidates[0]).title == "Rate plan incomplete")
     }
 
     @Test("Action titles use the Job's verb-phrase name as-is")
@@ -200,9 +210,9 @@ struct LoadTimingViewTests {
         let estimate = LoadTimingEstimator.StartNowEstimate(total: 1.25, finishTime: .now, batteryKwh: 0, wallKwh: 5, durationHours: 1, segments: [segment], hasUnobservedBalance: false)
         let candidate = LoadTimingRecommendation.Candidate(profile: LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 5, durationHours: 1, carSettings: nil), result: .estimate(estimate), remainingSurplusKwh: 3.5)
         let impact = LoadTimingPresentation.energyImpact(candidate)
-        #expect(impact.surplusConsumed == "1.5 kWh from your export cushion")
-        #expect(impact.energyBought == "3.5 kWh at the grid rate")
-        #expect(impact.remainingSurplus == "3.5 kWh of export cushion remains in these rate periods")
+        #expect(impact.surplusConsumed == "1.5 kWh from your bank")
+        #expect(impact.energyBought == "3.5 kWh at the full rate")
+        #expect(impact.remainingSurplus == "3.5 kWh remains in your bank in these rate periods")
         let unknown = LoadTimingPresentation.energyImpact(LoadTimingRecommendation.Candidate(profile: candidate.profile, result: candidate.result, remainingSurplusKwh: nil))
         #expect(unknown.remainingSurplus == nil)
     }
@@ -240,7 +250,7 @@ struct LoadTimingViewTests {
     @Test("No-response explorer keeps a neutral selected-load title but withholds estimate and calculation")
     func missingResponseExplorerExplainsUnavailableEstimate() {
         let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
-        #expect(LoadTimingPresentation.noResponseExplorationMessage.contains("bill response and tariff data"))
+        #expect(LoadTimingPresentation.noResponseExplorationMessage.contains("bill response and rate plan"))
         #expect(LoadTimingPresentation.noResponseExplorationMessage.contains("estimate or calculation"))
     }
 
@@ -263,9 +273,9 @@ struct LoadTimingViewTests {
 
         #expect(overlay.isForecastAware)
         #expect(enhanced.headline == "Waiting could save an estimated $1.20")
-        #expect(enhanced.costNow == "Start now — adds \(Self.money(3.40)) to your projected bill")
+        #expect(enhanced.costNow == "Start now. Adds \(Self.money(3.40)) to your projected bill")
         #expect(Self.normalized(enhanced.recommendedCost)
-            == Self.normalized("Start at 10:00 AM — adds \(Self.money(2.20)) to your projected bill"))
+            == Self.normalized("Start at 10:00 AM. Adds \(Self.money(2.20)) to your projected bill"))
         #expect(enhanced.savings == "Estimated savings $1.20")
         #expect(Self.normalized(enhanced.window) == Self.normalized("Runs 10:00 AM – 11:00 AM"))
         #expect(enhanced.solarContribution == "About 2.1 kWh of this run could come from your solar")
@@ -291,10 +301,10 @@ struct LoadTimingViewTests {
         let enhanced = try #require(overlay.enhanced)
 
         #expect(overlay.isForecastAware)
-        #expect(enhanced.headline == "Start now — no cheaper start was found")
+        #expect(enhanced.headline == "Start now. No cheaper start was found")
         #expect(enhanced.savings == nil)
-        #expect(enhanced.costNow == "Start now — adds $3.40 to your projected bill")
-        #expect(Self.normalized(enhanced.recommendedCost) == Self.normalized("Start now — adds $3.40 to your projected bill"))
+        #expect(enhanced.costNow == "Start now. Adds $3.40 to your projected bill")
+        #expect(Self.normalized(enhanced.recommendedCost) == Self.normalized("Start now. Adds $3.40 to your projected bill"))
     }
 
     /// `costNow`/`recommendedCost` are the *marginal* cost of the load against the
@@ -324,18 +334,18 @@ struct LoadTimingViewTests {
         let marginalNow = Self.money(0.01)
         let marginalLater = Self.money(0)
 
-        #expect(enhanced.costNow == "Start now — adds \(marginalNow) to your projected bill")
+        #expect(enhanced.costNow == "Start now. Adds \(marginalNow) to your projected bill")
         #expect(Self.normalized(enhanced.recommendedCost)
-            == Self.normalized("Start at 10:00 AM — adds \(marginalLater) to your projected bill"))
+            == Self.normalized("Start at 10:00 AM. Adds \(marginalLater) to your projected bill"))
 
         // The substantive property: neither may be readable as a standalone total.
         for rendered in [enhanced.costNow, enhanced.recommendedCost] {
             #expect(rendered.hasSuffix(" to your projected bill"),
                     "Cost copy must say what the figure is added to, got \"\(rendered)\"")
         }
-        // The "Start now:" form is the one that reads as a bare total, and only
-        // `costNow` can carry it; `recommendedCost` is checked by the equality above.
-        #expect(!enhanced.costNow.contains("Start now:"), "Cost copy must not read as a total")
+        // A bare "Start now. $X" form would read as a total, and only `costNow`
+        // can carry it; `recommendedCost` is checked by the equality above.
+        #expect(!enhanced.costNow.contains("Start now. $"), "Cost copy must not read as a total")
     }
 
     @Test("A saving too small to act on is described as similarly priced, not as a saving")
@@ -354,7 +364,7 @@ struct LoadTimingViewTests {
         )
         let enhanced = try #require(overlay.enhanced)
 
-        #expect(enhanced.headline == "Start now — waiting would save about $0.04, which is not worth delaying")
+        #expect(enhanced.headline == "Start now. Waiting would save about $0.04, which is not worth delaying")
         #expect(enhanced.savings == nil)
     }
 
@@ -484,7 +494,7 @@ struct LoadTimingViewTests {
                 "The device must not be told to report a server bug that is really its own clock")
         #expect(note.lowercased().contains("date and time"),
                 "The note should name the device's own date and time as the thing to check")
-        #expect(note.contains("using tariff and balance data"),
+        #expect(note.contains("Using your rate plan and bank data"),
                 "The note must still carry the shared prefix about what keeps working")
     }
 
@@ -511,7 +521,7 @@ struct LoadTimingViewTests {
                 "Nothing here is fixed by adjusting the clock, so do not tell the user to try")
         #expect(!note.lowercased().contains("report"),
                 "Still must not invite a server bug report")
-        #expect(note.contains("using tariff and balance data"),
+        #expect(note.contains("Using your rate plan and bank data"),
                 "The note must still carry the shared prefix about what keeps working")
     }
 
@@ -538,7 +548,7 @@ struct LoadTimingViewTests {
                     timeZone: "UTC",
                     now: Self.now
                 ).note
-                #expect(note?.contains("using tariff and balance data") == true)
+                #expect(note?.contains("Using your rate plan and bank data") == true)
                 #expect(note?.contains("Retry a refresh") == false,
                         "No note may promise a refresh affordance that does not exist")
             }
@@ -629,7 +639,7 @@ struct LoadTimingViewTests {
             )
 
             let note = overlay.note
-            #expect(note?.contains("using tariff and balance data") == true)
+            #expect(note?.contains("Using your rate plan and bank data") == true)
             #expect(note?.contains("Retry") == true, "A failed connection must remain retryable, not terminal")
             #expect(overlay.enhanced == nil)
         }
@@ -712,7 +722,7 @@ struct LoadTimingViewTests {
         #expect(!overlay.isForecastAware)
         // The connection is configured, so the user is told why nothing is
         // forecast-aware — but no cost is invented to fill the gap.
-        #expect(overlay.note?.contains("using tariff and balance data") == true)
+        #expect(overlay.note?.contains("Using your rate plan and bank data") == true)
         #expect(!overlay.allText.joined(separator: " ").contains("$"))
     }
 
@@ -842,7 +852,7 @@ struct LoadTimingViewTests {
             )
             let note = try #require(overlay.note)
 
-            #expect(note.contains("using tariff and balance data"))
+            #expect(note.contains("Using your rate plan and bank data"))
             #expect(!note.contains("Retry a refresh"), "\(cause) must not send the user to retry an exhausted budget")
             #expect(!note.lowercased().contains("too old or incomplete"), "\(cause) must not blame forecast age")
             #expect(overlay.enhanced == nil)
@@ -1002,7 +1012,7 @@ struct LoadTimingViewTests {
             )
             let enhanced = try #require(overlay.enhanced)
 
-            #expect(enhanced.headline == "Start now — no cheaper start was found",
+            #expect(enhanced.headline == "Start now. No cheaper start was found",
                     "A \(alternative) saving must not be advertised")
             #expect(enhanced.savings == nil)
             #expect(!enhanced.headline.contains("$0.00"))
@@ -1026,7 +1036,7 @@ struct LoadTimingViewTests {
         )
         let enhanced = try #require(overlay.enhanced)
 
-        #expect(enhanced.headline == "Start now — waiting would save about $0.06, which is not worth delaying")
+        #expect(enhanced.headline == "Start now. Waiting would save about $0.06, which is not worth delaying")
     }
 
     @Test("The forecast is still shown when no load fits the observed surplus")
@@ -1198,7 +1208,9 @@ struct LoadTimingViewTests {
 
         let none = evaluate(.none, sourceAge: 0)
         #expect(none.forecast == ForecastAvailability.none)
-        #expect(none.result.comparison?.assumptions.contains { $0.contains("held at today's observed values") } == true)
+        #expect(none.result.comparison?.assumptions.contains { $0 == "Banks are held at today's observed values; no solar or household use is projected." } == true)
+        #expect(none.result.comparison?.assumptions.contains { $0 == "Estimated cost uses each period's current bank through the shared horizon." } == true)
+        #expect(none.result.comparison?.assumptions.contains { $0.localizedCaseInsensitiveContains("balance") } == false)
 
         let missingSource = evaluate(.none, sourceAge: nil)
         #expect(missingSource.result.unavailableReason == .staleBalance)

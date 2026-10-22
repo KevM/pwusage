@@ -12,19 +12,19 @@ enum BatteryGaugeStyle {
         switch self {
         case .card:
             .init(insets: .init(top: 8, leading: 8, bottom: 8, trailing: 18), nubGap: 3, nubWidth: 5,
-                  nubHeightFraction: 0.3, cornerRadius: 16, lineWidth: 1.5, holdLineWidth: 2, tickOverhang: 0)
+                  nubHeightFraction: 0.3, cornerRadius: 16, lineWidth: 1.5, holdLineWidth: 2)
         case .bar:
             .init(insets: .init(top: 0, leading: 0, bottom: 0, trailing: 4), nubGap: 1.5, nubWidth: 2.5,
-                  nubHeightFraction: 0.4, cornerRadius: nil, lineWidth: 1.8, holdLineWidth: 2, tickOverhang: 0)
+                  nubHeightFraction: 0.4, cornerRadius: nil, lineWidth: 1.8, holdLineWidth: 2)
         case .mini:
             .init(insets: .init(top: 3, leading: 0.5, bottom: 3, trailing: 3.5), nubGap: 1, nubWidth: 2,
-                  nubHeightFraction: 0.4, cornerRadius: nil, lineWidth: 1.4, holdLineWidth: 2, tickOverhang: 2.5)
+                  nubHeightFraction: 0.4, cornerRadius: nil, lineWidth: 1.4, holdLineWidth: 2)
         }
     }
 }
 
 private struct BatteryGaugeMetrics {
-    /// From the frame to the outline. Mini insets leave room for the tick's overhang.
+    /// From the frame to the outline.
     let insets: EdgeInsets
     let nubGap: CGFloat
     let nubWidth: CGFloat
@@ -33,7 +33,6 @@ private struct BatteryGaugeMetrics {
     let cornerRadius: CGFloat?
     let lineWidth: CGFloat
     let holdLineWidth: CGFloat
-    let tickOverhang: CGFloat
 }
 
 /// Where each part of the drawn battery goes in a frame of `size`. Pure, so the
@@ -48,7 +47,7 @@ struct BatteryGaugeGeometry: Equatable {
     let lineWidth: CGFloat
     /// The charge, from the leading edge. nil when the charge is unknown.
     let fill: CGRect?
-    /// The held reserve: a full-height line, or for mini a tick past the outline.
+    /// The held reserve: a line inside the outline, shortened where the corners curve in.
     let holdLine: CGRect?
 
     init(style: BatteryGaugeStyle, size: CGSize, charge: Double?, holdLevel: Int?) {
@@ -73,12 +72,28 @@ struct BatteryGaugeGeometry: Equatable {
             let w = m.holdLineWidth
             let level = CGFloat(min(max(holdLevel, 0), 100)) / 100
             let x = min(max(inner.minX + inner.width * level, inner.minX + w / 2), inner.maxX - w / 2)
-            let top = style == .mini ? body.minY - m.tickOverhang : inner.minY
-            let bottom = style == .mini ? body.maxY + m.tickOverhang : inner.maxY
+            // Near either end the inner shape's rounded corners curve in, so a full-height
+            // line would poke past the outline (most visibly at a 100% hold).
+            let cornerInset = Self.cornerInset(lineX: x, in: inner,
+                                               radius: max(0, (m.cornerRadius ?? body.height * 0.32) - m.lineWidth))
+            let top = inner.minY + cornerInset
+            let bottom = inner.maxY - cornerInset
             holdLine = CGRect(x: x - w / 2, y: top, width: w, height: bottom - top)
         } else {
             holdLine = nil
         }
+    }
+
+    /// How far a vertical line at `lineX` must stop short of the top and bottom to stay
+    /// inside a rounded rect. The radius is padded because the drawn corners are
+    /// continuous, which curve in sooner than circular ones; the inset is capped so at
+    /// least 40% of the line remains.
+    private static func cornerInset(lineX: CGFloat, in rect: CGRect, radius: CGFloat) -> CGFloat {
+        let r = min(radius * 1.5, rect.height / 2, rect.width / 2)
+        let fromEdge = max(0, min(lineX - rect.minX, rect.maxX - lineX))
+        guard r > 0, fromEdge < r else { return 0 }
+        let d = r - fromEdge
+        return min(r - (r * r - d * d).squareRoot(), rect.height * 0.3)
     }
 }
 
@@ -100,7 +115,7 @@ struct BatteryGaugeView: View {
             ZStack(alignment: .topLeading) {
                 if let fill = g.fill, fill.width > 0 {
                     Path(fill)
-                        .fill((isStale ? Color.secondary : Color.green).opacity((style == .card ? 0.18 : 0.55) * (isFinal ? 0.5 : 1)))
+                        .fill(fillStyle)
                         .clipShape(Path(roundedRect: g.inner, cornerRadius: max(0, g.cornerRadius - g.lineWidth), style: .continuous))
                 }
                 Path(roundedRect: g.body, cornerRadius: g.cornerRadius, style: .continuous)
@@ -121,5 +136,18 @@ struct BatteryGaugeView: View {
                 }
             }
         }
+    }
+
+    /// A subtle left-to-right gradient that deepens toward the live charge edge, so the
+    /// card's text sits over the faintest part. Stale charge stays a flat gray.
+    private var fillStyle: AnyShapeStyle {
+        let fade = isFinal ? 0.5 : 1.0
+        guard !isStale else {
+            return AnyShapeStyle(Color.secondary.opacity((style == .card ? 0.18 : 0.55) * fade))
+        }
+        let (start, end) = style == .card ? (0.06, 0.30) : (0.40, 0.70)
+        return AnyShapeStyle(LinearGradient(
+            colors: [Color.green.opacity(start * fade), Color.green.opacity(end * fade)],
+            startPoint: .leading, endPoint: .trailing))
     }
 }

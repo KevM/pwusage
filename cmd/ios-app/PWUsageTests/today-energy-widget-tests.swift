@@ -95,6 +95,11 @@ struct TodayEnergyWidgetTests {
         #expect(!cost.isValid)
     }
 
+    @Test func todayCostDetailShowsExportCreditsAsPositive() {
+        let cost = TodayEnergyCost(netCost: 2.47, importCharges: 3.12, exportCredits: 0.65, currency: "USD")
+        #expect(TodayEnergyPresentation.todayCostDetail(cost, locale: Locale(identifier: "en_US")) == "Import $3.12 · Export $0.65")
+    }
+
     @Test func daylightSavingMidnightUsesSiteTimezone() throws {
         let start = try #require(ISO8601DateFormatter().date(from: "2026-11-01T05:00:00Z"))
         let source = start.addingTimeInterval(24 * 3600)
@@ -140,6 +145,9 @@ struct TodayEnergyWidgetTests {
         #expect(unknown[3].symbol == "battery.0percent")
         #expect(unknown[3].spokenRole == "Battery charge unknown")
         #expect(unknown[3].symbolPrefix == nil)
+        let even = TodayEnergyPresentation.tiles(homeKwh: 12, solarKwh: 18, gridNetKwh: 0, batteryNetKwh: 0)
+        #expect(even[2].detail == "Even")
+        #expect(even[3].detail == "Even")
         let appTiles = TodayEnergyPresentation.tiles(homeKwh: 12, solarKwh: 18, gridNetKwh: -6, batteryNetKwh: -2,
                                                      stateOfCharge: 78)
         #expect(appTiles[3].symbolPrefix == nil)

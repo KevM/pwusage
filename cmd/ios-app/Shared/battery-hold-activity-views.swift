@@ -43,19 +43,23 @@ struct BatteryHoldLockScreenView: View {
     let attributes: BatteryHoldActivityAttributes
     let state: BatteryHoldActivityAttributes.ContentState
     let isStale: Bool
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // Text stays primary: the system can draw this card as translucent glass over
+            // the wallpaper, where accent-colored text over the gauge fill loses contrast.
             HStack(spacing: 6) {
                 BatteryHoldGlyph(size: 17)
+                    .foregroundStyle(Color.accentColor)
                 Text(attributes.siteName)
+                    .foregroundStyle(.secondary)
             }
             .font(.footnote.weight(.semibold))
-            .foregroundStyle(Color.accentColor)
             .lineLimit(1)
             Text(BatteryHoldActivityPresentation.headline(state))
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             BatteryHoldActivitySummary(attributes: attributes, state: state, isStale: isStale)
@@ -68,7 +72,11 @@ struct BatteryHoldLockScreenView: View {
                              isStale: isStale, isFinal: state.isFinal)
                 .accessibilityHidden(true)
         }
-        .activityBackgroundTint(Color(uiColor: .secondarySystemBackground))
+        // Fixed sRGB values (secondarySystemBackground's) rather than the dynamic system
+        // color, so the card stays solid instead of rendering as translucent glass.
+        .activityBackgroundTint(colorScheme == .dark
+            ? Color(.sRGB, red: 0.110, green: 0.110, blue: 0.118, opacity: 1)
+            : Color(.sRGB, red: 0.949, green: 0.949, blue: 0.969, opacity: 1))
     }
 }
 
@@ -103,7 +111,7 @@ struct BatteryHoldActivitySummary: View {
                 }
                 if let home = BatteryHoldActivityPresentation.homeLoadText(state) {
                     figure(home, symbol: "house.fill", tint: .secondary)
-                        .accessibilityLabel("Home load \(home)")
+                        .accessibilityLabel("Home use \(home)")
                 }
                 if let peak = BatteryHoldActivityPresentation.peakText(state) {
                     Text(peak).foregroundStyle(.secondary)

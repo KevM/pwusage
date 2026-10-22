@@ -63,7 +63,7 @@ final class MobileAuthServiceTests {
 
         let service = try makeService()
         let task = Task { try await service.signIn() }
-        await Task.yield()
+        try #require(await waitUpTo { fakeSession.startCount == 1 })
         fakeSession.complete(error: ASWebAuthenticationSessionError(.canceledLogin))
         await #expect(throws: MobileAuthService.AuthError.cancelled) {
             try await task.value
@@ -104,7 +104,7 @@ final class MobileAuthServiceTests {
     func signInRejectsMalformedCallbackWithoutExchangingSession() async throws {
         let service = try makeService()
         let task = Task { try await service.signIn() }
-        await Task.yield()
+        try #require(await waitUpTo { fakeSession.startCount == 1 })
         fakeSession.complete(url: URL(string: "pwusage://wrong/callback?code=opaque&attempt=\(Self.attemptID)&state=wrong"))
 
         await #expect(throws: MobileAuthService.AuthError.invalidCallback) {

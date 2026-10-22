@@ -114,7 +114,7 @@ private struct PWUsageCommands: Commands {
                     await model.signOut()
                 }
             }
-            .disabled(model.screenState != .signedIn)
+            .disabled(model.screenState != .signedIn || model.isSigningOut)
         }
     }
 }
@@ -134,6 +134,7 @@ final class PWUsageAppModel: ObservableObject {
     @Published private(set) var selectedSiteID: String?
     @Published private(set) var coordinator: DashboardCoordinator?
     @Published private(set) var isSigningIn = false
+    @Published private(set) var isSigningOut = false
     @Published private(set) var signInMessage: String?
     @Published var isSitePickerPresented = false
     @Published private(set) var accountScopeID: String?
@@ -264,7 +265,7 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func signIn() async {
-        guard !isSigningIn else { return }
+        guard !isSigningIn, !isSigningOut else { return }
         isSigningIn = true
         signInMessage = nil
         defer { isSigningIn = false }
@@ -278,20 +279,20 @@ final class PWUsageAppModel: ObservableObject {
         } catch let error as PWUsageAPIError {
             guard generation == siteInstallGeneration else { return }
             if error == .signInRequired {
-                await invalidateSession(message: "Sign-in expired. Please try again.")
+                await invalidateSession(message: "Sign-in expired. Try again.")
             } else if authService.isAuthenticated {
                 screenState = .unavailable
                 signInMessage = "You’re signed in, but pwusage could not load your sites. Check your connection and try again."
             } else {
                 screenState = .signedOut
-                signInMessage = "Could not complete sign-in. Please try again."
+                signInMessage = "Could not complete sign-in. Try again."
             }
         } catch let error as MobileAuthService.AuthError {
             screenState = .signedOut
-            signInMessage = error == .cancelled ? nil : "Could not complete sign-in. Please try again."
+            signInMessage = error == .cancelled ? nil : "Could not complete sign-in. Try again."
         } catch {
             screenState = .signedOut
-            signInMessage = "Could not connect to pwusage. Please try again."
+            signInMessage = "Could not connect to pwusage. Try again."
         }
     }
 
@@ -314,7 +315,7 @@ final class PWUsageAppModel: ObservableObject {
             // even though it does not clear the existing dashboard cookie.
             if wasAuthenticated { authService.restoreAuthenticatedSession() }
             signInMessage = (error as? MobileAuthService.AuthError) == .cancelled
-                ? nil : "Could not reconnect Tesla. Please try again."
+                ? nil : "Could not reconnect Tesla. Try again."
             return
         }
         guard generation == siteInstallGeneration else { return }
@@ -366,7 +367,7 @@ final class PWUsageAppModel: ObservableObject {
         guard let siteID = BatteryHoldLink.siteID(from: url) else {
             pendingBatteryHoldSiteID = nil
             dismissCompetingPresentations()
-            batteryHoldNavigationMessage = "Choose a site in the Battery Hold control’s configuration, then try again."
+            batteryHoldNavigationMessage = "Choose a site in the Battery Saver control’s configuration, then try again."
             return
         }
         await openBatteryHold(siteID: siteID)
@@ -417,10 +418,15 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func signOut() async {
+        guard !isSigningOut else { return }
+        isSigningOut = true
+        defer { isSigningOut = false }
         // First, while the session cookie can still unregister this device's pushes.
         await liveActivities?.signOut()
         pendingBatteryHoldSiteID = nil
         batteryHoldNavigationMessage = nil
+        screenState = .signedOut
+        signInMessage = nil
         teardownCoordinator()
         var cleanupFailed = false
         do { try await authService.logout() }
@@ -435,14 +441,16 @@ final class PWUsageAppModel: ObservableObject {
         clearSelectedTab()
         await clearAccountScopeID()
         screenState = .signedOut
-        signInMessage = cleanupFailed ? "Could not clear local solar forecast data. Please try again." : nil
+        signInMessage = cleanupFailed ? "Could not clear local solar forecast data. Try again." : nil
     }
 
     func sessionExpired() async {
+        guard !isSigningOut else { return }
         await invalidateSession(message: "Your session expired. Sign in to continue.")
     }
 
     private func invalidateSession(message: String?) async {
+        guard !isSigningOut else { return }
         teardownCoordinator()
         await liveActivities?.sessionInvalidated()
         var cleanupFailed = false
@@ -458,7 +466,7 @@ final class PWUsageAppModel: ObservableObject {
         await clearAccountScopeID()
         screenState = .signedOut
         signInMessage = cleanupFailed
-            ? "Could not clear local solar forecast data. Please try again."
+            ? "Could not clear local solar forecast data. Try again."
             : message
     }
 
@@ -604,14 +612,22 @@ private struct PWUsageRootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(SectionTheme.groupedBackground)
             case .signedOut:
-                SignInView(isWorking: model.isSigningIn, message: model.signInMessage) {
+                SignInView(
+                    isWorking: model.isSigningIn || model.isSigningOut,
+                    workingTitle: model.isSigningOut ? "Signing out…" : "Connecting…",
+                    message: model.signInMessage
+                ) {
                     Task { await model.signIn() }
                 }
             case .signedIn:
                 if let coordinator = model.coordinator,
                    let site = model.sites.first(where: { $0.id == model.selectedSiteID }) {
                     if coordinator.requiresSignIn {
-                        SignInView(isWorking: model.isSigningIn, message: "Your session expired. Sign in to continue.") {
+                        SignInView(
+                            isWorking: model.isSigningIn || model.isSigningOut,
+                            workingTitle: model.isSigningOut ? "Signing out…" : "Connecting…",
+                            message: "Your session expired. Sign in to continue."
+                        ) {
                             Task { await model.signIn() }
                         }
                     } else {
@@ -649,7 +665,7 @@ private struct PWUsageRootView: View {
                     .padding()
             }
         }
-        .alert("Battery Hold", isPresented: Binding(
+        .alert("Battery Saver", isPresented: Binding(
             get: { model.batteryHoldNavigationMessage != nil },
             // Only the buttons dismiss this alert; "OK" is what abandons the
             // request, so the binding must not cancel out from under "Try Again".

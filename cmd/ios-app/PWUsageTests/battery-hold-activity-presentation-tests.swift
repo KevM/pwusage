@@ -73,8 +73,9 @@ struct BatteryHoldActivityPresentationTests {
 
     @Test("Transitions are said in a few words")
     func transitions() {
-        #expect(status(state(phase: .confirmingEnd)) == .init(text: "Load dropped, confirming", isWarning: false))
+        #expect(status(state(phase: .confirmingEnd)) == .init(text: "Home use dropped, confirming", isWarning: false))
         #expect(status(state(phase: .restoring))?.text == "Confirming with Tesla")
+        #expect(P.headline(state(phase: .loadRunning)) == "Saving at 100%")
         var reason = state(phase: .loadRunning)
         reason.restoreReason = .loadEnded
         #expect(P.isRestoring(reason))
@@ -107,18 +108,19 @@ struct BatteryHoldActivityPresentationTests {
         #expect(P.headline(restored) == "Reserve restored to 20%")
         #expect(status(restored)?.text == "Stopped in pwusage")
         restored.restoreReason = .loadEnded
-        #expect(status(restored)?.text == "Load finished")
+        #expect(status(restored)?.text == "Job finished")
         restored.restoreReason = .safetyTimeout
         #expect(status(restored)?.text == "8-hour safety limit")
         restored.restoreReason = .timerElapsed
         #expect(status(restored)?.text == "Stop time reached")
         var cancelled = state(status: .cancelled)
+        #expect(P.headline(cancelled) == "Battery Saver stopped")
         cancelled.cancelledObservedReserve = 45
         #expect(status(cancelled)?.text == "Reserve set to 45% outside pwusage")
         cancelled.cancelledObservedReserve = nil
         #expect(status(cancelled)?.text == "Reserve changed outside pwusage")
         let ended = state(status: .ended)
-        #expect(P.headline(ended) == "Battery hold ended")
+        #expect(P.headline(ended) == "Battery Saver ended")
         #expect(status(ended) == .init(text: "Open pwusage for details", isWarning: false))
     }
 

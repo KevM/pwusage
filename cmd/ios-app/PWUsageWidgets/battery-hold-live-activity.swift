@@ -36,7 +36,7 @@ struct BatteryHoldLiveActivity: Widget {
             } compactLeading: {
                 BatteryHoldGlyph(size: 20)
                     .foregroundStyle(Color.accentColor)
-                    .accessibilityLabel("Battery hold")
+                    .accessibilityLabel("Battery Saver")
             } compactTrailing: {
                 BatteryHoldGauge(style: .mini, state: context.state, isStale: context.isStale)
                     .frame(width: 30, height: 21)

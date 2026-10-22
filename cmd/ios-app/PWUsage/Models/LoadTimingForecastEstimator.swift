@@ -1060,11 +1060,11 @@ struct LoadTimingForecastEstimator {
         case .history:
             baseline = ["Banks follow your last four weeks of grid use through the bill date.", safetyAssumption]
         case .flat:
-            baseline = ["Balances are held at today's observed values; no solar or household use is projected."]
+            baseline = ["Banks are held at today's observed values; no solar or household use is projected."]
         }
         return baseline + [
             "Recommendation is the best among evaluated start times, not a continuous-time optimum.",
-            "Estimated cost uses the current signed period balances through the shared horizon."
+            "Estimated cost uses each period's current bank through the shared horizon."
         ]
     }
 

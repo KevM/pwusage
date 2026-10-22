@@ -15,7 +15,7 @@ struct BatteryHoldSetupSection: View {
     private var target: Int { showsChoice ? reserve : (plan?.target ?? 0) }
 
     var body: some View {
-        Section("Hold Battery for Charging") {
+        Section("Turn On Battery Saver") {
             if let stateOfCharge, let plan {
                 LabeledContent("Battery charge", value: "\(Int(stateOfCharge.rounded(.down)))%")
                 if showsChoice {
@@ -25,12 +25,12 @@ struct BatteryHoldSetupSection: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(minHeight: 44)
-                    Text("80% lets the battery serve the load down to 80%, then holds. 100% prevents discharge completely.")
+                    Text("80% lets your Powerwall power your home down to 80%, then saves the rest. 100% keeps it from discharging at all.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 } else {
-                    LabeledContent("Hold reserve", value: BatteryHoldPresentation.reserveText(plan.target))
+                    LabeledContent("Backup reserve", value: BatteryHoldPresentation.reserveText(plan.target))
                     if plan.target == 80 && stateOfCharge > 80 {
-                        Text("The battery can discharge to 80% before holding.")
+                        Text("Your Powerwall can discharge to 80% before Battery Saver keeps the rest.")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -39,7 +39,7 @@ struct BatteryHoldSetupSection: View {
                     Text("Fixed duration").tag(BatteryHoldMode.timer)
                 }
                 if mode == .auto {
-                    Text("Automatically restores battery reserve when we detect that the load is done.")
+                    Text("Restores your backup reserve automatically when the job finishes.")
                         .foregroundStyle(.secondary)
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 64))]) {
@@ -54,20 +54,20 @@ struct BatteryHoldSetupSection: View {
                         }
                     }
                     Stepper("\(hours) hours", value: $hours, in: 1...24)
-                        .accessibilityLabel("Custom hold duration")
+                        .accessibilityLabel("Custom Battery Saver duration")
                         .accessibilityValue("\(hours) hours")
-                    Text("Holds for the full duration, even if charging finishes early.")
+                    Text("Stays on for the full duration, even if the job finishes early.")
                         .foregroundStyle(.secondary)
                 }
-                Button("Hold at \(BatteryHoldPresentation.reserveText(target))", systemImage: "battery.100percent", action: confirm)
+                Button("Turn On at \(BatteryHoldPresentation.reserveText(target))", systemImage: "battery.100percent", action: confirm)
                     .disabled(!canStart)
-                    .accessibilityInputLabels(["Hold battery"])
+                    .accessibilityInputLabels(["Turn on Battery Saver", "Battery Saver"])
             } else {
-                Text("A recent battery charge reading is needed to start a hold. Try again to update it.")
+                Text("A recent battery charge reading is needed to turn on Battery Saver. Try again to update it.")
                     .foregroundStyle(.secondary)
             }
             if !hasTariff {
-                Text("Configure a tariff on the website before starting a battery hold.")
+                Text("Add a rate plan on the website before turning on Battery Saver.")
                     .foregroundStyle(.secondary)
             }
         }

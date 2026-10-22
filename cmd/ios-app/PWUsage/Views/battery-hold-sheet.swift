@@ -13,7 +13,7 @@ struct BatteryHoldSheet: View {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 Form {
                     Section {
-                        Text("Preserve your \(site.name) Powerwall battery level during a large load.")
+                        Text("Saves your \(site.name) Powerwall charge for when rates spike.")
                     }
                     if let response = coordinator.batteryHold.response {
                         if let notice = response.notice {
@@ -23,7 +23,7 @@ struct BatteryHoldSheet: View {
                             Section {
                                 Label("Showing last confirmed status", systemImage: "clock.badge.exclamationmark")
                                     .foregroundStyle(.secondary)
-                                Text("Current status is needed before changing the hold. Try again to update it.")
+                                Text("Current status is needed before changing Battery Saver. Try again to update it.")
                             }
                         }
                         if let hold = response.hold {
@@ -51,10 +51,10 @@ struct BatteryHoldSheet: View {
                         }
                     } else if !coordinator.batteryHold.isRefreshing {
                         ContentUnavailableView("Battery Saver Unavailable", systemImage: "battery.0percent",
-                                               description: Text("Refresh to load the current hold status."))
+                                               description: Text("Refresh to load the current Battery Saver status."))
                     }
                     if coordinator.batteryHold.isBusy {
-                        Section { ProgressView(coordinator.batteryHold.isSubmitting ? "Updating battery hold…" : "Loading battery hold…") }
+                        Section { ProgressView(coordinator.batteryHold.isSubmitting ? "Updating Battery Saver…" : "Loading Battery Saver…") }
                     }
                     if let failure = coordinator.batteryHold.failure {
                         Section {

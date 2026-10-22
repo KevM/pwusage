@@ -12,8 +12,8 @@ struct BatteryHoldActiveSection: View {
     @State private var isConfirmingRestore = false
 
     var body: some View {
-        Section("Battery Hold Active") {
-            Label("Holding at \(BatteryHoldPresentation.reserveText(hold.targetReserve))", systemImage: "battery.100percent")
+        Section("Battery Saver On") {
+            Label("Saving your Powerwall at \(BatteryHoldPresentation.reserveText(hold.targetReserve))", systemImage: "battery.100percent")
                 .font(.headline)
             if let monitoring = hold.monitoring {
                 VStack(alignment: .leading, spacing: 4) {
@@ -24,18 +24,18 @@ struct BatteryHoldActiveSection: View {
                         .foregroundStyle(.secondary)
                 }
             } else if hold.mode == .auto {
-                Text("Waiting for the first load check")
+                Text("Waiting for the first check")
                     .foregroundStyle(.secondary)
             }
             Text(BatteryHoldPresentation.restorationText(hold, timeZone: timeZone, at: now))
             if let liveActivity {
                 switch liveActivity {
                 case .showing:
-                    Text("Following this hold on your Lock Screen.").foregroundStyle(.secondary)
+                    Text("Following Battery Saver on your Lock Screen.").foregroundStyle(.secondary)
                 case .available:
                     Button("Show on Lock Screen", action: onShowLiveActivity).disabled(!canShowLiveActivity)
                 case .disabled:
-                    Text("Turn on Live Activities for pwusage in Settings to follow holds on your Lock Screen.")
+                    Text("Turn on Live Activities for pwusage in Settings to follow Battery Saver on your Lock Screen.")
                         .foregroundStyle(.secondary)
                 }
                 if liveActivity != .disabled, let limit = BatteryHoldPresentation.liveActivityLimitText(hold, at: now) {
@@ -56,10 +56,10 @@ struct BatteryHoldActiveSection: View {
                     }
                 }
             }
-            Button("Stop the Battery Hold", systemImage: "stop.circle", action: confirmRestore)
+            Button("Turn Off Battery Saver", systemImage: "stop.circle", action: confirmRestore)
                 .disabled(!canRestore)
-                .confirmationDialog("Stop the Battery Hold?", isPresented: $isConfirmingRestore, titleVisibility: .visible) {
-                    Button("Stop the Battery Hold", action: onRestore).disabled(!canRestore)
+                .confirmationDialog("Turn Off Battery Saver?", isPresented: $isConfirmingRestore, titleVisibility: .visible) {
+                    Button("Turn Off Battery Saver", action: onRestore).disabled(!canRestore)
                     Button("Cancel", role: .cancel) { }
                 } message: {
                     Text(BatteryHoldPresentation.restoreConfirmationText(originalReserve: hold.originalReserve))

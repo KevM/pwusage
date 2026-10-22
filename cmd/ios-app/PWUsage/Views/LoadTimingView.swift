@@ -16,7 +16,7 @@ enum LoadTimingPresentation {
         title: "Recommendation unavailable",
         detail: "The latest refresh failed and no saved bill data is available, so no recommendation or job estimates can be shown."
     )
-    static let noResponseExplorationMessage = "A saved bill response and tariff data are required before a job estimate or calculation is available."
+    static let noResponseExplorationMessage = "A saved bill response and rate plan are required before a job estimate or calculation is available."
 
     struct StartNowSummary: Equatable {
         let total: String
@@ -89,23 +89,23 @@ enum LoadTimingPresentation {
     ) -> RecommendationMessage {
         switch state {
         case .ready:
-            return RecommendationMessage(title: "Good time to start", detail: "Your export cushion covers this job.")
+            return RecommendationMessage(title: "Good time to start", detail: "Your bank covers this job.")
         case .noFit:
             if refreshUnavailable {
                 return RecommendationMessage(title: "Recommendation unavailable", detail: "The latest refresh failed, so the saved data cannot confirm whether any saved job fits now.")
             }
-            return RecommendationMessage(title: "No saved job fits your export cushion.", detail: "Additional energy would be priced at the grid rate.")
+            return RecommendationMessage(title: "No saved job fits your bank.", detail: "Additional energy would be priced at the full rate.")
         case .incompleteData:
             if !hasTariff {
                 return RecommendationMessage(title: "Add a Rate Plan", detail: "Smart Shift needs your rate plan to compare costs.")
             }
             if hasExpiredCandidate {
-                return RecommendationMessage(title: "No safe recommendation", detail: "This job would continue beyond the current billing cycle, so its current export cushion cannot be used for the estimate.")
+                return RecommendationMessage(title: "No safe recommendation", detail: "This job would continue beyond the current billing cycle, so its current bank cannot be used for the estimate.")
             }
             if hasOtherExpiredCandidate {
-                return RecommendationMessage(title: "No safe recommendation", detail: "Another saved job would continue beyond the current billing cycle, so no job can be recommended from the current export cushion.")
+                return RecommendationMessage(title: "No safe recommendation", detail: "Another saved job would continue beyond the current billing cycle, so no job can be recommended from the current bank.")
             }
-            return RecommendationMessage(title: "Rate Plan Incomplete", detail: "Some rate periods or export balances are missing.")
+            return RecommendationMessage(title: "Rate plan incomplete", detail: "Some rate periods or bank data are missing.")
         case .stale:
             let detail = refreshUnavailable
                 ? "The latest refresh failed. This saved estimate may be old, so no recommendation is offered."
@@ -117,7 +117,7 @@ enum LoadTimingPresentation {
             if !hasTariff {
                 return RecommendationMessage(title: "Add a Rate Plan and a Job", detail: "Add a job and a rate plan to compare costs.")
             }
-            return RecommendationMessage(title: "Add Your First Job", detail: "Add a job to see whether your export cushion covers it.")
+            return RecommendationMessage(title: "Add Your First Job", detail: "Add a job to see whether your bank covers it.")
         }
     }
 
@@ -125,11 +125,11 @@ enum LoadTimingPresentation {
         let surplus = candidate.surplusKwh.formatted(.number.precision(.fractionLength(1)))
         let bought = candidate.boughtKwh.formatted(.number.precision(.fractionLength(1)))
         let remaining = candidate.remainingSurplusKwh.map {
-            "\($0.formatted(.number.precision(.fractionLength(1)))) kWh of export cushion remains in these rate periods"
+            "\($0.formatted(.number.precision(.fractionLength(1)))) kWh remains in your bank in these rate periods"
         }
         return EnergyImpact(
-            surplusConsumed: "\(surplus) kWh from your export cushion",
-            energyBought: "\(bought) kWh at the grid rate",
+            surplusConsumed: "\(surplus) kWh from your bank",
+            energyBought: "\(bought) kWh at the full rate",
             remainingSurplus: remaining
         )
     }
@@ -149,8 +149,10 @@ enum LoadTimingPresentation {
     static func activeBalanceSummary(_ timing: LoadTiming) -> String? {
         guard timing.hasCycleData, let active = timing.periods.first(where: \.isActive) else { return nil }
         let balance = active.cycleNetExportKwh
-        let direction = balance > 0 ? "surplus" : (balance < 0 ? "deficit" : "balanced")
-        return "Current \(DashboardPresentation.tariffPeriodTitle(active.name)) billing-cycle balance: \(abs(balance).formatted(.number.precision(.fractionLength(0...1)))) kWh \(direction)."
+        let direction = balance > 0 ? "banked" : (balance < 0 ? "owed" : "")
+        let amount = abs(balance).formatted(.number.precision(.fractionLength(0...1)))
+        let state = balance == 0 ? "0 kWh" : "\(amount) kWh \(direction)"
+        return "Current \(DashboardPresentation.tariffPeriodTitle(active.name)) bank: \(state)."
     }
 
     static func observedBalances(_ timing: LoadTiming) -> [String: Double] {
@@ -180,14 +182,14 @@ enum LoadTimingPresentation {
 
     static func missingBalanceNote(hasUnobservedBalance: Bool) -> String? {
         guard hasUnobservedBalance else { return nil }
-        return "Missing rate-period balances are estimated at the grid rate."
+        return "Missing rate period bank data is estimated at the full rate."
     }
 
     static func unavailableMessage(_ reason: LoadTimingEstimator.StartNowUnavailableReason) -> String {
         switch reason {
         case .invalidInput: return "Job settings or rate plan values are invalid, so a start-now estimate is unavailable."
         case .incompleteTimeline: return "Rate plan timing is incomplete, so a start-now cost estimate is unavailable."
-        case .billingCycleExpired: return "This job extends beyond the current billing cycle, so its export cushion cannot be estimated safely."
+        case .billingCycleExpired: return "This job extends beyond the current billing cycle, so its bank cannot be estimated safely."
         }
     }
 
@@ -195,14 +197,14 @@ enum LoadTimingPresentation {
 
     static func cycleObservationMessage(hasCycleData: Bool) -> String? {
         guard !hasCycleData else { return nil }
-        return "Billing-cycle observations are unavailable. The start-now estimate uses grid rates where no balance has been observed."
+        return "Billing cycle observations are unavailable. The start-now estimate uses the full rate where no bank has been observed."
     }
 
     static func breakdownRows(_ segments: [LoadTimingEstimator.StartNowSegment], currencyCode: String, unobservedPeriodKeys: Set<String> = []) -> [BreakdownRow] {
         segments.map { segment in
             let balance = unobservedPeriodKeys.contains(segment.periodKey)
-                ? "No observed balance · estimated at buy rate"
-                : "\(segment.surplusKwh.formatted(.number.precision(.fractionLength(1)))) kWh observed surplus · \(segment.boughtKwh.formatted(.number.precision(.fractionLength(1)))) kWh at buy rate"
+                ? "No bank observed · priced at the full rate"
+                : "\(segment.surplusKwh.formatted(.number.precision(.fractionLength(1)))) kWh from your bank · \(segment.boughtKwh.formatted(.number.precision(.fractionLength(1)))) kWh at the full rate"
             return BreakdownRow(
                 periodKey: segment.periodKey,
                 wallEnergy: "\(segment.wallKwh.formatted(.number.precision(.fractionLength(1)))) kWh",
@@ -412,7 +414,7 @@ struct LoadTimingView: View {
                 }
             }
             .padding(20)
-            .frame(maxWidth: 760)
+            .frame(maxWidth: SectionTheme.maxContentWidth)
             .frame(maxWidth: .infinity)
         }
         .refreshable {

@@ -154,7 +154,7 @@ struct SolarForecastSettingsSheet: View {
                                     apiKey = ""
                                     discoveredSites = []
                                     selectedResourceIDs = []
-                                    statusMessage = "Disconnected. Load timing will use tariff and balance data."
+                                    statusMessage = "Disconnected. Smart Shift will use your rate plan and bank data."
                                 } catch {
                                     await applyStatus(error, operation: .disconnect)
                                 }

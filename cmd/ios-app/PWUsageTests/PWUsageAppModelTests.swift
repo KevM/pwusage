@@ -280,7 +280,7 @@ struct PWUsageAppModelTests {
         // Losing access to a site clears its activity from the Lock Screen.
         api.sites = [Self.site("site-1")]
         await model.reloadSitesAfterSignIn()
-        await eventually { host.handles[1].ends.count == 1 }
+        try await eventually { host.handles[1].ends.count == 1 }
         #expect(host.handles[1].ends.first?.immediately == true)
         #expect(host.handles[0].ends.isEmpty)
 
@@ -566,6 +566,76 @@ struct PWUsageAppModelTests {
         try await Task.sleep(for: .milliseconds(300))
         #expect(api.liveSiteIDs.count == liveBeforeSignOut)
         #expect(api.billSiteIDs.count == billBeforeSignOut)
+    }
+
+    @Test("Signing out does not flash an expired-session message during cleanup")
+    func signOutDoesNotFlashExpiredSessionMessage() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        api.holdLogout = true
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+
+        let signOut = Task { await model.signOut() }
+        try await waitUntil { api.logoutStarted }
+
+        #expect(model.isSigningOut)
+        #expect(model.screenState == .signedOut)
+        #expect(model.signInMessage == nil)
+
+        api.resumeLogout()
+        await signOut.value
+
+        #expect(!model.isSigningOut)
+        #expect(model.screenState == .signedOut)
+        #expect(model.signInMessage == nil)
+    }
+
+    @Test("Sign-in is blocked while sign-out cleanup is still running")
+    func signInBlockedWhileSigningOut() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        api.holdLogout = true
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+
+        let signOut = Task { await model.signOut() }
+        try await waitUntil { api.logoutStarted }
+
+        #expect(model.isSigningOut)
+        #expect(model.screenState == .signedOut)
+
+        let initialSiteFetches = api.siteFetchCount
+        await model.signIn()
+
+        #expect(model.isSigningOut)
+        #expect(!model.isSigningIn)
+        #expect(api.siteFetchCount == initialSiteFetches)
+
+        api.resumeLogout()
+        await signOut.value
+
+        #expect(!model.isSigningOut)
+        #expect(model.screenState == .signedOut)
+        #expect(model.coordinator == nil)
+    }
+
+    @Test("Session expiry notifications are suppressed while sign-out cleanup is running")
+    func sessionExpirySuppressedWhileSigningOut() async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        api.holdLogout = true
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+
+        let signOut = Task { await model.signOut() }
+        try await waitUntil { api.logoutStarted }
+
+        await model.sessionExpired()
+
+        #expect(model.signInMessage == nil)
+
+        api.resumeLogout()
+        await signOut.value
+
+        #expect(model.signInMessage == nil)
     }
 
     @Test("A live response that lands after sign-out does not repopulate the coordinator")
@@ -995,6 +1065,9 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldD
     var holdSites = false
     private var sitesContinuations: [CheckedContinuation<[MobileSite], Error>] = []
     var holdLive = false
+    var holdLogout = false
+    private(set) var logoutStarted = false
+    private var logoutContinuation: CheckedContinuation<Void, Never>?
     private(set) var siteFetchCount = 0
     private(set) var liveSiteIDs: [String] = []
     private(set) var billSiteIDs: [String] = []
@@ -1066,7 +1139,17 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldD
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {
         if let exchangeError { throw exchangeError }
     }
-    func logout() async throws {}
+    func logout() async throws {
+        logoutStarted = true
+        if holdLogout {
+            await withCheckedContinuation { logoutContinuation = $0 }
+        }
+    }
+    func resumeLogout() {
+        holdLogout = false
+        logoutContinuation?.resume()
+        logoutContinuation = nil
+    }
     func clearSiteAuthCookie() async { cookieClearCount += 1 }
 
     private static func liveResponse(siteID: String) throws -> MobileLiveResponse {

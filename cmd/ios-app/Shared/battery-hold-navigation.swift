@@ -11,7 +11,7 @@ enum BatteryHoldControlIdentity {
 
 /// Routing only: this intent performs no network requests or reserve writes.
 struct OpenBatteryHoldIntent: OpenIntent {
-    static let title: LocalizedStringResource = "Open Battery Hold"
+    static let title: LocalizedStringResource = "Open Battery Saver"
     static let openAppWhenRun = true
 
     @Parameter(title: "Site") var target: BatteryHoldControlSite
