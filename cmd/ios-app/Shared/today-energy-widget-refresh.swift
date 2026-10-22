@@ -18,11 +18,25 @@ struct TodayEnergyWidgetRefresh: Sendable {
     }
 
     static func current() async -> TodayEnergySnapshot? {
+        await TodayEnergyWidgetRefreshCoordinator.shared.current()
+    }
+
+    fileprivate static func fetchCurrent() async -> TodayEnergySnapshot? {
         guard let store = TodayEnergySnapshotStore.shared(),
               let configuration = try? AppConfiguration.fromBundle() else { return nil }
-        let session = SharedWebSession.makeSession()
+        let session = makeSession()
         defer { session.finishTasksAndInvalidate() }
         return await Self(origin: configuration.apiOrigin, session: session, store: store).load()
+    }
+
+    static func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.httpCookieStorage = SharedWebSession.cookieStorage()
+        configuration.httpShouldSetCookies = true
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 12
+        return URLSession(configuration: configuration)
     }
 
     func load(at date: Date? = nil) async -> TodayEnergySnapshot? {
@@ -37,6 +51,11 @@ struct TodayEnergyWidgetRefresh: Sendable {
            now.timeIntervalSince(value.fetchedAt) >= 0,
            now.timeIntervalSince(value.fetchedAt) < 5 * 60,
            value.availability(at: now) == .current { return value }
+
+        if matchingCache == nil,
+           now.timeIntervalSince(selection.fetchedAt) >= 0,
+           now.timeIntervalSince(selection.fetchedAt) < 5 * 60,
+           selection.availability(at: now) == .current { return selection }
 
         do {
             var components = URLComponents(url: origin, resolvingAgainstBaseURL: false)
@@ -77,5 +96,21 @@ struct TodayEnergyWidgetRefresh: Sendable {
         // Never write the app's selection file: a late widget write must not undo logout.
         let value = CachedRefresh(origin: origin, selection: selection, snapshot: snapshot)
         try? JSONEncoder().encode(value).write(to: cacheURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+}
+
+
+// Widget kinds share the extension process. Actor reentrancy must not start a second fetch.
+private actor TodayEnergyWidgetRefreshCoordinator {
+    static let shared = TodayEnergyWidgetRefreshCoordinator()
+    private var pending: Task<TodayEnergySnapshot?, Never>?
+
+    func current() async -> TodayEnergySnapshot? {
+        if let pending { return await pending.value }
+        let task = Task { await TodayEnergyWidgetRefresh.fetchCurrent() }
+        pending = task
+        let value = await task.value
+        pending = nil
+        return value
     }
 }

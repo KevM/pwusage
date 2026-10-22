@@ -11,6 +11,25 @@ struct TodayEnergyWidgetTests {
         TodayEnergySnapshot(siteID: "home", siteName: "Home", timezone: "America/Chicago", fetchedAt: now,
             energy: TodayEnergy(localDate: TodayEnergySnapshot.localDate(now, timezone: "America/Chicago"), homeKwh: 12, solarKwh: 18, gridNetKwh: -4, batteryNetKwh: -2, energyDataThrough: now))
     }
+    @Test func widgetSessionHasBoundedTimeouts() {
+        let session = TodayEnergyWidgetRefresh.makeSession()
+        defer { session.invalidateAndCancel() }
+        #expect(session.configuration.timeoutIntervalForRequest == 8)
+        #expect(session.configuration.timeoutIntervalForResource == 12)
+    }
+
+    @Test func freshAppSnapshotAvoidsNetwork() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TodayEnergySnapshotStore(fileURL: directory.appendingPathComponent("widget.json"))
+        try store.save(snapshot())
+        let session = URLSession(configuration: .ephemeral)
+        session.invalidateAndCancel()
+        let refresh = TodayEnergyWidgetRefresh(origin: URL(string: "https://example.invalid")!, session: session, store: store)
+        #expect(await refresh.load(at: now) == snapshot())
+        #expect(!FileManager.default.fileExists(atPath: store.refreshFileURL.path))
+    }
+
     @Test func sourceAgeAndSiteMidnightControlAvailability() {
         let value = snapshot()
         #expect(value.availability(at: now) == .current)
@@ -44,7 +63,10 @@ struct TodayEnergyWidgetTests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = TodayEnergySnapshotStore(fileURL: directory.appendingPathComponent("widget.json"))
-        let cache = DashboardCache(fileURL: directory.appendingPathComponent("app.json"), widgetStore: store)
+        var clock = now
+        var reloads: [String] = []
+        let cache = DashboardCache(fileURL: directory.appendingPathComponent("app.json"), widgetStore: store,
+                                   now: { clock }, reloadTimelines: { reloads.append($0) })
         cache.storeSites([MobileSite(id: "home", name: "Home", utility: "Utility")])
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -61,6 +83,16 @@ struct TodayEnergyWidgetTests {
         cache.storeLive(live, at: now)
         #expect(store.load() == nil)
         cache.selectWidgetSite("home")
+        #expect(reloads == [TodayEnergySnapshot.widgetKind, TodayEnergySnapshot.metricWidgetKind])
+        cache.storeLive(live, at: now)
+        #expect(reloads.count == 2, "An equal snapshot must not reload either kind.")
+        clock = now.addingTimeInterval(899)
+        cache.storeLive(live, at: clock)
+        #expect(store.load()?.fetchedAt == clock, "Throttling reloads must not throttle writes.")
+        #expect(reloads.count == 2)
+        clock = now.addingTimeInterval(900)
+        cache.storeLive(live, at: clock)
+        #expect(reloads.count == 4, "Changed snapshots may reload at the fifteen-minute floor.")
         #expect(store.load()?.siteID == "home")
         #expect(store.load()?.energy.homeKwh == 12)
         #expect(store.load()?.energy.solarKwh == 18)

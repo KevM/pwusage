@@ -20,8 +20,15 @@ final class DashboardCache {
     private let fileURL: URL
     private let widgetStore: TodayEnergySnapshotStore?
     private var widgetSiteID: String?
+    private(set) var lastPublishedAt: Date?
+    private let now: () -> Date
+    private let reloadTimelines: (String) -> Void
 
-    init(fileURL: URL, widgetStore: TodayEnergySnapshotStore? = nil) {
+    init(fileURL: URL, widgetStore: TodayEnergySnapshotStore? = nil,
+         now: @escaping () -> Date = Date.init,
+         reloadTimelines: @escaping (String) -> Void = { WidgetCenter.shared.reloadTimelines(ofKind: $0) }) {
+        self.now = now
+        self.reloadTimelines = reloadTimelines
         self.widgetStore = widgetStore
         self.fileURL = fileURL
         snapshot = (try? Data(contentsOf: fileURL))
@@ -53,6 +60,7 @@ final class DashboardCache {
 
     private func publishWidget() {
         guard let widgetStore else { return }
+        let previous = widgetStore.load()
         if let siteID = widgetSiteID, let reading = snapshot.live[siteID] {
             let response = reading.response
             let site = response.site
@@ -65,13 +73,18 @@ final class DashboardCache {
                                             todayCost: response.todayCost,
                                             batteryStateOfCharge: response.stateOfCharge,
                                             batteryStateOfChargeAt: response.sources.stateOfChargeAt)
+            guard value != previous else { return }
             do { try widgetStore.save(value) }
             catch { widgetStore.clear() }
         } else {
+            guard previous != nil else { return }
             widgetStore.clear()
         }
-        WidgetCenter.shared.reloadTimelines(ofKind: TodayEnergySnapshot.widgetKind)
-        WidgetCenter.shared.reloadTimelines(ofKind: TodayEnergySnapshot.metricWidgetKind)
+        let date = now()
+        guard lastPublishedAt.map({ date.timeIntervalSince($0) >= 15 * 60 }) ?? true else { return }
+        lastPublishedAt = date
+        reloadTimelines(TodayEnergySnapshot.widgetKind)
+        reloadTimelines(TodayEnergySnapshot.metricWidgetKind)
     }
 
     func storeLive(_ response: MobileLiveResponse, at date: Date) {
