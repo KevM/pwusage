@@ -22,7 +22,8 @@ protocol MobileAuthAPI: Sendable {
 
 final class PWUsageAPI: MobileAuthAPI, Sendable {
     private let origin: URL
-    private let session: URLSession
+    /// Not private so tests can pin the session policy the default initializer builds.
+    let session: URLSession
 
     init(configuration: AppConfiguration, session: URLSession? = nil) {
         origin = configuration.apiOrigin
@@ -31,16 +32,8 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         } else {
             let storage = SharedWebSession.cookieStorage()
             SharedWebSession.migrateSession(for: origin, from: .shared, to: storage)
-            self.session = Self.makeCookieSession(cookieStorage: storage)
+            self.session = SharedWebSession.makeSession(cookieStorage: storage)
         }
-    }
-
-    static func makeCookieSession(cookieStorage: HTTPCookieStorage = SharedWebSession.cookieStorage()) -> URLSession {
-        let configuration = URLSessionConfiguration.default
-        configuration.httpCookieStorage = cookieStorage
-        configuration.httpShouldSetCookies = true
-        configuration.httpCookieAcceptPolicy = .always
-        return URLSession(configuration: configuration)
     }
 
     func fetchSites() async throws -> [MobileSite] {

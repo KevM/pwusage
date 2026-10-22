@@ -254,7 +254,7 @@ final class PWUsageAPITests {
 
     @Test("Production cookie session uses injected storage and automatic cookie handling")
     func productionCookieSessionUsesInjectedStorageAndAutomaticCookieHandling() {
-        let configuredSession = PWUsageAPI.makeCookieSession(cookieStorage: cookieStorage)
+        let configuredSession = SharedWebSession.makeSession(cookieStorage: cookieStorage)
         defer { configuredSession.invalidateAndCancel() }
 
         #expect(configuredSession.configuration.httpCookieStorage === cookieStorage)
@@ -384,6 +384,24 @@ final class PWUsageAPITests {
         StubURLProtocol.requestHandler = { request in (try Self.response(request, status: 503), Data(#"{"error":"Unavailable"}"#.utf8)) }
         await #expect(throws: PWUsageAPIError.recoverableServerError(statusCode: 503)) {
             _ = try await api.fetchSites()
+        }
+    }
+
+    @Test("The app session uses the shared no-cache, bounded-timeout policy")
+    func appSessionUsesSharedPolicy() throws {
+        let defaultAPI = PWUsageAPI(
+            configuration: try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true)
+        )
+        let shared = SharedWebSession.makeSession()
+        defer { defaultAPI.session.invalidateAndCancel(); shared.invalidateAndCancel() }
+        for configuration in [defaultAPI.session.configuration, shared.configuration] {
+            #expect(configuration.timeoutIntervalForRequest == 20)
+            #expect(configuration.timeoutIntervalForResource == 25)
+            #expect(configuration.requestCachePolicy == .reloadIgnoringLocalCacheData)
+            #expect(configuration.urlCache == nil)
+            #expect(configuration.httpCookieStorage != nil)
+            #expect(configuration.httpShouldSetCookies)
+            #expect(configuration.httpCookieAcceptPolicy == .always)
         }
     }
 

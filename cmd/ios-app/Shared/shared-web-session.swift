@@ -20,12 +20,15 @@ enum SharedWebSession {
         }
     }
 
-    static func makeSession() -> URLSession {
+    /// The one policy for authenticated PWUsage requests, app and widget alike: bounded
+    /// timeouts, and no URL cache, so no authenticated response outlives the session.
+    static func makeSession(cookieStorage: HTTPCookieStorage = cookieStorage()) -> URLSession {
         let configuration = URLSessionConfiguration.default
-        configuration.httpCookieStorage = cookieStorage()
+        configuration.httpCookieStorage = cookieStorage
         configuration.httpShouldSetCookies = true
         configuration.httpCookieAcceptPolicy = .always
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.urlCache = nil
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 25
         return URLSession(configuration: configuration)
