@@ -115,7 +115,9 @@ enum BillOutlook {
                 points.append(point(date: interval.end, buckets: buckets))
             }
         }
-        guard let last = points.last, last.date > now else { return .empty }
+        // The recorded point can sit ahead of `now` while its sample is in progress; it is not a projection.
+        guard !intervals.isEmpty, let last = points.last, last.date > history.observedThrough, last.date > now
+        else { return .empty }
         return .init(points: points, usesSolar: intervals.contains(where: \.usesSolar),
                      usesHistory: intervals.contains { !$0.usesSolar })
     }

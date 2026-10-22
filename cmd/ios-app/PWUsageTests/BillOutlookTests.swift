@@ -75,6 +75,12 @@ struct BillOutlookTests {
         #expect(BillOutlook.project(history: history(), context: context(), forecast: [], now: now.addingTimeInterval(90000),
                                     cycleEnd: now.addingTimeInterval(172800)).isEmpty)
     }
+    @Test func anInProgressSampleAloneIsNotAProjection() {
+        let empty = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC", slots: [], asOf: now)
+        let result = BillOutlook.evaluate(history: history(), context: empty, forecast: [],
+                                         now: now.addingTimeInterval(-240), cycleEnd: now.addingTimeInterval(86400))
+        #expect(result.points.isEmpty)
+    }
     @Test func solarUsesTypicalHomeFlowThenFallsBackToGridHistory() throws {
         let forecast = [SolarForecastInterval(periodStart: now, periodEnd: now.addingTimeInterval(3600), powerKw: 5)]
         let result = BillOutlook.project(history: history(), context: context(), forecast: forecast, now: now,
