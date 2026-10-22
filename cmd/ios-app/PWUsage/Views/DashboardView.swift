@@ -137,13 +137,14 @@ struct DashboardView: View {
                             sourceTime: live.sources.liveStatusAt,
                             isUnavailable: coordinator.live.isUnavailable, now: now
                         ))
+                        // Inside the card, so side-by-side cards still share a bottom edge.
+                        if let notice = DashboardPresentation.liveFreshnessNotice(live.sources.liveStatusAt, now: now) {
+                            Label(notice, systemImage: "clock.badge.exclamationmark")
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+                                .accessibilityElement(children: .combine)
+                        }
                     }
-                }
-                if let notice = DashboardPresentation.liveFreshnessNotice(live.sources.liveStatusAt, now: now) {
-                    Label(notice, systemImage: "clock.badge.exclamationmark")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                        .accessibilityElement(children: .combine)
                 }
             } else if coordinator.live.isUnavailable {
                 EmptyCard(symbol: "bolt.slash", title: "Live readings unavailable", message: "Try again when your connection is available.")

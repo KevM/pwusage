@@ -15,12 +15,15 @@ struct SmartShiftVerdictView: View {
     static let sideBySideWhyMinWidth: CGFloat = 420
     static let sideBySideSpacing: CGFloat = 24
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var width: CGFloat = 0
 
     /// Wide enough for a prose column with the bars beside it, where
     /// full-width bars would stretch a small saving into an unreadable sliver.
+    /// Accessibility text sizes stay stacked: the breakpoint assumes default-size labels.
     private var barsBesideWhy: Bool {
-        width >= Self.sideBySideWhyMinWidth + Self.sideBySideSpacing + Self.sideBySideBars.lowerBound
+        !dynamicTypeSize.isAccessibilitySize
+            && width >= Self.sideBySideWhyMinWidth + Self.sideBySideSpacing + Self.sideBySideBars.lowerBound
     }
 
     var body: some View {
