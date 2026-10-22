@@ -1,3 +1,33 @@
+# Bill outlook (2026-10-21, verified 2026-10-22)
+
+- [x] Approve design and record implementation plan.
+- [x] Isolated worktree and baseline billing tests (24 passed).
+- [x] Canonical pricing fixtures shared by native and server tests.
+- [x] Recorded cumulative local-day history and attributed rate buckets.
+- [x] Shared baseline projection and native bill calculations.
+- [x] Shared refresh lifecycle with no live Tesla refresh on billing appearance.
+- [x] Familiar chart lanes, accessible date selection, and deadline reminder.
+- [x] Full native tests (705 passed), web tests (1,527 passed, 163 configured skips), lint and build.
+- [x] Private local PostgreSQL parity suite (76 passed), including raw/compact DST day grouping.
+- [x] Independent review findings addressed: incomplete-history selection, actual projection source labels,
+  and mode-specific observation freshness. Follow-up review could not run because its agent hit a usage limit;
+  manual review plus targeted tests covered the corrections.
+- [x] Final chart-label render check and commit. Normal and accessibility renders verified.
+
+Implementation is on `codex/bill-outlook` in the managed bill-outlook worktree.
+The optional bill response preserves older clients; current estimates remain usable
+when an outlook cannot decode. Shared Smart Shift flow helpers and chart background
+retain their existing behavior. Billing pricing retains historical rate buckets and
+nets across seasonal versions. No schema changes, real Tesla commands, or deployment.
+
+Verification found and corrected a UTC/local-day mismatch in raw aggregates;
+combined aggregate/coverage reads now explicitly use the site's time zone. Real
+PostgreSQL tests confirmed parity with compact history across DST while the database
+session used another time zone. Missing cycle data disables forecasting and does
+not draw invented cumulative history. Solar forecasts require the existing 30-minute
+observation age without grid history or 60 minutes with it, measured from the original
+five-minute interval start. Actual projection metadata drives the source label.
+
 # Reserve synchronization on hold start (2026-10-02)
 
 - [x] Trace start reads and reproduce a recently restored hold's stale Tesla reserve in regression tests.

@@ -576,6 +576,13 @@ final class DashboardCoordinator: ObservableObject {
         await loadTimingDetailAppeared()
     }
 
+    /// Billing needs a measured snapshot even when solar forecasting is not configured.
+    /// The shared planning path reuses context and solar caches without fetching live Tesla data.
+    func billOutlookAppeared() async {
+        await refreshBill(trigger: .screenAppearance)
+        await loadTimingDetailAppeared()
+    }
+
     /// Starts the optional enhancement only when a local credential and array
     /// selection exist. This path refreshes bill/context data but never live data.
     func loadTimingDetailAppeared() async {

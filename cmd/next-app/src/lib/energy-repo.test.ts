@@ -119,6 +119,15 @@ describe('EnergyRepo.getCycleAggregates', () => {
         queryMock.mockReset();
     });
 
+    it('uses explicit local midnight for chart aggregates regardless of database timezone', async () => {
+        queryMock.mockResolvedValue({ rows: [] });
+        const repo = new EnergyRepo();
+        await repo.getCycleAggregatesAndCoverage('site-1', start, end, 'America/Chicago');
+        expect(queryMock).toHaveBeenCalledWith(
+            expect.stringContaining("date_trunc('day', timestamp, $4::text)"),
+            ['site-1', start, end, 'America/Chicago']);
+    });
+
     it('returns an empty array when there are no rows', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -578,5 +587,45 @@ describe('EnergyRepo.getUsageByTOU range clamping', () => {
 
         expect(aggSpy).toHaveBeenCalledWith('site-1', start, start);
         expect(rawSpy).toHaveBeenCalledWith('site-1', start, end);
+    });
+});
+
+
+describe('EnergyRepo.getBillOutlook', () => {
+    afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+    it.each([false, true])('reads once, respects the 25-hour DST day and marks gaps (%s)', async (gap) => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-11-02T06:10:00Z'));
+        const start = new Date('2026-11-01T05:00:00Z');
+        const midnight = new Date('2026-11-02T06:00:00Z');
+        const end = new Date('2026-12-01T06:00:00Z');
+        const schedule = { id: 10, season_id: 1, name: 'Standard', buy_rate: .3, sell_rate: .04,
+            from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, to_hour: 24, from_minute: 0, to_minute: 0 };
+        const tariff = { id: 1, site_id: 'site-1', name: 'Utility', updated: new Date(), seasons: [
+            { id: 1, tariff_id: 1, name: 'All', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+                buy_rate: .3, sell_rate: .04, schedules: [schedule] }] };
+        vi.spyOn(SiteRepo.prototype, 'getSite').mockResolvedValue({ id: 'site-1', timezone: 'America/Chicago', tariffs: [tariff] } as never);
+        vi.spyOn(TariffRepo.prototype, 'getTariffsForSite').mockResolvedValue([tariff]);
+        vi.spyOn(TariffRepo.prototype, 'getSchedulesForSite').mockResolvedValue([schedule]);
+        const repo = new EnergyRepo();
+        const prior = vi.spyOn(repo, 'getCycleAggregatesAndCoverage').mockResolvedValue({
+            aggregates: [{ day: start, tariff_id: 1, tariff_schedule_id: 10, load_power: 0, solar_power: 0,
+                grid_power: 10000, battery_power: 0 }],
+            coverage: [{ localDayKey: '2026-11-01', count: gap ? 299 : 300, first: start,
+                last: new Date(+midnight - 300000), maxInteriorGapMs: gap ? 600000 : 300000 }],
+        });
+        const raw = vi.spyOn(repo, 'getRawEnergyData').mockResolvedValue([
+            makeEnergyRow({ timestamp: midnight, grid_power: -500 }),
+            makeEnergyRow({ timestamp: new Date(+midnight + 300000), grid_power: -500 }),
+        ]);
+        const result = await repo.getBillOutlook('site-1', start, end);
+        expect(prior).toHaveBeenCalledTimes(1);
+        expect(raw).toHaveBeenCalledTimes(1);
+        expect(prior).toHaveBeenCalledWith('site-1', start, midnight, 'America/Chicago');
+        expect(result.outlook?.points.map(point => point.date)).toEqual([
+            start.toISOString(), midnight.toISOString(), '2026-11-02T06:10:00.000Z']);
+        expect(result.outlook?.complete).toBe(!gap);
+        expect(result.outlook?.points.at(-1)?.estimatedCost).toBeCloseTo(result.usage.reduce((sum, row) => sum + (row.cost ?? 0), 0));
+        expect(result.outlook?.points.at(-1)?.periods[0].netGridKwh).toBe(9);
     });
 });

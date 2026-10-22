@@ -1,0 +1,96 @@
+[
+  {
+    "name": "seasonal export offsets",
+    "buckets": [
+      {
+        "tariffName": "Utility",
+        "periodName": "Peak",
+        "netGridKwh": -27.471,
+        "buyRate": 0.3,
+        "sellRate": 0.04
+      },
+      {
+        "tariffName": "Utility",
+        "periodName": "Peak",
+        "netGridKwh": 18.243,
+        "buyRate": 0.31,
+        "sellRate": 0.04
+      }
+    ],
+    "expectedCost": -0.36912
+  },
+  {
+    "name": "weighted historical imports",
+    "buckets": [
+      {
+        "tariffName": "Utility",
+        "periodName": "Peak",
+        "netGridKwh": 10,
+        "buyRate": 0.2,
+        "sellRate": 0.04
+      },
+      {
+        "tariffName": "Utility",
+        "periodName": "Peak",
+        "netGridKwh": 20,
+        "buyRate": 0.4,
+        "sellRate": 0.04
+      },
+      {
+        "tariffName": "Utility",
+        "periodName": "Peak",
+        "netGridKwh": -15,
+        "buyRate": 0.3,
+        "sellRate": 0.04
+      }
+    ],
+    "expectedCost": 5
+  },
+  {
+    "name": "separate plans and periods",
+    "buckets": [
+      {
+        "tariffName": "A",
+        "periodName": "Peak",
+        "netGridKwh": 10,
+        "buyRate": 0.3,
+        "sellRate": 0.04
+      },
+      {
+        "tariffName": "B",
+        "periodName": "Peak",
+        "netGridKwh": -10,
+        "buyRate": 0.3,
+        "sellRate": 0.04
+      },
+      {
+        "tariffName": "A",
+        "periodName": "Off-Peak",
+        "netGridKwh": -10,
+        "buyRate": 0.3,
+        "sellRate": 0.04
+      }
+    ],
+    "expectedCost": 2.2
+  },
+  {
+    "name": "future exports reverse bill",
+    "buckets": [
+      {
+        "tariffName": "Utility",
+        "periodName": "Peak",
+        "netGridKwh": 10,
+        "buyRate": 0.2,
+        "sellRate": 0.04
+      },
+      {
+        "tariffName": "Utility",
+        "periodName": "Peak",
+        "netGridKwh": -15,
+        "buyRate": 0.4,
+        "sellRate": 0.06
+      }
+    ],
+    "expectedCost": -0.3
+  }
+]

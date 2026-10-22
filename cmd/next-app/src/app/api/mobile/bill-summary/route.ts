@@ -26,7 +26,9 @@ const TIMELINE_LOOKBACK_MS = 60 * 60 * 1000;
 export async function GET(request: Request) {
     return withRequestContext(async () => {
         try {
-            const siteId = new URL(request.url).searchParams.get('siteId');
+            const params = new URL(request.url).searchParams;
+            const siteId = params.get('siteId');
+            const includeOutlook = params.get('outlook') === '1';
             if (!siteId) return NextResponse.json({ error: 'Missing siteId' }, { status: 400 });
             if (!(await verifySiteAccess(siteId))) {
                 return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -42,11 +44,14 @@ export async function GET(request: Request) {
             const cycleEnd = getNextCycleStart(billingDay, cycleStart, site.timezone);
             const energyRepo = createEnergyRepo(site.timezone);
             const [billing, currencyCode, energyDataThrough] = await Promise.all([
-                readBillingAvailability(()=>energyRepo.getUsageByTOU(siteId, cycleStart, cycleEnd),[]),
+                readBillingAvailability(async () => includeOutlook
+                    ? energyRepo.getBillOutlook(siteId, cycleStart, cycleEnd)
+                    : { usage: await energyRepo.getUsageByTOU(siteId, cycleStart, cycleEnd), outlook: null },
+                    { usage: [], outlook: null }),
                 siteRepo.getSiteCurrencyCode(siteId),
                 energyRepo.getLatestTimestamp(siteId),
             ]);
-            const usage=billing.value;
+            const usage = billing.value.usage;
             const estimatedCost = usage.length > 0
                 ? usage.reduce((sum, item) => sum + (item.cost ?? 0), 0)
                 : null;
@@ -117,6 +122,15 @@ export async function GET(request: Request) {
                     periods,
                 },
                 loadTiming: loadTimingWithTimeline,
+                ...(includeOutlook ? { outlook: billing.status === 'complete' && billing.value.outlook ? {
+                    ...billing.value.outlook,
+                    tariffTimeline: buildLoadTimingTimeline(schedule, new Date(billing.value.outlook.observedThrough),
+                        cycleEnd, new Date(Math.min(+now, +cycleEnd))).map(segment => {
+                        const match = schedule.getTariffPeriod(new Date(segment.start));
+                        return { ...segment, tariffName: match?.tariff.name || 'Unknown',
+                            periodName: match?.schedule.name || 'Unknown' };
+                    }),
+                } : null } : {}),
                 sources: {
                     calculatedAt: now.toISOString(),
                     energyDataThrough: energyDataThrough?.toISOString() ?? null,
