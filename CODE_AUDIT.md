@@ -1009,6 +1009,32 @@ Verification for §15: regression tests cover parked exchange responses (success
 
 ---
 
+## 13. WidgetKit, deep links, and Control Center
+
+### 13.1 Energy widget dashboard deep link
+- **Severity:** Important
+- **Fix:** Centralize DashboardLink alongside BatteryHoldLink; both widgets use it and the app selects Home without changing site.
+- **Status:** FIXED (PR pending)
+
+### 13.2 Live polls exhaust widget reload budgets
+- **Severity:** Important
+- **Fix:** Compare persisted snapshots, write every change, and inject reload/clock seams enforcing a fifteen-minute forced-reload floor.
+- **Status:** FIXED (PR pending)
+
+### 13.3 Control intent uses a process-local mailbox
+- **Severity:** Important
+- **Fix:** Return OpenURLIntent for the explicit site URL; move the legacy app observer mailbox out of Shared.
+- **Status:** FIXED (PR pending)
+
+### 13.4 Widget network requests exceed provider budget
+- **Severity:** Important
+- **Fix:** Use 8-second request / 12-second resource timeouts, prefer fresh app/refresh caches, and coalesce concurrent kind requests through an actor.
+- **Status:** FIXED (PR pending)
+
+Verification: Swift Testing coverage checks Home routing/site preservation, equal snapshots, the reload floor, fresh cache reuse, and widget session timeouts. Verification attempted: ./run-tests.sh stops before executing tests because sandbox access to CoreSimulatorService is unavailable. A simulator build fails because the sandbox prevents swift-plugin-server preview macro execution. Manual widget taps remain unverified. git diff --check passes.
+
+---
+
 ## 10. Cross-cutting recommendations
 
 1. **Centralize the freshness windows.** Twelve-plus magic numbers (§8.5) and three sites doing string surgery on a freshness string (§8.6) are the highest-leverage cleanup. A `DataFreshness` enum with named windows, passed into a structured-result `freshness(...)`, would fix §8.5, §8.6, and part of §8.7 at once.
