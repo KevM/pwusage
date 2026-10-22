@@ -82,6 +82,8 @@ targets:
       path: PWUsageWidgets/Info.plist
       properties:
         CFBundleDisplayName: Today's Energy
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         PWUSAGE_APP_GROUP: "$(PWUSAGE_APP_GROUP)"
         PWUSAGE_API_ORIGIN: "$(PWUSAGE_API_ORIGIN)"
         NSExtension:

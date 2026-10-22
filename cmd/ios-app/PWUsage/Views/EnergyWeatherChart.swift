@@ -179,15 +179,7 @@ private struct LaneChart: View {
         let x = xDomain, y = yDomain
         let labels = showsSwitchLabels ? switchLabels : [:]
         return Chart {
-            RectangleMark(xStart: .value("Start", x.lowerBound), xEnd: .value("End", x.upperBound),
-                          yStart: .value("Zero", 0), yEnd: .value("Top", y.upperBound))
-                .foregroundStyle(EnergyWeatherChart.bankedColor.opacity(0.12))
-            RectangleMark(xStart: .value("Start", x.lowerBound), xEnd: .value("End", x.upperBound),
-                          yStart: .value("Bottom", y.lowerBound), yEnd: .value("Zero", 0))
-                .foregroundStyle(EnergyWeatherChart.owedColor.opacity(0.14))
-            RuleMark(y: .value("Zero", 0))
-                .foregroundStyle(EnergyWeatherChart.ruleColor)
-                .lineStyle(StrokeStyle(lineWidth: 1))
+            EnergyBalanceBackdrop(x: x, y: y)
 
             ForEach(Array(lane.switches.enumerated()), id: \.offset) { _, marker in
                 RuleMark(x: .value("Switch", marker.date))

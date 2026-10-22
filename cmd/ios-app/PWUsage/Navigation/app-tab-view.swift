@@ -44,7 +44,8 @@ struct AppTabView: View {
             DashboardView(coordinator: coordinator, site: site, onOpenTab: model.selectTab,
                           onRefresh: { await model.refreshDashboard() })
         case .bill:
-            BillView(coordinator: coordinator, site: site)
+            BillView(coordinator: coordinator, site: site, isSelected: model.selectedTab == .bill,
+                     onOpenSmartShift: { model.selectTab(.smartShift) })
         case .smartShift:
             LoadTimingView(coordinator: coordinator, site: site, isSelected: model.selectedTab == .smartShift)
         case .settings:
