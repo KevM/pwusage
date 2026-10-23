@@ -40,6 +40,22 @@ describe('proxy middleware', () => {
         expect(res.cookies.get('site_auth')).toBeUndefined();
     });
 
+    // When checkRefreshNeeded refuses a revoked session (token sv behind the
+    // DB session_version), the proxy must not set a replacement cookie —
+    // re-issuing would re-stamp the new sv and un-revoke the session.
+    it('does not replace a cookie when refresh is refused for a revoked session', async () => {
+        mocks.checkRefreshNeeded.mockResolvedValue(null);
+
+        const req = new NextRequest('http://localhost/dashboard', {
+            headers: { cookie: 'site_auth=revoked-session-token' }
+        });
+        const res = await proxy(req);
+
+        expect(mocks.checkRefreshNeeded).toHaveBeenCalledWith('revoked-session-token');
+        expect(res.cookies.get('site_auth')).toBeUndefined();
+        expect(res.headers.get('set-cookie')).toBeNull();
+    });
+
     it('refreshes site_auth cookie with httpOnly, sameSite=lax, maxAge, and secure in production', async () => {
         vi.stubEnv('NODE_ENV', 'production');
         mocks.checkRefreshNeeded.mockResolvedValue('refreshed-token-xyz');
