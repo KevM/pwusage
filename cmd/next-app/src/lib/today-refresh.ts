@@ -63,6 +63,8 @@ export interface RefreshTodayResult {
 }
 
 export interface RefreshLiveStatusOptions {
+    /** Foreground power does not need site metadata or tariff rows. */
+    liveOnly?: boolean;
     cacheTtlMs?: number;
     minIntervalMs?: number;
     timeoutMs?: number;
@@ -193,7 +195,9 @@ export async function refreshLiveStatus(
     const siteRepo = new SiteRepo();
 
     try {
-        const site = await siteRepo.getSite(siteId);
+        const site = options.liveOnly
+            ? await siteRepo.getLiveRefreshState(siteId)
+            : await siteRepo.getSite(siteId);
         if (!site) {
             return { status: 'site-not-found' };
         }
