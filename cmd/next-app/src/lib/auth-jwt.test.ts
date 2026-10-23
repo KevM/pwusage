@@ -38,6 +38,23 @@ function nowSeconds() {
     return Math.floor(Date.now() / 1000);
 }
 
+describe('verifySiteToken', () => {
+    it('accepts the HS256 tokens signSiteToken issues', () => {
+        const token = signSiteToken(['s1'], ['user'], 'u1');
+        expect(verifySiteToken(token)).toMatchObject({ sites: ['s1'], roles: ['user'], sub: 'u1' });
+    });
+
+    // Pinning the accepted algorithm keeps a future key-type change from reopening
+    // algorithm confusion. These tokens are only ever minted as HS256.
+    it('rejects a token signed with a different HMAC algorithm', () => {
+        const token = jwt.sign({ sites: ['s1'], roles: ['user'], sub: 'u1' }, TEST_SECRET, {
+            algorithm: 'HS384',
+            expiresIn: 60,
+        });
+        expect(verifySiteToken(token)).toBeNull();
+    });
+});
+
 describe('checkRefreshNeeded', () => {
     beforeEach(() => {
         vi.clearAllMocks();

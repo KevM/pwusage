@@ -3,6 +3,7 @@ import { signSiteToken, COOKIE_MAX_AGE_SECONDS } from '@/lib/auth-jwt';
 import { consumeMobileLoginHandoff, isValidMobileLoginExchangeParameters } from '@/lib/mobile-login-handoff';
 import { SiteRepo } from '@/lib/site-repo';
 import { UserRepo } from '@/lib/user-repo';
+import { isSecureRequest } from '@/lib/request-security';
 
 interface ExchangeBody {
   attemptId?: unknown;
@@ -79,7 +80,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   });
   response.cookies.set('site_auth', siteToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isSecureRequest(request),
     maxAge: COOKIE_MAX_AGE_SECONDS,
     path: '/',
     sameSite: 'lax',

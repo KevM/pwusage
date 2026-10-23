@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { getAppBaseUrl } from '@/lib/url-utils';
 import { mobileCallbackResponse } from '@/lib/mobile-login-callback';
 import { isValidAppState, isValidMobileLoginParameters } from '@/lib/mobile-login-validation';
+import { isSecureRequest } from '@/lib/request-security';
 import { buildTeslaAuthorizeUrl } from '@/lib/tesla-authorize-url';
 
 export async function GET(request: NextRequest) {
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const authCookieOptions = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isSecureRequest(request),
   };
   cookieStore.set('auth_state', state, authCookieOptions);
   cookieStore.set('auth_nonce', nonce, authCookieOptions);
@@ -65,7 +66,7 @@ export async function GET(request: NextRequest) {
     cookieStore.set('auth_mobile_state', mobileState, mobileCookieOptions);
   }
   if (callback && callback.startsWith('/') && !callback.startsWith('//') && !callback.startsWith('/\\')) {
-    cookieStore.set('auth_callback', callback, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+    cookieStore.set('auth_callback', callback, { httpOnly: true, secure: isSecureRequest(request) });
   }
 
   const redirectBaseUrl = getAppBaseUrl(request);

@@ -48,6 +48,15 @@ describe('POST /api/mobile/session', () => {
     expect(mocks.signSiteToken).toHaveBeenCalledWith(['site-1'], ['user'], 'user-1');
   });
 
+  it('marks the session cookie Secure for HTTPS even when NODE_ENV is not production', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const response = await POST(new NextRequest('https://pwusage.test/api/mobile/session', {
+      method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' },
+    }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('set-cookie')).toContain('Secure');
+  });
+
   it('rejects invalid payloads and handoff replay', async () => {
     const invalid = await POST(new NextRequest('https://pwusage.test/api/mobile/session', {
       method: 'POST', body: JSON.stringify({ ...payload, verifier: 'bad' }), headers: { 'content-type': 'application/json' },

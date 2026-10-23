@@ -379,6 +379,23 @@ final class PWUsageAPITests {
         #expect(shared.cookies(for: origin)?.isEmpty != false)
     }
 
+    @Test("Fresh-install cleanup removes only site_auth cookies from a shared jar")
+    func freshInstallCookieClear() throws {
+        let storage = try #require(URLSessionConfiguration.ephemeral.httpCookieStorage)
+        let siteCookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "site_auth",
+            .value: "previous-session", .expires: Date().addingTimeInterval(3600)]))
+        let otherCookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "display",
+            .value: "compact"]))
+        storage.setCookie(siteCookie)
+        storage.setCookie(otherCookie)
+
+        SharedWebSession.clearSessionCookies(in: storage)
+
+        let remaining = storage.cookies ?? []
+        #expect(!remaining.contains(where: { $0.name == "site_auth" }))
+        #expect(remaining.contains(where: { $0.name == "display" }))
+    }
+
     @Test("Server error maps to recoverable data error")
     func serverErrorMapsToRecoverableDataError() async {
         StubURLProtocol.requestHandler = { request in (try Self.response(request, status: 503), Data(#"{"error":"Unavailable"}"#.utf8)) }

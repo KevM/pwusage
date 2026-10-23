@@ -306,18 +306,21 @@ cookies being shared between `ASWebAuthenticationSession` and the app's
 5. Before issuing a session, the exchange reloads the user and current site
    assignments. Inactive/missing accounts and sites no longer assigned to the
    account are rejected. The response sets the existing `site_auth` cookie with
-   `HttpOnly`, `SameSite=Lax`, path `/`, and `Secure` in production. URLSession
-   stores the cookie and sends it to existing APIs such as `/api/site-live-data`
-   and `/api/mobile/bill-summary`; those routes continue to call
-   `verifySiteAccess`.
+   `HttpOnly`, `SameSite=Lax`, path `/`, and `Secure` on HTTPS (always in
+   production). URLSession stores the cookie and sends it to existing APIs such as
+   `/api/site-live-data` and `/api/mobile/bill-summary`; those routes continue to
+   call `verifySiteAccess`.
 
 The iOS app and its widget extension share the persistent `site_auth` cookie via
 Foundation's App Group cookie store (separate Debug and Release groups). The app
 migrates an existing app-private session once and removes the old copy, so logout
-cannot restore it. Widget timeline requests use the same site authorization checks
-as the app. The extension only requests the app-selected site, discards in-flight
-results after that selection is cleared/changed, and hides data on HTTP 401/403.
-Credentials remain in the system cookie store, outside the presentation JSON files.
+cannot restore it. On a fresh install, startup maintenance deletes any `site_auth`
+cookie left in the shared jar before the app makes an authenticated request, so a
+previous install's session is not adopted. Widget timeline requests use the same
+site authorization checks as the app. The extension only requests the app-selected
+site, discards in-flight results after that selection is cleared/changed, and hides
+data on HTTP 401/403. Credentials remain in the system cookie store, outside the
+presentation JSON files.
 
 Handoff rows are used only during login. Creating a handoff deletes at most 100
 expired rows, keeping cleanup bounded and preventing indefinite table growth

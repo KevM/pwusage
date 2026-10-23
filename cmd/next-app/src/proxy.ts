@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { checkRefreshNeeded, COOKIE_MAX_AGE_SECONDS } from './lib/auth-jwt';
+import { isSecureRequest } from './lib/request-security';
 
 // Define paths that do not require auth check/refresh overhead
 // (Static files, images, favicon are usually excluded by matcher, but good to be safe)
@@ -25,7 +26,7 @@ export async function proxy(request: NextRequest) {
 
             response.cookies.set('site_auth', newToken, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
+                secure: isSecureRequest(request),
                 maxAge: COOKIE_MAX_AGE_SECONDS,
                 path: '/',
                 sameSite: 'lax'

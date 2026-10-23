@@ -57,4 +57,15 @@ describe('proxy middleware', () => {
         expect(setCookie?.maxAge).toBe(86400);
         expect(setCookie?.secure).toBe(true);
     });
+
+    it('marks a refreshed cookie Secure for an HTTPS request outside production', async () => {
+        mocks.checkRefreshNeeded.mockResolvedValue('refreshed-token-xyz');
+
+        const req = new NextRequest('https://pwusage.test/dashboard', {
+            headers: { cookie: 'site_auth=expiring-token' }
+        });
+        const res = await proxy(req);
+
+        expect(res.cookies.get('site_auth')?.secure).toBe(true);
+    });
 });

@@ -36,6 +36,9 @@ struct PWUsageApp: App {
                 sweepCredentials: {
                     try await DeviceSolcastCredentialStore.shared.deleteAllCredentials()
                 },
+                clearSessionCookie: {
+                    SharedWebSession.clearSessionCookies()
+                },
                 reloadControls: {
                     // Rebuild templates only after an update; retain saved site configuration.
                     ControlCenter.shared.reloadControls(ofKind: BatteryHoldControlIdentity.kind)
