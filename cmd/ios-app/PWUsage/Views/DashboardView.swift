@@ -83,7 +83,7 @@ struct DashboardView: View {
         // after a raise it lags, and fresh readings would look like future ones.
         if coordinator.refreshSettled, DashboardPresentation.homeNeedsRefresh(readingTimes, now: max(clock, .now)) {
             AvailabilityBanner(
-                message: "Some readings are over an hour old. Pull down to refresh.",
+                message: "Some readings are over an hour old or unavailable. Pull down to refresh.",
                 symbol: "clock.badge.exclamationmark"
             )
         }
@@ -102,6 +102,10 @@ struct DashboardView: View {
             }
         }
         if let bill { dates.append(bill.sources.energyDataThrough) }
+        // A failed request with nothing cached shows as unavailable, so it counts as stale too.
+        if power == nil, coordinator.power.isUnavailable || coordinator.live.isUnavailable { dates.append(nil) }
+        if live == nil, coordinator.live.isUnavailable { dates.append(nil) }
+        if bill == nil, coordinator.bill.isUnavailable { dates.append(nil) }
         return dates
     }
 
