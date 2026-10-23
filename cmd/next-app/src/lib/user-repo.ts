@@ -122,6 +122,16 @@ export class UserRepo {
     }
 
     // === Commands ===
+    /**
+     * Invalidate every outstanding site_auth JWT for the user ("sign out
+     * everywhere"). Tokens whose embedded sv trails the new value are blocked
+     * on each authenticated request and refused refresh; re-authenticating
+     * issues a token stamped with the new version.
+     */
+    async bumpSessionVersion(userId: string): Promise<void> {
+        await pool.query('UPDATE "User" SET session_version = session_version + 1 WHERE id = $1', [userId]);
+    }
+
     async updateUserEmail(userId: string, email: string): Promise<void> {
         await pool.query('UPDATE "User" SET email = $1 WHERE id = $2', [email, userId]);
     }
