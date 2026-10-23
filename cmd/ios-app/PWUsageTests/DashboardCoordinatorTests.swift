@@ -38,6 +38,52 @@ struct DashboardCoordinatorTests {
         #expect(api.summary.billSiteIDs.count == 1)
     }
 
+    @Test("Raising unsettles Home until its first refresh finishes, so stale cache never flashes a notice")
+    func raiseUnsettlesUntilRefreshFinishes() async throws {
+        let clock = TestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        #expect(!coordinator.refreshSettled)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+
+        coordinator.scenePhaseChanged(isActive: false)
+        api.holdPower = true
+        coordinator.scenePhaseChanged(isActive: true)
+        #expect(!coordinator.refreshSettled)
+        try await eventually { api.pendingPower != nil }
+        #expect(!coordinator.refreshSettled)
+        api.holdPower = false
+        api.resumePower()
+        try await eventually { coordinator.refreshSettled }
+
+        // Later polls keep it settled rather than toggling it.
+        clock.advance(minutes: 1)
+        await coordinator.refreshDue()
+        #expect(coordinator.refreshSettled)
+    }
+
+    @Test("A failed refresh still settles; a site switch unsettles until the new site refreshes")
+    func failureSettlesAndSiteSwitchUnsettles() async throws {
+        let clock = TestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        api.powerError = PWUsageAPIError.recoverableServerError(statusCode: 503)
+        api.summary.liveError = URLError(.notConnectedToInternet)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+
+        api.powerError = nil
+        api.summary.liveError = nil
+        api.holdPower = true
+        coordinator.selectSite("site-2")
+        #expect(!coordinator.refreshSettled)
+        try await eventually { api.pendingPower != nil }
+        api.holdPower = false
+        api.resumePower()
+        try await eventually { coordinator.refreshSettled }
+    }
+
     @Test("A delayed fast reading cannot return after sign-out or a site change")
     func fastPowerRespectsSessionAndSiteGeneration() async throws {
         for signOut in [true, false] {

@@ -13,7 +13,8 @@ struct DashboardView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var availableWidth: Double = 0
-    @State private var isRefreshing = false
+    /// Re-checks the stale notice each minute; readings age without the view otherwise redrawing.
+    @State private var clock = Date.now
 
     private var live: MobileLiveResponse? { coordinator.live.response }
     private var power: MobileLivePowerResponse? {
@@ -32,6 +33,7 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                staleNotice
                 if usesTwoColumns {
                     Grid(alignment: .topLeading, horizontalSpacing: 22, verticalSpacing: 22) {
                         GridRow {
@@ -59,21 +61,14 @@ struct DashboardView: View {
             .frame(maxWidth: .infinity)
         }
         .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { availableWidth = $0 }
-        .refreshable { await refresh() }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    if DashboardPresentation.homeNeedsRefresh(readingTimes, now: context.date) {
-                        Button {
-                            Task { await refresh() }
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .accessibilityLabel("Refresh Home")
-                        .accessibilityHint("Some readings are over an hour old or unavailable")
-                        .disabled(isRefreshing)
-                    }
-                }
+        .refreshable {
+            if let onRefresh { await onRefresh() }
+            else { await coordinator.refreshAll(trigger: .userGesture) }
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                clock = .now
             }
         }
         .background(SectionTheme.groupedBackground)
@@ -81,11 +76,17 @@ struct DashboardView: View {
         .inlineNavigationTitle()
     }
 
-    private func refresh() async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
-        if let onRefresh { await onRefresh() } else { await coordinator.refreshAll(trigger: .userGesture) }
+    /// Waits for the raise/site-switch refresh to finish, so it appears only
+    /// when a refresh could not bring Home current, never over cache about to update.
+    @ViewBuilder private var staleNotice: some View {
+        // Reads `clock` only to redraw each minute: it pauses in the background, so
+        // after a raise it lags, and fresh readings would look like future ones.
+        if coordinator.refreshSettled, DashboardPresentation.homeNeedsRefresh(readingTimes, now: max(clock, .now)) {
+            AvailabilityBanner(
+                message: "Some readings are over an hour old. Pull down to refresh.",
+                symbol: "clock.badge.exclamationmark"
+            )
+        }
     }
 
     private var readingTimes: [Date?] {

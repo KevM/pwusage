@@ -167,6 +167,10 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var power = DashboardEndpointState<MobileLivePowerResponse>()
     @Published private(set) var bill = DashboardEndpointState<MobileBillResponse>()
     @Published private(set) var isForeground = false
+    /// False from a raise, site switch or sign-in until that refresh finishes,
+    /// successful or not, so a stale-data notice waits for it instead of flashing
+    /// over cached readings that are about to be replaced.
+    @Published private(set) var refreshSettled = false
     @Published private(set) var requiresSignIn = false
     /// The dashboard presents one sheet at a time. Keeping that in a single
     /// published value means an external Battery Hold launch can clear whatever
@@ -320,6 +324,7 @@ final class DashboardCoordinator: ObservableObject {
             guard canRequestAccountData else { return }
             guard !isForeground else { return }
             isForeground = true
+            refreshSettled = false
             startTimer()
             Task {
                 guard isForeground else { return }
@@ -480,6 +485,7 @@ final class DashboardCoordinator: ObservableObject {
         bill.lastAttempt = nil
         guard sceneIsActive else { return }
         isForeground = true
+        refreshSettled = false
         startTimer()
         Task { await refreshDue() }
     }
@@ -495,6 +501,7 @@ final class DashboardCoordinator: ObservableObject {
         forecastGeneration += 1
         siteGeneration += 1
         cancelInFlightRequests()
+        refreshSettled = false
         batteryHold = BatteryHoldState()
         live.response = nil
         live.isRestored = false
@@ -514,6 +521,7 @@ final class DashboardCoordinator: ObservableObject {
         siteGeneration += 1
         forecastGeneration += 1
         cancelInFlightRequests()
+        refreshSettled = false
         batteryHold = BatteryHoldState()
         live.reset()
         power.reset()
@@ -544,6 +552,7 @@ final class DashboardCoordinator: ObservableObject {
             guard isForeground else { return }
         }
         let generation = siteGeneration
+        defer { if generation == siteGeneration, canRequestAccountData { refreshSettled = true } }
         await refreshPower(force: trigger == .userGesture)
         guard canStillRefresh(trigger: trigger, generation: generation) else { return }
         let requestTime = now()
