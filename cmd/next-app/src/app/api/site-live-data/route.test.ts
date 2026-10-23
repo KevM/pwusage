@@ -77,15 +77,6 @@ describe('site-live-data mobile response', () => {
         latestSocMock.mockResolvedValue(null);
     });
 
-    it('limits mobile summary history to the site-local day instead of the sparkline scale window', async () => {
-        await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
-        expect(bucketedMock).toHaveBeenCalledWith('site-a', new Date('2026-09-24T00:00:00Z'), new Date());
-        bucketedMock.mockClear();
-        await GET(new Request('https://example.test/api/site-live-data?siteId=site-a'));
-        const [, start] = bucketedMock.mock.calls[0] as [string, Date, Date];
-        expect(start.getTime()).toBeLessThan(new Date('2026-09-24T00:00:00Z').getTime());
-    });
-
     it('publishes daily canonical tariff charges and credits in the site currency', async () => {
         usageMock.mockImplementation(async (_site, start) => start.toISOString() === '2026-09-24T00:00:00.000Z'
             ? [{ cost: 3.12, touName: 'Peak' }, { cost: -0.65, touName: 'Off peak' }] : []);

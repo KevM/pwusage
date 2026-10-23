@@ -35,16 +35,6 @@ const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
 
 export class SiteRepo {
     // === Queries ===
-    /** One narrow row for the fast foreground path; no tariff tree or site JSON. */
-    async getLiveRefreshState(siteId: string): Promise<Pick<Site, 'id' | 'last_live_refresh_at' | 'live_status_cache'> | undefined> {
-        const { rows } = await pool.query<Pick<Site, 'id' | 'last_live_refresh_at' | 'live_status_cache'>>(`
-            SELECT id, last_live_refresh_at, live_status_cache
-            FROM "Site"
-            WHERE id = $1
-        `, [siteId]);
-        return rows[0];
-    }
-
     async getSitesForUser(userId: string, options?: SiteQueryOptions): Promise<Site[]> {
         const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
         const { rows } = await pool.query(`SELECT ${columns} FROM "Site" WHERE user_id = $1`, [userId]);

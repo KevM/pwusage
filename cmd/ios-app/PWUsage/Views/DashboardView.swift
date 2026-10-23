@@ -13,12 +13,8 @@ struct DashboardView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var availableWidth: Double = 0
-    @State private var isRefreshing = false
 
     private var live: MobileLiveResponse? { coordinator.live.response }
-    private var power: MobileLivePowerResponse? {
-        coordinator.power.response ?? live.map(MobileLivePowerResponse.init(snapshot:))
-    }
     private var bill: MobileBillResponse? { coordinator.bill.response }
 
     private var usesTwoColumns: Bool {
@@ -32,6 +28,7 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                readingStatus
                 if usesTwoColumns {
                     Grid(alignment: .topLeading, horizontalSpacing: 22, verticalSpacing: 22) {
                         GridRow {
@@ -59,91 +56,90 @@ struct DashboardView: View {
             .frame(maxWidth: .infinity)
         }
         .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { availableWidth = $0 }
-        .refreshable { await refresh() }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    if DashboardPresentation.homeNeedsRefresh(readingTimes, now: context.date) {
-                        Button {
-                            Task { await refresh() }
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .accessibilityLabel("Refresh Home")
-                        .accessibilityHint("Some readings are over an hour old or unavailable")
-                        .disabled(isRefreshing)
-                    }
-                }
-            }
+        .refreshable {
+            if let onRefresh { await onRefresh() }
+            else { await coordinator.refreshAll(trigger: .userGesture) }
         }
         .background(SectionTheme.groupedBackground)
         .navigationTitle(site.name)
         .inlineNavigationTitle()
     }
 
-    private func refresh() async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
-        if let onRefresh { await onRefresh() } else { await coordinator.refreshAll(trigger: .userGesture) }
-    }
-
-    private var readingTimes: [Date?] {
-        var dates: [Date?] = []
-        if let power {
-            dates.append(power.sources.liveStatusAt)
-            dates.append(power.sources.stateOfChargeAt)
-        }
-        if let live {
-            dates.append(live.sources.energyDataThrough)
-            if let timing = live.activeLoadTiming {
-                dates.append(timing.energyDataThrough ?? live.sources.energyDataThrough)
+    private var readingStatus: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let sources: [(String, Date?)] = readingSources
+            if !sources.isEmpty {
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(sources, id: \.0) { source in
+                            let age = DashboardPresentation.freshness(
+                                source.1, now: context.date, staleAfter: .infinity
+                            )
+                            Text("\(source.0) · \(age)")
+                        }
+                        if coordinator.live.isUnavailable || coordinator.bill.isUnavailable {
+                            Text("Couldn’t refresh all readings. Pull down to retry.")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    let failed = coordinator.live.isUnavailable || coordinator.bill.isUnavailable
+                    let status = DashboardPresentation.homeReadingStatus(sources.map { $0.1 }, now: context.date)
+                    Label((failed ? "Refresh incomplete · " : "") + status, systemImage: "clock")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .tint(.secondary)
             }
         }
-        if let bill { dates.append(bill.sources.energyDataThrough) }
-        return dates
+    }
+
+    private var readingSources: [(String, Date?)] {
+        var sources: [(String, Date?)] = []
+        if let live {
+            sources.append(("Power", live.sources.liveStatusAt))
+            if live.stateOfCharge != nil { sources.append(("Powerwall charge", live.sources.stateOfChargeAt)) }
+            sources.append(("Today", live.sources.energyDataThrough))
+            if live.activeLoadTiming != nil {
+                let summaryTime = live.activeLoadTiming?.energyDataThrough ?? live.sources.energyDataThrough
+                sources.append(("Smart Shift", summaryTime))
+            }
+        }
+        if let bill { sources.append(("Bill energy", bill.sources.energyDataThrough)) }
+        return sources
     }
 
     private var liveSection: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { _ in
+        TimelineView(.explicit(DashboardPresentation.livePowerUpdateDates(sourceTime: live?.sources.liveStatusAt))) { _ in
             // Use the actual clock even when a resumed timeline delivers a past entry.
             liveSection(now: .now)
         }
     }
 
     private func liveSection(now: Date) -> some View {
-        let livePowerIsCurrent = !coordinator.power.isUnavailable && power.map {
+        let livePowerIsCurrent = !coordinator.live.isUnavailable && live.map {
             DashboardPresentation.liveFreshnessNotice($0.sources.liveStatusAt, now: now) == nil
         } == true
         return VStack(alignment: .leading, spacing: 12) {
             sectionHeading("Live power")
-            if let power {
-                let charge = MobileLiveResponse.validatedStateOfCharge(
-                    power.stateOfCharge, takenAt: power.sources.stateOfChargeAt, now: now
-                )
+            if let live {
                 StatusCard {
                     VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(alignment: .center, spacing: 12) {
-                                Text(charge.map { "\(Int($0.rounded()))%" } ?? "--")
+                                Text(live.stateOfCharge.map { "\(Int($0.rounded()))%" } ?? "--")
                                     .font(.system(.largeTitle, design: .rounded, weight: .bold))
                                     .monospacedDigit()
                                     .contentTransition(reduceMotion ? .identity : .numericText())
-                                    .accessibilityLabel(
-                                        charge.map { "Battery charge \(Int($0.rounded())) percent" }
-                                            ?? "Battery charge unknown"
-                                    )
+                                    .accessibilityLabel(live.stateOfCharge.map { "Battery charge \(Int($0.rounded())) percent" } ?? "Battery charge unknown")
                                 HStack(alignment: .center, spacing: 4) {
                                     Image(systemName: DashboardPresentation.batterySymbol(
-                                        powerWatts: livePowerIsCurrent ? power.live.batteryPower : 0,
-                                        stateOfCharge: charge))
+                                        powerWatts: livePowerIsCurrent ? live.live.batteryPower : 0,
+                                        stateOfCharge: live.stateOfCharge))
                                         .font(.system(size: 44, weight: .bold))
-                                        .foregroundStyle(charge == nil ? Color.secondary : Color.green)
+                                        .foregroundStyle(live.stateOfCharge == nil ? Color.secondary : Color.green)
                                         .accessibilityHidden(true)
-                                    if livePowerIsCurrent
-                                        && DashboardPresentation.batteryDirection(
-                                            powerWatts: power.live.batteryPower
-                                        ) == .discharging {
+                                    if livePowerIsCurrent && DashboardPresentation.batteryDirection(powerWatts: live.live.batteryPower) == .discharging {
                                         DischargeSymbol()
                                             .stroke(Color.secondary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                                             .frame(width: 16, height: 16)
@@ -156,17 +152,16 @@ struct DashboardView: View {
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(
                             (livePowerIsCurrent
-                                ? DashboardPresentation.batteryDescription(
-                                    stateOfCharge: charge, powerWatts: power.live.batteryPower
-                                )
-                                : "Battery \(charge.map { "\(Int($0.rounded()))%" } ?? "--"), flow unknown")
+                                ? DashboardPresentation.batteryDescription(stateOfCharge: live.stateOfCharge, powerWatts: live.live.batteryPower)
+                                : "Battery \(live.stateOfCharge.map { "\(Int($0.rounded()))%" } ?? "--"), flow unknown")
+                            + (DashboardPresentation.chargeAgeLabel(live.sources.stateOfChargeAt, now: now).map { ", \($0)" } ?? "")
                         )
                         Divider()
                         LivePowerFlowCards(flow: DashboardPresentation.powerFlow(
-                            solarPower: power.live.solarPower, loadPower: power.live.loadPower,
-                            batteryPower: power.live.batteryPower, gridPower: power.live.gridPower,
-                            sourceTime: power.sources.liveStatusAt,
-                            isUnavailable: coordinator.power.isUnavailable, now: now
+                            solarPower: live.live.solarPower, loadPower: live.live.loadPower,
+                            batteryPower: live.live.batteryPower, gridPower: live.live.gridPower,
+                            sourceTime: live.sources.liveStatusAt,
+                            isUnavailable: coordinator.live.isUnavailable, now: now
                         ))
                     }
                 }
@@ -192,7 +187,14 @@ struct DashboardView: View {
                             homeKwh: today.homeKwh, solarKwh: today.solarKwh,
                             gridNetKwh: today.gridNetKwh, batteryNetKwh: today.batteryNetKwh
                         ))
-
+                        if live?.todayComplete == false {
+                            // Only reserve footer space when there is a footer to show.
+                            Spacer(minLength: 0)
+                            Divider()
+                            Label("Some energy intervals are missing", systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        }
                     }
                 }
             } else {
@@ -253,10 +255,12 @@ struct DashboardView: View {
     private var loadTimingNavigation: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeading("Smart Shift")
+            let summarySource = live?.activeLoadTiming?.energyDataThrough ?? live?.sources.energyDataThrough
+            let summaryIsStale = coordinator.live.isUnavailable || DashboardPresentation.loadTimingSummaryIsStale(source: summarySource)
             let summary = DashboardPresentation.loadTimingSummary(
                 live?.activeLoadTiming,
                 hasTariff: DashboardPresentation.hasActiveTariff(label: live?.activeTariff),
-                isStale: false,
+                isStale: summaryIsStale,
                 currencyCode: bill?.currentBill.currency
             )
             Button { onOpenTab(.smartShift) } label: {

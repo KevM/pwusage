@@ -65,19 +65,6 @@ describe('SiteRepo site payload selection', () => {
         repo.invalidateCache('site-1');
     });
 
-    it('reads one small cache row without rate plans for foreground power', async () => {
-        queryMock.mockResolvedValue({ rows: [{ id: 'site-1', last_live_refresh_at: 123, live_status_cache: null }] });
-        const result = await new SiteRepo().getLiveRefreshState('site-1');
-        expect(result?.id).toBe('site-1');
-        expect(queryMock).toHaveBeenCalledTimes(1);
-        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
-        expect(sql).toContain('SELECT id, last_live_refresh_at, live_status_cache');
-        expect(sql).not.toContain('Tariff');
-        expect(sql).not.toContain('token');
-        expect(sql).not.toContain('json');
-        expect(params).toEqual(['site-1']);
-    });
-
     it('fetches slim site columns by default', async () => {
         mockSiteLoad([makeSiteRow()]);
 

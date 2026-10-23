@@ -51,17 +51,6 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         catch { throw PWUsageAPIError.invalidResponse }
     }
 
-    func fetchLivePower(siteID: String) async throws -> MobileLivePowerResponse {
-        let url = try makeURL(path: "/api/mobile/live-power", siteID: siteID)
-        let data = try await request(url: url)
-        do {
-            return try MobileContractDecoder.make().decode(MobileLivePowerResponse.self, from: data)
-                .validating(siteID: siteID)
-        } catch let error as MobileLiveResponse.ContractError { throw error } catch {
-            throw PWUsageAPIError.invalidResponse
-        }
-    }
-
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
         let url = try makeURL(path: "/api/mobile/bill-summary", siteID: siteID, extra: [URLQueryItem(name: "outlook", value: "1")])
         let data = try await request(url: url)
@@ -215,7 +204,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
 // Every retroactive conformance this type has, in one place. Each protocol is
 // declared next to the type that consumes it, which is why these used to be one
 // line each in three files.
-extension PWUsageAPI: MobileDashboardDataAPI, MobileLivePowerDataAPI {}
+extension PWUsageAPI: MobileDashboardDataAPI {}
 extension PWUsageAPI: MobileLoadPlanningDataAPI {}
 extension PWUsageAPI: PWUsageApplicationAPI {}
 

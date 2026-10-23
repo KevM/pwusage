@@ -7,12 +7,6 @@ protocol MobileDashboardDataAPI: Sendable {
     func fetchBill(siteID: String) async throws -> MobileBillResponse
 }
 
-/// Optional capability so older servers/preview fixtures retain the combined path.
-@MainActor
-protocol MobileLivePowerDataAPI: Sendable {
-    func fetchLivePower(siteID: String) async throws -> MobileLivePowerResponse
-}
-
 @MainActor
 protocol MobileLoadPlanningDataAPI: Sendable {
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse
@@ -149,8 +143,6 @@ final class DashboardCoordinator: ObservableObject {
     enum RefreshTrigger { case userGesture, screenAppearance, scheduled }
 
     static let liveInterval: TimeInterval = 5 * 60
-    static let livePowerInterval: TimeInterval = 60
-    static let summaryInterval: TimeInterval = 30 * 60
     static let billInterval: TimeInterval = 30 * 60
     /// Floor under appearance-driven bill refreshes, so opening the Load timing
     /// screen twice in a row does not bill twice but still feels fresh.
@@ -164,7 +156,6 @@ final class DashboardCoordinator: ObservableObject {
 
     @Published private(set) var selectedSiteID: String
     @Published private(set) var live = DashboardEndpointState<MobileLiveResponse>()
-    @Published private(set) var power = DashboardEndpointState<MobileLivePowerResponse>()
     @Published private(set) var bill = DashboardEndpointState<MobileBillResponse>()
     @Published private(set) var isForeground = false
     @Published private(set) var requiresSignIn = false
@@ -221,9 +212,6 @@ final class DashboardCoordinator: ObservableObject {
     private var sceneIsActive = false
     private var timerTask: Task<Void, Never>?
     private var liveTask: Task<Void, Never>?
-    private var powerTask: Task<Void, Never>?
-    private var livePowerEndpointAvailable = true
-    private var usesLivePowerEndpoint: Bool { livePowerEndpointAvailable && api is any MobileLivePowerDataAPI }
     private var billTask: Task<Void, Never>?
     private var siteGeneration = 0
     private var forecastGeneration = 0
@@ -321,21 +309,12 @@ final class DashboardCoordinator: ObservableObject {
             guard !isForeground else { return }
             isForeground = true
             startTimer()
-            Task {
-                guard isForeground else { return }
-                await refreshPower(force: true)
-                await refreshDue()
-            }
+            Task { await refreshDue() }
         } else {
             sceneIsActive = false
             isForeground = false
             batteryHold.isCurrent = false
             stopTimer()
-            // Keep fast polls in memory; persist the combined snapshot once on
-            // backgrounding instead of encoding the entire bill every minute.
-            if let snapshot = live.response, let power = power.response {
-                cache?.storeLive(MobileLiveResponse(snapshot: snapshot, power: power), at: now())
-            }
         }
     }
 
@@ -433,11 +412,6 @@ final class DashboardCoordinator: ObservableObject {
     }
 
     func batteryHoldStateOfCharge(at date: Date) -> Double? {
-        if let response = power.response, response.siteID == selectedSiteID, !power.isUnavailable {
-            return MobileLiveResponse.validatedStateOfCharge(
-                response.stateOfCharge, takenAt: response.sources.stateOfChargeAt, now: date
-            )
-        }
         guard !live.isUnavailable, let response = live.response,
               response.site.id == selectedSiteID else { return nil }
         return MobileLiveResponse.validatedStateOfCharge(response.stateOfCharge, takenAt: response.sources.stateOfChargeAt, now: date)
@@ -498,7 +472,6 @@ final class DashboardCoordinator: ObservableObject {
         batteryHold = BatteryHoldState()
         live.response = nil
         live.isRestored = false
-        power.reset()
         bill.response = nil
         bill.isRestored = false
         requiresSignIn = true
@@ -516,7 +489,6 @@ final class DashboardCoordinator: ObservableObject {
         cancelInFlightRequests()
         batteryHold = BatteryHoldState()
         live.reset()
-        power.reset()
         bill.reset()
         restoreCachedReadings()
         // Checking, not "not connected": the new site's setup is read next, and
@@ -543,15 +515,12 @@ final class DashboardCoordinator: ObservableObject {
         if trigger == .scheduled {
             guard isForeground else { return }
         }
-        let generation = siteGeneration
-        await refreshPower(force: trigger == .userGesture)
-        guard canStillRefresh(trigger: trigger, generation: generation) else { return }
         let requestTime = now()
-        let interval = usesLivePowerEndpoint ? Self.summaryInterval : Self.liveInterval
+        let generation = siteGeneration
 
         if liveTask == nil {
             if trigger == .userGesture
-                || isDue(lastAttempt: live.lastAttempt, interval: interval, at: requestTime) {
+                || isDue(lastAttempt: live.lastAttempt, interval: Self.liveInterval, at: requestTime) {
                 live.lastAttempt = requestTime
                 let siteID = selectedSiteID
                 liveTask = Task { await performLive(siteID: siteID, generation: generation) }
@@ -1038,45 +1007,6 @@ final class DashboardCoordinator: ObservableObject {
         return age >= 0 && age < Self.billMinimumInterval
     }
 
-    private func refreshPower(force: Bool) async {
-        guard canRequestAccountData, usesLivePowerEndpoint,
-              let powerAPI = api as? any MobileLivePowerDataAPI else { return }
-        if let powerTask {
-            await powerTask.value
-            return
-        }
-        let due = isDue(lastAttempt: power.lastAttempt, interval: Self.livePowerInterval, at: now())
-        guard force || due else { return }
-        power.lastAttempt = now()
-        let generation = siteGeneration
-        let siteID = selectedSiteID
-        powerTask = Task {
-            defer { if generation == siteGeneration { powerTask = nil } }
-            do {
-                let response = try await powerAPI.fetchLivePower(siteID: siteID).validating(siteID: siteID)
-                guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return }
-                power.response = response
-                power.lastSuccess = now()
-                power.isUnavailable = false
-            } catch {
-                guard generation == siteGeneration, canRequestAccountData else { return }
-                if error as? PWUsageAPIError == .signInRequired {
-                    authenticationInvalidated()
-                    isForeground = false
-                    stopTimer()
-                } else if let rejected = error as? PWUsageAPIError,
-                          case .requestRejected(let statusCode, _) = rejected, statusCode == 404 {
-                    // An older server can still serve the combined endpoint.
-                    livePowerEndpointAvailable = false
-                    power.isUnavailable = false
-                } else {
-                    power.isUnavailable = true
-                }
-            }
-        }
-        await powerTask?.value
-    }
-
     private func performLive(siteID: String, generation: Int) async {
         defer {
             if generation == siteGeneration { liveTask = nil }
@@ -1088,14 +1018,7 @@ final class DashboardCoordinator: ObservableObject {
             let successTime = now()
             live.lastSuccess = successTime
             live.isRestored = false
-            if api is any MobileLivePowerDataAPI,
-               let source = response.sources.liveStatusAt,
-               source >= (power.response?.sources.liveStatusAt ?? .distantPast) {
-                power.response = MobileLivePowerResponse(snapshot: response)
-                power.isUnavailable = false
-            }
-            let snapshot = power.response.map { MobileLiveResponse(snapshot: response, power: $0) } ?? response
-            cache?.storeLive(snapshot, at: successTime)
+            cache?.storeLive(response, at: successTime)
             live.isUnavailable = false
             live.unavailableStatusCode = nil
         } catch {
@@ -1174,10 +1097,8 @@ final class DashboardCoordinator: ObservableObject {
     /// cancelled so the next trigger does not join a doomed request.
     private func cancelInFlightRequests() {
         liveTask?.cancel()
-        powerTask?.cancel()
         billTask?.cancel()
         liveTask = nil
-        powerTask = nil
         billTask = nil
     }
 }

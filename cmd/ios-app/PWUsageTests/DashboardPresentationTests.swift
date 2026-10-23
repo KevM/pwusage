@@ -4,15 +4,22 @@ import Testing
 
 @Suite("Dashboard Presentation Tests")
 struct DashboardPresentationTests {
-    @Test("Home stays quiet for ordinary summary lag and prompts only beyond an hour")
-    func homeRefreshPromptThreshold() {
+    @Test("Home consolidates matching source ages without stale warnings")
+    func homeMatchingReadingTimes() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        #expect(!DashboardPresentation.homeNeedsRefresh([], now: now))
-        #expect(!DashboardPresentation.homeNeedsRefresh([now, now.addingTimeInterval(-1800)], now: now))
-        #expect(!DashboardPresentation.homeNeedsRefresh([now.addingTimeInterval(-3600)], now: now))
-        #expect(DashboardPresentation.homeNeedsRefresh([now, now.addingTimeInterval(-3601)], now: now))
-        #expect(DashboardPresentation.homeNeedsRefresh([now, nil], now: now))
-        #expect(DashboardPresentation.homeNeedsRefresh([now.addingTimeInterval(60)], now: now))
+        let source = now.addingTimeInterval(-31 * 60)
+        #expect(DashboardPresentation.homeReadingStatus([source, source], now: now) == "Updated 31 min ago")
+        #expect(DashboardPresentation.homeReadingStatus([now, now], now: now) == "Updated just now")
+    }
+
+    @Test("Home distinguishes mixed, missing and future source times")
+    func homeDifferentReadingTimes() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(DashboardPresentation.homeReadingStatus([now, now.addingTimeInterval(-1860)], now: now)
+            == "Oldest reading · updated 31 min ago")
+        #expect(DashboardPresentation.homeReadingStatus([now, nil], now: now) == "Some reading times unavailable")
+        #expect(DashboardPresentation.homeReadingStatus([now.addingTimeInterval(60)], now: now)
+            == "Check reading times")
     }
 
     private let flowNow = Date(timeIntervalSince1970: 1_800_000_000)

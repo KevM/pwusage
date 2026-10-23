@@ -320,14 +320,18 @@ enum DashboardPresentation {
         return formatter.string(from: NSNumber(value: kWh)) ?? String(format: "%.1f", kWh)
     }
 
-    /// Home stays quiet for ordinary 15–30 minute summary lag. No shared timestamp
-    /// implies that independently sampled power, charge, energy and bill are equally fresh.
-    static func homeNeedsRefresh(_ sources: [Date?], now: Date = .now) -> Bool {
-        sources.contains { source in
-            guard let source else { return true }
-            let age = now.timeIntervalSince(source)
-            return age < 0 || age > 60 * 60
+    /// One Home status uses source observation times, never response/calculation times.
+    /// Detailed times remain available when sources differ or their clocks are unknown.
+    static func homeReadingStatus(_ sources: [Date?], now: Date = .now) -> String {
+        guard !sources.isEmpty, sources.allSatisfy({ $0 != nil }) else {
+            return "Some reading times unavailable"
         }
+        let dates = sources.compactMap { $0 }
+        guard dates.allSatisfy({ $0 <= now }) else { return "Check reading times" }
+        guard let oldest = dates.min() else { return "Reading times unavailable" }
+        let ages = Set(dates.map { Int(now.timeIntervalSince($0) / 60) })
+        let age = freshness(oldest, now: now, staleAfter: .infinity)
+        return ages.count == 1 ? age : "Oldest reading · " + age.lowercased()
     }
 
     static func freshness(_ date: Date?, now: Date = .now, staleAfter: TimeInterval = 15 * 60) -> String {

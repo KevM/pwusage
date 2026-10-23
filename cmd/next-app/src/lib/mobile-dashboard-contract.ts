@@ -105,18 +105,7 @@ export interface MobileDashboardContract {
     sources: { liveStatusAt: string | null; energyDataThrough: string | null; stateOfChargeAt: string | null };
 }
 
-export interface MobileLivePowerContract {
-    version: number;
-    siteID: string;
-    live: MobileDashboardContract['live'];
-    stateOfCharge: number | null;
-    sources: { liveStatusAt: string | null; stateOfChargeAt: string | null };
-}
-
-/** Fast foreground path: no energy history, tariff calculation or database SoC fallback. */
-export function buildMobileLivePowerContract(
-    input: Pick<MobileDashboardContractInput, 'live' | 'fallbackSoc' | 'now'> & { siteID: string }
-): MobileLivePowerContract {
+export function buildMobileDashboardContract(input: MobileDashboardContractInput): MobileDashboardContract {
     const sourceTimestamp = new Date(input.live.timestamp);
     const liveStatusAgeMs = Number.isFinite(sourceTimestamp.getTime())
         ? input.now.getTime() - sourceTimestamp.getTime()
@@ -139,7 +128,7 @@ export function buildMobileLivePowerContract(
 
     return {
         version: MOBILE_DASHBOARD_CONTRACT_VERSION,
-        siteID: input.siteID,
+        site: { id: input.site.id, name: input.site.name, timezone: input.site.timezone, localDate: input.todayDate },
         live: {
             solarPower: input.live.solar_power,
             loadPower: input.live.load_power,
@@ -147,21 +136,6 @@ export function buildMobileLivePowerContract(
             gridPower: input.live.grid_power,
         },
         stateOfCharge,
-        sources: {
-            liveStatusAt: Number.isFinite(sourceTimestamp.getTime()) ? sourceTimestamp.toISOString() : null,
-            stateOfChargeAt,
-        },
-    };
-}
-
-export function buildMobileDashboardContract(input: MobileDashboardContractInput): MobileDashboardContract {
-    const power = buildMobileLivePowerContract({ ...input, siteID: input.site.id });
-
-    return {
-        version: MOBILE_DASHBOARD_CONTRACT_VERSION,
-        site: { id: input.site.id, name: input.site.name, timezone: input.site.timezone, localDate: input.todayDate },
-        live: power.live,
-        stateOfCharge: power.stateOfCharge,
         activeTariff: input.activeTariff || null,
         ...(input.activeLoadTiming !== undefined ? { activeLoadTiming: input.activeLoadTiming } : {}),
         today: input.today,
@@ -175,9 +149,9 @@ export function buildMobileDashboardContract(input: MobileDashboardContractInput
             periods: input.bill.periods ?? [],
         } : null,
         sources: {
-            liveStatusAt: power.sources.liveStatusAt,
+            liveStatusAt: Number.isFinite(sourceTimestamp.getTime()) ? sourceTimestamp.toISOString() : null,
             energyDataThrough: input.energyTimestamp?.toISOString() ?? null,
-            stateOfChargeAt: power.sources.stateOfChargeAt,
+            stateOfChargeAt,
         },
     };
 }
