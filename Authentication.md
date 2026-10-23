@@ -88,13 +88,19 @@ User and site provisioning:
 - Persists latest Tesla tokens on user.
 
 Session issuance:
-- Signs `site_auth` JWT with `sites`, `roles`, `sub`.
+- Signs `site_auth` JWT with `sites`, `roles`, `sub`, and `sv` (the user's
+  `session_version`). Fresh logins (web callback and mobile exchange) stamp the
+  current DB value so a login after a sign-out-everywhere bump is not treated as
+  a revoked session.
 - Sets `site_auth` cookie.
 - Clears one-time auth cookies.
 - Redirects to saved callback (or `/`).
 
 Important implementation note:
-- `auth-checks.ts` now uses `site_auth` claims only for `verifySiteAccess`/`getAuthorizedSiteIds`; legacy `access_token` cookie fallback was removed.
+- `auth-checks.ts` treats `site_auth` as a cache only: after verifying the JWT
+  it resolves active status, `session_version`, roles, and site memberships from
+  the DB on every request. Stale `sites`/`roles` claims cannot outlive the DB
+  state they were derived from. Legacy `access_token` cookie fallback was removed.
 
 ### ID token signature verification
 
@@ -173,9 +179,11 @@ email and a later verified login keyed a second row by Tesla `sub`.
 
 ### 3. Runtime authorization checks
 
-Common checks:
-- `verifySiteAccess(siteId)` in `auth-checks.ts`: allows if `site_auth` has site or `admin`.
-- `SiteService.validateSiteAccess(siteId)`: same JWT check, then Tesla API fallback if client exists.
+Common checks (all DB-derived after JWT verification):
+- `verifySiteAccess(siteId)` in `auth-checks.ts`: verifies the `site_auth` JWT,
+  then checks the user is active, that the token's `sv` is not behind the DB
+  `session_version`, and authorizes against DB site memberships and roles.
+- `SiteService.validateSiteAccess(siteId)`: same checks, then Tesla API fallback if client exists.
 
 Protected surfaces include:
 - Site pages (`/site/[id]`)
@@ -186,7 +194,15 @@ Protected surfaces include:
 
 Middleware/proxy (`src/proxy.ts`):
 - On each request with `site_auth`, checks token expiry window.
-- If near expiry, re-signs and resets `site_auth` cookie (sliding session).
+- If near expiry, re-signs and resets `site_auth` cookie (sliding session,
+  7-day expiry with a 30-day absolute cap from `orig_iat`).
+- Refresh re-derives roles and sites from the DB and refuses to refresh when:
+  - the user is missing or not active, or
+  - the token's `sv` is behind the DB `session_version` (revoked by
+    sign-out-everywhere). Re-stamping the new `sv` here would auto-un-revoke a
+    stolen session, so refusal is permanent until re-auth.
+- Tokens without `sv` (legacy) are treated as `sv: 0`: they refresh and migrate
+  to the current DB version only while the DB version is still 0.
 
 Tesla token refresh behavior:
 - `TeslaClient` retries once on Fleet API 401 when refresh token exists.
@@ -195,8 +211,17 @@ Tesla token refresh behavior:
 - Terminal auth failures can mark user `auth_status='revoked'`.
 
 ### 5. Logout
-Route: `GET|POST /logout`
-- Deletes `site_auth` cookie and redirects to `/`.
+Local logout — Route: `GET|POST /logout`
+- Deletes `site_auth` cookie and redirects to `/`. Does not bump
+  `session_version`; other devices stay signed in.
+
+Sign out everywhere — Route: `POST /api/auth/sign-out-everywhere`
+- Requires an authenticated user (with origin/`sec-fetch-site` checks as
+  CSRF defense in depth).
+- Increments `User.session_version`, which revokes every outstanding `site_auth`
+  JWT on every device: each request blocks on the `sv` mismatch and the proxy
+  refuses to renew the cookie. Re-authentication issues a token stamped with the
+  new version. The caller's cookie is cleared in the same response.
 
 ### Troubleshooting: "passkey failed" on auth.tesla.com
 
@@ -340,8 +365,8 @@ simulator and device verification in the native app implementation.
 
 ## Authorization Decision Summary
 
-- Human user auth: `site_auth` JWT in cookie.
-- Human user site-level authorization: `site_auth.sites` and `roles` (or `SiteService` Tesla API fallback on specific server paths that instantiate a Tesla client).
+- Human user auth: `site_auth` JWT in cookie, verified per request against DB state (active status, `session_version`, roles, site memberships). Revocation via `POST /api/auth/sign-out-everywhere` bumps `session_version` and invalidates all outstanding JWTs.
+- Human user site-level authorization: DB site memberships and roles (or `SiteService` Tesla API fallback on specific server paths that instantiate a Tesla client).
 - Device/plugin auth: Trmnl JWT validation (`/api/trmnl/manage`) or installation bearer token (`/api/trmnl/markup`, `/api/trmnl/uninstall`).
 - Tesla backend API auth: tokens from `User` table, auto-refreshed server-side.
 
