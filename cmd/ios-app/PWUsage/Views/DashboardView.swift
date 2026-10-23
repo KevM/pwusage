@@ -28,7 +28,7 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                banners
+                readingStatus
                 if usesTwoColumns {
                     Grid(alignment: .topLeading, horizontalSpacing: 22, verticalSpacing: 22) {
                         GridRow {
@@ -65,16 +65,48 @@ struct DashboardView: View {
         .inlineNavigationTitle()
     }
 
-    @ViewBuilder private var banners: some View {
-        if coordinator.live.isRestored || coordinator.bill.isRestored {
-            AvailabilityBanner(message: "Showing saved data from your last visit.", symbol: "clock.arrow.circlepath")
+    private var readingStatus: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let sources: [(String, Date?)] = readingSources
+            if !sources.isEmpty {
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(sources, id: \.0) { source in
+                            let age = DashboardPresentation.freshness(
+                                source.1, now: context.date, staleAfter: .infinity
+                            )
+                            Text("\(source.0) · \(age)")
+                        }
+                        if coordinator.live.isUnavailable || coordinator.bill.isUnavailable {
+                            Text("Couldn’t refresh all readings. Pull down to retry.")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    let failed = coordinator.live.isUnavailable || coordinator.bill.isUnavailable
+                    let status = DashboardPresentation.homeReadingStatus(sources.map { $0.1 }, now: context.date)
+                    Label((failed ? "Refresh incomplete · " : "") + status, systemImage: "clock")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .tint(.secondary)
+            }
         }
-        if coordinator.live.isUnavailable {
-            AvailabilityBanner(message: "Live data is temporarily unavailable. Showing the last successful reading with its original source time.", symbol: "wifi.exclamationmark")
+    }
+
+    private var readingSources: [(String, Date?)] {
+        var sources: [(String, Date?)] = []
+        if let live {
+            sources.append(("Power", live.sources.liveStatusAt))
+            if live.stateOfCharge != nil { sources.append(("Powerwall charge", live.sources.stateOfChargeAt)) }
+            sources.append(("Today", live.sources.energyDataThrough))
+            if live.activeLoadTiming != nil {
+                let summaryTime = live.activeLoadTiming?.energyDataThrough ?? live.sources.energyDataThrough
+                sources.append(("Smart Shift", summaryTime))
+            }
         }
-        if coordinator.bill.isUnavailable {
-            AvailabilityBanner(message: "The bill estimate could not be refreshed. Showing the last successful estimate.", symbol: "clock.badge.exclamationmark")
-        }
+        if let bill { sources.append(("Bill energy", bill.sources.energyDataThrough)) }
+        return sources
     }
 
     private var liveSection: some View {
@@ -89,7 +121,7 @@ struct DashboardView: View {
             DashboardPresentation.liveFreshnessNotice($0.sources.liveStatusAt, now: now) == nil
         } == true
         return VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Live power", subtitle: nil)
+            sectionHeading("Live power")
             if let live {
                 StatusCard {
                     VStack(alignment: .leading, spacing: 18) {
@@ -116,12 +148,6 @@ struct DashboardView: View {
                                     }
                                 }
                             }
-                            if live.stateOfCharge != nil,
-                               let ageLabel = DashboardPresentation.chargeAgeLabel(live.sources.stateOfChargeAt, now: now) {
-                                Text(ageLabel)
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                            }
                         }
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(
@@ -137,13 +163,6 @@ struct DashboardView: View {
                             sourceTime: live.sources.liveStatusAt,
                             isUnavailable: coordinator.live.isUnavailable, now: now
                         ))
-                        // Inside the card, so side-by-side cards still share a bottom edge.
-                        if let notice = DashboardPresentation.liveFreshnessNotice(live.sources.liveStatusAt, now: now) {
-                            Label(notice, systemImage: "clock.badge.exclamationmark")
-                                .font(.footnote)
-                                .foregroundStyle(.orange)
-                                .accessibilityElement(children: .combine)
-                        }
                     }
                 }
             } else if coordinator.live.isUnavailable {
@@ -156,7 +175,9 @@ struct DashboardView: View {
 
     private var todaySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading(coordinator.live.isRestored ? "Energy · \(live?.site.localDate ?? "Last visit")" : "Today so far", subtitle: live.map { DashboardPresentation.freshness($0.sources.energyDataThrough, staleAfter: 30 * 60) } ?? "Waiting for energy data")
+            sectionHeading(
+                coordinator.live.isRestored ? "Energy · \(live?.site.localDate ?? "Last visit")" : "Today so far"
+            )
             if let live, live.sources.energyDataThrough == nil {
                 EmptyCard(symbol: "chart.bar", title: "No energy data yet", message: "Today’s totals will appear after the first energy sample is recorded.")
             } else if let today = live?.today {
@@ -166,26 +187,13 @@ struct DashboardView: View {
                             homeKwh: today.homeKwh, solarKwh: today.solarKwh,
                             gridNetKwh: today.gridNetKwh, batteryNetKwh: today.batteryNetKwh
                         ))
-                        // Keeps the footer at the bottom when the card is stretched to its row.
-                        Spacer(minLength: 0)
-                        if live?.activeTariff == nil || live?.todayComplete == false {
+                        if live?.todayComplete == false {
+                            // Only reserve footer space when there is a footer to show.
+                            Spacer(minLength: 0)
                             Divider()
-                            VStack(alignment: .leading, spacing: 6) {
-                                if live?.activeTariff == nil {
-                                    Label("No rate plan is set up", systemImage: "info.circle")
-                                }
-                                if live?.todayComplete == false {
-                                    Label("Some energy intervals are missing", systemImage: "exclamationmark.triangle")
-                                }
-                            }
+                            Label("Some energy intervals are missing", systemImage: "exclamationmark.triangle")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
-                        }
-                        if let tariff = live?.activeTariff {
-                            Label("Rate plan · \(tariff)", systemImage: "tag")
-                                .font(.footnote.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .accessibilityElement(children: .combine)
                         }
                     }
                 }
@@ -197,7 +205,7 @@ struct DashboardView: View {
 
     private var billNavigation: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Current Bill", subtitle: bill.map { "Calculated · \(DashboardPresentation.freshness($0.sources.calculatedAt, staleAfter: 60 * 60).replacingOccurrences(of: "Updated ", with: ""))" } ?? "Waiting for estimate")
+            sectionHeading("Current Bill")
             if let bill {
                 Button { onOpenTab(.bill) } label: {
                     StatusCard(theme: .bill, fillAlignment: .leading) {
@@ -246,9 +254,7 @@ struct DashboardView: View {
 
     private var loadTimingNavigation: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Smart Shift", subtitle: live.map {
-                "Live summary · \(DashboardPresentation.freshness($0.activeLoadTiming?.energyDataThrough ?? $0.sources.energyDataThrough, staleAfter: 30 * 60).replacingOccurrences(of: "Updated ", with: ""))"
-            } ?? "Waiting for rate plan")
+            sectionHeading("Smart Shift")
             let summarySource = live?.activeLoadTiming?.energyDataThrough ?? live?.sources.energyDataThrough
             let summaryIsStale = coordinator.live.isUnavailable || DashboardPresentation.loadTimingSummaryIsStale(source: summarySource)
             let summary = DashboardPresentation.loadTimingSummary(
@@ -285,11 +291,6 @@ struct DashboardView: View {
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
-                            if let freshness = summary.freshness {
-                                Text(freshness)
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         Image(systemName: "chevron.right")
@@ -322,20 +323,10 @@ struct DashboardView: View {
         }
     }
 
-    private func sectionHeading(_ title: String, subtitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.title3.weight(.bold))
-                .accessibilityAddTraits(.isHeader)
-            if let subtitle {
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if usesTwoColumns {
-                // Holds the subtitle line so this card's top lines up with its neighbour's.
-                Text(" ").font(.caption).hidden()
-            }
-        }
+    private func sectionHeading(_ title: String) -> some View {
+        Text(title)
+            .font(.title3.weight(.bold))
+            .accessibilityAddTraits(.isHeader)
     }
 
 }
@@ -354,7 +345,7 @@ private struct StatusCard<Content: View>: View {
     var body: some View {
         content
             .padding(16)
-            .frame(maxHeight: fillsHeight ? .infinity : nil, alignment: fillAlignment)
+            .frame(maxWidth: .infinity, maxHeight: fillsHeight ? .infinity : nil, alignment: fillAlignment)
             .background {
                 Group {
                     if let theme {
@@ -416,6 +407,7 @@ struct LivePowerFlowCards: View {
         let role = card.role == .supplying ? "Supplying power" : (card.role == .receiving ? "Receiving power" : nil)
         return MetricTile(title: card.id.title, value: card.watts.map(DashboardPresentation.power) ?? "--",
                           detail: card.detail, symbol: symbol, tint: tint,
+                          showsDetail: card.role != .unknown,
                           isMuted: card.role == .idle || card.role == .unknown,
                           numericValue: card.watts, spokenRole: role)
             .accessibilitySortPriority(flow.supplying.firstIndex(of: card).map { Double(99 - $0) }
