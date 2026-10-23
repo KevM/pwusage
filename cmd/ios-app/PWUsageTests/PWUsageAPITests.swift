@@ -205,6 +205,43 @@ final class PWUsageAPITests {
         #expect(second.0.value(forHTTPHeaderField: "Cookie") == "site_auth=session-value")
     }
 
+    /// The server may replace site_auth mid-session (sliding refresh, or a fresh
+    /// login stamped with the DB session_version after sign-out-everywhere).
+    /// iOS treats the cookie value as opaque: the proxy's Set-Cookie must replace
+    /// the stored copy and the next request must replay the new value, with no
+    /// client-side parsing of the `sv` claim.
+    @Test("Server-refreshed versioned session cookie replaces the stored one opaquely")
+    func refreshedSessionCookieReplacesStoredOne() async throws {
+        let stale = try #require(HTTPCookie(properties: [
+            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "old.stale.token"
+        ]))
+        cookieStorage.setCookie(stale)
+
+        let refreshedValue = "header.eyJzdiI6MX0.signature"
+        var recordedRequests: [URLRequest] = []
+        StubURLProtocol.requestHandler = { request in
+            recordedRequests.append(request)
+            guard let url = request.url else { throw URLError(.badURL) }
+            if url.path == "/api/sites" {
+                // Proxy-style sliding refresh: 200 plus a replacement session cookie.
+                guard let replaced = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [
+                    "Content-Type": "application/json",
+                    "Set-Cookie": "site_auth=\(refreshedValue); Path=/; HttpOnly; SameSite=Lax"
+                ]) else { throw URLError(.badServerResponse) }
+                return (replaced, Data(#"[{"id":"site-1","name":"Home","utility":"Utility Co"}]"#.utf8))
+            }
+            return (try Self.response(request, status: 200), Data(#"[]"#.utf8))
+        }
+
+        _ = try await api.fetchSites()
+        let secondURL = try #require(URL(string: "https://pwusage.test/api/sites"))
+        let stored = cookieStorage.cookies(for: secondURL)?.first { $0.name == "site_auth" }
+        #expect(stored?.value == refreshedValue)
+
+        _ = try await api.fetchSites()
+        #expect(recordedRequests.last?.value(forHTTPHeaderField: "Cookie") == "site_auth=\(refreshedValue)")
+    }
+
     @Test("Site ID is encoded as query item and bill response is decoded")
     func siteIDIsEncodedAsQueryItemAndBillResponseIsDecoded() async throws {
         var recordedRequest: URLRequest?
