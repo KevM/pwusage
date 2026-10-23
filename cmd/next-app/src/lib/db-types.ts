@@ -11,6 +11,7 @@ export interface User {
   is_active?: boolean;
   auth_status?: string;
   last_checked_at?: Date | string;
+  session_version?: number; // Bumped on sign-out-everywhere; embedded in site_auth JWT as `sv`
 }
 
 export interface Site {
