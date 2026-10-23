@@ -6,6 +6,7 @@ import { getAppBaseUrl } from '@/lib/url-utils';
 import { createMobileLoginHandoff } from '@/lib/mobile-login-handoff';
 import { mobileCallbackResponse } from '@/lib/mobile-login-callback';
 import { isValidAppState, isValidMobileLoginParameters } from '@/lib/mobile-login-validation';
+import { isSecureRequest } from '@/lib/request-security';
 
 export const maxDuration = 60; // Allow up to 60 seconds on Vercel to avoid timeouts during slow Tesla API / JWKS calls
 
@@ -152,7 +153,7 @@ export async function GET(request: NextRequest) {
             // Set 24h cookie
             cookieStore.set('site_auth', siteToken, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
+                secure: isSecureRequest(request),
                 maxAge: COOKIE_MAX_AGE_SECONDS,
                 path: '/',
                 sameSite: 'lax'

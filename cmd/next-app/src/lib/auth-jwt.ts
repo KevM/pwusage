@@ -19,6 +19,11 @@ export const COOKIE_MAX_AGE_SECONDS = EXPIRY_DAYS * 24 * 60 * 60;
 const REFRESH_THRESHOLD_SECONDS = REFRESH_HOURS * 60 * 60;
 const MAX_SESSION_SECONDS = MAX_SESSION_DAYS * 24 * 60 * 60;
 
+// signSiteToken always issues HS256. Pinning it here means a future change to
+// AUTH_SECRET (for example an asymmetric key) cannot silently make verification
+// accept a token signed with an unexpected algorithm.
+const SITE_TOKEN_ALGORITHM = 'HS256';
+
 export interface SiteAuthClaims {
     sites: string[];
     roles?: string[]; // Added roles
@@ -44,7 +49,7 @@ export function signSiteToken(siteIds: string[], roles: string[] = [], userId?: 
 
 export function verifySiteToken(token: string): { sites: string[], roles: string[], sub?: string, orig_iat?: number } | null {
     try {
-        const decoded = jwt.verify(token, getAuthSecret()) as SiteAuthClaims;
+        const decoded = jwt.verify(token, getAuthSecret(), { algorithms: [SITE_TOKEN_ALGORITHM] }) as SiteAuthClaims;
         if (decoded && Array.isArray(decoded.sites)) {
             return {
                 sites: decoded.sites,
@@ -65,7 +70,7 @@ export function verifySiteToken(token: string): { sites: string[], roles: string
  */
 export async function checkRefreshNeeded(token: string): Promise<string | null> {
     try {
-        const decoded = jwt.verify(token, getAuthSecret()) as SiteAuthClaims;
+        const decoded = jwt.verify(token, getAuthSecret(), { algorithms: [SITE_TOKEN_ALGORITHM] }) as SiteAuthClaims;
         if (!decoded || !decoded.exp || !Array.isArray(decoded.sites)) return null;
 
         const now = Math.floor(Date.now() / 1000);

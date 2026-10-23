@@ -20,6 +20,15 @@ enum SharedWebSession {
         }
     }
 
+    /// Delete every `site_auth` cookie, regardless of domain or path. Used only for
+    /// a fresh install so a session left in the shared jar by a previous install is
+    /// not adopted.
+    static func clearSessionCookies(in storage: HTTPCookieStorage = cookieStorage()) {
+        for cookie in storage.cookies ?? [] where cookie.name == "site_auth" {
+            storage.deleteCookie(cookie)
+        }
+    }
+
     /// The one policy for authenticated PWUsage requests, app and widget alike: bounded
     /// timeouts, and no URL cache, so no authenticated response outlives the session.
     static func makeSession(cookieStorage: HTTPCookieStorage = cookieStorage()) -> URLSession {
