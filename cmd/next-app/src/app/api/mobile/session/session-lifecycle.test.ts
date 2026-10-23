@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 const state = vi.hoisted(() => ({
   cookie: '',
   active: true,
+  sessionVersion: 0,
   siteIds: ['site-1'],
   consume: vi.fn(),
   getById: vi.fn(),
@@ -31,6 +32,11 @@ vi.mock('@/lib/user-repo', () => ({
   UserRepo: class {
     getById = state.getById;
     isActive = async () => state.active;
+    getAuthState = async () => ({
+      isActive: state.active,
+      sessionVersion: state.sessionVersion ?? 0,
+      roles: ['user'],
+    });
   },
   isUserActive: async () => state.active,
 }));
@@ -58,6 +64,7 @@ describe('mobile session lifecycle', () => {
     vi.clearAllMocks();
     state.cookie = '';
     state.active = true;
+    state.sessionVersion = 0;
     state.siteIds = ['site-1'];
     state.consume.mockResolvedValue({ userId: 'user-1', siteIds: ['site-1'], roles: ['user'] });
     state.getById.mockResolvedValue({ id: 'user-1', is_active: true, roles: ['user'] });

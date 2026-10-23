@@ -74,7 +74,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return jsonError('No authorized sites remain', 403);
   }
 
-  const siteToken = signSiteToken(siteIds, roles, claims.userId);
+  // Stamp the user's current session_version so a fresh mobile login after a
+  // sign-out-everywhere bump is not immediately treated as revoked.
+  const siteToken = signSiteToken(siteIds, roles, claims.userId, undefined, user.session_version ?? 0);
   const response = NextResponse.json({ ok: true }, {
     headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
   });

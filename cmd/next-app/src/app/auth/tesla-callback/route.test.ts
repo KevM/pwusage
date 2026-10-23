@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     cookieDelete: vi.fn(),
     cookieSet: vi.fn(),
     getCookie: vi.fn(),
+    getAuthState: vi.fn(async () => ({ isActive: true, sessionVersion: 0, roles: ['user'] })),
     createMobileLoginHandoff: vi.fn(async () => ({ code: 'opaque-handoff-code', attemptId: '9b47b05a-3f0b-498e-b604-9e43fa7df015' })),
 }));
 
@@ -33,6 +34,12 @@ vi.mock('@/lib/auth-jwt', () => ({
 vi.mock('@/lib/mobile-login-handoff', () => ({
     createMobileLoginHandoff: mocks.createMobileLoginHandoff,
     isValidMobileLoginParameters: (challenge: string, state: string) => challenge.length === 43 && state.length >= 22,
+}));
+
+vi.mock('@/lib/user-repo', () => ({
+    UserRepo: class {
+        getAuthState = mocks.getAuthState;
+    }
 }));
 
 import { GET } from './route';
@@ -169,6 +176,26 @@ describe('GET /auth/tesla-callback', () => {
         expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_nonce');
         expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_callback');
         expect(mocks.redirect).toHaveBeenCalledWith('/');
+        // Fresh logins stamp the DB session_version so a re-login after
+        // sign-out-everywhere is not immediately treated as a revoked session.
+        expect(mocks.getAuthState).toHaveBeenCalledWith('user-123');
+        expect(mocks.signSiteToken).toHaveBeenCalledWith(['site-1'], ['user'], 'user-123', undefined, 0);
+    });
+
+    it('stamps the current DB session_version into a fresh-login token after a bump', async () => {
+        mocks.handleTeslaCallback.mockResolvedValue({
+            status: 'success',
+            siteIds: ['site-1'],
+            roles: ['user'],
+            userId: 'user-123'
+        });
+        mocks.getCookie.mockReturnValue(undefined);
+        mocks.getAuthState.mockResolvedValueOnce({ isActive: true, sessionVersion: 4, roles: ['user'] });
+
+        const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
+        await GET(req);
+
+        expect(mocks.signSiteToken).toHaveBeenCalledWith(['site-1'], ['user'], 'user-123', undefined, 4);
     });
 
     it('does not set site_auth when success result has no sites and no admin role', async () => {
