@@ -5,6 +5,95 @@ import Testing
 @MainActor
 @Suite("Dashboard Coordinator Tests", .serialized)
 struct DashboardCoordinatorTests {
+    @Test("Fast power polls each minute while history and bill stay on thirty minute cadences")
+    func fastPowerDoesNotPollHistory() async throws {
+        let clock = TestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        for _ in 1..<60 {
+            clock.advance(minutes: 1)
+            await coordinator.refreshDue()
+        }
+        #expect(api.powerSiteIDs.count == 60)
+        #expect(api.summary.liveSiteIDs.count == 2)
+        #expect(api.summary.billSiteIDs.count == 2)
+        #expect(coordinator.power.response?.sources.liveStatusAt == clock.now)
+        #expect(coordinator.live.response?.sources.liveStatusAt != clock.now)
+    }
+
+    @Test("Foregrounding refreshes power even inside its poll cadence without repeating summaries")
+    func raiseRefreshesPowerOnly() async throws {
+        let clock = TestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        coordinator.scenePhaseChanged(isActive: false)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { api.powerSiteIDs.count == 2 && coordinator.power.lastSuccess != nil }
+        await coordinator.refreshDue()
+        #expect(api.summary.liveSiteIDs.count == 1)
+        #expect(api.summary.billSiteIDs.count == 1)
+    }
+
+    @Test("A delayed fast reading cannot return after sign-out or a site change")
+    func fastPowerRespectsSessionAndSiteGeneration() async throws {
+        for signOut in [true, false] {
+            let api = FastDashboardAPISpy(now: Date.init)
+            api.holdPower = true
+            let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
+            let task = Task { await coordinator.refreshAll(trigger: .userGesture) }
+            try await eventually { api.pendingPower != nil }
+            if signOut { coordinator.authenticationInvalidated() } else { coordinator.selectSite("site-2") }
+            api.resumePower()
+            await task.value
+            #expect(coordinator.power.response == nil)
+            #expect(coordinator.live.response == nil)
+            #expect(api.summary.liveSiteIDs.isEmpty)
+        }
+    }
+
+    @Test("Fast power updates preserve summary source times and are persisted on backgrounding")
+    func fastPowerPreservesSummaryAndWidgetTimes() async {
+        let clock = TestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = DashboardCache(fileURL: directory.appendingPathComponent("cache.json"))
+        cache.storeSites([MobileSite(id: "site-1", name: "Home", utility: "Utility")])
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil, cache: cache
+        )
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        let summary = coordinator.live.response
+        let bill = coordinator.bill.response
+        let initialSnapshot = cache.snapshot.live["site-1"]?.response
+        clock.advance(minutes: 1)
+        await coordinator.refreshDue()
+        #expect(coordinator.live.response == summary)
+        #expect(coordinator.bill.response == bill)
+        #expect(cache.snapshot.live["site-1"]?.response == initialSnapshot)
+        coordinator.scenePhaseChanged(isActive: false)
+        #expect(cache.snapshot.live["site-1"]?.response.sources.liveStatusAt == clock.now)
+        #expect(cache.snapshot.live["site-1"]?.response.sources.energyDataThrough == summary?.sources.energyDataThrough)
+    }
+
+    @Test("An older server retains the combined endpoint cadence")
+    func fastPowerRouteMissingFallsBack() async {
+        let clock = TestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        api.powerError = PWUsageAPIError.requestRejected(statusCode: 404, message: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        await coordinator.refreshAll(trigger: .userGesture)
+        clock.advance(minutes: 5)
+        await coordinator.refreshAll(trigger: .screenAppearance)
+        #expect(api.powerSiteIDs.count == 1)
+        #expect(api.summary.liveSiteIDs.count == 2)
+    }
+
     @Test("Disk snapshots preserve timestamps and restore only the selected site")
     func diskSnapshotsRestorePerSite() async throws {
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
@@ -844,4 +933,56 @@ private actor DashboardForecastStoreSpy: SolarForecastManaging {
     var lastErrorDescription: String? { "Forecast request failed" }
     func disconnect(accountScopeID: String, siteID: String) throws {}
     func signOut() async throws {}
+}
+
+@MainActor
+private final class FastDashboardAPISpy: MobileDashboardDataAPI, MobileLivePowerDataAPI {
+    let summary = DashboardAPISpy()
+    let now: () -> Date
+    var powerSiteIDs: [String] = []
+    var powerError: (any Error)?
+    var holdPower = false
+    var pendingPower: CheckedContinuation<MobileLivePowerResponse, any Error>?
+    private var pendingSiteID: String?
+
+    init(now: @escaping () -> Date) { self.now = now }
+
+    func fetchLive(siteID: String) async throws -> MobileLiveResponse {
+        try await summary.fetchLive(siteID: siteID)
+    }
+
+    func fetchBill(siteID: String) async throws -> MobileBillResponse {
+        try await summary.fetchBill(siteID: siteID)
+    }
+
+    func fetchLivePower(siteID: String) async throws -> MobileLivePowerResponse {
+        powerSiteIDs.append(siteID)
+        if let powerError { throw powerError }
+        if holdPower {
+            pendingSiteID = siteID
+            return try await withCheckedThrowingContinuation { pendingPower = $0 }
+        }
+        return try response(siteID: siteID)
+    }
+
+    func resumePower() {
+        let continuation = pendingPower
+        pendingPower = nil
+        do { continuation?.resume(returning: try response(siteID: pendingSiteID ?? "site-1")) } catch {
+            continuation?.resume(throwing: error)
+        }
+    }
+
+    private func response(siteID: String) throws -> MobileLivePowerResponse {
+        let stamp = ISO8601DateFormatter().string(from: now())
+        let json = """
+        {"version":1,"siteID":"\(siteID)",
+         "live":{"solarPower":4000,"loadPower":1000,"batteryPower":-3000,"gridPower":0},
+         "stateOfCharge":75,"sources":{"liveStatusAt":"\(stamp)","stateOfChargeAt":"\(stamp)"}}
+        """
+        let instant = now()
+        return try MobileContractDecoder.make(now: { instant }).decode(
+            MobileLivePowerResponse.self, from: Data(json.utf8)
+        )
+    }
 }

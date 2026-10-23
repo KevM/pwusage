@@ -77,6 +77,7 @@ final class ActivityKitBatteryHoldHandle: BatteryHoldActivityHandle {
     nonisolated static func lifecycle(_ state: ActivityState) -> BatteryHoldActivityLifecycle {
         if #available(iOS 26, *), state == .pending { return .pending }
         switch state {
+        case .pending: return .pending
         case .active: return .active
         case .stale: return .stale
         case .ended: return .ended

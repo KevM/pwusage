@@ -4,6 +4,17 @@ import Testing
 
 @Suite("Dashboard Presentation Tests")
 struct DashboardPresentationTests {
+    @Test("Home stays quiet for ordinary summary lag and prompts only beyond an hour")
+    func homeRefreshPromptThreshold() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(!DashboardPresentation.homeNeedsRefresh([], now: now))
+        #expect(!DashboardPresentation.homeNeedsRefresh([now, now.addingTimeInterval(-1800)], now: now))
+        #expect(!DashboardPresentation.homeNeedsRefresh([now.addingTimeInterval(-3600)], now: now))
+        #expect(DashboardPresentation.homeNeedsRefresh([now, now.addingTimeInterval(-3601)], now: now))
+        #expect(DashboardPresentation.homeNeedsRefresh([now, nil], now: now))
+        #expect(DashboardPresentation.homeNeedsRefresh([now.addingTimeInterval(60)], now: now))
+    }
+
     private let flowNow = Date(timeIntervalSince1970: 1_800_000_000)
 
     private func flow(solar: Double, home: Double, grid: Double, battery: Double,

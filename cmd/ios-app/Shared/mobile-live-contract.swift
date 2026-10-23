@@ -111,6 +111,23 @@ struct MobileLiveResponse: Codable, Equatable {
         self.sources = sources
     }
 
+    /// Replace just the fast readings; history and bill source times stay unchanged.
+    init(snapshot: MobileLiveResponse, power: MobileLivePowerResponse) {
+        version = snapshot.version
+        site = snapshot.site
+        live = power.live
+        stateOfCharge = power.stateOfCharge
+        activeTariff = snapshot.activeTariff
+        activeLoadTiming = snapshot.activeLoadTiming
+        today = snapshot.today
+        todayCost = snapshot.todayCost
+        todayComplete = snapshot.todayComplete
+        currentBill = snapshot.currentBill
+        sources = Sources(liveStatusAt: power.sources.liveStatusAt,
+                          energyDataThrough: snapshot.sources.energyDataThrough,
+                          stateOfChargeAt: power.sources.stateOfChargeAt)
+    }
+
     /// Money and rates are checked for finiteness only. JSON cannot carry NaN or infinity, so
     /// this guards against a non-conforming source rather than a wire value. Rates are not
     /// bounded below on purpose: the server prices negative buy and sell rates, and rejecting
@@ -202,5 +219,51 @@ private extension ISO8601DateFormatter {
         let standard = ISO8601DateFormatter()
         standard.formatOptions = [.withInternetDateTime]
         return standard.date(from: value)
+    }
+}
+
+/// Small foreground response independent of history and rate-plan summaries.
+struct MobileLivePowerResponse: Codable, Equatable {
+    let version: Int
+    let siteID: String
+    let live: MobileLiveResponse.Live
+    let stateOfCharge: Double?
+    let sources: Sources
+
+    struct Sources: Codable, Equatable {
+        let liveStatusAt: Date?
+        let stateOfChargeAt: Date?
+    }
+
+    private enum CodingKeys: String, CodingKey { case version, siteID, live, stateOfCharge, sources }
+
+    init(snapshot: MobileLiveResponse) {
+        version = snapshot.version
+        siteID = snapshot.site.id
+        live = snapshot.live
+        stateOfCharge = snapshot.stateOfCharge
+        sources = Sources(
+            liveStatusAt: snapshot.sources.liveStatusAt, stateOfChargeAt: snapshot.sources.stateOfChargeAt
+        )
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        guard version == 1 else { throw MobileLiveResponse.ContractError.unsupportedVersion(version) }
+        siteID = try container.decode(String.self, forKey: .siteID)
+        live = try container.decode(MobileLiveResponse.Live.self, forKey: .live)
+        sources = try container.decode(Sources.self, forKey: .sources)
+        stateOfCharge = MobileLiveResponse.validatedStateOfCharge(
+            try container.decodeIfPresent(Double.self, forKey: .stateOfCharge),
+            takenAt: sources.stateOfChargeAt, now: decoder.injectedCurrentDate ?? Date()
+        )
+    }
+
+    func validating(siteID expected: String) throws -> Self {
+        guard siteID == expected else {
+            throw MobileLiveResponse.ContractError.siteMismatch(expected: expected, actual: siteID)
+        }
+        return self
     }
 }
