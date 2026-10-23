@@ -55,6 +55,7 @@ const siteRepoMock = {
     releaseImportLock: vi.fn(),
     getImportStatus: vi.fn(),
     getSite: vi.fn(),
+    getLiveRefreshState: vi.fn(),
     updateLiveStatusCache: vi.fn(),
     claimLiveRefresh: vi.fn(),
     releaseLiveRefreshClaim: vi.fn(),
@@ -457,6 +458,16 @@ describe('refreshLiveStatus', () => {
 
         await expect(refreshLiveStatus('site-1')).resolves.toMatchObject({ status: 'error' });
         expect(siteRepoMock.releaseLiveRefreshClaim).toHaveBeenCalledWith('site-1', expect.any(Number), previous);
+    });
+
+    it('foreground power refreshes with a narrow cache lookup and no tariff query', async () => {
+        const { refreshLiveStatus } = await importRefreshLiveStatus();
+        siteRepoMock.getLiveRefreshState.mockResolvedValue({ id: 'site-1' });
+        await expect(refreshLiveStatus('site-1', { force: true, liveOnly: true }))
+            .resolves.toMatchObject({ status: 'refreshed' });
+        expect(siteRepoMock.getLiveRefreshState).toHaveBeenCalledWith('site-1');
+        expect(siteRepoMock.getSite).not.toHaveBeenCalled();
+        expect(teslaClientMock.getLiveStatus).toHaveBeenCalledTimes(1);
     });
 
     it('bypasses the claim when force is set', async () => {
