@@ -44,17 +44,19 @@ export async function GET(request: Request) {
             const siteRepo = new SiteRepo();
 
             const now = new Date();
+            const mobileView = searchParams.get('view') === 'mobile';
+            const site = await siteRepo.getSite(siteId);
             const scaleWindowHours = parseScaleWindowHours(process.env.SPARKLINE_SCALE_WINDOW_HOURS);
             const sparklineWindowStart = new Date(now.getTime() - (SPARKLINE_DISPLAY_WINDOW_HOURS * 60 * 60 * 1000));
-            const sparklineScaleStart = new Date(now.getTime() - (scaleWindowHours * 60 * 60 * 1000));
-
-            const sitePromise=siteRepo.getSite(siteId);
-            const repoPromise=sitePromise.then(site=>createEnergyRepo(site?.timezone??'UTC'));
-            const [liveResult, site, repo, initialHistoryRows] = await Promise.all([
+            // Home and widgets do not render sparklines. Only read the current
+            // site-local day for their 30-minute summary, including DST days.
+            const sparklineScaleStart = mobileView
+                ? EnergyRepo.getSiteMidnight(now, site?.timezone ?? 'UTC')
+                : new Date(now.getTime() - (scaleWindowHours * 60 * 60 * 1000));
+            const repo = createEnergyRepo(site?.timezone ?? 'UTC');
+            const [liveResult, initialHistoryRows] = await Promise.all([
                 refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000 }),
-                sitePromise,
-                repoPromise,
-                repoPromise.then(repo=>repo.getBucketedEnergyData(siteId, sparklineScaleStart, now))
+                repo.getBucketedEnergyData(siteId, sparklineScaleStart, now),
             ]);
 
             if (liveResult.status === 'no-tokens' || liveResult.status === 'site-not-found') {
@@ -66,7 +68,6 @@ export async function GET(request: Request) {
             }
 
             const liveStatus = liveResult.liveStatus;
-            const mobileView = searchParams.get('view') === 'mobile';
             let historyRows = initialHistoryRows;
 
             // The website refreshes today's Tesla history before reading its
@@ -182,12 +183,6 @@ export async function GET(request: Request) {
                 }
             }
 
-            const { series: sparklines, scales: sparklineScales } = toSparklinePayload(historyRows, now, {
-                solar: liveStatus.solar_power,
-                grid: liveStatus.grid_power,
-                load: liveStatus.load_power
-            }, sparklineWindowStart);
-
             const liveSourceMs = new Date(liveStatus.timestamp).getTime();
             const stateOfCharge = Number.isFinite(liveSourceMs)
                 && now.getTime() - liveSourceMs >= 0
@@ -244,6 +239,12 @@ export async function GET(request: Request) {
             if (mobileView) {
                 return NextResponse.json(mobileContract);
             }
+
+            const { series: sparklines, scales: sparklineScales } = toSparklinePayload(historyRows, now, {
+                solar: liveStatus.solar_power,
+                grid: liveStatus.grid_power,
+                load: liveStatus.load_power
+            }, sparklineWindowStart);
 
             return NextResponse.json({
                 solarPower: liveStatus.solar_power,

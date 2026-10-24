@@ -34,6 +34,27 @@ final class PWUsageAPITests {
         StubURLProtocol.cookieStorage = nil
     }
 
+    @Test("Foreground power uses the compact endpoint and rejects a different site's readings")
+    func compactPowerTransport() async throws {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        StubURLProtocol.requestHandler = { request in
+            let url = try #require(request.url)
+            let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+            #expect(components.path == "/api/mobile/live-power")
+            #expect(components.queryItems?.contains(URLQueryItem(name: "siteId", value: "site-1")) == true)
+            let json = """
+            {"version":1,"siteID":"site-1",
+             "live":{"solarPower":1000,"loadPower":500,"batteryPower":-500,"gridPower":0},
+             "stateOfCharge":70,"sources":{"liveStatusAt":"\(stamp)","stateOfChargeAt":"\(stamp)"}}
+            """
+            return (try Self.response(request, status: 200), Data(json.utf8))
+        }
+        let reading = try await api.fetchLivePower(siteID: "site-1")
+        #expect(reading.stateOfCharge == 70)
+        #expect(reading.live.solarPower == 1000)
+        #expect(throws: MobileLiveResponse.ContractError.self) { try reading.validating(siteID: "site-2") }
+    }
+
     @Test("Battery hold reads and commands use an encoded site path and typed JSON")
     func batteryHoldTransport() async throws {
         var requests: [(URLRequest, Data)] = []
@@ -585,3 +606,4 @@ private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func stopLoading() {}
 }
+

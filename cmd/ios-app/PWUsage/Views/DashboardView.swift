@@ -13,8 +13,13 @@ struct DashboardView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var availableWidth: Double = 0
+    /// Re-checks the stale notice each minute; readings age without the view otherwise redrawing.
+    @State private var clock = Date.now
 
     private var live: MobileLiveResponse? { coordinator.live.response }
+    private var power: MobileLivePowerResponse? {
+        coordinator.power.response ?? live.map(MobileLivePowerResponse.init(snapshot:))
+    }
     private var bill: MobileBillResponse? { coordinator.bill.response }
 
     private var usesTwoColumns: Bool {
@@ -28,7 +33,7 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                readingStatus
+                staleNotice
                 if usesTwoColumns {
                     Grid(alignment: .topLeading, horizontalSpacing: 22, verticalSpacing: 22) {
                         GridRow {
@@ -60,86 +65,90 @@ struct DashboardView: View {
             if let onRefresh { await onRefresh() }
             else { await coordinator.refreshAll(trigger: .userGesture) }
         }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                clock = .now
+            }
+        }
         .background(SectionTheme.groupedBackground)
         .navigationTitle(site.name)
         .inlineNavigationTitle()
     }
 
-    private var readingStatus: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let sources: [(String, Date?)] = readingSources
-            if !sources.isEmpty {
-                DisclosureGroup {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(sources, id: \.0) { source in
-                            let age = DashboardPresentation.freshness(
-                                source.1, now: context.date, staleAfter: .infinity
-                            )
-                            Text("\(source.0) · \(age)")
-                        }
-                        if coordinator.live.isUnavailable || coordinator.bill.isUnavailable {
-                            Text("Couldn’t refresh all readings. Pull down to retry.")
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                } label: {
-                    let failed = coordinator.live.isUnavailable || coordinator.bill.isUnavailable
-                    let status = DashboardPresentation.homeReadingStatus(sources.map { $0.1 }, now: context.date)
-                    Label((failed ? "Refresh incomplete · " : "") + status, systemImage: "clock")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .tint(.secondary)
-            }
+    /// Waits for the raise/site-switch refresh to finish, so it appears only
+    /// when a refresh could not bring Home current, never over cache about to update.
+    @ViewBuilder private var staleNotice: some View {
+        // Reads `clock` only to redraw each minute: it pauses in the background, so
+        // after a raise it lags, and fresh readings would look like future ones.
+        if coordinator.refreshSettled, DashboardPresentation.homeNeedsRefresh(readingTimes, now: max(clock, .now)) {
+            AvailabilityBanner(
+                message: "Some readings are over an hour old or unavailable. Pull down to refresh.",
+                symbol: "clock.badge.exclamationmark"
+            )
         }
     }
 
-    private var readingSources: [(String, Date?)] {
-        var sources: [(String, Date?)] = []
+    private var readingTimes: [Date?] {
+        var dates: [Date?] = []
+        if let power {
+            dates.append(power.sources.liveStatusAt)
+            dates.append(power.sources.stateOfChargeAt)
+        }
         if let live {
-            sources.append(("Power", live.sources.liveStatusAt))
-            if live.stateOfCharge != nil { sources.append(("Powerwall charge", live.sources.stateOfChargeAt)) }
-            sources.append(("Today", live.sources.energyDataThrough))
-            if live.activeLoadTiming != nil {
-                let summaryTime = live.activeLoadTiming?.energyDataThrough ?? live.sources.energyDataThrough
-                sources.append(("Smart Shift", summaryTime))
+            dates.append(live.sources.energyDataThrough)
+            if let timing = live.activeLoadTiming {
+                dates.append(timing.energyDataThrough ?? live.sources.energyDataThrough)
             }
         }
-        if let bill { sources.append(("Bill energy", bill.sources.energyDataThrough)) }
-        return sources
+        if let bill { dates.append(bill.sources.energyDataThrough) }
+        // A failed request with nothing cached shows as unavailable, so it counts as stale too.
+        if power == nil, coordinator.livePowerIsUnavailable { dates.append(nil) }
+        if live == nil, coordinator.live.isUnavailable { dates.append(nil) }
+        if bill == nil, coordinator.bill.isUnavailable { dates.append(nil) }
+        return dates
     }
 
     private var liveSection: some View {
-        TimelineView(.explicit(DashboardPresentation.livePowerUpdateDates(sourceTime: live?.sources.liveStatusAt))) { _ in
+        TimelineView(.periodic(from: .now, by: 60)) { _ in
             // Use the actual clock even when a resumed timeline delivers a past entry.
             liveSection(now: .now)
         }
     }
 
     private func liveSection(now: Date) -> some View {
-        let livePowerIsCurrent = !coordinator.live.isUnavailable && live.map {
+        let livePowerIsCurrent = !coordinator.livePowerIsUnavailable && power.map {
             DashboardPresentation.liveFreshnessNotice($0.sources.liveStatusAt, now: now) == nil
         } == true
         return VStack(alignment: .leading, spacing: 12) {
             sectionHeading("Live power")
-            if let live {
+            if let power {
+                let charge = MobileLiveResponse.validatedStateOfCharge(
+                    power.stateOfCharge, takenAt: power.sources.stateOfChargeAt, now: now
+                )
                 StatusCard {
                     VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(alignment: .center, spacing: 12) {
-                                Text(live.stateOfCharge.map { "\(Int($0.rounded()))%" } ?? "--")
+                                Text(charge.map { "\(Int($0.rounded()))%" } ?? "--")
                                     .font(.system(.largeTitle, design: .rounded, weight: .bold))
                                     .monospacedDigit()
                                     .contentTransition(reduceMotion ? .identity : .numericText())
-                                    .accessibilityLabel(live.stateOfCharge.map { "Battery charge \(Int($0.rounded())) percent" } ?? "Battery charge unknown")
+                                    .accessibilityLabel(
+                                        charge.map { "Battery charge \(Int($0.rounded())) percent" }
+                                            ?? "Battery charge unknown"
+                                    )
                                 HStack(alignment: .center, spacing: 4) {
                                     Image(systemName: DashboardPresentation.batterySymbol(
-                                        powerWatts: livePowerIsCurrent ? live.live.batteryPower : 0,
-                                        stateOfCharge: live.stateOfCharge))
+                                        powerWatts: livePowerIsCurrent ? power.live.batteryPower : 0,
+                                        stateOfCharge: charge))
                                         .font(.system(size: 44, weight: .bold))
-                                        .foregroundStyle(live.stateOfCharge == nil ? Color.secondary : Color.green)
+                                        .foregroundStyle(charge == nil ? Color.secondary : Color.green)
                                         .accessibilityHidden(true)
-                                    if livePowerIsCurrent && DashboardPresentation.batteryDirection(powerWatts: live.live.batteryPower) == .discharging {
+                                    if livePowerIsCurrent
+                                        && DashboardPresentation.batteryDirection(
+                                            powerWatts: power.live.batteryPower
+                                        ) == .discharging {
                                         DischargeSymbol()
                                             .stroke(Color.secondary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                                             .frame(width: 16, height: 16)
@@ -152,16 +161,17 @@ struct DashboardView: View {
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(
                             (livePowerIsCurrent
-                                ? DashboardPresentation.batteryDescription(stateOfCharge: live.stateOfCharge, powerWatts: live.live.batteryPower)
-                                : "Battery \(live.stateOfCharge.map { "\(Int($0.rounded()))%" } ?? "--"), flow unknown")
-                            + (DashboardPresentation.chargeAgeLabel(live.sources.stateOfChargeAt, now: now).map { ", \($0)" } ?? "")
+                                ? DashboardPresentation.batteryDescription(
+                                    stateOfCharge: charge, powerWatts: power.live.batteryPower
+                                )
+                                : "Battery \(charge.map { "\(Int($0.rounded()))%" } ?? "--"), flow unknown")
                         )
                         Divider()
                         LivePowerFlowCards(flow: DashboardPresentation.powerFlow(
-                            solarPower: live.live.solarPower, loadPower: live.live.loadPower,
-                            batteryPower: live.live.batteryPower, gridPower: live.live.gridPower,
-                            sourceTime: live.sources.liveStatusAt,
-                            isUnavailable: coordinator.live.isUnavailable, now: now
+                            solarPower: power.live.solarPower, loadPower: power.live.loadPower,
+                            batteryPower: power.live.batteryPower, gridPower: power.live.gridPower,
+                            sourceTime: power.sources.liveStatusAt,
+                            isUnavailable: coordinator.livePowerIsUnavailable, now: now
                         ))
                     }
                 }
@@ -187,14 +197,7 @@ struct DashboardView: View {
                             homeKwh: today.homeKwh, solarKwh: today.solarKwh,
                             gridNetKwh: today.gridNetKwh, batteryNetKwh: today.batteryNetKwh
                         ))
-                        if live?.todayComplete == false {
-                            // Only reserve footer space when there is a footer to show.
-                            Spacer(minLength: 0)
-                            Divider()
-                            Label("Some energy intervals are missing", systemImage: "exclamationmark.triangle")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        }
+
                     }
                 }
             } else {
@@ -255,12 +258,10 @@ struct DashboardView: View {
     private var loadTimingNavigation: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeading("Smart Shift")
-            let summarySource = live?.activeLoadTiming?.energyDataThrough ?? live?.sources.energyDataThrough
-            let summaryIsStale = coordinator.live.isUnavailable || DashboardPresentation.loadTimingSummaryIsStale(source: summarySource)
             let summary = DashboardPresentation.loadTimingSummary(
                 live?.activeLoadTiming,
                 hasTariff: DashboardPresentation.hasActiveTariff(label: live?.activeTariff),
-                isStale: summaryIsStale,
+                isStale: false,
                 currencyCode: bill?.currentBill.currency
             )
             Button { onOpenTab(.smartShift) } label: {
