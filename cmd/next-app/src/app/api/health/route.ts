@@ -49,13 +49,14 @@ export async function GET() {
     if (checks.database.status === 'ok') {
         try {
             const siteCount = await pool.query('SELECT COUNT(*) FROM "Site"');
-            const dataCount = await pool.query('SELECT COUNT(*) FROM "EnergyData"');
+            // Day records hold the history; raw rows are a transitional write buffer.
+            const dayCount = await pool.query('SELECT COUNT(*) FROM "EnergyDayArchive"');
 
             checks.schema = {
                 status: 'ok',
                 details: {
                     sites: parseInt(siteCount.rows[0].count),
-                    energyDataRows: parseInt(dataCount.rows[0].count)
+                    energyDays: parseInt(dayCount.rows[0].count)
                 }
             };
         } catch (error) {

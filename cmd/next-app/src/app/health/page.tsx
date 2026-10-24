@@ -15,7 +15,7 @@ type HealthResponse = HealthChecks | { status: 'ok' | 'error' };
 
 type SchemaSummaryDetails = {
     sites: number;
-    energyDataRows: number;
+    energyDays: number;
 };
 
 function isSchemaSummaryDetails(details: unknown): details is SchemaSummaryDetails {
@@ -24,7 +24,7 @@ function isSchemaSummaryDetails(details: unknown): details is SchemaSummaryDetai
     }
 
     const candidate = details as Record<string, unknown>;
-    return typeof candidate.sites === 'number' && typeof candidate.energyDataRows === 'number';
+    return typeof candidate.sites === 'number' && typeof candidate.energyDays === 'number';
 }
 
 export default function HealthPage() {
@@ -129,8 +129,8 @@ export default function HealthPage() {
                                         <div className="text-xs text-gray-500 dark:text-gray-400">Sites</div>
                                     </div>
                                     <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-zinc-700 dark:bg-zinc-700">
-                                        <div className="text-2xl font-bold text-gray-900 dark:text-white">{schemaDetails.energyDataRows}</div>
-                                        <div className="text-xs text-gray-500 dark:text-gray-400">Data Rows</div>
+                                        <div className="text-2xl font-bold text-gray-900 dark:text-white">{schemaDetails.energyDays}</div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-400">Stored Days</div>
                                     </div>
                                 </div>
                             ) : null}

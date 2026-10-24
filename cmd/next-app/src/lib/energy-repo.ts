@@ -225,8 +225,10 @@ ORDER BY local_day`,
      * sites in one query. Rows are unique per (timestamp, site_id), so a count
      * equal to the number of 5-minute slots means the window has no gaps. A
      * settled archive day (`SETTLED_ARCHIVE_DAY_SQL`) counts as all of its slots,
-     * since planning treats it as covered even once its raw rows are trimmed;
-     * windows are site-local midnights, so such days lie wholly inside them.
+     * since planning treats it as covered even once its raw rows are trimmed.
+     * Any other day with no raw rows left (trimmed, or written straight from
+     * Tesla) counts its archived `sample_count`. Windows are site-local
+     * midnights, so archive days lie wholly inside them.
      */
     async countAlignedSamples(
         windows: Array<{ siteId: string; start: Date; end: Date }>,
@@ -254,6 +256,14 @@ SELECT w.site_id, (
       AND a.day_start >= w.start_ts
       AND a.day_end <= w.end_ts
       AND ${SETTLED_ARCHIVE_DAY_SQL}
+) + (
+    SELECT COALESCE(SUM(a.sample_count), 0)::int
+    FROM "EnergyDayArchive" a
+    WHERE a.site_id = w.site_id
+      AND a.day_start >= w.start_ts
+      AND a.day_end <= w.end_ts
+      AND a.raw_pruned
+      AND NOT ${SETTLED_ARCHIVE_DAY_SQL}
 ) AS n
 FROM w`,
             [windows.map(w => w.siteId), windows.map(w => w.start.toISOString()), windows.map(w => w.end.toISOString())]

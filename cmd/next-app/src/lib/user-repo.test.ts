@@ -11,6 +11,7 @@ vi.mock('./db', () => ({
 }));
 
 import { UserRepo } from './user-repo';
+import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { TeslaAuthError } from './tesla-client';
 
 describe('UserRepo admin ordering', () => {
@@ -30,6 +31,17 @@ describe('UserRepo admin ordering', () => {
             1,
             expect.stringContaining('ORDER BY last_data_import DESC NULLS LAST, u.is_active DESC')
         );
+    });
+
+    it('takes last data import from raw rows or day records, whichever is newer', async () => {
+        queryMock
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [] });
+
+        await new UserRepo().getAllUsers();
+
+        const [sql] = queryMock.mock.calls[0] as [string];
+        expect(sql).toContain(`SELECT MAX(${latestStoredSampleSql('s.id')}) FROM "Site" s WHERE s.user_id = u.id`);
     });
 });
 

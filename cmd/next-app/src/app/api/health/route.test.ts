@@ -32,8 +32,8 @@ describe('/api/health', () => {
             if (sql.includes('FROM "Site"')) {
                 return { rows: [{ count: '2' }] };
             }
-            if (sql.includes('FROM "EnergyData"')) {
-                return { rows: [{ count: '500' }] };
+            if (sql.includes('FROM "EnergyDayArchive"')) {
+                return { rows: [{ count: '40' }] };
             }
             return { rows: [] };
         });
@@ -114,8 +114,10 @@ describe('/api/health', () => {
         expect(body.schema.status).toBe('ok');
         expect(body.schema.details).toEqual({
             sites: 2,
-            energyDataRows: 500
+            energyDays: 40
         });
+        // Day records are the history; raw rows are a transitional write buffer.
+        expect(mocks.query.mock.calls.some(([sql]) => String(sql).includes('"EnergyData"'))).toBe(false);
         expect(body.env.status).toBe('ok');
         expect(body.env.details.hasDbUrl).toBeDefined();
     });

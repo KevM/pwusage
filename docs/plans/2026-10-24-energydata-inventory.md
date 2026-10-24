@@ -51,15 +51,18 @@ decodes partial days, so this is a status/selection change, not a codec one).
 
 ### Raw-only (bypass the reader: `new EnergyRepo()` or direct SQL)
 
-| Reader | Location | Reads | Replacement |
-|---|---|---|---|
-| Today refresh "latest stored sample" | `today-refresh.ts:145` `getLatestEnergyData` | newest raw row (also decides yesterday's tail) | Today's (or yesterday's) record `last_timestamp` / latest projection |
-| Battery-hold monitor | `battery-hold-monitor-service.ts:64` `getRawEnergyData` | last 30 min raw | Decode today's open record (or use `createEnergyRepo`) |
-| Gap-heal pre-check | `gap-heal.ts:63` `countAlignedSamples` | counts raw samples (+ settled archive days, #193) | Count from day records' `sample_count` / `complete` |
-| Gap-heal / import planning | `gap-heal.ts:112` `planMissingWindows(new EnergyRepo())`, `Importer.planMissingWindows` | coverage via `createEnergyRepo(...).getDailyCoverage` (compact-aware) | Plan from day-record status: refetch `open` days only |
-| Admin last import | `user-repo.ts:91` | `MAX(timestamp)` raw per user | Max `last_timestamp` from day records (or `Site.last_import_at`) |
-| Admin Sites tab ordering | `site-repo.ts:489` | `max(timestamp)` raw per site | Same as above |
-| Health check | `app/api/health/route.ts:52` | `COUNT(*)` raw | Count day records |
+| Reader | Location | Reads | Replacement | Status |
+|---|---|---|---|---|
+| Today refresh "latest stored sample" | `today-refresh.ts` `getLatestEnergyData` | newest stored sample (also decides yesterday's tail) | `createEnergyRepo(site.timezone).getLatestEnergyData` (raw or day record, whichever is newer) | Done |
+| Battery-hold monitor | `battery-hold-monitor-service.ts` `getRawEnergyData` | last 30 min | `createEnergyRepo(site.timezone).getRawEnergyData` (decodes an archived yesterday) | Done |
+| Gap-heal pre-check | `gap-heal.ts` → `EnergyRepo.countAlignedSamples` | raw samples + settled archive days (#193) | Also counts `sample_count` of unsettled days with no raw left (`raw_pruned`, incl. `writeDayFromSamples`) | Done; later: count from day-record status once raw is gone |
+| Gap-heal / import planning | `gap-heal.ts` `planMissingWindows(new EnergyRepo())`, `Importer.planMissingWindows` | coverage via `createEnergyRepo(...).getDailyCoverage`; the `EnergyRepo` argument is only the flag-off raw fallback | No change needed now; later: plan from day-record status (refetch `open` days only) | Already compact-aware |
+| Admin last import | `user-repo.ts` `getAllUsers` | newest stored sample per user | `latestStoredSampleSql` (`GREATEST` of raw `max(timestamp)` and the newest archive's `last_timestamp`, two index lookups per site) | Done; drop the raw half with the table |
+| Admin Sites tab ordering | `site-repo.ts` `getHistoryOverview` | newest stored sample per site | Same `latestStoredSampleSql` | Done; drop the raw half with the table |
+| Health check | `app/api/health/route.ts` | `COUNT(*)` of day records (`energyDays`, "Stored Days") | — | Done |
+
+`Site.last_import_at` was considered for the admin columns but is the import
+lock's acquire time, not data freshness, so it was not used.
 
 ## Database objects tied to EnergyData
 

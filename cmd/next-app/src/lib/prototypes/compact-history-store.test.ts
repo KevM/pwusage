@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import {addDaysInSiteTimezone} from '../date-utils';
 import { readFileSync, statSync } from 'node:fs';
 import { CompactHistoryStore } from './compact-history-store';
+import {latestStoredSampleSql} from '../latest-stored-sample-sql';
 import { CompactHistoryReader } from './compact-history-reader';
 import {HistoryArchiveRepo} from '../history-archive-repo';
 import {archiveCutoff,runHistoryArchive} from '../history-archive-service';
@@ -338,6 +339,29 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         expect(await reader.getRawEnergyData('site',start,end)).toEqual(samples);
         expect((await reader.getDailyCoverage('site',start,end,'America/Chicago'))[0]).toMatchObject({count:288,archived:true});
         expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDaySummary"')).rows[0].n).toBeGreaterThan(0);
+    });
+    it('counts an unsettled day written straight from Tesla by its stored samples for the gap-heal pre-check',async()=>{
+        await pool.query('TRUNCATE "EnergyData"');
+        // Samples with no recorded period leave attribution incomplete, so the pruned day is not settled.
+        const samples=daySamples().slice(0,100).map(r=>({...r,tariff_schedule_id:null}));
+        expect(await store.writeDayFromSamples('site',start,samples,jobOptions.now)).toMatchObject({status:'written',attributionComplete:false});
+        await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null)`,[end]);
+        const later=addDaysInSiteTimezone(end,1,'America/Chicago');
+        expect((await new EnergyRepo().countAlignedSamples([{siteId:'site',start,end:later}],pool)).get('site')).toBe(100+1);
+    });
+    it('finds the newest stored sample across raw rows and day records',async()=>{
+        const latest=async(site='site')=>(await pool.query<{at:Date|null}>(`SELECT ${latestStoredSampleSql('$1')} AS at`,[site])).rows[0].at;
+        expect(await latest()).toEqual(new Date(+start+300000));
+        expect(await latest('other')).toBeNull();
+        const next=addDaysInSiteTimezone(start,1,'America/Chicago');
+        const nextDay=daySamples().map(r=>({...r,timestamp:new Date(+r.timestamp-+start+ +next)}));
+        await store.writeDayFromSamples('site',next,nextDay,jobOptions.now);
+        expect(await latest()).toEqual(nextDay.at(-1)!.timestamp);
+        await pool.query('TRUNCATE "EnergyData"');
+        expect(await latest()).toEqual(nextDay.at(-1)!.timestamp);
+        const today=new Date('2026-01-09T12:00:00Z');
+        await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null)`,[today]);
+        expect(await latest()).toEqual(today);
     });
     it('replaces the day when written again, as Tesla is the source of truth',async()=>{
         await pool.query('TRUNCATE "EnergyData"');

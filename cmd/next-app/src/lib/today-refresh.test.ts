@@ -95,10 +95,10 @@ vi.mock('./site-repo', () => ({
     }),
 }));
 
-vi.mock('./energy-repo', () => ({
-    EnergyRepo: vi.fn(function EnergyRepo() {
-        return energyRepoMock;
-    }),
+const createEnergyRepoMock = vi.hoisted(() => vi.fn());
+
+vi.mock('./energy-repo-factory', () => ({
+    createEnergyRepo: createEnergyRepoMock,
 }));
 
 vi.mock('./tesla-token-repo', () => ({
@@ -135,9 +135,11 @@ describe('refreshTodayData', () => {
         siteRepoMock.getImportStatus.mockResolvedValue({ isImporting: false, lastImportAt: 0 });
         siteRepoMock.getSite.mockResolvedValue({
             id: 'site-1',
+            timezone: 'America/Chicago',
             live_status_cache: null,
             last_live_refresh_at: null,
         });
+        createEnergyRepoMock.mockReturnValue(energyRepoMock);
         siteRepoMock.updateLiveStatusCache.mockResolvedValue(undefined);
         siteRepoMock.claimLiveRefresh.mockResolvedValue(true);
         siteRepoMock.releaseLiveRefreshClaim.mockResolvedValue(undefined);
@@ -219,6 +221,23 @@ describe('refreshTodayData', () => {
 
         await refreshTodayData('site-1');
         expect(importerMock.getTodayData).toHaveBeenCalledWith('site-1', latest);
+    });
+
+    it('reads the latest stored sample through the compact-aware repo in the site timezone', async () => {
+        const { refreshTodayData } = await importRefreshTodayData();
+
+        await refreshTodayData('site-1');
+        expect(siteRepoMock.getSite).toHaveBeenCalledWith('site-1');
+        expect(createEnergyRepoMock).toHaveBeenCalledWith('America/Chicago');
+        expect(energyRepoMock.getLatestEnergyData).toHaveBeenCalledWith('site-1');
+    });
+
+    it('skips the refresh when the site no longer exists', async () => {
+        siteRepoMock.getSite.mockResolvedValue(undefined);
+        const { refreshTodayData } = await importRefreshTodayData();
+
+        await expect(refreshTodayData('site-1')).resolves.toEqual({ status: 'no-new-rows' });
+        expect(importerMock.getTodayData).not.toHaveBeenCalled();
     });
 
     it('passes null when the site has no stored rows', async () => {
