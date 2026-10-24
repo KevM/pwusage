@@ -44,6 +44,25 @@ describe('verifySiteToken', () => {
         expect(verifySiteToken(token)).toMatchObject({ sites: ['s1'], roles: ['user'], sub: 'u1' });
     });
 
+    it('embeds and verifies the session_version (sv) claim', () => {
+        const token = signSiteToken(['s1'], ['user'], 'u1', undefined, 3);
+        expect(verifySiteToken(token)).toMatchObject({ sites: ['s1'], roles: ['user'], sub: 'u1', sv: 3 });
+    });
+
+    it('defaults sv to 0 when signing without an explicit session version', () => {
+        const token = signSiteToken(['s1'], ['user'], 'u1');
+        expect(verifySiteToken(token)?.sv).toBe(0);
+    });
+
+    it('verifies a legacy token without an sv claim and reports sv as undefined', () => {
+        const legacy = jwt.sign({ sites: ['s1'], roles: ['user'], sub: 'u1', orig_iat: nowSeconds() }, TEST_SECRET, {
+            expiresIn: 60,
+        });
+        const decoded = verifySiteToken(legacy);
+        expect(decoded).toMatchObject({ sites: ['s1'], roles: ['user'], sub: 'u1' });
+        expect(decoded?.sv).toBeUndefined();
+    });
+
     // Pinning the accepted algorithm keeps a future key-type change from reopening
     // algorithm confusion. These tokens are only ever minted as HS256.
     it('rejects a token signed with a different HMAC algorithm', () => {
@@ -58,7 +77,7 @@ describe('verifySiteToken', () => {
 describe('checkRefreshNeeded', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockGetById.mockResolvedValue({ id: 'u1', is_active: true, roles: ['user'] });
+        mockGetById.mockResolvedValue({ id: 'u1', is_active: true, roles: ['user'], session_version: 0 });
         mockGetSitesForUser.mockResolvedValue([{ id: 's1' }]);
     });
 
@@ -92,7 +111,7 @@ describe('checkRefreshNeeded', () => {
         );
 
         // DB state shows user was demoted to 'user' role and s2 was unassigned
-        mockGetById.mockResolvedValue({ id: 'u1', is_active: true, roles: ['user'] });
+        mockGetById.mockResolvedValue({ id: 'u1', is_active: true, roles: ['user'], session_version: 0 });
         mockGetSitesForUser.mockResolvedValue([{ id: 's1' }]);
 
         const refreshed = await checkRefreshNeeded(expiringSoon);
@@ -102,6 +121,69 @@ describe('checkRefreshNeeded', () => {
         expect(claims?.sub).toBe('u1');
         expect(claims?.roles).toEqual(['user']); // Admin role demoted
         expect(claims?.sites).toEqual(['s1']);   // Stale site s2 removed
+    });
+
+    it('stamps the DB session_version into the refreshed token', async () => {
+        mockGetById.mockResolvedValue({ id: 'u1', is_active: true, roles: ['user'], session_version: 2 });
+        mockGetSitesForUser.mockResolvedValue([{ id: 's1' }]);
+
+        const expiringSoon = jwt.sign(
+            { sites: ['s1'], roles: ['user'], sub: 'u1', sv: 2, orig_iat: nowSeconds() },
+            TEST_SECRET,
+            { expiresIn: 60 }
+        );
+
+        const refreshed = await checkRefreshNeeded(expiringSoon);
+
+        expect(refreshed).toBeTruthy();
+        expect(verifySiteToken(refreshed!)?.sv).toBe(2);
+    });
+
+    // A token whose sv is behind the DB session_version was revoked by
+    // sign-out-everywhere. Refresh must NOT re-stamp the new sv — that would
+    // auto-un-revoke a stolen/old session on its next refresh window.
+    it('refuses to refresh a session revoked by a session_version bump', async () => {
+        mockGetById.mockResolvedValue({ id: 'u1', is_active: true, roles: ['user'], session_version: 1 });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const revokedToken = jwt.sign(
+            { sites: ['s1'], roles: ['user'], sub: 'u1', sv: 0, orig_iat: nowSeconds() },
+            TEST_SECRET,
+            { expiresIn: 60 }
+        );
+
+        expect(await checkRefreshNeeded(revokedToken)).toBeNull();
+        expect(warn).toHaveBeenCalled();
+    });
+
+    it('treats a legacy token without sv as version 0 and refuses refresh once the DB version is bumped', async () => {
+        mockGetById.mockResolvedValue({ id: 'u1', is_active: true, roles: ['user'], session_version: 1 });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const legacyToken = jwt.sign(
+            { sites: ['s1'], roles: ['user'], sub: 'u1', orig_iat: nowSeconds() },
+            TEST_SECRET,
+            { expiresIn: 60 }
+        );
+
+        expect(await checkRefreshNeeded(legacyToken)).toBeNull();
+        expect(warn).toHaveBeenCalled();
+    });
+
+    it('gracefully migrates a legacy token (no sv) to the current DB version when it is still 0', async () => {
+        mockGetById.mockResolvedValue({ id: 'u1', is_active: true, roles: ['user'], session_version: 0 });
+        mockGetSitesForUser.mockResolvedValue([{ id: 's1' }]);
+
+        const legacyToken = jwt.sign(
+            { sites: ['s1'], roles: ['user'], sub: 'u1', orig_iat: nowSeconds() },
+            TEST_SECRET,
+            { expiresIn: 60 }
+        );
+
+        const refreshed = await checkRefreshNeeded(legacyToken);
+
+        expect(refreshed).toBeTruthy();
+        expect(verifySiteToken(refreshed!)?.sv).toBe(0);
     });
 
     it('does not refresh a freshly issued token (outside the window)', async () => {

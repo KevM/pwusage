@@ -45,7 +45,7 @@ describe('POST /api/mobile/session', () => {
     expect(response.headers.get('set-cookie')).toContain('HttpOnly');
     expect(response.headers.get('set-cookie')).toContain('Secure');
     expect(response.headers.get('cache-control')).toContain('no-store');
-    expect(mocks.signSiteToken).toHaveBeenCalledWith(['site-1'], ['user'], 'user-1');
+    expect(mocks.signSiteToken).toHaveBeenCalledWith(['site-1'], ['user'], 'user-1', undefined, 0);
   });
 
   it('marks the session cookie Secure for HTTPS even when NODE_ENV is not production', async () => {

@@ -1,7 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { getAuthorizedSiteIds } from '@/lib/auth-checks';
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { getAuthorizedSiteIds, getCurrentUser, hasValidSession } from '@/lib/auth-checks';
 import { SiteRepo } from '@/lib/site-repo';
 import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards';
 import { createTeslaClientForUser } from '@/lib/tesla-client-factory';
@@ -32,8 +31,9 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         redirect('/login');
     }
 
-    const decoded = verifySiteToken(siteAuthToken);
-    if (!decoded) {
+    // DB-backed: a session revoked by sign-out-everywhere must not reach the
+    // user's Tesla account even though its JWT signature is still valid.
+    if (!await hasValidSession()) {
         redirect('/login');
     }
 
@@ -61,9 +61,10 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         }));
     }
 
-    if (decoded.sub) {
+    const currentUser = await getCurrentUser();
+    if (currentUser) {
         try {
-            const client = await createTeslaClientForUser(decoded.sub);
+            const client = await createTeslaClientForUser(currentUser.id);
             if (client) {
                 const fleetProducts = await client.getProducts();
                 vehicleProducts = fleetProducts

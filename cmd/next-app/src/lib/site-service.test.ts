@@ -27,7 +27,8 @@ describe('SiteService Security', () => {
     };
 
     const mockEnergyRepo = {
-        getSites: vi.fn()
+        getSites: vi.fn(),
+        getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }])
     };
 
     it('should filter sites based on API authorization when no JWT provided', async () => {
@@ -145,10 +146,11 @@ describe('SiteService Security', () => {
         });
     });
 
-    // The JWT fast-path trusts claims offline; a revoked user must be blocked here
-    // too, otherwise removing the refresh-time check would only delay (not prevent)
-    // their lockout from these JWT-only endpoints.
-    describe('revocation (isUserActive)', () => {
+    // The JWT fast-path trusts claims offline; a revoked user or a session
+    // revoked by sign-out-everywhere must be blocked here too, otherwise
+    // removing the refresh-time check would only delay (not prevent) their
+    // lockout from these JWT-only endpoints.
+    describe('revocation (getAuthState)', () => {
         it('validateSiteAccess returns false for a revoked user without hitting the API', async () => {
             mockTeslaClient.getProducts.mockClear();
             vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1' });
@@ -157,7 +159,7 @@ describe('SiteService Security', () => {
                 teslaClient: mockTeslaClient as unknown as TeslaClient,
                 siteRepo: mockEnergyRepo as unknown as SiteRepo,
                 siteAuthToken: 'valid_token',
-                isUserActive: vi.fn().mockResolvedValue(false),
+                getAuthState: vi.fn().mockResolvedValue({ isActive: false, sessionVersion: 0, roles: ['user'] }),
             });
 
             expect(await service.validateSiteAccess('12345')).toBe(false);
@@ -172,7 +174,7 @@ describe('SiteService Security', () => {
                 teslaClient: mockTeslaClient as unknown as TeslaClient,
                 siteRepo: mockEnergyRepo as unknown as SiteRepo,
                 siteAuthToken: 'valid_token',
-                isUserActive: vi.fn().mockResolvedValue(true),
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] }),
             });
 
             expect(await service.validateSiteAccess('12345')).toBe(true);
@@ -188,11 +190,79 @@ describe('SiteService Security', () => {
                 teslaClient: mockTeslaClient as unknown as TeslaClient,
                 siteRepo: mockEnergyRepo as unknown as SiteRepo,
                 siteAuthToken: 'valid_token',
-                isUserActive: vi.fn().mockResolvedValue(false),
+                getAuthState: vi.fn().mockResolvedValue({ isActive: false, sessionVersion: 0, roles: ['user'] }),
             });
 
             await expect(service.getAuthorizedSites()).rejects.toThrow('Unauthorized');
             expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
+        });
+
+        // Sign-out-everywhere: a token whose sv trails the DB session_version
+        // must be rejected even though the user is still active.
+        it('validateSiteAccess returns false for a session revoked by a session_version bump', async () => {
+            mockTeslaClient.getProducts.mockClear();
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1', sv: 0 });
+
+            const service = new SiteService({
+                teslaClient: mockTeslaClient as unknown as TeslaClient,
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 1, roles: ['user'] }),
+            });
+
+            expect(await service.validateSiteAccess('12345')).toBe(false);
+            expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
+        });
+
+        it('getAuthorizedSites rejects a session revoked by a session_version bump', async () => {
+            mockTeslaClient.getProducts.mockClear();
+            mockEnergyRepo.getSites.mockResolvedValue([mockSite, mockUnauthorizedSite]);
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1', sv: 0 });
+
+            const service = new SiteService({
+                teslaClient: mockTeslaClient as unknown as TeslaClient,
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 1, roles: ['user'] }),
+            });
+
+            await expect(service.getAuthorizedSites()).rejects.toThrow('Unauthorized');
+            expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
+        });
+
+        // Stale site claims: membership comes from the DB, not the JWT.
+        it('validateSiteAccess denies a site the user no longer belongs to', async () => {
+            mockTeslaClient.getProducts.mockClear();
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['stale-site'], roles: [], sub: 'u1' });
+            mockEnergyRepo.getSitesForUser.mockResolvedValue([{ id: 'current-site' }]);
+
+            const service = new SiteService({
+                teslaClient: mockTeslaClient as unknown as TeslaClient,
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] }),
+            });
+
+            expect(await service.validateSiteAccess('stale-site')).toBe(false);
+            expect(await service.validateSiteAccess('current-site')).toBe(true);
+            expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
+        });
+
+        // Stale role claims: admin comes from the DB too.
+        it('validateSiteAccess uses DB roles over stale JWT admin role', async () => {
+            mockTeslaClient.getProducts.mockClear();
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['site-x'], roles: ['admin'], sub: 'u1' });
+            mockEnergyRepo.getSitesForUser.mockResolvedValue([{ id: 'site-x' }]);
+
+            const service = new SiteService({
+                teslaClient: mockTeslaClient as unknown as TeslaClient,
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] }),
+            });
+
+            expect(await service.validateSiteAccess('other-site')).toBe(false);
+            expect(await service.validateSiteAccess('site-x')).toBe(true);
         });
     });
 
@@ -240,9 +310,9 @@ describe('SiteService Security', () => {
             vi.mocked(authJwt.verifySiteToken).mockReturnValue(null); // Unauthorized
 
             const service = new SiteService({
-                siteRepo: { getSites: vi.fn(), getSite: vi.fn() } as unknown as SiteRepo,
+                siteRepo: { getSites: vi.fn(), getSite: vi.fn(), getSitesForUser: vi.fn() } as unknown as SiteRepo,
                 siteAuthToken: 'invalid',
-                isUserActive: vi.fn().mockResolvedValue(true)
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] })
             });
 
             const result = await service.loadSitePageData('12345');
@@ -252,6 +322,7 @@ describe('SiteService Security', () => {
         it('returns not-found when site does not exist in DB and ensureSite cannot create it', async () => {
             const mockSiteRepo = {
                 getSites: vi.fn(),
+                getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }]),
                 getSite: vi.fn().mockResolvedValue(null) // site not found
             };
 
@@ -260,7 +331,7 @@ describe('SiteService Security', () => {
             const service = new SiteService({
                 siteRepo: mockSiteRepo as unknown as SiteRepo,
                 siteAuthToken: 'valid_token',
-                isUserActive: vi.fn().mockResolvedValue(true),
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] }),
                 energyRepo: mockEnergyRepo as unknown as EnergyRepo,
                 teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
                 trmnlService: mockTrmnlService as unknown as TrmnlService,
@@ -276,6 +347,7 @@ describe('SiteService Security', () => {
         it('returns needs-setup when site exists but energy repo has no data', async () => {
             const mockSiteRepo = {
                 getSites: vi.fn(),
+                getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }]),
                 getSite: vi.fn().mockResolvedValue(mockSiteData)
             };
 
@@ -285,7 +357,7 @@ describe('SiteService Security', () => {
             const service = new SiteService({
                 siteRepo: mockSiteRepo as unknown as SiteRepo,
                 siteAuthToken: 'valid_token',
-                isUserActive: vi.fn().mockResolvedValue(true),
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] }),
                 energyRepo: mockEnergyRepo as unknown as EnergyRepo,
                 teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
                 trmnlService: mockTrmnlService as unknown as TrmnlService,
@@ -301,6 +373,7 @@ describe('SiteService Security', () => {
         it('returns auth-failure when ensureSite throws a 401 error and DB has no data', async () => {
             const mockSiteRepo = {
                 getSites: vi.fn(),
+                getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }]),
                 getSite: vi.fn().mockResolvedValue(null) // missing in DB initially
             };
 
@@ -310,7 +383,7 @@ describe('SiteService Security', () => {
             const service = new SiteService({
                 siteRepo: mockSiteRepo as unknown as SiteRepo,
                 siteAuthToken: 'valid_token',
-                isUserActive: vi.fn().mockResolvedValue(true),
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] }),
                 energyRepo: mockEnergyRepo as unknown as EnergyRepo,
                 teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
                 trmnlService: mockTrmnlService as unknown as TrmnlService,
@@ -325,6 +398,7 @@ describe('SiteService Security', () => {
         it('returns ready status with full calculated data when site has data', async () => {
             const mockSiteRepo = {
                 getSites: vi.fn(),
+                getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }]),
                 getSite: vi.fn().mockResolvedValue({
                     ...mockSiteData,
                     json: {
@@ -341,7 +415,7 @@ describe('SiteService Security', () => {
             const service = new SiteService({
                 siteRepo: mockSiteRepo as unknown as SiteRepo,
                 siteAuthToken: 'valid_token',
-                isUserActive: vi.fn().mockResolvedValue(true),
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] }),
                 energyRepo: mockEnergyRepo as unknown as EnergyRepo,
                 teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
                 trmnlService: mockTrmnlService as unknown as TrmnlService,
@@ -366,6 +440,7 @@ describe('SiteService Security', () => {
         it('builds the Tesla client with explicit empty credentials when the site row is missing', async () => {
             const mockSiteRepo = {
                 getSites: vi.fn(),
+                getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }]),
                 getSite: vi.fn().mockResolvedValue(null)
             };
             mockImporter.ensureSite.mockResolvedValue(null);
@@ -374,7 +449,7 @@ describe('SiteService Security', () => {
             const service = new SiteService({
                 siteRepo: mockSiteRepo as unknown as SiteRepo,
                 siteAuthToken: 'valid_token',
-                isUserActive: vi.fn().mockResolvedValue(true),
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] }),
                 energyRepo: mockEnergyRepo as unknown as EnergyRepo,
                 teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
                 trmnlService: mockTrmnlService as unknown as TrmnlService,

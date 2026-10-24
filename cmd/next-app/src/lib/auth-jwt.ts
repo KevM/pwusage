@@ -28,16 +28,18 @@ export interface SiteAuthClaims {
     sites: string[];
     roles?: string[]; // Added roles
     sub?: string;     // User ID (Standard JWT Subject claim)
+    sv?: number;      // session_version from User row; absent = legacy token (treated as 0)
     orig_iat?: number; // Original issued at (for absolute session cap)
     iat?: number;
     exp?: number;
 }
 
-export function signSiteToken(siteIds: string[], roles: string[] = [], userId?: string, originalIat?: number): string {
+export function signSiteToken(siteIds: string[], roles: string[] = [], userId?: string, originalIat?: number, sessionVersion: number = 0): string {
     const now = Math.floor(Date.now() / 1000);
     const payload: SiteAuthClaims = {
         sites: siteIds,
         roles,
+        sv: sessionVersion,
         orig_iat: originalIat || now
     };
     if (userId) payload.sub = userId;
@@ -47,7 +49,7 @@ export function signSiteToken(siteIds: string[], roles: string[] = [], userId?: 
     });
 }
 
-export function verifySiteToken(token: string): { sites: string[], roles: string[], sub?: string, orig_iat?: number } | null {
+export function verifySiteToken(token: string): { sites: string[], roles: string[], sub?: string, sv?: number, orig_iat?: number } | null {
     try {
         const decoded = jwt.verify(token, getAuthSecret(), { algorithms: [SITE_TOKEN_ALGORITHM] }) as SiteAuthClaims;
         if (decoded && Array.isArray(decoded.sites)) {
@@ -55,6 +57,7 @@ export function verifySiteToken(token: string): { sites: string[], roles: string
                 sites: decoded.sites,
                 roles: decoded.roles || [],
                 sub: decoded.sub,
+                sv: decoded.sv,
                 orig_iat: decoded.orig_iat
             };
         }
@@ -85,6 +88,7 @@ export async function checkRefreshNeeded(token: string): Promise<string | null> 
         if (timeRemaining < REFRESH_THRESHOLD_SECONDS) {
             let refreshedSites = decoded.sites;
             let refreshedRoles = decoded.roles || [];
+            let refreshedSessionVersion = decoded.sv ?? 0;
 
             // Don't extend a session for a revoked/deactivated user and re-derive fresh
             // roles/sites from DB. Authorization paths (e.g. SiteService.validateSiteAccess)
@@ -109,7 +113,21 @@ export async function checkRefreshNeeded(token: string): Promise<string | null> 
                     return null;
                 }
 
+                // Refuse to refresh a session revoked by sign-out-everywhere (or any
+                // session_version bump). Legacy tokens without `sv` are treated as 0,
+                // so they refresh (and migrate to the current sv) only while the DB
+                // version is still 0. Once the version is bumped, old tokens are
+                // blocked here permanently — re-stamping the new sv here would
+                // auto-un-revoke a stolen/revoked session on its next refresh window.
+                const dbSessionVersion = user.session_version ?? 0;
+                const tokenSessionVersion = decoded.sv ?? 0;
+                if (tokenSessionVersion < dbSessionVersion) {
+                    console.warn(`[AuthJWT] Refusing to refresh revoked session for user ${decoded.sub} (token sv=${tokenSessionVersion} < db sv=${dbSessionVersion})`);
+                    return null;
+                }
+
                 refreshedRoles = user.roles || [];
+                refreshedSessionVersion = dbSessionVersion;
 
                 const siteRepo = new SiteRepo();
                 const userSites = await siteRepo.getSitesForUser(decoded.sub);
@@ -117,7 +135,7 @@ export async function checkRefreshNeeded(token: string): Promise<string | null> 
             }
 
             // Token is valid but expiring soon -> Refresh with updated claims
-            return signSiteToken(refreshedSites, refreshedRoles, decoded.sub, decoded.orig_iat);
+            return signSiteToken(refreshedSites, refreshedRoles, decoded.sub, decoded.orig_iat, refreshedSessionVersion);
         }
 
         return null;
