@@ -212,6 +212,9 @@ final class DashboardCoordinator: ObservableObject {
     @Published private(set) var householdPattern: LoadTimingForecastEstimator.PlanningContext?
 
     var pollingTimerIsActive: Bool { timerTask != nil }
+    /// Whichever endpoint supplies Home's power readings owns their availability:
+    /// on an older server without the fast route, the combined endpoint does.
+    var livePowerIsUnavailable: Bool { usesLivePowerEndpoint ? power.isUnavailable : live.isUnavailable }
 
     private let api: any MobileDashboardDataAPI
     private let planningAPI: (any MobileLoadPlanningDataAPI)?

@@ -140,6 +140,40 @@ struct DashboardCoordinatorTests {
         #expect(api.summary.liveSiteIDs.count == 2)
     }
 
+    @Test("On an older server a combined-endpoint failure marks live power unavailable")
+    func fallbackFailureMarksLivePowerUnavailable() async {
+        let clock = TestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        api.powerError = PWUsageAPIError.requestRejected(statusCode: 404, message: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(!coordinator.livePowerIsUnavailable)
+
+        api.summary.liveError = PWUsageAPIError.recoverableServerError(statusCode: 503)
+        clock.advance(minutes: 5)
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(!coordinator.power.isUnavailable)
+        #expect(coordinator.livePowerIsUnavailable)
+    }
+
+    @Test("With the fast endpoint, live power availability follows that endpoint alone")
+    func fastEndpointOwnsLivePowerAvailability() async {
+        let clock = TestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        await coordinator.refreshAll(trigger: .userGesture)
+        api.summary.liveError = PWUsageAPIError.recoverableServerError(statusCode: 503)
+        clock.advance(minutes: 1)
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(coordinator.live.isUnavailable)
+        #expect(!coordinator.livePowerIsUnavailable)
+
+        api.powerError = PWUsageAPIError.recoverableServerError(statusCode: 503)
+        clock.advance(minutes: 1)
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(coordinator.livePowerIsUnavailable)
+    }
+
     @Test("Disk snapshots preserve timestamps and restore only the selected site")
     func diskSnapshotsRestorePerSite() async throws {
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")

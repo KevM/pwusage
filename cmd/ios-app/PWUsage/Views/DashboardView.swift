@@ -103,7 +103,7 @@ struct DashboardView: View {
         }
         if let bill { dates.append(bill.sources.energyDataThrough) }
         // A failed request with nothing cached shows as unavailable, so it counts as stale too.
-        if power == nil, coordinator.power.isUnavailable || coordinator.live.isUnavailable { dates.append(nil) }
+        if power == nil, coordinator.livePowerIsUnavailable { dates.append(nil) }
         if live == nil, coordinator.live.isUnavailable { dates.append(nil) }
         if bill == nil, coordinator.bill.isUnavailable { dates.append(nil) }
         return dates
@@ -117,7 +117,7 @@ struct DashboardView: View {
     }
 
     private func liveSection(now: Date) -> some View {
-        let livePowerIsCurrent = !coordinator.power.isUnavailable && power.map {
+        let livePowerIsCurrent = !coordinator.livePowerIsUnavailable && power.map {
             DashboardPresentation.liveFreshnessNotice($0.sources.liveStatusAt, now: now) == nil
         } == true
         return VStack(alignment: .leading, spacing: 12) {
@@ -171,7 +171,7 @@ struct DashboardView: View {
                             solarPower: power.live.solarPower, loadPower: power.live.loadPower,
                             batteryPower: power.live.batteryPower, gridPower: power.live.gridPower,
                             sourceTime: power.sources.liveStatusAt,
-                            isUnavailable: coordinator.power.isUnavailable, now: now
+                            isUnavailable: coordinator.livePowerIsUnavailable, now: now
                         ))
                     }
                 }
