@@ -94,7 +94,14 @@ Maintenance scripts that query `EnergyData` directly (`backfill-soc.ts`,
 
 ## Decisions to make before switching writers
 
-1. **Tariff attribution**: keep per-sample `tariff_id`/`tariff_schedule_id` in the payload, or store samples pure and attribution as summaries tagged with the effective-tariff timeline revision that produced them (needed for back-dated tariffs and ROI; see TODO "Effective-dated tariffs").
+1. **Tariff attribution — decided: a per-day segment timeline.** Samples stay pure Tesla data (no per-sample `tariff_id`/`tariff_schedule_id` in the payload). Each day record carries its attribution as an ordered list of segments, e.g. `[{offset: 0, scheduleId: off-peak}, {offset: 480, scheduleId: on-peak}, {offset: 1260, scheduleId: off-peak}]`.
+   - **Offsets are minutes from `day_start`** (or absolute timestamps), never local clock times, so DST days are unambiguous (the fall-back day repeats 1:00–2:00 local).
+   - **The schedule ID pins the rates:** a `TariffSchedule` belongs to a season of one append-only tariff version, so it identifies the exact version; `tariff_id` may be stored alongside for convenience.
+   - **Gaps are explicit:** a segment with no schedule (no matching period) marks the day's attribution incomplete instead of pricing it with a synthetic fallback.
+   - **Provenance:** the record notes which tariff-timeline revision produced the segments, so once effective-dated tariffs exist (TODO "Effective-dated tariffs"), stale days are a query.
+   - **Summaries** (`EnergyDaySummary`) are derived from samples × segments when the record is written, and re-derived when segments change.
+   - **Re-attribution** (a back-dated tariff, a correction) rewrites only a day's segments and summaries from stored samples: no sample rewrite, no Tesla refetch.
+   - Until effective dates exist, segments come from the tariff version current at write time, as today.
 2. **Open days**: status (`open`/`complete`), `fetched_at` replace guard, and the completeness rule (ended + 288 samples; DST days 276/300).
 3. **SOC**: keep per-sample `battery_soc` where Tesla returns it, or store an hourly SOC series per day.
 4. **Refresh latch**: fetch at most once per new 5-minute sample, ~2 min after each boundary (measured: samples appear 75–85 s after their timestamp and never change).
@@ -107,4 +114,9 @@ Maintenance scripts that query `EnergyData` directly (`backfill-soc.ts`,
 - Ops tooling: 3 scripts/workflows simplified.
 - The rest is deletion.
 
-The one decision with long-term reach is attribution (1); the rest is mechanical.
+Attribution (1) was the one decision with long-term reach and is settled; the rest is mechanical.
+
+## Working branch
+
+Integration branch: `feat/single-compact-store`. Sessions branch from it and
+open PRs back into it; it merges to `main` once the cutover is ready.
