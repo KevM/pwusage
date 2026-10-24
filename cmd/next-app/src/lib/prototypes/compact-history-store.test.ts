@@ -292,6 +292,13 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).stopped).toBe('paused');
         expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(2);
     });
+    it('runs the claimed job without JIT and leaves pooled sessions unchanged',async()=>{
+        const before=(await pool.query('SHOW jit')).rows[0].jit;
+        const held=new HistoryArchiveRepo(pool);await held.claim();
+        try {expect((await (held as unknown as {client:{query:(sql:string)=>Promise<{rows:{jit:string}[]}>}}).client.query('SHOW jit')).rows[0].jit).toBe('off');}
+        finally {await held.release();}
+        expect((await pool.query('SHOW jit')).rows[0].jit).toBe(before);
+    });
     it('preflight refuses transfer over budget without changing raw samples',async()=>{
         await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
         const report=await runHistoryArchive(new HistoryArchiveRepo(pool),{...jobOptions,maxEstimatedBytes:40000});
