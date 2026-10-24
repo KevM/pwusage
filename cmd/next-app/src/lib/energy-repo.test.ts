@@ -342,6 +342,21 @@ describe('EnergyRepo.countAlignedSamples', () => {
     });
 });
 
+describe('EnergyRepo.getBucketedEnergyData', () => {
+    beforeEach(() => queryMock.mockReset());
+
+    it('returns the ROW_NUMBER id as a number, matching compact reads', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{
+            id: '7', timestamp: '2026-04-01T00:00:00Z', sample_timestamp: '2026-04-01T00:10:00Z', site_id: 'site-1',
+            tariff_id: 1, tariff_schedule_id: 2, load_power: '1', solar_power: '2', grid_power: '3', battery_power: '4', sample_count: '3',
+        }] });
+
+        const [row] = await new EnergyRepo().getBucketedEnergyData('site-1', new Date('2026-04-01'), new Date('2026-04-02'));
+
+        expect(row.id).toBe(7);
+    });
+});
+
 describe('EnergyRepo getRawEnergyData column projection', () => {
     beforeEach(() => {
         queryMock.mockReset();

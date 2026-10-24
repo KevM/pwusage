@@ -669,7 +669,7 @@ FROM w`,
         console.log(`[EnergyRepo] getBucketedEnergyData: Query = ${queryDuration}ms, Rows = ${res.rows.length}`);
 
         return res.rows.map(row => ({
-            id: row.id,
+            id: Number(row.id),
             timestamp: new Date(row.timestamp),
             sample_timestamp: new Date(row.sample_timestamp),
             site_id: row.site_id.toString(),
