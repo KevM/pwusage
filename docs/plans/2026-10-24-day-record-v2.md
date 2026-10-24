@@ -61,23 +61,20 @@ minus the two tariff columns. The site-day grid is 5 minutes.
 - **`timelineRevision`** records what produced the segments. Until
   effective-dated tariffs exist it is the tariff version current at write time;
   afterwards, the timeline revision, so stale days are a query.
-- **Tesla's sample timestamp marks the end of its 5-minute interval**
-  (decided 2026-10-24): a sample appears complete ~75–85 s after its
-  timestamp, so a sample labeled `16:00` covers 15:55–16:00.
-- **Derivation:** walk the day's 5-minute intervals and price each by its
-  start, `Schedule.getTariffPeriod(t − 5 min)` for the sample labeled `t`, then
-  run-length encode. Segment boundaries fall on 5-minute marks; a schedule
-  boundary that isn't on one (none exist today) takes effect at the next
-  interval. Today's importer calls `getTariffPeriod(t)`, which prices every
-  period's first interval one step early; v2 corrects that, and the archive
-  migration re-derives it from stored samples.
-- **Day boundary check (before migrating archives):** with end-labeled
-  samples, the interval 23:55–24:00 is labeled `00:00` of the next day.
-  Tesla's calendar day appears to return labels `00:00…23:55` (178 samples by
-  14:45 local), i.e. the previous day's last interval and not its own. Verify
-  by fetching two consecutive days and comparing day D+1's `00:00` sample with
-  day D; if confirmed, a day record holds the intervals ending `00:05…24:00`
-  and the fetch for day D also requests D+1's first sample.
+- **Sample labels follow Tesla's own bucketing: a label is its interval's
+  start** (verified 2026-10-24 with `scripts/probe-tesla-day-boundary.ts`:
+  Tesla's 30-minute buckets for Harrison equal the sum of the 5-minute samples
+  labeled `h … h+25` exactly, for grid import and home usage on every bucket
+  checked; summing `h+5 … h+30` is off by 8–22 Wh). A day is the samples
+  labeled `00:00 … 23:55`, which is what the importer stores today. Samples do
+  appear ~75–85 s after their label already looking complete, so Tesla may
+  measure with a lag or label ahead; matching Tesla's own aggregates is the
+  only checkable reference, so the label-as-start convention stays.
+- **Derivation:** walk the day's 5-minute slots, price each with
+  `Schedule.getTariffPeriod(t)` for the sample labeled `t` (unchanged from
+  today), then run-length encode. Segment boundaries fall on 5-minute marks; a
+  schedule boundary that isn't on one (none exist today) takes effect at the
+  next slot.
 
 ### Status and freshness (new columns)
 
@@ -176,9 +173,9 @@ read support is removed.
 2. **Segments use the tariff version current at write time** until
    effective-dated tariffs exist; days are re-attributed as past tariffs are
    backfilled.
-3. **Timestamps mark interval ends:** attribution prices each sample by its
-   interval start (`t − 5 min`). Open item: the day-boundary check above,
-   before the archive migration.
+3. **Labels mark interval starts,** matching Tesla's own 30-minute and daily
+   bucketing (verified). Attribution keeps `getTariffPeriod(t)`; day
+   boundaries are unchanged.
 
 ## Implementation slices (each a PR into `feat/single-compact-store`)
 
