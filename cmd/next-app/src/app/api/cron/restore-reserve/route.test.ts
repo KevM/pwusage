@@ -7,7 +7,8 @@ const { getAllMock, rawMock, evalMock, refreshMock, createClientMock, restoreMoc
 
 vi.mock('@/lib/battery-hold-repo', () => ({ BatteryHoldRepo: class { getAllActiveHolds = getAllMock; recordMonitoring = recordMock;
   claimHold = async () => true; releaseHold = async () => undefined; } }));
-vi.mock('@/lib/energy-repo', () => ({ EnergyRepo: class { getRawEnergyData = rawMock; } }));
+vi.mock('@/lib/energy-repo-factory', () => ({ createEnergyRepo: () => ({ getRawEnergyData: rawMock }) }));
+vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = async (id: string) => ({ id, timezone: 'America/Chicago' }); } }));
 vi.mock('@/lib/battery-hold-detection', () => ({ evaluateHold: evalMock }));
 vi.mock('@/lib/today-refresh', () => ({ refreshTodayData: refreshMock }));
 vi.mock('@/lib/battery-hold-service', () => ({ createSiteTeslaClient: createClientMock, restoreBattery: restoreMock }));

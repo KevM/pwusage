@@ -1,5 +1,6 @@
 import { pool, Site, SiteWithTariffs, Tariff, TariffSeason } from './db';
 import { getRequestContext } from './request-context';
+import { latestStoredSampleSql } from './latest-stored-sample-sql';
 
 // Use global cache to persist across reloads in dev
 const globalForCache = global as unknown as { siteCache: Map<string, { data: SiteWithTariffs; expires: number }> };
@@ -470,7 +471,7 @@ export class SiteRepo {
      * first, then unmigrated sites gone quiet, then migrated sites; oldest
      * install first within each group. The archive aggregate reads only the
      * (site_id, day_start) primary key, never the archive payloads; the latest
-     * sample is one idx_energy_site_ts lookup per site.
+     * sample (raw rows or day records) is two index lookups per site.
      */
     async getHistoryOverview(): Promise<SiteHistoryOverview[]> {
         const { rows } = await pool.query<SiteHistoryOverview>(`
@@ -485,9 +486,7 @@ export class SiteRepo {
                     min(day_start) AS first_archived_day, max(day_start) AS last_archived_day
                 FROM "EnergyDayArchive" GROUP BY site_id
             ) a ON a.site_id = s.id
-            LEFT JOIN LATERAL (
-                SELECT max(timestamp) AS last_energy_at FROM "EnergyData" WHERE site_id = s.id
-            ) e ON true
+            LEFT JOIN LATERAL (SELECT ${latestStoredSampleSql('s.id')} AS last_energy_at) e ON true
             ORDER BY s.history_migrated_at IS NOT NULL,
                 (e.last_energy_at >= now() - interval '7 days') IS NOT TRUE,
                 s.installed ASC, s.id
