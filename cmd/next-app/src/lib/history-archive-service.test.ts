@@ -1,13 +1,13 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {runHistoryArchive,readArchiveOptions,ArchiveControlChangedError,type ArchiveJobRepo,type ArchiveCandidate} from './history-archive-service';
 const now=new Date('2026-10-07T20:00:00Z');
-const day:ArchiveCandidate={siteId:'site',start:new Date('2025-01-01T06:00:00Z'),end:new Date('2025-01-02T06:00:00Z'),timezone:'America/Chicago'};
+const day:ArchiveCandidate={siteId:'site',start:new Date('2025-01-01T06:00:00Z'),end:new Date('2025-01-02T06:00:00Z'),timezone:'America/Chicago',trim:true};
 afterEach(()=>vi.restoreAllMocks());
 function fixture() {
     const repo:ArchiveJobRepo={claim:vi.fn(async()=>true),release:vi.fn(async()=>{}),control:vi.fn(async()=>({paused:false,trim:false,revision:"1"})),
         next:vi.fn(async()=>day),estimate:vi.fn(async()=>100000),finalize:vi.fn<ArchiveJobRepo['finalize']>(async()=>({status:'finalized',revision:'revision',attributionComplete:true})),
         trim:vi.fn<ArchiveJobRepo['trim']>(async()=>({status:'trimmed',samples:288})),retry:vi.fn(async()=>{}),clearRetry:vi.fn(async()=>{}),saveReport:vi.fn(async()=>{})};
-    const options={now,retentionDays:365,maxDays:1,maxTimeMs:30000,maxEstimatedBytes:1000000,readsEnabled:true};return {repo,options};
+    const options={now,retentionDays:365,archiveAfterDays:2,maxDays:1,maxTimeMs:30000,maxEstimatedBytes:1000000,readsEnabled:true};return {repo,options};
 }
 it('does nothing while paused and releases its claim',async()=>{
     const {repo,options}=fixture();vi.mocked(repo.control).mockResolvedValue({paused:true,trim:true,revision:"2"});
@@ -34,9 +34,28 @@ it('rechecks pause after finalization before trimming',async()=>{
     const {repo,options}=fixture();vi.mocked(repo.control).mockResolvedValueOnce({paused:false,trim:true,revision:"1"}).mockResolvedValueOnce({paused:false,trim:true,revision:"1"}).mockResolvedValueOnce({paused:true,trim:true,revision:"2"});
     expect((await runHistoryArchive(repo,options)).stopped).toBe('paused');expect(repo.trim).not.toHaveBeenCalled();
 });
-it('refuses a day ending inside retention',async()=>{
-    const {repo,options}=fixture();vi.mocked(repo.next).mockResolvedValue({...day,start:new Date('2025-10-07T05:00:00Z'),end:new Date('2025-10-08T05:00:00Z')});
+it('refuses a day ending inside the archive-after window',async()=>{
+    const {repo,options}=fixture();vi.mocked(repo.next).mockResolvedValue({...day,start:new Date('2026-10-06T05:00:00Z'),end:new Date('2026-10-07T05:00:00Z')});
     expect((await runHistoryArchive(repo,options)).days[0].status).toBe('failed');expect(repo.finalize).not.toHaveBeenCalled();
+});
+it('archives a day inside retention once it is past the archive-after window',async()=>{
+    const {repo,options}=fixture();const recent={...day,start:new Date('2026-10-04T05:00:00Z'),end:new Date('2026-10-05T05:00:00Z'),trim:false};
+    vi.mocked(repo.next).mockResolvedValue(recent);
+    expect((await runHistoryArchive(repo,options)).days[0].status).toBe('archived');expect(repo.finalize).toHaveBeenCalledWith(recent,now,{paused:false,trim:false,revision:'1'});
+});
+it('in trim mode archives without trimming a day the repo did not mark for trim',async()=>{
+    const {repo,options}=fixture();vi.mocked(repo.control).mockResolvedValue({paused:false,trim:true,revision:"1"});
+    vi.mocked(repo.next).mockResolvedValue({...day,trim:false});
+    expect((await runHistoryArchive(repo,options)).days[0].status).toBe('archived');expect(repo.trim).not.toHaveBeenCalled();
+});
+it('never trims a marked day that ends inside retention',async()=>{
+    const {repo,options}=fixture();vi.mocked(repo.control).mockResolvedValue({paused:false,trim:true,revision:"1"});
+    vi.mocked(repo.next).mockResolvedValue({...day,start:new Date('2026-10-04T05:00:00Z'),end:new Date('2026-10-05T05:00:00Z'),trim:true});
+    expect((await runHistoryArchive(repo,options)).days[0].status).toBe('archived');expect(repo.trim).not.toHaveBeenCalled();
+});
+it('asks the repo for days past the archive-after window with the trim retention',async()=>{
+    const {repo,options}=fixture();await runHistoryArchive(repo,{...options,retentionDays:90,archiveAfterDays:3});
+    expect(repo.next).toHaveBeenCalledWith(90,3,now,false);
 });
 it('reserves transfer estimates before fetching source rows',async()=>{
     const {repo,options}=fixture();const report=await runHistoryArchive(repo,{...options,maxEstimatedBytes:40000});
@@ -55,6 +74,11 @@ it('does not release a claim it never acquired',async()=>{
 });
 it('fails closed on malformed environment options',()=>{
     for(const value of ['0','-1','365days','NaN',''])expect(()=>readArchiveOptions({NODE_ENV:'test',DATA_RETENTION_DAYS:value})).toThrow();expect(readArchiveOptions({NODE_ENV:'test'}).retentionDays).toBe(365);
+});
+it('archives after 2 days by default, separately from trim retention',()=>{
+    expect(readArchiveOptions({NODE_ENV:'test'}).archiveAfterDays).toBe(2);
+    expect(readArchiveOptions({NODE_ENV:'test',HISTORY_ARCHIVE_AFTER_DAYS:'7',DATA_RETENTION_DAYS:'90'})).toMatchObject({archiveAfterDays:7,retentionDays:90});
+    for(const value of ['0','1','-1','2days',''])expect(()=>readArchiveOptions({NODE_ENV:'test',HISTORY_ARCHIVE_AFTER_DAYS:value})).toThrow();
 });
 it('leaves room for an admitted transaction and reporting within the 60-second deployment limit',()=>{
     expect(readArchiveOptions({NODE_ENV:'test'}).maxTimeMs).toBe(30000);

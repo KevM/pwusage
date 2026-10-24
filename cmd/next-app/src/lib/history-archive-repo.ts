@@ -2,7 +2,7 @@ import type {Pool,PoolClient} from 'pg';
 import {CompactHistoryStore} from './prototypes/compact-history-store';
 import {addDaysInSiteTimezone,getSiteMidnight} from './date-utils';
 import {ArchiveControlChangedError} from './history-archive-service';
-import type {ArchiveCandidate,ArchiveControl,ArchiveDayStatus,ArchiveJobRepo,ArchiveReport} from './history-archive-service';
+import type {ArchiveCandidate,ArchiveControl,ArchiveDayStatus,ArchiveJobRepo,ArchiveReport,HealControl} from './history-archive-service';
 
 /** Internal cron/operator control only. No user-facing mutation API. */
 export class HistoryArchiveRepo implements ArchiveJobRepo {
@@ -42,44 +42,69 @@ export class HistoryArchiveRepo implements ArchiveJobRepo {
     }
     /**
      * Control for archiving one healed day outside the job claim, or null when the
-     * job is paused or the day is outside its cohort or date bounds (as in `next`).
+     * job is paused or the day is outside its cohort (as in `next`). `trimSite` says
+     * whether trim mode covers this day (listed site, inside the date bounds).
      * The guarded finalize/trim still re-check this revision in their transaction.
      */
-    async healControl(day:ArchiveCandidate):Promise<ArchiveControl|null> {
-        const result=await this.pool.query<ArchiveControl>(`SELECT h.paused,h.trim,h.xmin::text AS revision
+    async healControl(day:ArchiveCandidate):Promise<HealControl|null> {
+        const inBounds=`(h.from_date IS NULL OR $2::timestamptz >= (h.from_date::timestamp AT TIME ZONE s.timezone))
+                AND (h.before_date IS NULL OR $2::timestamptz < (h.before_date::timestamp AT TIME ZONE s.timezone))`;
+        const result=await this.pool.query<HealControl>(`SELECT h.paused,h.trim,h.xmin::text AS revision,
+                (h.trim AND s.id=ANY(h.site_ids) AND ${inBounds}) AS "trimSite"
             FROM "HistoryArchiveControl" h JOIN "Site" s ON s.id=$1 AND s.user_id IS NOT NULL
-            WHERE h.id=true AND NOT h.paused AND s.id=ANY(h.site_ids)
-                AND (h.from_date IS NULL OR $2::timestamptz >= (h.from_date::timestamp AT TIME ZONE s.timezone))
-                AND (h.before_date IS NULL OR $2::timestamptz < (h.before_date::timestamp AT TIME ZONE s.timezone))`,[day.siteId,day.start]);
+            WHERE h.id=true AND NOT h.paused AND (h.archive_all OR (s.id=ANY(h.site_ids) AND ${inBounds}))`,[day.siteId,day.start]);
         return result.rows[0]??null;
     }
-    async next(trim:boolean,retentionDays:number,now:Date,preferRetry=false):Promise<ArchiveCandidate|null> {
-        const eligible=`e.timestamp < (((($3::timestamptz AT TIME ZONE s.timezone)::date - GREATEST($2::int,2))::timestamp) AT TIME ZONE s.timezone)
-            AND (s.from_date IS NULL OR e.timestamp >= (s.from_date::timestamp AT TIME ZONE s.timezone))
-            AND (s.before_date IS NULL OR e.timestamp < (s.before_date::timestamp AT TIME ZONE s.timezone))
-            AND ($1::boolean OR NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a
-                WHERE a.site_id=s.id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end
-                AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL AND a.payload_checksum IS NOT NULL))`;
-        const result=await this.connection().query<{site_id:string;timezone:string;timestamp:Date}>(`
-            WITH sites AS MATERIALIZED (SELECT s.id,s.timezone,h.from_date,h.before_date FROM "Site" s
-                CROSS JOIN "HistoryArchiveControl" h WHERE h.id=true AND s.user_id IS NOT NULL AND s.id=ANY(h.site_ids)),
-            candidates AS (
-                SELECT s.id AS site_id,s.timezone,c.timestamp,false AS retry,NULL::timestamptz AS retry_at FROM sites s
-                CROSS JOIN LATERAL (SELECT e.timestamp FROM "EnergyData" e WHERE e.site_id=s.id AND ${eligible}
-                    AND NOT EXISTS (SELECT 1 FROM "HistoryArchiveRetry" r WHERE r.site_id=s.id
-                        AND e.timestamp>=r.day_start AND e.timestamp<r.day_end)
-                    ORDER BY e.timestamp LIMIT 1) c
+    /**
+     * The oldest day to work on: an unarchived day past the archive-after cutoff for
+     * any site in the cohort (archive_all, or listed and inside the date bounds), or,
+     * in trim mode, a listed in-bound day past retention that still has raw rows.
+     * `trim` on the result marks the latter. Every candidate is past the
+     * archive-after cutoff: a day is archived before it may be trimmed.
+     *
+     * Walks each site's raw history a day at a time (one index seek per day) rather
+     * than testing every raw row against the archive: per-row probing took over a
+     * minute on production once most raw days were already archived.
+     */
+    async next(retentionDays:number,archiveAfterDays:number,now:Date,preferRetry=false):Promise<ArchiveCandidate|null> {
+        const before=(days:string,ts:string)=>`${ts} < (((($3::timestamptz AT TIME ZONE s.timezone)::date - GREATEST(${days}::int,2))::timestamp) AT TIME ZONE s.timezone)`;
+        const inBounds=(ts:string)=>`(s.from_date IS NULL OR ${ts} >= (s.from_date::timestamp AT TIME ZONE s.timezone))
+            AND (s.before_date IS NULL OR ${ts} < (s.before_date::timestamp AT TIME ZONE s.timezone))`;
+        const trimDay=(ts:string)=>`(s.trim_site AND ${inBounds(ts)} AND ${before('$1',ts)} AND ${before('$2',ts)})`;
+        // Archive days start at site midnight, so the containing day is found within a two-day index range.
+        const archived=(ts:string)=>`EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=s.id
+            AND a.day_start<=${ts} AND a.day_start>${ts}-interval '2 days' AND ${ts}<a.day_end
+            AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL AND a.payload_checksum IS NOT NULL)`;
+        const eligible=(ts:string)=>`(${trimDay(ts)} OR ((s.archive_all OR (s.listed AND ${inBounds(ts)})) AND ${before('$2',ts)} AND NOT ${archived(ts)}))`;
+        const retried=(ts:string)=>`EXISTS (SELECT 1 FROM "HistoryArchiveRetry" r WHERE r.site_id=s.id AND ${ts}>=r.day_start AND ${ts}<r.day_end)`;
+        const nextMidnight=`((((s.ts AT TIME ZONE s.timezone)::date + 1)::timestamp) AT TIME ZONE s.timezone)`;
+        const result=await this.connection().query<{site_id:string;timezone:string;timestamp:Date;trim:boolean}>(`
+            WITH RECURSIVE sites AS MATERIALIZED (SELECT s.id,s.timezone,h.from_date,h.before_date,h.archive_all,
+                    s.id=ANY(h.site_ids) AS listed,(h.trim AND s.id=ANY(h.site_ids)) AS trim_site
+                FROM "Site" s CROSS JOIN "HistoryArchiveControl" h
+                WHERE h.id=true AND s.user_id IS NOT NULL AND (h.archive_all OR s.id=ANY(h.site_ids))),
+            walk AS (
+                SELECT s.*,(SELECT min(e.timestamp) FROM "EnergyData" e WHERE e.site_id=s.id) AS ts FROM sites s
                 UNION ALL
-                SELECT s.id AS site_id,s.timezone,c.timestamp,true AS retry,r.retry_after AS retry_at FROM sites s
+                SELECT s.id,s.timezone,s.from_date,s.before_date,s.archive_all,s.listed,s.trim_site,
+                    (SELECT min(e.timestamp) FROM "EnergyData" e WHERE e.site_id=s.id AND e.timestamp>=${nextMidnight})
+                FROM walk s
+                WHERE s.ts IS NOT NULL AND ${before('$2','s.ts')}
+                    AND NOT (${eligible('s.ts')} AND NOT ${retried('s.ts')})),
+            candidates AS (
+                SELECT s.id AS site_id,s.timezone,s.ts AS timestamp,${trimDay('s.ts')} AS trim,false AS retry,NULL::timestamptz AS retry_at FROM walk s
+                WHERE s.ts IS NOT NULL AND ${eligible('s.ts')} AND NOT ${retried('s.ts')}
+                UNION ALL
+                SELECT s.id AS site_id,s.timezone,c.timestamp,c.trim,true AS retry,r.retry_after AS retry_at FROM sites s
                 JOIN "HistoryArchiveRetry" r ON r.site_id=s.id AND r.retry_after<=$3
-                CROSS JOIN LATERAL (SELECT e.timestamp FROM "EnergyData" e WHERE e.site_id=s.id
-                    AND e.timestamp>=r.day_start AND e.timestamp<r.day_end AND ${eligible}
+                CROSS JOIN LATERAL (SELECT e.timestamp,${trimDay('e.timestamp')} AS trim FROM "EnergyData" e WHERE e.site_id=s.id
+                    AND e.timestamp>=r.day_start AND e.timestamp<r.day_end AND ${eligible('e.timestamp')}
                     ORDER BY e.timestamp LIMIT 1) c
-            ) SELECT site_id,timezone,timestamp FROM candidates
-            ORDER BY (retry=$4::boolean) DESC,retry_at NULLS LAST,timestamp,site_id LIMIT 1`,[trim,retentionDays,now,preferRetry]);
+            ) SELECT site_id,timezone,timestamp,trim FROM candidates
+            ORDER BY (retry=$4::boolean) DESC,retry_at NULLS LAST,timestamp,site_id LIMIT 1`,[retentionDays,archiveAfterDays,now,preferRetry]);
         const row=result.rows[0];if(!row)return null;
         const start=getSiteMidnight(row.timestamp,row.timezone);
-        return {siteId:row.site_id,timezone:row.timezone,start,end:addDaysInSiteTimezone(start,1,row.timezone)};
+        return {siteId:row.site_id,timezone:row.timezone,start,end:addDaysInSiteTimezone(start,1,row.timezone),trim:row.trim};
     }
     /** Conservative response admission estimate; not provider wire-byte accounting. */
     async estimate(day:ArchiveCandidate):Promise<number> {

@@ -56,12 +56,13 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007134255_compact_energy_payload_integrity.sql',import.meta.url),'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007144600_compact_energy_trim_recovery.sql',import.meta.url),'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007190945_history_archive_job.sql',import.meta.url),'utf8'));
+        await pool.query(readFileSync(new URL('../../../db-migrations/20261024180000_history_archive_all_sites.sql',import.meta.url),'utf8'));
         await pool.query("ALTER TABLE \"Site\" ADD COLUMN user_id text DEFAULT 'owner'");
         store = new CompactHistoryStore(pool,15000,async client=>{await client.query('SELECT 1');});
     });
     beforeEach(async () => {
         await pool.query('TRUNCATE "EnergyData", "LoadTag", "EnergyDayArchive", "HistoryArchiveRetry" CASCADE');
-        await pool.query(`UPDATE "HistoryArchiveControl" SET paused=true,trim=false,last_report=null,site_ids=ARRAY['site'],from_date=null,before_date=null`);
+        await pool.query(`UPDATE "HistoryArchiveControl" SET paused=true,trim=false,archive_all=false,last_report=null,site_ids=ARRAY['site'],from_date=null,before_date=null`);
         await pool.query(`UPDATE "Site" SET timezone='America/Chicago' WHERE id='site'`);
         await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null),('site',$2,1,2,20,3,-5,-2,50)`, [start, new Date(+start+300000)]);
     });
@@ -69,7 +70,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         await pool?.end();
         if (admin) { try { await admin.query(`DROP DATABASE IF EXISTS ${database}`); } finally { await admin.end(); } }
     });
-    const jobOptions={now:new Date('2026-01-10T12:00:00Z'),retentionDays:3,maxDays:2,maxTimeMs:30000,maxEstimatedBytes:4*1024*1024,readsEnabled:true};
+    const jobOptions={now:new Date('2026-01-10T12:00:00Z'),retentionDays:3,archiveAfterDays:2,maxDays:2,maxTimeMs:30000,maxEstimatedBytes:4*1024*1024,readsEnabled:true};
     it('raw and compact billing history agree on local days across DST in another session timezone', async () => {
         const from = new Date('2026-11-01T05:00:00Z');
         const until = new Date('2026-11-02T06:10:00Z');
@@ -146,7 +147,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         const day={siteId:'site',start,end,timezone:'America/Chicago'};
         expect(await repo.healControl(day)).toBeNull();
         await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
-        expect(await repo.healControl(day)).toMatchObject({paused:false,trim:true,revision:expect.any(String)});
+        expect(await repo.healControl(day)).toMatchObject({paused:false,trim:true,trimSite:true,revision:expect.any(String)});
         await pool.query(`UPDATE "HistoryArchiveControl" SET from_date='2025-12-31',before_date='2026-01-02'`);
         expect(await repo.healControl(day)).not.toBeNull();
         await pool.query(`UPDATE "HistoryArchiveControl" SET from_date='2026-01-02',before_date='2026-01-03'`);
@@ -298,6 +299,49 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         try {expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days).toEqual([]);}
         finally {await pool.query(`UPDATE "Site" SET user_id='owner' WHERE id='site'`);}
     });
+    it('archive-all archives every owned site without listing it, and only trims listed sites',async()=>{
+        await pool.query(`UPDATE "HistoryArchiveControl" SET paused=false,trim=true,archive_all=true,site_ids=ARRAY['other']`);
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days).toEqual([{siteId:'site',start:start.toISOString(),status:'archived'}]);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(2);
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days).toEqual([]);
+        await pool.query(`UPDATE "HistoryArchiveControl" SET archive_all=true,site_ids='{}'; UPDATE "Site" SET user_id=null WHERE id='site'`);
+        await pool.query('TRUNCATE "EnergyDayArchive" CASCADE');
+        try {expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days).toEqual([]);}
+        finally {await pool.query(`UPDATE "Site" SET user_id='owner' WHERE id='site'`);}
+    });
+    it('archives past the archive-after window and trims only once retention passes',async()=>{
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),{...jobOptions,retentionDays:30})).days.map(d=>d.status)).toEqual(['archived']);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(2);
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),{...jobOptions,retentionDays:30})).days).toEqual([]);
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days.map(d=>d.status)).toEqual(['trimmed']);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(0);
+    });
+    it('walks past already-archived days to the next unarchived one',async()=>{
+        const days=[1,2,3].map(n=>addDaysInSiteTimezone(start,n,'America/Chicago'));
+        await pool.query(`INSERT INTO "EnergyData" SELECT 'site',d,1,2,20,3,10,-2,null FROM unnest($1::timestamptz[]) d`,[days]);
+        for(const day of [start,days[0],days[1]])await store.finalizeDay('site',day,jobOptions.now);
+        const repo=new HistoryArchiveRepo(pool);await repo.claim();
+        try {expect(await repo.next(30,2,jobOptions.now)).toMatchObject({start:days[2],trim:false});}
+        finally {await repo.release();}
+    });
+    it('date bounds limit only the listed trim cohort under archive-all',async()=>{
+        await pool.query(`UPDATE "HistoryArchiveControl" SET paused=false,trim=true,archive_all=true,from_date='2026-01-02',before_date='2026-01-03'`);
+        expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days.map(d=>d.status)).toEqual(['archived']);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(2);
+    });
+    it('reads the heal control for archive-all sites, trimming only listed in-bound days',async()=>{
+        const repo=new HistoryArchiveRepo(pool);
+        const day={siteId:'site',start,end,timezone:'America/Chicago'};
+        await pool.query(`UPDATE "HistoryArchiveControl" SET paused=false,trim=true,archive_all=true,site_ids='{}'`);
+        expect(await repo.healControl(day)).toMatchObject({paused:false,trim:true,trimSite:false});
+        await pool.query(`UPDATE "HistoryArchiveControl" SET site_ids=ARRAY['site']`);
+        expect(await repo.healControl(day)).toMatchObject({trim:true,trimSite:true});
+        await pool.query(`UPDATE "HistoryArchiveControl" SET from_date='2026-01-02',before_date='2026-01-03'`);
+        expect(await repo.healControl(day)).toMatchObject({trim:true,trimSite:false});
+        await pool.query(`UPDATE "HistoryArchiveControl" SET archive_all=false`);
+        expect(await repo.healControl(day)).toBeNull();
+    });
     it('date cohorts bound discovery to whole site-local days',async()=>{
         await pool.query(`UPDATE "HistoryArchiveControl" SET paused=false,trim=true,from_date='2026-01-02',before_date='2026-01-03'`);
         expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days).toEqual([]);
@@ -332,8 +376,13 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
     it('admits only whole days outside retention including DST and exact cutoff',async()=>{
         const repo=new HistoryArchiveRepo(pool);await repo.claim();
         try {
-            expect(await repo.next(true,9,jobOptions.now)).toBeNull();
-            expect((await repo.next(true,8,jobOptions.now))?.start).toEqual(start);
+            expect(await repo.next(30,9,jobOptions.now)).toBeNull();
+            expect(await repo.next(30,8,jobOptions.now)).toMatchObject({start,trim:false});
+            await pool.query('UPDATE "HistoryArchiveControl" SET trim=true');
+            expect(await repo.next(9,9,jobOptions.now)).toBeNull();
+            // Trim never reaches inside the archive-after window, even with a shorter retention.
+            expect(await repo.next(8,9,jobOptions.now)).toBeNull();
+            expect(await repo.next(8,8,jobOptions.now)).toMatchObject({start,trim:true});
             const cutoff=archiveCutoff(new Date('2026-03-10T12:00:00Z'),'America/Chicago',2);
             expect(cutoff.toISOString()).toBe('2026-03-08T06:00:00.000Z');
         } finally {await repo.release();}
