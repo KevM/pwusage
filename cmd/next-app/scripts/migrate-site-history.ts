@@ -3,7 +3,7 @@
  * archive every finished day before the 2-day floor. Preview by default;
  * `--apply` writes. Deletes nothing.
  *
- *   npx tsx scripts/migrate-site-history.ts --site-id <id> [--apply] [--skip-backfill | --skip-archive] [--repair]
+ *   npx tsx scripts/migrate-site-history.ts --site-id <id> [--apply] [--skip-backfill | --skip-archive] [--repair] [--repair-from YYYY-MM-DD]
  *
  * Backfill pauses between passes so the site's own today-refresh can still take
  * the import lock; a multi-year site takes over an hour. The days between the
@@ -15,7 +15,8 @@
  * --repair re-fetches days whose stored samples are short, gappy or not fully
  * tariff-attributed (the archive report's `repairable`), on or after the
  * backfill start, then re-archives them. Tesla usually still has those days
- * complete; the app's own imports had missed a few samples.
+ * complete; the app's own imports had missed a few samples. --repair-from
+ * (implies --repair) limits it to days on or after that site-local date.
  */
 import 'dotenv/config';
 import {pool} from '../src/lib/db';

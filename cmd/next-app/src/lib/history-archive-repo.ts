@@ -22,6 +22,9 @@ export class HistoryArchiveRepo implements ArchiveJobRepo {
             await client.query('BEGIN');
             await client.query("SET LOCAL statement_timeout='15s'");
             await client.query("SET LOCAL transaction_timeout='60s'");
+            // Freshly truncated or never-analyzed tables inflate next()'s estimate past
+            // jit_above_cost; compiling a tiny lookup has stalled it past statement_timeout.
+            await client.query("SET LOCAL jit=off");
             const result=await client.query<{acquired:boolean}>("SELECT pg_try_advisory_xact_lock(hashtextextended('daily-history-archive-job',0)) AS acquired");
             if(!result.rows[0].acquired) {await client.query('ROLLBACK');client.off('error',this.onClientError);client.release(true);return false;}
             this.client=client;return true;
