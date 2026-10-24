@@ -325,6 +325,40 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         try {expect(await repo.next(30,2,jobOptions.now)).toMatchObject({start:days[2],trim:false});}
         finally {await repo.release();}
     });
+    const daySamples=(solar=3)=>Array.from({length:288},(_,n)=>({site_id:'site',timestamp:new Date(+start+n*300000),tariff_id:1,tariff_schedule_id:2,
+        load_power:20,solar_power:solar,grid_power:10,battery_power:-2,battery_soc:n%12===0?50:null}));
+    it('writes a whole day from samples as the only copy, readable and billable',async()=>{
+        await pool.query('TRUNCATE "EnergyData"');
+        const samples=daySamples();
+        const result=await store.writeDayFromSamples('site',start,samples,jobOptions.now);
+        expect(result).toMatchObject({status:'written',attributionComplete:true,revision:expect.any(String)});
+        expect((await pool.query('SELECT raw_pruned,sample_count FROM "EnergyDayArchive"')).rows).toEqual([{raw_pruned:true,sample_count:288}]);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(0);
+        const reader=new CompactHistoryReader(store,'America/Chicago');
+        expect(await reader.getRawEnergyData('site',start,end)).toEqual(samples);
+        expect((await reader.getDailyCoverage('site',start,end,'America/Chicago'))[0]).toMatchObject({count:288,archived:true});
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDaySummary"')).rows[0].n).toBeGreaterThan(0);
+    });
+    it('replaces the day when written again, as Tesla is the source of truth',async()=>{
+        await pool.query('TRUNCATE "EnergyData"');
+        const first=await store.writeDayFromSamples('site',start,daySamples(3),jobOptions.now);
+        const second=await store.writeDayFromSamples('site',start,daySamples(7),jobOptions.now);
+        expect(second).toMatchObject({status:'written'});expect(second.revision).not.toBe(first.revision);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(1);
+        expect((await new CompactHistoryReader(store,'America/Chicago').getRawEnergyData('site',start,end))[0].solar_power).toBe(7);
+    });
+    it('refuses to write a day that still has raw rows',async()=>{
+        await expect(store.writeDayFromSamples('site',start,daySamples(),jobOptions.now)).rejects.toThrow(/raw/i);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
+    });
+    it('refuses unfinished days and foreign samples, and ignores an empty day',async()=>{
+        await pool.query('TRUNCATE "EnergyData"');
+        await expect(store.writeDayFromSamples('site',start,daySamples(),start)).rejects.toThrow();
+        await expect(store.writeDayFromSamples('site',start,[{...daySamples()[0],site_id:'other'}],jobOptions.now)).rejects.toThrow();
+        await expect(store.writeDayFromSamples('site',start,[{...daySamples()[0],timestamp:end}],jobOptions.now)).rejects.toThrow();
+        expect(await store.writeDayFromSamples('site',start,[],jobOptions.now)).toEqual({status:'empty'});
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
+    });
     it('date bounds limit only the listed trim cohort under archive-all',async()=>{
         await pool.query(`UPDATE "HistoryArchiveControl" SET paused=false,trim=true,archive_all=true,from_date='2026-01-02',before_date='2026-01-03'`);
         expect((await runHistoryArchive(new HistoryArchiveRepo(pool),jobOptions)).days.map(d=>d.status)).toEqual(['archived']);
