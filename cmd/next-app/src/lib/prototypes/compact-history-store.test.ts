@@ -103,7 +103,8 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         expect(report.days).toEqual([{siteId:'site',start:start.toISOString(),status:'trimmed',samples:2}]);
         expect(report.stopped).toBe('caught-up');
         expect(await reader.getRawEnergyData('site',start,end)).toEqual(original);
-        expect(await reader.getDailyCoverage('site',start,end,'America/Chicago')).toEqual(coverage);
+        // Same samples; the trimmed day is now also flagged as a settled archive day.
+        expect(await reader.getDailyCoverage('site',start,end,'America/Chicago')).toEqual(coverage.map(c=>({...c,archived:true})));
         expect(await reader.getCycleAggregates('site',start,end)).toEqual(totals);
         expect((await pool.query('SELECT count(*)::int AS n FROM "LoadTag"')).rows[0].n).toBe(1);
         expect((await pool.query('SELECT * FROM "TariffSchedule"')).rows).toEqual(tariffs);
@@ -111,6 +112,58 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         const revision=(await pool.query('SELECT revision FROM "EnergyDayArchive"')).rows[0].revision;
         await store.restoreDay('site',start,revision);
         expect((await store.readVerificationSnapshot('site',start,end)).raw).toEqual(original);
+    });
+    const fillDay=()=>pool.query(`INSERT INTO "EnergyData" SELECT 'site',t,1,2,20,3,10,-2,null
+        FROM generate_series($1::timestamptz,$2::timestamptz-interval '5 minutes',interval '5 minutes') t ON CONFLICT DO NOTHING`,[start,end]);
+    it('flags only settled archive days in scalar coverage',async()=>{
+        const reader=new CompactHistoryReader(store,'America/Chicago');
+        const day=async()=>(await reader.getDailyCoverage('site',start,end,'America/Chicago'))[0];
+        const partial=await store.finalizeDay('site',start,now);
+        // 2 of 288 slots with raw still kept: the raw coverage audit still decides.
+        expect(await day()).toMatchObject({count:2,archived:false});
+        await store.trimDay('site',start,partial.revision!,new Date('2026-01-05'));
+        // Pruned: the archive is the only copy, so a re-fetch would only churn it.
+        expect(await day()).toMatchObject({count:2,archived:true});
+    });
+    it('flags a complete unpruned archive day as settled',async()=>{
+        await fillDay();
+        await store.finalizeDay('site',start,now);
+        expect((await new CompactHistoryReader(store,'America/Chicago').getDailyCoverage('site',start,end,'America/Chicago'))[0])
+            .toMatchObject({count:288,archived:true});
+    });
+    it('counts settled archive days as fully stored slots for the gap-heal pre-check',async()=>{
+        const later=addDaysInSiteTimezone(end,1,'America/Chicago');
+        await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null)`,[end]);
+        const count=async()=>(await new EnergyRepo().countAlignedSamples([{siteId:'site',start,end:later}],pool)).get('site');
+        expect(await count()).toBe(3);
+        const finalized=await store.finalizeDay('site',start,now);
+        expect(await count()).toBe(3);
+        await store.trimDay('site',start,finalized.revision!,new Date('2026-01-05'));
+        expect(await count()).toBe(288+1);
+    });
+    it('reads the heal control only for cohort days inside the configured bounds',async()=>{
+        const repo=new HistoryArchiveRepo(pool);
+        const day={siteId:'site',start,end,timezone:'America/Chicago'};
+        expect(await repo.healControl(day)).toBeNull();
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
+        expect(await repo.healControl(day)).toMatchObject({paused:false,trim:true,revision:expect.any(String)});
+        await pool.query(`UPDATE "HistoryArchiveControl" SET from_date='2025-12-31',before_date='2026-01-02'`);
+        expect(await repo.healControl(day)).not.toBeNull();
+        await pool.query(`UPDATE "HistoryArchiveControl" SET from_date='2026-01-02',before_date='2026-01-03'`);
+        expect(await repo.healControl(day)).toBeNull();
+        await pool.query(`UPDATE "HistoryArchiveControl" SET from_date='2025-12-01',before_date='2026-01-01'`);
+        expect(await repo.healControl(day)).toBeNull();
+        await pool.query(`UPDATE "HistoryArchiveControl" SET from_date=null,before_date=null,site_ids=ARRAY['other']`);
+        expect(await repo.healControl(day)).toBeNull();
+    });
+    it('finalizes and trims a healed day through the heal control without the job claim',async()=>{
+        await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
+        const {archiveHealedDays}=await import('../healed-day-archive');
+        const result=await archiveHealedDays({id:'site',timezone:'America/Chicago'},[{start,end}],jobOptions.now,
+            {repo:new HistoryArchiveRepo(pool),env:{DATA_RETENTION_DAYS:'3',COMPACT_HISTORY_READS_ENABLED:'true'} as unknown as NodeJS.ProcessEnv});
+        expect(result).toEqual([{start:start.toISOString(),status:'trimmed'}]);
+        expect((await pool.query('SELECT raw_pruned FROM "EnergyDayArchive"')).rows).toEqual([{raw_pruned:true}]);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(0);
     });
     it('rejects a replaced control revision inside the mutation transaction',async()=>{
         await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true');
@@ -628,7 +681,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         await pool.query(`UPDATE "EnergyDayArchive" SET payload=decode('00','hex')`);
         const reader=new CompactHistoryReader(store,'America/Chicago');
         expect((await reader.getCycleAggregates('site',start,end))[0].grid_power).toBe(5);
-        expect(await reader.getDailyCoverage('site',start,end,'America/Chicago')).toEqual([{localDayKey:'2026-01-01',count:2,first:start,last:new Date(+start+300000),maxInteriorGapMs:300000}]);
+        expect(await reader.getDailyCoverage('site',start,end,'America/Chicago')).toEqual([{localDayKey:'2026-01-01',count:2,first:start,last:new Date(+start+300000),maxInteriorGapMs:300000,archived:false}]);
         await expect(reader.getRawEnergyData('site',start,end)).rejects.toThrow();
         await expect(reader.getCycleAggregates('site',new Date(+start+300000),end)).rejects.toThrow();
     });

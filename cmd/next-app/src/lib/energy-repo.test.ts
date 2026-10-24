@@ -327,7 +327,7 @@ describe('EnergyRepo.countAlignedSamples', () => {
         expect(counts).toEqual(new Map([['a', 4032], ['b', 12]]));
         expect(queryMock).toHaveBeenCalledTimes(1);
         const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
-        expect(sql).toContain('unnest($1::text[], $2::timestamp[], $3::timestamp[])');
+        expect(sql).toContain('unnest($1::text[], $2::timestamptz[], $3::timestamptz[])');
         expect(sql).toContain('% 300 = 0');
         expect(params).toEqual([
             ['a', 'b'],

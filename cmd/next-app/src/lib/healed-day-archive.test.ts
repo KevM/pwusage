@@ -1,0 +1,85 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./db', () => ({ pool: {} }));
+
+import { archiveHealedDays, type HealedDayArchiveRepo } from './healed-day-archive';
+import type { ArchiveControl } from './history-archive-service';
+
+const NOW = new Date('2026-10-24T12:00:00Z');
+const SITE = { id: 'site', timezone: 'UTC' };
+// DATA_RETENTION_DAYS=90 puts the cutoff at 2026-07-26 UTC midnight.
+const OLD = { start: new Date('2026-07-01T00:00:00Z'), end: new Date('2026-07-02T00:00:00Z') };
+const OLDER = { start: new Date('2026-06-01T00:00:00Z'), end: new Date('2026-06-02T00:00:00Z') };
+const RECENT = { start: new Date('2026-10-20T00:00:00Z'), end: new Date('2026-10-21T00:00:00Z') };
+const env = (extra: Record<string, string> = {}) =>
+    ({ DATA_RETENTION_DAYS: '90', COMPACT_HISTORY_READS_ENABLED: 'true', ...extra }) as unknown as NodeJS.ProcessEnv;
+
+describe('archiveHealedDays', () => {
+    let control: ArchiveControl | null;
+    let repo: { [K in keyof HealedDayArchiveRepo]: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+        control = { paused: false, trim: true, revision: '7' };
+        repo = {
+            healControl: vi.fn(async () => control),
+            finalize: vi.fn(async () => ({ status: 'finalized', revision: 'rev-1', attributionComplete: true })),
+            trim: vi.fn(async () => ({ status: 'trimmed', samples: 288 })),
+        };
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    });
+
+    const run = (days = [OLD], extra = {}) =>
+        archiveHealedDays(SITE, days, NOW, { repo: repo as unknown as HealedDayArchiveRepo, env: env(extra) });
+
+    it('leaves days inside the retention window as raw without touching the archive', async () => {
+        expect(await run([RECENT])).toEqual([]);
+        expect(repo.healControl).not.toHaveBeenCalled();
+    });
+
+    it('finalizes and trims a healed day past retention, as the archive job would', async () => {
+        expect(await run()).toEqual([{ start: OLD.start.toISOString(), status: 'trimmed' }]);
+        const day = { siteId: 'site', timezone: 'UTC', ...OLD };
+        expect(repo.healControl).toHaveBeenCalledWith(day);
+        expect(repo.finalize).toHaveBeenCalledWith(day, NOW, control);
+        expect(repo.trim).toHaveBeenCalledWith(day, 'rev-1', NOW, control);
+    });
+
+    it('only finalizes in archive-only mode or while compact reads are off', async () => {
+        control = { paused: false, trim: false, revision: '7' };
+        expect(await run()).toEqual([{ start: OLD.start.toISOString(), status: 'archived' }]);
+        control = { paused: false, trim: true, revision: '7' };
+        expect(await run([OLD], { COMPACT_HISTORY_READS_ENABLED: 'false' }))
+            .toEqual([{ start: OLD.start.toISOString(), status: 'archived' }]);
+        expect(repo.trim).not.toHaveBeenCalled();
+    });
+
+    it('skips sites outside the archive cohort or while the job is paused', async () => {
+        control = null;
+        expect(await run()).toEqual([{ start: OLD.start.toISOString(), status: 'skipped' }]);
+        expect(repo.finalize).not.toHaveBeenCalled();
+    });
+
+    it('does not trim a day whose tariff attribution is incomplete', async () => {
+        repo.finalize.mockResolvedValueOnce({ status: 'finalized', revision: 'rev-1', attributionComplete: false });
+        expect(await run()).toEqual([{ start: OLD.start.toISOString(), status: 'incomplete-attribution' }]);
+        expect(repo.trim).not.toHaveBeenCalled();
+    });
+
+    it('isolates per-day failures and never throws, leaving the archive job as the backstop', async () => {
+        repo.finalize.mockRejectedValueOnce(new Error('Energy mutation claim busy'));
+        expect(await run([OLDER, OLD])).toEqual([
+            { start: OLDER.start.toISOString(), status: 'failed' },
+            { start: OLD.start.toISOString(), status: 'trimmed' },
+        ]);
+    });
+
+    it('reports a busy finalize or trim claim without retrying', async () => {
+        repo.trim.mockResolvedValueOnce({ status: 'busy', samples: 0 });
+        expect(await run()).toEqual([{ start: OLD.start.toISOString(), status: 'busy' }]);
+    });
+
+    it('does nothing on invalid archive configuration', async () => {
+        expect(await run([OLD], { DATA_RETENTION_DAYS: 'soon' })).toEqual([]);
+        expect(repo.healControl).not.toHaveBeenCalled();
+    });
+});

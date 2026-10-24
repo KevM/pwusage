@@ -23,6 +23,8 @@ export interface DayAuditResult extends DayWindow {
     missingStart: boolean;
     missingEnd: boolean;
     hasInteriorGap: boolean;
+    /** A settled archive day: covered unless the caller forces a re-fetch. */
+    archived: boolean;
 }
 
 export interface GenerateDayWindowsOptions {
@@ -125,6 +127,7 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             missingStart: firstInWindow !== null && (firstInWindow - day.windowStart.getTime() > gapThresholdMs),
             missingEnd: lastInWindow !== null && (day.effectiveWindowEnd.getTime() - lastInWindow > gapThresholdMs),
             hasInteriorGap: stat.maxInteriorGapMs > gapThresholdMs,
+            archived: stat.archived === true,
         });
     }
 
@@ -134,7 +137,9 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
 export function planImport(options: PlanOptions): DateWindow[] {
     const { forceRefetch = false } = options;
     return auditDays(options)
-        .filter(d => d.count === 0 || forceRefetch || d.missingStart || d.missingEnd || d.hasInteriorGap)
+        // Re-fetching a settled archive day rewrites its raw rows, which drops the
+        // archive (and restores a trimmed day): a churn loop for days Tesla can't fill.
+        .filter(d => forceRefetch || (!d.archived && (d.count === 0 || d.missingStart || d.missingEnd || d.hasInteriorGap)))
         .map(d => ({ start: d.windowStart, end: d.effectiveWindowEnd }));
 }
 

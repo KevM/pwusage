@@ -23,6 +23,16 @@ const raw = (r: RawRecord): EnergyData => ({ ...r, timestamp: new Date(r.timesta
     load_power: Number(r.load_power), solar_power: Number(r.solar_power), grid_power: Number(r.grid_power),
     battery_power: Number(r.battery_power), battery_soc: r.battery_soc === null ? null : Number(r.battery_soc) });
 type ArchiveRecord=RecoveryArchive;
+/**
+ * An `EnergyDayArchive` row (alias `a`) that planning and gap-heal treat as a
+ * finished day: verified metadata, complete tariff attribution, and either
+ * every 5-minute slot present or raw already trimmed (the archive is then the
+ * only copy, and re-fetching would restore and drop it). An unpruned archive
+ * with holes is not settled, so its raw coverage still decides.
+ */
+export const SETTLED_ARCHIVE_DAY_SQL=`(a.metadata_version=2 AND a.metadata_checksum IS NOT NULL AND a.attribution_complete
+    AND (a.raw_pruned OR a.sample_count>=a.expected_slots))`;
+
 type DetailArchiveRecord = Pick<ArchiveRecord, 'site_id'|'day_start'|'day_end'|'revision'|'format_version'|'codec'|'axis'|'checksum'|'payload'|'expected_slots'|'attribution_complete'>;
 const detailColumns = 'site_id,day_start,day_end,revision,format_version,codec,axis,checksum,payload,expected_slots,attribution_complete';
 type LatestArchiveRecord=Pick<ArchiveRecord,'site_id'|'day_start'|'day_end'|'format_version'|'checksum'|'latest_metadata'|'latest_checksum'>;
@@ -434,8 +444,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             if(site.rows[0] && !site.rows[0].verified) throw new Error('Day metadata mismatch');
             const timezone=site.rows[0]?.timezone??null;
             const aggregates:CycleAggregateRow[]=[];const coverage:DailyCoverageStat[]=[];
-            const eligible=`SELECT a.site_id,a.day_start,a.revision,a.first_timestamp,a.last_timestamp,a.sample_count,a.max_interior_gap_ms
-                FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
+            const eligible=`SELECT a.site_id,a.day_start,a.revision,a.first_timestamp,a.last_timestamp,a.sample_count,a.max_interior_gap_ms,
+                ${SETTLED_ARCHIVE_DAY_SQL} AS settled FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
                 AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL`;
             if(mode.billing) {
                 const result=await client.query<CycleAggregateRow>(`WITH eligible AS MATERIALIZED (${eligible})
@@ -445,10 +455,10 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                     load_power:Number(r.load_power),solar_power:Number(r.solar_power),grid_power:Number(r.grid_power),battery_power:Number(r.battery_power)})));
             }
             if(mode.coverage && timezone) {
-                const result=await client.query<{key:string;count:number;first:Date;last:Date;gap:number}>(`WITH eligible AS MATERIALIZED (${eligible})
+                const result=await client.query<{key:string;count:number;first:Date;last:Date;gap:number;settled:boolean}>(`WITH eligible AS MATERIALIZED (${eligible})
                     SELECT to_char(day_start AT TIME ZONE $4::text,'YYYY-MM-DD') AS key,sample_count AS count,
-                        first_timestamp AS first,last_timestamp AS last,max_interior_gap_ms AS gap FROM eligible ORDER BY day_start`,[siteId,start,end,timezone]);
-                coverage.push(...result.rows.map(r=>({localDayKey:r.key,count:r.count,first:new Date(r.first),last:new Date(r.last),maxInteriorGapMs:r.gap})));
+                        first_timestamp AS first,last_timestamp AS last,max_interior_gap_ms AS gap,settled FROM eligible ORDER BY day_start`,[siteId,start,end,timezone]);
+                coverage.push(...result.rows.map(r=>({localDayKey:r.key,count:r.count,first:new Date(r.first),last:new Date(r.last),maxInteriorGapMs:r.gap,archived:r.settled})));
             }
             const partial=site.rows[0]?.has_detail?await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<$3 AND day_end>$2
                 AND NOT (day_start >= $2 AND day_end <= $3 AND metadata_version=2 AND metadata_checksum IS NOT NULL) ORDER BY day_start`,[siteId,start,end]):{rows:[]};

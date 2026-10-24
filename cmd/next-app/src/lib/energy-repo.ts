@@ -9,7 +9,8 @@ import { getSiteMidnight, getValidTimezone } from './date-utils';
 import { Schedule } from './schedule';
 import { SiteRepo } from './site-repo';
 import { TariffRepo } from './tariff-repo';
-import {CompactHistoryStore} from './prototypes/compact-history-store';
+import {CompactHistoryStore,SETTLED_ARCHIVE_DAY_SQL} from './prototypes/compact-history-store';
+import type {Pool} from 'pg';
 
 export interface LatestEnergySnapshot {timestamp:Date;batterySoc:number|null;batteryPower:number;solarPower:number;gridPower:number;loadPower:number}
 export interface LatestBatterySoc {timestamp:Date;value:number}
@@ -38,6 +39,12 @@ export interface DailyCoverageStat {
     first: Date | null;
     last: Date | null;
     maxInteriorGapMs: number;
+    /**
+     * Set by compact reads: the day is a settled archive (see
+     * `SETTLED_ARCHIVE_DAY_SQL`), so planning treats it as covered even when
+     * its samples have gaps Tesla never filled.
+     */
+    archived?: boolean;
 }
 
 export interface CycleAggregateRow {
@@ -216,21 +223,39 @@ ORDER BY local_day`,
     /**
      * Stored samples on a 5-minute mark within each site's [start, end), for all
      * sites in one query. Rows are unique per (timestamp, site_id), so a count
-     * equal to the number of 5-minute slots means the window has no gaps. Reads
-     * raw rows directly: a pruned (compact) site just counts short and falls
-     * back to the full coverage audit.
+     * equal to the number of 5-minute slots means the window has no gaps. A
+     * settled archive day (`SETTLED_ARCHIVE_DAY_SQL`) counts as all of its slots,
+     * since planning treats it as covered even once its raw rows are trimmed;
+     * windows are site-local midnights, so such days lie wholly inside them.
      */
-    async countAlignedSamples(windows: Array<{ siteId: string; start: Date; end: Date }>): Promise<Map<string, number>> {
+    async countAlignedSamples(
+        windows: Array<{ siteId: string; start: Date; end: Date }>,
+        database: Pick<Pool, 'query'> = energyQueryExecutor()
+    ): Promise<Map<string, number>> {
         if (windows.length === 0) return new Map();
-        const res = await energyQueryExecutor().query(
-            `SELECT w.site_id, (
+        const res = await database.query(
+            `WITH w AS (
+    SELECT * FROM unnest($1::text[], $2::timestamptz[], $3::timestamptz[]) AS w(site_id, start_ts, end_ts)
+)
+SELECT w.site_id, (
     SELECT COUNT(*)::int FROM "EnergyData" e
     WHERE e.site_id = w.site_id
       AND e.timestamp >= w.start_ts
       AND e.timestamp < w.end_ts
       AND EXTRACT(EPOCH FROM e.timestamp)::bigint % 300 = 0
+      AND NOT EXISTS (
+          SELECT 1 FROM "EnergyDayArchive" a
+          WHERE a.site_id = e.site_id AND e.timestamp >= a.day_start AND e.timestamp < a.day_end
+            AND ${SETTLED_ARCHIVE_DAY_SQL})
+) + (
+    SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (a.day_end - a.day_start))::int / 300), 0)::int
+    FROM "EnergyDayArchive" a
+    WHERE a.site_id = w.site_id
+      AND a.day_start >= w.start_ts
+      AND a.day_end <= w.end_ts
+      AND ${SETTLED_ARCHIVE_DAY_SQL}
 ) AS n
-FROM unnest($1::text[], $2::timestamp[], $3::timestamp[]) AS w(site_id, start_ts, end_ts)`,
+FROM w`,
             [windows.map(w => w.siteId), windows.map(w => w.start.toISOString()), windows.map(w => w.end.toISOString())]
         );
         return new Map(res.rows.map((r: { site_id: string; n: string | number }) => [r.site_id, Number(r.n)]));
