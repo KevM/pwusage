@@ -61,16 +61,23 @@ minus the two tariff columns. The site-day grid is 5 minutes.
 - **`timelineRevision`** records what produced the segments. Until
   effective-dated tariffs exist it is the tariff version current at write time;
   afterwards, the timeline revision, so stale days are a query.
-- **Derivation:** walk the day's 5-minute slots (`Schedule.getTariffPeriod` on
-  each slot timestamp), run-length encode. A sample at timestamp `t` belongs to
-  the segment containing `t`, exactly as `getTariffPeriod(t)` decides today.
-  Segment boundaries therefore fall on 5-minute marks; a schedule boundary that
-  isn't on one (none exist today) takes effect at the next slot.
-- **Open question to verify:** whether Tesla's sample timestamp marks the start
-  or the end of its 5-minute interval (the publish-lag probe suggests the end).
-  If the end, attribution at period boundaries is 5 minutes early today; fixing
-  it is a one-line offset in derivation, and v2 makes the fix re-derivable from
-  stored samples.
+- **Tesla's sample timestamp marks the end of its 5-minute interval**
+  (decided 2026-10-24): a sample appears complete ~75–85 s after its
+  timestamp, so a sample labeled `16:00` covers 15:55–16:00.
+- **Derivation:** walk the day's 5-minute intervals and price each by its
+  start, `Schedule.getTariffPeriod(t − 5 min)` for the sample labeled `t`, then
+  run-length encode. Segment boundaries fall on 5-minute marks; a schedule
+  boundary that isn't on one (none exist today) takes effect at the next
+  interval. Today's importer calls `getTariffPeriod(t)`, which prices every
+  period's first interval one step early; v2 corrects that, and the archive
+  migration re-derives it from stored samples.
+- **Day boundary check (before migrating archives):** with end-labeled
+  samples, the interval 23:55–24:00 is labeled `00:00` of the next day.
+  Tesla's calendar day appears to return labels `00:00…23:55` (178 samples by
+  14:45 local), i.e. the previous day's last interval and not its own. Verify
+  by fetching two consecutive days and comparing day D+1's `00:00` sample with
+  day D; if confirmed, a day record holds the intervals ending `00:05…24:00`
+  and the fetch for day D also requests D+1's first sample.
 
 ### Status and freshness (new columns)
 
@@ -79,10 +86,11 @@ minus the two tariff columns. The site-day grid is 5 minutes.
     refetched.
   - `open`: today, or an ended day with missing samples. Refetched by
     today-refresh (today) or gap-heal (recent past days).
-  - `gapped`: an ended day still short of samples after repeated fetches made
-    no progress (same as history-migration's "no progress" rule: N fetches past
-    the gap-heal window without new samples). Kept, never refetched
-    automatically; a repair can still replace it.
+  - `gapped`: an ended day short of samples and older than the gap-heal window
+    (14 days). Tesla never had the missing samples (gateway offline, the
+    install-to-utility-approval gap, Tesla-side loss), so refetching would only
+    return the same gaps. Kept as is, never refetched automatically; a repair
+    can still replace it. No fetch counters: age alone decides.
 - **`fetched_at`**: when the Tesla response was received. A write replaces the
   record only if its `fetched_at` is newer than the stored one, so an older,
   slower fetch can never overwrite a newer one.
@@ -151,14 +159,15 @@ Convert every v1 archive to v2 once this format is final:
 Readers support v1 and v2 until the migration reports zero v1 rows, then v1
 read support is removed.
 
-## Decisions to confirm
+## Decisions (settled 2026-10-24)
 
-1. **`gapped` rule:** how many no-progress fetches, and how far past the
-   gap-heal window, before an ended day stops being refetched.
-2. **Segment derivation on today's tariffs:** until effective dates exist, new
-   writes use the current tariff version. Acceptable?
-3. **Timestamp semantics:** verify start-vs-end before migrating archives, so
-   the conversion and new writes agree.
+1. **`gapped`:** an ended, incomplete day older than the gap-heal window.
+2. **Segments use the tariff version current at write time** until
+   effective-dated tariffs exist; days are re-attributed as past tariffs are
+   backfilled.
+3. **Timestamps mark interval ends:** attribution prices each sample by its
+   interval start (`t − 5 min`). Open item: the day-boundary check above,
+   before the archive migration.
 
 ## Implementation slices (each a PR into `feat/single-compact-store`)
 
