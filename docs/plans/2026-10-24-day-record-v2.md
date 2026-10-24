@@ -126,6 +126,17 @@ sample" and freshness reads never decode the payload.
 - Replacing an open day rewrites one small row and its few summary rows: with
   the latch, at most ~288 writes per site per day, typically far fewer.
 
+## Backfill
+
+Backfill walks every day from the newest missing day back to `Site.installed`,
+fetching each once. It writes `complete` or `gapped` records as Tesla returns
+them; a `gapped` day never stops the walk (`gapped` only means "don't retry
+this day automatically"). Days that come back empty get no record; the empty
+stretch right after install (hardware install → utility approval, e.g.
+Harrison 11-14 → 11-28) is recorded once in `Site.history_backfill_from` so
+later runs start there. The 14-day gap-heal window governs automatic retries
+only, never how far back a backfill goes.
+
 ## Reads
 
 - The compact reader treats `open` days like any other record (it already
