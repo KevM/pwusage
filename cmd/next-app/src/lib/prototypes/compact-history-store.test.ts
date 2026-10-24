@@ -380,7 +380,9 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             expect(await repo.next(30,8,jobOptions.now)).toMatchObject({start,trim:false});
             await pool.query('UPDATE "HistoryArchiveControl" SET trim=true');
             expect(await repo.next(9,9,jobOptions.now)).toBeNull();
-            expect(await repo.next(8,9,jobOptions.now)).toMatchObject({start,trim:true});
+            // Trim never reaches inside the archive-after window, even with a shorter retention.
+            expect(await repo.next(8,9,jobOptions.now)).toBeNull();
+            expect(await repo.next(8,8,jobOptions.now)).toMatchObject({start,trim:true});
             const cutoff=archiveCutoff(new Date('2026-03-10T12:00:00Z'),'America/Chicago',2);
             expect(cutoff.toISOString()).toBe('2026-03-08T06:00:00.000Z');
         } finally {await repo.release();}

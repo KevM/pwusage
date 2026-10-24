@@ -59,7 +59,8 @@ export class HistoryArchiveRepo implements ArchiveJobRepo {
      * The oldest day to work on: an unarchived day past the archive-after cutoff for
      * any site in the cohort (archive_all, or listed and inside the date bounds), or,
      * in trim mode, a listed in-bound day past retention that still has raw rows.
-     * `trim` on the result marks the latter.
+     * `trim` on the result marks the latter. Every candidate is past the
+     * archive-after cutoff: a day is archived before it may be trimmed.
      *
      * Walks each site's raw history a day at a time (one index seek per day) rather
      * than testing every raw row against the archive: per-row probing took over a
@@ -69,7 +70,7 @@ export class HistoryArchiveRepo implements ArchiveJobRepo {
         const before=(days:string,ts:string)=>`${ts} < (((($3::timestamptz AT TIME ZONE s.timezone)::date - GREATEST(${days}::int,2))::timestamp) AT TIME ZONE s.timezone)`;
         const inBounds=(ts:string)=>`(s.from_date IS NULL OR ${ts} >= (s.from_date::timestamp AT TIME ZONE s.timezone))
             AND (s.before_date IS NULL OR ${ts} < (s.before_date::timestamp AT TIME ZONE s.timezone))`;
-        const trimDay=(ts:string)=>`(s.trim_site AND ${inBounds(ts)} AND ${before('$1',ts)})`;
+        const trimDay=(ts:string)=>`(s.trim_site AND ${inBounds(ts)} AND ${before('$1',ts)} AND ${before('$2',ts)})`;
         // Archive days start at site midnight, so the containing day is found within a two-day index range.
         const archived=(ts:string)=>`EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=s.id
             AND a.day_start<=${ts} AND a.day_start>${ts}-interval '2 days' AND ${ts}<a.day_end
@@ -88,7 +89,7 @@ export class HistoryArchiveRepo implements ArchiveJobRepo {
                 SELECT s.id,s.timezone,s.from_date,s.before_date,s.archive_all,s.listed,s.trim_site,
                     (SELECT min(e.timestamp) FROM "EnergyData" e WHERE e.site_id=s.id AND e.timestamp>=${nextMidnight})
                 FROM walk s
-                WHERE s.ts IS NOT NULL AND (${before('$1','s.ts')} OR ${before('$2','s.ts')})
+                WHERE s.ts IS NOT NULL AND ${before('$2','s.ts')}
                     AND NOT (${eligible('s.ts')} AND NOT ${retried('s.ts')})),
             candidates AS (
                 SELECT s.id AS site_id,s.timezone,s.ts AS timestamp,${trimDay('s.ts')} AS trim,false AS retry,NULL::timestamptz AS retry_at FROM walk s
