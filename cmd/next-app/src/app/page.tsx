@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import Link from 'next/link';
 import Image from 'next/image';
 import { redirect } from 'next/navigation';
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { getAuthorizedSiteIds, hasValidSession } from '@/lib/auth-checks';
 import { SiteRepo } from '@/lib/site-repo';
 import { ProductWithLiveData } from '@/components/DashboardCards';
 import { AnnouncementRepo } from '@/lib/announcement-repo';
@@ -77,17 +77,19 @@ export default async function Home() {
   let products: ProductWithLiveData[] = []; // We will map this to ProductWithLiveData
   const repo = new SiteRepo();
 
-  const decoded = verifySiteToken(siteAuthToken);
-  if (!decoded) {
+  // DB-backed: revoked sessions go to login; site membership comes from the DB,
+  // not the JWT claims.
+  if (!await hasValidSession()) {
     redirect('/login');
   }
 
-  if (decoded.sites.length === 0) {
+  const siteIds = await getAuthorizedSiteIds();
+  if (siteIds.length === 0) {
     // Car-only users are authenticated and should land on the products page.
     redirect('/products');
   }
 
-  const sitePromises = decoded.sites.map(id => repo.getSite(id));
+  const sitePromises = siteIds.map(id => repo.getSite(id));
   const sitesResults = await Promise.all(sitePromises);
   const validSites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
 

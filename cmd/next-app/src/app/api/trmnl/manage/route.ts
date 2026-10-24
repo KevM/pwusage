@@ -6,7 +6,7 @@ import { TrmnlInstallationRepo } from '@/lib/trmnl-installation-repo';
 import { cookies } from 'next/headers';
 import { SiteService } from '@/lib/site-service';
 import { verifyTrmnlToken } from '@/lib/trmnl-auth';
-import { verifySiteToken } from '@/lib/auth-jwt';
+import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import {
     buildDefaultTrmnlComponentScreens,
     coercePositiveInt,
@@ -48,24 +48,13 @@ export async function GET(request: Request) {
 
     if (!isDeviceAuthorized) {
         // Site auth fallback is only valid if the user owns the currently linked site.
-        const cookieStore = await cookies();
-        const siteAuthToken = cookieStore.get('site_auth')?.value;
-        if (!siteAuthToken) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const decoded = verifySiteToken(siteAuthToken);
-        if (!decoded) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
+        // verifySiteAccess is DB-backed (session_version, active status, roles,
+        // site membership), so a session revoked by sign-out-everywhere fails here.
         if (!installation || !installation.site_id) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const isAdmin = decoded.roles.includes('admin');
-        const ownsLinkedSite = decoded.sites.includes(installation.site_id);
-        if (!isAdmin && !ownsLinkedSite) {
+        if (!await verifySiteAccess(installation.site_id)) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
     }
@@ -131,12 +120,12 @@ export async function POST(request: Request) {
         let accessToken: string | undefined;
 
         if (siteAuthToken) {
-            const { verifySiteToken } = await import('@/lib/auth-jwt');
             const { UserRepo } = await import('@/lib/user-repo');
 
-            const decoded = verifySiteToken(siteAuthToken);
-            if (decoded && decoded.sub) {
-                const userTokens = await new UserRepo().getTokens(decoded.sub);
+            // DB-backed: a revoked session must not unlock the user's Tesla tokens.
+            const currentUser = await getCurrentUser();
+            if (currentUser) {
+                const userTokens = await new UserRepo().getTokens(currentUser.id);
                 if (userTokens) {
                     accessToken = userTokens.access_token;
                 }

@@ -28,7 +28,7 @@ vi.mock('./site-repo', () => ({
     }
 }));
 
-import { getCurrentUser, verifySiteAccess, getAuthorizedSiteIds, isUserAdmin } from './auth-checks';
+import { getCurrentUser, verifySiteAccess, getAuthorizedSiteIds, isUserAdmin, hasValidSession } from './auth-checks';
 
 describe('auth-checks.ts', () => {
     beforeEach(() => {
@@ -189,5 +189,23 @@ describe('auth-checks.ts', () => {
         mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 1, roles: ['user'] });
         expect(await getCurrentUser()).toBeNull();
         expect(await verifySiteAccess('site-1')).toBe(false);
+    });
+
+    it('hasValidSession is false for a revoked session and true for a current one', async () => {
+        mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['site-1'], roles: ['user'], sv: 0 });
+
+        mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 1, roles: ['user'] });
+        expect(await hasValidSession()).toBe(false);
+
+        mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] });
+        expect(await hasValidSession()).toBe(true);
+    });
+
+    it('hasValidSession is true for a car-only user with no sites', async () => {
+        mocks.verifySiteToken.mockReturnValue({ sub: 'car-user', sites: [], roles: ['user'], sv: 0 });
+        mocks.getSitesForUser.mockResolvedValue([]);
+
+        expect(await hasValidSession()).toBe(true);
+        expect(await getAuthorizedSiteIds()).toEqual([]);
     });
 });

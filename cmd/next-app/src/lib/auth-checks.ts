@@ -70,6 +70,15 @@ export const isUserAdmin = cache(async (): Promise<boolean> => {
     return !!auth && auth.roles.includes('admin');
 });
 
+/**
+ * True when the request carries a site_auth session that passes the DB checks
+ * (active user, current session_version). Unlike getAuthorizedSiteIds(), this
+ * distinguishes a revoked session from a valid car-only session with no sites.
+ */
+export const hasValidSession = cache(async (): Promise<boolean> => {
+    return !!(await resolveAuth());
+});
+
 export const getCurrentUser = cache(async (): Promise<{ id: string, email?: string } | null> => {
     const auth = await resolveAuth();
     if (!auth || !auth.userId) return null;
