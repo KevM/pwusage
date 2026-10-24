@@ -186,10 +186,13 @@ export class Importer {
                 ? windows
                 : [...windows].reverse().slice(0, maxWindows);
 
+            // The archive pass shares the caller's budget; days it can't reach are left to the archive cron.
+            const deadline = options?.maxTimeMs === undefined ? undefined : Date.now() + options.maxTimeMs;
             const imported: DateWindow[] = [];
             const result = await this.importWindows(siteId, toImport, windows.length, options?.maxTimeMs, onProgress, imported);
             if (options?.archiveHealedDays && imported.length > 0) {
-                await archiveHealedDays({ id: site.id, timezone: site.timezone }, imported, new Date());
+                await archiveHealedDays({ id: site.id, timezone: site.timezone }, imported, new Date(),
+                    deadline === undefined ? {} : { deadline });
             }
             return result;
         });

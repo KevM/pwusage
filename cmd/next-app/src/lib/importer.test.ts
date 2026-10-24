@@ -98,7 +98,7 @@ vi.mock('./user-repo', () => {
     return { UserRepo };
 });
 vi.mock('./tesla-client');
-const healedArchiveMock = vi.hoisted(() => ({ archiveHealedDays: vi.fn(async () => []) }));
+const healedArchiveMock = vi.hoisted(() => ({ archiveHealedDays: vi.fn(async (..._args: unknown[]) => []) }));
 vi.mock('./healed-day-archive', () => healedArchiveMock);
 vi.mock('./import-lock', () => ({
     withImportLock: importLockMock.withImportLock,
@@ -437,7 +437,26 @@ describe('Importer Sync Logic', () => {
         expect(healedArchiveMock.archiveHealedDays).toHaveBeenCalledWith(
             { id: 'site-123', timezone: 'America/Chicago' },
             [{ start: new Date('2026-01-10T00:00:00Z'), end: new Date('2026-01-11T00:00:00Z') }],
-            expect.any(Date));
+            expect.any(Date),
+            {});
+    });
+
+    it('bounds healed-day archiving by the remaining request time budget', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+        vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const before = Date.now();
+
+        await importer.ensureDataForRange('site-123', new Date('2026-01-10T00:00:00Z'), new Date('2026-01-11T00:00:00Z'),
+            undefined, { archiveHealedDays: true, maxTimeMs: 40000 });
+
+        const deps = healedArchiveMock.archiveHealedDays.mock.calls[0][3] as { deadline: number };
+        expect(deps.deadline).toBeGreaterThanOrEqual(before + 40000);
+        expect(deps.deadline).toBeLessThanOrEqual(Date.now() + 40000);
     });
 
     it('leaves archiving to the caller by default and when nothing imported', async () => {

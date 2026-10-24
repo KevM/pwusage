@@ -78,6 +78,21 @@ describe('archiveHealedDays', () => {
         expect(await run()).toEqual([{ start: OLD.start.toISOString(), status: 'busy' }]);
     });
 
+    it('defers days left once the caller\'s deadline passes to the archive job', async () => {
+        let clock = 0;
+        repo.finalize.mockImplementation(async () => {
+            clock += 10;
+            return { status: 'finalized', revision: 'rev-1', attributionComplete: true };
+        });
+        const result = await archiveHealedDays(SITE, [OLDER, OLD], NOW,
+            { repo: repo as unknown as HealedDayArchiveRepo, env: env(), deadline: 5, clock: () => clock });
+        expect(result).toEqual([
+            { start: OLDER.start.toISOString(), status: 'trimmed' },
+            { start: OLD.start.toISOString(), status: 'deferred' },
+        ]);
+        expect(repo.finalize).toHaveBeenCalledTimes(1);
+    });
+
     it('does nothing on invalid archive configuration', async () => {
         expect(await run([OLD], { DATA_RETENTION_DAYS: 'soon' })).toEqual([]);
         expect(repo.healControl).not.toHaveBeenCalled();
