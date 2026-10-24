@@ -30,19 +30,21 @@ export class ArchiveControlChangedError extends Error {
     constructor() {super('Archive control changed before mutation');}
 }
 const CONTROL_BYTES=32768;
+/** 7 days measured ~13 s on Prod (2026-10-24); the 30 s admission budget still stops a slow run early. */
+const MAX_DAYS_PER_RUN=10;
 function integer(value:string|undefined,fallback:number,max:number,min=1):number {
     if(value!==undefined&&!/^[1-9]\d*$/.test(value))throw new Error('Invalid archive job configuration');
     const n=value===undefined?fallback:Number(value);
     if(!Number.isSafeInteger(n)||n<min||n>max)throw new Error('Invalid archive job configuration');return n;
 }
 export function readArchiveOptions(env:NodeJS.ProcessEnv,now=new Date()):ArchiveOptions {
-    return {now,retentionDays:integer(env.DATA_RETENTION_DAYS,365,36500),archiveAfterDays:integer(env.HISTORY_ARCHIVE_AFTER_DAYS,2,36500,2),maxDays:integer(env.HISTORY_ARCHIVE_MAX_DAYS,2,7),
+    return {now,retentionDays:integer(env.DATA_RETENTION_DAYS,365,36500),archiveAfterDays:integer(env.HISTORY_ARCHIVE_AFTER_DAYS,2,36500,2),maxDays:integer(env.HISTORY_ARCHIVE_MAX_DAYS,2,MAX_DAYS_PER_RUN),
         maxTimeMs:integer(env.HISTORY_ARCHIVE_MAX_TIME_MS,30000,30000),maxEstimatedBytes:integer(env.HISTORY_ARCHIVE_MAX_ESTIMATED_BYTES,4*1024*1024,64*1024*1024),
         readsEnabled:env.COMPACT_HISTORY_READS_ENABLED==='true'};
 }
 function validate(options:ArchiveOptions):void {
     if(!Number.isSafeInteger(+options.now))throw new Error('Invalid archive clock');
-    for(const [n,max,min] of [[options.retentionDays,36500,1],[options.archiveAfterDays,36500,2],[options.maxDays,7,1],[options.maxTimeMs,30000,1],[options.maxEstimatedBytes,64*1024*1024,1]]) {
+    for(const [n,max,min] of [[options.retentionDays,36500,1],[options.archiveAfterDays,36500,2],[options.maxDays,MAX_DAYS_PER_RUN,1],[options.maxTimeMs,30000,1],[options.maxEstimatedBytes,64*1024*1024,1]]) {
         if(!Number.isSafeInteger(n)||n<min||n>max)throw new Error('Invalid archive job budget');
     }
 }

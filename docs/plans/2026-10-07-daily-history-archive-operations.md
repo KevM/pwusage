@@ -55,7 +55,7 @@ logged; saved progress or the original work error remains the result.
 
 - HISTORY_ARCHIVE_AFTER_DAYS: integer 2–36500, default 2. A finished day is archived once it is this many site-local days old.
 - DATA_RETENTION_DAYS: positive integer, default 365, maximum 36500. Only how long trim mode keeps raw rows; it no longer delays archiving.
-- HISTORY_ARCHIVE_MAX_DAYS: default 2, maximum 7 attempted days.
+- HISTORY_ARCHIVE_MAX_DAYS: default 2, maximum 10 attempted days. On 2026-10-24 a 7-day Prod run took about 13 s.
 - HISTORY_ARCHIVE_MAX_TIME_MS: default/max 30000 milliseconds.
 - HISTORY_ARCHIVE_MAX_ESTIMATED_BYTES: default 4194304, maximum 67108864.
 
@@ -157,10 +157,10 @@ prevent deletion of tariffs used by history. Normal tariff saves append versions
 
 Archive-only adds archives but does not reduce raw storage. Disabled/paused or
 undersized jobs do not enforce a storage ceiling. Each run processes **two
-site-days total** by default, at most seven, with retries sharing those slots.
+site-days total** by default, at most ten, with retries sharing those slots.
 Since 2026-10-24 a Supabase pg_cron job (`history-archive-trigger`, hourly at
 :23) calls the route as well as the daily Vercel cron, giving 48 site-days/day
-at the default (168 at `HISTORY_ARCHIVE_MAX_DAYS=7`); the advisory lock keeps
+at the default (240 at `HISTORY_ARCHIVE_MAX_DAYS=10`); the advisory lock keeps
 the two from overlapping. Discovery walks each site's raw history a day at a
 time: on production (84 owned sites, ~1,800 raw site-days, most already
 archived) it took about 2.6 s, against more than a minute for the earlier
@@ -169,7 +169,7 @@ site-days per day after the retention window. Effective successful trims/day
 must exceed N to drain an existing backlog; matching N only maintains it.
 The 30s/byte budgets can make actual throughput smaller than the day limit.
 The hourly schedule maintains well over 22 reporting sites at the default
-budget; a large first backlog drains faster at `HISTORY_ARCHIVE_MAX_DAYS=7`, or
+budget; a large first backlog drains faster at `HISTORY_ARCHIVE_MAX_DAYS=10`, or
 with `scripts/migrate-site-history.ts --skip-backfill --apply` per site. Selected one-day
 canaries and manually invoked bounded catch-up runs are appropriate during
 rehearsal; they do not prove fleet-wide sustainability.
