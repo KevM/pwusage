@@ -80,6 +80,10 @@ it('archives after 2 days by default, separately from trim retention',()=>{
     expect(readArchiveOptions({NODE_ENV:'test',HISTORY_ARCHIVE_AFTER_DAYS:'7',DATA_RETENTION_DAYS:'90'})).toMatchObject({archiveAfterDays:7,retentionDays:90});
     for(const value of ['0','1','-1','2days',''])expect(()=>readArchiveOptions({NODE_ENV:'test',HISTORY_ARCHIVE_AFTER_DAYS:value})).toThrow();
 });
+it('admits up to 10 days per run',()=>{
+    expect(readArchiveOptions({NODE_ENV:'test',HISTORY_ARCHIVE_MAX_DAYS:'10'}).maxDays).toBe(10);
+    expect(()=>readArchiveOptions({NODE_ENV:'test',HISTORY_ARCHIVE_MAX_DAYS:'11'})).toThrow();
+});
 it('leaves room for an admitted transaction and reporting within the 60-second deployment limit',()=>{
     expect(readArchiveOptions({NODE_ENV:'test'}).maxTimeMs).toBe(30000);
     expect(()=>readArchiveOptions({NODE_ENV:'test',HISTORY_ARCHIVE_MAX_TIME_MS:'30001'})).toThrow();
