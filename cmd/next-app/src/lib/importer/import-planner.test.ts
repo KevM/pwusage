@@ -272,6 +272,56 @@ describe('planImport — a gap exactly equal to the threshold is not a gap', () 
     });
 });
 
+describe('planImport — settled archive days', () => {
+    // A trimmed day Tesla never fully reported: archive metadata shows a 2-hour hole.
+    const holeyArchive: DailyCoverageStat = {
+        localDayKey: DAY1_KEY,
+        count: 264,
+        first: DAY1_START,
+        last: new Date(DAY1_END.getTime() - 5 * 60 * 1000),
+        maxInteriorGapMs: 2 * 60 * 60 * 1000,
+        archived: true,
+    };
+
+    it('treats a settled archive day as covered even when its samples have gaps', () => {
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [holeyArchive],
+            timezone: TZ,
+            now: FUTURE,
+        })).toEqual([]);
+    });
+
+    it('still re-fetches the same gap when the day is not a settled archive', () => {
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [{ ...holeyArchive, archived: false }],
+            timezone: TZ,
+            now: FUTURE,
+        })).toHaveLength(1);
+    });
+
+    it('re-fetches a settled archive day when forced', () => {
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [holeyArchive],
+            timezone: TZ,
+            forceRefetch: true,
+            now: FUTURE,
+        })).toEqual([{ start: DAY1_START, end: DAY1_END }]);
+    });
+
+    it('reports the settled flag in the audit', () => {
+        const [day] = auditDays({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [holeyArchive],
+            timezone: TZ,
+            now: FUTURE,
+        });
+        expect(day).toMatchObject({ archived: true, hasInteriorGap: true });
+    });
+});
+
 describe('splitAtSiteMidnight', () => {
     it('returns a single window that does not cross site midnight', () => {
         const w = {

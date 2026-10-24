@@ -98,6 +98,8 @@ vi.mock('./user-repo', () => {
     return { UserRepo };
 });
 vi.mock('./tesla-client');
+const healedArchiveMock = vi.hoisted(() => ({ archiveHealedDays: vi.fn(async (..._args: unknown[]) => []) }));
+vi.mock('./healed-day-archive', () => healedArchiveMock);
 vi.mock('./import-lock', () => ({
     withImportLock: importLockMock.withImportLock,
 }));
@@ -415,6 +417,62 @@ describe('Importer Sync Logic', () => {
         expect(result.totalWindows).toBe(5);
         expect(result.processedWindows).toBe(2);
         expect(result.complete).toBe(false);
+    });
+
+    it('hands successfully imported days to the healed-day archiver when asked', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+        vi.spyOn(importer, 'importRange')
+            .mockResolvedValueOnce([])
+            .mockRejectedValueOnce(new Error('Tesla flaked on this day'));
+
+        await importer.ensureDataForRange('site-123', new Date('2026-01-10T00:00:00Z'), new Date('2026-01-12T00:00:00Z'),
+            undefined, { archiveHealedDays: true });
+
+        expect(healedArchiveMock.archiveHealedDays).toHaveBeenCalledTimes(1);
+        expect(healedArchiveMock.archiveHealedDays).toHaveBeenCalledWith(
+            { id: 'site-123', timezone: 'America/Chicago' },
+            [{ start: new Date('2026-01-10T00:00:00Z'), end: new Date('2026-01-11T00:00:00Z') }],
+            expect.any(Date),
+            {});
+    });
+
+    it('bounds healed-day archiving by the remaining request time budget', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+        vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const before = Date.now();
+
+        await importer.ensureDataForRange('site-123', new Date('2026-01-10T00:00:00Z'), new Date('2026-01-11T00:00:00Z'),
+            undefined, { archiveHealedDays: true, maxTimeMs: 40000 });
+
+        const deps = healedArchiveMock.archiveHealedDays.mock.calls[0][3] as { deadline: number };
+        expect(deps.deadline).toBeGreaterThanOrEqual(before + 40000);
+        expect(deps.deadline).toBeLessThanOrEqual(Date.now() + 40000);
+    });
+
+    it('leaves archiving to the caller by default and when nothing imported', async () => {
+        (importer as unknown as { repo: unknown }).repo = {
+            getSiteMidnight: EnergyRepo.getSiteMidnight,
+            getLatestTimestamp: vi.fn().mockResolvedValue(null),
+            getDailyCoverage: vi.fn().mockResolvedValue([]),
+            insertEnergyDataBatch: vi.fn()
+        };
+        vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const start = new Date('2026-01-10T00:00:00Z'), end = new Date('2026-01-11T00:00:00Z');
+
+        await importer.ensureDataForRange('site-123', start, end);
+        await importer.ensureDataForRange('site-123', start, end, undefined, { archiveHealedDays: true, maxWindows: 0 });
+
+        expect(healedArchiveMock.archiveHealedDays).not.toHaveBeenCalled();
     });
 
     it('returns complete: false when some planned windows fail and others succeed', async () => {

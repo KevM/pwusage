@@ -14,7 +14,9 @@ import { addDaysInSiteTimezone, getSiteMidnight } from './date-utils';
  * each recently used site's trailing complete site-local days through
  * ensureDataForRange (planImport under the import lock), capped per site and
  * by a shared time budget sized for the Vercel Hobby 60s function limit.
- * Unhealed windows are simply re-planned by the next run.
+ * Unhealed windows are simply re-planned by the next run. Settled archive days
+ * count as covered (so trimmed raw is not re-fetched), and a healed day past the
+ * retention cutoff goes back into the archive (`archiveHealedDays`).
  */
 export interface HealTrailingGapsOptions {
     days?: number;
@@ -55,7 +57,7 @@ export async function healTrailingGaps(options: HealTrailingGapsOptions = {}): P
     const sites = await new SiteRepo().getSitesForGapHeal(at.getTime() - GAP_HEAL_ACTIVE_WITHIN_MS);
     const windows = sites.map(site => trailingWindow(site, days, at));
 
-    // Egress: one small count query covers every site. Only sites short of a
+    // Egress: one small count query covers every site, settled archive days included. Only sites short of a
     // full set of 5-minute samples pay for tokens, the site load, the import
     // lock and the per-day coverage audit (planImport) that decides what to fetch.
     const counts = await new EnergyRepo().countAlignedSamples(
@@ -114,7 +116,7 @@ async function healSite(
         const client = await createTeslaClientForSite(siteId);
         if (!client) return { siteId, status: 'no-tokens' };
 
-        const res = await new Importer(client).ensureDataForRange(siteId, start, end, undefined, { maxTimeMs, maxWindows });
+        const res = await new Importer(client).ensureDataForRange(siteId, start, end, undefined, { maxTimeMs, maxWindows, archiveHealedDays: true });
 
         // ensureDataForRange reports a busy import lock as an empty, incomplete result.
         if (!res.complete && res.totalWindows === 0) return { siteId, status: 'busy' };

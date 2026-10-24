@@ -57,7 +57,7 @@ export async function GET(request: Request) {
                             });
                             controller.enqueue(encoder.encode(`data: ${progressJson}\n\n`));
                         },
-                        { maxTimeMs: 40000 }
+                        { maxTimeMs: 40000, archiveHealedDays: true }
                     );
 
                     if (result.complete) {

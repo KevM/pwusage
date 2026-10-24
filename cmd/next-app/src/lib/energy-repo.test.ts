@@ -327,7 +327,7 @@ describe('EnergyRepo.countAlignedSamples', () => {
         expect(counts).toEqual(new Map([['a', 4032], ['b', 12]]));
         expect(queryMock).toHaveBeenCalledTimes(1);
         const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
-        expect(sql).toContain('unnest($1::text[], $2::timestamp[], $3::timestamp[])');
+        expect(sql).toContain('unnest($1::text[], $2::timestamptz[], $3::timestamptz[])');
         expect(sql).toContain('% 300 = 0');
         expect(params).toEqual([
             ['a', 'b'],
@@ -339,6 +339,21 @@ describe('EnergyRepo.countAlignedSamples', () => {
     it('skips the query when there are no windows', async () => {
         await expect(new EnergyRepo().countAlignedSamples([])).resolves.toEqual(new Map());
         expect(queryMock).not.toHaveBeenCalled();
+    });
+});
+
+describe('EnergyRepo.getBucketedEnergyData', () => {
+    beforeEach(() => queryMock.mockReset());
+
+    it('returns the ROW_NUMBER id as a number, matching compact reads', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{
+            id: '7', timestamp: '2026-04-01T00:00:00Z', sample_timestamp: '2026-04-01T00:10:00Z', site_id: 'site-1',
+            tariff_id: 1, tariff_schedule_id: 2, load_power: '1', solar_power: '2', grid_power: '3', battery_power: '4', sample_count: '3',
+        }] });
+
+        const [row] = await new EnergyRepo().getBucketedEnergyData('site-1', new Date('2026-04-01'), new Date('2026-04-02'));
+
+        expect(row.id).toBe(7);
     });
 });
 

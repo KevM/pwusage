@@ -11,6 +11,7 @@ import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer'
 import { planImport, splitAtSiteMidnight, auditDays, type DateWindow } from './import-planner';
 import { getSiteMidnight } from '../date-utils';
 import { withImportLock } from '../import-lock';
+import { archiveHealedDays } from '../healed-day-archive';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -163,7 +164,13 @@ export class Importer {
         start: Date,
         end: Date,
         onProgress?: (msg: string) => void,
-        options?: { force?: boolean; maxTimeMs?: number; maxWindows?: number }
+        options?: {
+            force?: boolean;
+            maxTimeMs?: number;
+            maxWindows?: number;
+            /** Put re-imported days past the retention cutoff back into the archive. */
+            archiveHealedDays?: boolean;
+        }
     ): Promise<EnsureDataResult> {
         const force = options?.force ?? false;
         const maxWindows = options?.maxWindows;
@@ -179,7 +186,15 @@ export class Importer {
                 ? windows
                 : [...windows].reverse().slice(0, maxWindows);
 
-            return this.importWindows(siteId, toImport, windows.length, options?.maxTimeMs, onProgress);
+            // The archive pass shares the caller's budget; days it can't reach are left to the archive cron.
+            const deadline = options?.maxTimeMs === undefined ? undefined : Date.now() + options.maxTimeMs;
+            const imported: DateWindow[] = [];
+            const result = await this.importWindows(siteId, toImport, windows.length, options?.maxTimeMs, onProgress, imported);
+            if (options?.archiveHealedDays && imported.length > 0) {
+                await archiveHealedDays({ id: site.id, timezone: site.timezone }, imported, new Date(),
+                    deadline === undefined ? {} : { deadline });
+            }
+            return result;
         });
     }
 
@@ -256,7 +271,8 @@ export class Importer {
         toImport: DateWindow[],
         totalWindows: number,
         maxTimeMs?: number,
-        onProgress?: (msg: string) => void
+        onProgress?: (msg: string) => void,
+        imported?: DateWindow[]
     ): Promise<EnsureDataResult> {
         const allRows: EnergyDataRow[] = [];
         let successCount = 0;
@@ -279,6 +295,7 @@ export class Importer {
                 const rows = await this.importRange(siteId, window.start, window.end, 'day');
                 allRows.push(...rows);
                 successCount++;
+                imported?.push(window);
             } catch (error) {
                 console.error(`[Importer] Failed to import window ${window.start.toISOString()} - ${window.end.toISOString()}:`, error);
                 if (onProgress) onProgress(`Error importing ${dateStr}: ${error instanceof Error ? error.message : String(error)}`);

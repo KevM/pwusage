@@ -40,6 +40,19 @@ export class HistoryArchiveRepo implements ArchiveJobRepo {
         const result=await this.connection().query<ArchiveControl>('SELECT paused,trim,xmin::text AS revision FROM "HistoryArchiveControl" WHERE id=true');
         if(!result.rows[0])throw new Error('Missing archive control');return result.rows[0];
     }
+    /**
+     * Control for archiving one healed day outside the job claim, or null when the
+     * job is paused or the day is outside its cohort or date bounds (as in `next`).
+     * The guarded finalize/trim still re-check this revision in their transaction.
+     */
+    async healControl(day:ArchiveCandidate):Promise<ArchiveControl|null> {
+        const result=await this.pool.query<ArchiveControl>(`SELECT h.paused,h.trim,h.xmin::text AS revision
+            FROM "HistoryArchiveControl" h JOIN "Site" s ON s.id=$1 AND s.user_id IS NOT NULL
+            WHERE h.id=true AND NOT h.paused AND s.id=ANY(h.site_ids)
+                AND (h.from_date IS NULL OR $2::timestamptz >= (h.from_date::timestamp AT TIME ZONE s.timezone))
+                AND (h.before_date IS NULL OR $2::timestamptz < (h.before_date::timestamp AT TIME ZONE s.timezone))`,[day.siteId,day.start]);
+        return result.rows[0]??null;
+    }
     async next(trim:boolean,retentionDays:number,now:Date,preferRetry=false):Promise<ArchiveCandidate|null> {
         const eligible=`e.timestamp < (((($3::timestamptz AT TIME ZONE s.timezone)::date - GREATEST($2::int,2))::timestamp) AT TIME ZONE s.timezone)
             AND (s.from_date IS NULL OR e.timestamp >= (s.from_date::timestamp AT TIME ZONE s.timezone))
