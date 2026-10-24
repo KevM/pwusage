@@ -7,6 +7,12 @@ export interface UserWithSites extends User {
     has_trmnl_integration?: boolean;
 }
 
+export interface UserAuthState {
+    isActive: boolean;
+    sessionVersion: number;
+    roles: string[];
+}
+
 export class UserRepo {
     // === Queries ===
     async getByAccessToken(token: string): Promise<{ id: string, email?: string, roles?: string[] } | null> {
@@ -35,6 +41,22 @@ export class UserRepo {
     async isActive(userId: string): Promise<boolean> {
         const res = await pool.query('SELECT is_active FROM "User" WHERE id = $1', [userId]);
         return res.rows.length > 0 && res.rows[0].is_active === true;
+    }
+
+    /**
+     * Single-query auth state for per-request authorization. The DB is the
+     * source of truth for active status, session_version (sign-out-everywhere),
+     * and roles; the site_auth JWT is only a cache of these claims.
+     */
+    async getAuthState(userId: string): Promise<UserAuthState | null> {
+        const res = await pool.query('SELECT is_active, session_version, roles FROM "User" WHERE id = $1', [userId]);
+        if (res.rows.length === 0) return null;
+        const row = res.rows[0];
+        return {
+            isActive: row.is_active === true,
+            sessionVersion: row.session_version ?? 0,
+            roles: row.roles || []
+        };
     }
 
     async getById(userId: string): Promise<User | null> {
@@ -100,6 +122,16 @@ export class UserRepo {
     }
 
     // === Commands ===
+    /**
+     * Invalidate every outstanding site_auth JWT for the user ("sign out
+     * everywhere"). Tokens whose embedded sv trails the new value are blocked
+     * on each authenticated request and refused refresh; re-authenticating
+     * issues a token stamped with the new version.
+     */
+    async bumpSessionVersion(userId: string): Promise<void> {
+        await pool.query('UPDATE "User" SET session_version = session_version + 1 WHERE id = $1', [userId]);
+    }
+
     async updateUserEmail(userId: string, email: string): Promise<void> {
         await pool.query('UPDATE "User" SET email = $1 WHERE id = $2', [email, userId]);
     }

@@ -148,7 +148,11 @@ export async function GET(request: NextRequest) {
 
         if (result.siteIds.length > 0 || result.roles.includes('admin')) {
             const { signSiteToken, COOKIE_MAX_AGE_SECONDS } = await import('@/lib/auth-jwt');
-            const siteToken = signSiteToken(result.siteIds, result.roles, result.userId);
+            // Stamp the user's current session_version so a fresh login after a
+            // sign-out-everywhere bump is not immediately treated as revoked.
+            const { UserRepo } = await import('@/lib/user-repo');
+            const authState = await new UserRepo().getAuthState(result.userId);
+            const siteToken = signSiteToken(result.siteIds, result.roles, result.userId, undefined, authState?.sessionVersion ?? 0);
 
             // Set 24h cookie
             cookieStore.set('site_auth', siteToken, {

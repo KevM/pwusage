@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => {
     return {
         verifySiteAccess: vi.fn(),
+        findByUuidWithSite: vi.fn(),
         getSite: vi.fn(),
         getSiteCurrencyCode: vi.fn(),
         getLatestEnergyData: vi.fn(),
@@ -25,6 +26,13 @@ vi.mock('next/server', async (importOriginal) => {
 
 vi.mock('@/lib/auth-checks', () => ({
     verifySiteAccess: mocks.verifySiteAccess
+}));
+
+vi.mock('@/lib/trmnl-installation-repo', () => ({
+    TrmnlInstallationRepo: class {
+        findByUuidWithSite = mocks.findByUuidWithSite;
+        updateCarouselIndex = vi.fn();
+    }
 }));
 
 vi.mock('@/lib/site-repo', () => ({
@@ -107,5 +115,77 @@ describe('/api/trmnl/markup', () => {
         expect(body.markup).toContain('Harrison @ 7:30am');
 
         vi.useRealTimers();
+    });
+
+    // Session revocation (sign-out-everywhere) must not affect TRMNL device
+    // polling: devices authenticate with installation bearer tokens, never
+    // site_auth. This test forces the human authz check to fail and still
+    // expects the device path to render.
+    it('renders device (uuid) polls authenticated by installation bearer token without consulting session auth', async () => {
+        mocks.verifySiteAccess.mockResolvedValue(false); // revoked human session
+        mocks.findByUuidWithSite.mockResolvedValue({
+            installation: {
+                id: 'inst-1',
+                uuid: 'device-uuid-1',
+                access_token: 'device-token',
+                json: null,
+            },
+            site: {
+                id: 'site-1',
+                name: 'Harrison',
+                timezone: 'America/Chicago',
+                tariffs: [],
+                billing_start_day: 1,
+            },
+        });
+
+        const response = await GET(new Request('http://localhost/api/trmnl/markup?uuid=device-uuid-1', {
+            headers: { Authorization: 'Bearer device-token' },
+        }));
+
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.markup).toContain('Harrison');
+        // Human session authz must not be consulted on the device path.
+        expect(mocks.verifySiteAccess).not.toHaveBeenCalled();
+    });
+
+    it('rejects a device poll whose bearer token does not match the installation', async () => {
+        mocks.verifySiteAccess.mockResolvedValue(false);
+        mocks.findByUuidWithSite.mockResolvedValue({
+            installation: {
+                id: 'inst-1',
+                uuid: 'device-uuid-1',
+                access_token: 'device-token',
+                json: null,
+            },
+            site: {
+                id: 'site-1',
+                name: 'Harrison',
+                timezone: 'America/Chicago',
+                tariffs: [],
+                billing_start_day: 1,
+            },
+        });
+
+        const response = await GET(new Request('http://localhost/api/trmnl/markup?uuid=device-uuid-1', {
+            headers: { Authorization: 'Bearer wrong-token' },
+        }));
+
+        const body = await response.json();
+        expect(body.markup).toContain('Plugin Auth Failed');
+        expect(mocks.verifySiteAccess).not.toHaveBeenCalled();
+    });
+
+    // Preview mode is human auth: it must go through verifySiteAccess, which
+    // now enforces active status and session_version.
+    it('rejects preview (site_id) polls when the human session is revoked', async () => {
+        mocks.verifySiteAccess.mockResolvedValue(false);
+
+        const response = await GET(new Request('http://localhost/api/trmnl/markup?site_id=site-1'));
+
+        expect(response.status).toBe(401);
+        expect(mocks.verifySiteAccess).toHaveBeenCalledWith('site-1');
+        expect(mocks.getSite).not.toHaveBeenCalled();
     });
 });

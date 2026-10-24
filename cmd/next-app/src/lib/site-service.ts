@@ -2,7 +2,7 @@ import { Site, SiteWithTariffs, TrmnlInstallation } from './db';
 import { TeslaClient, TeslaClientConfig, isTeslaAuthError } from './tesla-client';
 import { SiteRepo } from './site-repo';
 import { verifySiteToken } from './auth-jwt';
-import { isUserActive as defaultIsUserActive } from './user-repo';
+import { UserRepo, UserAuthState } from './user-repo';
 import { createEnergyRepo } from './energy-repo-factory';
 import { EnergyRepo, UsageData } from './energy-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
@@ -22,8 +22,9 @@ export interface SiteServiceDeps {
     teslaClient?: Pick<TeslaClient, 'getProducts'>;
     siteRepo: SiteRepo;
     siteAuthToken?: string;
-    // Revocation check. Defaults to the real (React-cached) isUserActive; injectable for tests.
-    isUserActive?: (userId: string) => Promise<boolean>;
+    // DB auth-state resolution (active status + session_version + roles).
+    // Defaults to the real UserRepo.getAuthState; injectable for tests.
+    getAuthState?: (userId: string) => Promise<UserAuthState | null>;
     energyRepo?: Pick<EnergyRepo, 'hasData' | 'getUsageByTOU'>;
     teslaTokenRepo?: Pick<TeslaTokenRepo, 'getLockedRefreshHandler'>;
     trmnlService?: Pick<TrmnlService, 'getInstallationBySiteId'>;
@@ -72,13 +73,24 @@ export class SiteService {
             const decoded = verifySiteToken(this.deps.siteAuthToken);
             if (decoded) {
                 // The JWT claims are trusted offline, so a revoked/deactivated user
-                // would otherwise keep access until the token expires. Re-check.
-                if (decoded.sub && !(await this.isUserStillActive(decoded.sub))) {
-                    console.warn(`[SiteService] getAuthorizedSites blocked for revoked/inactive user: ${decoded.sub}`);
-                    throw new Error('Unauthorized: Revoked or inactive user');
+                // or a session revoked by sign-out-everywhere would otherwise keep
+                // access until the token expires. Re-check against the DB.
+                if (decoded.sub) {
+                    const authState = await this.getAuthState(decoded.sub);
+                    if (!authState || !authState.isActive) {
+                        console.warn(`[SiteService] getAuthorizedSites blocked for revoked/inactive user: ${decoded.sub}`);
+                        throw new Error('Unauthorized: Revoked or inactive user');
+                    }
+                    if ((decoded.sv ?? 0) < authState.sessionVersion) {
+                        console.warn(`[SiteService] getAuthorizedSites blocked revoked session for user ${decoded.sub} (token sv=${decoded.sv ?? 0} < db sv=${authState.sessionVersion})`);
+                        throw new Error('Unauthorized: Revoked session');
+                    }
+                    // Close stale claims: derive site membership from the DB, not the JWT.
+                    const userSites = await this.deps.siteRepo.getSitesForUser(decoded.sub);
+                    authorizedSiteIds = new Set(userSites.map(s => s.id));
+                } else {
+                    authorizedSiteIds = new Set(decoded.sites);
                 }
-                // console.log('[SiteService] Using JWT for authorization');
-                authorizedSiteIds = new Set(decoded.sites);
             } else {
                 console.warn('[SiteService] Invalid or expired siteAuthToken');
                 // If we have a client (e.g. legacy/preview flow), we could fallback, but for strict JWT mode we might fail.
@@ -278,11 +290,25 @@ export class SiteService {
         if (this.deps.siteAuthToken) {
             const decoded = verifySiteToken(this.deps.siteAuthToken);
             if (decoded) {
-                // The JWT claims are trusted offline, so a revoked/deactivated user
-                // would otherwise keep access until the token expires. Re-check.
-                if (decoded.sub && !(await this.isUserStillActive(decoded.sub))) {
-                    console.warn(`[SiteService] validateSiteAccess blocked for revoked/inactive user: ${decoded.sub}`);
-                    return false;
+                if (decoded.sub) {
+                    // The JWT claims are trusted offline, so a revoked/deactivated
+                    // user or a session revoked by sign-out-everywhere would
+                    // otherwise keep access until the token expires. Re-check.
+                    const authState = await this.getAuthState(decoded.sub);
+                    if (!authState || !authState.isActive) {
+                        console.warn(`[SiteService] validateSiteAccess blocked for revoked/inactive user: ${decoded.sub}`);
+                        return false;
+                    }
+                    if ((decoded.sv ?? 0) < authState.sessionVersion) {
+                        console.warn(`[SiteService] validateSiteAccess blocked revoked session for user ${decoded.sub} (token sv=${decoded.sv ?? 0} < db sv=${authState.sessionVersion})`);
+                        return false;
+                    }
+                    // Close stale claims: authorize from DB roles + DB site membership.
+                    if (authState.roles.includes('admin')) {
+                        return true;
+                    }
+                    const userSites = await this.deps.siteRepo.getSitesForUser(decoded.sub);
+                    return userSites.some(s => s.id === siteId);
                 }
                 if (decoded.roles.includes('admin')) {
                     return true;
@@ -306,9 +332,10 @@ export class SiteService {
         return false;
     }
 
-    private async isUserStillActive(userId: string): Promise<boolean> {
-        const isUserActive = this.deps.isUserActive ?? defaultIsUserActive;
-        return isUserActive(userId);
+    private async getAuthState(userId: string): Promise<UserAuthState | null> {
+        const resolveAuthState = this.deps.getAuthState;
+        if (resolveAuthState) return resolveAuthState(userId);
+        return new UserRepo().getAuthState(userId);
     }
 
     private async fetchSitesFromApi(): Promise<Set<string>> {

@@ -8,6 +8,13 @@ const mocks = vi.hoisted(() => ({
     upsertSettings: vi.fn(),
     validateSiteAccess: vi.fn(),
     getTokens: vi.fn(),
+    verifySiteAccess: vi.fn(),
+    getCurrentUser: vi.fn(),
+}));
+
+vi.mock('@/lib/auth-checks', () => ({
+    verifySiteAccess: mocks.verifySiteAccess,
+    getCurrentUser: mocks.getCurrentUser
 }));
 
 vi.mock('next/headers', () => ({
@@ -58,6 +65,8 @@ describe('/api/trmnl/manage', () => {
         mocks.cookies.mockResolvedValue({
             get: vi.fn().mockReturnValue(undefined)
         });
+        mocks.verifySiteAccess.mockResolvedValue(false);
+        mocks.getCurrentUser.mockResolvedValue(null);
     });
 
     describe('GET', () => {
@@ -88,6 +97,7 @@ describe('/api/trmnl/manage', () => {
                 get: vi.fn((name: string) => name === 'site_auth' ? { value: 'site-cookie-jwt' } : undefined)
             });
             mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['site-1'], roles: [] });
+            mocks.verifySiteAccess.mockResolvedValue(true);
             mocks.getInstallationByUuid.mockResolvedValue({
                 site_id: 'site-1',
                 plugin_setting_id: 12,
@@ -99,6 +109,26 @@ describe('/api/trmnl/manage', () => {
             expect(res.status).toBe(200);
             const data = await res.json();
             expect(data.site_id).toBe('site-1');
+        });
+
+        it('rejects GET with a revoked session even when the JWT claims the linked site', async () => {
+            mocks.cookies.mockResolvedValue({
+                get: vi.fn((name: string) => name === 'site_auth' ? { value: 'site-cookie-jwt' } : undefined)
+            });
+            // Signature-valid token still lists site-1, but the DB-backed check
+            // rejects it (sign-out-everywhere bumped session_version).
+            mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['site-1'], roles: ['admin'] });
+            mocks.verifySiteAccess.mockResolvedValue(false);
+            mocks.getInstallationByUuid.mockResolvedValue({
+                site_id: 'site-1',
+                plugin_setting_id: 12,
+                json: {}
+            });
+
+            const req = new Request('http://localhost/api/trmnl/manage?uuid=dev-1');
+            const res = await GET(req);
+            expect(res.status).toBe(401);
+            expect(mocks.verifySiteAccess).toHaveBeenCalledWith('site-1');
         });
 
         it('rejects GET for unlinked device with site cookie only', async () => {
@@ -175,6 +205,28 @@ describe('/api/trmnl/manage', () => {
             });
             const res = await POST(req);
             expect(res.status).toBe(200);
+        });
+
+        it('does not load Tesla tokens for a revoked session cookie', async () => {
+            mocks.cookies.mockResolvedValue({
+                get: vi.fn((name: string) => name === 'site_auth' ? { value: 'site-cookie-jwt' } : undefined)
+            });
+            mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['site-1'], roles: [] });
+            mocks.getCurrentUser.mockResolvedValue(null);
+            mocks.getInstallationByUuid.mockResolvedValue({ uuid: 'dev-1', site_id: 'site-1', json: {} });
+            mocks.validateSiteAccess.mockResolvedValue(false);
+
+            const req = new Request('http://localhost/api/trmnl/manage', {
+                method: 'POST',
+                body: JSON.stringify({
+                    uuid: 'dev-1',
+                    site_id: 'site-1',
+                    component_screens: ['solar_overview']
+                })
+            });
+            const res = await POST(req);
+            expect(res.status).toBe(401);
+            expect(mocks.getTokens).not.toHaveBeenCalled();
         });
 
         it('validates target site access when re-linking to a different target site', async () => {

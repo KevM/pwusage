@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 const state = vi.hoisted(() => ({
   cookie: '',
   active: true,
+  sessionVersion: 0,
   siteIds: ['site-1'],
   consume: vi.fn(),
   getById: vi.fn(),
@@ -31,6 +32,11 @@ vi.mock('@/lib/user-repo', () => ({
   UserRepo: class {
     getById = state.getById;
     isActive = async () => state.active;
+    getAuthState = async () => ({
+      isActive: state.active,
+      sessionVersion: state.sessionVersion ?? 0,
+      roles: ['user'],
+    });
   },
   isUserActive: async () => state.active,
 }));
@@ -58,9 +64,15 @@ describe('mobile session lifecycle', () => {
     vi.clearAllMocks();
     state.cookie = '';
     state.active = true;
+    state.sessionVersion = 0;
     state.siteIds = ['site-1'];
     state.consume.mockResolvedValue({ userId: 'user-1', siteIds: ['site-1'], roles: ['user'] });
-    state.getById.mockResolvedValue({ id: 'user-1', is_active: true, roles: ['user'] });
+    state.getById.mockImplementation(async () => ({
+      id: 'user-1',
+      is_active: true,
+      roles: ['user'],
+      session_version: state.sessionVersion,
+    }));
     state.getSitesForUser.mockImplementation(async () => state.siteIds.map(id => ({ id })));
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
@@ -101,5 +113,48 @@ describe('mobile session lifecycle', () => {
 
     await logout();
     expect(state.deleteCookie).toHaveBeenCalledWith({ name: 'site_auth', path: '/' });
+  });
+
+  // Sign-out-everywhere end-to-end: after the DB session_version bumps, the
+  // old cookie is blocked on every request AND the proxy refuses to renew it
+  // (renewing would re-stamp the new sv and un-revoke a stolen session).
+  it('blocks and refuses to renew a session revoked by a session_version bump', async () => {
+    const exchangeResponse = await exchangeSession(new NextRequest('https://pwusage.test/api/mobile/session', {
+      method: 'POST',
+      body: JSON.stringify(exchangePayload),
+      headers: { 'content-type': 'application/json' },
+    }));
+    expect(exchangeResponse.status).toBe(200);
+
+    const issuedCookie = exchangeResponse.cookies.get('site_auth')?.value;
+    expect(issuedCookie).toBeTruthy();
+    state.cookie = issuedCookie || '';
+
+    expect(await verifySiteAccess('site-1')).toBe(true);
+
+    // Another device called sign-out-everywhere: DB version bumped to 1.
+    state.sessionVersion = 1;
+
+    expect(await verifySiteAccess('site-1')).toBe(false);
+
+    // The proxy must not renew the revoked cookie: no set-cookie at all.
+    vi.setSystemTime(new Date('2026-01-07T00:05:00.000Z'));
+    const renewedResponse = await proxy(new NextRequest('https://pwusage.test/api/site-live-data', {
+      headers: { cookie: `site_auth=${state.cookie}` },
+    }));
+    expect(renewedResponse.cookies.get('site_auth')).toBeUndefined();
+
+    // Re-authenticating issues a token stamped with the new DB version.
+    const freshResponse = await exchangeSession(new NextRequest('https://pwusage.test/api/mobile/session', {
+      method: 'POST',
+      body: JSON.stringify(exchangePayload),
+      headers: { 'content-type': 'application/json' },
+    }));
+    const freshCookie = freshResponse.cookies.get('site_auth')?.value;
+    expect(freshCookie).toBeTruthy();
+    state.cookie = freshCookie || '';
+
+    expect(verifySiteToken(state.cookie)?.sv).toBe(1);
+    expect(await verifySiteAccess('site-1')).toBe(true);
   });
 });
