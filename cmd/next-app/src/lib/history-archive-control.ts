@@ -1,9 +1,9 @@
 import {validateMaintenanceDates} from './prototypes/compact-history-maintenance';
-export interface ArchiveControlArgs {action:'status'|'pause'|'archive'|'trim';sites:string[];from?:string;before?:string}
+export interface ArchiveControlArgs {action:'status'|'pause'|'archive'|'archive-all'|'trim';sites:string[];from?:string;before?:string}
 export function parseArchiveControlArgs(args:string[]):ArchiveControlArgs {
     const [action,...rest]=args;
-    if(action!=='status'&&action!=='pause'&&action!=='archive'&&action!=='trim')throw new Error('Expected status, pause, archive or trim');
-    if((action==='status'||action==='pause')&&rest.length)throw new Error('Status and pause take no arguments');
+    if(action!=='status'&&action!=='pause'&&action!=='archive'&&action!=='archive-all'&&action!=='trim')throw new Error('Expected status, pause, archive, archive-all or trim');
+    if((action==='status'||action==='pause'||action==='archive-all')&&rest.length)throw new Error('Status, pause and archive-all take no arguments');
     const sites:string[]=[];let from:string|undefined,before:string|undefined;
     for(let i=0;i<rest.length;i++) {
         const key=rest[i];

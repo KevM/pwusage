@@ -40,7 +40,7 @@ async function run():Promise<void> {
     let report:Awaited<ReturnType<typeof runHistoryArchive>>|undefined;
     try {
         await pool.query('UPDATE "HistoryArchiveControl" SET paused=false,trim=true,site_ids=$1,from_date=$2,before_date=$3 WHERE id=true',[[siteId],from,before]);
-        const options={now:new Date(),retentionDays:3,maxDays:1,maxTimeMs:30000,maxEstimatedBytes:4*1024*1024,readsEnabled:true};
+        const options={now:new Date(),retentionDays:3,archiveAfterDays:3,maxDays:1,maxTimeMs:30000,maxEstimatedBytes:4*1024*1024,readsEnabled:true};
         report=await runHistoryArchive(new HistoryArchiveRepo(pool),options);
         const archive=(await pool.query<{revision:string;raw_pruned:boolean}>('SELECT revision,raw_pruned FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start])).rows[0];
         if(archive?.raw_pruned)recoveryRevision=archive.revision;

@@ -18,8 +18,15 @@ malformed date arguments fail before database access. There is no public mutatio
 npx tsx scripts/control-history-archive.ts status
 npx tsx scripts/control-history-archive.ts pause
 npx tsx scripts/control-history-archive.ts archive SITE_ID
+npx tsx scripts/control-history-archive.ts archive-all
 npx tsx scripts/control-history-archive.ts trim SITE_ID --from 2026-08-01 --before 2026-08-02
 ```
+
+`archive-all` (2026-10-24) archives every owned site, so new sites are picked up
+without an edit; it clears the explicit list and leaves trim off. `trim` keeps
+`archive_all` as it is: with archive-all on, every owned site is still archived,
+and only the listed sites (inside the optional date bounds) have raw rows
+trimmed. `archive SITE_ID` turns archive-all off and archives only the list.
 
 `archive` verifies and retains raw samples. `trim` additionally requires
 `COMPACT_HISTORY_READS_ENABLED=true` locally and in the running deployment.
@@ -46,14 +53,16 @@ logged; saved progress or the original work error remains the result.
 
 ## Budgets and cutoff
 
-- DATA_RETENTION_DAYS: positive integer, default 365, maximum 36500.
+- HISTORY_ARCHIVE_AFTER_DAYS: integer 2–36500, default 2. A finished day is archived once it is this many site-local days old.
+- DATA_RETENTION_DAYS: positive integer, default 365, maximum 36500. Only how long trim mode keeps raw rows; it no longer delays archiving.
 - HISTORY_ARCHIVE_MAX_DAYS: default 2, maximum 7 attempted days.
 - HISTORY_ARCHIVE_MAX_TIME_MS: default/max 30000 milliseconds.
 - HISTORY_ARCHIVE_MAX_ESTIMATED_BYTES: default 4194304, maximum 67108864.
 
-The cutoff is site-local midnight minus the configured calendar days. Only whole
-days ending at or before it qualify. A two-completed-day recent buffer always
-applies, even with a shorter configured retention. Unowned sites are excluded.
+Each cutoff is site-local midnight minus the configured calendar days. Only whole
+days ending at or before the archive-after cutoff are archived, and only archived
+days ending at or before the retention cutoff are trimmed. A two-completed-day
+recent buffer always applies to both, even with a shorter configured value. Unowned sites are excluded.
 Archived history has no automatic expiry. Tags and tariff versions are preserved.
 
 Time is a phase-admission budget, checked after discovery/preflight and before
@@ -104,6 +113,16 @@ retry, partial late corrections and exact whole-day restoration. Pause the job
 and restore pruned Dev days before changing reader flags or discarding fixtures.
 Do not use the old cleanup methods to prune.
 
+Unattended archiving (archive-only, every owned site), once the deployment has
+`HISTORY_ARCHIVE_JOB_ENABLED=true` and the archive-all migrations are applied:
+
+```sh
+DATABASE_URL='<prod-url>' HISTORY_ARCHIVE_JOB_ENABLED=true npx tsx scripts/control-history-archive.ts archive-all
+DATABASE_URL='<prod-url>' npx tsx scripts/control-history-archive.ts status
+```
+
+Then watch `last_report` over a few hourly runs. Trim rollout stays per site.
+
 Production: finish that hosted rehearsal, review the actual hosted egress budget,
 preserve a fresh recoverable backup, select a small explicit cohort and obtain
 first-trim approval. Deployment alone leaves this job disabled and paused.
@@ -137,15 +156,21 @@ all historical tariff versions remain permanent; summary FKs intentionally
 prevent deletion of tariffs used by history. Normal tariff saves append versions.
 
 Archive-only adds archives but does not reduce raw storage. Disabled/paused or
-undersized jobs do not enforce a storage ceiling. The once-daily cron processes
-**two site-days total** by default, at most seven, with retries sharing those
-slots. A cohort of N continuously reporting sites produces about N eligible
+undersized jobs do not enforce a storage ceiling. Each run processes **two
+site-days total** by default, at most seven, with retries sharing those slots.
+Since 2026-10-24 a Supabase pg_cron job (`history-archive-trigger`, hourly at
+:23) calls the route as well as the daily Vercel cron, giving 48 site-days/day
+at the default (168 at `HISTORY_ARCHIVE_MAX_DAYS=7`); the advisory lock keeps
+the two from overlapping. Discovery walks each site's raw history a day at a
+time: on production (84 owned sites, ~1,800 raw site-days, most already
+archived) it took about 2.6 s, against more than a minute for the earlier
+per-row archive probe. A cohort of N continuously reporting sites produces about N eligible
 site-days per day after the retention window. Effective successful trims/day
 must exceed N to drain an existing backlog; matching N only maintains it.
 The 30s/byte budgets can make actual throughput smaller than the day limit.
-For example, 22 reporting sites cannot be maintained by this single daily job
-at its current maximum. Do not expand to that cohort without measured capacity
-and an additional reviewed execution schedule/worker design. Selected one-day
+The hourly schedule maintains well over 22 reporting sites at the default
+budget; a large first backlog drains faster at `HISTORY_ARCHIVE_MAX_DAYS=7`, or
+with `scripts/migrate-site-history.ts --skip-backfill --apply` per site. Selected one-day
 canaries and manually invoked bounded catch-up runs are appropriate during
 rehearsal; they do not prove fleet-wide sustainability.
 
