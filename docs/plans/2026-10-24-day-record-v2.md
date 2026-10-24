@@ -179,10 +179,16 @@ read support is removed.
 
 ## Implementation slices (each a PR into `feat/single-compact-store`)
 
-1. **Codec + schema:** v2 payload encode/decode, `attribution`/`status`/
+1. **Codec + schema** (done): v2 payload encode/decode, `attribution`/`status`/
    `fetched_at` columns (idempotent migration), segment derivation and
    samples×segments rollup, metadata checksum v3; v1 still readable. Pure
-   functions with tests first.
+   functions with tests first. Landed as `encodeDaySamples`/`decodeDaySamples`
+   (`compact-energy.ts`), `day-attribution.ts` (`deriveDayAttribution`,
+   `segmentsFromV1Rows`, `rollupSamples`, `dayStatus`), `buildDayMetadataV3`
+   (`compact-day-metadata.ts`) and `20261024190000_day_record_v2_schema.sql`,
+   which also lets `verify_compact_day_metadata` check v3 digests in
+   PostgreSQL. In `segmentsFromV1Rows`, an edge gap (before the first or after
+   the last sample) takes its single neighbour's attribution.
 2. **`writeDay`** (open days, `fetched_at` guard, `requireSoe`) and reader
    support for open days.
 3. **v1 → v2 migration script** with verification and batching.
