@@ -227,7 +227,9 @@ ORDER BY local_day`,
      * settled archive day (`SETTLED_ARCHIVE_DAY_SQL`) counts as all of its slots,
      * since planning treats it as covered even once its raw rows are trimmed.
      * Any other day with no raw rows left (trimmed, or written straight from
-     * Tesla) counts its archived `sample_count`. Windows are site-local
+     * Tesla) counts its archived `sample_count` when every sample is on the
+     * 5-minute grid (`axis = 'grid'`); an off-grid day counts nothing, so the
+     * coverage audit decides. Windows are site-local
      * midnights, so archive days lie wholly inside them.
      */
     async countAlignedSamples(
@@ -263,6 +265,7 @@ SELECT w.site_id, (
       AND a.day_start >= w.start_ts
       AND a.day_end <= w.end_ts
       AND a.raw_pruned
+      AND a.axis = 'grid'
       AND NOT ${SETTLED_ARCHIVE_DAY_SQL}
 ) AS n
 FROM w`,

@@ -9,7 +9,8 @@ vi.mock('./db', () => ({ pool: {
 } }));
 // The monitor's Tesla-facing steps return at once, so its runtime is pure scheduling and database work.
 vi.mock('./today-refresh', () => ({ refreshTodayData: async () => ({ status: 'persisted' }) }));
-vi.mock('./energy-repo', () => ({ EnergyRepo: class { getRawEnergyData = async () => []; } }));
+vi.mock('./energy-repo-factory', () => ({ createEnergyRepo: () => ({ getRawEnergyData: async () => [] }) }));
+vi.mock('./site-repo', () => ({ SiteRepo: class { getSite = async (id: string) => ({ id, timezone: 'America/Chicago' }); } }));
 
 import { BatteryHoldRepo } from './battery-hold-repo';
 import { BatteryHoldActivityRepo, type ActivityRegistration } from './battery-hold-activity-repo';

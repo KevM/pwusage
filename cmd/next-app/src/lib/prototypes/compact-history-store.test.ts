@@ -349,6 +349,14 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         const later=addDaysInSiteTimezone(end,1,'America/Chicago');
         expect((await new EnergyRepo().countAlignedSamples([{siteId:'site',start,end:later}],pool)).get('site')).toBe(100+1);
     });
+    it('leaves an unsettled day with off-grid samples to the coverage audit in the gap-heal pre-check',async()=>{
+        await pool.query('TRUNCATE "EnergyData"');
+        // Off-grid timestamps: sample_count no longer says how many 5-minute slots are covered.
+        const samples=daySamples().map((r,n)=>({...r,tariff_schedule_id:null,timestamp:new Date(+r.timestamp+(n%2?1000:0))}));
+        expect(await store.writeDayFromSamples('site',start,samples,jobOptions.now)).toMatchObject({status:'written',attributionComplete:false});
+        expect((await pool.query('SELECT axis FROM "EnergyDayArchive"')).rows).toEqual([{axis:'offsets'}]);
+        expect((await new EnergyRepo().countAlignedSamples([{siteId:'site',start,end}],pool)).get('site')).toBe(0);
+    });
     it('finds the newest stored sample across raw rows and day records',async()=>{
         const latest=async(site='site')=>(await pool.query<{at:Date|null}>(`SELECT ${latestStoredSampleSql('$1')} AS at`,[site])).rows[0].at;
         expect(await latest()).toEqual(new Date(+start+300000));
