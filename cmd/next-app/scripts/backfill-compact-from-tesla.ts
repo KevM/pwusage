@@ -3,7 +3,9 @@
  * without staging raw "EnergyData" rows or reading them back: one Tesla day
  * request (energy + SOE), tariff attribution in memory, one archive write.
  * Preview by default (fetch only); `--apply` writes. Days that still have raw
- * rows are skipped (their archive is owned by the raw source).
+ * rows are skipped (their archive is owned by the raw source), and so is any day
+ * whose energy or SOE request fails (`fetch-failed`), so a re-run never replaces
+ * stored SOC with nulls.
  *
  *   npx tsx scripts/backfill-compact-from-tesla.ts --site-id <id> --from YYYY-MM-DD --before YYYY-MM-DD [--apply] [--concurrency N]
  *
@@ -65,7 +67,11 @@ async function run():Promise<void> {
                     const day=start.toISOString();
                     const t0=performance.now();
                     // End 1 s before midnight so Tesla stays inside this day (see Importer.loadInterval).
-                    const rows=(await importer.fetchRange(site,start,new Date(+end-1000),'day')).filter(r=>r.timestamp>=start&&r.timestamp<end);
+                    // SOE is required: the write replaces the whole day, so a failed SOE request
+                    // would otherwise erase SOC already stored. Such a day is skipped for a re-run.
+                    let rows:Awaited<ReturnType<typeof importer.fetchRange>>;
+                    try {rows=(await importer.fetchRange(site,start,new Date(+end-1000),'day',{requireSoe:true})).filter(r=>r.timestamp>=start&&r.timestamp<end);}
+                    catch {results.push({day,samples:0,status:'fetch-failed',fetchMs:Math.round(performance.now()-t0),writeMs:0});continue;}
                     const fetchMs=Math.round(performance.now()-t0);
                     let status='preview';const t1=performance.now();
                     if(options.apply) {

@@ -65,4 +65,24 @@ describe('Importer.fetchRange', () => {
             '2026-11-02T06:00:00.000Z',
         ]);
     });
+
+    it('tolerates an SOE failure by default, returning rows without SOC', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const client = {
+            getEnergyHistory: vi.fn().mockResolvedValue([entry('2026-10-01T05:00:00Z')]),
+            getSoeHistory: vi.fn().mockRejectedValue(new Error('SOE unavailable')),
+        } as unknown as TeslaClient;
+        const rows = await new Importer(client).fetchRange(site, new Date('2026-10-01T05:00:00Z'), new Date('2026-10-02T04:59:59Z'), 'day');
+        expect(rows).toHaveLength(1);
+        expect(rows[0].battery_soc).toBeNull();
+    });
+
+    it('fails the fetch on an SOE error when SOE is required, so callers never replace stored SOC with nulls', async () => {
+        const client = {
+            getEnergyHistory: vi.fn().mockResolvedValue([entry('2026-10-01T05:00:00Z')]),
+            getSoeHistory: vi.fn().mockRejectedValue(new Error('SOE unavailable')),
+        } as unknown as TeslaClient;
+        await expect(new Importer(client).fetchRange(site, new Date('2026-10-01T05:00:00Z'), new Date('2026-10-02T04:59:59Z'), 'day', { requireSoe: true }))
+            .rejects.toThrow('SOE unavailable');
+    });
 });
