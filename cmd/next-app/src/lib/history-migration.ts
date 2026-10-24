@@ -314,7 +314,7 @@ export interface SiteMigrationReport {
  */
 export async function migrateSiteHistory(
     deps: { site: MigrationSite; backfill: BackfillDeps; store: MaintenanceStore },
-    options: { apply: boolean; now: Date; skipBackfill?: boolean; skipArchive?: boolean; repair?: boolean }
+    options: { apply: boolean; now: Date; skipBackfill?: boolean; skipArchive?: boolean; repair?: boolean; repairFrom?: string }
 ): Promise<SiteMigrationReport> {
     const { site } = deps;
     const cutoff = archiveCutoff(options.now, site.timezone, ARCHIVE_FLOOR_DAYS);
@@ -334,10 +334,11 @@ export async function migrateSiteHistory(
     let repair: RepairSummary | 'skipped' = 'skipped';
     if (options.repair && archive !== 'skipped') {
         // Only days with real data worth re-fetching: on or after the backfill
-        // start (never the pre-provisioning gap) and not ones Tesla can't fill.
+        // start (never the pre-provisioning gap), on or after repairFrom, and
+        // not ones Tesla can't fill.
         const installDate = formatSiteDate(site.installed, site.timezone);
         const from = [installDate, site.backfillFrom ? formatSiteDate(site.backfillFrom, site.timezone) : '',
-            backfill === 'skipped' ? '' : backfill.backfillFrom ?? ''].reduce((a, b) => (b > a ? b : a));
+            backfill === 'skipped' ? '' : backfill.backfillFrom ?? '', options.repairFrom ?? ''].reduce((a, b) => (b > a ? b : a));
         const unfillable = new Set(backfill === 'skipped' ? [] : backfill.missingDays);
         const planned = archive.repairable.filter(date => date >= from && !unfillable.has(date));
         repair = await repairSiteDays(deps.backfill, site, planned, options.apply);
@@ -379,24 +380,35 @@ export function isMigrationComplete(report: SiteMigrationReport): boolean {
 
 const MIGRATION_FLAGS = ['--apply', '--skip-backfill', '--skip-archive', '--repair'];
 
-/** Parse `--site-id <id> [--apply] [--skip-backfill | --skip-archive] [--repair]`. */
-export function parseMigrationArgs(args: string[]): { siteId: string; apply: boolean; skipBackfill: boolean; skipArchive: boolean; repair: boolean } {
+/** A real calendar date in YYYY-MM-DD form. */
+function isLocalDate(value: string): boolean {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const date = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(+date) && date.toISOString().startsWith(value);
+}
+
+/** Parse `--site-id <id> [--apply] [--skip-backfill | --skip-archive] [--repair] [--repair-from <YYYY-MM-DD>]`. */
+export function parseMigrationArgs(args: string[]): { siteId: string; apply: boolean; skipBackfill: boolean; skipArchive: boolean; repair: boolean; repairFrom?: string } {
     const seen = new Set<string>();
     let siteId = '';
+    let repairFrom: string | undefined;
     for (let i = 0; i < args.length; i++) {
         const key = args[i];
         if (seen.has(key)) throw new Error('Duplicate argument');
         seen.add(key);
         if (MIGRATION_FLAGS.includes(key)) continue;
-        if (key !== '--site-id' || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error('Unknown or missing argument');
-        siteId = args[++i].trim();
+        if ((key !== '--site-id' && key !== '--repair-from') || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error('Unknown or missing argument');
+        const value = args[++i].trim();
+        if (key === '--site-id') siteId = value;
+        else if (isLocalDate(value)) repairFrom = value;
+        else throw new Error('--repair-from takes a YYYY-MM-DD date');
     }
     if (!siteId || siteId.length > 200) throw new Error('Explicit site ID required');
     const skipBackfill = seen.has('--skip-backfill');
     const skipArchive = seen.has('--skip-archive');
     if (skipBackfill && skipArchive) throw new Error('Nothing to do with both steps skipped');
-    const repair = seen.has('--repair');
+    const repair = seen.has('--repair') || repairFrom !== undefined;
     // Repair picks its days from the archive step's report.
     if (repair && skipArchive) throw new Error('--repair needs the archive step');
-    return { siteId, apply: seen.has('--apply'), skipBackfill, skipArchive, repair };
+    return { siteId, apply: seen.has('--apply'), skipBackfill, skipArchive, repair, ...(repairFrom === undefined ? {} : { repairFrom }) };
 }

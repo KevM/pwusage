@@ -430,6 +430,11 @@ describe('parseMigrationArgs', () => {
         expect(parseMigrationArgs(['--site-id', 'abc', '--skip-archive'])).toMatchObject({ skipArchive: true, skipBackfill: false });
     });
 
+    it('accepts --repair-from <date>, which implies --repair', () => {
+        expect(parseMigrationArgs(['--site-id', 'abc', '--repair-from', '2026-09-09'])).toEqual({ siteId: 'abc', apply: false, skipBackfill: false, skipArchive: false, repair: true, repairFrom: '2026-09-09' });
+        expect(parseMigrationArgs(['--site-id', 'abc', '--repair', '--repair-from', '2026-09-09', '--apply'])).toMatchObject({ apply: true, repair: true, repairFrom: '2026-09-09' });
+    });
+
     it.each([
         [[]],
         [['--site-id']],
@@ -443,6 +448,12 @@ describe('parseMigrationArgs', () => {
         [['--site-id', 'abc', '--skip-backfill', '--skip-archive']],
         [['--site-id', 'abc', '--repair', '--skip-archive']],
         [['--site-id', 'abc', '--repair', '--repair']],
+        [['--site-id', 'abc', '--repair-from']],
+        [['--site-id', 'abc', '--repair-from', '--apply']],
+        [['--site-id', 'abc', '--repair-from', '2026-9-9']],
+        [['--site-id', 'abc', '--repair-from', '2026-02-30']],
+        [['--site-id', 'abc', '--repair-from', '2026-09-09', '--repair-from', '2026-09-10']],
+        [['--site-id', 'abc', '--repair-from', '2026-09-09', '--skip-archive']],
     ])('rejects %j', (args) => {
         expect(() => parseMigrationArgs(args)).toThrow(Error);
     });
@@ -593,6 +604,13 @@ describe('migrateSiteHistory --repair', () => {
         const report = await migrateSiteHistory({ site, backfill, store }, { apply: true, now: migrateNow, repair: true });
         expect(report.archive).toMatchObject({ stopped: 'busy' });
         expect(report.repair).toMatchObject({ refetched: 2, stillNeedsRepair: ['2025-03-10'] });
+    });
+
+    it('only plans days on or after repairFrom', async () => {
+        const counts = new Map([['2025-02-05', 280], ['2025-03-01', 287], ['2025-03-10', 100]]);
+        const backfill = fakeBackfill([[]]);
+        const report = await migrateSiteHistory({ site, backfill, store: countingStore(counts) }, { apply: false, now: migrateNow, repair: true, repairFrom: '2025-03-01' });
+        expect(report.repair).toMatchObject({ planned: ['2025-03-01', '2025-03-10'], stopped: 'preview' });
     });
 
     it('previews the days it would refetch', async () => {
