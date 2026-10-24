@@ -338,7 +338,12 @@ export class Importer {
         return allRows;
     }
 
-    async fetchRange(site: SiteWithTariffs, start: Date, end: Date, period: string = "day"): Promise<EnergyDataRow[]> {
+    /**
+     * `requireSoe`: fail instead of returning rows without SOC when the SOE request
+     * fails. Set it when the rows will replace a stored day wholesale (compact
+     * backfill), since nothing else would preserve the SOC already stored.
+     */
+    async fetchRange(site: SiteWithTariffs, start: Date, end: Date, period: string = "day", options: { requireSoe?: boolean } = {}): Promise<EnergyDataRow[]> {
         const allRows: EnergyDataRow[] = [];
 
         // One request per site-local day: Tesla returns the whole calendar day for
@@ -349,6 +354,7 @@ export class Importer {
                 this.client.getEnergyHistory(site.id, chunkStart, chunkEnd, period, site.timezone),
                 this.client.getSoeHistory(site.id, chunkStart, chunkEnd, period, site.timezone)
                     .catch(error => {
+                        if (options.requireSoe) throw error;
                         console.warn(`[Importer] SOE history fetch failed for ${site.id} (${chunkStart.toISOString()}-${chunkEnd.toISOString()})`, error);
                         return [] as SoeHistoryEntry[];
                     })

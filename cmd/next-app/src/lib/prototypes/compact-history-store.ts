@@ -56,7 +56,7 @@ function sameSummaries(expected: DayRollup[], actual: DayRollup[]): boolean {
     try { deepStrictEqual(sorted(expected),sorted(actual)); return true; } catch { return false; }
 }
 export interface ArchiveMutationResult {status:'busy'|'trimmed'|'already-trimmed'|'restored'|'not-pruned';samples:number}
-export interface FinalizationResult { status: 'busy' | 'empty' | 'finalized' | 'unchanged'; revision?: string;attributionComplete?:boolean }
+export interface FinalizationResult { status: 'busy' | 'empty' | 'finalized' | 'unchanged' | 'written'; revision?: string;attributionComplete?:boolean }
 
 export class CompactHistoryStore implements HistorySnapshotStore {
     constructor(private readonly pool: Pool,private readonly transactionTimeoutMs?:number,private readonly mutationGuard?:(client:PoolClient)=>Promise<void>) {
@@ -509,20 +509,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const rows = input.rows.map(raw);
             if(old && rows.length!==old.sample_count)throw new Error('Raw archive source incomplete; restore before rebuilding');
             if (!rows.length) { await client.query('COMMIT'); return { status:'empty' }; }
-            const archive = encodeDay(rows,start,end,'brotli');
-            const recovered = decodeDay(archive,{siteId,start,end});
-            deepStrictEqual(recovered, rows);
-            const summaries = rollupDay(recovered,start);
-            const reference = rollupDay(rows,start);
-            if (JSON.stringify(summaries)!==JSON.stringify(reference)) throw new Error('Finalization reconciliation failed');
-            const { tariffs, schedules } = await this.tariffs(client,siteId);
-            const audit = auditTariffAttribution(rows,timezone,tariffs,schedules);
-            // Null inference is reported but never silently rewrites the lossless source IDs.
-            const attributionComplete = audit.unresolvedSamples===0 && audit.inferredSamples===0 && audit.recordedPeriodDisagreements===0
-                && audit.periods.every(p=>Number.isFinite(p.buy_rate)&&Number.isFinite(p.sell_rate));
-            const metadata=buildDayMetadata(recovered,start,end,attributionComplete);
-            const payloadChecksum=createHash('sha256').update(archive.data).digest('hex');
-            const latest=buildLatestMetadata(recovered,{siteId,start,end,archiveChecksum:archive.sha256});
+            const {archive,summaries,attributionComplete,metadata,payloadChecksum,latest}=await this.prepareDay(client,siteId,timezone,start,end,rows);
             let oldLatestValid=false;
             if(old) {try {verifyLatest(old);oldLatestValid=true;}catch { /* Retry repairs stale/missing projections. */ }}
             const previousSummaries = old ? (await client.query<SummaryRecord>(
@@ -535,18 +522,78 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 && old.max_interior_gap_ms===metadata.maxInteriorGapMs && sameSummaries(summaries,previousSummaries)) {
                 await client.query('COMMIT'); return { status:'unchanged', revision:old.revision,attributionComplete };
             }
-            const revision = randomUUID();
-            await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start]);
-            await client.query(`INSERT INTO "EnergyDayArchive" (site_id,day_start,day_end,revision,format_version,codec,axis,checksum,payload,sample_count,expected_slots,attribution_complete,first_timestamp,last_timestamp,max_interior_gap_ms,metadata_checksum,metadata_version,latest_metadata,latest_checksum,payload_checksum)
-                VALUES ($1,$2,$3,$4,1,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,2,$16,$17,$18)`,[siteId,start,end,revision,archive.codec,archive.axis,archive.sha256,archive.data,rows.length,archive.expectedSlots,attributionComplete,metadata.first,metadata.last,metadata.maxInteriorGapMs,metadata.checksum,JSON.stringify(latest.data),latest.checksum,payloadChecksum]);
-            for (const s of summaries) await client.query(`INSERT INTO "EnergyDaySummary" (site_id,day_start,revision,tariff_id,tariff_schedule_id,
-                load_power,solar_power,grid_power,battery_power,sample_import_wh,sample_export_wh,sample_charge_wh,sample_discharge_wh,sample_count)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[siteId,start,revision,s.tariff_id,s.tariff_schedule_id,
-                s.load_power,s.solar_power,s.grid_power,s.battery_power,s.sample_import_wh,s.sample_export_wh,s.sample_charge_wh,s.sample_discharge_wh,s.sample_count]);
+            const revision=await this.replaceDay(client,siteId,start,end,rows.length,{archive,summaries,attributionComplete,metadata,payloadChecksum,latest},false);
             await client.query('COMMIT');
             return { status:'finalized', revision,attributionComplete };
         } catch (error) { await client.query('ROLLBACK'); throw error; }
         finally { client.release(this.transactionTimeoutMs!==undefined); }
+    }
+
+    /**
+     * Write one finished site-local day straight from samples fetched from Tesla,
+     * as the only copy: no raw rows are written or read back, so a backfill costs
+     * no read egress and stages nothing in "EnergyData". Replaces any archive for
+     * the day (Tesla is the source of truth). Refuses a day that still has raw rows,
+     * whose archive the raw source owns.
+     */
+    async writeDayFromSamples(siteId:string,start:Date,rows:EnergyData[],now=new Date()):Promise<FinalizationResult> {
+        const client=await this.pool.connect();
+        try {
+            await beginTransaction(client,'ISOLATION LEVEL READ COMMITTED');
+            await this.boundTransaction(client);
+            await client.query("SET LOCAL statement_timeout = '15s'");
+            await client.query("SET LOCAL lock_timeout = '3s'");
+            await this.mutationGuard?.(client);
+            if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy'};}
+            const timezone=(await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1',[siteId])).rows[0]?.timezone;
+            if(!timezone||!Number.isSafeInteger(+start)||!Number.isSafeInteger(+now)||+start!==+getSiteMidnight(start,timezone))throw new Error('Expected a completed local day');
+            const end=addDaysInSiteTimezone(start,1,timezone);
+            if(end>getSiteMidnight(now,timezone))throw new Error('Expected a completed local day');
+            if(rows.length>4096||rows.some(r=>r.site_id!==siteId||!(r.timestamp>=start&&r.timestamp<end)))throw new Error('Samples outside the site day');
+            if(!rows.length) {await client.query('COMMIT');return {status:'empty'};}
+            const raw=(await client.query<{present:boolean}>('SELECT EXISTS(SELECT 1 FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3) AS present',[siteId,start,end])).rows[0].present;
+            if(raw)throw new Error('Day still has raw samples; finalize it from raw instead');
+            const sorted=[...rows].sort((a,b)=>+a.timestamp-+b.timestamp);
+            const prepared=await this.prepareDay(client,siteId,timezone,start,end,sorted);
+            const revision=await this.replaceDay(client,siteId,start,end,sorted.length,prepared,true);
+            await client.query('COMMIT');
+            return {status:'written',revision,attributionComplete:prepared.attributionComplete};
+        } catch(error) {await client.query('ROLLBACK');throw error;}
+        finally {client.release(this.transactionTimeoutMs!==undefined);}
+    }
+
+    /** Encode, verify the lossless round trip and summaries, and audit tariff attribution for one day. */
+    private async prepareDay(client:PoolClient,siteId:string,timezone:string,start:Date,end:Date,rows:EnergyData[]) {
+        const archive = encodeDay(rows,start,end,'brotli');
+        const recovered = decodeDay(archive,{siteId,start,end});
+        deepStrictEqual(recovered, rows);
+        const summaries = rollupDay(recovered,start);
+        const reference = rollupDay(rows,start);
+        if (JSON.stringify(summaries)!==JSON.stringify(reference)) throw new Error('Finalization reconciliation failed');
+        const { tariffs, schedules } = await this.tariffs(client,siteId);
+        const audit = auditTariffAttribution(rows,timezone,tariffs,schedules);
+        // Null inference is reported but never silently rewrites the lossless source IDs.
+        const attributionComplete = audit.unresolvedSamples===0 && audit.inferredSamples===0 && audit.recordedPeriodDisagreements===0
+            && audit.periods.every(p=>Number.isFinite(p.buy_rate)&&Number.isFinite(p.sell_rate));
+        const metadata=buildDayMetadata(recovered,start,end,attributionComplete);
+        const payloadChecksum=createHash('sha256').update(archive.data).digest('hex');
+        const latest=buildLatestMetadata(recovered,{siteId,start,end,archiveChecksum:archive.sha256});
+        return {archive,summaries,attributionComplete,metadata,payloadChecksum,latest};
+    }
+
+    /** Replace the day's archive and summaries with a new revision. */
+    private async replaceDay(client:PoolClient,siteId:string,start:Date,end:Date,sampleCount:number,
+        day:Awaited<ReturnType<CompactHistoryStore['prepareDay']>>,rawPruned:boolean):Promise<string> {
+        const {archive,summaries,attributionComplete,metadata,payloadChecksum,latest}=day;
+        const revision = randomUUID();
+        await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start]);
+        await client.query(`INSERT INTO "EnergyDayArchive" (site_id,day_start,day_end,revision,format_version,codec,axis,checksum,payload,sample_count,expected_slots,attribution_complete,first_timestamp,last_timestamp,max_interior_gap_ms,metadata_checksum,metadata_version,latest_metadata,latest_checksum,payload_checksum,raw_pruned)
+            VALUES ($1,$2,$3,$4,1,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,2,$16,$17,$18,$19)`,[siteId,start,end,revision,archive.codec,archive.axis,archive.sha256,archive.data,sampleCount,archive.expectedSlots,attributionComplete,metadata.first,metadata.last,metadata.maxInteriorGapMs,metadata.checksum,JSON.stringify(latest.data),latest.checksum,payloadChecksum,rawPruned]);
+        for (const s of summaries) await client.query(`INSERT INTO "EnergyDaySummary" (site_id,day_start,revision,tariff_id,tariff_schedule_id,
+            load_power,solar_power,grid_power,battery_power,sample_import_wh,sample_export_wh,sample_charge_wh,sample_discharge_wh,sample_count)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[siteId,start,revision,s.tariff_id,s.tariff_schedule_id,
+            s.load_power,s.solar_power,s.grid_power,s.battery_power,s.sample_import_wh,s.sample_export_wh,s.sample_charge_wh,s.sample_discharge_wh,s.sample_count]);
+        return revision;
     }
 
     private async tariffs(client: PoolClient,siteId: string): Promise<{ tariffs:Tariff[]; schedules:TariffSchedule[] }> {
