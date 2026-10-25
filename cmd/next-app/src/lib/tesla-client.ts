@@ -229,8 +229,12 @@ export class TeslaClient {
     }
 
     private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
+        // The host this request last went to. Concurrent requests share this.baseUrl,
+        // so a 421 is judged against the host that answered it, not the current one.
+        let requestBaseUrl = this.baseUrl;
         const makeRequest = async (token: string) => {
-            const url = `${this.baseUrl}${path}`;
+            requestBaseUrl = this.baseUrl;
+            const url = `${requestBaseUrl}${path}`;
             const headers = {
                 "Authorization": `Bearer ${token}`,
                 "Content-Type": "application/json",
@@ -298,7 +302,7 @@ export class TeslaClient {
                 regionRetried = true;
                 errorBody = await abortable(response.text());
                 const regionalBaseUrl = fleetBaseUrlFrom421(errorBody);
-                if (regionalBaseUrl && regionalBaseUrl !== this.baseUrl) {
+                if (regionalBaseUrl && regionalBaseUrl !== requestBaseUrl) {
                     await this.adoptBaseUrl(regionalBaseUrl);
                     errorBody = undefined;
                     response = await makeRequest(this.config.accessToken);

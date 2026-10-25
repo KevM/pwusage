@@ -459,6 +459,20 @@ describe('TeslaClient regional base URL', () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
+    it('retries every in-flight 421 even after another request already switched host', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+            const url = String(input);
+            if (!url.startsWith(EU)) return make421Response(outOfRegionBody);
+            return makeJsonResponse({ response: [], count: 0 });
+        });
+        const onBaseUrlChange = vi.fn();
+        const client = new TeslaClient({ accessToken: 'tok', onBaseUrlChange });
+
+        await expect(Promise.all([client.getProducts(), client.getProducts()])).resolves.toEqual([[], []]);
+        expect(fetchMock).toHaveBeenCalledTimes(4);
+        expect(onBaseUrlChange).toHaveBeenCalledTimes(1);
+    });
+
     it('resolveRegion adopts the users/region base URL', async () => {
         const fetchMock = vi.spyOn(globalThis, 'fetch')
             .mockResolvedValueOnce(makeJsonResponse({ response: { region: 'eu', fleet_api_base_url: EU } }))
