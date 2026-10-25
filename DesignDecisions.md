@@ -388,6 +388,34 @@ boilerplate and contains claims that don't match the codebase. It carries a
 supersession banner. **Verify any claim there against current code before acting
 on it.**
 
+## Login callback: persist credentials before product import
+
+**Decision:** `TeslaAuthService.handleTeslaCallback` writes the rotated access and
+refresh tokens *before* calling `getProducts()`. Product, site-import, and region
+failures are returned as explicit `fleet-api-failed` results, never as `success`
+with an empty site list.
+
+**Why it matters:** the callback exchange can rotate the refresh token. Fetching
+products first meant a transient Fleet failure could discard the new refresh
+token, while the old success-shaped result set no web cookie and left the user
+looking silently signed out. Admins are the deliberate exception: a product
+failure does not block admin access, because recovering partner registration or
+a region problem requires an admin session.
+
+**421 has two meanings — do not collapse them.** Tesla also answers 421 with
+`Account … must be registered in the current region <host>`, meaning the partner
+app is not registered in that region. The named host is usually the current host,
+so following it is a no-op. `parseTesla421` classifies the body; only
+`out-of-region` answers switch hosts, and `TeslaRegionError` surfaces every other
+421 without interpolating the raw body (which `isTeslaAuthError` substring
+matching could otherwise misread as a terminal auth failure). The partner case
+must be fixed by registering the app for that region, not by retrying the request.
+
+**Pinned by:** `tesla-auth-service.test.ts` persistence/product/import-failure
+tests, `tesla-region.test.ts` `parseTesla421`, `tesla-client.test.ts`
+`TeslaRegionError` cases, and the callback route's explicit `db-error` /
+`fleet-api-failed` mappings.
+
 ## 6. Billing balances span seasonal rate changes
 
 **Decision:** A bill's energy bucket is keyed by tariff name and TOU period name

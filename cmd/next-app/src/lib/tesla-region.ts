@@ -35,3 +35,28 @@ export function fleetBaseUrlFrom421(body: string): string | null {
     }
     return null;
 }
+
+export type Tesla421Kind = 'out-of-region' | 'partner-not-registered' | 'unknown';
+
+export interface ParsedTesla421 {
+    kind: Tesla421Kind;
+    /** The allowlisted host named by the body, if any. */
+    baseUrl: string | null;
+}
+
+/**
+ * A 421 has two meanings that must not be collapsed into "switch host":
+ * the account belongs to another region, or the partner application itself is
+ * not registered in the region that answered. The second names the current host,
+ * so following it is a no-op and the request would fail again.
+ */
+export function parseTesla421(body: string): ParsedTesla421 {
+    const baseUrl = fleetBaseUrlFrom421(body);
+    if (/must be registered in the current region/i.test(body)) {
+        return { kind: 'partner-not-registered', baseUrl };
+    }
+    if (/user out of region/i.test(body)) {
+        return { kind: 'out-of-region', baseUrl };
+    }
+    return { kind: 'unknown', baseUrl };
+}

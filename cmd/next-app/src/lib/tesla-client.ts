@@ -1,5 +1,10 @@
 import { ioSignal, checkIoDeadline, abortable, ioDelay } from './io-deadline';
-import { DEFAULT_FLEET_BASE_URL, fleetBaseUrlFrom421, normalizeFleetBaseUrl } from './tesla-region';
+import {
+    DEFAULT_FLEET_BASE_URL,
+    normalizeFleetBaseUrl,
+    parseTesla421,
+    type Tesla421Kind,
+} from './tesla-region';
 export interface FleetProduct {
     energy_site_id?: number;
     resource_type: string;
@@ -157,6 +162,37 @@ export class TeslaAuthError extends Error {
         }
     }
 }
+
+function regionErrorMessage(kind: Tesla421Kind, host: string): string {
+    if (kind === 'partner-not-registered') {
+        return `Tesla API Error: 421 Tesla partner account is not registered in ${host}`;
+    }
+    if (kind === 'out-of-region') {
+        return `Tesla API Error: 421 region response did not resolve to a different host than ${host}`;
+    }
+    return 'Tesla API Error: 421 response did not identify a supported regional host';
+}
+
+/**
+ * A 421 that must not be followed as a host redirect: the partner app is not
+ * registered in the region, the body named no allowlisted host, or following
+ * the redirect did not fix the response. The raw Tesla body is never included
+ * in the message because isTeslaAuthError matches message substrings.
+ */
+export class TeslaRegionError extends Error {
+    readonly kind: Tesla421Kind;
+    readonly host: string;
+
+    constructor(kind: Tesla421Kind, host: string) {
+        super(regionErrorMessage(kind, host));
+        this.name = 'TeslaRegionError';
+        this.kind = kind;
+        this.host = host;
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, TeslaRegionError);
+        }
+    }
+}
 export function isTeslaAuthError(error: unknown): error is TeslaAuthError {
     if (error instanceof TeslaAuthError || (error instanceof Error && error.name === 'TeslaAuthError')) {
         return true;
@@ -252,6 +288,7 @@ export class TeslaClient {
         let refreshAttempted = false;
         let rateLimitAttempt = 0;
         let regionRetried = false;
+        let regionError: TeslaRegionError | undefined;
         let errorBody: string | undefined;
         while (true) {
             if (response.status === 401 && this.config.refreshToken && !refreshAttempted) {
@@ -296,21 +333,46 @@ export class TeslaClient {
                 continue;
             }
 
-            // Wrong region: Tesla names the account's host in the body. Follow it
-            // once, and only to an allowlisted Fleet host.
-            if (response.status === 421 && !regionRetried) {
-                regionRetried = true;
+            // Wrong region: Tesla names the account's host in the body. Follow an
+            // out-of-region redirect once, and only to an allowlisted Fleet host.
+            // A 421 can also mean the partner app is not registered in the region
+            // that answered; that host is usually the current one, so retrying is
+            // a no-op and must surface as a region error instead.
+            if (response.status === 421) {
                 errorBody = await abortable(response.text());
-                const regionalBaseUrl = fleetBaseUrlFrom421(errorBody);
-                if (regionalBaseUrl && regionalBaseUrl !== requestBaseUrl) {
-                    await this.adoptBaseUrl(regionalBaseUrl);
+                const parsed = parseTesla421(errorBody);
+                const kind: Tesla421Kind = parsed.kind === 'out-of-region' && !parsed.baseUrl
+                    ? 'unknown'
+                    : parsed.kind;
+
+                if (kind === 'out-of-region' && !regionRetried
+                    && parsed.baseUrl && parsed.baseUrl !== requestBaseUrl) {
+                    regionRetried = true;
+                    await this.adoptBaseUrl(parsed.baseUrl);
                     errorBody = undefined;
                     response = await makeRequest(this.config.accessToken);
                     continue;
                 }
+
+                regionError = new TeslaRegionError(kind, requestBaseUrl);
+                if (kind === 'partner-not-registered') {
+                    console.error(
+                        `[TeslaClient] Tesla partner app is not registered for ${requestBaseUrl}. Register the app for this region.`
+                    );
+                } else if (kind === 'out-of-region') {
+                    console.warn(
+                        `[TeslaClient] Tesla 421 did not resolve to a different host than ${requestBaseUrl}`
+                    );
+                } else {
+                    console.warn('[TeslaClient] Tesla 421 named no supported regional host');
+                }
             }
 
             break;
+        }
+
+        if (regionError) {
+            throw regionError;
         }
 
         if (!response.ok) {

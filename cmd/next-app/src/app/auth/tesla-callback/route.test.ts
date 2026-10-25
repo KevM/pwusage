@@ -146,7 +146,9 @@ describe('GET /auth/tesla-callback', () => {
             { status: 'state-mismatch', expectedHttp: 401 },
             { status: 'token-exchange-failed', statusCode: 502, expectedHttp: 502 },
             { status: 'invalid-id-token', expectedHttp: 401 },
-            { status: 'nonce-mismatch', expectedHttp: 401 }
+            { status: 'nonce-mismatch', expectedHttp: 401 },
+            { status: 'db-error', expectedHttp: 500 },
+            { status: 'fleet-api-failed', reason: 'region', expectedHttp: 502 }
         ];
 
         for (const failure of failureCases) {
@@ -157,6 +159,23 @@ describe('GET /auth/tesla-callback', () => {
             const res = await GET(req);
             expect(res.status).toBe(failure.expectedHttp);
         }
+    });
+
+    it.each([
+        ['db-error', { status: 'db-error' }, 500, 'Could not finish Tesla sign-in'],
+        ['fleet-api-failed', { status: 'fleet-api-failed', reason: 'region' }, 502, 'Failed to load Tesla products'],
+    ])('returns %s as an explicit error instead of a success redirect', async (_label, result, expectedHttp, expectedError) => {
+        mocks.handleTeslaCallback.mockResolvedValue(result);
+        mocks.getCookie.mockReturnValue(undefined);
+
+        const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
+        const res = await GET(req);
+
+        expect(res.status).toBe(expectedHttp);
+        expect(await res.json()).toEqual({ error: expectedError });
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_state');
+        expect(mocks.cookieSet).not.toHaveBeenCalledWith('site_auth', expect.any(String), expect.any(Object));
+        expect(mocks.redirect).not.toHaveBeenCalled();
     });
 
     it('deletes auth cookies and sets site_auth on success with sites/roles', async () => {
@@ -323,6 +342,8 @@ describe('GET /auth/tesla-callback', () => {
         ['token-exchange-failed', 'token_exchange_failed'],
         ['invalid-id-token', 'invalid_id_token'],
         ['nonce-mismatch', 'nonce_mismatch'],
+        ['db-error', 'login_unavailable'],
+        ['fleet-api-failed', 'product_import_failed'],
     ])('returns mobile login to the app after %s', async (status, expectedError) => {
         mocks.handleTeslaCallback.mockResolvedValue({ status, statusCode: 502 });
         const mobileCookies: Record<string, string> = {
