@@ -571,6 +571,14 @@ describe('planImport from day record status', () => {
         expect(plan(nearlyFull({ archived: true, count: 100, maxInteriorGapMs: 12 * 3600000 }), true)).toEqual([]);
     });
 
+    it('settles an open record once it ages past the gap-heal window, as its status would on a rewrite', () => {
+        const days = (n: number) => new Date(+DAY1_END + n * 24 * 3600000);
+        expect(plan(nearlyFull({ open: true }), true, days(14))).toHaveLength(1);
+        expect(plan(nearlyFull({ open: true }), true, new Date(+days(14) + 1))).toEqual([]);
+        expect(auditDays({ requestedRange: { start: DAY1_START, end: DAY1_END }, existingCoverage: [nearlyFull({ open: true, count: 10, maxInteriorGapMs: 12 * 3600000 })],
+            timezone: TZ, now: days(15) })[0]).toMatchObject({ archived: true, open: false });
+    });
+
     it('leaves today\'s open record to the today refresh', () => {
         const midday = new Date(+DAY1_START + 12 * 3600000);
         expect(plan(nearlyFull({ open: true, last: new Date(+midday - 300000), count: 143 }), true, midday)).toEqual([]);

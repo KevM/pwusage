@@ -88,9 +88,19 @@ minus the two tariff columns. The site-day grid is 5 minutes.
     install-to-utility-approval gap, Tesla-side loss), so refetching would only
     return the same gaps. Kept as is, never refetched automatically; a repair
     can still replace it. No fetch counters: age alone decides.
-- **`fetched_at`**: when the Tesla response was received. A write replaces the
-  record only if its `fetched_at` is newer than the stored one, so an older,
-  slower fetch can never overwrite a newer one.
+  - Status is stored when the record is written, so it can go stale with no
+    further write: an `open` day older than the gap-heal window is read as
+    `gapped` by planning (`auditDays`), the same age rule `dayStatus` applies
+    on a rewrite. A day whose last write came before its end (stored `open`
+    even with every sample) is rewritten by today-refresh after midnight, so its
+    stored status becomes final.
+- **`fetched_at`**: when the Tesla request was made (not when the response
+  arrived). A write replaces the record only if its `fetched_at` is newer than
+  the stored one. Published samples never change, so a later request sees at
+  least what an earlier one did; an earlier, slower request that arrives last is
+  `superseded` instead of overwriting newer data. (Slice 2 stamped the response
+  time, which let exactly that happen; changed in slice 4.) Ordering relies on
+  instance clocks agreeing to well under a request's duration.
 - **`raw_pruned`** stays during the transition (true for every day written
   straight from Tesla) and goes away with `EnergyData`.
 
@@ -134,12 +144,48 @@ Harrison 11-14 → 11-28) is recorded once in `Site.history_backfill_from` so
 later runs start there. The 14-day gap-heal window governs automatic retries
 only, never how far back a backfill goes.
 
+**Open item (slice 5):** an empty day in the middle of history has no durable
+"checked" state, so a later backfill cannot tell "fetched and empty" from
+"never fetched". `writeDay([])` writes nothing and keeps an existing record (an
+empty response after a non-empty one is treated as a Tesla failure, not as
+truth). Empty-day semantics (a checked marker or checkpoint, retry age) must be
+settled before the backfill relies on them; a fetch failure stays distinct from
+a successful empty answer.
+
 ## Reads
 
 - The compact reader treats `open` days like any other record (it already
   decodes partial days); today's data comes from today's record.
 - During the transition the reader still merges raw rows where they exist
-  (#197), so flipping writers is safe before raw is gone.
+  (#197). Reading both formats is not enough to flip writers on its own; see
+  "Writer handoff" below.
+
+## Writer handoff (flag on, during the transition)
+
+- **Days that already have raw rows** are replaced, not refused: the importer's
+  `writeDay(..., {replaceRaw:true})` deletes the day's raw rows in the same
+  transaction as the v2 write (slice 4). Today's raw rows go the same way on the
+  first latched refresh.
+- **An in-flight raw writer** (an instance still on flag-off code, or a
+  request that started before the flip) that touches a v2 day: with compact
+  reads on, `writeEnergyDataBatch` restores the day to raw rows first and
+  upserts, so nothing is lost; the next importer write replaces it again. With
+  compact reads off the raw-insert trigger refuses the write. So the flag is
+  only turned on where compact reads are on (Prod), and only after a deploy has
+  drained flag-off instances.
+- **Rollback** (flag off again): raw writes resume; a v2 day they touch is
+  restored to raw as above, and untouched v2 days keep reading from their
+  records. No data migration is needed either way.
+- **Sites without working Tesla tokens** are never written by the importer, so
+  their raw rows and v1 archives stay as they are until slice 5's cutover
+  (convert in place; no refetch possible).
+- **Timezone changes** are blocked: the `invalidate_compact_energy_timezone`
+  trigger refuses a `Site.timezone` change while any of the site's days is
+  pruned, which every importer-written record is. A correction needs a
+  coordinated rebuild (re-key days from stored samples, or refetch where tokens
+  exist) before it can be allowed; until then the site refresh that carries a
+  new timezone fails loudly instead of overlapping old and new day partitions.
+  Open item for slice 5.
 
 ## Re-attribution
 
@@ -165,7 +211,10 @@ Convert every v1 archive to v2 once this format is final:
    budget (~a few KB read per day: the v1 payload).
 
 Readers support v1 and v2 until the migration reports zero v1 rows, then v1
-read support is removed.
+read support is removed. **Open item:** some days stay v1 by design (off-grid
+samples, `attribution-flag`, `unattributed-gap`) and a converter retry cannot
+change that; refetching is not possible for tokenless sites and would discard
+the original attribution. Until each class has a disposition, v1 reading stays.
 
 **Implemented (slice 3):** `scripts/convert-archives-v2.ts` →
 `CompactHistoryStore.convertDayToV2` and `compact-v1-conversion.ts`.
@@ -235,7 +284,8 @@ read support is removed.
    site's `is_current` tariff (lowest ID names the `timelineRevision`), and
    returns `superseded` when the stored `fetched_at` is the same or newer.
    `fetchDayForWrite` (`compact-day-fetch.ts`) is the one Tesla fetch for a day
-   (SOE required, up to `now` for today, `fetchedAt` = response time); the backfill
+   (SOE required, up to `now` for today, `fetchedAt` = response time, request
+   time since slice 4); the backfill
    script uses both. Readers decode format 2 through its segments (charts,
    coverage, billing, latest sample/SOC, maintenance); `SETTLED_ARCHIVE_DAY_SQL`
    treats a v2 record as settled only when `complete` or `gapped`, so an `open`
@@ -267,8 +317,8 @@ read support is removed.
      record status.
    - **Today-refresh** (`Importer.refreshTodayRecords`): today's open record from
      the whole day so far, plus yesterday's while it is not `complete` and its
-     stored fetch predates its last sample's publication (`isDayFetchFinal`);
-     after that, its remaining gaps are gap-heal's. With no record for yesterday,
+     stored fetch was requested before the day ended (`isDayFetchFinal`), so
+     its stored status is final; after that, its remaining gaps are gap-heal's. With no record for yesterday,
      only a missing stored tail fetches it (as the raw path does). Writes run one
      at a time (one per-site claim).
    - **Latch** (flag on or off, `tesla-sample-timing.ts`): `refreshTodayData`

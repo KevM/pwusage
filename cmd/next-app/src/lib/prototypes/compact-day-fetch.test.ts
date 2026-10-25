@@ -26,14 +26,19 @@ describe('fetchDayForWrite', () => {
         expect(fetchRange).toHaveBeenCalledWith(site, start, now, 'day', { requireSoe: true });
     });
 
-    it('stamps the fetch when the response arrives, not when it was requested', async () => {
-        let resolve!: (rows: EnergyDataRow[]) => void;
-        const fetchRange = vi.fn().mockReturnValue(new Promise<EnergyDataRow[]>(r => { resolve = r; }));
+    it('stamps the fetch when it was requested, so a slower, older request can never win', async () => {
+        const resolvers: Array<(rows: EnergyDataRow[]) => void> = [];
+        const fetchRange = vi.fn().mockImplementation(() => new Promise<EnergyDataRow[]>(r => { resolvers.push(r); }));
         let clock = 1;
-        const pending = fetchDayForWrite({ fetchRange }, site, start, new Date('2026-11-04T00:00:00Z'), () => new Date(clock));
+        const now = new Date('2026-11-04T00:00:00Z');
+        const older = fetchDayForWrite({ fetchRange }, site, start, now, () => new Date(clock));
         clock = 2;
-        resolve([]);
-        expect((await pending).fetchedAt).toEqual(new Date(2));
+        const newer = fetchDayForWrite({ fetchRange }, site, start, now, () => new Date(clock));
+        clock = 3;
+        // The newer request completes first; the older one arrives last but keeps its earlier stamp.
+        resolvers[1]([]); expect((await newer).fetchedAt).toEqual(new Date(2));
+        clock = 4;
+        resolvers[0]([]); expect((await older).fetchedAt).toEqual(new Date(1));
     });
 
     it('propagates an SOE failure so the stored day is left as it was', async () => {

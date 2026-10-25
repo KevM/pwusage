@@ -1,5 +1,6 @@
 import { formatSiteDate, getSiteMidnight } from '../date-utils';
 import type { DailyCoverageStat } from '../energy-repo';
+import { DAY_GAP_HEAL_DAYS } from '../prototypes/day-attribution';
 
 export interface DateWindow {
     start: Date;
@@ -121,6 +122,9 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             last: null,
             maxInteriorGapMs: 0,
         };
+        // A record's status is computed when written, so an open day that has aged
+        // past the gap-heal window counts as gapped (settled), as a rewrite would store it.
+        const aged = stat.open === true && now.getTime() - day.windowEnd.getTime() > DAY_GAP_HEAL_DAYS * 24 * 3600000;
         const firstInWindow = stat.first === null ? null : stat.first.getTime();
         const lastInWindow = stat.last === null ? null : stat.last.getTime();
 
@@ -135,8 +139,8 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             missingStart: firstInWindow !== null && (firstInWindow - day.windowStart.getTime() > gapThresholdMs),
             missingEnd: lastInWindow !== null && (day.effectiveWindowEnd.getTime() - lastInWindow > gapThresholdMs),
             hasInteriorGap: stat.maxInteriorGapMs > gapThresholdMs,
-            archived: stat.archived === true,
-            open: stat.open === true,
+            archived: stat.archived === true || aged,
+            open: stat.open === true && !aged,
         });
     }
 

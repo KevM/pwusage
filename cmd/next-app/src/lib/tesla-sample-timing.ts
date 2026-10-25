@@ -15,10 +15,12 @@ export function nextSampleDueAt(latestLabel: Date): Date {
 }
 
 /**
- * A fetch made after the day's last sample was published is Tesla's final
- * answer for the day: samples never change once published, so refetching
- * would only return the same gaps.
+ * A fetch requested once the day has ended is Tesla's final answer for it:
+ * samples never change once published, so refetching would only return the
+ * same gaps, and the record it wrote got its final status (complete, or open
+ * until it ages into gapped). A request at 23:58 can already hold every sample
+ * but was stored as open, so it is not final.
  */
 export function isDayFetchFinal(fetchedAt: Date | null, dayEnd: Date): boolean {
-    return fetchedAt !== null && +fetchedAt >= +dayEnd - SAMPLE_INTERVAL_MS + TESLA_PUBLISH_LAG_MS;
+    return fetchedAt !== null && +fetchedAt >= +dayEnd;
 }
