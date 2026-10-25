@@ -659,11 +659,11 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             await pool.query(`INSERT INTO "EnergyDayEmpty" VALUES ('moved',$1,$2,$2)`,[utcDay('2026-10-30'),days[0]]);
             const before=await rows();
             // Preview does the work and rolls it back.
-            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:false,now:later})).toEqual({status:'previewed',from:'UTC',sourceDays:3,records:4,restoredRawSamples:0,droppedEmptyMarkers:1});
+            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:false,now:later})).toEqual({status:'previewed',from:'UTC',sourceDays:3,records:4,restoredRawSamples:0,reattributedRawSamples:0,droppedEmptyMarkers:1});
             expect(await rows()).toEqual(before);
             await expect(new CompactHistoryStore(pool).rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).rejects.toThrow('mutation guard');
             await expect(store.rebuildTimezone('moved','Mars/Olympus',{apply:true,now:later})).rejects.toThrow();
-            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).toEqual({status:'rebuilt',from:'UTC',sourceDays:3,records:4,restoredRawSamples:0,droppedEmptyMarkers:1});
+            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).toEqual({status:'rebuilt',from:'UTC',sourceDays:3,records:4,restoredRawSamples:0,reattributedRawSamples:0,droppedEmptyMarkers:1});
             expect((await pool.query(`SELECT timezone FROM "Site" WHERE id='moved'`)).rows[0].timezone).toBe('America/Chicago');
             expect((await pool.query(`SELECT count(*)::int AS n FROM "EnergyDayEmpty" WHERE site_id='moved'`)).rows[0].n).toBe(0);
             const rebuilt=await rows();
@@ -691,11 +691,19 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             // The next UTC day is raw only; its first five hours fall in the same Chicago day as most of the record.
             await pool.query(`INSERT INTO "EnergyData" SELECT 'moved',t,9,11,1,1,1,1,NULL FROM generate_series($1::timestamptz,$2::timestamptz,interval '5 minutes') t`,
                 [utcDay('2026-11-01'),new Date(+utcDay('2026-11-02')-300000)]);
-            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).toMatchObject({status:'rebuilt',sourceDays:1,records:1,restoredRawSamples:228});
+            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).toMatchObject({status:'rebuilt',sourceDays:1,records:1,restoredRawSamples:228,reattributedRawSamples:expect.any(Number)});
             expect((await rows()).map(r=>[r.day_start.toISOString(),r.sample_count])).toEqual([['2026-10-30T05:00:00.000Z',60]]);
             expect((await pool.query(`SELECT count(*)::int AS n FROM "EnergyData" WHERE site_id='moved'`)).rows[0].n).toBe(288+228);
             const reader=new CompactHistoryReader(store,'America/Chicago');
             expect(values((await reader.getRawEnergyData('moved',day,utcDay('2026-11-01'))))).toEqual(values(record));
+            // Every raw row, restored or already raw, is priced on Chicago's clock: 16:00 UTC is 11:00 there, off-peak.
+            const mispriced=await pool.query(`SELECT count(*)::int AS n FROM "EnergyData" WHERE site_id='moved' AND (tariff_id<>9 OR tariff_schedule_id IS DISTINCT FROM
+                CASE WHEN extract(hour FROM timestamp AT TIME ZONE 'America/Chicago')<16 THEN 11 WHEN extract(hour FROM timestamp AT TIME ZONE 'America/Chicago')<21 THEN 10 ELSE 12 END)`);
+            expect(mispriced.rows[0].n).toBe(0);
+            const chicagoDay=new Date('2026-10-31T05:00:00Z'),chicagoEnd=new Date('2026-11-01T05:00:00Z');
+            const billing=await readBillingAvailability(()=>reader.getCycleAggregatesAndCoverage('moved',chicagoDay,chicagoEnd,'America/Chicago'),{aggregates:[],coverage:[]});
+            expect(billing.status).toBe('complete');
+            expect(billing.value.aggregates.map(a=>a.tariff_schedule_id).sort()).toEqual([10,11,12]);
         });
         it('refuses to drop an unpruned archive whose raw rows no longer hold its samples',async()=>{
             const day=utcDay('2026-10-31');

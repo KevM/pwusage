@@ -239,7 +239,13 @@ instead a change is a coordinated rebuild, and the site refresh never fails on i
      raw rows also touch gets its pruned samples back as raw rows (writes only,
      no read-back), and raw stays its single source until the archive job or a
      refetch writes it.
-  4. Preview runs all of it and rolls back.
+  4. Re-price every raw row (restored or already raw) on the new clock from the
+     current tariff, so billing and later archiving never use old-timezone
+     periods (a 16:00 UTC peak sample is 11:00 off-peak in Chicago). Segments
+     are derived per local day in TypeScript and applied as timestamp ranges in
+     one `UPDATE`; no raw rows are read back and only changed rows are written.
+     Tokenless sites need this, since they can't refetch.
+  5. Preview runs all of it and rolls back.
   No Tesla request, so tokenless sites rebuild too. Cost: one read of the
   site's pruned payloads (~3 KB/day: ~3 MB for a three-year site); the
   transaction has no 15 s budget (operator script, not a function).

@@ -79,7 +79,7 @@ export interface FinalizationResult { status: 'busy' | 'empty' | 'finalized' | '
  */
 export interface DayWriteResult { status:'busy'|'empty'|'checked-empty'|'written'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
 /** One site's day records re-keyed to a new timezone (see `rebuildTimezone`). */
-export interface TimezoneRebuildResult { status:'busy'|'unchanged'|'previewed'|'rebuilt'; from?:string; sourceDays?:number; records?:number; restoredRawSamples?:number; droppedEmptyMarkers?:number }
+export interface TimezoneRebuildResult { status:'busy'|'unchanged'|'previewed'|'rebuilt'; from?:string; sourceDays?:number; records?:number; restoredRawSamples?:number; reattributedRawSamples?:number; droppedEmptyMarkers?:number }
 /** v1 -> v2 conversion of one archive; `convertible` is a preview's verified result. */
 /** `reattributed` (`reattributable` in preview): a day v2 cannot reproduce, kept as samples with segments from the current tariff (`reattribute`). */
 export interface DayConversionResult { status:'busy'|'converted'|'convertible'|'reattributed'|'reattributable'|'already-v2'|'left-v1'; reason?:V1ConversionReason; revision?:string; dayStatus?:DayStatus }
@@ -661,7 +661,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
      * new timezone, `fetched_at` its oldest source's. A new day that also has raw
      * rows gets its pruned samples back as raw rows, so raw stays its only source
      * until it is archived or refetched. Unpruned archives are dropped (their raw
-     * rows stay) and so are empty-day markers. Preview does the same work and rolls back.
+     * rows stay) and so are empty-day markers. Every raw row is then re-priced on the
+     * new clock (`reattributeRaw`). Preview does the same work and rolls back.
      */
     async rebuildTimezone(siteId:string,timezone:string,{apply,now}:{apply:boolean;now:Date}):Promise<TimezoneRebuildResult> {
         if(!siteId?.trim()||siteId.length>200||!Number.isSafeInteger(+now))throw new Error('Invalid timezone rebuild request');
@@ -713,10 +714,43 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 await this.replaceDay(client,siteId,starts[i],ends[i],samples.length,this.prepareSamples(siteId,timezone,starts[i],ends[i],samples,tariffs,day.fetchedAt,now),true);
                 records++;
             }
+            const reattributedRawSamples=await this.reattributeRaw(client,siteId,timezone,tariffs);
             await client.query(apply?'COMMIT':'ROLLBACK');
-            return {status:apply?'rebuilt':'previewed',from,sourceDays,records,restoredRawSamples,droppedEmptyMarkers};
+            return {status:apply?'rebuilt':'previewed',from,sourceDays,records,restoredRawSamples,reattributedRawSamples,droppedEmptyMarkers};
         } catch(error) {await client.query('ROLLBACK');throw error;}
         finally {client.release(this.transactionTimeoutMs!==undefined);}
+    }
+
+    /**
+     * Re-price every raw row of the site on the new timezone's clock (TOU periods are
+     * local time), from the current tariff as day records are. Segments are derived
+     * per local day that has raw rows and applied as timestamp ranges server side, so
+     * no raw row is read back; only rows whose IDs change are written.
+     */
+    private async reattributeRaw(client:PoolClient,siteId:string,timezone:string,tariffs:Tariff[]):Promise<number> {
+        const days=(await client.query<{s:Date}>(`SELECT DISTINCT (date_trunc('day',timestamp AT TIME ZONE $2) AT TIME ZONE $2) AS s
+            FROM "EnergyData" WHERE site_id=$1 ORDER BY 1`,[siteId,timezone])).rows.map(r=>new Date(r.s));
+        if(!days.length)return 0;
+        if(!tariffs.length)throw new Error('No current tariff');
+        const schedule=new Schedule(tariffs,timezone),tariffId=Number(tariffs[0].id);
+        const from:Date[]=[],until:Date[]=[],tariff:number[]=[],scheduleIds:(number|null)[]=[];
+        for(const start of days) {
+            const end=addDaysInSiteTimezone(start,1,timezone);
+            const {segments}=deriveDayAttribution(schedule,tariffId,start,end);
+            segments.forEach((segment,i)=>{
+                from.push(new Date(+start+segment.offset*60000));
+                until.push(i+1<segments.length?new Date(+start+segments[i+1].offset*60000):end);
+                tariff.push(segment.tariffId);scheduleIds.push(segment.scheduleId);
+            });
+        }
+        // Each changed row fires the raw trigger; allow a multi-year site more than the usual statement budget.
+        await client.query("SET LOCAL statement_timeout='120s'");
+        const updated=await client.query(`UPDATE "EnergyData" e SET tariff_id=s.tariff,tariff_schedule_id=s.schedule
+            FROM unnest($2::timestamptz[],$3::timestamptz[],$4::int[],$5::int[]) AS s(f,t,tariff,schedule)
+            WHERE e.site_id=$1 AND e.timestamp >= s.f AND e.timestamp < s.t
+            AND (e.tariff_id,e.tariff_schedule_id) IS DISTINCT FROM (s.tariff,s.schedule)`,[siteId,from,until,tariff,scheduleIds]);
+        await client.query("SET LOCAL statement_timeout='15s'");
+        return updated.rowCount??0;
     }
 
     /**
