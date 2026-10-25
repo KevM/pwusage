@@ -169,6 +169,26 @@ export function isTeslaAuthError(error: unknown): error is TeslaAuthError {
     return false;
 }
 
+/**
+ * The `time_series` of a calendar_history answer. An empty result counts as a
+ * stored fact ("Tesla has no data for this day"), so only the shapes Tesla uses
+ * for that are empty: `time_series: []`, and for a day with no data (observed
+ * 2026-10-25) an energy answer with an empty `serial_number` and no
+ * `time_series`, or an SOE `response` of "". Anything else is malformed and
+ * throws, like a failed request, so it is retried instead of recorded.
+ */
+function calendarTimeSeries<T>(result: unknown, kind: 'energy' | 'soe'): T[] {
+    const response = (result as { response?: unknown } | null)?.response;
+    if (response !== null && typeof response === 'object') {
+        const body = response as { time_series?: unknown; serial_number?: unknown };
+        if (Array.isArray(body.time_series)) return body.time_series as T[];
+        if (kind === 'energy' && !('time_series' in body) && body.serial_number === '') return [];
+    } else if (kind === 'soe' && response === '') {
+        return [];
+    }
+    throw new Error(`Malformed Tesla ${kind === 'energy' ? 'energy' : 'SOE'} history response: ${JSON.stringify(result).substring(0, 200)}`);
+}
+
 export class TeslaClient {
     private baseUrl = "https://fleet-api.prd.na.vn.cloud.tesla.com";
     private config: TeslaClientConfig;
@@ -284,11 +304,11 @@ export class TeslaClient {
         console.log(`[TeslaClient] Params: start_date=${s}, end_date=${e}`);
 
         const teslaStart = Date.now();
-        const result = await this.fetch<{ response: { time_series: EnergyHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
+        const result = await this.fetch<unknown>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
         console.log(`[TeslaClient] History fetch duration: ${Date.now() - teslaStart}ms`);
 
         console.log(`[TeslaClient] History Response for ${start.toISOString()}-${end.toISOString()} (${period}):`, JSON.stringify(result).substring(0, 200));
-        return result.response?.time_series ?? [];
+        return calendarTimeSeries<EnergyHistoryEntry>(result, 'energy');
     }
 
     async getSoeHistory(siteId: string, start: Date, end: Date, period: string = "day", timeZone: string): Promise<SoeHistoryEntry[]> {
@@ -302,8 +322,8 @@ export class TeslaClient {
             time_zone: timeZone
         });
 
-        const result = await this.fetch<{ response: { time_series?: RawSoeHistoryEntry[] } }>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
-        const rows = result.response?.time_series ?? [];
+        const result = await this.fetch<unknown>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
+        const rows = calendarTimeSeries<RawSoeHistoryEntry>(result, 'soe');
 
         return rows
             .map((row) => {
