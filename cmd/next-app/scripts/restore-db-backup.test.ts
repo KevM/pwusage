@@ -27,6 +27,7 @@ CREATE TABLE public."EnergyData" (
 CREATE UNIQUE INDEX energy_ts_site_uidx ON public."EnergyData"("timestamp", site_id);
 CREATE TABLE public."EnergyDayArchive" (site_id text NOT NULL, day_start timestamptz NOT NULL, day_end timestamptz NOT NULL,
     raw_pruned boolean NOT NULL DEFAULT false);
+CREATE TABLE public."EnergyDaySummary" (site_id text NOT NULL, day_start timestamptz NOT NULL);
 CREATE FUNCTION public.invalidate_day() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN DELETE FROM public."EnergyDayArchive" WHERE site_id = NEW.site_id; RETURN NEW; END; $$;
 CREATE TRIGGER invalidate_day BEFORE INSERT OR UPDATE ON public."EnergyData"
@@ -49,6 +50,7 @@ const WEEKLY = {
         + copy('Site', 'id, user_id', ['s1\tu1', 's2\tu1'])
         + copy('EnergyData', 'id, "timestamp", site_id, load_power, battery_soc', [`1\t${T1}\ts1\t100\t50`, `2\t${T2}\ts1\t100\t50`, `3\t${T1}\ts2\t200\t50`])
         + copy('EnergyDayArchive', 'site_id, day_start, day_end', [`s1\t${T1}\t${T1_END}`])
+        + copy('EnergyDaySummary', 'site_id, day_start', [`s1\t${T1}`])
         + `SELECT pg_catalog.setval('public."EnergyData_id_seq"', 3, true);\n`,
 };
 
@@ -60,6 +62,7 @@ const DAILY = {
         + copy('User', 'id, email', ['u1\tnew@example.com', 'u2\t\\N'])
         + copy('Site', 'id, user_id', ['s1\tu1', 's3\tu2'])
         + copy('EnergyDayArchive', 'site_id, day_start, day_end', [`s1\t${T1}\t${T1_END}`])
+        + copy('EnergyDaySummary', 'site_id, day_start', [`s1\t${T1}`])
         // pg_dump keeps EnergyData's sequence even when the table's data is excluded,
         // but the recent readings are copied a moment later: id 5 landed in between.
         + `SELECT pg_catalog.setval('public."EnergyData_id_seq"', 4, true);\n`,

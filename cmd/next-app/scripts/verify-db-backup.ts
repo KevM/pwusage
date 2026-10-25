@@ -66,11 +66,16 @@ export async function verifyBackupDirectory(dir: string, dump: BackupDump): Prom
 
     const rows = countCopyRows(data);
 
-    const mustHaveRows = dump === 'full' ? ['User', 'Site', 'EnergyData'] : ['User', 'Site'];
-    for (const table of mustHaveRows) {
+    for (const table of ['User', 'Site']) {
         if (!rows[table]) throw new Error(`data.sql has no rows for ${table}`);
     }
-    if (dump === 'full') return rows;
+    // Day records carry their totals in summary rows; records without any were cut off.
+    if (rows.EnergyDayArchive && !rows.EnergyDaySummary) throw new Error('data.sql has day records but no rows for EnergyDaySummary');
+    if (dump === 'full') {
+        // History lives in raw EnergyData, day records, or both while the migration drains raw.
+        if (!rows.EnergyData && !rows.EnergyDayArchive) throw new Error('data.sql has no energy history (EnergyData or EnergyDayArchive)');
+        return rows;
+    }
 
     if ('EnergyData' in rows) throw new Error('EnergyData was not excluded from the daily data dump');
     const recent = (await required(dir, RECENT_ENERGY)).split('\n').filter((line) => line.length > 0);
