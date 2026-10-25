@@ -19,6 +19,11 @@ export interface PlanOptions {
      * records are settled and never refetched automatically.
      */
     refetchOpenDays?: boolean;
+    /**
+     * Day starts Tesla has settled as empty (`CompactHistoryStore.getSettledEmptyDays`):
+     * never refetched unless forced, like a settled archive day.
+     */
+    settledEmptyDays?: Date[];
     gapThresholdMs?: number;
     now?: Date;
 }
@@ -158,12 +163,14 @@ export interface PlannedWindow extends DateWindow {
 
 export function planImport(options: PlanOptions): PlannedWindow[] {
     const { forceRefetch = false, refetchOpenDays = false } = options;
+    const settledEmpty = new Set((options.settledEmptyDays ?? []).map(Number));
     return auditDays(options).flatMap(d => {
         const window = { start: d.windowStart, end: d.effectiveWindowEnd };
         if (forceRefetch) return [window];
         // Re-fetching a settled archive day rewrites its raw rows, which drops the
         // archive (and restores a trimmed day): a churn loop for days Tesla can't fill.
-        if (d.archived) return [];
+        // A settled empty day would only return the same empty answer again.
+        if (d.archived || settledEmpty.has(+d.windowStart)) return [];
         if (d.count === 0 || d.missingStart || d.missingEnd || d.hasInteriorGap) return [window];
         return refetchOpenDays && d.open && !d.isToday ? [{ ...window, openRetry: true as const }] : [];
     });
