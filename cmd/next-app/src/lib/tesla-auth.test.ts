@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { refreshAccessToken } from './tesla-auth';
-import { TeslaAuthError } from './tesla-client';
+import { isTeslaAuthError, TeslaAuthError } from './tesla-client';
 
 const ORIGINAL_ENV = {
     PUBLIC_TESLA_OAUTH_CLIENT_ID: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID,
@@ -162,6 +162,31 @@ describe('refreshAccessToken', () => {
         expect((thrown as Error).message).not.toMatch(/login_required|invalid_grant/);
     });
 
+    // Upstream text is not evidence that the credential is dead. TeslaTokenRepo
+    // turns isTeslaAuthError into an atomic revoke, so a 403 or 400 whose body
+    // happens to contain a trigger substring must stay non-terminal. The message
+    // must not carry that text either, because the predicate matches messages.
+    it.each([
+        { status: 403, body: '{"error":"login_required"}' },
+        { status: 400, body: '{"error":"invalid authentication"}' },
+    ])(
+        'does not treat a $status response body containing a trigger as terminal',
+        async ({ status, body }) => {
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+                ok: false,
+                status,
+                text: async () => body,
+            } as unknown as Response));
+
+            const thrown = await refreshAccessToken('old-refresh').catch((err: unknown) => err);
+
+            expect(thrown).toBeInstanceOf(Error);
+            expect(thrown).not.toBeInstanceOf(TeslaAuthError);
+            expect(isTeslaAuthError(thrown)).toBe(false);
+            expect((thrown as Error).message).not.toMatch(/login_required|invalid_grant|invalid authentication/i);
+        }
+    );
+
     it('throws a plain, non-terminal error when a 200 response omits the tokens', async () => {
         // The body carries `invalid_grant` on purpose. With the benign fixture
         // this test used, an implementation that interpolated the payload into
@@ -249,12 +274,11 @@ describe('refreshAccessToken', () => {
         expect(thrown).not.toBeInstanceOf(TeslaAuthError);
 
         // isTeslaAuthError also matches message substrings, so the thrown
-        // message must not carry a revoke trigger either. This is the assertion
-        // that would catch describeError (tesla-token-endpoint.ts:25-31) folding
-        // an upstream or intermediary body into a classified message: today it
-        // interpolates err.cause.message verbatim, so a 503 whose body read
-        // "... invalid_grant from proxy" would flip this to terminal. parseRefreshedTokens
-        // gets the same guard at :206; this path previously got none.
+        // message must not carry a revoke trigger either. This catches a
+        // regression that folds an upstream or intermediary body into a
+        // classified message: a 503 whose cause read "... invalid_grant from
+        // proxy" would otherwise flip this to terminal. parseRefreshedTokens
+        // gets the same guard.
         expect((thrown as Error).message).not.toMatch(/login_required|invalid_grant|invalid authentication/i);
 
         expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
