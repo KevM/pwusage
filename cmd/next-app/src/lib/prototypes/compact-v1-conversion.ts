@@ -201,7 +201,7 @@ export class V1ConversionPgRepo implements V1ConversionRepo {
     }
     async counts(sites: string[] | null) {
         const row = (await this.pool.query<{ v1: number; v2: number }>(`SELECT count(*) FILTER (WHERE format_version=1)::int AS v1,
-            count(*) FILTER (WHERE format_version=2)::int AS v2 FROM "EnergyDayArchive" WHERE $1::text[] IS NULL OR site_id=ANY($1)`, [sites])).rows[0];
+            count(*) FILTER (WHERE format_version=2 AND status IS DISTINCT FROM 'empty')::int AS v2 FROM "EnergyDayArchive" WHERE $1::text[] IS NULL OR site_id=ANY($1)`, [sites])).rows[0];
         return { v1: row.v1, v2: row.v2 };
     }
     async candidates(sites: string[] | null, after: { siteId: string; start: Date } | null, limit: number) {

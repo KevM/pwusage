@@ -478,7 +478,7 @@ export class SiteRepo {
             LEFT JOIN (
                 SELECT site_id, count(*) AS archived_days,
                     min(day_start) AS first_archived_day, max(day_start) AS last_archived_day
-                FROM "EnergyDayArchive" GROUP BY site_id
+                FROM "EnergyDayArchive" WHERE status IS DISTINCT FROM 'empty' GROUP BY site_id
             ) a ON a.site_id = s.id
             LEFT JOIN LATERAL (SELECT ${latestStoredSampleSql('s.id')} AS last_energy_at) e ON true
             ORDER BY s.history_migrated_at IS NOT NULL,

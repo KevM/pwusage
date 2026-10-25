@@ -11,7 +11,7 @@ import { auditTariffAttribution } from './compact-tariff-audit';
 import { decodeDay, decodeDaySamples, encodeDay, encodeDaySamples, rollupDay, toSample, type DayArchive, type DayRollup, type EnergySample } from './compact-energy';
 import {buildLatestMetadata,verifyLatestMetadata,type LatestMetadata,type LatestSample} from './compact-latest-metadata';
 import { buildDayMetadata, buildDayMetadataV3, type SummarizedHistoryDay } from './compact-day-metadata';
-import { DAY_GAP_HEAL_DAYS, dayStatus, deriveDayAttribution, type DayAttribution, type DayStatus, type GapPricer } from './day-attribution';
+import { DAY_GAP_HEAL_DAYS, dayStatus, deriveDayAttribution, type DayAttribution, type DayRecordStatus, type DayStatus, type GapPricer } from './day-attribution';
 import { Schedule } from '../schedule';
 import {beginTransaction} from '../pg-transaction';
 import {REATTRIBUTABLE,convertV1Day,type V1ConversionReason} from './compact-v1-conversion';
@@ -40,6 +40,12 @@ export const SETTLED_ARCHIVE_DAY_SQL=`(a.metadata_checksum IS NOT NULL AND CASE 
     ELSE a.metadata_version=2 AND a.attribution_complete AND (a.raw_pruned OR a.sample_count>=a.expected_slots) END)`;
 /** Archive rows whose day metadata is checksummed (v1 archives on metadata 2, v2 records on metadata 3). */
 const MODERN_METADATA_SQL=(alias='')=>`${alias}metadata_version IN (2,3) AND ${alias}metadata_checksum IS NOT NULL`;
+/**
+ * Archive rows that hold samples. An `empty` day record (Tesla answered the day with
+ * no samples) has no payload, digest, projection or summaries: readers treat it as
+ * "checked, no data" by skipping it, and it never hides raw rows.
+ */
+export const HAS_SAMPLES_SQL=(alias='')=>`${alias}status IS DISTINCT FROM 'empty'`;
 
 type DetailArchiveRecord = Pick<ArchiveRecord, 'site_id'|'day_start'|'day_end'|'revision'|'format_version'|'codec'|'axis'|'checksum'|'payload'|'expected_slots'|'attribution_complete'|'attribution'>;
 const detailColumns = 'site_id,day_start,day_end,revision,format_version,codec,axis,checksum,payload,expected_slots,attribution_complete,attribution';
@@ -74,12 +80,12 @@ export interface ArchiveMutationResult {status:'busy'|'trimmed'|'already-trimmed
 export interface FinalizationResult { status: 'busy' | 'empty' | 'finalized' | 'unchanged'; revision?: string;attributionComplete?:boolean }
 /**
  * `superseded`: the stored record came from a newer (or the same) fetch and was kept.
- * `checked-empty`: Tesla answered with no samples for a day with nothing stored; recorded in "EnergyDayEmpty".
+ * `checked-empty`: Tesla answered with no samples for a day with nothing stored; recorded as an `empty` day record.
  * `empty`: Tesla answered with no samples for a day that has a record or raw rows, which were kept.
  */
 export interface DayWriteResult { status:'busy'|'empty'|'checked-empty'|'written'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
 /** One site's day records re-keyed to a new timezone (see `rebuildTimezone`). */
-export interface TimezoneRebuildResult { status:'busy'|'unchanged'|'previewed'|'rebuilt'; from?:string; sourceDays?:number; records?:number; restoredRawSamples?:number; reattributedRawSamples?:number; droppedEmptyMarkers?:number }
+export interface TimezoneRebuildResult { status:'busy'|'unchanged'|'previewed'|'rebuilt'; from?:string; sourceDays?:number; records?:number; restoredRawSamples?:number; reattributedRawSamples?:number; droppedEmptyDays?:number }
 /** v1 -> v2 conversion of one archive; `convertible` is a preview's verified result. */
 /** `reattributed` (`reattributable` in preview): a day v2 cannot reproduce, kept as samples with segments from the current tariff (`reattribute`). */
 export interface DayConversionResult { status:'busy'|'converted'|'convertible'|'reattributed'|'reattributable'|'already-v2'|'left-v1'; reason?:V1ConversionReason; revision?:string; dayStatus?:DayStatus }
@@ -118,7 +124,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');
             await client.query("SET LOCAL statement_timeout = '15s'");
             const archives = await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive"
-                WHERE site_id=$1 AND day_start < $3 AND day_end > $2 ORDER BY day_start`, [siteId,start,end]);
+                WHERE site_id=$1 AND day_start < $3 AND day_end > $2 AND ${HAS_SAMPLES_SQL()} ORDER BY day_start`, [siteId,start,end]);
             const summaries = await client.query<SummaryRecord>(`SELECT s.* FROM "EnergyDaySummary" s
                 JOIN "EnergyDayArchive" a USING (site_id,day_start,revision)
                 WHERE a.site_id=$1 AND a.day_start < $3 AND a.day_end > $2
@@ -126,7 +132,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const samples = await client.query<RawRecord>(`SELECT ${columns} FROM "EnergyData"
                 WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3
                 AND ($4::boolean OR NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id="EnergyData".site_id
-                    AND "EnergyData".timestamp >= a.day_start AND "EnergyData".timestamp < a.day_end))
+                    AND "EnergyData".timestamp >= a.day_start AND "EnergyData".timestamp < a.day_end AND ${HAS_SAMPLES_SQL('a.')}))
                 ORDER BY timestamp LIMIT 105409`, [siteId,start,end,verifyRawOverlap]);
             if (samples.rows.length > 105408) throw new Error('History sample limit exceeded');
             const days = archives.rows.map(a => detailDay(a,summaries.rows));
@@ -144,7 +150,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const rawRow=(await client.query<RawRecord>(`SELECT ${columns} FROM "EnergyData" WHERE site_id=$1 AND timestamp<=$2 ORDER BY timestamp DESC LIMIT 1`,[siteId,asOf])).rows[0];
             let result:LatestEnergySnapshot|null=rawRow?{timestamp:new Date(rawRow.timestamp),batterySoc:rawRow.battery_soc===null?null:Number(rawRow.battery_soc),batteryPower:Number(rawRow.battery_power),solarPower:Number(rawRow.solar_power),gridPower:Number(rawRow.grid_power),loadPower:Number(rawRow.load_power)}:null;
             const archives=(await client.query<LatestArchiveRecord>(`SELECT ${latestColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2
-                ORDER BY day_start DESC LIMIT 2`,[siteId,asOf])).rows;
+                AND ${HAS_SAMPLES_SQL()} ORDER BY day_start DESC LIMIT 2`,[siteId,asOf])).rows;
             for(const a of archives) {
                 let sample:LatestEnergySnapshot|null=null;
                 if(a.latest_metadata && verifyLatest(a).sample.timestamp<=+asOf)sample=projectedEnergy(a.latest_metadata.sample);
@@ -170,7 +176,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const guard=(await client.query<{verified:boolean;legacy:boolean;cut:boolean}>(`SELECT COALESCE(bool_and(CASE WHEN latest_metadata IS NOT NULL THEN public.verify_compact_latest_metadata(site_id,day_start) ELSE true END),true) AS verified,
                 COALESCE(bool_or(latest_metadata IS NULL),false) AS legacy,
                 COALESCE(bool_or(day_end>$3 AND (latest_metadata->'soc'->>'timestamp')::bigint>$4),false) AS cut
-                FROM "EnergyDayArchive" WHERE site_id=$1 AND day_end>$2 AND day_start<=$3`,[siteId,since,now,+now])).rows[0];
+                FROM "EnergyDayArchive" WHERE site_id=$1 AND day_end>$2 AND day_start<=$3 AND ${HAS_SAMPLES_SQL()}`,[siteId,since,now,+now])).rows[0];
             if(!guard.verified)throw new Error('Latest metadata mismatch');
             if(guard.legacy)throw new Error('Latest SOC metadata requires rebuild');
             const archive=(await client.query<LatestArchiveRecord>(`SELECT ${latestColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND latest_metadata IS NOT NULL
@@ -185,7 +191,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             // Only the day containing the cutoff can project a SOC after it while holding earlier SOC
             // samples (a historical cutoff); its payload is read just then.
             if(guard.cut) {
-                const detail=(await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2 AND day_end>$2`,[siteId,now])).rows[0];
+                const detail=(await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2 AND day_end>$2 AND ${HAS_SAMPLES_SQL()}`,[siteId,now])).rows[0];
                 const sample=this.decodeSamples(detail).findLast(s=>s.battery_soc!==null&&s.timestamp>=since&&s.timestamp<=now);
                 if(sample)consider(+sample.timestamp,sample.battery_soc!);
             }
@@ -210,7 +216,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 (${MODERN_METADATA_SQL()}) AS modern,
                 CASE WHEN ${MODERN_METADATA_SQL()}
                     THEN public.verify_compact_day_metadata(site_id,day_start,false) ELSE true END AS verified
-                FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2 ORDER BY day_start DESC LIMIT 2`,[siteId,asOf])).rows;
+                FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2 AND ${HAS_SAMPLES_SQL()} ORDER BY day_start DESC LIMIT 2`,[siteId,asOf])).rows;
             let archivedLatest:Date|null=null;
             for(const archive of archives) {
                 if(!archive.verified) throw new Error('Day metadata mismatch');
@@ -426,7 +432,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
 
     async hasData(siteId:string):Promise<boolean> {
         const result=await this.pool.query<{present:boolean}>(`SELECT EXISTS (SELECT 1 FROM "EnergyData" WHERE site_id=$1)
-            OR EXISTS (SELECT 1 FROM "EnergyDayArchive" WHERE site_id=$1) AS present`,[siteId]);
+            OR EXISTS (SELECT 1 FROM "EnergyDayArchive" WHERE site_id=$1 AND ${HAS_SAMPLES_SQL()}) AS present`,[siteId]);
         return result.rows[0].present;
     }
 
@@ -443,11 +449,11 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 expected_slots,sample_count,attribution_complete,first_timestamp,last_timestamp,max_interior_gap_ms,metadata_checksum,metadata_version,attribution
                 FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start >= $2 AND day_end <= $3 AND metadata_checksum IS NOT NULL ORDER BY day_start`,[siteId,start,end]);
             const partial=await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<$3 AND day_end>$2
-                AND NOT (day_start >= $2 AND day_end <= $3 AND metadata_checksum IS NOT NULL) ORDER BY day_start`,[siteId,start,end]);
+                AND NOT (day_start >= $2 AND day_end <= $3 AND metadata_checksum IS NOT NULL) AND ${HAS_SAMPLES_SQL()} ORDER BY day_start`,[siteId,start,end]);
             const summaries=(await client.query<SummaryRecord>(`SELECT s.* FROM "EnergyDaySummary" s JOIN "EnergyDayArchive" a USING (site_id,day_start,revision)
                 WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2 ORDER BY s.day_start,s.tariff_id,s.tariff_schedule_id NULLS FIRST`,[siteId,start,end])).rows;
             const samples=await client.query<RawRecord>(`SELECT ${columns} FROM "EnergyData" e WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3
-                AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp >= a.day_start AND e.timestamp < a.day_end)
+                AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp >= a.day_start AND e.timestamp < a.day_end AND ${HAS_SAMPLES_SQL('a.')})
                 ORDER BY timestamp LIMIT 105409`,[siteId,start,end]);
             if (samples.rows.length>105408) throw new Error('History sample limit exceeded');
             const parts=partial.rows.map(a=>detailDay(a,summaries));
@@ -469,9 +475,9 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
             const site=await client.query<{timezone:string;has_detail:boolean;has_raw:boolean;verified:boolean;attribution_complete:boolean}>(`SELECT timezone,
                 EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2
-                    AND NOT(a.day_start >= $2 AND a.day_end <= $3 AND ${MODERN_METADATA_SQL('a.')})) AS has_detail,
+                    AND NOT(a.day_start >= $2 AND a.day_end <= $3 AND ${MODERN_METADATA_SQL('a.')}) AND ${HAS_SAMPLES_SQL('a.')}) AS has_detail,
                 EXISTS (SELECT 1 FROM "EnergyData" e WHERE e.site_id=$1 AND e.timestamp >= $2 AND e.timestamp < $3
-                    AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end)) AS has_raw,
+                    AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end AND ${HAS_SAMPLES_SQL('a.')})) AS has_raw,
                 COALESCE((SELECT bool_and(public.verify_compact_day_metadata(a.site_id,a.day_start,false))
                     FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
                     AND ${MODERN_METADATA_SQL('a.')}),true) AS verified,
@@ -500,12 +506,12 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 coverage.push(...result.rows.map(r=>({localDayKey:r.key,count:r.count,first:new Date(r.first),last:new Date(r.last),maxInteriorGapMs:r.gap,archived:r.settled,...(r.is_open?{open:true}:{})})));
             }
             const partial=site.rows[0]?.has_detail?await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<$3 AND day_end>$2
-                AND NOT (day_start >= $2 AND day_end <= $3 AND ${MODERN_METADATA_SQL()}) ORDER BY day_start`,[siteId,start,end]):{rows:[]};
+                AND NOT (day_start >= $2 AND day_end <= $3 AND ${MODERN_METADATA_SQL()}) AND ${HAS_SAMPLES_SQL()} ORDER BY day_start`,[siteId,start,end]):{rows:[]};
             const summaries=partial.rows.length?(await client.query<SummaryRecord>(`SELECT s.* FROM "EnergyDaySummary" s JOIN "EnergyDayArchive" a USING(site_id,day_start,revision)
                 WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2 AND NOT (a.day_start >= $2 AND a.day_end <= $3 AND ${MODERN_METADATA_SQL('a.')})
                 ORDER BY s.day_start,s.tariff_id,s.tariff_schedule_id NULLS FIRST`,[siteId,start,end])).rows:[];
             const rawRows=site.rows[0]?.has_raw?await client.query<RawRecord>(`SELECT ${columns} FROM "EnergyData" e WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3
-                AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end)
+                AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end AND ${HAS_SAMPLES_SQL('a.')})
                 ORDER BY timestamp LIMIT 105409`,[siteId,start,end]):{rows:[]};
             if(rawRows.rows.length>105408) throw new Error('History sample limit exceeded');
             const days=partial.rows.map(a=>detailDay(a,summaries));
@@ -533,7 +539,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const end = addDaysInSiteTimezone(start,1,timezone);
             if (end > getSiteMidnight(now,timezone)) throw new Error('Expected a completed local day');
             const existing = await client.query<ArchiveRecord>('SELECT * FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2 FOR UPDATE',[siteId,start]);
-            const old = existing.rows[0];
+            // An empty record holds no samples to keep; raw rows (which a raw insert would have made it drop) decide.
+            const old = existing.rows[0]?.status==='empty' ? undefined : existing.rows[0];
             if(old?.raw_pruned) {
                 if(+old.day_end!==+end)throw new Error('Pruned archive day bounds mismatch');
                 await this.recoverySamples(client,old);
@@ -601,19 +608,25 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             if(samples.some(r=>(+r.timestamp-+start)%300000))throw new Error('Samples off the 5-minute grid');
             if(!samples.length) {
                 // Published samples never disappear, so an empty answer for a day with stored samples is a
-                // Tesla failure and changes nothing; for a day with nothing stored it is a durable check.
-                const kept=(await client.query<{present:boolean}>(`SELECT EXISTS(SELECT 1 FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2)
+                // Tesla failure and changes nothing; for a day with nothing stored it is a durable check:
+                // an `empty` record, whose check time (fetched_at) only moves forward.
+                const kept=(await client.query<{present:boolean}>(`SELECT EXISTS(SELECT 1 FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2 AND ${HAS_SAMPLES_SQL()})
                     OR EXISTS(SELECT 1 FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3) AS present`,[siteId,start,end])).rows[0].present;
-                if(!kept)await client.query(`INSERT INTO "EnergyDayEmpty" (site_id,day_start,day_end,checked_at) VALUES ($1,$2,$3,$4)
-                    ON CONFLICT (site_id,day_start) DO UPDATE SET checked_at=EXCLUDED.checked_at WHERE "EnergyDayEmpty".checked_at<EXCLUDED.checked_at`,[siteId,start,end,fetchedAt]);
+                if(!kept)await client.query(`INSERT INTO "EnergyDayArchive" (site_id,day_start,day_end,revision,format_version,sample_count,expected_slots,
+                        attribution_complete,metadata_version,raw_pruned,status,fetched_at)
+                    VALUES ($1,$2,$3,$4,2,0,$5,false,3,false,'empty',$6)
+                    ON CONFLICT (site_id,day_start) DO UPDATE SET fetched_at=EXCLUDED.fetched_at
+                    WHERE "EnergyDayArchive".status='empty' AND "EnergyDayArchive".fetched_at<EXCLUDED.fetched_at`,
+                [siteId,start,end,randomUUID(),Math.ceil((+end-+start)/300000),fetchedAt]);
                 await client.query('COMMIT');return {status:kept?'empty':'checked-empty'};
             }
             if(!replaceRaw) {
                 const raw=(await client.query<{present:boolean}>('SELECT EXISTS(SELECT 1 FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3) AS present',[siteId,start,end])).rows[0].present;
                 if(raw)throw new Error('Day still has raw samples; finalize it from raw instead');
             }
-            const stored=(await client.query<{revision:string;fetched_at:Date|null}>('SELECT revision,fetched_at FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2 FOR UPDATE',[siteId,start])).rows[0];
-            if(stored?.fetched_at&&+fetchedAt<=+stored.fetched_at) {await client.query('COMMIT');return {status:'superseded',revision:stored.revision};}
+            const stored=(await client.query<{revision:string;fetched_at:Date|null;status:DayRecordStatus|null}>('SELECT revision,fetched_at,status FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2 FOR UPDATE',[siteId,start])).rows[0];
+            // Samples always replace an empty record: an empty answer after they were published was a Tesla failure.
+            if(stored?.fetched_at&&stored.status!=='empty'&&+fetchedAt<=+stored.fetched_at) {await client.query('COMMIT');return {status:'superseded',revision:stored.revision};}
             const sorted=samples.map(toSample).sort((a,b)=>+a.timestamp-+b.timestamp);
             const {tariffs}=await this.tariffs(client,siteId,true);
             const prepared=this.prepareSamples(siteId,timezone,start,end,sorted,tariffs,fetchedAt,now);
@@ -623,7 +636,6 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start]);
                 await client.query('DELETE FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3',[siteId,start,end]);
             }
-            await client.query('DELETE FROM "EnergyDayEmpty" WHERE site_id=$1 AND day_start=$2',[siteId,start]);
             const revision=await this.replaceDay(client,siteId,start,end,sorted.length,prepared,true);
             await client.query('COMMIT');
             return {status:'written',revision,attributionComplete:prepared.attributionComplete,dayStatus:prepared.record!.status};
@@ -631,24 +643,25 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         finally {client.release(this.transactionTimeoutMs!==undefined);}
     }
 
-    /** A day record's status (null for v1) and fetch time, for deciding whether Tesla's answer for it is final. */
-    async getDayRecordState(siteId:string,start:Date):Promise<{status:DayStatus|null;fetchedAt:Date|null}|null> {
-        const row=(await this.pool.query<{status:DayStatus|null;fetched_at:Date|null}>('SELECT status,fetched_at FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start])).rows[0];
+    /** A day record's status (null for v1, `empty` for a day Tesla answered with no samples) and fetch time, for deciding whether Tesla's answer for it is final. */
+    async getDayRecordState(siteId:string,start:Date):Promise<{status:DayRecordStatus|null;fetchedAt:Date|null}|null> {
+        const row=(await this.pool.query<{status:DayRecordStatus|null;fetched_at:Date|null}>('SELECT status,fetched_at FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start])).rows[0];
         return row?{status:row.status,fetchedAt:row.fetched_at}:null;
     }
 
     /**
-     * Days a backfill need not fetch again: Tesla answered them with no samples in a
-     * request made after the day ended, they are older than the gap-heal window (the
-     * age rule that makes a short day `gapped`), and nothing has been stored since.
-     * A day with no marker was never answered (or its fetch failed) and is fetched.
+     * Days neither a backfill nor import planning need fetch again: `empty` records
+     * whose (latest) empty answer was requested after the day ended, older than the
+     * gap-heal window (the age rule that makes a short day `gapped`), with no raw rows.
+     * A day with no record was never answered (or its fetch failed) and is fetched;
+     * inside the window an empty day is retried like an `open` one.
      */
     async getSettledEmptyDays(siteId:string,from:Date,before:Date,now:Date):Promise<Date[]> {
-        const rows=(await this.pool.query<{day_start:Date}>(`SELECT e.day_start FROM "EnergyDayEmpty" e
-            WHERE e.site_id=$1 AND e.day_start >= $2 AND e.day_start < $3 AND e.checked_at >= e.day_end AND e.day_end < $4::timestamptz - make_interval(days => $5)
-            AND NOT EXISTS(SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND a.day_start=e.day_start)
-            AND NOT EXISTS(SELECT 1 FROM "EnergyData" r WHERE r.site_id=e.site_id AND r.timestamp >= e.day_start AND r.timestamp < e.day_end)
-            ORDER BY e.day_start`,[siteId,from,before,now,DAY_GAP_HEAL_DAYS])).rows;
+        const rows=(await this.pool.query<{day_start:Date}>(`SELECT a.day_start FROM "EnergyDayArchive" a
+            WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_start < $3 AND a.status='empty'
+            AND a.fetched_at >= a.day_end AND a.day_end < $4::timestamptz - make_interval(days => $5)
+            AND NOT EXISTS(SELECT 1 FROM "EnergyData" r WHERE r.site_id=a.site_id AND r.timestamp >= a.day_start AND r.timestamp < a.day_end)
+            ORDER BY a.day_start`,[siteId,from,before,now,DAY_GAP_HEAL_DAYS])).rows;
         return rows.map(r=>new Date(r.day_start));
     }
 
@@ -661,7 +674,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
      * new timezone, `fetched_at` its oldest source's. A new day that also has raw
      * rows gets its pruned samples back as raw rows, so raw stays its only source
      * until it is archived or refetched. Unpruned archives are dropped (their raw
-     * rows stay) and so are empty-day markers. Every raw row is then re-priced on the
+     * rows stay) and so are empty records. Every raw row is then re-priced on the
      * new clock (`reattributeRaw`). Preview does the same work and rolls back.
      */
     async rebuildTimezone(siteId:string,timezone:string,{apply,now}:{apply:boolean;now:Date}):Promise<TimezoneRebuildResult> {
@@ -696,8 +709,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                     else {day.rows.push(row);if(fetchedAt<day.fetchedAt)day.fetchedAt=fetchedAt;}
                 }
             }
-            const droppedEmptyMarkers=(await client.query('DELETE FROM "EnergyDayEmpty" WHERE site_id=$1',[siteId])).rowCount??0;
-            const sourceDays=(await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id=$1',[siteId])).rowCount??0;
+            const deleted=(await client.query<{empty:boolean}>(`DELETE FROM "EnergyDayArchive" WHERE site_id=$1 RETURNING status IS NOT DISTINCT FROM 'empty' AS empty`,[siteId])).rows;
+            const droppedEmptyDays=deleted.filter(r=>r.empty).length,sourceDays=deleted.length-droppedEmptyDays;
             // With no archive left the timezone trigger allows the change.
             await client.query('UPDATE "Site" SET timezone=$2 WHERE id=$1',[siteId,timezone]);
             const starts=[...days.keys()].sort((a,b)=>a-b).map(key=>new Date(key));
@@ -716,7 +729,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             }
             const reattributedRawSamples=await this.reattributeRaw(client,siteId,timezone,tariffs);
             await client.query(apply?'COMMIT':'ROLLBACK');
-            return {status:apply?'rebuilt':'previewed',from,sourceDays,records,restoredRawSamples,reattributedRawSamples,droppedEmptyMarkers};
+            return {status:apply?'rebuilt':'previewed',from,sourceDays,records,restoredRawSamples,reattributedRawSamples,droppedEmptyDays};
         } catch(error) {await client.query('ROLLBACK');throw error;}
         finally {client.release(this.transactionTimeoutMs!==undefined);}
     }
