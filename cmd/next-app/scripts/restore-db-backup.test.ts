@@ -12,7 +12,8 @@ const safeSocket = socket && /^\/(?:private\/)?tmp\/db-backup-pg-[a-zA-Z0-9]+$/.
 if (socket && !safeSocket) throw new Error('Backup restore tests require a disposable private local socket');
 
 // Mirrors the parts of the real schema the restore depends on: the EnergyData
-// unique key, its foreign key to Site, and a trigger that clears archived days.
+// unique key, its foreign key to Site, a trigger that clears archived days, and
+// the archive's raw_pruned flag (a pruned day's only copy is its archive).
 const SCHEMA = `
 CREATE TABLE public."User" (id text PRIMARY KEY, email text);
 CREATE TABLE public."Site" (id text PRIMARY KEY, user_id text REFERENCES public."User"(id));
@@ -24,7 +25,8 @@ CREATE TABLE public."EnergyData" (
     battery_soc double precision DEFAULT 0 NOT NULL
 );
 CREATE UNIQUE INDEX energy_ts_site_uidx ON public."EnergyData"("timestamp", site_id);
-CREATE TABLE public."EnergyDayArchive" (site_id text NOT NULL, day_start timestamptz NOT NULL);
+CREATE TABLE public."EnergyDayArchive" (site_id text NOT NULL, day_start timestamptz NOT NULL, day_end timestamptz NOT NULL,
+    raw_pruned boolean NOT NULL DEFAULT false);
 CREATE FUNCTION public.invalidate_day() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN DELETE FROM public."EnergyDayArchive" WHERE site_id = NEW.site_id; RETURN NEW; END; $$;
 CREATE TRIGGER invalidate_day BEFORE INSERT OR UPDATE ON public."EnergyData"
@@ -36,6 +38,7 @@ const copy = (table: string, columns: string, rows: string[]) =>
 const T1 = '2026-10-01 00:00:00+00';
 const T2 = '2026-10-14 00:00:00+00';
 const T3 = '2026-10-15 00:00:00+00';
+const T1_END = '2026-10-02 00:00:00+00';
 
 const WEEKLY = {
     'backup-info': 'kind=weekly\ndump=full\ntaken_at=2026-10-12T09:41:00Z\n',
@@ -45,7 +48,7 @@ const WEEKLY = {
         + copy('User', 'id, email', ['u1\told@example.com'])
         + copy('Site', 'id, user_id', ['s1\tu1', 's2\tu1'])
         + copy('EnergyData', 'id, "timestamp", site_id, load_power, battery_soc', [`1\t${T1}\ts1\t100\t50`, `2\t${T2}\ts1\t100\t50`, `3\t${T1}\ts2\t200\t50`])
-        + copy('EnergyDayArchive', 'site_id, day_start', [`s1\t${T1}`])
+        + copy('EnergyDayArchive', 'site_id, day_start, day_end', [`s1\t${T1}\t${T1_END}`])
         + `SELECT pg_catalog.setval('public."EnergyData_id_seq"', 3, true);\n`,
 };
 
@@ -56,7 +59,7 @@ const DAILY = {
     'data.sql': 'SET session_replication_role = replica;\n'
         + copy('User', 'id, email', ['u1\tnew@example.com', 'u2\t\\N'])
         + copy('Site', 'id, user_id', ['s1\tu1', 's3\tu2'])
-        + copy('EnergyDayArchive', 'site_id, day_start', [`s1\t${T1}`])
+        + copy('EnergyDayArchive', 'site_id, day_start, day_end', [`s1\t${T1}\t${T1_END}`])
         // pg_dump keeps EnergyData's sequence even when the table's data is excluded,
         // but the recent readings are copied a moment later: id 5 landed in between.
         + `SELECT pg_catalog.setval('public."EnergyData_id_seq"', 4, true);\n`,
@@ -147,6 +150,29 @@ describe.skipIf(!safeSocket)('restore-db-backup.sh against isolated PostgreSQL',
         ]);
         // Triggers stay paused, as when the dump itself loads.
         expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 1 }]);
+    });
+
+    it('drops weekly raw rows for days the newer daily backup holds only in their archive', async () => {
+        // Between the two backups s1's 10-01 was pruned to its archive (raw rows deleted).
+        // Restoring the weekly's raw rows under it would break that day's invariant.
+        const T1_LATE = '2026-10-01 23:55:00+00';
+        const weekly = { ...WEEKLY, 'data.sql': WEEKLY['data.sql'].replace(`3\t${T1}\ts2\t200\t50`, `3\t${T1}\ts2\t200\t50\n4\t${T1_LATE}\ts1\t100\t50`) };
+        const daily = {
+            ...DAILY,
+            'data.sql': DAILY['data.sql'].replace(
+                copy('EnergyDayArchive', 'site_id, day_start, day_end', [`s1\t${T1}\t${T1_END}`]),
+                copy('EnergyDayArchive', 'site_id, day_start, day_end, raw_pruned', [`s1\t${T1}\t${T1_END}\tt`])),
+            // A recent reading inside the pruned day is dropped the same way.
+            'energy-recent.csv': DAILY['energy-recent.csv'] + `6,${T1_LATE},s1,999,99\n`,
+        };
+        const result = await restore('--full', await backupDir('weekly', weekly), '--daily', await backupDir('daily', daily));
+        expect(result.out).toContain('Restore complete');
+        expect(await rows(`SELECT to_char("timestamp" AT TIME ZONE 'UTC', 'MM-DD HH24:MI') AS at, site_id
+                           FROM public."EnergyData" ORDER BY site_id, "timestamp"`)).toEqual([
+            { at: '10-14 00:00', site_id: 's1' },
+            { at: '10-15 00:00', site_id: 's3' },
+        ]);
+        expect(await rows(`SELECT raw_pruned FROM public."EnergyDayArchive"`)).toEqual([{ raw_pruned: true }]);
     });
 
     it('advances the EnergyData id sequence past every restored row', async () => {
