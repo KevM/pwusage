@@ -1222,6 +1222,20 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             await store.restoreDay('site',start,v2.revision);
             expect(await rawRows()).toEqual(raw);
         });
+        it('converts a trimmed v1 day from the archive alone: reads unchanged, still pruned, restore brings raw back exactly',async()=>{
+            await insertRaw('site',start,end,'1','2');
+            const v1=await store.finalizeDay('site',start,now);
+            const before=await reads('site',start,end);const raw=await rawRows();
+            expect(await store.trimDay('site',start,v1.revision!,later)).toEqual({status:'trimmed',samples:288});
+            expect(await rawRows()).toEqual([]);
+            const result=await convert('site',start);
+            expect(result).toMatchObject({status:'converted',dayStatus:'complete'});
+            expect(await archiveRow()).toMatchObject({format_version:2,raw_pruned:true,status:'complete',attribution_complete:true,verified:true});
+            expect(await rawRows()).toEqual([]);
+            expect(await reads('site',start,end)).toEqual(before);
+            await store.restoreDay('site',start,result.revision!);
+            expect(await rawRows()).toEqual(raw);
+        });
         it('converts a gappy day: same reads; an old short day becomes gapped, so planning settles it',async()=>{
             await insertRaw('site',start,end,'1','2','n<100 OR n>180');
             await store.finalizeDay('site',start,now);
