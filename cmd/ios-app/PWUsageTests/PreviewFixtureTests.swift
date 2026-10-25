@@ -54,31 +54,6 @@ struct PreviewFixtureTests {
         #expect(peak.marginalCost ?? 0 > offPeak.marginalCost ?? 0)
     }
 
-    @Test("The default preview exercises the no-suggestion forecast placement")
-    func previewExercisesExplorerPlacement() async throws {
-        let api = DashboardPreviewAPI(mode: .normal)
-        let response = try await api.fetchBill(siteID: "preview-home")
-        let timing = try #require(response.loadTiming)
-        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
-
-        let recommendation = LoadTimingRecommendation.evaluate(
-            profiles: [washer],
-            start: Date.now,
-            timing: timing,
-            energyDataThrough: response.sources.energyDataThrough,
-            cycleEnd: response.currentBill.cycleEnd,
-            refreshUnavailable: false
-        )
-
-        // Peak is a net buyer, so the basic layer cannot recommend a load. This is
-        // the case that hides the forecast when it is attached to the suggestion.
-        #expect(recommendation.suggested == nil)
-        let placement = try #require(
-            LoadTimingForecastPresentation.placement(recommendation: recommendation, explicitExploredID: nil)
-        )
-        #expect(placement.card == .explorer)
-    }
-
     /// The whole point of the solar previews is to reach the enhanced state. A
     /// silent mismatch between the bill's site timezone and the planning context's
     /// makes the coordinator reject the enhancement, so every preview shows the
@@ -146,22 +121,10 @@ struct PreviewFixtureTests {
         #expect(comparison.evaluatedStarts.count > 1)
         #expect(comparison.estimatedSolarContribution >= 0)
 
-        // And the overlay must turn that comparison into visible forecast copy.
-        let overlay = LoadTimingForecastPresentation.overlay(
-            enhancement: .enhanced,
-            connection: .ready,
-            cause: nil,
-            result: .init(comparison: comparison, unavailableReason: nil),
-            forecastFetchedAt: batch.fetchedAt,
-            contextAsOf: context.asOf,
-            currencyCode: response.currentBill.currency,
-            timeZone: response.site.timezone,
-            now: now
-        )
-        let enhanced = try #require(overlay.enhanced)
-        #expect(overlay.isForecastAware)
-        #expect(enhanced.recommendedCost.contains("$"))
-        #expect(!enhanced.horizon.isEmpty)
+        #expect(LoadTimingForecastPresentation.forecastAvailability(
+            state: .enhanced, connection: .ready, cause: nil, reason: nil,
+            forecastFetchedAt: batch.fetchedAt, now: now
+        ) == .ready)
     }
     @Test("Smart Shift preview fixtures render the states they are named for")
     func smartShiftPreviewFixturesMatchTheirNames() throws {

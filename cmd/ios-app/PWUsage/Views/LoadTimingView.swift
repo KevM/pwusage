@@ -6,36 +6,10 @@ enum LoadTimingPresentation {
         let detail: String
     }
 
-    struct EnergyImpact: Equatable {
-        let surplusConsumed: String
-        let energyBought: String
-        let remainingSurplus: String?
-    }
-
     static let noResponseRecommendationMessage = RecommendationMessage(
         title: "Recommendation unavailable",
         detail: "The latest refresh failed and no saved bill data is available, so no recommendation or job estimates can be shown."
     )
-    static let noResponseExplorationMessage = "A saved bill response and rate plan are required before a job estimate or calculation is available."
-
-    struct StartNowSummary: Equatable {
-        let total: String
-        let energy: String
-        let finish: String
-    }
-
-    struct RunCardSummary: Equatable {
-        let total: String
-        let finish: String
-    }
-
-    struct BreakdownRow: Equatable {
-        let periodKey: String
-        let wallEnergy: String
-        let balance: String
-        let total: String
-    }
-
     static func profileChipTitle(_ profile: LoadProfile) -> String {
         if profile.kind == .car, let settings = profile.carSettings,
            let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) {
@@ -52,175 +26,19 @@ enum LoadTimingPresentation {
         return "\(profile.name), \(profile.energyKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours, \(profile.durationHours.formatted(.number.precision(.fractionLength(0...1)))) hours"
     }
 
-    /// Job names are verb phrases ("Charge the car"), so they are used as-is.
-    static func actionTitle(for profile: LoadProfile) -> String {
-        profile.name
-    }
-
-    /// `.incompleteData` is aggregated across every job while the card speaks
-    /// about the selected one, so the expired-cycle copy has to say whose run
-    /// crosses the billing cycle.
-    static func recommendationMessage(
-        for recommendation: LoadTimingRecommendation,
-        selected: LoadTimingRecommendation.Candidate?,
-        refreshUnavailable: Bool = false,
-        hasTariff: Bool = true
-    ) -> RecommendationMessage {
-        let expired = LoadTimingEstimator.StartNowResult.unavailable(.billingCycleExpired)
-        let selectedExpired = selected?.result == expired
-        let otherExpired = recommendation.candidates.contains {
-            $0.profile.id != selected?.profile.id && $0.result == expired
-        }
-        return recommendationMessage(
-            for: recommendation.state,
-            refreshUnavailable: refreshUnavailable,
-            hasTariff: hasTariff,
-            hasExpiredCandidate: selectedExpired,
-            hasOtherExpiredCandidate: otherExpired
-        )
-    }
-
-    static func recommendationMessage(
-        for state: LoadTimingRecommendation.State,
-        refreshUnavailable: Bool = false,
-        hasTariff: Bool = true,
-        hasExpiredCandidate: Bool = false,
-        hasOtherExpiredCandidate: Bool = false
-    ) -> RecommendationMessage {
-        switch state {
-        case .ready:
-            return RecommendationMessage(title: "Good time to start", detail: "Your bank covers this job.")
-        case .noFit:
-            if refreshUnavailable {
-                return RecommendationMessage(title: "Recommendation unavailable", detail: "The latest refresh failed, so the saved data cannot confirm whether any saved job fits now.")
-            }
-            return RecommendationMessage(title: "No saved job fits your bank.", detail: "Additional energy would be priced at the full rate.")
-        case .incompleteData:
-            if !hasTariff {
-                return RecommendationMessage(title: "Add a Rate Plan", detail: "Smart Shift needs your rate plan to compare costs.")
-            }
-            if hasExpiredCandidate {
-                return RecommendationMessage(title: "No safe recommendation", detail: "This job would continue beyond the current billing cycle, so its current bank cannot be used for the estimate.")
-            }
-            if hasOtherExpiredCandidate {
-                return RecommendationMessage(title: "No safe recommendation", detail: "Another saved job would continue beyond the current billing cycle, so no job can be recommended from the current bank.")
-            }
-            return RecommendationMessage(title: "Rate plan incomplete", detail: "Some rate periods or bank data are missing.")
-        case .stale:
-            let detail = refreshUnavailable
-                ? "The latest refresh failed. This saved estimate may be old, so no recommendation is offered."
-                : "Energy observations are older than one hour or have no valid source time, so no recommendation is offered."
-            return RecommendationMessage(title: "Recommendation unavailable", detail: detail)
-        case .noEnergyNeeded:
-            return RecommendationMessage(title: "No energy needed", detail: "Every saved job is already at its target, so no energy is needed right now.")
-        case .noCandidates:
-            if !hasTariff {
-                return RecommendationMessage(title: "Add a Rate Plan and a Job", detail: "Add a job and a rate plan to compare costs.")
-            }
-            return RecommendationMessage(title: "Add Your First Job", detail: "Add a job to see whether your bank covers it.")
-        }
-    }
-
-    static func energyImpact(_ candidate: LoadTimingRecommendation.Candidate) -> EnergyImpact {
-        let surplus = candidate.surplusKwh.formatted(.number.precision(.fractionLength(1)))
-        let bought = candidate.boughtKwh.formatted(.number.precision(.fractionLength(1)))
-        let remaining = candidate.remainingSurplusKwh.map {
-            "\($0.formatted(.number.precision(.fractionLength(1)))) kWh remains in your bank in these rate periods"
-        }
-        return EnergyImpact(
-            surplusConsumed: "\(surplus) kWh from your bank",
-            energyBought: "\(bought) kWh at the full rate",
-            remainingSurplus: remaining
-        )
-    }
-
-    static func costDifference(alternativeCost: Double?, suggestedCost: Double?, currencyCode: String) -> String? {
-        guard let alternativeCost, let suggestedCost,
-              alternativeCost.isFinite, suggestedCost.isFinite else { return nil }
-        let difference = alternativeCost - suggestedCost
-        guard difference.isFinite else { return nil }
-        if abs(difference) < 0.01 { return "About the same estimated cost as the suggestion" }
-        let amount = DashboardPresentation.currency(abs(difference), code: currencyCode)
-        return difference > 0
-            ? "Estimated \(amount) more than the suggestion"
-            : "Estimated \(amount) less than the suggestion"
-    }
-
-    static func activeBalanceSummary(_ timing: LoadTiming) -> String? {
-        guard timing.hasCycleData, let active = timing.periods.first(where: \.isActive) else { return nil }
-        let balance = active.cycleNetExportKwh
-        let direction = balance > 0 ? "banked" : (balance < 0 ? "owed" : "")
-        let amount = abs(balance).formatted(.number.precision(.fractionLength(0...1)))
-        let state = balance == 0 ? "0 kWh" : "\(amount) kWh \(direction)"
-        return "Current \(DashboardPresentation.tariffPeriodTitle(active.name)) bank: \(state)."
-    }
-
-    static func observedBalances(_ timing: LoadTiming) -> [String: Double] {
-        guard timing.hasCycleData else { return [:] }
-        return timing.periods.reduce(into: [:]) { balances, period in
-            balances[period.name] = period.cycleNetExportKwh
-        }
-    }
-
     static func sourceTimeSummary(_ energyDataThrough: Date?, timeZone: String) -> String {
         let time = energyDataThrough.map { DashboardPresentation.date($0, timeZoneIdentifier: timeZone, dateStyle: .medium, timeStyle: .short) } ?? "unavailable"
         return "Energy observations through \(time)"
     }
 
-    static func startNowSummary(_ estimate: LoadTimingEstimator.StartNowEstimate, currencyCode: String, timeZone: String) -> StartNowSummary {
-        StartNowSummary(
-            total: "Estimated \(DashboardPresentation.currency(estimate.total, code: currencyCode)) to start now",
-            energy: "About \(estimate.wallKwh.formatted(.number.precision(.fractionLength(1)))) kWh from the wall",
-            finish: "Finishes \(DashboardPresentation.date(estimate.finishTime, timeZoneIdentifier: timeZone, dateStyle: .medium, timeStyle: .short)) · about \(estimate.durationHours.formatted(.number.precision(.fractionLength(1)))) hours"
-        )
-    }
-
-    static func runCardSummary(_ estimate: LoadTimingEstimator.StartNowEstimate, currencyCode: String, timeZone: String) -> RunCardSummary {
-        let summary = startNowSummary(estimate, currencyCode: currencyCode, timeZone: timeZone)
-        return RunCardSummary(total: summary.total, finish: summary.finish)
-    }
-
-    static func missingBalanceNote(hasUnobservedBalance: Bool) -> String? {
-        guard hasUnobservedBalance else { return nil }
-        return "Missing rate period bank data is estimated at the full rate."
-    }
-
-    static func unavailableMessage(_ reason: LoadTimingEstimator.StartNowUnavailableReason) -> String {
-        switch reason {
-        case .invalidInput: return "Job settings or rate plan values are invalid, so a start-now estimate is unavailable."
-        case .incompleteTimeline: return "Rate plan timing is incomplete, so a start-now cost estimate is unavailable."
-        case .billingCycleExpired: return "This job extends beyond the current billing cycle, so its bank cannot be estimated safely."
-        }
-    }
-
-    static let noChargeMessage = "No charging needed at this target."
-
-    static func cycleObservationMessage(hasCycleData: Bool) -> String? {
-        guard !hasCycleData else { return nil }
-        return "Billing cycle observations are unavailable. The start-now estimate uses the full rate where no bank has been observed."
-    }
-
-    static func breakdownRows(_ segments: [LoadTimingEstimator.StartNowSegment], currencyCode: String, unobservedPeriodKeys: Set<String> = []) -> [BreakdownRow] {
-        segments.map { segment in
-            let balance = unobservedPeriodKeys.contains(segment.periodKey)
-                ? "No bank observed · priced at the full rate"
-                : "\(segment.surplusKwh.formatted(.number.precision(.fractionLength(1)))) kWh from your bank · \(segment.boughtKwh.formatted(.number.precision(.fractionLength(1)))) kWh at the full rate"
-            return BreakdownRow(
-                periodKey: segment.periodKey,
-                wallEnergy: "\(segment.wallKwh.formatted(.number.precision(.fractionLength(1)))) kWh",
-                balance: balance,
-                total: DashboardPresentation.currency(segment.total, code: currencyCode)
-            )
-        }
-    }
-
-    /// One hour is deliberate and matches `LoadTimingRecommendation.detailFreshnessWindow`,
-    /// so the verdict and this label age out on the same tick. It is *not* the
-    /// same policy as `LoadTimingForecastEstimator.Projection.maximumBalanceAge`
-    /// (30 minutes for a forecast without grid history), which gates whether a
-    /// forecast may be produced at all: a forecast that policy already rejects
-    /// can keep being described here for up to another 30 minutes. The two are separate on purpose — one is
-    /// "can we still trust the basic estimate", the other is "may we forecast".
+    /// One hour is deliberate, so the verdict and this label age out on the same
+    /// tick. It is *not* the same policy as
+    /// `LoadTimingForecastEstimator.Projection.maximumBalanceAge` (30 minutes for
+    /// a forecast without grid history), which gates whether a forecast may be
+    /// produced at all: a forecast that policy already rejects can keep being
+    /// described here for up to another 30 minutes. The two are separate on
+    /// purpose — one is "can we still trust the basic estimate", the other is
+    /// "may we forecast".
     static func sourceStatus(isUnavailable: Bool, energyDataThrough: Date?, now: Date = .now) -> String {
         let freshness = DashboardPresentation.freshness(energyDataThrough, now: now, staleAfter: 60 * 60)
         return isUnavailable ? "Refresh unavailable · \(freshness.lowercased())" : freshness

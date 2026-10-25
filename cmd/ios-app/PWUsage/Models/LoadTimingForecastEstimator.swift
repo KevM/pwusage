@@ -4,7 +4,7 @@ import Foundation
 /// solar forecast and the site's historical local-time household/battery profile.
 struct LoadTimingForecastEstimator {
     static let maximumBalanceAge: TimeInterval = 30 * 60
-    /// The forecast-free comparison follows `LoadTimingRecommendation`'s freshness window.
+    /// The forecast-free comparison uses a one-hour balance freshness window.
     static let maximumFlatBalanceAge: TimeInterval = 60 * 60
     /// Each `EnergyData` row holds signed energy for a five-minute interval and
     /// its timestamp marks that interval's start, so the cycle balance already
@@ -107,7 +107,7 @@ struct LoadTimingForecastEstimator {
             // first interval, so only a forecast without it needs the 30-minute limit.
             case .forecast(_, let context) where context.hasGridHistory: LoadTimingForecastEstimator.maximumFlatBalanceAge
             case .forecast: LoadTimingForecastEstimator.maximumBalanceAge
-            // Like `.flat`, the forecast-free card follows `LoadTimingRecommendation`'s window.
+            // Like `.flat`, the forecast-free card uses a one-hour balance window.
             case .history, .flat: LoadTimingForecastEstimator.maximumFlatBalanceAge
             }
         }
@@ -717,7 +717,7 @@ struct LoadTimingForecastEstimator {
         guard !finalRateSet.invalid else { return unavailable(.invalidInput) }
         var rates = finalRateSet.rates
 
-        // Like `LoadTimingRecommendation`, the forecast-free path reads no balances
+        // The forecast-free path reads no balances
         // when the cycle has no data yet, so every period is priced from zero.
         let observedBalances: [String: Double] = timing.hasCycleData
             ? Dictionary(timing.pricingPeriods.map { ($0.name, $0.cycleNetExportKwh) }, uniquingKeysWith: { _, latest in latest })
@@ -750,8 +750,8 @@ struct LoadTimingForecastEstimator {
                 balances[key] = balance
             }
         } else {
-            // Held still, an unobserved period is simply priced from zero, as
-            // `LoadTimingEstimator.estimateStartNow` does, and flagged for the UI.
+            // Held still, an unobserved period is simply priced from zero and
+            // flagged for the UI.
             for key in rates.keys {
                 if let balance = observedBalances[key] {
                     guard balance.isFinite else { return unavailable(.incompleteBalance) }
