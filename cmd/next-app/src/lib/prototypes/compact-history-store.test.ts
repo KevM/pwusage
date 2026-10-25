@@ -1285,6 +1285,50 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             } finally {await holder.query('ROLLBACK');holder.release();}
             expect((await archiveRow()).format_version).toBe(1);
         });
+        it('converts a day in few round trips: one read for the archive, site and summaries',async()=>{
+            const day=new Date('2026-11-01T05:00:00Z'),dayEnd=addDaysInSiteTimezone(day,1,'America/Chicago');
+            await insertRaw('tou',day,dayEnd,'3',`CASE WHEN extract(hour FROM t AT TIME ZONE 'America/Chicago')<16 THEN 5
+                WHEN extract(hour FROM t AT TIME ZONE 'America/Chicago')<21 THEN 4 ELSE 6 END`);
+            await store.finalizeDay('tou',day,new Date('2026-12-01'));
+            const {PostgresTransferMeter}=await import('./postgres-transfer-meter');
+            const meter=new PostgresTransferMeter(socket!);await meter.start();
+            const metered=new Pool({host:meter.host,port:55439,database,user:process.env.USER,max:1});
+            try {
+                const meteredStore=new CompactHistoryStore(metered,15000,async client=>{await client.query('SELECT 1');});
+                await metered.query('SELECT 1');
+                const at=new Date('2026-12-01');
+                const preview=await meter.measure(()=>meteredStore.convertDayToV2('tou',day,{apply:false,now:at}));
+                expect(preview.value.status).toBe('convertible');
+                // BEGIN, statement timeout, the day read, COMMIT.
+                expect(preview.transfer.requests).toBe(4);
+                const applied=await meter.measure(()=>meteredStore.convertDayToV2('tou',day,{apply:true,now:at}));
+                expect(applied.value.status).toBe('converted');
+                // Three summary rows go in one INSERT; the total no longer grows with them.
+                expect(applied.transfer.requests).toBeLessThanOrEqual(12);
+            } finally {await metered.end();await meter.close();}
+        });
+        it('reads summaries at full double precision under Supabase\'s extra_float_digits=0',async()=>{
+            await insertRaw('site',start,end,'1','2');
+            await pool.query('UPDATE "EnergyData" SET solar_power=$1,load_power=$2 WHERE timestamp=$3',[7631.409423828125,0.1+0.2,start]);
+            await store.finalizeDay('site',start,now);
+            const before=await reads('site',start,end);
+            const rounding=new Pool({host:socket,port:55439,database,user:process.env.USER,max:2,options:'-c extra_float_digits=0'});
+            try {
+                const rounded=new CompactHistoryStore(rounding,15000,async client=>{await client.query('SELECT 1');});
+                expect(await rounded.convertDayToV2('site',start,{apply:true,now:later})).toMatchObject({status:'converted'});
+            } finally {await rounding.end();}
+            expect(await reads('site',start,end)).toEqual(before);
+        });
+        it('converts sites concurrently through real per-site claims',async()=>{
+            const tou=new Date('2026-11-01T05:00:00Z'),touEnd=addDaysInSiteTimezone(tou,1,'America/Chicago');
+            for(const day of [start,end]) {
+                await insertRaw('site',day,addDaysInSiteTimezone(day,1,'America/Chicago'),'1','2');await store.finalizeDay('site',day,now);
+            }
+            await insertRaw('tou',tou,touEnd,'3','5','extract(hour FROM t AT TIME ZONE \'America/Chicago\')<16');
+            await store.finalizeDay('tou',tou,new Date('2026-12-01'));
+            const report=await runV1Conversion(new V1ConversionPgRepo(pool,store),{sites:null,apply:true,maxDays:10,maxReservedBytes:1024*1024,now:new Date('2026-12-01'),concurrency:2});
+            expect(report).toMatchObject({stopped:'caught-up',considered:3,counts:{converted:3},remainingV1:0});
+        });
         it('runs resumably over all sites within its reservation, reporting counts only',async()=>{
             await insertRaw('site',start,end,'1','2');await store.finalizeDay('site',start,now);
             await insertRaw('site',end,addDaysInSiteTimezone(end,1,'America/Chicago'),'1','2');await store.finalizeDay('site',end,now);

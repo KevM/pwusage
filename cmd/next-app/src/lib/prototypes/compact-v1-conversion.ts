@@ -76,14 +76,16 @@ export interface ConversionCandidate { siteId: string; start: Date; payloadBytes
 export interface V1ConversionRepo {
     /** v1 and v2 record counts in scope (`null` = every site). */
     counts(sites: string[] | null): Promise<{ v1: number; v2: number }>;
-    /** v1 days after the keyset cursor, in (site, day) order. */
+    /** v1 days after the keyset cursor, in (day, site) order, so a batch spans sites. */
     candidates(sites: string[] | null, after: { siteId: string; start: Date } | null, limit: number): Promise<ConversionCandidate[]>;
     convert(candidate: ConversionCandidate, apply: boolean, now: Date): Promise<DayConversionResult>;
 }
 export interface V1ConversionOptions {
     sites: string[] | null; apply: boolean; maxDays: number; maxReservedBytes: number; batchSize?: number; now: Date;
-    /** Start after this (site, day): a capped run's `resumeAfter`, so days left v1 are not re-examined first. */
+    /** Start after this (day, site): a capped run's `resumeAfter`, so days left v1 are not re-examined first. */
     after?: { siteId: string; start: Date } | null;
+    /** Sites converted at once (each site still one day at a time, under its claim). */
+    concurrency?: number;
 }
 export interface V1ConversionReport {
     mode: 'preview' | 'apply'; stopped: 'caught-up' | 'day-cap' | 'byte-cap';
@@ -111,36 +113,64 @@ export const CONVERSION_DAY_BYTES = 24 * 1024;
 const LISTING_BYTES = 4096;
 
 export async function runV1Conversion(repo: V1ConversionRepo, options: V1ConversionOptions): Promise<V1ConversionReport> {
-    const batchSize = options.batchSize ?? 50;
+    const batchSize = options.batchSize ?? 50, concurrency = options.concurrency ?? 1;
     const start = await repo.counts(options.sites);
     const report: V1ConversionReport = { mode: options.apply ? 'apply' : 'preview', stopped: 'caught-up', considered: 0, counts: {}, alreadyV2: start.v2,
         remainingV1: start.v1, leftV1: { byReason: {}, days: [] }, reservedBytes: LISTING_BYTES };
     // Keyset cursor: a day left v1 is examined once per run, so a run always ends.
     let after: { siteId: string; start: Date } | null = options.after ?? null;
-    scan: for (;;) {
+    for (;;) {
         report.reservedBytes += LISTING_BYTES;
         const batch = await repo.candidates(options.sites, after, batchSize);
         if (!batch.length) break;
+        // Admit a key-ordered prefix within the caps before converting any of it,
+        // so the cursor always marks a whole prefix even with sites in parallel.
+        const admitted: ConversionCandidate[] = [];
         for (const candidate of batch) {
-            if (report.considered >= options.maxDays) { report.stopped = 'day-cap'; break scan; }
+            if (report.considered + admitted.length >= options.maxDays) { report.stopped = 'day-cap'; break; }
             const reserve = CONVERSION_DAY_BYTES + candidate.payloadBytes;
-            if (report.reservedBytes + reserve > options.maxReservedBytes) { report.stopped = 'byte-cap'; break scan; }
+            if (report.reservedBytes + reserve > options.maxReservedBytes) { report.stopped = 'byte-cap'; break; }
             report.reservedBytes += reserve;
+            admitted.push(candidate);
+        }
+        const results = await convertBySite(repo, admitted, options, concurrency);
+        admitted.forEach((candidate, i) => {
+            const result = results[i];
             report.considered++;
-            after = { siteId: candidate.siteId, start: candidate.start };
-            const result = await repo.convert(candidate, options.apply, options.now);
             report.counts[result.status] = (report.counts[result.status] ?? 0) + 1;
             if (result.status === 'left-v1') {
                 const reason = result.reason!;
                 report.leftV1.byReason[reason] = (report.leftV1.byReason[reason] ?? 0) + 1;
                 report.leftV1.days.push({ siteId: candidate.siteId, day: candidate.start.toISOString(), reason });
             }
-        }
-        if (batch.length < batchSize) break;
+        });
+        if (admitted.length) after = { siteId: admitted.at(-1)!.siteId, start: admitted.at(-1)!.start };
+        if (report.stopped !== 'caught-up' || batch.length < batchSize) break;
     }
     if (report.stopped !== 'caught-up' && after) report.resumeAfter = { siteId: after.siteId, day: after.start.toISOString() };
     report.remainingV1 = (await repo.counts(options.sites)).v1;
     return report;
+}
+
+/** Up to `concurrency` sites at once, each site's days in order; results in input order. Stops starting days after a failure. */
+async function convertBySite(repo: V1ConversionRepo, days: ConversionCandidate[], options: V1ConversionOptions, concurrency: number): Promise<DayConversionResult[]> {
+    const results: DayConversionResult[] = new Array(days.length);
+    const bySite = new Map<string, number[]>();
+    days.forEach((day, i) => bySite.set(day.siteId, [...(bySite.get(day.siteId) ?? []), i]));
+    const queue = [...bySite.values()];
+    let failed = false;
+    const settled = await Promise.allSettled(Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+        for (let site = queue.shift(); site && !failed; site = queue.shift()) {
+            for (const i of site) {
+                if (failed) return;
+                try { results[i] = await repo.convert(days[i], options.apply, options.now); }
+                catch (error) { failed = true; throw error; }
+            }
+        }
+    }));
+    const failure = settled.find(r => r.status === 'rejected');
+    if (failure) throw (failure as PromiseRejectedResult).reason;
+    return results;
 }
 
 /** PostgreSQL candidates and counts; payload sizes are computed server side, never transferred. */
@@ -155,7 +185,7 @@ export class V1ConversionPgRepo implements V1ConversionRepo {
         if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('Invalid conversion batch');
         const rows = (await this.pool.query<{ site_id: string; day_start: Date; bytes: number }>(`SELECT site_id,day_start,octet_length(payload) AS bytes
             FROM "EnergyDayArchive" WHERE format_version=1 AND ($1::text[] IS NULL OR site_id=ANY($1))
-            AND ($2::text IS NULL OR (site_id,day_start)>($2,$3::timestamptz)) ORDER BY site_id,day_start LIMIT $4`,
+            AND ($2::text IS NULL OR (day_start,site_id)>($3::timestamptz,$2)) ORDER BY day_start,site_id LIMIT $4`,
         [sites, after?.siteId ?? null, after?.start ?? null, limit])).rows;
         return rows.map(r => ({ siteId: r.site_id, start: new Date(r.day_start), payloadBytes: Number(r.bytes) }));
     }
@@ -166,7 +196,7 @@ export class V1ConversionPgRepo implements V1ConversionRepo {
 
 /** Operator input errors, safe to print. */
 export class ConversionUsageError extends Error {}
-const USAGE = 'Usage: [--site-id <id>]... [--apply] [--max-days 1-5000] [--max-mb 1-256] [--after <siteId>/<ISO day>]';
+const USAGE = 'Usage: [--site-id <id>]... [--apply] [--max-days 1-5000] [--max-mb 1-256] [--concurrency 1-4] [--after <siteId>/<ISO day>]';
 /** `<siteId>/<ISO day>`, as a report's `resumeAfter` prints them. */
 function parseCursor(value: string): { siteId: string; start: Date } {
     const split = value.lastIndexOf('/');
@@ -176,7 +206,7 @@ function parseCursor(value: string): { siteId: string; start: Date } {
 }
 export function parseConversionArgs(args: string[]): Omit<V1ConversionOptions, 'now' | 'batchSize'> {
     const sites: string[] = [];
-    let apply = false, maxDays = 500, maxMb = 16, after: { siteId: string; start: Date } | null = null;
+    let apply = false, maxDays = 500, maxMb = 16, concurrency = 1, after: { siteId: string; start: Date } | null = null;
     for (let i = 0; i < args.length; i++) {
         const key = args[i];
         if (key === '--apply') { apply = true; continue; }
@@ -186,8 +216,11 @@ export function parseConversionArgs(args: string[]): Omit<V1ConversionOptions, '
         else if (key === '--max-days') maxDays = Number(value);
         else if (key === '--max-mb') maxMb = Number(value);
         else if (key === '--after') after = parseCursor(value);
+        else if (key === '--concurrency') concurrency = Number(value);
         else throw new ConversionUsageError(`Unknown argument ${key}. ${USAGE}`);
     }
-    if (!Number.isInteger(maxDays) || maxDays < 1 || maxDays > 5000 || !Number.isInteger(maxMb) || maxMb < 1 || maxMb > 256) throw new ConversionUsageError(USAGE);
-    return { sites: sites.length ? [...new Set(sites)] : null, apply, maxDays, maxReservedBytes: maxMb * 1024 * 1024, after };
+    if (!Number.isInteger(maxDays) || maxDays < 1 || maxDays > 5000 || !Number.isInteger(maxMb) || maxMb < 1 || maxMb > 256
+        // The script's pool holds 5 connections: up to 4 conversions plus the listing.
+        || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4) throw new ConversionUsageError(USAGE);
+    return { sites: sites.length ? [...new Set(sites)] : null, apply, maxDays, maxReservedBytes: maxMb * 1024 * 1024, after, concurrency };
 }

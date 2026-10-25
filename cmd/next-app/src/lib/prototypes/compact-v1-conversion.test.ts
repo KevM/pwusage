@@ -139,7 +139,8 @@ describe('runV1Conversion', () => {
             },
             async candidates(sites, after, limit) {
                 return days.filter(d => !done.has(key(d)) && (!sites || sites.includes(d.siteId))
-                    && (!after || d.siteId > after.siteId || (d.siteId === after.siteId && +d.start > +after.start))).slice(0, limit);
+                    && (!after || +d.start > +after.start || (+d.start === +after.start && d.siteId > after.siteId)))
+                    .sort((x, y) => +x.start - +y.start || x.siteId.localeCompare(y.siteId)).slice(0, limit);
             },
             async convert(c, apply) {
                 calls.push({ candidate: c, apply });
@@ -151,8 +152,8 @@ describe('runV1Conversion', () => {
         return { repo, calls };
     };
     const options = { sites: null, apply: false, maxDays: 100, maxReservedBytes: 64 * 1024 * 1024, batchSize: 2, now: new Date('2026-10-24T12:00:00Z') };
-    it('previews every v1 day in key order without writing, then applies and resumes as a no-op', async () => {
-        const days = [candidate('a', 1), candidate('a', 2), candidate('b', 1)];
+    it('previews every v1 day in (day, site) order without writing, then applies and resumes as a no-op', async () => {
+        const days = [candidate('a', 1), candidate('b', 1), candidate('a', 2)];
         const { repo, calls } = fakeRepo(days);
         const preview = await runV1Conversion(repo, options);
         expect(preview).toMatchObject({ mode: 'preview', stopped: 'caught-up', considered: 3, counts: { convertible: 3 }, alreadyV2: 0, remainingV1: 3 });
@@ -186,16 +187,54 @@ describe('runV1Conversion', () => {
         expect(capped.reservedBytes).toBeLessThanOrEqual(3 * perDay - 1);
     });
     it('resumes a capped run after the last day it examined, past days left v1', async () => {
-        const days = [candidate('a', 1), candidate('a', 2), candidate('b', 1)];
+        const days = [candidate('a', 1), candidate('b', 1), candidate('a', 2)];
         const { repo, calls } = fakeRepo(days, c => c.siteId === 'a' && c.start.getUTCDate() === 1 ? { status: 'left-v1', reason: 'off-grid' } : { status: 'converted' });
         const first = await runV1Conversion(repo, { ...options, apply: true, maxDays: 1 });
         expect(first).toMatchObject({ stopped: 'day-cap', considered: 1, resumeAfter: { siteId: 'a', day: days[0].start.toISOString() } });
-        const second = await runV1Conversion(repo, { ...options, apply: true, maxDays: 1, after: { siteId: 'a', start: new Date(first.resumeAfter!.day) } });
-        expect(second).toMatchObject({ considered: 1, counts: { converted: 1 }, resumeAfter: { siteId: 'a', day: days[1].start.toISOString() } });
-        const rest = await runV1Conversion(repo, { ...options, apply: true, after: { siteId: 'a', start: days[1].start } });
+        const second = await runV1Conversion(repo, { ...options, apply: true, maxDays: 1, after: { siteId: first.resumeAfter!.siteId, start: new Date(first.resumeAfter!.day) } });
+        expect(second).toMatchObject({ considered: 1, counts: { converted: 1 } });
+        expect(second.resumeAfter).toEqual({ siteId: 'b', day: days[1].start.toISOString() });
+        const rest = await runV1Conversion(repo, { ...options, apply: true, after: { siteId: 'b', start: days[1].start } });
         expect(rest).toMatchObject({ stopped: 'caught-up', considered: 1, remainingV1: 1 });
         expect(rest.resumeAfter).toBeUndefined();
         expect(calls.map(c => c.candidate)).toEqual(days);
+    });
+    it('converts different sites concurrently, one day at a time per site, keeping a contiguous resume cursor', async () => {
+        const days = [1, 2, 3].flatMap(n => ['a', 'b', 'c'].map(site => candidate(site, n)));
+        const inFlight = new Map<string, number>();
+        let peak = 0;
+        const sameSite: string[] = [];
+        const repo: V1ConversionRepo = {
+            ...fakeRepo(days).repo,
+            async convert(c) {
+                if (inFlight.has(c.siteId)) sameSite.push(c.siteId);
+                inFlight.set(c.siteId, 1);
+                peak = Math.max(peak, inFlight.size);
+                await new Promise(resolve => setTimeout(resolve, 5));
+                inFlight.delete(c.siteId);
+                return c.siteId === 'b' && c.start.getUTCDate() === 1 ? { status: 'left-v1', reason: 'off-grid' } : { status: 'convertible' };
+            },
+        };
+        const all = await runV1Conversion(repo, { ...options, concurrency: 3, batchSize: 9 });
+        expect(peak).toBe(3);
+        expect(sameSite).toEqual([]);
+        expect(all).toMatchObject({ considered: 9, counts: { convertible: 8, 'left-v1': 1 }, stopped: 'caught-up' });
+        // A cap stops at a whole prefix in (site, day) order, so resuming skips nothing.
+        const capped = await runV1Conversion(repo, { ...options, concurrency: 3, batchSize: 9, maxDays: 4 });
+        expect(capped).toMatchObject({ considered: 4, stopped: 'day-cap', resumeAfter: { siteId: 'a', day: days[3].start.toISOString() } });
+        expect(capped.leftV1.days).toEqual([{ siteId: 'b', day: days[1].start.toISOString(), reason: 'off-grid' }]);
+    });
+    it('stops starting days once one fails, and rethrows', async () => {
+        const days = [1, 2, 3].flatMap(n => ['a', 'b'].map(site => candidate(site, n)));
+        const seen: string[] = [];
+        const repo: V1ConversionRepo = { ...fakeRepo(days).repo, async convert(c) {
+            seen.push(`${c.siteId}${c.start.getUTCDate()}`);
+            await new Promise(resolve => setTimeout(resolve, 5));
+            if (c.siteId === 'a') throw new Error('connection lost');
+            return { status: 'convertible' };
+        } };
+        await expect(runV1Conversion(repo, { ...options, concurrency: 2, batchSize: 6 })).rejects.toThrow('connection lost');
+        expect(seen).toEqual(['a1', 'b1']);
     });
     it('counts busy days without stopping', async () => {
         const { repo } = fakeRepo([candidate('a', 1), candidate('a', 2)], c => c.start.getUTCDate() === 1 ? { status: 'busy' } : { status: 'converted' });
@@ -205,13 +244,14 @@ describe('runV1Conversion', () => {
 
 describe('parseConversionArgs', () => {
     it('previews all sites by default and takes repeatable site IDs, apply and caps', () => {
-        expect(parseConversionArgs([])).toEqual({ sites: null, apply: false, maxDays: 500, maxReservedBytes: 16 * 1024 * 1024, after: null });
+        expect(parseConversionArgs([])).toEqual({ sites: null, apply: false, maxDays: 500, maxReservedBytes: 16 * 1024 * 1024, after: null, concurrency: 1 });
+        expect(parseConversionArgs(['--concurrency', '4']).concurrency).toBe(4);
         expect(parseConversionArgs(['--site-id', 'a', '--site-id', 'b', '--apply', '--max-days', '50', '--max-mb', '4']))
-            .toEqual({ sites: ['a', 'b'], apply: true, maxDays: 50, maxReservedBytes: 4 * 1024 * 1024, after: null });
+            .toEqual({ sites: ['a', 'b'], apply: true, maxDays: 50, maxReservedBytes: 4 * 1024 * 1024, after: null, concurrency: 1 });
         // The report's resumeAfter, passed back as is.
         expect(parseConversionArgs(['--after', 'site 1/2026-10-01T05:00:00.000Z']).after).toEqual({ siteId: 'site 1', start: new Date('2026-10-01T05:00:00.000Z') });
     });
-    it.each([[['--max-days', '0']], [['--max-days', '5001']], [['--max-mb', '257']], [['--site-id']], [['--bogus', '1']], [['--after', 'site']], [['--after', 'site/yesterday']]])('rejects %j', args => {
+    it.each([[['--max-days', '0']], [['--max-days', '5001']], [['--max-mb', '257']], [['--site-id']], [['--bogus', '1']], [['--after', 'site']], [['--after', 'site/yesterday']], [['--concurrency', '0']], [['--concurrency', '5']]])('rejects %j', args => {
         expect(() => parseConversionArgs(args)).toThrow();
     });
 });
