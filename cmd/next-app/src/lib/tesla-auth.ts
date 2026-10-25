@@ -13,6 +13,17 @@ import { postToTeslaTokenEndpoint } from './tesla-token-endpoint';
 // here and has no environment variable.
 const REFRESH_SCOPE = 'openid email offline_access';
 
+function parseTokenErrorCode(body: string): string | null {
+    try {
+        const parsed: unknown = JSON.parse(body);
+        if (typeof parsed !== 'object' || parsed === null) return null;
+        const { error } = parsed as Record<string, unknown>;
+        return typeof error === 'string' ? error : null;
+    } catch {
+        return null;
+    }
+}
+
 interface RefreshedTokens {
     access_token: string;
     refresh_token: string;
@@ -70,11 +81,16 @@ export async function refreshAccessToken(refreshToken: string): Promise<Refreshe
 
     if (!response.ok) {
         const body = await abortable(response.text());
-        const message = `Failed to refresh token: ${response.status} ${body}`;
-        if (
-            response.status === 401 ||
-            (response.status === 400 && (body.includes('invalid_grant') || body.includes('login_required')))
-        ) {
+        const errorCode = parseTokenErrorCode(body);
+        const terminalCode = response.status === 400
+            && (errorCode === 'invalid_grant' || errorCode === 'login_required');
+        const terminal = response.status === 401 || terminalCode;
+        // Never interpolate the body: isTeslaAuthError matches message
+        // substrings, so arbitrary upstream text could otherwise revoke a user.
+        // Only a recognized terminal code is safe to echo.
+        const detail = terminalCode ? ` ${errorCode}` : '';
+        const message = `Failed to refresh token: ${response.status}${detail}`;
+        if (terminal) {
             throw new TeslaAuthError(message, response.status);
         }
         throw new Error(message);

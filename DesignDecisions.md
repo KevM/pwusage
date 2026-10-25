@@ -348,41 +348,31 @@ pinned by `raises TeslaAuthError on a 401 regardless of the response body` and
 deleting the 401 branch, or widening the 400 branch to bare `status === 400`,
 both left the suite green.
 
-### Known remaining violations
+### Previously known violations (fixed 2026-10-25)
 
-The rules above are enforced on the paths this branch touched. Two code paths
-still break them. **Neither is fixed here**, and each is described in full below,
-but this section previously read as if the rules were universally held, which
-they are not.
+Two paths broke these rules. Both are fixed; the rules above are enforced again.
 
-1. **`cmd/next-app/src/lib/tesla-auth.ts:63-70` — raw body interpolated into a
-   non-terminal error.** The fallthrough branch throws
+1. **`cmd/next-app/src/lib/tesla-auth.ts` — raw body interpolated into a
+   non-terminal error.** The refresh fallthrough used to throw
    ``Error(`Failed to refresh token: ${status} ${body}`)``. A 403 body containing
-   `login_required`, or a 400 body containing `invalid authentication`, is
-   **non-terminal** to `refreshAccessToken`'s own logic (it does not match its
-   401/400 condition) yet **terminal** to `isTeslaAuthError`, so
-   `TeslaTokenRepo` performs the atomic revoke. Verified against the real
-   predicate: both cases give `refreshAccessToken terminal=false,
-   isTeslaAuthError=true`. The two classifiers disagree about the *same* error
-   object: one says "retry later", the other says "revoke the user". The
-   status/`error`-code pair should decide, and the message should be built from
-   the parsed code rather than the raw body.
+   `login_required`, or a 400 body containing `invalid authentication`, was
+   non-terminal to `refreshAccessToken` yet terminal to `isTeslaAuthError`, so
+   `TeslaTokenRepo` performed the atomic revoke. It now parses the JSON `error`
+   code, treats only 401 and 400 `invalid_grant` / `login_required` as terminal,
+   and echoes only that recognized code — never the raw body.
 
-2. **`cmd/next-app/src/lib/tesla-token-endpoint.ts:25-31` — `describeError` folds
-   `err.cause.message` in verbatim.** A transport error from an intermediary
-   carrying a trigger substring therefore makes `TeslaTokenEndpointError` classify
-   as terminal:
+2. **`cmd/next-app/src/lib/tesla-token-endpoint.ts` — transport details folded
+   into the thrown message.** `describeError` used to include `err.message` and
+   `err.cause.message` verbatim, so a proxy/TLS cause carrying a trigger
+   substring made `TeslaTokenEndpointError` classify as terminal. Full details
+   now go only to `console.warn`; the thrown summary is the fixed text
+   `transport error`, which cannot match a classification substring.
 
-   ```
-   "All Tesla token endpoints failed. Last failure: transport error: fetch failed:
-    socket hang up: invalid_grant from proxy"   → isTeslaAuthError === true
-   ```
-
-   Latent in practice — undici cause strings are DNS/TLS/socket text, so no
-   current path produces one — but it is structurally possible, and it is the
-   same "interpolate an untrusted string into a message that gets classified"
-   pattern this section forbids one file over. A doc/code contradiction, not a
-   hypothetical: the rule says never, and the code does. Deferred as a follow-up.
+**Pinned by:** the trigger-body table cases in `tesla-auth.test.ts`
+(`403 login_required`, `400 invalid authentication`) and
+`keeps transport error text out of the thrown message` in
+`tesla-token-endpoint.test.ts`. The load-bearing substring list and its
+`tesla-token-repo.test.ts` guard are unchanged.
 
 ---
 

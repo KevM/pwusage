@@ -162,6 +162,22 @@ describe('postToTeslaTokenEndpoint', () => {
             .rejects.toThrow(/HTTP 502/);
     });
 
+    // A transport failure is never a credential failure. isTeslaAuthError matches
+    // message substrings, so folding a fetch error or its cause into the thrown
+    // message can make a dead socket look like a revoked refresh token.
+    it('keeps transport error text out of the thrown message', async () => {
+        const transportError = new Error('fetch failed: invalid authentication', {
+            cause: new Error('proxy returned invalid_grant'),
+        });
+        const fetchImpl = vi.fn().mockRejectedValue(transportError);
+
+        const thrown = await postToTeslaTokenEndpoint({ code: 'x' }, fetchImpl)
+            .catch((err: unknown) => err);
+
+        expect(thrown).toBeInstanceOf(TeslaTokenEndpointError);
+        expect((thrown as Error).message).not.toMatch(/login_required|invalid_grant|invalid authentication/i);
+    });
+
     // ReadableStream.cancel() rejects on an already-errored stream. Without a
     // catch this surfaces as an unhandled rejection, i.e. a 500 where a clean
     // 502 was intended — precisely the flapping-upstream case this branch
