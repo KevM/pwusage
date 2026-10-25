@@ -11,7 +11,7 @@ import { decodeDaySamples, encodeDaySamples, rollupDay, toSample, type DayArchiv
 import { equalRecoveryValue, recoverVerifiedSamples } from './compact-energy-recovery';
 import { buildDayMetadataV3, type SummarizedHistoryDay } from './compact-day-metadata';
 import { buildLatestMetadata, type LatestMetadata } from './compact-latest-metadata';
-import { attributeSamples, dayStatus, segmentsFromV1Rows, type DayAttribution, type DayStatus } from './day-attribution';
+import { attributeSamples, dayStatus, segmentsFromV1Rows, type DayAttribution, type DayStatus, type GapPricer } from './day-attribution';
 import type { CompactHistoryStore, DayConversionResult } from './compact-history-store';
 
 /**
@@ -39,12 +39,16 @@ export interface ConvertedDay {
 
 const sortSummaries = (rows: DayRollup[]) => [...rows].sort((a, b) => a.tariff_id - b.tariff_id || (a.tariff_schedule_id ?? -1) - (b.tariff_schedule_id ?? -1));
 
-/** Builds the v2 record for a verified v1 day, or says why the day must stay v1. Pure. */
-export function convertV1Day(day: V1Day): { day: ConvertedDay } | { reason: V1ConversionReason } {
+/**
+ * Builds the v2 record for a verified v1 day, or says why the day must stay v1.
+ * Pure. `price` (the site's recorded tariff versions) resolves a gap across a
+ * period boundary; without it such a day is `unattributed-gap`.
+ */
+export function convertV1Day(day: V1Day, price?: GapPricer): { day: ConvertedDay } | { reason: V1ConversionReason } {
     const { siteId, start, end, rows } = day;
     let segments;
     // The v1 helper refuses samples off the 5-minute slots, which segments cannot address.
-    try { segments = segmentsFromV1Rows(rows, start, end); } catch { return { reason: 'off-grid' }; }
+    try { segments = segmentsFromV1Rows(rows, start, end, price); } catch { return { reason: 'off-grid' }; }
     const attribution: DayAttribution = { timelineRevision: v1ConversionTimelineRevision(day.revision), segments };
     const samples = rows.map(toSample);
     const archive = encodeDaySamples(samples, start, end, 'brotli');

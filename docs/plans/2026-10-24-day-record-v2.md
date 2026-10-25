@@ -188,10 +188,16 @@ read support is removed.
   only for an ended short day older than 14 days (now `gapped`, so gap-heal
   stops refetching samples Tesla never had) and for a v1 day with incomplete
   attribution (v2 settles by samples; a refetch cannot fix tariff setup).
-- **Left v1 by design:** a gap spanning a period boundary on a day v1 billed as
-  fully attributed (`unattributed-gap`: v2 would mark those minutes `null`
-  and refuse billing), samples off the 5-minute grid, and v1 days flagged
-  incomplete although every sample has a schedule.
+- **Gaps across a period boundary:** priced with `getTariffPeriod` under the
+  tariff version both neighbouring samples recorded, but only when that version
+  reproduces both neighbours' schedules (the site's tariff versions are read
+  only for such days). Otherwise, including a version change inside the gap,
+  the day stays v1 as `unattributed-gap` (v2 would mark those minutes `null`
+  and refuse billing a day v1 billed as complete). Prod's first apply
+  (2026-10-25) converted 2,404 days and left 24 such days before this rule.
+- **Left v1 by design:** samples off the 5-minute grid, and v1 days flagged
+  incomplete although every sample has a schedule (`attribution-flag`; 3 Prod
+  days on 2026-07-03).
 - **Cost:** reads only the archive row and its summaries; measured ~5 KB per
   day of PostgreSQL responses, reserved conservatively at the payload + 24 KB
   (`--max-mb`, default 16; `--max-days`, default 500).

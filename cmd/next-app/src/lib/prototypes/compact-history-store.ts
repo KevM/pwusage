@@ -11,7 +11,7 @@ import { auditTariffAttribution } from './compact-tariff-audit';
 import { decodeDay, decodeDaySamples, encodeDay, encodeDaySamples, rollupDay, toSample, type DayArchive, type DayRollup, type EnergySample } from './compact-energy';
 import {buildLatestMetadata,verifyLatestMetadata,type LatestMetadata,type LatestSample} from './compact-latest-metadata';
 import { buildDayMetadata, buildDayMetadataV3, type SummarizedHistoryDay } from './compact-day-metadata';
-import { dayStatus, deriveDayAttribution, type DayAttribution, type DayStatus } from './day-attribution';
+import { dayStatus, deriveDayAttribution, type DayAttribution, type DayStatus, type GapPricer } from './day-attribution';
 import { Schedule } from '../schedule';
 import {beginTransaction} from '../pg-transaction';
 import {convertV1Day,type V1ConversionReason} from './compact-v1-conversion';
@@ -648,8 +648,10 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         let rows:EnergyData[];
         // Verified exactly as recovery and trim do: payload, metadata, summaries and projection.
         try {rows=recoverVerifiedSamples(old,stored);} catch {return left('integrity');}
-        const converted=convertV1Day({siteId:old.site_id,start,end,revision:old.revision,createdAt:new Date(old.created_at),
-            attributionComplete:old.attribution_complete,rows,summaries:stored,now});
+        const day={siteId:old.site_id,start,end,revision:old.revision,createdAt:new Date(old.created_at),attributionComplete:old.attribution_complete,rows,summaries:stored,now};
+        let converted=convertV1Day(day);
+        // Only a gap across a period boundary needs the site's tariff versions (a few rows), so the usual day skips them.
+        if('reason' in converted&&converted.reason==='unattributed-gap')converted=convertV1Day(day,await this.gapPricer(client,old.site_id,timezone!));
         if('reason' in converted)return left(converted.reason);
         const {archive,attribution,metadata,status,fetchedAt,latest,payloadChecksum}=converted.day;
         if(!apply)return {status:'convertible',dayStatus:status};
@@ -658,6 +660,16 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         // The database's own digest check must agree before the conversion commits.
         await client.query('SELECT public.verify_compact_day_metadata($1,$2,false)',[old.site_id,start]);
         return {status:'converted',revision,dayStatus:status};
+    }
+
+    /** Prices a slot under any recorded tariff version (current or not), as the importer did for its samples. */
+    private async gapPricer(client:PoolClient,siteId:string,timezone:string):Promise<GapPricer> {
+        const {tariffs}=await this.tariffs(client,siteId);
+        const versions=new Map<number,Schedule>(tariffs.map(t=>[Number(t.id),new Schedule([t],timezone)]));
+        return (timestamp,tariffId)=>{
+            const period=versions.get(tariffId)?.getTariffPeriod(timestamp);
+            return period?Number(period.schedule.id):null;
+        };
     }
 
     /** Format 2: verify the lossless round trip, derive segments from the current tariff, then summaries, status and projections. */

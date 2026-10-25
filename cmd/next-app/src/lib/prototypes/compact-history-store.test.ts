@@ -1264,6 +1264,23 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             // v2 settles a day by its samples alone (a refetch cannot fix tariff configuration); nothing else moves.
             expect(await reads('site',start,end)).toEqual({...before,coverage:before.coverage.map(c=>({...c,archived:true}))});
         });
+        it('prices a gap across a TOU boundary under the recorded tariff version, so v1-complete billing stays complete',async()=>{
+            const day=new Date('2026-01-05T06:00:00Z'),dayEnd=addDaysInSiteTimezone(day,1,'America/Chicago');
+            // 15:00-17:00 local missing: the 16:00 peak boundary has no sample on either side of it.
+            await insertRaw('tou',day,dayEnd,'3',`CASE WHEN extract(hour FROM t AT TIME ZONE 'America/Chicago')<16 THEN 5
+                WHEN extract(hour FROM t AT TIME ZONE 'America/Chicago')<21 THEN 4 ELSE 6 END`,'n-1<180 OR n-1>=204');
+            expect(await store.finalizeDay('tou',day,later)).toMatchObject({status:'finalized',attributionComplete:true});
+            const before=await reads('tou',day,dayEnd);
+            expect(before.billing.status).toBe('complete');
+            expect(await convert('tou',day,false)).toMatchObject({status:'convertible'});
+            expect(await convert('tou',day)).toMatchObject({status:'converted',dayStatus:'gapped'});
+            expect((await archiveRow('tou')).attribution.segments).toEqual([{offset:0,tariffId:3,scheduleId:5},{offset:960,tariffId:3,scheduleId:4},{offset:1260,tariffId:3,scheduleId:6}]);
+            expect((await archiveRow('tou')).attribution_complete).toBe(true);
+            // Only the settled flag moves (an old short day is gapped).
+            const settled=(c:DailyCoverageStat)=>({...c,archived:true});
+            expect(await reads('tou',day,dayEnd)).toEqual({...before,coverage:before.coverage.map(settled),
+                billing:{...before.billing,value:{...before.billing.value,coverage:before.billing.value.coverage.map(settled)}}});
+        });
         it('leaves a day that fails verification as v1 and writes nothing',async()=>{
             await insertRaw('site',start,end,'1','2');
             await store.finalizeDay('site',start,now);

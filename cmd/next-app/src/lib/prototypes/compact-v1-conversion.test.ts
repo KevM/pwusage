@@ -115,6 +115,35 @@ describe('convertV1Day', () => {
         const rows = pricedRows(start, end, i => i < 84 || i >= 108);
         expect(convertV1Day(input(start, end, rows))).toEqual({ reason: 'unattributed-gap' });
     });
+    describe('with the site\'s recorded tariff versions to price gaps', () => {
+        /** Prices a slot under the given tariff version, as the importer did. */
+        const price = (timestamp: Date, tariffId: number) => tariffId === 82 ? Number(tou.getTariffPeriod(timestamp)?.schedule.id ?? NaN) || null : null;
+        it('places a boundary inside a gap where that version puts it, converting the day as fully attributed', () => {
+            const { start, end } = day('2026-10-14');
+            const rows = pricedRows(start, end, i => i < 84 || i >= 108);
+            const d = converted(convertV1Day(input(start, end, rows), price));
+            expect(d.attribution.segments).toEqual(deriveDayAttribution(tou, 82, start, end).segments);
+            expect(d.metadata).toMatchObject({ attributionComplete: true, summaries: rollupDay(rows, start) });
+            expect(readBack(start, end, d)).toEqual(rows);
+        });
+        it('keeps the gap unattributed when that version does not reproduce the neighbouring samples\' schedules', () => {
+            const { start, end } = day('2026-10-14');
+            const rows = pricedRows(start, end, i => i < 84 || i >= 108);
+            // A version whose peak starts at 10:00 disagrees with the recorded 09:00 sample.
+            const late = (timestamp: Date, tariffId: number) => price(new Date(+timestamp - 2 * 3600000), tariffId);
+            expect(convertV1Day(input(start, end, rows), late)).toEqual({ reason: 'unattributed-gap' });
+        });
+        it('keeps the gap unattributed when the tariff version changed during it', () => {
+            const { start, end } = day('2026-10-14');
+            const rows = pricedRows(start, end, i => i < 84 || i >= 108).map(r => +r.timestamp >= +start + 9 * 3600000 ? { ...r, tariff_id: 90, tariff_schedule_id: 902 } : r);
+            expect(convertV1Day(input(start, end, rows), price)).toEqual({ reason: 'unattributed-gap' });
+        });
+        it('leaves gaps between agreeing neighbours as before', () => {
+            const { start, end } = day('2026-10-14');
+            const rows = pricedRows(start, end, i => i < 12 || i >= 36);
+            expect(converted(convertV1Day(input(start, end, rows), price)).attribution).toEqual(converted(convertV1Day(input(start, end, rows))).attribution);
+        });
+    });
     it('leaves a day v1 whose flag says incomplete although every sample has a schedule', () => {
         const { start, end } = day('2026-10-14');
         expect(convertV1Day(input(start, end, pricedRows(start, end), { attributionComplete: false }))).toEqual({ reason: 'attribution-flag' });
