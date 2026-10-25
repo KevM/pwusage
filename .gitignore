@@ -32,3 +32,4 @@ cmd/ios-app/PWUsageTests/Fixtures/solcast-capture.json
 **/*.backup
 # Per-user Claude Code permissions
 **/.claude/settings.local.json
+.vercel
