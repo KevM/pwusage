@@ -477,7 +477,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const timezone=site.rows[0]?.timezone??null;
             const aggregates:CycleAggregateRow[]=[];const coverage:DailyCoverageStat[]=[];
             const eligible=`SELECT a.site_id,a.day_start,a.revision,a.first_timestamp,a.last_timestamp,a.sample_count,a.max_interior_gap_ms,
-                ${SETTLED_ARCHIVE_DAY_SQL} AS settled FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
+                ${SETTLED_ARCHIVE_DAY_SQL} AS settled,(a.metadata_version=3 AND a.status='open') AS is_open FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
                 AND ${MODERN_METADATA_SQL('a.')}`;
             if(mode.billing) {
                 const result=await client.query<CycleAggregateRow>(`WITH eligible AS MATERIALIZED (${eligible})
@@ -487,10 +487,10 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                     load_power:Number(r.load_power),solar_power:Number(r.solar_power),grid_power:Number(r.grid_power),battery_power:Number(r.battery_power)})));
             }
             if(mode.coverage && timezone) {
-                const result=await client.query<{key:string;count:number;first:Date;last:Date;gap:number;settled:boolean}>(`WITH eligible AS MATERIALIZED (${eligible})
+                const result=await client.query<{key:string;count:number;first:Date;last:Date;gap:number;settled:boolean;is_open:boolean}>(`WITH eligible AS MATERIALIZED (${eligible})
                     SELECT to_char(day_start AT TIME ZONE $4::text,'YYYY-MM-DD') AS key,sample_count AS count,
-                        first_timestamp AS first,last_timestamp AS last,max_interior_gap_ms AS gap,settled FROM eligible ORDER BY day_start`,[siteId,start,end,timezone]);
-                coverage.push(...result.rows.map(r=>({localDayKey:r.key,count:r.count,first:new Date(r.first),last:new Date(r.last),maxInteriorGapMs:r.gap,archived:r.settled})));
+                        first_timestamp AS first,last_timestamp AS last,max_interior_gap_ms AS gap,settled,is_open FROM eligible ORDER BY day_start`,[siteId,start,end,timezone]);
+                coverage.push(...result.rows.map(r=>({localDayKey:r.key,count:r.count,first:new Date(r.first),last:new Date(r.last),maxInteriorGapMs:r.gap,archived:r.settled,...(r.is_open?{open:true}:{})})));
             }
             const partial=site.rows[0]?.has_detail?await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<$3 AND day_end>$2
                 AND NOT (day_start >= $2 AND day_end <= $3 AND ${MODERN_METADATA_SQL()}) ORDER BY day_start`,[siteId,start,end]):{rows:[]};
@@ -571,9 +571,11 @@ export class CompactHistoryStore implements HistorySnapshotStore {
      * tariff). No raw rows are written or read back, so it costs no read egress.
      * Tesla is the source of truth, so the record is replaced, but only by a newer
      * fetch: an older, slower response is `superseded` and changes nothing.
-     * Refuses a day that still has raw rows, whose archive the raw source owns.
+     * Refuses a day that still has raw rows, whose archive the raw source owns,
+     * unless `replaceRaw`: the importer's fetch then replaces both representations,
+     * deleting the day's raw rows in the same transaction (no read-back).
      */
-    async writeDay(siteId:string,start:Date,samples:EnergySample[],fetchedAt:Date,now=new Date()):Promise<DayWriteResult> {
+    async writeDay(siteId:string,start:Date,samples:EnergySample[],fetchedAt:Date,now=new Date(),{replaceRaw=false}:{replaceRaw?:boolean}={}):Promise<DayWriteResult> {
         const client=await this.pool.connect();
         try {
             await beginTransaction(client,'ISOLATION LEVEL READ COMMITTED');
@@ -591,18 +593,32 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             // Status compares sample_count with the day's 5-minute slots, so every sample must own one.
             if(samples.some(r=>(+r.timestamp-+start)%300000))throw new Error('Samples off the 5-minute grid');
             if(!samples.length) {await client.query('COMMIT');return {status:'empty'};}
-            const raw=(await client.query<{present:boolean}>('SELECT EXISTS(SELECT 1 FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3) AS present',[siteId,start,end])).rows[0].present;
-            if(raw)throw new Error('Day still has raw samples; finalize it from raw instead');
+            if(!replaceRaw) {
+                const raw=(await client.query<{present:boolean}>('SELECT EXISTS(SELECT 1 FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3) AS present',[siteId,start,end])).rows[0].present;
+                if(raw)throw new Error('Day still has raw samples; finalize it from raw instead');
+            }
             const stored=(await client.query<{revision:string;fetched_at:Date|null}>('SELECT revision,fetched_at FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2 FOR UPDATE',[siteId,start])).rows[0];
             if(stored?.fetched_at&&+fetchedAt<=+stored.fetched_at) {await client.query('COMMIT');return {status:'superseded',revision:stored.revision};}
             const sorted=samples.map(toSample).sort((a,b)=>+a.timestamp-+b.timestamp);
             const {tariffs}=await this.tariffs(client,siteId,true);
             const prepared=this.prepareSamples(siteId,timezone,start,end,sorted,tariffs,fetchedAt,now);
+            if(replaceRaw) {
+                // Archive first: the raw-delete trigger (invalidate_compact_energy_day) refuses an unpruned
+                // archive whose sample count no longer matches raw; with none left it only deletes the rows.
+                await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start]);
+                await client.query('DELETE FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3',[siteId,start,end]);
+            }
             const revision=await this.replaceDay(client,siteId,start,end,sorted.length,prepared,true);
             await client.query('COMMIT');
             return {status:'written',revision,attributionComplete:prepared.attributionComplete,dayStatus:prepared.record!.status};
         } catch(error) {await client.query('ROLLBACK');throw error;}
         finally {client.release(this.transactionTimeoutMs!==undefined);}
+    }
+
+    /** A day record's status (null for v1) and fetch time, for deciding whether Tesla's answer for it is final. */
+    async getDayRecordState(siteId:string,start:Date):Promise<{status:DayStatus|null;fetchedAt:Date|null}|null> {
+        const row=(await this.pool.query<{status:DayStatus|null;fetched_at:Date|null}>('SELECT status,fetched_at FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start])).rows[0];
+        return row?{status:row.status,fetchedAt:row.fetched_at}:null;
     }
 
     /**

@@ -5,6 +5,8 @@ import {CompactHistoryReader} from './prototypes/compact-history-reader';
 import {withRawEnergyAccess} from './energy-storage-access';
 
 export function compactHistoryReadsEnabled():boolean {return process.env.COMPACT_HISTORY_READS_ENABLED==='true';}
+/** Importer writes go to v2 day records (`CompactHistoryStore.writeDay`) instead of raw `EnergyData` rows. */
+export function compactDayWritesEnabled():boolean {return process.env.COMPACT_DAY_WRITES_ENABLED==='true';}
 
 /** The flag opts unpruned sites into validation; pruned sites always require archives. */
 export function createEnergyRepo(timezone:string,rawRepo?:EnergyRepo):EnergyRepo {

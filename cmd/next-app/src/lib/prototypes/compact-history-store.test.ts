@@ -405,6 +405,61 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         await expect(store.writeDay('site',start,daySamples(),fetched,jobOptions.now)).rejects.toThrow(/raw/i);
         expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
     });
+    describe('writeDay replacing raw rows (importer day writes)',()=>{
+        const rawCount=async()=>(await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n;
+        const archives=async()=>(await pool.query('SELECT format_version,raw_pruned,sample_count FROM "EnergyDayArchive"')).rows;
+        it('replaces a raw-only day and deletes its raw rows in the same write',async()=>{
+            expect(await rawCount()).toBe(2);
+            expect(await store.writeDay('site',start,daySamples(),fetched,jobOptions.now,{replaceRaw:true})).toMatchObject({status:'written',dayStatus:'complete'});
+            expect(await rawCount()).toBe(0);
+            expect(await archives()).toEqual([{format_version:2,raw_pruned:true,sample_count:288}]);
+            expect(await new CompactHistoryReader(store,'America/Chicago').getRawEnergyData('site',start,end)).toEqual(daySamples());
+        });
+        it('replaces a day whose v1 archive still has its raw rows (the raw-delete trigger drops nothing it should keep)',async()=>{
+            await store.finalizeDay('site',start,now);
+            expect(await archives()).toEqual([{format_version:1,raw_pruned:false,sample_count:2}]);
+            await store.writeDay('site',start,daySamples(),fetched,jobOptions.now,{replaceRaw:true});
+            expect(await rawCount()).toBe(0);
+            expect(await archives()).toEqual([{format_version:2,raw_pruned:true,sample_count:288}]);
+        });
+        it('replaces a day whose archive no longer matches its raw rows',async()=>{
+            await store.finalizeDay('site',start,now);
+            // A stale archive the raw-delete trigger would refuse ("Raw archive source incomplete").
+            await pool.query('UPDATE "EnergyDayArchive" SET sample_count=1');
+            await store.writeDay('site',start,daySamples(),fetched,jobOptions.now,{replaceRaw:true});
+            expect(await rawCount()).toBe(0);
+            expect(await archives()).toEqual([{format_version:2,raw_pruned:true,sample_count:288}]);
+        });
+        it('keeps raw rows and the old archive when the new record cannot be written',async()=>{
+            await store.finalizeDay('site',start,now);
+            await pool.query(`CREATE FUNCTION fail_archive_insert() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'insert refused'; END$$;
+                CREATE TRIGGER fail_archive_insert BEFORE INSERT ON "EnergyDayArchive" FOR EACH ROW EXECUTE FUNCTION fail_archive_insert()`);
+            try {
+                await expect(store.writeDay('site',start,daySamples(),fetched,jobOptions.now,{replaceRaw:true})).rejects.toThrow('insert refused');
+            } finally {await pool.query('DROP TRIGGER fail_archive_insert ON "EnergyDayArchive"; DROP FUNCTION fail_archive_insert()');}
+            expect(await rawCount()).toBe(2);
+            expect(await archives()).toEqual([{format_version:1,raw_pruned:false,sample_count:2}]);
+        });
+        it('never lets an older fetch replace a newer record or delete its raw rows',async()=>{
+            await store.finalizeDay('site',start,now);
+            await store.convertDayToV2('site',start,{apply:true,now:jobOptions.now});
+            // Converted records carry their archive's creation time, which is after this fetch.
+            const kept=(await pool.query('SELECT revision FROM "EnergyDayArchive"')).rows[0].revision;
+            expect(await store.writeDay('site',start,daySamples(),fetched,jobOptions.now,{replaceRaw:true})).toEqual({status:'superseded',revision:kept});
+            expect(await rawCount()).toBe(2);
+            expect(await archives()).toEqual([{format_version:2,raw_pruned:false,sample_count:2}]);
+        });
+        it('reports a recent short record as open for planning, and its fetch state',async()=>{
+            await store.writeDay('site',start,daySamples().slice(0,287),fetched,jobOptions.now,{replaceRaw:true});
+            expect((await new CompactHistoryReader(store,'America/Chicago').getDailyCoverage('site',start,end,'America/Chicago'))[0])
+                .toMatchObject({count:287,archived:false,open:true});
+            expect(await store.getDayRecordState('site',start)).toEqual({status:'open',fetchedAt:fetched});
+            await store.writeDay('site',start,daySamples(),new Date(+fetched+1),jobOptions.now,{replaceRaw:true});
+            const complete=(await new CompactHistoryReader(store,'America/Chicago').getDailyCoverage('site',start,end,'America/Chicago'))[0];
+            expect(complete).toMatchObject({archived:true});expect(complete.open).toBeUndefined();
+            expect(await store.getDayRecordState('site',end)).toBeNull();
+        });
+    });
     it('refuses days not yet begun, foreign samples, future or invalid fetch times, and ignores an empty day',async()=>{
         await pool.query('TRUNCATE "EnergyData"');
         await expect(store.writeDay('site',start,daySamples(),new Date(+start-1),new Date(+start-1))).rejects.toThrow();

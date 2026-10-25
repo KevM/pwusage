@@ -1,5 +1,6 @@
 import { formatSiteDate, getSiteMidnight } from '../date-utils';
 import type { DailyCoverageStat } from '../energy-repo';
+import { DAY_GAP_HEAL_DAYS } from '../prototypes/day-attribution';
 
 export interface DateWindow {
     start: Date;
@@ -12,6 +13,12 @@ export interface PlanOptions {
     timezone: string;
     installationDate?: Date;
     forceRefetch?: boolean;
+    /**
+     * Day writes on: refetch every `open` day record but today's (the today
+     * refresh owns it), however small its gaps; `complete` and `gapped`
+     * records are settled and never refetched automatically.
+     */
+    refetchOpenDays?: boolean;
     gapThresholdMs?: number;
     now?: Date;
 }
@@ -25,6 +32,8 @@ export interface DayAuditResult extends DayWindow {
     hasInteriorGap: boolean;
     /** A settled archive day: covered unless the caller forces a re-fetch. */
     archived: boolean;
+    /** An `open` v2 day record (see `DailyCoverageStat.open`). */
+    open: boolean;
 }
 
 export interface GenerateDayWindowsOptions {
@@ -113,6 +122,9 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             last: null,
             maxInteriorGapMs: 0,
         };
+        // A record's status is computed when written, so an open day that has aged
+        // past the gap-heal window counts as gapped (settled), as a rewrite would store it.
+        const aged = stat.open === true && now.getTime() - day.windowEnd.getTime() > DAY_GAP_HEAL_DAYS * 24 * 3600000;
         const firstInWindow = stat.first === null ? null : stat.first.getTime();
         const lastInWindow = stat.last === null ? null : stat.last.getTime();
 
@@ -127,20 +139,34 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             missingStart: firstInWindow !== null && (firstInWindow - day.windowStart.getTime() > gapThresholdMs),
             missingEnd: lastInWindow !== null && (day.effectiveWindowEnd.getTime() - lastInWindow > gapThresholdMs),
             hasInteriorGap: stat.maxInteriorGapMs > gapThresholdMs,
-            archived: stat.archived === true,
+            archived: stat.archived === true || aged,
+            open: stat.open === true && !aged,
         });
     }
 
     return results;
 }
 
-export function planImport(options: PlanOptions): DateWindow[] {
-    const { forceRefetch = false } = options;
-    return auditDays(options)
+/**
+ * `openRetry`: planned only because it is an open record (its gaps are under
+ * the thresholds). Tesla often returns the same gaps, so a window cap serves
+ * other days first or these retries would take the cap every run.
+ */
+export interface PlannedWindow extends DateWindow {
+    openRetry?: true;
+}
+
+export function planImport(options: PlanOptions): PlannedWindow[] {
+    const { forceRefetch = false, refetchOpenDays = false } = options;
+    return auditDays(options).flatMap(d => {
+        const window = { start: d.windowStart, end: d.effectiveWindowEnd };
+        if (forceRefetch) return [window];
         // Re-fetching a settled archive day rewrites its raw rows, which drops the
         // archive (and restores a trimmed day): a churn loop for days Tesla can't fill.
-        .filter(d => forceRefetch || (!d.archived && (d.count === 0 || d.missingStart || d.missingEnd || d.hasInteriorGap)))
-        .map(d => ({ start: d.windowStart, end: d.effectiveWindowEnd }));
+        if (d.archived) return [];
+        if (d.count === 0 || d.missingStart || d.missingEnd || d.hasInteriorGap) return [window];
+        return refetchOpenDays && d.open && !d.isToday ? [{ ...window, openRetry: true as const }] : [];
+    });
 }
 
 export function splitAtSiteMidnight(window: DateWindow, timezone: string): DateWindow[] {
