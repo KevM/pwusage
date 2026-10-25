@@ -2,7 +2,8 @@
  * One-time v1 -> v2 conversion of `EnergyDayArchive` records
  * (docs/plans/2026-10-24-day-record-v2.md, "Migrating existing archives").
  * A day converts only when its v2 record reads back exactly as the v1 archive
- * did; any mismatch leaves it v1 with a reason. Raw `EnergyData` is never touched.
+ * did; any mismatch leaves it v1 with a reason. Raw `EnergyData` is never touched,
+ * except by `reattribute`, which replaces a day's raw rows with its record.
  */
 import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
@@ -19,9 +20,13 @@ import type { CompactHistoryStore, DayConversionResult } from './compact-history
  * verification. `unattributed-gap`: a missing stretch spans a period boundary,
  * which v2 marks unattributed although v1 billed the day as complete.
  * `attribution-flag`: v1 says incomplete although every sample has a schedule.
+ * With `reattribute` only: `raw-mismatch` (the day's raw rows differ from its
+ * archive) and `no-current-tariff`.
  */
 export type V1ConversionReason = 'legacy-metadata'|'day-bounds'|'integrity'|'off-grid'|'sample-mismatch'|'attribution-mismatch'
-    |'summary-mismatch'|'unattributed-gap'|'attribution-flag'|'verification';
+    |'summary-mismatch'|'unattributed-gap'|'attribution-flag'|'verification'|'raw-mismatch'|'no-current-tariff';
+/** Reasons a day keeps its samples but can take segments from the current tariff (`--reattribute`). */
+export const REATTRIBUTABLE: ReadonlySet<V1ConversionReason> = new Set(['unattributed-gap', 'attribution-flag']);
 export const v1ConversionTimelineRevision = (revision: string): string => `v1-conversion:${revision}`;
 
 export interface V1Day {
@@ -84,7 +89,7 @@ export interface V1ConversionRepo {
     counts(sites: string[] | null): Promise<{ v1: number; v2: number }>;
     /** v1 days after the keyset cursor, in (day, site) order, so a batch spans sites. */
     candidates(sites: string[] | null, after: { siteId: string; start: Date } | null, limit: number): Promise<ConversionCandidate[]>;
-    convert(candidate: ConversionCandidate, apply: boolean, now: Date): Promise<DayConversionResult>;
+    convert(candidate: ConversionCandidate, apply: boolean, now: Date, reattribute?: boolean): Promise<DayConversionResult>;
 }
 export interface V1ConversionOptions {
     sites: string[] | null; apply: boolean; maxDays: number; maxReservedBytes: number; batchSize?: number; now: Date;
@@ -92,6 +97,8 @@ export interface V1ConversionOptions {
     after?: { siteId: string; start: Date } | null;
     /** Sites converted at once (each site still one day at a time, under its claim). */
     concurrency?: number;
+    /** Re-attribute `REATTRIBUTABLE` days from the current tariff instead of leaving them v1. */
+    reattribute?: boolean;
 }
 export interface V1ConversionReport {
     mode: 'preview' | 'apply'; stopped: 'caught-up' | 'day-cap' | 'byte-cap';
@@ -171,7 +178,7 @@ async function convertBySite(repo: V1ConversionRepo, days: ConversionCandidate[]
         for (let site = queue.shift(); site && !failed; site = queue.shift()) {
             for (const i of site) {
                 if (failed) return;
-                try { results[i] = await repo.convert(days[i], options.apply, options.now); }
+                try { results[i] = await repo.convert(days[i], options.apply, options.now, options.reattribute); }
                 catch (error) { failed = true; throw error; }
             }
         }
@@ -205,14 +212,14 @@ export class V1ConversionPgRepo implements V1ConversionRepo {
         [sites, after?.siteId ?? null, after?.start ?? null, limit])).rows;
         return rows.map(r => ({ siteId: r.site_id, start: new Date(r.day_start), payloadBytes: Number(r.bytes) }));
     }
-    convert(candidate: ConversionCandidate, apply: boolean, now: Date) {
-        return this.store.convertDayToV2(candidate.siteId, candidate.start, { apply, now });
+    convert(candidate: ConversionCandidate, apply: boolean, now: Date, reattribute = false) {
+        return this.store.convertDayToV2(candidate.siteId, candidate.start, { apply, now, reattribute });
     }
 }
 
 /** Operator input errors, safe to print. */
 export class ConversionUsageError extends Error {}
-const USAGE = 'Usage: [--site-id <id>]... [--apply] [--max-days 1-5000] [--max-mb 1-256] [--concurrency 1-4] [--after <siteId>/<ISO day>]';
+const USAGE = 'Usage: [--site-id <id>]... [--apply] [--max-days 1-5000] [--max-mb 1-256] [--concurrency 1-4] [--after <siteId>/<ISO day>] [--reattribute]';
 /** `<siteId>/<ISO day>`, as a report's `resumeAfter` prints them. */
 function parseCursor(value: string): { siteId: string; start: Date } {
     const split = value.lastIndexOf('/');
@@ -222,10 +229,11 @@ function parseCursor(value: string): { siteId: string; start: Date } {
 }
 export function parseConversionArgs(args: string[]): Omit<V1ConversionOptions, 'now' | 'batchSize'> {
     const sites: string[] = [];
-    let apply = false, maxDays = 500, maxMb = 16, concurrency = 1, after: { siteId: string; start: Date } | null = null;
+    let apply = false, reattribute = false, maxDays = 500, maxMb = 16, concurrency = 1, after: { siteId: string; start: Date } | null = null;
     for (let i = 0; i < args.length; i++) {
         const key = args[i];
         if (key === '--apply') { apply = true; continue; }
+        if (key === '--reattribute') { reattribute = true; continue; }
         const value = args[++i];
         if (!value || value.startsWith('--')) throw new ConversionUsageError(`Missing value for ${key}. ${USAGE}`);
         if (key === '--site-id' && value.trim() && value.length <= 200) sites.push(value);
@@ -238,5 +246,5 @@ export function parseConversionArgs(args: string[]): Omit<V1ConversionOptions, '
     if (!Number.isInteger(maxDays) || maxDays < 1 || maxDays > 5000 || !Number.isInteger(maxMb) || maxMb < 1 || maxMb > 256
         // The script's pool holds 5 connections: up to 4 conversions plus the listing.
         || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4) throw new ConversionUsageError(USAGE);
-    return { sites: sites.length ? [...new Set(sites)] : null, apply, maxDays, maxReservedBytes: maxMb * 1024 * 1024, after, concurrency };
+    return { sites: sites.length ? [...new Set(sites)] : null, apply, maxDays, maxReservedBytes: maxMb * 1024 * 1024, after, concurrency, reattribute };
 }

@@ -10,7 +10,13 @@
  * raw rows stay until the cutover, and finalization keeps the converted record
  * while it matches them).
  *
- *   npx tsx scripts/convert-archives-v2.ts [--site-id <id>]... [--apply] [--max-days 500] [--max-mb 16] [--concurrency 1-4] [--after <siteId>/<day>]
+ * `--reattribute` handles the days conversion leaves v1 because their attribution
+ * cannot be reproduced (`unattributed-gap`, `attribution-flag`): their samples
+ * are kept and take segments from the current tariff, as a Tesla refetch would,
+ * and raw rows still holding such a day are proven equal to its archive in the
+ * database, then deleted. Run it only where compact reads are on (Prod).
+ *
+ *   npx tsx scripts/convert-archives-v2.ts [--site-id <id>]... [--apply] [--max-days 500] [--max-mb 16] [--concurrency 1-4] [--after <siteId>/<day>] [--reattribute]
  *
  * Days are taken in (day, site) order. `--concurrency` converts that many sites
  * at once (each site one day at a time, under its claim): pooler round trips,

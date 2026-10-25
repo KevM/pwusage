@@ -497,7 +497,7 @@ export class Importer {
                 }
             }
 
-            await this.siteRepo.upsertSite({
+            const storedTimezone = await this.siteRepo.upsertSite({
                 id: siteId,
                 name: info.site_name,
                 utility: info.tariff_content_v2?.utility ?? null,
@@ -505,6 +505,10 @@ export class Importer {
                 timezone: info.installation_time_zone,
                 json: info,
             });
+            // Kept back while the site has pruned days (see UPSERT_SITE_SQL); an operator re-keys them.
+            if (storedTimezone && info.installation_time_zone && info.installation_time_zone !== 'UTC' && storedTimezone !== info.installation_time_zone) {
+                console.warn(`[Import] Site ${siteId} reports timezone ${info.installation_time_zone} but keeps ${storedTimezone}: run scripts/rebuild-site-timezone.ts`);
+            }
 
             if (tariffsChanged) {
                 console.log(`Tariff content changed for site ${siteId}, updating tariffs...`);

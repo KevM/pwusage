@@ -6,7 +6,10 @@
  * writes. Days that still have raw rows are skipped (their archive is owned by
  * the raw source), and so is any day whose energy or SOE request fails
  * (`fetch-failed`), so a re-run never replaces stored SOC with nulls. A day
- * already written from a newer fetch is left as is (`superseded`).
+ * already written from a newer fetch is left as is (`superseded`). A day Tesla
+ * answers with no samples is recorded as checked (`checked-empty`, see
+ * "EnergyDayEmpty"); once that answer is final and older than the gap-heal
+ * window, later runs skip the day (`settled-empty`) without a Tesla request.
  *
  *   npx tsx scripts/backfill-compact-from-tesla.ts --site-id <id> --from YYYY-MM-DD --before YYYY-MM-DD [--apply] [--concurrency N]
  *
@@ -58,6 +61,9 @@ async function run():Promise<void> {
         const days:Date[]=[];
         for(let d=parseSiteLocalDateToMidnight(options.from,site.timezone),stop=parseSiteLocalDateToMidnight(options.before,site.timezone);d<stop;d=addDaysInSiteTimezone(d,1,site.timezone))days.push(d);
 
+        // Days Tesla already answered empty, after they ended and outside the gap-heal window, are not fetched again.
+        const settledEmpty=new Set((await store.getSettledEmptyDays(site.id,days[0]??new Date(0),addDaysInSiteTimezone(days.at(-1)??new Date(0),1,site.timezone),new Date())).map(d=>+d));
+
         const quiet=console.log;console.log=()=>{};
         const results:{day:string;samples:number;status:string;fetchMs:number;writeMs:number}[]=[];
         const started=performance.now();
@@ -67,6 +73,7 @@ async function run():Promise<void> {
                 while(next<days.length) {
                     const start=days[next++];
                     const day=start.toISOString();
+                    if(settledEmpty.has(+start)) {results.push({day,samples:0,status:'settled-empty',fetchMs:0,writeMs:0});continue;}
                     const t0=performance.now();
                     // A failed energy or SOE request skips the day for a re-run (see fetchDayForWrite).
                     let fetched:FetchedDay;

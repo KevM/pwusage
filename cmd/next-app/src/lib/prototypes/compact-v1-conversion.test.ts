@@ -285,10 +285,11 @@ describe('runV1Conversion', () => {
 
 describe('parseConversionArgs', () => {
     it('previews all sites by default and takes repeatable site IDs, apply and caps', () => {
-        expect(parseConversionArgs([])).toEqual({ sites: null, apply: false, maxDays: 500, maxReservedBytes: 16 * 1024 * 1024, after: null, concurrency: 1 });
+        expect(parseConversionArgs([])).toEqual({ sites: null, apply: false, maxDays: 500, maxReservedBytes: 16 * 1024 * 1024, after: null, concurrency: 1, reattribute: false });
         expect(parseConversionArgs(['--concurrency', '4']).concurrency).toBe(4);
         expect(parseConversionArgs(['--site-id', 'a', '--site-id', 'b', '--apply', '--max-days', '50', '--max-mb', '4']))
-            .toEqual({ sites: ['a', 'b'], apply: true, maxDays: 50, maxReservedBytes: 4 * 1024 * 1024, after: null, concurrency: 1 });
+            .toEqual({ sites: ['a', 'b'], apply: true, maxDays: 50, maxReservedBytes: 4 * 1024 * 1024, after: null, concurrency: 1, reattribute: false });
+        expect(parseConversionArgs(['--reattribute']).reattribute).toBe(true);
         // The report's resumeAfter, passed back as is.
         expect(parseConversionArgs(['--after', 'site 1/2026-10-01T05:00:00.000Z']).after).toEqual({ siteId: 'site 1', start: new Date('2026-10-01T05:00:00.000Z') });
     });

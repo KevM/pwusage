@@ -11,10 +11,10 @@ import { auditTariffAttribution } from './compact-tariff-audit';
 import { decodeDay, decodeDaySamples, encodeDay, encodeDaySamples, rollupDay, toSample, type DayArchive, type DayRollup, type EnergySample } from './compact-energy';
 import {buildLatestMetadata,verifyLatestMetadata,type LatestMetadata,type LatestSample} from './compact-latest-metadata';
 import { buildDayMetadata, buildDayMetadataV3, type SummarizedHistoryDay } from './compact-day-metadata';
-import { dayStatus, deriveDayAttribution, type DayAttribution, type DayStatus, type GapPricer } from './day-attribution';
+import { DAY_GAP_HEAL_DAYS, dayStatus, deriveDayAttribution, type DayAttribution, type DayStatus, type GapPricer } from './day-attribution';
 import { Schedule } from '../schedule';
 import {beginTransaction} from '../pg-transaction';
-import {convertV1Day,type V1ConversionReason} from './compact-v1-conversion';
+import {REATTRIBUTABLE,convertV1Day,type V1ConversionReason} from './compact-v1-conversion';
 import type { ScalarHistorySnapshot, AggregateHistorySnapshot, FinalizedHistoryDay, HistorySnapshot, HistorySnapshotStore } from './compact-history-reader';
 
 type RawRecord = { site_id: string; timestamp: Date; tariff_id: number; tariff_schedule_id: number | null;
@@ -72,10 +72,17 @@ function detailDay(a:DetailArchiveRecord,summaries:SummaryRecord[]):FinalizedHis
 }
 export interface ArchiveMutationResult {status:'busy'|'trimmed'|'already-trimmed'|'restored'|'not-pruned';samples:number}
 export interface FinalizationResult { status: 'busy' | 'empty' | 'finalized' | 'unchanged'; revision?: string;attributionComplete?:boolean }
-/** `superseded`: the stored record came from a newer (or the same) fetch and was kept. */
-export interface DayWriteResult { status:'busy'|'empty'|'written'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
+/**
+ * `superseded`: the stored record came from a newer (or the same) fetch and was kept.
+ * `checked-empty`: Tesla answered with no samples for a day with nothing stored; recorded in "EnergyDayEmpty".
+ * `empty`: Tesla answered with no samples for a day that has a record or raw rows, which were kept.
+ */
+export interface DayWriteResult { status:'busy'|'empty'|'checked-empty'|'written'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
+/** One site's day records re-keyed to a new timezone (see `rebuildTimezone`). */
+export interface TimezoneRebuildResult { status:'busy'|'unchanged'|'previewed'|'rebuilt'; from?:string; sourceDays?:number; records?:number; restoredRawSamples?:number; droppedEmptyMarkers?:number }
 /** v1 -> v2 conversion of one archive; `convertible` is a preview's verified result. */
-export interface DayConversionResult { status:'busy'|'converted'|'convertible'|'already-v2'|'left-v1'; reason?:V1ConversionReason; revision?:string; dayStatus?:DayStatus }
+/** `reattributed` (`reattributable` in preview): a day v2 cannot reproduce, kept as samples with segments from the current tariff (`reattribute`). */
+export interface DayConversionResult { status:'busy'|'converted'|'convertible'|'reattributed'|'reattributable'|'already-v2'|'left-v1'; reason?:V1ConversionReason; revision?:string; dayStatus?:DayStatus }
 /** An archive row with its site's timezone and its revision's summaries (JSON, read with full float precision). */
 type ConversionRecord=ArchiveRecord&{created_at:Date;timezone:string|null;summaries:SummaryRecord[]};
 type PreparedDay={archive:DayArchive;summaries:DayRollup[];attributionComplete:boolean;metadata:SummarizedHistoryDay;payloadChecksum:string;
@@ -592,7 +599,15 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             if(samples.length>4096||samples.some(r=>r.site_id!==siteId||!(r.timestamp>=start&&r.timestamp<end)))throw new Error('Samples outside the site day');
             // Status compares sample_count with the day's 5-minute slots, so every sample must own one.
             if(samples.some(r=>(+r.timestamp-+start)%300000))throw new Error('Samples off the 5-minute grid');
-            if(!samples.length) {await client.query('COMMIT');return {status:'empty'};}
+            if(!samples.length) {
+                // Published samples never disappear, so an empty answer for a day with stored samples is a
+                // Tesla failure and changes nothing; for a day with nothing stored it is a durable check.
+                const kept=(await client.query<{present:boolean}>(`SELECT EXISTS(SELECT 1 FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2)
+                    OR EXISTS(SELECT 1 FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3) AS present`,[siteId,start,end])).rows[0].present;
+                if(!kept)await client.query(`INSERT INTO "EnergyDayEmpty" (site_id,day_start,day_end,checked_at) VALUES ($1,$2,$3,$4)
+                    ON CONFLICT (site_id,day_start) DO UPDATE SET checked_at=EXCLUDED.checked_at WHERE "EnergyDayEmpty".checked_at<EXCLUDED.checked_at`,[siteId,start,end,fetchedAt]);
+                await client.query('COMMIT');return {status:kept?'empty':'checked-empty'};
+            }
             if(!replaceRaw) {
                 const raw=(await client.query<{present:boolean}>('SELECT EXISTS(SELECT 1 FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3) AS present',[siteId,start,end])).rows[0].present;
                 if(raw)throw new Error('Day still has raw samples; finalize it from raw instead');
@@ -608,6 +623,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start]);
                 await client.query('DELETE FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3',[siteId,start,end]);
             }
+            await client.query('DELETE FROM "EnergyDayEmpty" WHERE site_id=$1 AND day_start=$2',[siteId,start]);
             const revision=await this.replaceDay(client,siteId,start,end,sorted.length,prepared,true);
             await client.query('COMMIT');
             return {status:'written',revision,attributionComplete:prepared.attributionComplete,dayStatus:prepared.record!.status};
@@ -622,13 +638,93 @@ export class CompactHistoryStore implements HistorySnapshotStore {
     }
 
     /**
+     * Days a backfill need not fetch again: Tesla answered them with no samples in a
+     * request made after the day ended, they are older than the gap-heal window (the
+     * age rule that makes a short day `gapped`), and nothing has been stored since.
+     * A day with no marker was never answered (or its fetch failed) and is fetched.
+     */
+    async getSettledEmptyDays(siteId:string,from:Date,before:Date,now:Date):Promise<Date[]> {
+        const rows=(await this.pool.query<{day_start:Date}>(`SELECT e.day_start FROM "EnergyDayEmpty" e
+            WHERE e.site_id=$1 AND e.day_start >= $2 AND e.day_start < $3 AND e.checked_at >= e.day_end AND e.day_end < $4::timestamptz - make_interval(days => $5)
+            AND NOT EXISTS(SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND a.day_start=e.day_start)
+            AND NOT EXISTS(SELECT 1 FROM "EnergyData" r WHERE r.site_id=e.site_id AND r.timestamp >= e.day_start AND r.timestamp < e.day_end)
+            ORDER BY e.day_start`,[siteId,from,before,now,DAY_GAP_HEAL_DAYS])).rows;
+        return rows.map(r=>new Date(r.day_start));
+    }
+
+    /**
+     * Re-key every stored day of a site to a new timezone in one transaction, so old
+     * and new local-day partitions never coexist and no Tesla request is needed
+     * (tokenless sites included). Pruned days are decoded (verified as recovery
+     * does) and regrouped by the new local midnight. A new day built only from
+     * pruned samples becomes a v2 record, segments from the current tariff under the
+     * new timezone, `fetched_at` its oldest source's. A new day that also has raw
+     * rows gets its pruned samples back as raw rows, so raw stays its only source
+     * until it is archived or refetched. Unpruned archives are dropped (their raw
+     * rows stay) and so are empty-day markers. Preview does the same work and rolls back.
+     */
+    async rebuildTimezone(siteId:string,timezone:string,{apply,now}:{apply:boolean;now:Date}):Promise<TimezoneRebuildResult> {
+        if(!siteId?.trim()||siteId.length>200||!Number.isSafeInteger(+now))throw new Error('Invalid timezone rebuild request');
+        new Intl.DateTimeFormat('en-US',{timeZone:timezone});
+        if(apply&&!this.mutationGuard)throw new Error('A mutation guard is required to rebuild a site\'s days');
+        const client=await this.pool.connect();
+        try {
+            await beginTransaction(client,'ISOLATION LEVEL READ COMMITTED');
+            await this.boundTransaction(client);
+            await client.query("SET LOCAL statement_timeout='15s'; SET LOCAL lock_timeout='3s'");
+            if(apply)await this.mutationGuard!(client);
+            if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy'};}
+            const from=(await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1 FOR UPDATE',[siteId])).rows[0]?.timezone;
+            if(!from)throw new Error('Site not found');
+            if(from===timezone) {await client.query('COMMIT');return {status:'unchanged',from};}
+            // Only pruned days are read: an unpruned archive's raw rows already hold its samples.
+            const pruned=(await client.query<ArchiveRecord&{created_at:Date;summaries:SummaryRecord[]}>(`SELECT a.*,COALESCE((SELECT json_agg(x) FROM "EnergyDaySummary" x
+                WHERE x.site_id=a.site_id AND x.day_start=a.day_start AND x.revision=a.revision),'[]') AS summaries
+                FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.raw_pruned ORDER BY a.day_start`,[siteId])).rows;
+            const days=new Map<number,{rows:EnergyData[];fetchedAt:Date}>();
+            for(const archive of pruned) {
+                const fetchedAt=new Date(archive.fetched_at??archive.created_at);
+                for(const row of recoverVerifiedSamples(archive,archive.summaries.map(summary))) {
+                    const key=+getSiteMidnight(row.timestamp,timezone);
+                    const day=days.get(key);
+                    if(!day)days.set(key,{rows:[row],fetchedAt});
+                    else {day.rows.push(row);if(fetchedAt<day.fetchedAt)day.fetchedAt=fetchedAt;}
+                }
+            }
+            const droppedEmptyMarkers=(await client.query('DELETE FROM "EnergyDayEmpty" WHERE site_id=$1',[siteId])).rowCount??0;
+            const sourceDays=(await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id=$1',[siteId])).rowCount??0;
+            // With no archive left the timezone trigger allows the change.
+            await client.query('UPDATE "Site" SET timezone=$2 WHERE id=$1',[siteId,timezone]);
+            const starts=[...days.keys()].sort((a,b)=>a-b).map(key=>new Date(key));
+            const ends=starts.map(start=>addDaysInSiteTimezone(start,1,timezone));
+            const withRaw=new Set((await client.query<{s:Date}>(`SELECT r.s FROM unnest($2::timestamptz[],$3::timestamptz[]) AS r(s,e)
+                WHERE EXISTS(SELECT 1 FROM "EnergyData" WHERE site_id=$1 AND timestamp >= r.s AND timestamp < r.e)`,[siteId,starts,ends])).rows.map(r=>+r.s));
+            const {tariffs}=await this.tariffs(client,siteId,true);
+            let records=0,restoredRawSamples=0;
+            for(let i=0;i<starts.length;i++) {
+                const day=days.get(+starts[i])!;
+                if(withRaw.has(+starts[i])) {await this.insertRows(client,day.rows);restoredRawSamples+=day.rows.length;continue;}
+                const samples=day.rows.map(toSample).sort((a,b)=>+a.timestamp-+b.timestamp);
+                if(samples.some(r=>(+r.timestamp-+starts[i])%300000))throw new Error('Samples off the 5-minute grid in the new timezone');
+                await this.replaceDay(client,siteId,starts[i],ends[i],samples.length,this.prepareSamples(siteId,timezone,starts[i],ends[i],samples,tariffs,day.fetchedAt,now),true);
+                records++;
+            }
+            await client.query(apply?'COMMIT':'ROLLBACK');
+            return {status:apply?'rebuilt':'previewed',from,sourceDays,records,restoredRawSamples,droppedEmptyMarkers};
+        } catch(error) {await client.query('ROLLBACK');throw error;}
+        finally {client.release(this.transactionTimeoutMs!==undefined);}
+    }
+
+    /**
      * Convert one v1 archive to a format 2 record in place (new revision), keeping
      * the attribution each sample was priced with and `raw_pruned` as stored; raw
      * rows are not read or written. Only a day whose v2 record reads back exactly
      * as the verified v1 archive did is written; otherwise it stays v1 with a
-     * reason. Preview runs the same verification read-only and writes nothing.
+     *  reason. Preview runs the same verification read-only and writes nothing.
+     * `reattribute`: an `unattributed-gap` or `attribution-flag` day is re-attributed
+     * instead (see `reattributeV1Day`), deleting its raw rows; run only where compact reads are on.
      */
-    async convertDayToV2(siteId:string,start:Date,{apply,now}:{apply:boolean;now:Date}):Promise<DayConversionResult> {
+    async convertDayToV2(siteId:string,start:Date,{apply,now,reattribute=false}:{apply:boolean;now:Date;reattribute?:boolean}):Promise<DayConversionResult> {
         if(!siteId?.trim()||siteId.length>200||!Number.isSafeInteger(+start)||!Number.isSafeInteger(+now))throw new Error('Invalid conversion request');
         if(apply&&!this.mutationGuard)throw new Error('A mutation guard is required to convert an archive');
         const client=await this.pool.connect();
@@ -645,13 +741,13 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 WHERE x.site_id=a.site_id AND x.day_start=a.day_start AND x.revision=a.revision),'[]') AS summaries
                 FROM "EnergyDayArchive" a LEFT JOIN "Site" s ON s.id=a.site_id WHERE a.site_id=$1 AND a.day_start=$2${apply?' FOR UPDATE OF a':''}`,[siteId,start])).rows[0];
             if(!old)throw new Error('Archive day not found');
-            const result=await this.convertArchive(client,old,apply,now);
+            const result=await this.convertArchive(client,old,apply,now,reattribute);
             await client.query('COMMIT');return result;
         } catch(error) {await client.query('ROLLBACK');throw error;}
         finally {client.release(apply&&this.transactionTimeoutMs!==undefined);}
     }
 
-    private async convertArchive(client:PoolClient,old:ConversionRecord,apply:boolean,now:Date):Promise<DayConversionResult> {
+    private async convertArchive(client:PoolClient,old:ConversionRecord,apply:boolean,now:Date,reattribute:boolean):Promise<DayConversionResult> {
         if(old.format_version===2)return {status:'already-v2'};
         const left=(reason:V1ConversionReason):DayConversionResult=>({status:'left-v1',reason});
         if(old.format_version!==1||old.metadata_version!==2)return left('legacy-metadata');
@@ -668,7 +764,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         let converted=convertV1Day(day);
         // Only a gap across a period boundary needs the site's tariff versions (a few rows), so the usual day skips them.
         if('reason' in converted&&converted.reason==='unattributed-gap')converted=convertV1Day(day,await this.gapPricer(client,old.site_id,timezone!));
-        if('reason' in converted)return left(converted.reason);
+        if('reason' in converted)return reattribute&&REATTRIBUTABLE.has(converted.reason)?this.reattributeV1Day(client,old,rows,apply,now):left(converted.reason);
         const {archive,attribution,metadata,status,fetchedAt,latest,payloadChecksum}=converted.day;
         if(!apply)return {status:'convertible',dayStatus:status};
         const revision=await this.replaceDay(client,old.site_id,start,end,rows.length,{archive,summaries:metadata.summaries,
@@ -676,6 +772,35 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         // The database's own digest check must agree before the conversion commits.
         await client.query('SELECT public.verify_compact_day_metadata($1,$2,false)',[old.site_id,start]);
         return {status:'converted',revision,dayStatus:status};
+    }
+
+    /**
+     * A v1 day whose attribution v2 cannot reproduce keeps its samples and takes
+     * segments from the current tariff, as every importer write (and a Tesla
+     * refetch of the same samples) would; no Tesla request, so tokenless sites
+     * too. Raw rows still holding the day are first proven equal to the archive in
+     * the database (no read-back), then deleted with it as `writeDay(..., {replaceRaw})`
+     * does: their per-sample IDs are the attribution being replaced.
+     */
+    private async reattributeV1Day(client:PoolClient,old:ConversionRecord,rows:EnergyData[],apply:boolean,now:Date):Promise<DayConversionResult> {
+        const start=new Date(old.day_start),end=new Date(old.day_end);
+        if(!old.raw_pruned) {
+            const source=(await client.query<{digest:string;samples:number}>('SELECT * FROM public.compact_raw_day_digest($1,$2,$3)',[old.site_id,start,end])).rows[0];
+            if(source.samples!==rows.length||source.digest!==rawDayDigest(rows,old.site_id,start,end))return {status:'left-v1',reason:'raw-mismatch'};
+        }
+        const {tariffs}=await this.tariffs(client,old.site_id,true);
+        if(!tariffs.length)return {status:'left-v1',reason:'no-current-tariff'};
+        const prepared=this.prepareSamples(old.site_id,old.timezone!,start,end,rows.map(toSample),tariffs,new Date(old.created_at),now);
+        if(!apply)return {status:'reattributable',dayStatus:prepared.record!.status};
+        if(!old.raw_pruned) {
+            // Archive first, as writeDay does: with no archive left the raw-delete trigger only deletes the rows.
+            await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[old.site_id,start]);
+            const deleted=await client.query('DELETE FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3',[old.site_id,start,end]);
+            if(deleted.rowCount!==rows.length)throw new Error('Re-attribution raw row count mismatch');
+        }
+        const revision=await this.replaceDay(client,old.site_id,start,end,rows.length,prepared,true);
+        await client.query('SELECT public.verify_compact_day_metadata($1,$2,false)',[old.site_id,start]);
+        return {status:'reattributed',revision,dayStatus:prepared.record!.status};
     }
 
     /** Prices a slot under any recorded tariff version (current or not), as the importer did for its samples. */

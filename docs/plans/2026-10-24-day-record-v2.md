@@ -144,13 +144,39 @@ Harrison 11-14 → 11-28) is recorded once in `Site.history_backfill_from` so
 later runs start there. The 14-day gap-heal window governs automatic retries
 only, never how far back a backfill goes.
 
-**Open item (slice 5):** an empty day in the middle of history has no durable
-"checked" state, so a later backfill cannot tell "fetched and empty" from
-"never fetched". `writeDay([])` writes nothing and keeps an existing record (an
-empty response after a non-empty one is treated as a Tesla failure, not as
-truth). Empty-day semantics (a checked marker or checkpoint, retry age) must be
-settled before the backfill relies on them; a fetch failure stays distinct from
-a successful empty answer.
+### Empty days (decided 2026-10-25)
+
+A successful Tesla answer with no samples for a day is a fact worth keeping;
+a failed request is not.
+
+- **Marker, not a record:** `writeDay(..., [])` for a day with no record and no
+  raw rows inserts `EnergyDayEmpty (site_id, day_start, day_end, checked_at)`
+  (migration `20261025120000_day_record_empty_days.sql`; `checked_at` is the
+  request time, like `fetched_at`, and only moves forward) and returns
+  `checked-empty`. No payload, summaries or reader changes: readers never see
+  it. A marker is a few dozen bytes, so even years of empty days cost nothing
+  against the 500 MB quota.
+- **Fetch failure stays distinct:** `fetchDayForWrite` throws on a failed energy
+  or SOE request before `writeDay` runs, so a failure leaves no marker and the
+  day reads as "never fetched".
+- **Empty after non-empty:** published samples never disappear, so an empty
+  answer for a day that has a record (or raw rows) is a Tesla failure. It returns
+  `empty` and changes nothing: no marker, the record stays.
+- **Samples later:** a non-empty `writeDay` deletes the day's marker in the same
+  transaction.
+- **Retry age (same rule as `gapped`):** `getSettledEmptyDays` treats a marker as
+  final only when its check was requested after the day ended
+  (`checked_at >= day_end`, as `isDayFetchFinal`) and the day is older than the
+  14-day gap-heal window, and nothing has been stored for the day since. Inside
+  the window an empty day is retried like an `open` one (gap-heal still sees 0
+  samples); after it, a backfill skips it. No fetch counters.
+- **Backfill:** `scripts/backfill-compact-from-tesla.ts` reports `checked-empty`
+  and skips settled empty days (`settled-empty`) without a Tesla request. Slice
+  5's planner uses the same query. `Site.history_backfill_from` stays as the
+  cheap lower bound for the leading pre-provisioning run; markers cover interior
+  days, which a single checkpoint cannot (one failing day would pin it).
+- A timezone change drops the site's markers with its archives (re-checking an
+  empty day costs one request).
 
 ## Reads
 
@@ -179,13 +205,45 @@ a successful empty answer.
 - **Sites without working Tesla tokens** are never written by the importer, so
   their raw rows and v1 archives stay as they are until slice 5's cutover
   (convert in place; no refetch possible).
-- **Timezone changes** are blocked: the `invalidate_compact_energy_timezone`
-  trigger refuses a `Site.timezone` change while any of the site's days is
-  pruned, which every importer-written record is. A correction needs a
-  coordinated rebuild (re-key days from stored samples, or refetch where tokens
-  exist) before it can be allowed; until then the site refresh that carries a
-  new timezone fails loudly instead of overlapping old and new day partitions.
-  Open item for slice 5.
+- **Timezone changes** are no longer a failing refresh; see "Timezone changes"
+  below.
+
+## Timezone changes (decided 2026-10-25)
+
+Day records are keyed by local midnight, so a `Site.timezone` change moves every
+day boundary. The `invalidate_compact_energy_timezone` trigger still refuses the
+change while any day is pruned (it can't move a record that is the only copy);
+instead a change is a coordinated rebuild, and the site refresh never fails on it.
+
+- **Refresh keeps the old timezone:** `upsertSite` (`UPSERT_SITE_SQL`) keeps the
+  stored timezone while the site has any pruned day, stores Tesla's reported one
+  in `Site.json` as always, and returns the stored value; `Importer.ensureSite`
+  logs the mismatch with the script to run. Without pruned days the change goes
+  through as before (the trigger drops the unpruned archives, raw rebuilds them).
+- **Rebuild** (`CompactHistoryStore.rebuildTimezone`, operator script
+  `scripts/rebuild-site-timezone.ts --site-id <id> [--timezone <tz>] [--apply]`,
+  default timezone = Tesla's reported one): one transaction under the per-site
+  claim and the archive control row, so readers and writers see either the old
+  partition or the new one, never both.
+  1. Decode every pruned day (verified as recovery does). Unpruned archives are
+     not read: their raw rows already hold the samples.
+  2. Delete the site's markers and archives, then update `Site.timezone` (the
+     trigger now allows it).
+  3. Regroup the pruned samples by the new local midnight. A new day built only
+     from pruned samples becomes a v2 record: segments from the current tariff
+     under the new timezone (TOU periods are local-clock, so the old attribution
+     is wrong after the change anyway), status by the usual rule, `fetched_at`
+     its oldest source's, so any later Tesla fetch replaces it. A new day that
+     raw rows also touch gets its pruned samples back as raw rows (writes only,
+     no read-back), and raw stays its single source until the archive job or a
+     refetch writes it.
+  4. Preview runs all of it and rolls back.
+  No Tesla request, so tokenless sites rebuild too. Cost: one read of the
+  site's pruned payloads (~3 KB/day: ~3 MB for a three-year site); the
+  transaction has no 15 s budget (operator script, not a function).
+- Tested across the fall-back day: three UTC days re-keyed to Chicago become
+  four contiguous days (60, 288, 300 of 300, 216 samples), every sample
+  preserved, segments at Chicago offsets.
 
 ## Re-attribution
 
@@ -211,10 +269,33 @@ Convert every v1 archive to v2 once this format is final:
    budget (~a few KB read per day: the v1 payload).
 
 Readers support v1 and v2 until the migration reports zero v1 rows, then v1
-read support is removed. **Open item:** some days stay v1 by design (off-grid
-samples, `attribution-flag`, `unattributed-gap`) and a converter retry cannot
-change that; refetching is not possible for tokenless sites and would discard
-the original attribution. Until each class has a disposition, v1 reading stays.
+read support is removed (not kept indefinitely). Every class the converter
+leaves v1 by design has a disposition (decided 2026-10-25):
+
+- **`unattributed-gap`, `attribution-flag`: re-attribute** (`--reattribute`,
+  `CompactHistoryStore.reattributeV1Day`). The samples are kept exactly; the
+  segments come from the current tariff (`timelineRevision: current-tariff:<id>`),
+  which is what a Tesla refetch would produce (same published samples) and the
+  stated policy for every importer write (decision 2). The v1 attribution is
+  not worth preserving here: it is either unreproducible or flagged wrong. No
+  Tesla request, so tokenless sites too. A day that still has raw rows (every
+  Prod day today) is first proven equal to its archive in the database
+  (`compact_raw_day_digest`, no read-back), then its raw rows are deleted with
+  the archive, as `writeDay(..., {replaceRaw})` does; otherwise the archive job
+  would rebuild v1 from raw. Run only where compact reads are on. New left-v1
+  reasons in this mode: `raw-mismatch`, `no-current-tariff`.
+- **`off-grid`** (samples not on the 5-minute grid, which v2 cannot store):
+  tokened sites refetch the day (`Importer.refetchDays` with
+  `COMPACT_DAY_WRITES_ENABLED` on writes a v2 record and deletes raw); Tesla's
+  own samples are on the grid. Tokenless sites: snap each sample to the start of
+  its 5-minute interval (the label-as-start convention) and re-attribute, unless
+  two samples share a slot, which leaves the day for an operator. Not built:
+  Prod's first apply left 24 of 2,428 days v1, attributed above to the gap
+  rule; per-class counts weren't re-queried for this decision. Build the snap
+  only if the converter's `leftV1` report shows a tokenless off-grid day.
+- **`integrity`, `day-bounds`, `legacy-metadata`, mismatch reasons:** not
+  expected; if any appear, refetch (tokened) or investigate before removing v1
+  reads.
 
 **Implemented (slice 3):** `scripts/convert-archives-v2.ts` →
 `CompactHistoryStore.convertDayToV2` and `compact-v1-conversion.ts`.
@@ -330,4 +411,8 @@ the original attribution. Until each class has a disposition, v1 reading stays.
      yesterday's tail. `force` bypasses it; the import lock still collapses
      concurrent callers; the `live_status` cache is unchanged.
 5. **Cutover:** Tesla backfill for tokened sites, ops tooling, pause the
-   archive job, stop raw writes, later drop `EnergyData`.
+   archive job, stop raw writes, later drop `EnergyData`. Relies on the
+   decisions above: settled empty days (`getSettledEmptyDays`) bound the
+   backfill, a timezone change goes through `rebuild-site-timezone.ts`, and the
+   converter runs with `--reattribute` (plus refetches for `off-grid`) until it
+   reports zero v1 rows, after which v1 read support is removed.
