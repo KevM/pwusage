@@ -2,7 +2,7 @@ import { withIoDeadline, ioSignal, checkIoDeadline } from './io-deadline';
 import { Importer } from './importer';
 import { type EnergySiteLiveStatus } from './tesla-client';
 import { SiteRepo } from './site-repo';
-import { EnergyRepo } from './energy-repo';
+import { createEnergyRepo } from './energy-repo-factory';
 import { withImportLock } from './import-lock';
 import { createTeslaClientForSite } from './tesla-client-factory';
 
@@ -142,12 +142,15 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
             state.lastRefreshAt = Date.now();
 
             try {
-                const energyRepo = new EnergyRepo();
+                // Cached site; the importer loads it again for today's window.
+                const site = await siteRepo.getSite(siteId);
+                if (!site) return { status: 'no-new-rows' };
                 const importer = new Importer(client);
 
-                // Sequential: the importer needs the latest stored row to decide
-                // whether yesterday's tail (after the last pre-midnight refresh) is missing.
-                const latest = await energyRepo.getLatestEnergyData(siteId);
+                // Sequential: the importer needs the latest stored sample (raw or day
+                // record) to decide whether yesterday's tail (after the last
+                // pre-midnight refresh) is missing.
+                const latest = await createEnergyRepo(site.timezone).getLatestEnergyData(siteId);
                 checkIoDeadline();
                 const rows = await importer.getTodayData(siteId, latest?.timestamp ?? null);
 

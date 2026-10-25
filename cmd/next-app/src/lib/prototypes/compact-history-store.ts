@@ -5,14 +5,17 @@ import type { Pool, PoolClient } from 'pg';
 import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow,DailyCoverageStat } from '../energy-repo';
 import type { EnergyData, Tariff, TariffSchedule, TariffSeason } from '../db-types';
 import { addDaysInSiteTimezone, getSiteMidnight,parseSiteLocalDateToMidnight,formatSiteDate } from '../date-utils';
-import {recoverVerifiedSamples,rawDayDigest,type RecoveryArchive,type EnergyWrite} from './compact-energy-recovery';
+import {equalRecoveryValue,recoverVerifiedSamples,rawDayDigest,type RecoveryArchive,type EnergyWrite} from './compact-energy-recovery';
 import {validateMaintenanceDates,type MaintenanceSnapshot} from './compact-history-maintenance';
 import { auditTariffAttribution } from './compact-tariff-audit';
-import { decodeDay, encodeDay, rollupDay, type DayRollup } from './compact-energy';
+import { decodeDay, decodeDaySamples, encodeDay, encodeDaySamples, rollupDay, toSample, type DayArchive, type DayRollup, type EnergySample } from './compact-energy';
 import {buildLatestMetadata,verifyLatestMetadata,type LatestMetadata,type LatestSample} from './compact-latest-metadata';
-import { buildDayMetadata } from './compact-day-metadata';
+import { buildDayMetadata, buildDayMetadataV3, type SummarizedHistoryDay } from './compact-day-metadata';
+import { dayStatus, deriveDayAttribution, type DayAttribution, type DayStatus } from './day-attribution';
+import { Schedule } from '../schedule';
 import {beginTransaction} from '../pg-transaction';
-import type { ScalarHistorySnapshot, AggregateHistorySnapshot, HistorySnapshot, HistorySnapshotStore } from './compact-history-reader';
+import {convertV1Day,type V1ConversionReason} from './compact-v1-conversion';
+import type { ScalarHistorySnapshot, AggregateHistorySnapshot, FinalizedHistoryDay, HistorySnapshot, HistorySnapshotStore } from './compact-history-reader';
 
 type RawRecord = { site_id: string; timestamp: Date; tariff_id: number; tariff_schedule_id: number | null;
     load_power: number | string; solar_power: number | string; grid_power: number | string;
@@ -25,21 +28,27 @@ const raw = (r: RawRecord): EnergyData => ({ ...r, timestamp: new Date(r.timesta
 type ArchiveRecord=RecoveryArchive;
 /**
  * An `EnergyDayArchive` row (alias `a`) that planning and gap-heal treat as a
- * finished day: verified metadata, complete tariff attribution, and either
- * every 5-minute slot present or raw already trimmed (the archive is then the
- * only copy, and re-fetching would restore and drop it). An unpruned archive
- * with holes is not settled, so its raw coverage still decides.
+ * finished day. A v2 record (metadata 3) is settled once `complete` or
+ * `gapped`; an `open` one (today, or a recent day short of samples) is not, so
+ * its stored samples count and gap-heal refetches it. A v1 archive needs
+ * verified metadata, complete tariff attribution, and either every 5-minute
+ * slot present or raw already trimmed (the archive is then the only copy, and
+ * re-fetching would restore and drop it). An unpruned v1 archive with holes is
+ * not settled, so its raw coverage still decides.
  */
-export const SETTLED_ARCHIVE_DAY_SQL=`(a.metadata_version=2 AND a.metadata_checksum IS NOT NULL AND a.attribution_complete
-    AND (a.raw_pruned OR a.sample_count>=a.expected_slots))`;
+export const SETTLED_ARCHIVE_DAY_SQL=`(a.metadata_checksum IS NOT NULL AND CASE WHEN a.metadata_version=3 THEN a.status IN ('complete','gapped')
+    ELSE a.metadata_version=2 AND a.attribution_complete AND (a.raw_pruned OR a.sample_count>=a.expected_slots) END)`;
+/** Archive rows whose day metadata is checksummed (v1 archives on metadata 2, v2 records on metadata 3). */
+const MODERN_METADATA_SQL=(alias='')=>`${alias}metadata_version IN (2,3) AND ${alias}metadata_checksum IS NOT NULL`;
 
-type DetailArchiveRecord = Pick<ArchiveRecord, 'site_id'|'day_start'|'day_end'|'revision'|'format_version'|'codec'|'axis'|'checksum'|'payload'|'expected_slots'|'attribution_complete'>;
-const detailColumns = 'site_id,day_start,day_end,revision,format_version,codec,axis,checksum,payload,expected_slots,attribution_complete';
+type DetailArchiveRecord = Pick<ArchiveRecord, 'site_id'|'day_start'|'day_end'|'revision'|'format_version'|'codec'|'axis'|'checksum'|'payload'|'expected_slots'|'attribution_complete'|'attribution'>;
+const detailColumns = 'site_id,day_start,day_end,revision,format_version,codec,axis,checksum,payload,expected_slots,attribution_complete,attribution';
+const archiveOf=(a:DetailArchiveRecord):DayArchive=>({codec:a.codec,axis:a.axis,sha256:a.checksum,data:a.payload,expectedSlots:a.expected_slots});
 type LatestArchiveRecord=Pick<ArchiveRecord,'site_id'|'day_start'|'day_end'|'format_version'|'checksum'|'latest_metadata'|'latest_checksum'>;
 const latestColumns='site_id,day_start,day_end,format_version,checksum,latest_metadata,latest_checksum';
 const projectedEnergy=(s:LatestSample):LatestEnergySnapshot=>({...s,timestamp:new Date(s.timestamp)});
 function verifyLatest(a:LatestArchiveRecord):LatestMetadata {
-    if(a.format_version!==1||!a.latest_metadata||!a.latest_checksum)throw new Error('Latest metadata mismatch');
+    if((a.format_version!==1&&a.format_version!==2)||!a.latest_metadata||!a.latest_checksum)throw new Error('Latest metadata mismatch');
     verifyLatestMetadata(a.latest_metadata,a.latest_checksum,{siteId:a.site_id,start:new Date(a.day_start),end:new Date(a.day_end),archiveChecksum:a.checksum});
     return a.latest_metadata;
 }
@@ -55,8 +64,22 @@ function sameSummaries(expected: DayRollup[], actual: DayRollup[]): boolean {
     const sorted = (rows: DayRollup[]) => [...rows].sort((a,b)=>a.tariff_id-b.tariff_id || (a.tariff_schedule_id??-1)-(b.tariff_schedule_id??-1));
     try { deepStrictEqual(sorted(expected),sorted(actual)); return true; } catch { return false; }
 }
+/** A day's chart payload and summaries for the reader; format 2 carries its segment timeline. */
+function detailDay(a:DetailArchiveRecord,summaries:SummaryRecord[]):FinalizedHistoryDay {
+    if((a.format_version!==1&&a.format_version!==2)||(a.format_version===2)!==(a.attribution!==null))throw new Error('Unsupported archive version');
+    return {siteId:a.site_id,start:new Date(a.day_start),end:new Date(a.day_end),attributionComplete:a.attribution_complete,archive:archiveOf(a),
+        summaries:summaries.filter(s=>s.revision===a.revision).map(summary),...(a.attribution?{attribution:a.attribution}:{})};
+}
 export interface ArchiveMutationResult {status:'busy'|'trimmed'|'already-trimmed'|'restored'|'not-pruned';samples:number}
-export interface FinalizationResult { status: 'busy' | 'empty' | 'finalized' | 'unchanged' | 'written'; revision?: string;attributionComplete?:boolean }
+export interface FinalizationResult { status: 'busy' | 'empty' | 'finalized' | 'unchanged'; revision?: string;attributionComplete?:boolean }
+/** `superseded`: the stored record came from a newer (or the same) fetch and was kept. */
+export interface DayWriteResult { status:'busy'|'empty'|'written'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
+/** v1 -> v2 conversion of one archive; `convertible` is a preview's verified result. */
+export interface DayConversionResult { status:'busy'|'converted'|'convertible'|'already-v2'|'left-v1'; reason?:V1ConversionReason; revision?:string; dayStatus?:DayStatus }
+/** An archive row with its site's timezone and its revision's summaries (JSON, read with full float precision). */
+type ConversionRecord=ArchiveRecord&{created_at:Date;timezone:string|null;summaries:SummaryRecord[]};
+type PreparedDay={archive:DayArchive;summaries:DayRollup[];attributionComplete:boolean;metadata:SummarizedHistoryDay;payloadChecksum:string;
+    latest:{data:LatestMetadata;checksum:string};record?:{attribution:DayAttribution;status:DayStatus;fetchedAt:Date}};
 
 export class CompactHistoryStore implements HistorySnapshotStore {
     constructor(private readonly pool: Pool,private readonly transactionTimeoutMs?:number,private readonly mutationGuard?:(client:PoolClient)=>Promise<void>) {
@@ -99,12 +122,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                     AND "EnergyData".timestamp >= a.day_start AND "EnergyData".timestamp < a.day_end))
                 ORDER BY timestamp LIMIT 105409`, [siteId,start,end,verifyRawOverlap]);
             if (samples.rows.length > 105408) throw new Error('History sample limit exceeded');
-            const days = archives.rows.map(a => {
-                if (a.format_version !== 1) throw new Error('Unsupported archive version');
-                return { siteId: a.site_id, start: new Date(a.day_start), end: new Date(a.day_end), attributionComplete: a.attribution_complete,
-                    archive: { codec: a.codec, axis: a.axis, sha256: a.checksum, data: a.payload, expectedSlots: a.expected_slots },
-                    summaries: summaries.rows.filter(s=>s.revision===a.revision).map(summary) };
-            });
+            const days = archives.rows.map(a => detailDay(a,summaries.rows));
             await client.query('COMMIT');
             return { raw: samples.rows.map(raw), days };
         } catch (error) { await client.query('ROLLBACK'); throw error; }
@@ -125,8 +143,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 if(a.latest_metadata && verifyLatest(a).sample.timestamp<=+asOf)sample=projectedEnergy(a.latest_metadata.sample);
                 else {
                     const detail=(await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2`,[siteId,a.day_start])).rows[0];
-                    if(detail.format_version!==1)throw new Error('Unsupported archive version');
-                    const rows=decodeDay({codec:detail.codec,axis:detail.axis,sha256:detail.checksum,data:detail.payload,expectedSlots:detail.expected_slots},{siteId,start:new Date(detail.day_start),end:new Date(detail.day_end)});
+                    const rows=this.decodeSamples(detail);
                     const row=rows.findLast(r=>r.timestamp<=asOf);
                     if(row)sample={timestamp:row.timestamp,batterySoc:row.battery_soc??null,batteryPower:row.battery_power,solarPower:row.solar_power,gridPower:row.grid_power,loadPower:row.load_power};
                 }
@@ -136,61 +153,77 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         } catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
     }
 
-    async getLatestBatterySoc(siteId:string,since:Date):Promise<LatestBatterySoc|null> {
-        const now=new Date();
-        if(!siteId||!Number.isSafeInteger(+since)||+now-+since>366*86400000)throw new Error('Invalid SOC window or exceeds 366 days');
+    async getLatestBatterySoc(siteId:string,since:Date,now=new Date()):Promise<LatestBatterySoc|null> {
+        if(!siteId||!Number.isSafeInteger(+since)||!Number.isSafeInteger(+now)||+now-+since>366*86400000)throw new Error('Invalid SOC window or exceeds 366 days');
         if(since>now)return null;
         const client=await this.pool.connect();
         try {
             await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
             const rawRow=(await client.query<{timestamp:Date;battery_soc:number}>(`SELECT timestamp,battery_soc FROM "EnergyData" WHERE site_id=$1 AND timestamp>=$2 AND timestamp<=$3 AND battery_soc IS NOT NULL ORDER BY timestamp DESC LIMIT 1`,[siteId,since,now])).rows[0];
-            const guard=(await client.query<{verified:boolean;legacy:boolean}>(`SELECT COALESCE(bool_and(CASE WHEN latest_metadata IS NOT NULL THEN public.verify_compact_latest_metadata(site_id,day_start) ELSE true END),true) AS verified,
-                COALESCE(bool_or(latest_metadata IS NULL),false) AS legacy FROM "EnergyDayArchive" WHERE site_id=$1 AND day_end>$2 AND day_start<=$3`,[siteId,since,now])).rows[0];
+            const guard=(await client.query<{verified:boolean;legacy:boolean;cut:boolean}>(`SELECT COALESCE(bool_and(CASE WHEN latest_metadata IS NOT NULL THEN public.verify_compact_latest_metadata(site_id,day_start) ELSE true END),true) AS verified,
+                COALESCE(bool_or(latest_metadata IS NULL),false) AS legacy,
+                COALESCE(bool_or(day_end>$3 AND (latest_metadata->'soc'->>'timestamp')::bigint>$4),false) AS cut
+                FROM "EnergyDayArchive" WHERE site_id=$1 AND day_end>$2 AND day_start<=$3`,[siteId,since,now,+now])).rows[0];
             if(!guard.verified)throw new Error('Latest metadata mismatch');
             if(guard.legacy)throw new Error('Latest SOC metadata requires rebuild');
             const archive=(await client.query<LatestArchiveRecord>(`SELECT ${latestColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND latest_metadata IS NOT NULL
                 AND (latest_metadata->'soc'->>'timestamp')::bigint >= $2 AND (latest_metadata->'soc'->>'timestamp')::bigint <= $3
                 ORDER BY (latest_metadata->'soc'->>'timestamp')::bigint DESC LIMIT 1`,[siteId,+since,+now])).rows[0];
             let result:LatestBatterySoc|null=rawRow?{timestamp:new Date(rawRow.timestamp),value:Number(rawRow.battery_soc)}:null;
+            const consider=(timestamp:number,value:number)=>{if(!result||timestamp>+result.timestamp)result={timestamp:new Date(timestamp),value};};
             if(archive) {
                 const charge=verifyLatest(archive).soc;
-                if(charge && (!result||charge.timestamp>+result.timestamp))result={timestamp:new Date(charge.timestamp),value:charge.value};
+                if(charge)consider(charge.timestamp,charge.value);
+            }
+            // Only the day containing the cutoff can project a SOC after it while holding earlier SOC
+            // samples (a historical cutoff); its payload is read just then.
+            if(guard.cut) {
+                const detail=(await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2 AND day_end>$2`,[siteId,now])).rows[0];
+                const sample=this.decodeSamples(detail).findLast(s=>s.battery_soc!==null&&s.timestamp>=since&&s.timestamp<=now);
+                if(sample)consider(+sample.timestamp,sample.battery_soc!);
             }
             await client.query('COMMIT');return result;
         }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
     }
 
-    /** Scalar modern freshness; only legacy metadata needs the selected day's payload. */
-    async getLatestTimestamp(siteId:string):Promise<Date|null> {
-        if(!siteId) throw new Error('Invalid site');
+    /**
+     * Scalar modern freshness, today's open record included; only legacy
+     * metadata, or a record with samples after `asOf`, needs the day's payload.
+     */
+    async getLatestTimestamp(siteId:string,asOf=new Date()):Promise<Date|null> {
+        if(!siteId||!Number.isSafeInteger(+asOf)) throw new Error('Invalid site');
         const client=await this.pool.connect();
         try {
             await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');
             await client.query("SET LOCAL statement_timeout='15s'");
             const rawLatest=(await client.query<{timestamp:Date}>(`SELECT timestamp FROM "EnergyData"
-                WHERE site_id=$1 AND timestamp<=CURRENT_TIMESTAMP ORDER BY timestamp DESC LIMIT 1`,[siteId])).rows[0]?.timestamp;
-            const archive=(await client.query<{day_start:Date;day_end:Date;last_timestamp:Date|null;modern:boolean;verified:boolean}>(`SELECT day_start,day_end,last_timestamp,
-                (metadata_version=2 AND metadata_checksum IS NOT NULL) AS modern,
-                CASE WHEN metadata_version=2 AND metadata_checksum IS NOT NULL
+                WHERE site_id=$1 AND timestamp<=$2 ORDER BY timestamp DESC LIMIT 1`,[siteId,asOf])).rows[0]?.timestamp;
+            // The day containing asOf may have no sample at or before it yet; the previous day then has the latest.
+            const archives=(await client.query<{day_start:Date;day_end:Date;last_timestamp:Date|null;modern:boolean;verified:boolean}>(`SELECT day_start,day_end,last_timestamp,
+                (${MODERN_METADATA_SQL()}) AS modern,
+                CASE WHEN ${MODERN_METADATA_SQL()}
                     THEN public.verify_compact_day_metadata(site_id,day_start,false) ELSE true END AS verified
-                FROM "EnergyDayArchive" WHERE site_id=$1 AND day_end<=CURRENT_TIMESTAMP ORDER BY day_start DESC LIMIT 1`,[siteId])).rows[0];
+                FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2 ORDER BY day_start DESC LIMIT 2`,[siteId,asOf])).rows;
             let archivedLatest:Date|null=null;
-            if(archive) {
+            for(const archive of archives) {
                 if(!archive.verified) throw new Error('Day metadata mismatch');
-                if(archive.modern) archivedLatest=archive.last_timestamp?new Date(archive.last_timestamp):null;
+                if(archive.modern&&archive.last_timestamp&&archive.last_timestamp<=asOf) archivedLatest=new Date(archive.last_timestamp);
                 else {
                     const a=(await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive"
                         WHERE site_id=$1 AND day_start=$2`,[siteId,archive.day_start])).rows[0];
-                    if(a.format_version!==1) throw new Error('Unsupported archive version');
-                    const samples=decodeDay({codec:a.codec,axis:a.axis,sha256:a.checksum,data:a.payload,expectedSlots:a.expected_slots},
-                        {siteId,start:new Date(a.day_start),end:new Date(a.day_end)});
-                    archivedLatest=samples.at(-1)?.timestamp??null;
+                    archivedLatest=this.decodeSamples(a).findLast(sample=>sample.timestamp<=asOf)?.timestamp??null;
                 }
+                if(archivedLatest)break;
             }
             const candidates=[rawLatest?new Date(rawLatest):null,archivedLatest].filter((d):d is Date=>d!==null);
             await client.query('COMMIT');
             return candidates.length?new Date(Math.max(...candidates.map(Number))):null;
         } catch(error) {await client.query('ROLLBACK');throw error;} finally {client.release();}
+    }
+
+    private decodeSamples(a:DetailArchiveRecord):EnergySample[] {
+        if(a.format_version!==1&&a.format_version!==2)throw new Error('Unsupported archive version');
+        return decodeDaySamples(archiveOf(a),{siteId:a.site_id,start:new Date(a.day_start),end:new Date(a.day_end)});
     }
 
     private async claimMutation(client:PoolClient,siteId:string):Promise<boolean> {
@@ -342,10 +375,10 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 COALESCE(max(EXTRACT(EPOCH FROM (timestamp-previous))*1000),0) AS gap FROM samples GROUP BY day ORDER BY day`,[siteId,start,end,site.timezone]);
             if(result.rows.reduce((sum,r)=>sum+r.count,0)>126976)throw new Error('Maintenance sample limit exceeded');
             const archives=rebuild?[]:(await client.query<{start:Date;attribution_complete:boolean;verified:boolean;modern:boolean;raw_pruned:boolean;sample_count:number;first_timestamp:Date;last_timestamp:Date;max_interior_gap_ms:number}>(`SELECT day_start AS start,attribution_complete,raw_pruned,sample_count,first_timestamp,last_timestamp,max_interior_gap_ms,
-                format_version=1 AND CASE WHEN payload_checksum IS NOT NULL THEN payload_checksum=encode(sha256(payload),'hex') ELSE true END AND CASE WHEN metadata_version=2 AND metadata_checksum IS NOT NULL
+                format_version IN (1,2) AND CASE WHEN payload_checksum IS NOT NULL THEN payload_checksum=encode(sha256(payload),'hex') ELSE true END AND CASE WHEN ${MODERN_METADATA_SQL()}
                     THEN public.verify_compact_day_metadata(site_id,day_start,false) ELSE true END
                     AND CASE WHEN latest_metadata IS NOT NULL THEN public.verify_compact_latest_metadata(site_id,day_start) ELSE true END AS verified,
-                metadata_version=2 AND metadata_checksum IS NOT NULL AND latest_metadata IS NOT NULL AND payload_checksum IS NOT NULL AS modern
+                ${MODERN_METADATA_SQL()} AND latest_metadata IS NOT NULL AND payload_checksum IS NOT NULL AS modern
                 FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start >= $2 AND day_end <= $3 ORDER BY day_start`,[siteId,start,end])).rows;
             if(archives.some(a=>!a.verified))throw new Error('Archive integrity mismatch');
             const coverage:DailyCoverageStat[]=result.rows.map(r=>({localDayKey:r.key,count:r.count,first:new Date(r.first),last:new Date(r.last),maxInteriorGapMs:Number(r.gap)}));
@@ -400,7 +433,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const site=await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1',[siteId]);
             // Deliberately omit payload: complete modern days require only scalar metadata.
             const full=await client.query<Omit<ArchiveRecord,'payload'>>(`SELECT site_id,day_start,day_end,revision,format_version,codec,axis,checksum,
-                expected_slots,sample_count,attribution_complete,first_timestamp,last_timestamp,max_interior_gap_ms,metadata_checksum,metadata_version
+                expected_slots,sample_count,attribution_complete,first_timestamp,last_timestamp,max_interior_gap_ms,metadata_checksum,metadata_version,attribution
                 FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start >= $2 AND day_end <= $3 AND metadata_checksum IS NOT NULL ORDER BY day_start`,[siteId,start,end]);
             const partial=await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<$3 AND day_end>$2
                 AND NOT (day_start >= $2 AND day_end <= $3 AND metadata_checksum IS NOT NULL) ORDER BY day_start`,[siteId,start,end]);
@@ -410,13 +443,12 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp >= a.day_start AND e.timestamp < a.day_end)
                 ORDER BY timestamp LIMIT 105409`,[siteId,start,end]);
             if (samples.rows.length>105408) throw new Error('History sample limit exceeded');
-            const parts=partial.rows.map(a=>({siteId:a.site_id,start:new Date(a.day_start),end:new Date(a.day_end),attributionComplete:a.attribution_complete,
-                archive:{codec:a.codec,axis:a.axis,sha256:a.checksum,data:a.payload,expectedSlots:a.expected_slots},
-                summaries:summaries.filter(s=>s.revision===a.revision).map(summary)}));
+            const parts=partial.rows.map(a=>detailDay(a,summaries));
             const fullDays=full.rows.map(a=>({siteId:a.site_id,start:new Date(a.day_start),end:new Date(a.day_end),attributionComplete:a.attribution_complete,
                 sampleCount:a.sample_count,first:new Date(a.first_timestamp??NaN),last:new Date(a.last_timestamp??NaN),
-                maxInteriorGapMs:a.max_interior_gap_ms??NaN,checksum:a.metadata_checksum??'',checksumVersion:a.metadata_version,summaries:summaries.filter(s=>s.revision===a.revision).map(summary)}));
-            if ([...full.rows,...partial.rows].some(a=>a.format_version!==1)) throw new Error('Unsupported archive version');
+                maxInteriorGapMs:a.max_interior_gap_ms??NaN,checksum:a.metadata_checksum??'',checksumVersion:a.metadata_version,summaries:summaries.filter(s=>s.revision===a.revision).map(summary),
+                ...(a.metadata_version===3&&a.attribution?{attribution:a.attribution}:{})}));
+            if (full.rows.some(a=>a.format_version!==1&&a.format_version!==2)) throw new Error('Unsupported archive version');
             await client.query('COMMIT');
             return {timezone:site.rows[0]?.timezone??null,fullDays,detail:{raw:samples.rows.map(raw),days:parts}};
         } catch (error) { await client.query('ROLLBACK');throw error; } finally { client.release(); }
@@ -430,23 +462,23 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
             const site=await client.query<{timezone:string;has_detail:boolean;has_raw:boolean;verified:boolean;attribution_complete:boolean}>(`SELECT timezone,
                 EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2
-                    AND NOT(a.day_start >= $2 AND a.day_end <= $3 AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL)) AS has_detail,
+                    AND NOT(a.day_start >= $2 AND a.day_end <= $3 AND ${MODERN_METADATA_SQL('a.')})) AS has_detail,
                 EXISTS (SELECT 1 FROM "EnergyData" e WHERE e.site_id=$1 AND e.timestamp >= $2 AND e.timestamp < $3
                     AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end)) AS has_raw,
                 COALESCE((SELECT bool_and(public.verify_compact_day_metadata(a.site_id,a.day_start,false))
                     FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
-                    AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL),true) AS verified,
+                    AND ${MODERN_METADATA_SQL('a.')}),true) AS verified,
                 COALESCE((SELECT bool_and(a.attribution_complete AND NOT EXISTS (
                     SELECT 1 FROM "EnergyDaySummary" s WHERE s.site_id=a.site_id AND s.day_start=a.day_start AND s.revision=a.revision AND s.tariff_schedule_id IS NULL
                 )) FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
-                    AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL),true) AS attribution_complete
+                    AND ${MODERN_METADATA_SQL('a.')}),true) AS attribution_complete
                 FROM "Site" WHERE id=$1`,[siteId,start,end]);
             if(site.rows[0] && !site.rows[0].verified) throw new Error('Day metadata mismatch');
             const timezone=site.rows[0]?.timezone??null;
             const aggregates:CycleAggregateRow[]=[];const coverage:DailyCoverageStat[]=[];
             const eligible=`SELECT a.site_id,a.day_start,a.revision,a.first_timestamp,a.last_timestamp,a.sample_count,a.max_interior_gap_ms,
                 ${SETTLED_ARCHIVE_DAY_SQL} AS settled FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
-                AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL`;
+                AND ${MODERN_METADATA_SQL('a.')}`;
             if(mode.billing) {
                 const result=await client.query<CycleAggregateRow>(`WITH eligible AS MATERIALIZED (${eligible})
                     SELECT s.day_start AS day,s.tariff_id,s.tariff_schedule_id,s.load_power,s.solar_power,s.grid_power,s.battery_power
@@ -461,17 +493,15 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 coverage.push(...result.rows.map(r=>({localDayKey:r.key,count:r.count,first:new Date(r.first),last:new Date(r.last),maxInteriorGapMs:r.gap,archived:r.settled})));
             }
             const partial=site.rows[0]?.has_detail?await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<$3 AND day_end>$2
-                AND NOT (day_start >= $2 AND day_end <= $3 AND metadata_version=2 AND metadata_checksum IS NOT NULL) ORDER BY day_start`,[siteId,start,end]):{rows:[]};
+                AND NOT (day_start >= $2 AND day_end <= $3 AND ${MODERN_METADATA_SQL()}) ORDER BY day_start`,[siteId,start,end]):{rows:[]};
             const summaries=partial.rows.length?(await client.query<SummaryRecord>(`SELECT s.* FROM "EnergyDaySummary" s JOIN "EnergyDayArchive" a USING(site_id,day_start,revision)
-                WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2 AND NOT (a.day_start >= $2 AND a.day_end <= $3 AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL)
+                WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2 AND NOT (a.day_start >= $2 AND a.day_end <= $3 AND ${MODERN_METADATA_SQL('a.')})
                 ORDER BY s.day_start,s.tariff_id,s.tariff_schedule_id NULLS FIRST`,[siteId,start,end])).rows:[];
             const rawRows=site.rows[0]?.has_raw?await client.query<RawRecord>(`SELECT ${columns} FROM "EnergyData" e WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3
                 AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end)
                 ORDER BY timestamp LIMIT 105409`,[siteId,start,end]):{rows:[]};
             if(rawRows.rows.length>105408) throw new Error('History sample limit exceeded');
-            const days=partial.rows.map(a=>({siteId:a.site_id,start:new Date(a.day_start),end:new Date(a.day_end),attributionComplete:a.attribution_complete,
-                archive:{codec:a.codec,axis:a.axis,sha256:a.checksum,data:a.payload,expectedSlots:a.expected_slots},summaries:summaries.filter(s=>s.revision===a.revision).map(summary)}));
-            if(partial.rows.some(a=>a.format_version!==1)) throw new Error('Unsupported archive version');
+            const days=partial.rows.map(a=>detailDay(a,summaries));
             await client.query('COMMIT');return {attributionComplete:site.rows[0]?.attribution_complete??true,timezone,aggregates,coverage,detail:{raw:rawRows.rows.map(raw),days}};
         } catch(error) {await client.query('ROLLBACK');throw error;} finally {client.release();}
     }
@@ -510,6 +540,12 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             if(old && rows.length!==old.sample_count)throw new Error('Raw archive source incomplete; restore before rebuilding');
             if (!rows.length) { await client.query('COMMIT'); return { status:'empty' }; }
             const {archive,summaries,attributionComplete,metadata,payloadChecksum,latest}=await this.prepareDay(client,siteId,timezone,start,end,rows);
+            // A day converted from v1 keeps its record while it still recovers to exactly the raw rows.
+            if(old?.format_version===2&&old.attribution_complete===attributionComplete&&+old.day_end===+end) {
+                let same=false;
+                try {same=equalRecoveryValue(await this.recoverySamples(client,old),rows);} catch { /* Rebuild a damaged record from raw. */ }
+                if(same) {await client.query('COMMIT');return {status:'unchanged',revision:old.revision,attributionComplete};}
+            }
             let oldLatestValid=false;
             if(old) {try {verifyLatest(old);oldLatestValid=true;}catch { /* Retry repairs stale/missing projections. */ }}
             const previousSummaries = old ? (await client.query<SummaryRecord>(
@@ -530,13 +566,14 @@ export class CompactHistoryStore implements HistorySnapshotStore {
     }
 
     /**
-     * Write one finished site-local day straight from samples fetched from Tesla,
-     * as the only copy: no raw rows are written or read back, so a backfill costs
-     * no read egress and stages nothing in "EnergyData". Replaces any archive for
-     * the day (Tesla is the source of truth). Refuses a day that still has raw rows,
-     * whose archive the raw source owns.
+     * Write one site-local day, today included, straight from a Tesla fetch as the
+     * only copy (format 2: samples, plus a segment timeline from the site's current
+     * tariff). No raw rows are written or read back, so it costs no read egress.
+     * Tesla is the source of truth, so the record is replaced, but only by a newer
+     * fetch: an older, slower response is `superseded` and changes nothing.
+     * Refuses a day that still has raw rows, whose archive the raw source owns.
      */
-    async writeDayFromSamples(siteId:string,start:Date,rows:EnergyData[],now=new Date()):Promise<FinalizationResult> {
+    async writeDay(siteId:string,start:Date,samples:EnergySample[],fetchedAt:Date,now=new Date()):Promise<DayWriteResult> {
         const client=await this.pool.connect();
         try {
             await beginTransaction(client,'ISOLATION LEVEL READ COMMITTED');
@@ -546,24 +583,99 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             await this.mutationGuard?.(client);
             if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy'};}
             const timezone=(await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1',[siteId])).rows[0]?.timezone;
-            if(!timezone||!Number.isSafeInteger(+start)||!Number.isSafeInteger(+now)||+start!==+getSiteMidnight(start,timezone))throw new Error('Expected a completed local day');
+            if(!timezone||!Number.isSafeInteger(+start)||!Number.isSafeInteger(+now)||+start!==+getSiteMidnight(start,timezone)||start>now)throw new Error('Expected a started local day');
+            // A fetch time from the future would lock the day against every later fetch.
+            if(!Number.isSafeInteger(+fetchedAt)||fetchedAt>now)throw new Error('Invalid fetch time');
             const end=addDaysInSiteTimezone(start,1,timezone);
-            if(end>getSiteMidnight(now,timezone))throw new Error('Expected a completed local day');
-            if(rows.length>4096||rows.some(r=>r.site_id!==siteId||!(r.timestamp>=start&&r.timestamp<end)))throw new Error('Samples outside the site day');
-            if(!rows.length) {await client.query('COMMIT');return {status:'empty'};}
+            if(samples.length>4096||samples.some(r=>r.site_id!==siteId||!(r.timestamp>=start&&r.timestamp<end)))throw new Error('Samples outside the site day');
+            // Status compares sample_count with the day's 5-minute slots, so every sample must own one.
+            if(samples.some(r=>(+r.timestamp-+start)%300000))throw new Error('Samples off the 5-minute grid');
+            if(!samples.length) {await client.query('COMMIT');return {status:'empty'};}
             const raw=(await client.query<{present:boolean}>('SELECT EXISTS(SELECT 1 FROM "EnergyData" WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3) AS present',[siteId,start,end])).rows[0].present;
             if(raw)throw new Error('Day still has raw samples; finalize it from raw instead');
-            const sorted=[...rows].sort((a,b)=>+a.timestamp-+b.timestamp);
-            const prepared=await this.prepareDay(client,siteId,timezone,start,end,sorted);
+            const stored=(await client.query<{revision:string;fetched_at:Date|null}>('SELECT revision,fetched_at FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2 FOR UPDATE',[siteId,start])).rows[0];
+            if(stored?.fetched_at&&+fetchedAt<=+stored.fetched_at) {await client.query('COMMIT');return {status:'superseded',revision:stored.revision};}
+            const sorted=samples.map(toSample).sort((a,b)=>+a.timestamp-+b.timestamp);
+            const {tariffs}=await this.tariffs(client,siteId,true);
+            const prepared=this.prepareSamples(siteId,timezone,start,end,sorted,tariffs,fetchedAt,now);
             const revision=await this.replaceDay(client,siteId,start,end,sorted.length,prepared,true);
             await client.query('COMMIT');
-            return {status:'written',revision,attributionComplete:prepared.attributionComplete};
+            return {status:'written',revision,attributionComplete:prepared.attributionComplete,dayStatus:prepared.record!.status};
         } catch(error) {await client.query('ROLLBACK');throw error;}
         finally {client.release(this.transactionTimeoutMs!==undefined);}
     }
 
+    /**
+     * Convert one v1 archive to a format 2 record in place (new revision), keeping
+     * the attribution each sample was priced with and `raw_pruned` as stored; raw
+     * rows are not read or written. Only a day whose v2 record reads back exactly
+     * as the verified v1 archive did is written; otherwise it stays v1 with a
+     * reason. Preview runs the same verification read-only and writes nothing.
+     */
+    async convertDayToV2(siteId:string,start:Date,{apply,now}:{apply:boolean;now:Date}):Promise<DayConversionResult> {
+        if(!siteId?.trim()||siteId.length>200||!Number.isSafeInteger(+start)||!Number.isSafeInteger(+now))throw new Error('Invalid conversion request');
+        if(apply&&!this.mutationGuard)throw new Error('A mutation guard is required to convert an archive');
+        const client=await this.pool.connect();
+        try {
+            await beginTransaction(client,apply?'ISOLATION LEVEL READ COMMITTED':'ISOLATION LEVEL REPEATABLE READ READ ONLY');
+            if(apply)await this.boundTransaction(client);
+            await client.query(apply?"SET LOCAL statement_timeout='15s'; SET LOCAL lock_timeout='3s'":"SET LOCAL statement_timeout='15s'");
+            if(apply) {
+                await this.mutationGuard!(client);
+                if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy'};}
+            }
+            // One round trip for the day: the archive, its site's timezone and its revision's summaries.
+            const old=(await client.query<ConversionRecord>(`SELECT a.*,s.timezone,COALESCE((SELECT json_agg(x) FROM "EnergyDaySummary" x
+                WHERE x.site_id=a.site_id AND x.day_start=a.day_start AND x.revision=a.revision),'[]') AS summaries
+                FROM "EnergyDayArchive" a LEFT JOIN "Site" s ON s.id=a.site_id WHERE a.site_id=$1 AND a.day_start=$2${apply?' FOR UPDATE OF a':''}`,[siteId,start])).rows[0];
+            if(!old)throw new Error('Archive day not found');
+            const result=await this.convertArchive(client,old,apply,now);
+            await client.query('COMMIT');return result;
+        } catch(error) {await client.query('ROLLBACK');throw error;}
+        finally {client.release(apply&&this.transactionTimeoutMs!==undefined);}
+    }
+
+    private async convertArchive(client:PoolClient,old:ConversionRecord,apply:boolean,now:Date):Promise<DayConversionResult> {
+        if(old.format_version===2)return {status:'already-v2'};
+        const left=(reason:V1ConversionReason):DayConversionResult=>({status:'left-v1',reason});
+        if(old.format_version!==1||old.metadata_version!==2)return left('legacy-metadata');
+        const start=new Date(old.day_start),end=new Date(old.day_end);
+        const {timezone}=old;
+        try {
+            if(!timezone||+start!==+getSiteMidnight(start,timezone)||+end!==+addDaysInSiteTimezone(start,1,timezone))return left('day-bounds');
+        } catch {return left('day-bounds');}
+        const stored=old.summaries.map(summary);
+        let rows:EnergyData[];
+        // Verified exactly as recovery and trim do: payload, metadata, summaries and projection.
+        try {rows=recoverVerifiedSamples(old,stored);} catch {return left('integrity');}
+        const converted=convertV1Day({siteId:old.site_id,start,end,revision:old.revision,createdAt:new Date(old.created_at),
+            attributionComplete:old.attribution_complete,rows,summaries:stored,now});
+        if('reason' in converted)return left(converted.reason);
+        const {archive,attribution,metadata,status,fetchedAt,latest,payloadChecksum}=converted.day;
+        if(!apply)return {status:'convertible',dayStatus:status};
+        const revision=await this.replaceDay(client,old.site_id,start,end,rows.length,{archive,summaries:metadata.summaries,
+            attributionComplete:metadata.attributionComplete,metadata,payloadChecksum,latest,record:{attribution,status,fetchedAt}},old.raw_pruned);
+        // The database's own digest check must agree before the conversion commits.
+        await client.query('SELECT public.verify_compact_day_metadata($1,$2,false)',[old.site_id,start]);
+        return {status:'converted',revision,dayStatus:status};
+    }
+
+    /** Format 2: verify the lossless round trip, derive segments from the current tariff, then summaries, status and projections. */
+    private prepareSamples(siteId:string,timezone:string,start:Date,end:Date,samples:EnergySample[],tariffs:Tariff[],fetchedAt:Date,now:Date):PreparedDay {
+        if(!tariffs.length)throw new Error('No current tariff');
+        const archive=encodeDaySamples(samples,start,end,'brotli');
+        const recovered=decodeDaySamples(archive,{siteId,start,end});
+        deepStrictEqual(recovered,samples);
+        const attribution=deriveDayAttribution(new Schedule(tariffs,timezone),Number(tariffs[0].id),start,end);
+        const metadata=buildDayMetadataV3(recovered,attribution,start,end);
+        const status=dayStatus({end,sampleCount:recovered.length,expectedSlots:archive.expectedSlots,now});
+        const payloadChecksum=createHash('sha256').update(archive.data).digest('hex');
+        const latest=buildLatestMetadata(recovered,{siteId,start,end,archiveChecksum:archive.sha256});
+        return {archive,summaries:metadata.summaries,attributionComplete:metadata.attributionComplete,metadata,payloadChecksum,latest,record:{attribution,status,fetchedAt}};
+    }
+
     /** Encode, verify the lossless round trip and summaries, and audit tariff attribution for one day. */
-    private async prepareDay(client:PoolClient,siteId:string,timezone:string,start:Date,end:Date,rows:EnergyData[]) {
+    private async prepareDay(client:PoolClient,siteId:string,timezone:string,start:Date,end:Date,rows:EnergyData[]):Promise<PreparedDay> {
         const archive = encodeDay(rows,start,end,'brotli');
         const recovered = decodeDay(archive,{siteId,start,end});
         deepStrictEqual(recovered, rows);
@@ -581,26 +693,30 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         return {archive,summaries,attributionComplete,metadata,payloadChecksum,latest};
     }
 
-    /** Replace the day's archive and summaries with a new revision. */
-    private async replaceDay(client:PoolClient,siteId:string,start:Date,end:Date,sampleCount:number,
-        day:Awaited<ReturnType<CompactHistoryStore['prepareDay']>>,rawPruned:boolean):Promise<string> {
-        const {archive,summaries,attributionComplete,metadata,payloadChecksum,latest}=day;
+    /** Replace the day's archive and summaries with a new revision (format 2 when the day carries a record). */
+    private async replaceDay(client:PoolClient,siteId:string,start:Date,end:Date,sampleCount:number,day:PreparedDay,rawPruned:boolean):Promise<string> {
+        const {archive,summaries,attributionComplete,metadata,payloadChecksum,latest,record}=day;
         const revision = randomUUID();
         await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2',[siteId,start]);
-        await client.query(`INSERT INTO "EnergyDayArchive" (site_id,day_start,day_end,revision,format_version,codec,axis,checksum,payload,sample_count,expected_slots,attribution_complete,first_timestamp,last_timestamp,max_interior_gap_ms,metadata_checksum,metadata_version,latest_metadata,latest_checksum,payload_checksum,raw_pruned)
-            VALUES ($1,$2,$3,$4,1,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,2,$16,$17,$18,$19)`,[siteId,start,end,revision,archive.codec,archive.axis,archive.sha256,archive.data,sampleCount,archive.expectedSlots,attributionComplete,metadata.first,metadata.last,metadata.maxInteriorGapMs,metadata.checksum,JSON.stringify(latest.data),latest.checksum,payloadChecksum,rawPruned]);
-        for (const s of summaries) await client.query(`INSERT INTO "EnergyDaySummary" (site_id,day_start,revision,tariff_id,tariff_schedule_id,
+        await client.query(`INSERT INTO "EnergyDayArchive" (site_id,day_start,day_end,revision,format_version,codec,axis,checksum,payload,sample_count,expected_slots,attribution_complete,first_timestamp,last_timestamp,max_interior_gap_ms,metadata_checksum,metadata_version,latest_metadata,latest_checksum,payload_checksum,raw_pruned,attribution,status,fetched_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,[siteId,start,end,revision,record?2:1,archive.codec,archive.axis,archive.sha256,archive.data,sampleCount,archive.expectedSlots,attributionComplete,metadata.first,metadata.last,metadata.maxInteriorGapMs,metadata.checksum,record?3:2,JSON.stringify(latest.data),latest.checksum,payloadChecksum,rawPruned,
+            record?JSON.stringify(record.attribution):null,record?.status??null,record?.fetchedAt??null]);
+        // One statement for all of the day's summary rows.
+        if(summaries.length) await client.query(`INSERT INTO "EnergyDaySummary" (site_id,day_start,revision,tariff_id,tariff_schedule_id,
             load_power,solar_power,grid_power,battery_power,sample_import_wh,sample_export_wh,sample_charge_wh,sample_discharge_wh,sample_count)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[siteId,start,revision,s.tariff_id,s.tariff_schedule_id,
-            s.load_power,s.solar_power,s.grid_power,s.battery_power,s.sample_import_wh,s.sample_export_wh,s.sample_charge_wh,s.sample_discharge_wh,s.sample_count]);
+            VALUES ${summaries.map((_,i)=>`($1,$2,$3,${Array.from({length:11},(_,j)=>'$'+(4+i*11+j)).join(',')})`).join(',')}`,
+            [siteId,start,revision,...summaries.flatMap(s=>[s.tariff_id,s.tariff_schedule_id,
+                s.load_power,s.solar_power,s.grid_power,s.battery_power,s.sample_import_wh,s.sample_export_wh,s.sample_charge_wh,s.sample_discharge_wh,s.sample_count])]);
         return revision;
     }
 
-    private async tariffs(client: PoolClient,siteId: string): Promise<{ tariffs:Tariff[]; schedules:TariffSchedule[] }> {
-        const tariffs = (await client.query<Tariff>('SELECT * FROM "Tariff" WHERE site_id=$1',[siteId])).rows;
-        const seasons = (await client.query<TariffSeason>(`SELECT s.* FROM "TariffSeason" s JOIN "Tariff" t ON t.id=s.tariff_id WHERE t.site_id=$1`,[siteId])).rows;
+    /** Every tariff version (for auditing recorded IDs), or only the current ones (for new attribution), ordered by ID. */
+    private async tariffs(client: PoolClient,siteId: string,currentOnly=false): Promise<{ tariffs:Tariff[]; schedules:TariffSchedule[] }> {
+        const current = currentOnly ? ' AND t.is_current' : '';
+        const tariffs = (await client.query<Tariff>(`SELECT t.* FROM "Tariff" t WHERE t.site_id=$1${current} ORDER BY t.id`,[siteId])).rows;
+        const seasons = (await client.query<TariffSeason>(`SELECT s.* FROM "TariffSeason" s JOIN "Tariff" t ON t.id=s.tariff_id WHERE t.site_id=$1${current}`,[siteId])).rows;
         const schedules = (await client.query<TariffSchedule>(`SELECT p.* FROM "TariffSchedule" p JOIN "TariffSeason" s ON s.id=p.season_id
-            JOIN "Tariff" t ON t.id=s.tariff_id WHERE t.site_id=$1`,[siteId])).rows;
+            JOIN "Tariff" t ON t.id=s.tariff_id WHERE t.site_id=$1${current}`,[siteId])).rows;
         for (const tariff of tariffs) tariff.seasons = seasons.filter(s=>s.tariff_id===tariff.id).map(s=>({ ...s,
             buy_rate:Number(s.buy_rate), sell_rate:Number(s.sell_rate), schedules:schedules.filter(p=>p.season_id===s.id).map(p=>({ ...p,
                 buy_rate:p.buy_rate===null ? null : Number(p.buy_rate), sell_rate:p.sell_rate===null ? null : Number(p.sell_rate) })) }));

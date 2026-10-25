@@ -1,6 +1,7 @@
 import { cache } from 'react';
 import { pool, User, Site } from './db';
 import { TeslaClient, isTeslaAuthError } from './tesla-client';
+import { latestStoredSampleSql } from './latest-stored-sample-sql';
 
 export interface UserWithSites extends User {
     sites: Site[];
@@ -87,10 +88,7 @@ export class UserRepo {
                 WHERE s.user_id = u.id
             ) as has_trmnl_integration,
             (
-                SELECT MAX(ed.timestamp)
-                FROM "EnergyData" ed
-                JOIN "Site" s ON s.id = ed.site_id
-                WHERE s.user_id = u.id
+                SELECT MAX(${latestStoredSampleSql('s.id')}) FROM "Site" s WHERE s.user_id = u.id
             ) as last_data_import
             FROM "User" u
             ORDER BY last_data_import DESC NULLS LAST, u.is_active DESC

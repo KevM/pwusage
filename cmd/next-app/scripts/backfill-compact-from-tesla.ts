@@ -1,11 +1,12 @@
 /**
- * Backfill whole site-local days from Tesla straight into compact archives,
- * without staging raw "EnergyData" rows or reading them back: one Tesla day
- * request (energy + SOE), tariff attribution in memory, one archive write.
- * Preview by default (fetch only); `--apply` writes. Days that still have raw
- * rows are skipped (their archive is owned by the raw source), and so is any day
- * whose energy or SOE request fails (`fetch-failed`), so a re-run never replaces
- * stored SOC with nulls.
+ * Backfill site-local days from Tesla straight into compact day records
+ * (`CompactHistoryStore.writeDay`), without staging raw "EnergyData" rows or
+ * reading them back: one Tesla day request (energy + SOE), segments from the
+ * current tariff, one record write. Preview by default (fetch only); `--apply`
+ * writes. Days that still have raw rows are skipped (their archive is owned by
+ * the raw source), and so is any day whose energy or SOE request fails
+ * (`fetch-failed`), so a re-run never replaces stored SOC with nulls. A day
+ * already written from a newer fetch is left as is (`superseded`).
  *
  *   npx tsx scripts/backfill-compact-from-tesla.ts --site-id <id> --from YYYY-MM-DD --before YYYY-MM-DD [--apply] [--concurrency N]
  *
@@ -18,6 +19,7 @@ import {Pool} from 'pg';
 import {pool} from '../src/lib/db';
 import {addDaysInSiteTimezone,parseSiteLocalDateToMidnight} from '../src/lib/date-utils';
 import {Importer} from '../src/lib/importer';
+import {fetchDayForWrite,type FetchedDay} from '../src/lib/prototypes/compact-day-fetch';
 import {CompactHistoryStore} from '../src/lib/prototypes/compact-history-store';
 import {SiteRepo} from '../src/lib/site-repo';
 import {createTeslaClientForSite} from '../src/lib/tesla-client-factory';
@@ -63,19 +65,18 @@ async function run():Promise<void> {
             let next=0;
             await Promise.all(Array.from({length:options.concurrency},async()=>{
                 while(next<days.length) {
-                    const start=days[next++];const end=addDaysInSiteTimezone(start,1,site.timezone);
+                    const start=days[next++];
                     const day=start.toISOString();
                     const t0=performance.now();
-                    // End 1 s before midnight so Tesla stays inside this day (see Importer.loadInterval).
-                    // SOE is required: the write replaces the whole day, so a failed SOE request
-                    // would otherwise erase SOC already stored. Such a day is skipped for a re-run.
-                    let rows:Awaited<ReturnType<typeof importer.fetchRange>>;
-                    try {rows=(await importer.fetchRange(site,start,new Date(+end-1000),'day',{requireSoe:true})).filter(r=>r.timestamp>=start&&r.timestamp<end);}
+                    // A failed energy or SOE request skips the day for a re-run (see fetchDayForWrite).
+                    let fetched:FetchedDay;
+                    try {fetched=await fetchDayForWrite(importer,site,start);}
                     catch {results.push({day,samples:0,status:'fetch-failed',fetchMs:Math.round(performance.now()-t0),writeMs:0});continue;}
+                    const {rows,fetchedAt}=fetched;
                     const fetchMs=Math.round(performance.now()-t0);
                     let status='preview';const t1=performance.now();
                     if(options.apply) {
-                        try {status=(await store.writeDayFromSamples(site.id,start,rows)).status;}
+                        try {status=(await store.writeDay(site.id,start,rows,fetchedAt)).status;}
                         catch(error) {status=error instanceof Error&&/raw samples/.test(error.message)?'raw-present':'failed';}
                     }
                     results.push({day,samples:rows.length,status,fetchMs,writeMs:Math.round(performance.now()-t1)});

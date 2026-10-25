@@ -8,9 +8,15 @@ import { randomUUID } from 'node:crypto';
 import {addDaysInSiteTimezone} from '../date-utils';
 import { readFileSync, statSync } from 'node:fs';
 import { CompactHistoryStore } from './compact-history-store';
+import { encodeDaySamples } from './compact-energy';
+import { buildDayMetadataV3 } from './compact-day-metadata';
+import type { DayAttribution } from './day-attribution';
+import {latestStoredSampleSql} from '../latest-stored-sample-sql';
 import { CompactHistoryReader } from './compact-history-reader';
 import {HistoryArchiveRepo} from '../history-archive-repo';
 import {archiveCutoff,runHistoryArchive} from '../history-archive-service';
+import type {DailyCoverageStat} from '../energy-repo';
+import {V1ConversionPgRepo,runV1Conversion} from './compact-v1-conversion';
 
 const socket = process.env.COMPACT_HISTORY_TEST_SOCKET;
 const start = new Date('2026-01-01T06:00:00Z');
@@ -36,7 +42,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role BYPASSRLS; END IF;
             END $$;
             CREATE TABLE "Site" (id text PRIMARY KEY, timezone text NOT NULL);
-            CREATE TABLE "Tariff" (id int PRIMARY KEY, site_id text, name text, updated timestamptz);
+            CREATE TABLE "Tariff" (id int PRIMARY KEY, site_id text, name text, updated timestamptz, is_current boolean NOT NULL DEFAULT true);
             CREATE TABLE "TariffSeason" (id int PRIMARY KEY, tariff_id int, name text, from_month int, from_day int,
                 to_month int, to_day int, buy_rate float8, sell_rate float8);
             CREATE TABLE "TariffSchedule" (id int PRIMARY KEY, season_id int, name text, buy_rate float8, sell_rate float8,
@@ -57,6 +63,8 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007144600_compact_energy_trim_recovery.sql',import.meta.url),'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007190945_history_archive_job.sql',import.meta.url),'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261024180000_history_archive_all_sites.sql',import.meta.url),'utf8'));
+        // Applied twice: migrations must be idempotent.
+        for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261024190000_day_record_v2_schema.sql',import.meta.url),'utf8'));
         await pool.query("ALTER TABLE \"Site\" ADD COLUMN user_id text DEFAULT 'owner'");
         store = new CompactHistoryStore(pool,15000,async client=>{await client.query('SELECT 1');});
     });
@@ -327,37 +335,212 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
     });
     const daySamples=(solar=3)=>Array.from({length:288},(_,n)=>({site_id:'site',timestamp:new Date(+start+n*300000),tariff_id:1,tariff_schedule_id:2,
         load_power:20,solar_power:solar,grid_power:10,battery_power:-2,battery_soc:n%12===0?50:null}));
+    const fetched=new Date('2026-01-09T12:00:00Z');
     it('writes a whole day from samples as the only copy, readable and billable',async()=>{
         await pool.query('TRUNCATE "EnergyData"');
         const samples=daySamples();
-        const result=await store.writeDayFromSamples('site',start,samples,jobOptions.now);
-        expect(result).toMatchObject({status:'written',attributionComplete:true,revision:expect.any(String)});
-        expect((await pool.query('SELECT raw_pruned,sample_count FROM "EnergyDayArchive"')).rows).toEqual([{raw_pruned:true,sample_count:288}]);
+        const result=await store.writeDay('site',start,samples,fetched,jobOptions.now);
+        expect(result).toMatchObject({status:'written',attributionComplete:true,dayStatus:'complete',revision:expect.any(String)});
+        expect((await pool.query('SELECT raw_pruned,sample_count,format_version,metadata_version,status FROM "EnergyDayArchive"')).rows)
+            .toEqual([{raw_pruned:true,sample_count:288,format_version:2,metadata_version:3,status:'complete'}]);
         expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(0);
         const reader=new CompactHistoryReader(store,'America/Chicago');
         expect(await reader.getRawEnergyData('site',start,end)).toEqual(samples);
         expect((await reader.getDailyCoverage('site',start,end,'America/Chicago'))[0]).toMatchObject({count:288,archived:true});
         expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDaySummary"')).rows[0].n).toBeGreaterThan(0);
     });
-    it('replaces the day when written again, as Tesla is the source of truth',async()=>{
+    it('counts an open day written straight from Tesla by its stored samples for the gap-heal pre-check',async()=>{
         await pool.query('TRUNCATE "EnergyData"');
-        const first=await store.writeDayFromSamples('site',start,daySamples(3),jobOptions.now);
-        const second=await store.writeDayFromSamples('site',start,daySamples(7),jobOptions.now);
+        // 100 of 288 slots, ended 8 days ago: open, so not settled.
+        expect(await store.writeDay('site',start,daySamples().slice(0,100),fetched,jobOptions.now)).toMatchObject({status:'written',dayStatus:'open'});
+        await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null)`,[end]);
+        const later=addDaysInSiteTimezone(end,1,'America/Chicago');
+        expect((await new EnergyRepo().countAlignedSamples([{siteId:'site',start,end:later}],pool)).get('site')).toBe(100+1);
+        expect((await new CompactHistoryReader(store,'America/Chicago').getDailyCoverage('site',start,end,'America/Chicago'))[0])
+            .toMatchObject({count:100,archived:false});
+    });
+    it('refuses samples off the 5-minute grid, which would make the slot count meaningless',async()=>{
+        await pool.query('TRUNCATE "EnergyData"');
+        const samples=daySamples().map((r,n)=>({...r,timestamp:new Date(+r.timestamp+(n%2?1000:0))}));
+        await expect(store.writeDay('site',start,samples,fetched,jobOptions.now)).rejects.toThrow(/grid/);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
+    });
+    it('finds the newest stored sample across raw rows and day records',async()=>{
+        const latest=async(site='site')=>(await pool.query<{at:Date|null}>(`SELECT ${latestStoredSampleSql('$1')} AS at`,[site])).rows[0].at;
+        expect(await latest()).toEqual(new Date(+start+300000));
+        expect(await latest('other')).toBeNull();
+        const next=addDaysInSiteTimezone(start,1,'America/Chicago');
+        const nextDay=daySamples().map(r=>({...r,timestamp:new Date(+r.timestamp-+start+ +next)}));
+        await store.writeDay('site',next,nextDay,fetched,jobOptions.now);
+        expect(await latest()).toEqual(nextDay.at(-1)!.timestamp);
+        await pool.query('TRUNCATE "EnergyData"');
+        expect(await latest()).toEqual(nextDay.at(-1)!.timestamp);
+        const today=new Date('2026-01-09T12:00:00Z');
+        await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null)`,[today]);
+        expect(await latest()).toEqual(today);
+    });
+    it('replaces the day only from a newer fetch, as Tesla is the source of truth',async()=>{
+        await pool.query('TRUNCATE "EnergyData"');
+        const first=await store.writeDay('site',start,daySamples(3),fetched,jobOptions.now);
+        const newer=new Date(+fetched+60000);
+        const second=await store.writeDay('site',start,daySamples(7),newer,jobOptions.now);
         expect(second).toMatchObject({status:'written'});expect(second.revision).not.toBe(first.revision);
-        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(1);
-        expect((await new CompactHistoryReader(store,'America/Chicago').getRawEnergyData('site',start,end))[0].solar_power).toBe(7);
+        expect((await pool.query('SELECT count(*)::int AS n,max(fetched_at) AS at FROM "EnergyDayArchive"')).rows[0]).toEqual({n:1,at:newer});
+        const solar=async()=>(await new CompactHistoryReader(store,'America/Chicago').getRawEnergyData('site',start,end))[0].solar_power;
+        expect(await solar()).toBe(7);
+        // An older, slower fetch (or the same fetch retried) never overwrites the newer one.
+        for(const at of [fetched,newer]) expect(await store.writeDay('site',start,daySamples(1),at,jobOptions.now)).toEqual({status:'superseded',revision:second.revision});
+        expect(await solar()).toBe(7);
+        expect((await pool.query('SELECT revision FROM "EnergyDayArchive"')).rows[0].revision).toBe(second.revision);
+    });
+    it('replaces a v1 archive, which has no fetch time',async()=>{
+        await pool.query('TRUNCATE "EnergyData"');
+        await pool.query(`INSERT INTO "EnergyData" SELECT 'site',$1::timestamptz+n*interval '5 minutes',1,2,20,3,10,-2,null FROM generate_series(0,9) n`,[start]);
+        await store.finalizeDay('site',start,now);
+        await store.trimDay('site',start,(await pool.query('SELECT revision FROM "EnergyDayArchive"')).rows[0].revision,new Date('2026-01-05'));
+        expect(await store.writeDay('site',start,daySamples(),fetched,jobOptions.now)).toMatchObject({status:'written',dayStatus:'complete'});
+        expect((await pool.query('SELECT format_version,sample_count FROM "EnergyDayArchive"')).rows).toEqual([{format_version:2,sample_count:288}]);
     });
     it('refuses to write a day that still has raw rows',async()=>{
-        await expect(store.writeDayFromSamples('site',start,daySamples(),jobOptions.now)).rejects.toThrow(/raw/i);
+        await expect(store.writeDay('site',start,daySamples(),fetched,jobOptions.now)).rejects.toThrow(/raw/i);
         expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
     });
-    it('refuses unfinished days and foreign samples, and ignores an empty day',async()=>{
+    it('refuses days not yet begun, foreign samples, future or invalid fetch times, and ignores an empty day',async()=>{
         await pool.query('TRUNCATE "EnergyData"');
-        await expect(store.writeDayFromSamples('site',start,daySamples(),start)).rejects.toThrow();
-        await expect(store.writeDayFromSamples('site',start,[{...daySamples()[0],site_id:'other'}],jobOptions.now)).rejects.toThrow();
-        await expect(store.writeDayFromSamples('site',start,[{...daySamples()[0],timestamp:end}],jobOptions.now)).rejects.toThrow();
-        expect(await store.writeDayFromSamples('site',start,[],jobOptions.now)).toEqual({status:'empty'});
+        await expect(store.writeDay('site',start,daySamples(),new Date(+start-1),new Date(+start-1))).rejects.toThrow();
+        await expect(store.writeDay('site',start,[{...daySamples()[0],site_id:'other'}],fetched,jobOptions.now)).rejects.toThrow();
+        await expect(store.writeDay('site',start,[{...daySamples()[0],timestamp:end}],fetched,jobOptions.now)).rejects.toThrow();
+        await expect(store.writeDay('site',start,daySamples(),new Date(+jobOptions.now+1),jobOptions.now)).rejects.toThrow();
+        await expect(store.writeDay('site',start,daySamples(),new Date(NaN),jobOptions.now)).rejects.toThrow();
+        expect(await store.writeDay('site',start,[],fetched,jobOptions.now)).toEqual({status:'empty'});
         expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
+    });
+    describe('writeDay for open days (day record v2)',()=>{
+        const samplesAt=(day:Date,count:number,solar=3,site='site')=>Array.from({length:count},(_,n)=>({site_id:site,timestamp:new Date(+day+n*300000),
+            load_power:20,solar_power:solar,grid_power:n%3?10:-4,battery_power:-2,battery_soc:n%12===0?40+n/12:null}));
+        beforeEach(async()=>{await pool.query('TRUNCATE "EnergyData"');});
+        it('writes today while it is in progress and replaces it from each newer fetch',async()=>{
+            const reader=new CompactHistoryReader(store,'America/Chicago');
+            // 06:00 local on the day: 72 samples so far.
+            const morning=new Date(+start+6*3600000+90000);
+            const first=await store.writeDay('site',start,samplesAt(start,72),morning,morning);
+            expect(first).toMatchObject({status:'written',dayStatus:'open',attributionComplete:true});
+            const row=(await pool.query('SELECT status,sample_count,expected_slots,attribution,fetched_at FROM "EnergyDayArchive"')).rows[0];
+            expect(row).toEqual({status:'open',sample_count:72,expected_slots:288,fetched_at:morning,
+                attribution:{timelineRevision:'current-tariff:1',segments:[{offset:0,tariffId:1,scheduleId:2}]}});
+            expect(await reader.getRawEnergyData('site',start,morning)).toHaveLength(72);
+            expect(await store.getLatestTimestamp('site',morning)).toEqual(new Date(+start+71*300000));
+            expect((await store.getLatestEnergyData('site',morning))?.timestamp).toEqual(new Date(+start+71*300000));
+            expect(await store.getLatestBatterySoc('site',start,morning)).toEqual({timestamp:new Date(+start+60*300000),value:45});
+            // Coverage and billing for the day so far, from the open record.
+            const window=await reader.getCycleAggregatesAndCoverage('site',start,morning,'America/Chicago');
+            expect(window.coverage).toEqual([expect.objectContaining({count:72})]);
+            expect(window.aggregates).toEqual([expect.objectContaining({tariff_schedule_id:2,load_power:20*72})]);
+            const later=new Date(+morning+300000);
+            expect(await store.writeDay('site',start,samplesAt(start,73),later,later)).toMatchObject({status:'written',dayStatus:'open'});
+            expect(await store.getLatestTimestamp('site',later)).toEqual(new Date(+start+72*300000));
+            // Planning still sees today as incomplete.
+            expect((await new EnergyRepo().countAlignedSamples([{siteId:'site',start,end}],pool)).get('site')).toBe(73);
+        });
+        it('marks an ended short day open within the gap-heal window and gapped after it; a full day is complete',async()=>{
+            const status=async()=>(await pool.query('SELECT status FROM "EnergyDayArchive"')).rows[0].status;
+            const at=(days:number)=>new Date(+end+days*86400000);
+            expect((await store.writeDay('site',start,samplesAt(start,200),at(1),at(1))).dayStatus).toBe('open');
+            expect((await store.writeDay('site',start,samplesAt(start,200),at(15),at(15))).dayStatus).toBe('gapped');
+            expect(await status()).toBe('gapped');
+            const coverage=async()=>(await new CompactHistoryReader(store,'America/Chicago').getDailyCoverage('site',start,end,'America/Chicago'))[0];
+            // Gapped: Tesla never had the missing samples, so planning treats the day as settled.
+            expect(await coverage()).toMatchObject({count:200,archived:true});
+            expect((await store.writeDay('site',start,samplesAt(start,288),at(16),at(16))).dayStatus).toBe('complete');
+            expect(await coverage()).toMatchObject({count:288,archived:true});
+        });
+        it.each([
+            ['fall-back',new Date('2026-11-01T05:00:00Z'),300,[{offset:0,tariffId:3,scheduleId:5},{offset:1020,tariffId:3,scheduleId:4},{offset:1320,tariffId:3,scheduleId:6}]],
+            ['spring-forward',new Date('2026-03-08T06:00:00Z'),276,[{offset:0,tariffId:3,scheduleId:5},{offset:900,tariffId:3,scheduleId:4},{offset:1200,tariffId:3,scheduleId:6}]],
+        ])('attributes the %s DST day by minutes from midnight',async(_,day,slots,segments)=>{
+            await pool.query(`INSERT INTO "Site" VALUES ('tou','America/Chicago') ON CONFLICT DO NOTHING;
+                INSERT INTO "Tariff" (id,site_id,name,updated) VALUES (3,'tou','TOU',now()) ON CONFLICT DO NOTHING;
+                INSERT INTO "TariffSeason" VALUES (3,3,'All',1,1,12,31,.2,.04) ON CONFLICT DO NOTHING;
+                INSERT INTO "TariffSchedule" VALUES (4,3,'Peak',.4,.04,0,6,16,21,0,0),(5,3,'Off',.1,.04,0,6,0,16,0,0),(6,3,'Late',.1,.04,0,6,21,24,0,0) ON CONFLICT DO NOTHING;`);
+            const dayEnd=addDaysInSiteTimezone(day,1,'America/Chicago');
+            const samples=samplesAt(day,slots,3,'tou');
+            expect(await store.writeDay('tou',day,samples,dayEnd,dayEnd)).toMatchObject({status:'written',dayStatus:'complete',attributionComplete:true});
+            const row=(await pool.query('SELECT expected_slots,attribution FROM "EnergyDayArchive" WHERE site_id=$1',['tou'])).rows[0];
+            expect(row).toEqual({expected_slots:slots,attribution:{timelineRevision:'current-tariff:3',segments}});
+            const reader=new CompactHistoryReader(store,'America/Chicago');
+            const rows=await reader.getRawEnergyData('tou',day,dayEnd);
+            expect(rows).toHaveLength(slots);
+            expect(rows.filter(r=>r.tariff_schedule_id===4)).toHaveLength(60);
+            const result=await reader.getCycleAggregatesAndCoverage('tou',day,dayEnd,'America/Chicago');
+            expect(result.coverage).toEqual([expect.objectContaining({count:slots,archived:true})]);
+            expect(result.aggregates.map(a=>[a.tariff_schedule_id,a.load_power])).toEqual([[4,20*60],[5,20*(segments[1].offset/5)],[6,20*36]]);
+        });
+        it('ignores non-current tariff versions when deriving segments',async()=>{
+            await pool.query(`INSERT INTO "Tariff" (id,site_id,name,updated,is_current) VALUES (9,'site','Old',now(),false) ON CONFLICT DO NOTHING`);
+            try {
+                await store.writeDay('site',start,samplesAt(start,10),fetched,jobOptions.now);
+                expect((await pool.query('SELECT attribution FROM "EnergyDayArchive"')).rows[0].attribution.timelineRevision).toBe('current-tariff:1');
+            } finally {await pool.query('DELETE FROM "Tariff" WHERE id=9');}
+        });
+        it('never replaces stored SOC when the SOE request fails',async()=>{
+            const {Importer}=await import('../importer');
+            const {fetchDayForWrite}=await import('./compact-day-fetch');
+            await store.writeDay('site',start,samplesAt(start,288),fetched,jobOptions.now);
+            const before=(await pool.query('SELECT revision,latest_metadata FROM "EnergyDayArchive"')).rows[0];
+            const client={getEnergyHistory:async()=>[{timestamp:start.toISOString(),solar_power:1,battery_power:0,grid_power:0,load_power:1}],
+                getSoeHistory:async()=>{throw new Error('SOE unavailable');}};
+            const site={id:'site',timezone:'America/Chicago',tariffs:[]} as unknown as Parameters<typeof fetchDayForWrite>[1];
+            await expect(fetchDayForWrite(new Importer(client as never),site,start,jobOptions.now)).rejects.toThrow('SOE unavailable');
+            expect((await pool.query('SELECT revision,latest_metadata FROM "EnergyDayArchive"')).rows[0]).toEqual(before);
+            expect(before.latest_metadata.soc).toEqual({timestamp:+start+276*300000,value:63});
+        });
+        it('reads v1 and v2 days side by side for charts, coverage, latest values and billing',async()=>{
+            await pool.query(`INSERT INTO "EnergyData" SELECT 'site',$1::timestamptz+n*interval '5 minutes',1,2,20,3,10,-2,CASE WHEN n=0 THEN 30 END FROM generate_series(0,287) n`,[start]);
+            await store.finalizeDay('site',start,now);
+            const next=end,nextEnd=addDaysInSiteTimezone(end,1,'America/Chicago');
+            await store.writeDay('site',next,samplesAt(next,288),fetched,jobOptions.now);
+            expect((await pool.query('SELECT format_version FROM "EnergyDayArchive" ORDER BY day_start')).rows.map(r=>r.format_version)).toEqual([1,2]);
+            const reader=new CompactHistoryReader(store,'America/Chicago');
+            const rows=await reader.getRawEnergyData('site',start,nextEnd);
+            expect(rows).toHaveLength(576);
+            expect(rows.every(r=>r.tariff_id===1&&r.tariff_schedule_id===2)).toBe(true);
+            // Partial windows decode both formats; whole days use the scalar path.
+            expect(await reader.getRawEnergyData('site',new Date(+end-600000),new Date(+end+600000))).toHaveLength(4);
+            for(const [from,until] of [[start,nextEnd],[new Date(+start+3600000),new Date(+nextEnd-3600000)]]) {
+                const result=await reader.getCycleAggregatesAndCoverage('site',from,until,'America/Chicago');
+                expect(result.coverage.map(c=>c.count)).toEqual(+from===+start?[288,288]:[276,276]);
+                expect(result.aggregates.map(a=>a.load_power)).toEqual(+from===+start?[20*288,20*288]:[20*276,20*276]);
+            }
+            // Store without the scalar fast path: full days come from verified metadata (v2 and v3).
+            const aggregateOnly=new CompactHistoryReader({readSnapshot:(s,a,b)=>store.readSnapshot(s,a,b),
+                readAggregateSnapshot:(s,a,b)=>store.readAggregateSnapshot(s,a,b)},'America/Chicago');
+            expect((await aggregateOnly.getCycleAggregatesAndCoverage('site',start,nextEnd,'America/Chicago')).coverage.map(c=>c.count)).toEqual([288,288]);
+            expect((await reader.getBucketedEnergyData('site',start,nextEnd))).toHaveLength(192);
+            expect((await store.getLatestEnergyData('site',jobOptions.now))?.timestamp).toEqual(new Date(+next+287*300000));
+            expect(await store.getLatestTimestamp('site',jobOptions.now)).toEqual(new Date(+next+287*300000));
+            expect(await store.getLatestBatterySoc('site',start,jobOptions.now)).toEqual({timestamp:new Date(+next+276*300000),value:63});
+            const maintenance=await store.getMaintenanceSnapshot('site','2026-01-01','2026-01-03',false,jobOptions.now);
+            expect(maintenance.archives).toHaveLength(2);
+        });
+        it('reads historical freshness and SOC from before a record\'s latest projection',async()=>{
+            await store.writeDay('site',start,samplesAt(start,288),fetched,jobOptions.now);
+            // The next day's first stored sample is at 00:05, after an as-of of midnight.
+            await store.writeDay('site',end,samplesAt(end,100).slice(1),fetched,jobOptions.now);
+            expect(await store.getLatestTimestamp('site',end)).toEqual(new Date(+end-300000));
+            expect(await store.getLatestTimestamp('site',new Date(+start-1))).toBeNull();
+            // SOC at 02:00 and later; a 02:30 cutoff must not skip the day for its later projection.
+            expect(await store.getLatestBatterySoc('site',start,new Date(+start+30*300000))).toEqual({timestamp:new Date(+start+24*300000),value:42});
+            expect(await store.getLatestBatterySoc('site',new Date(+start+25*300000),new Date(+start+30*300000))).toBeNull();
+        });
+        it('restores a v2 day to raw rows before a late raw import touches it',async()=>{
+            const samples=samplesAt(start,50);
+            await store.writeDay('site',start,samples,fetched,jobOptions.now);
+            await store.writeEnergyDataBatch([{site_id:'site',timestamp:new Date(+start+50*300000),tariff_id:1,tariff_schedule_id:2,load_power:1,solar_power:1,grid_power:1,battery_power:1,battery_soc:null}]);
+            expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
+            const raw=(await store.readSnapshot('site',start,end)).raw;
+            expect(raw).toHaveLength(51);
+            expect(raw.slice(0,50)).toEqual(samples.map(s=>({...s,tariff_id:1,tariff_schedule_id:2})));
+        });
     });
     it('date bounds limit only the listed trim cohort under archive-all',async()=>{
         await pool.query(`UPDATE "HistoryArchiveControl" SET paused=false,trim=true,archive_all=true,from_date='2026-01-02',before_date='2026-01-03'`);
@@ -986,5 +1169,248 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             const grants=await pool.query(`SELECT has_function_privilege('anon',$1,'EXECUTE') AS anon,has_function_privilege('authenticated',$1,'EXECUTE') AS authenticated,has_function_privilege('service_role',$1,'EXECUTE') AS service`,[signature]);
             expect(grants.rows[0]).toEqual({anon:false,authenticated:false,service:true});
         }
+    });
+    describe('v1 archive conversion to day record v2',()=>{
+        const later=new Date('2026-01-25T12:00:00Z');
+        beforeAll(async()=>{
+            await pool.query(`INSERT INTO "Site" VALUES ('tou','America/Chicago') ON CONFLICT DO NOTHING;
+                INSERT INTO "Tariff" (id,site_id,name,updated) VALUES (3,'tou','TOU',now()) ON CONFLICT DO NOTHING;
+                INSERT INTO "TariffSeason" VALUES (3,3,'All',1,1,12,31,.2,.04) ON CONFLICT DO NOTHING;
+                INSERT INTO "TariffSchedule" VALUES (4,3,'Peak',.4,.04,0,6,16,21,0,0),(5,3,'Off',.1,.04,0,6,0,16,0,0),(6,3,'Late',.1,.04,0,6,21,24,0,0) ON CONFLICT DO NOTHING;
+                INSERT INTO "Tariff" (id,site_id,name,updated,is_current) VALUES (7,'site','Before the save',now(),false) ON CONFLICT DO NOTHING;
+                INSERT INTO "TariffSeason" VALUES (7,7,'All',1,1,12,31,.25,.04) ON CONFLICT DO NOTHING;
+                INSERT INTO "TariffSchedule" VALUES (8,7,'Flat',.25,.04,0,6,0,24,0,0) ON CONFLICT DO NOTHING;`);
+        });
+        beforeEach(async()=>{await pool.query('TRUNCATE "EnergyData"');});
+        const rawRows=async()=>(await pool.query('SELECT * FROM "EnergyData" ORDER BY site_id,timestamp')).rows;
+        const archiveRow=async(site='site')=>(await pool.query(`SELECT format_version,metadata_version,revision,raw_pruned,status,fetched_at,created_at,attribution,attribution_complete,
+            public.verify_compact_day_metadata(site_id,day_start,false) AS verified FROM "EnergyDayArchive" WHERE site_id=$1`,[site])).rows[0];
+        /** Every read path a converted day serves: charts, buckets, coverage, billing, freshness, SOC. */
+        const reads=async(site:string,from:Date,until:Date)=>{
+            const reader=new CompactHistoryReader(store,'America/Chicago');
+            return {chart:await reader.getRawEnergyData(site,from,until),buckets:await reader.getBucketedEnergyData(site,from,until),
+                partial:await reader.getRawEnergyData(site,new Date(+from+3600000),new Date(+until-3600000)),
+                billing:await readBillingAvailability(()=>reader.getCycleAggregatesAndCoverage(site,from,until,'America/Chicago'),{aggregates:[],coverage:[]}),
+                coverage:await reader.getDailyCoverage(site,from,until,'America/Chicago'),
+                latest:await store.getLatestEnergyData(site,jobOptions.now),stamp:await store.getLatestTimestamp(site,jobOptions.now),soc:await store.getLatestBatterySoc(site,from,jobOptions.now)};
+        };
+        const convert=(site:string,day:Date,apply=true,at=later)=>store.convertDayToV2(site,day,{apply,now:at});
+        const insertRaw=(site:string,day:Date,dayEnd:Date,tariff:string,schedule:string,where='true')=>pool.query(`INSERT INTO "EnergyData"
+            SELECT $1,t,${tariff},${schedule},20+n%7,n%5,(n%9)-4.5,(n%3)-1,CASE WHEN n%4=0 THEN 40+n/10.0 END
+            FROM generate_series($2::timestamptz,$3::timestamptz-interval '5 minutes',interval '5 minutes') WITH ORDINALITY g(t,n) WHERE ${where}`,[site,day,dayEnd]);
+        it('converts a full v1 day in place: samples, attribution and every read unchanged; raw rows untouched',async()=>{
+            await insertRaw('site',start,end,'1','2');
+            expect((await store.finalizeDay('site',start,now)).status).toBe('finalized');
+            const v1=await archiveRow();const before=await reads('site',start,end);const raw=await rawRows();
+            expect(await convert('site',start,false)).toEqual({status:'convertible',dayStatus:'complete'});
+            expect(await archiveRow()).toEqual(v1);
+            const result=await convert('site',start);
+            expect(result).toMatchObject({status:'converted',dayStatus:'complete'});
+            const v2=await archiveRow();
+            expect(v2).toMatchObject({format_version:2,metadata_version:3,raw_pruned:false,status:'complete',fetched_at:v1.created_at,attribution_complete:true,verified:true,
+                attribution:{timelineRevision:`v1-conversion:${v1.revision}`,segments:[{offset:0,tariffId:1,scheduleId:2}]}});
+            expect(v2.revision).toBe(result.revision);expect(v2.revision).not.toBe(v1.revision);
+            expect(await reads('site',start,end)).toEqual(before);
+            expect(await rawRows()).toEqual(raw);
+            // Re-running is a no-op; the job's finalization keeps the converted record.
+            expect(await convert('site',start)).toEqual({status:'already-v2'});
+            expect(await store.finalizeDay('site',start,now)).toEqual({status:'unchanged',revision:v2.revision,attributionComplete:true});
+            expect((await archiveRow()).revision).toBe(v2.revision);
+            // Trim reconciles the converted record against raw, and restore brings raw back exactly.
+            expect(await store.trimDay('site',start,v2.revision,later)).toEqual({status:'trimmed',samples:288});
+            expect(await reads('site',start,end)).toEqual(before);
+            await store.restoreDay('site',start,v2.revision);
+            expect(await rawRows()).toEqual(raw);
+        });
+        it('converts a gappy day: same reads; an old short day becomes gapped, so planning settles it',async()=>{
+            await insertRaw('site',start,end,'1','2','n<100 OR n>180');
+            await store.finalizeDay('site',start,now);
+            const before=await reads('site',start,end);
+            expect(before.coverage).toEqual([expect.objectContaining({count:207,archived:false})]);
+            expect(await convert('site',start,false,jobOptions.now)).toMatchObject({status:'convertible',dayStatus:'open'});
+            expect(await convert('site',start)).toMatchObject({status:'converted',dayStatus:'gapped'});
+            // Only the settled flag moves: Tesla never had the missing samples, so gap-heal stops refetching.
+            const settled=(c:DailyCoverageStat)=>({...c,archived:true});
+            expect(await reads('site',start,end)).toEqual({...before,coverage:before.coverage.map(settled),
+                billing:{...before.billing,value:{...before.billing.value,coverage:before.billing.value.coverage.map(settled)}}});
+        });
+        it('converts a DST fall-back day with a TOU tariff to the timeline a v2 write derives',async()=>{
+            const day=new Date('2026-11-01T05:00:00Z'),dayEnd=addDaysInSiteTimezone(day,1,'America/Chicago');
+            await insertRaw('tou',day,dayEnd,'3',`CASE WHEN extract(hour FROM t AT TIME ZONE 'America/Chicago')<16 THEN 5
+                WHEN extract(hour FROM t AT TIME ZONE 'America/Chicago')<21 THEN 4 ELSE 6 END`);
+            expect(await store.finalizeDay('tou',day,new Date('2026-12-01'))).toMatchObject({status:'finalized',attributionComplete:true});
+            const before=await reads('tou',day,dayEnd);
+            expect(await convert('tou',day,true,new Date('2026-12-01'))).toMatchObject({status:'converted',dayStatus:'complete'});
+            expect((await archiveRow('tou')).attribution.segments).toEqual([{offset:0,tariffId:3,scheduleId:5},{offset:1020,tariffId:3,scheduleId:4},{offset:1320,tariffId:3,scheduleId:6}]);
+            expect(await reads('tou',day,dayEnd)).toEqual(before);
+            expect(before.chart).toHaveLength(300);
+        });
+        it('keeps mixed schedules across a tariff version boundary as each sample was priced',async()=>{
+            await insertRaw('site',start,end,`CASE WHEN n<=144 THEN 7 ELSE 1 END`,`CASE WHEN n<=144 THEN 8 ELSE 2 END`);
+            expect(await store.finalizeDay('site',start,now)).toMatchObject({attributionComplete:true});
+            const before=await reads('site',start,end);
+            expect(await convert('site',start)).toMatchObject({status:'converted'});
+            expect((await archiveRow()).attribution.segments).toEqual([{offset:0,tariffId:7,scheduleId:8},{offset:720,tariffId:1,scheduleId:2}]);
+            expect(await reads('site',start,end)).toEqual(before);
+            expect(before.billing.value.aggregates.map(a=>a.tariff_schedule_id)).toEqual([2,8]);
+        });
+        it('converts a null-schedule (fallback) day as unattributed, billing still refused',async()=>{
+            await insertRaw('site',start,end,'1','NULL');
+            expect(await store.finalizeDay('site',start,now)).toMatchObject({attributionComplete:false});
+            const before=await reads('site',start,end);
+            expect(before.billing.status).toBe('incomplete-attribution');
+            expect(await convert('site',start)).toMatchObject({status:'converted'});
+            expect(await archiveRow()).toMatchObject({attribution_complete:false,attribution:{segments:[{offset:0,tariffId:1,scheduleId:null}]}});
+            // v2 settles a day by its samples alone (a refetch cannot fix tariff configuration); nothing else moves.
+            expect(await reads('site',start,end)).toEqual({...before,coverage:before.coverage.map(c=>({...c,archived:true}))});
+        });
+        it('leaves a day that fails verification as v1 and writes nothing',async()=>{
+            await insertRaw('site',start,end,'1','2');
+            await store.finalizeDay('site',start,now);
+            await pool.query('UPDATE "EnergyDaySummary" SET load_power=load_power+1');
+            const stored=async()=>(await pool.query('SELECT a.*,s.load_power FROM "EnergyDayArchive" a JOIN "EnergyDaySummary" s USING (site_id,day_start,revision)')).rows;
+            const v1=await stored();
+            expect(await convert('site',start)).toEqual({status:'left-v1',reason:'integrity'});
+            expect(await stored()).toEqual(v1);
+        });
+        it('requires a mutation guard to apply, and skips a day whose site claim is held',async()=>{
+            await insertRaw('site',start,end,'1','2');
+            await store.finalizeDay('site',start,now);
+            await expect(new CompactHistoryStore(pool).convertDayToV2('site',start,{apply:true,now:later})).rejects.toThrow('mutation guard');
+            const holder=await pool.connect();
+            try {
+                await holder.query('BEGIN');
+                await holder.query("SELECT pg_advisory_xact_lock(hashtextextended('compact-energy:site',0))");
+                expect(await convert('site',start)).toEqual({status:'busy'});
+            } finally {await holder.query('ROLLBACK');holder.release();}
+            expect((await archiveRow()).format_version).toBe(1);
+        });
+        it('converts a day in few round trips: one read for the archive, site and summaries',async()=>{
+            const day=new Date('2026-11-01T05:00:00Z'),dayEnd=addDaysInSiteTimezone(day,1,'America/Chicago');
+            await insertRaw('tou',day,dayEnd,'3',`CASE WHEN extract(hour FROM t AT TIME ZONE 'America/Chicago')<16 THEN 5
+                WHEN extract(hour FROM t AT TIME ZONE 'America/Chicago')<21 THEN 4 ELSE 6 END`);
+            await store.finalizeDay('tou',day,new Date('2026-12-01'));
+            const {PostgresTransferMeter}=await import('./postgres-transfer-meter');
+            const meter=new PostgresTransferMeter(socket!);await meter.start();
+            const metered=new Pool({host:meter.host,port:55439,database,user:process.env.USER,max:1});
+            try {
+                const meteredStore=new CompactHistoryStore(metered,15000,async client=>{await client.query('SELECT 1');});
+                await metered.query('SELECT 1');
+                const at=new Date('2026-12-01');
+                const preview=await meter.measure(()=>meteredStore.convertDayToV2('tou',day,{apply:false,now:at}));
+                expect(preview.value.status).toBe('convertible');
+                // BEGIN, statement timeout, the day read, COMMIT.
+                expect(preview.transfer.requests).toBe(4);
+                const applied=await meter.measure(()=>meteredStore.convertDayToV2('tou',day,{apply:true,now:at}));
+                expect(applied.value.status).toBe('converted');
+                // Three summary rows go in one INSERT; the total no longer grows with them.
+                expect(applied.transfer.requests).toBeLessThanOrEqual(12);
+            } finally {await metered.end();await meter.close();}
+        });
+        it('reads summaries at full double precision under Supabase\'s extra_float_digits=0',async()=>{
+            await insertRaw('site',start,end,'1','2');
+            await pool.query('UPDATE "EnergyData" SET solar_power=$1,load_power=$2 WHERE timestamp=$3',[7631.409423828125,0.1+0.2,start]);
+            await store.finalizeDay('site',start,now);
+            const before=await reads('site',start,end);
+            const rounding=new Pool({host:socket,port:55439,database,user:process.env.USER,max:2,options:'-c extra_float_digits=0'});
+            try {
+                const rounded=new CompactHistoryStore(rounding,15000,async client=>{await client.query('SELECT 1');});
+                expect(await rounded.convertDayToV2('site',start,{apply:true,now:later})).toMatchObject({status:'converted'});
+            } finally {await rounding.end();}
+            expect(await reads('site',start,end)).toEqual(before);
+        });
+        it('converts sites concurrently through real per-site claims',async()=>{
+            const tou=new Date('2026-11-01T05:00:00Z'),touEnd=addDaysInSiteTimezone(tou,1,'America/Chicago');
+            for(const day of [start,end]) {
+                await insertRaw('site',day,addDaysInSiteTimezone(day,1,'America/Chicago'),'1','2');await store.finalizeDay('site',day,now);
+            }
+            await insertRaw('tou',tou,touEnd,'3','5','extract(hour FROM t AT TIME ZONE \'America/Chicago\')<16');
+            await store.finalizeDay('tou',tou,new Date('2026-12-01'));
+            const report=await runV1Conversion(new V1ConversionPgRepo(pool,store),{sites:null,apply:true,maxDays:10,maxReservedBytes:1024*1024,now:new Date('2026-12-01'),concurrency:2});
+            expect(report).toMatchObject({stopped:'caught-up',considered:3,counts:{converted:3},remainingV1:0});
+        });
+        it('detects whether the day record v2 schema has been migrated',async()=>{
+            expect(await new V1ConversionPgRepo(pool,store).schemaReady()).toBe(true);
+            const bare=`${database}_unmigrated`;
+            await admin.query(`CREATE DATABASE ${bare}`);
+            const unmigrated=new Pool({host:socket,port:55439,database:bare,user:process.env.USER,max:1});
+            try {
+                await unmigrated.query('CREATE TABLE "EnergyDayArchive" (site_id text, day_start timestamptz, format_version int)');
+                expect(await new V1ConversionPgRepo(unmigrated,new CompactHistoryStore(unmigrated)).schemaReady()).toBe(false);
+            } finally {await unmigrated.end();await admin.query(`DROP DATABASE IF EXISTS ${bare}`);}
+        });
+        it('runs resumably over all sites within its reservation, reporting counts only',async()=>{
+            await insertRaw('site',start,end,'1','2');await store.finalizeDay('site',start,now);
+            await insertRaw('site',end,addDaysInSiteTimezone(end,1,'America/Chicago'),'1','2');await store.finalizeDay('site',end,now);
+            await pool.query('UPDATE "EnergyDaySummary" SET load_power=load_power+1 WHERE day_start=$1',[end]);
+            const {PostgresTransferMeter}=await import('./postgres-transfer-meter');
+            const meter=new PostgresTransferMeter(socket!);await meter.start();
+            const metered=new Pool({host:meter.host,port:55439,database,user:process.env.USER,max:1});
+            try {
+                const repo=new V1ConversionPgRepo(metered,new CompactHistoryStore(metered,15000,async client=>{await client.query('SELECT 1');}));
+                await repo.counts(null);
+                const options={sites:null,apply:true,maxDays:10,maxReservedBytes:1024*1024,batchSize:1,now:later};
+                const {value:report,transfer}=await meter.measure(()=>runV1Conversion(repo,options));
+                expect(report).toMatchObject({mode:'apply',stopped:'caught-up',considered:2,counts:{converted:1,'left-v1':1},alreadyV2:0,remainingV1:1,
+                    leftV1:{byReason:{integrity:1},days:[{siteId:'site',day:end.toISOString(),reason:'integrity'}]}});
+                expect(transfer.bytes).toBeLessThanOrEqual(report.reservedBytes);
+                expect(JSON.stringify(report)).not.toMatch(/load_power|payload|token/);
+                expect(await runV1Conversion(repo,options)).toMatchObject({considered:1,counts:{'left-v1':1},alreadyV2:1,remainingV1:1});
+            } finally {await metered.end();await meter.close();}
+        });
+    });
+    describe('day record v2 schema',()=>{
+        const segments=[{offset:0,tariffId:1,scheduleId:2},{offset:480,tariffId:1,scheduleId:null}];
+        const samples=[0,1,2,100,101].map(i=>({site_id:'site',timestamp:new Date(+start+i*300000),load_power:20+i,solar_power:3,grid_power:i%2?-5:10,battery_power:-2,battery_soc:i%2?50:null}));
+        const insertV2=async(overrides:Record<string,unknown>={},attribution:DayAttribution={timelineRevision:'current-tariff:1',segments})=>{
+            const archive=encodeDaySamples(samples,start,end,'brotli');
+            const meta=buildDayMetadataV3(samples,attribution,start,end);
+            const row={site_id:'site',day_start:start,day_end:end,revision:randomUUID(),format_version:2,codec:archive.codec,axis:archive.axis,checksum:archive.sha256,
+                payload:archive.data,sample_count:meta.sampleCount,expected_slots:archive.expectedSlots,attribution_complete:meta.attributionComplete,
+                first_timestamp:meta.first,last_timestamp:meta.last,max_interior_gap_ms:meta.maxInteriorGapMs,metadata_checksum:meta.checksum,metadata_version:3,
+                attribution:JSON.stringify(meta.attribution),status:'open',fetched_at:now,raw_pruned:true,...overrides};
+            const keys=Object.keys(row);
+            await pool.query(`INSERT INTO "EnergyDayArchive" (${keys.join(',')}) VALUES (${keys.map((_,i)=>`$${i+1}`).join(',')})`,Object.values(row));
+            for(const s of meta.summaries) await pool.query(`INSERT INTO "EnergyDaySummary" VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+                ['site',start,row.revision,s.tariff_id,s.tariff_schedule_id,s.load_power,s.solar_power,s.grid_power,s.battery_power,
+                    s.sample_import_wh,s.sample_export_wh,s.sample_charge_wh,s.sample_discharge_wh,s.sample_count]);
+            return meta;
+        };
+        const verify=(billing=false)=>pool.query<{ok:boolean}>('SELECT public.verify_compact_day_metadata($1,$2,$3) AS ok',['site',start,billing]);
+        it('adds nullable columns so existing v1 archives stay valid and verifiable',async()=>{
+            await store.finalizeDay('site',start,now);
+            const row=(await pool.query('SELECT format_version,metadata_version,attribution,status,fetched_at FROM "EnergyDayArchive"')).rows[0];
+            expect(row).toEqual({format_version:1,metadata_version:2,attribution:null,status:null,fetched_at:null});
+            expect((await verify()).rows[0].ok).toBe(true);
+        });
+        it('verifies the v3 digest, attribution included, inside PostgreSQL',async()=>{
+            const meta=await insertV2();
+            expect(meta.attributionComplete).toBe(false);
+            expect((await verify()).rows[0].ok).toBe(true);
+            await expect(verify(true)).rejects.toThrow('Incomplete tariff attribution');
+            for(const tamper of [`jsonb_set(attribution,'{segments,1,offset}','485')`,`jsonb_set(attribution,'{segments,1,scheduleId}','2')`,
+                `jsonb_set(attribution,'{timelineRevision}','"current-tariff:9"')`,`jsonb_set(attribution,'{segments}',(attribution->'segments')-1)`]) {
+                await pool.query(`UPDATE "EnergyDayArchive" SET attribution=${tamper}`);
+                await expect(verify()).rejects.toThrow('Day metadata mismatch');
+                await pool.query(`UPDATE "EnergyDayArchive" SET attribution=$1`,[JSON.stringify(meta.attribution)]);
+                expect((await verify()).rows[0].ok).toBe(true);
+            }
+        });
+        it('passes billing verification for a fully attributed v2 day',async()=>{
+            await insertV2({},{timelineRevision:'current-tariff:1',segments:[{offset:0,tariffId:1,scheduleId:2}]});
+            expect((await verify(true)).rows[0].ok).toBe(true);
+        });
+        it.each([
+            ['an unknown status',{status:'stale'}],
+            ['complete while short of slots',{status:'complete'}],
+            ['a v2 record without status',{status:null}],
+            ['a v2 record without fetched_at',{fetched_at:null}],
+            ['a v2 record on metadata 2',{metadata_version:2}],
+            ['metadata 3 without attribution',{attribution:null}],
+            ['an attribution without segments',{attribution:JSON.stringify({timelineRevision:'x'})}],
+            ['format 3',{format_version:3}],
+        ])('rejects %s',async(_,overrides)=>{
+            await expect(insertV2(overrides)).rejects.toThrow(/violates check constraint/);
+        });
     });
 });

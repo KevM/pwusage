@@ -4,7 +4,8 @@ import type { EnergyData } from '../db-types';
 import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow, CycleAggregatesAndCoverage, DailyCoverageStat, EnergyHistoryReader } from '../energy-repo';
 import { addDaysInSiteTimezone, formatSiteDate, getSiteMidnight } from '../date-utils';
 import { verifyDayMetadata,type SummarizedHistoryDay } from './compact-day-metadata';
-import { decodeDay, rollupDay, type DayArchive, type DayRollup } from './compact-energy';
+import { decodeDay, decodeDaySamples, rollupDay, type DayArchive, type DayRollup } from './compact-energy';
+import { attributeSamples, type DayAttribution } from './day-attribution';
 
 export interface FinalizedHistoryDay {
     /** Set only after auditing schedule ownership/existence against original historical tariffs. */
@@ -14,6 +15,8 @@ export interface FinalizedHistoryDay {
     end: Date;
     archive: DayArchive;
     summaries: DayRollup[];
+    /** Format 2 records only: samples carry no tariff IDs; each takes the segment covering its label. */
+    attribution?: DayAttribution;
 }
 export interface HistorySnapshot { raw: EnergyData[]; days: FinalizedHistoryDay[] }
 export interface AggregateHistorySnapshot { timezone:string|null; fullDays:SummarizedHistoryDay[]; detail:HistorySnapshot }
@@ -51,7 +54,9 @@ export class CompactHistoryReader implements EnergyHistoryReader {
                 || +day.end !== +addDaysInSiteTimezone(day.start, 1, this.timezone)
                 || day.start >= end || day.end <= start || +day.start < priorEnd) throw new Error('Invalid finalized day');
             priorEnd = +day.end;
-            const decoded = decodeDay(day.archive, { siteId, start: day.start, end: day.end });
+            const identity = { siteId, start: day.start, end: day.end };
+            const decoded = day.attribution ? attributeSamples(decodeDaySamples(day.archive, identity), day.attribution, day.start, day.end)
+                : decodeDay(day.archive, identity);
             // Prototype verifies every snapshot. A production store can trust an immutable,
             // reconciled revision and fetch just summaries for whole-day billing.
             const expected = rollupDay(decoded, day.start);

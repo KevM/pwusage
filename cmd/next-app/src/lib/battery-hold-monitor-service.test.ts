@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BatteryHold } from './db';
-const mocks = vi.hoisted(() => ({ claim: vi.fn(), release: vi.fn(), record: vi.fn(), raw: vi.fn(), refresh: vi.fn(), client: vi.fn(), restore: vi.fn(), reconcile: vi.fn(), live: vi.fn() }));
+const mocks = vi.hoisted(() => ({ claim: vi.fn(), release: vi.fn(), record: vi.fn(), raw: vi.fn(), refresh: vi.fn(), client: vi.fn(), restore: vi.fn(), reconcile: vi.fn(), live: vi.fn(), createRepo: vi.fn(), site: vi.fn() }));
 vi.mock('./battery-hold-activity-repo', () => ({ reconcileBatteryHoldActivities: mocks.reconcile }));
 vi.mock('./battery-hold-repo', () => ({ BatteryHoldRepo: class { claimHold = mocks.claim; releaseHold = mocks.release; recordMonitoring = mocks.record; } }));
-vi.mock('./energy-repo', () => ({ EnergyRepo: class { getRawEnergyData = mocks.raw; } }));
+vi.mock('./energy-repo-factory', () => ({ createEnergyRepo: mocks.createRepo }));
+vi.mock('./site-repo', () => ({ SiteRepo: class { getSite = mocks.site; } }));
 vi.mock('./today-refresh', () => ({ refreshTodayData: mocks.refresh, refreshLiveStatus: mocks.live }));
 vi.mock('./battery-hold-service', () => ({ createSiteTeslaClient: mocks.client, restoreBattery: mocks.restore }));
 vi.mock('./nilm/tesla-adapter', () => ({ adaptTeslaData: (x: unknown) => x }));
@@ -22,6 +23,7 @@ describe('bounded hold monitoring', () => {
     mocks.raw.mockResolvedValue([]); mocks.refresh.mockResolvedValue({ status: 'persisted' });
     mocks.client.mockResolvedValue({}); mocks.restore.mockResolvedValue({ status: 'ok' });
     mocks.reconcile.mockResolvedValue(2);
+    mocks.createRepo.mockReturnValue({ getRawEnergyData: mocks.raw }); mocks.site.mockResolvedValue({ id: '1', timezone: 'America/Denver' });
     mocks.live.mockResolvedValue({ status: 'error' });
   });
   afterEach(() => vi.useRealTimers());
@@ -38,6 +40,12 @@ describe('bounded hold monitoring', () => {
     const result = await pending;
     expect(result.results).toHaveLength(10); expect(mocks.refresh).toHaveBeenCalledTimes(10);
     expect(peak).toBe(3); expect(result.runtimeMs).toBeLessThanOrEqual(120000); expect(result.failed).toBe(1);
+  });
+  it('reads hold history through the compact-aware repo in the site timezone', async () => {
+    await monitorBatteryHolds([hold(1)]);
+    expect(mocks.site).toHaveBeenCalledWith('1');
+    expect(mocks.createRepo).toHaveBeenCalledWith('America/Denver');
+    expect(mocks.raw).toHaveBeenCalledWith('1', new Date(NOW.getTime() - 3600000 - 30 * 60000), NOW);
   });
   it('restores expired Auto and timer holds before unnecessary history', async () => {
     await monitorBatteryHolds([hold(1), hold(2, { safety_expires_at: NOW }), hold(3, { mode: 'timer', safety_expires_at: NOW })]);

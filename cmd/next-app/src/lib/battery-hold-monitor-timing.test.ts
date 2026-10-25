@@ -7,7 +7,8 @@ vi.mock('./battery-hold-repo', () => ({ BatteryHoldRepo: class {
   async releaseHold() { state.active--; }
   async recordMonitoring() {}
 } }));
-vi.mock('./energy-repo', () => ({ EnergyRepo: class {} }));
+vi.mock('./energy-repo-factory', () => ({ createEnergyRepo: () => ({}) }));
+vi.mock('./site-repo', () => ({ SiteRepo: class {} }));
 // The reconcile consumes its whole real budget, so the 60 s guard tracks ACTIVITY_SYNC_BUDGET_MS.
 vi.mock('./battery-hold-activity-repo', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./battery-hold-activity-repo')>();

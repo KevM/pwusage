@@ -98,7 +98,7 @@ vi.mock('./user-repo', () => {
     return { UserRepo };
 });
 vi.mock('./tesla-client');
-const healedArchiveMock = vi.hoisted(() => ({ archiveHealedDays: vi.fn(async (..._args: unknown[]) => []) }));
+const healedArchiveMock = vi.hoisted(() => ({ archiveHealedDays: vi.fn<(...args: unknown[]) => Promise<never[]>>(async () => []) }));
 vi.mock('./healed-day-archive', () => healedArchiveMock);
 vi.mock('./import-lock', () => ({
     withImportLock: importLockMock.withImportLock,

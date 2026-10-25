@@ -11,6 +11,7 @@ vi.mock('./db', () => ({
 }));
 
 import { SiteRepo } from './site-repo';
+import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { withRequestContext } from './request-context';
 
 function makeSiteRow(overrides: Record<string, unknown> = {}) {
@@ -589,13 +590,13 @@ describe('SiteRepo history migration status', () => {
         expect(sql).not.toMatch(/token|json|live_status_cache/);
     });
 
-    it('reads each site\'s latest energy sample through the (site_id, timestamp) index', async () => {
+    it('reads each site\'s latest stored sample from raw rows or day records by index', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
 
         await new SiteRepo().getHistoryOverview();
 
         const [sql] = queryMock.mock.calls[0] as [string];
-        expect(sql).toMatch(/LEFT JOIN LATERAL \(\s*SELECT max\(timestamp\) AS last_energy_at FROM "EnergyData" WHERE site_id = s\.id\s*\) e ON true/);
+        expect(sql).toContain(`LEFT JOIN LATERAL (SELECT ${latestStoredSampleSql('s.id')} AS last_energy_at) e ON true`);
     });
 
     it('lists active unmigrated sites first, then inactive unmigrated, then migrated; oldest install first within each', async () => {

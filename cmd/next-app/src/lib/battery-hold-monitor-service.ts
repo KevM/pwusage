@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { BatteryHoldRepo } from './battery-hold-repo';
-import { EnergyRepo } from './energy-repo';
+import { createEnergyRepo } from './energy-repo-factory';
+import { SiteRepo } from './site-repo';
 import { adaptTeslaData } from './nilm/tesla-adapter';
 import { summarizeHoldMonitoring, type BatteryHoldMonitoring, type HoldLiveStatus } from './battery-hold-monitoring';
 import { evaluateHold } from './battery-hold-detection';
@@ -61,7 +62,9 @@ async function processHold(hold: BatteryHold): Promise<MonitorResult> {
         now = new Date();
         decision = evaluateHold(hold, [], now);
         if (!decision) {
-          const rows = await new EnergyRepo().getRawEnergyData(hold.site_id, new Date(hold.created_at.getTime() - 30 * 60000), now);
+          // Cached site (the today refresh just loaded it); the window can reach into an archived yesterday.
+          const site = await new SiteRepo().getSite(hold.site_id);
+          const rows = site ? await createEnergyRepo(site.timezone).getRawEnergyData(hold.site_id, new Date(hold.created_at.getTime() - 30 * 60000), now) : [];
           samples = adaptTeslaData(rows);
           now = new Date();
           decision = evaluateHold(hold, samples, now);
