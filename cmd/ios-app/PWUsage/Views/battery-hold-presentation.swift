@@ -102,8 +102,4 @@ enum BatteryHoldPresentation {
         return "Battery Saver. Open Battery Saver."
     }
 
-    static func toolbarLabel(state: BatteryHoldState, at now: Date) -> String {
-        guard state.statusIsCurrent(at: now) else { return "Battery Saver" }
-        return state.response?.hold == nil ? "Battery Saver" : "Battery Saver On"
-    }
 }

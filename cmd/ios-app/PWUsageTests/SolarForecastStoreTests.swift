@@ -1027,7 +1027,6 @@ private actor TestCredentialKeychain: SolcastCredentialKeychain {
         }
         values.removeValue(forKey: SolarForecastScope.key(accountScopeID, siteID))
     }
-    func deleteAll(accountScopeID: String) async throws { values = values.filter { !$0.key.hasPrefix(SolarForecastScope.prefix(accountScopeID)) } }
     func deleteAllCredentials() async throws {
         if shouldFailDeleteAll { shouldFailDeleteAll = false; throw TestFileError.failedWrite }
         values.removeAll()

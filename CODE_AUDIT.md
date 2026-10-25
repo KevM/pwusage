@@ -438,12 +438,12 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Confidence:** High
 
 ### 6.3 Untested destructive keychain path
-- **Location:** `PWUsage/Authentication/SolcastCredentialStore.swift:8`, `:98-124`; `PWUsage/State/SolarForecastStore.swift:644-651`
-- **What:** `SolcastCredentialKeychain.deleteAll(accountScopeID:)` is a prefix-matched bulk delete with no production caller — `signOut` uses the broader `deleteAllCredentials()` (`SolarForecastStore.swift:341`) instead. The protocol requirement is satisfied only by a test fake. Similarly, `DeviceSolarForecastPersistence.clearConnections()` is never called.
+- **Location:** `PWUsage/Authentication/SolcastCredentialStore.swift` (removed); `PWUsage/State/SolarForecastStore.swift` (removed)
+- **What:** `SolcastCredentialKeychain.deleteAll(accountScopeID:)` was a prefix-matched bulk delete with no production caller — `signOut` uses the broader `deleteAllCredentials()` (`SolarForecastStore.swift:341`) instead. The protocol requirement was satisfied only by a test fake. Similarly, `DeviceSolarForecastPersistence.clearConnections()` was never called.
 - **Why:** A bulk credential wipe that no test exercises and no caller can reach is untested destructive security-adjacent code, and `clearConnections` is a second, weaker path for erasing credentials.
-- **Action:** Delete both, or add tests that exercise them before keeping them.
+- **Action:** Deleted both, along with the now-unused `SolarForecastScope.prefix` helper and the test fake's protocol method.
 - **Severity:** Low
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
 - **Confidence:** High
 
 ### 6.4 Release origin allowlist matches host only, so a nonstandard port slips through
