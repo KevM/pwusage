@@ -83,20 +83,6 @@ final class LoadProfileStore: ObservableObject {
         return updated
     }
 
-    func updateProfile(_ profile: LoadProfile) throws {
-        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { throw LoadProfileError.profileNotFound }
-        guard profile.kind == profiles[index].kind else { throw LoadProfileError.invalidProfile }
-        var updated = profile
-        if updated.kind == .custom {
-            updated.name = updated.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            updated.name = profiles[index].name
-        }
-        try Self.validate(updated)
-        profiles[index] = updated
-        persist()
-    }
-
     func deleteCustomProfile(id: String) throws {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
         guard profiles[index].kind == .custom else { throw LoadProfileError.cannotDeleteBuiltIn }

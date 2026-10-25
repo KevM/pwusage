@@ -47,10 +47,10 @@ struct BillOutlookTests {
         }, asOf: now)
         let solar = [SolarForecastInterval(periodStart: now, periodEnd: now.addingTimeInterval(86400), powerKw: 3)]
         let later = now.addingTimeInterval(45 * 60)
-        #expect(BillOutlook.project(history: history(), context: pattern, forecast: solar, now: later,
-                                   cycleEnd: now.addingTimeInterval(86400)).isEmpty)
-        #expect(!BillOutlook.project(history: history(), context: context(), forecast: solar, now: later,
-                                    cycleEnd: now.addingTimeInterval(86400)).isEmpty)
+        #expect(BillOutlook.evaluate(history: history(), context: pattern, forecast: solar, now: later,
+                                   cycleEnd: now.addingTimeInterval(86400)).points.isEmpty)
+        #expect(!BillOutlook.evaluate(history: history(), context: context(), forecast: solar, now: later,
+                                    cycleEnd: now.addingTimeInterval(86400)).points.isEmpty)
     }
     @Test func matchesCanonicalServerPricingFixtures() throws {
         struct Fixture: Decodable { let name: String; let buckets: [BillOutlookBucket]; let expectedCost: Double }
@@ -62,29 +62,31 @@ struct BillOutlookTests {
         }
     }
     @Test func projectsHistoryWithoutAJobAndStartsAfterMeasuredInterval() throws {
-        let result = BillOutlook.project(history: history(), context: context(), forecast: [], now: now,
-                                         cycleEnd: now.addingTimeInterval(86400))
+        let result = BillOutlook.evaluate(history: history(), context: context(), forecast: [], now: now,
+                                         cycleEnd: now.addingTimeInterval(86400)).points
         let end = try #require(result.last)
         #expect(end.date == now.addingTimeInterval(86400))
         #expect(abs(end.periods[0].netGridKwh - (-14)) < 0.000001)
         #expect(abs(end.estimatedCost - (-0.56)) < 0.000001)
     }
     @Test func missingHistoryAndStaleContextDoNotInventProjection() {
-        #expect(BillOutlook.project(history: history(complete: false), context: context(), forecast: [], now: now,
-                                    cycleEnd: now.addingTimeInterval(86400)).isEmpty)
-        #expect(BillOutlook.project(history: history(), context: context(), forecast: [], now: now.addingTimeInterval(90000),
-                                    cycleEnd: now.addingTimeInterval(172800)).isEmpty)
+        #expect(BillOutlook.evaluate(history: history(complete: false), context: context(), forecast: [], now: now,
+                                    cycleEnd: now.addingTimeInterval(86400)).points.isEmpty)
+        #expect(BillOutlook.evaluate(history: history(), context: context(), forecast: [],
+                                    now: now.addingTimeInterval(90000),
+                                    cycleEnd: now.addingTimeInterval(172800)).points.isEmpty)
     }
     @Test func anInProgressSampleAloneIsNotAProjection() {
         let empty = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC", slots: [], asOf: now)
         let result = BillOutlook.evaluate(history: history(), context: empty, forecast: [],
-                                         now: now.addingTimeInterval(-240), cycleEnd: now.addingTimeInterval(86400))
-        #expect(result.points.isEmpty)
+                                          now: now.addingTimeInterval(-240),
+                                          cycleEnd: now.addingTimeInterval(86400)).points
+        #expect(result.isEmpty)
     }
     @Test func solarUsesTypicalHomeFlowThenFallsBackToGridHistory() throws {
         let forecast = [SolarForecastInterval(periodStart: now, periodEnd: now.addingTimeInterval(3600), powerKw: 5)]
-        let result = BillOutlook.project(history: history(), context: context(), forecast: forecast, now: now,
-                                         cycleEnd: now.addingTimeInterval(7200))
+        let result = BillOutlook.evaluate(history: history(), context: context(), forecast: forecast, now: now,
+                                         cycleEnd: now.addingTimeInterval(7200)).points
         let end = try #require(result.last)
         #expect(abs(end.periods[0].netGridKwh - 5) < 0.000001)
     }
@@ -95,8 +97,8 @@ struct BillOutlookTests {
                   sellRate: 0.04, tariffName: "Utility", periodName: "Peak"),
             .init(start: now.addingTimeInterval(3600), end: now.addingTimeInterval(7200), periodKey: "peak", name: "Peak",
                   buyRate: 0.6, sellRate: 0.04, tariffName: "Utility", periodName: "Peak")]
-        let end = try #require(BillOutlook.project(history: history, context: context(grid: -1), forecast: [], now: now,
-                                                  cycleEnd: now.addingTimeInterval(7200)).last)
+        let end = try #require(BillOutlook.evaluate(history: history, context: context(grid: -1), forecast: [],
+                                                  now: now, cycleEnd: now.addingTimeInterval(7200)).points.last)
         #expect(end.date == now.addingTimeInterval(7200))
         #expect(abs(end.estimatedCost - 3.9) < 0.000001)
     }

@@ -135,12 +135,15 @@ struct LoadProfileStoreTests {
         #expect(throws: LoadProfileError.self) { try store.createCustomProfile(name: "Bad", energyKwh: 2, durationHours: 0) }
         var invalidCar = try #require(store.profile(id: "car"))
         invalidCar.carSettings?.targetStateOfCharge = -1
-        #expect(throws: LoadProfileError.self) { try store.updateProfile(invalidCar) }
+        #expect(throws: LoadProfileError.self) {
+            try store.editProfile(id: "car", energyKwh: invalidCar.energyKwh, durationHours: invalidCar.durationHours,
+                                  carSettings: invalidCar.carSettings)
+        }
         invalidCar.carSettings = CarLoadSettings(capacityKwh: 201, initialStateOfCharge: 0, targetStateOfCharge: 100, chargingLevel: .level1)
-        #expect(throws: LoadProfileError.self) { try store.updateProfile(invalidCar) }
-        var changedKind = try #require(store.profile(id: "dishwasher"))
-        changedKind = LoadProfile(id: changedKind.id, name: changedKind.name, kind: .custom, energyKwh: changedKind.energyKwh, durationHours: changedKind.durationHours, carSettings: nil)
-        #expect(throws: LoadProfileError.self) { try store.updateProfile(changedKind) }
+        #expect(throws: LoadProfileError.self) {
+            try store.editProfile(id: "car", energyKwh: invalidCar.energyKwh, durationHours: invalidCar.durationHours,
+                                  carSettings: invalidCar.carSettings)
+        }
     }
 
     @Test("Trims names and validates SOC ordering and range")
@@ -151,7 +154,10 @@ struct LoadProfileStoreTests {
         #expect(created.name == "Workshop")
         var car = try #require(store.profile(id: "car"))
         car.carSettings?.initialStateOfCharge = 81
-        #expect(throws: LoadProfileError.self) { try store.updateProfile(car) }
+        #expect(throws: LoadProfileError.self) {
+            try store.editProfile(id: "car", energyKwh: car.energyKwh, durationHours: car.durationHours,
+                                  carSettings: car.carSettings)
+        }
     }
 
     @Test("Fresh installs name every Job as a verb phrase")

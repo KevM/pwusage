@@ -5,7 +5,6 @@ protocol SolcastCredentialKeychain: Sendable {
     func save(key: String, accountScopeID: String, siteID: String, credentialID: String) async throws
     func load(accountScopeID: String, siteID: String) async throws -> SolcastStoredCredential?
     func delete(accountScopeID: String, siteID: String) async throws
-    func deleteAll(accountScopeID: String) async throws
     func deleteAllCredentials() async throws
 }
 
@@ -18,8 +17,6 @@ enum SolarForecastScope {
     static func key(_ accountScopeID: String, _ siteID: String) -> String {
         segment(accountScopeID) + segment(siteID)
     }
-
-    static func prefix(_ accountScopeID: String) -> String { segment(accountScopeID) }
 
     private static func segment(_ value: String) -> String { "\(value.utf8.count):\(value)" }
 }
@@ -95,34 +92,6 @@ actor DeviceSolcastCredentialStore: SolcastCredentialKeychain {
         guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError.status(status) }
     }
 
-    func deleteAll(accountScopeID: String) throws {
-        // The app owns a single generic-password service. Its nonsecret metadata
-        // contains no secrets; delete matching items by their account prefix.
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrSynchronizable as String: false,
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return }
-        guard status == errSecSuccess, let items = result as? [[String: Any]] else { throw KeychainError.status(status) }
-        for item in items {
-            guard let account = item[kSecAttrAccount as String] as? String,
-                  account.hasPrefix(Self.scopePrefix(accountScopeID)) else { continue }
-            let itemQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
-                kSecAttrSynchronizable as String: false,
-            ]
-            let deleteStatus = SecItemDelete(itemQuery as CFDictionary)
-            guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else { throw KeychainError.status(deleteStatus) }
-        }
-    }
-
     func deleteAllCredentials() throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -134,8 +103,6 @@ actor DeviceSolcastCredentialStore: SolcastCredentialKeychain {
     }
 
     private static func account(accountScopeID: String, siteID: String) -> String { SolarForecastScope.key(accountScopeID, siteID) }
-
-    private static func scopePrefix(_ accountScopeID: String) -> String { SolarForecastScope.prefix(accountScopeID) }
 
     enum KeychainError: Error { case status(OSStatus), invalidItem }
 }

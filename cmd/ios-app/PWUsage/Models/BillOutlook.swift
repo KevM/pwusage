@@ -82,10 +82,6 @@ enum BillOutlook {
         let usesHistory: Bool
         static let empty = ProjectionResult(points: [], usesSolar: false, usesHistory: false)
     }
-    static func project(history: BillOutlookHistory, context: LoadTimingForecastEstimator.PlanningContext,
-                        forecast: [SolarForecastInterval], now: Date, cycleEnd: Date) -> [BillOutlookPoint] {
-        evaluate(history: history, context: context, forecast: forecast, now: now, cycleEnd: cycleEnd).points
-    }
     static func evaluate(history: BillOutlookHistory, context: LoadTimingForecastEstimator.PlanningContext,
                         forecast: [SolarForecastInterval], now: Date, cycleEnd: Date) -> ProjectionResult {
         guard history.complete, let observed = history.points.last, observed.complete,

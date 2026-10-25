@@ -836,14 +836,6 @@ actor DeviceSolarForecastPersistence: SolarForecastPersistence {
         cached = state
     }
 
-    func clearConnections() throws {
-        var current = (try? loadState()) ?? SolarForecastPersistedState()
-        current.credentials.removeAll()
-        current.caches.removeAll()
-        current.budgetLinks.removeAll()
-        current.failedScopes.removeAll()
-        try saveState(current)
-    }
 }
 
 @MainActor

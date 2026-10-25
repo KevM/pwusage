@@ -146,22 +146,19 @@ struct BatteryHoldCoordinatorTests {
         #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: now).contains("unknown"))
     }
 
-    @Test("Battery Saver navigation labels describe unknown, idle and active status")
+    @Test("Battery Saver toolbar accessibility labels describe unknown, idle and active status")
     func batterySaverNavigationLabels() async throws {
         let now = Date.now
         let unknown = BatteryHoldState()
-        #expect(BatteryHoldPresentation.toolbarLabel(state: unknown, at: now) == "Battery Saver")
         #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: unknown, at: now) == "Battery Saver, status unknown")
 
         let api = BatteryHoldAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { now }, timerInterval: nil)
         await coordinator.refreshBatteryHold()
-        #expect(BatteryHoldPresentation.toolbarLabel(state: coordinator.batteryHold, at: now) == "Battery Saver")
         #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: now) == "Battery Saver. Open Battery Saver.")
 
         api.response = .init(hold: try Self.hold(), notice: nil)
         await coordinator.refreshBatteryHold()
-        #expect(BatteryHoldPresentation.toolbarLabel(state: coordinator.batteryHold, at: now) == "Battery Saver On")
         #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: now) == "Battery Saver on, saving your Powerwall at 80%. Open Battery Saver.")
     }
 
