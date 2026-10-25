@@ -600,6 +600,15 @@ export class TeslaAuthService {
             ? this.deps.teslaClientCreator(teslaClientConfig)
             : new TeslaClient(teslaClientConfig);
 
+        // Non-NA accounts get 421 "user out of region" from the default host, so
+        // find the account's regional host before any other Fleet call. If this
+        // fails, the client still follows a 421's base URL on the calls below.
+        try {
+            await client.resolveRegion();
+        } catch (e) {
+            console.warn('[TeslaAuthService] Failed to resolve Tesla region; relying on 421 redirects:', e);
+        }
+
         let userEmail: string | undefined;
         let userId: string | undefined;
 
@@ -717,6 +726,7 @@ export class TeslaAuthService {
                     accessToken: authData.access_token,
                     refreshToken: authData.refresh_token,
                     tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
+                    fleetApiBaseUrl: client.getBaseUrl(),
                 });
             } catch (err) {
                 // idx_user_email_lower rejected the insert: a concurrent login
@@ -736,6 +746,7 @@ export class TeslaAuthService {
                     accessToken: authData.access_token,
                     refreshToken: authData.refresh_token,
                     tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
+                    fleetApiBaseUrl: client.getBaseUrl(),
                 });
             }
 

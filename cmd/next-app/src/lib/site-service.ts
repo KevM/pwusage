@@ -135,6 +135,7 @@ export class SiteService {
         const accessToken = site?.access_token;
         const refreshToken = site?.refresh_token;
 
+        const ownerId = site?.user_id;
         const handlers = teslaTokenRepo.getLockedRefreshHandler(siteId);
         // Tokens are absent when the site row is missing or the user has no
         // stored credentials. We still build the client and attempt ensureSite:
@@ -149,7 +150,9 @@ export class SiteService {
             onTokenError: handlers.errorHandler,
             onTokenUpdate: async () => {
                 console.log('Token update callback triggered (Site Page Service).');
-            }
+            },
+            baseUrl: site?.fleet_api_base_url,
+            onBaseUrlChange: ownerId ? (baseUrl) => new UserRepo().setFleetApiBaseUrl(ownerId, baseUrl) : undefined
         };
 
         const teslaClient = this.deps.teslaClientCreator

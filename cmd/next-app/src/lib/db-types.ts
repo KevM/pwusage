@@ -100,6 +100,8 @@ export interface SiteWithTariffs extends Site {
   access_token?: string | null;
   refresh_token?: string | null;
   auth_status?: string | null;
+  /** The owner's regional Fleet API host (null = unknown, North America). */
+  fleet_api_base_url?: string | null;
 }
 
 export interface LoadTag {
