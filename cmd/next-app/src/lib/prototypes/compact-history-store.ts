@@ -76,6 +76,8 @@ export interface FinalizationResult { status: 'busy' | 'empty' | 'finalized' | '
 export interface DayWriteResult { status:'busy'|'empty'|'written'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
 /** v1 -> v2 conversion of one archive; `convertible` is a preview's verified result. */
 export interface DayConversionResult { status:'busy'|'converted'|'convertible'|'already-v2'|'left-v1'; reason?:V1ConversionReason; revision?:string; dayStatus?:DayStatus }
+/** An archive row with its site's timezone and its revision's summaries (JSON, read with full float precision). */
+type ConversionRecord=ArchiveRecord&{created_at:Date;timezone:string|null;summaries:SummaryRecord[]};
 type PreparedDay={archive:DayArchive;summaries:DayRollup[];attributionComplete:boolean;metadata:SummarizedHistoryDay;payloadChecksum:string;
     latest:{data:LatestMetadata;checksum:string};record?:{attribution:DayAttribution;status:DayStatus;fetchedAt:Date}};
 
@@ -617,13 +619,15 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         try {
             await beginTransaction(client,apply?'ISOLATION LEVEL READ COMMITTED':'ISOLATION LEVEL REPEATABLE READ READ ONLY');
             if(apply)await this.boundTransaction(client);
-            await client.query("SET LOCAL statement_timeout='15s'");
+            await client.query(apply?"SET LOCAL statement_timeout='15s'; SET LOCAL lock_timeout='3s'":"SET LOCAL statement_timeout='15s'");
             if(apply) {
-                await client.query("SET LOCAL lock_timeout='3s'");
                 await this.mutationGuard!(client);
                 if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy'};}
             }
-            const old=(await client.query<ArchiveRecord&{created_at:Date}>(`SELECT * FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2${apply?' FOR UPDATE':''}`,[siteId,start])).rows[0];
+            // One round trip for the day: the archive, its site's timezone and its revision's summaries.
+            const old=(await client.query<ConversionRecord>(`SELECT a.*,s.timezone,COALESCE((SELECT json_agg(x) FROM "EnergyDaySummary" x
+                WHERE x.site_id=a.site_id AND x.day_start=a.day_start AND x.revision=a.revision),'[]') AS summaries
+                FROM "EnergyDayArchive" a LEFT JOIN "Site" s ON s.id=a.site_id WHERE a.site_id=$1 AND a.day_start=$2${apply?' FOR UPDATE OF a':''}`,[siteId,start])).rows[0];
             if(!old)throw new Error('Archive day not found');
             const result=await this.convertArchive(client,old,apply,now);
             await client.query('COMMIT');return result;
@@ -631,17 +635,16 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         finally {client.release(apply&&this.transactionTimeoutMs!==undefined);}
     }
 
-    private async convertArchive(client:PoolClient,old:ArchiveRecord&{created_at:Date},apply:boolean,now:Date):Promise<DayConversionResult> {
+    private async convertArchive(client:PoolClient,old:ConversionRecord,apply:boolean,now:Date):Promise<DayConversionResult> {
         if(old.format_version===2)return {status:'already-v2'};
         const left=(reason:V1ConversionReason):DayConversionResult=>({status:'left-v1',reason});
         if(old.format_version!==1||old.metadata_version!==2)return left('legacy-metadata');
         const start=new Date(old.day_start),end=new Date(old.day_end);
-        const timezone=(await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1',[old.site_id])).rows[0]?.timezone;
+        const {timezone}=old;
         try {
             if(!timezone||+start!==+getSiteMidnight(start,timezone)||+end!==+addDaysInSiteTimezone(start,1,timezone))return left('day-bounds');
         } catch {return left('day-bounds');}
-        const stored=(await client.query<SummaryRecord>('SELECT * FROM "EnergyDaySummary" WHERE site_id=$1 AND day_start=$2 AND revision=$3',
-            [old.site_id,old.day_start,old.revision])).rows.map(summary);
+        const stored=old.summaries.map(summary);
         let rows:EnergyData[];
         // Verified exactly as recovery and trim do: payload, metadata, summaries and projection.
         try {rows=recoverVerifiedSamples(old,stored);} catch {return left('integrity');}
@@ -698,10 +701,12 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         await client.query(`INSERT INTO "EnergyDayArchive" (site_id,day_start,day_end,revision,format_version,codec,axis,checksum,payload,sample_count,expected_slots,attribution_complete,first_timestamp,last_timestamp,max_interior_gap_ms,metadata_checksum,metadata_version,latest_metadata,latest_checksum,payload_checksum,raw_pruned,attribution,status,fetched_at)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,[siteId,start,end,revision,record?2:1,archive.codec,archive.axis,archive.sha256,archive.data,sampleCount,archive.expectedSlots,attributionComplete,metadata.first,metadata.last,metadata.maxInteriorGapMs,metadata.checksum,record?3:2,JSON.stringify(latest.data),latest.checksum,payloadChecksum,rawPruned,
             record?JSON.stringify(record.attribution):null,record?.status??null,record?.fetchedAt??null]);
-        for (const s of summaries) await client.query(`INSERT INTO "EnergyDaySummary" (site_id,day_start,revision,tariff_id,tariff_schedule_id,
+        // One statement for all of the day's summary rows.
+        if(summaries.length) await client.query(`INSERT INTO "EnergyDaySummary" (site_id,day_start,revision,tariff_id,tariff_schedule_id,
             load_power,solar_power,grid_power,battery_power,sample_import_wh,sample_export_wh,sample_charge_wh,sample_discharge_wh,sample_count)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[siteId,start,revision,s.tariff_id,s.tariff_schedule_id,
-            s.load_power,s.solar_power,s.grid_power,s.battery_power,s.sample_import_wh,s.sample_export_wh,s.sample_charge_wh,s.sample_discharge_wh,s.sample_count]);
+            VALUES ${summaries.map((_,i)=>`($1,$2,$3,${Array.from({length:11},(_,j)=>'$'+(4+i*11+j)).join(',')})`).join(',')}`,
+            [siteId,start,revision,...summaries.flatMap(s=>[s.tariff_id,s.tariff_schedule_id,
+                s.load_power,s.solar_power,s.grid_power,s.battery_power,s.sample_import_wh,s.sample_export_wh,s.sample_charge_wh,s.sample_discharge_wh,s.sample_count])]);
         return revision;
     }
 

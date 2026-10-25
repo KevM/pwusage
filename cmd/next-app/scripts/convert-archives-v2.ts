@@ -10,10 +10,13 @@
  * raw rows stay until the cutover, and finalization keeps the converted record
  * while it matches them).
  *
- *   npx tsx scripts/convert-archives-v2.ts [--site-id <id>]... [--apply] [--max-days 500] [--max-mb 16] [--after <siteId>/<day>]
+ *   npx tsx scripts/convert-archives-v2.ts [--site-id <id>]... [--apply] [--max-days 500] [--max-mb 16] [--concurrency 1-4] [--after <siteId>/<day>]
  *
- * A run stopped by a cap prints `resumeAfter`; pass it back as `--after` to
- * continue past the days it examined (days left v1 are not re-examined first).
+ * Days are taken in (day, site) order. `--concurrency` converts that many sites
+ * at once (each site one day at a time, under its claim): pooler round trips,
+ * not bytes, dominate the run time. A run stopped by a cap prints
+ * `resumeAfter`; pass it back as `--after` to continue past the days it
+ * examined (days left v1 are not re-examined first).
  *
  * `--max-mb` caps the run's conservative read reservation (stored payload plus
  * a fixed per-day overhead; measured real cost is a few KB per day), to stay
