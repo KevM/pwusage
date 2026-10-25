@@ -47,6 +47,8 @@ export interface DailyCoverageStat {
     archived?: boolean;
     /** Set by compact reads: a v2 day record still `open` (today, or a recent day short of samples). */
     open?: boolean;
+    /** Set by compact reads: when a v2 day record was fetched from Tesla. */
+    fetchedAt?: Date;
 }
 
 export interface CycleAggregateRow {

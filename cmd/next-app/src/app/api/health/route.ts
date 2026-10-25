@@ -49,8 +49,8 @@ export async function GET() {
     if (checks.database.status === 'ok') {
         try {
             const siteCount = await pool.query('SELECT COUNT(*) FROM "Site"');
-            // Day records hold the history; raw rows are a transitional write buffer.
-            const dayCount = await pool.query('SELECT COUNT(*) FROM "EnergyDayArchive"');
+            // Day records hold the history; raw rows are a transitional write buffer. Empty records hold no samples.
+            const dayCount = await pool.query(`SELECT COUNT(*) FROM "EnergyDayArchive" WHERE status IS DISTINCT FROM 'empty'`);
 
             checks.schema = {
                 status: 'ok',

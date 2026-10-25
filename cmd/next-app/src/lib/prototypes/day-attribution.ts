@@ -17,6 +17,18 @@ export const DAY_GAP_HEAL_DAYS = 14;
 export interface TariffSegment { offset: number; tariffId: number; scheduleId: number | null }
 export interface DayAttribution { timelineRevision: string; segments: TariffSegment[] }
 export type DayStatus = 'open' | 'complete' | 'gapped';
+/**
+ * A stored day record's status: a `DayStatus`, or `empty` for a day Tesla answered
+ * with no samples (no payload or summaries; replaced by the first non-empty write).
+ */
+export type DayRecordStatus = DayStatus | 'empty';
+
+/** An empty day record: when Tesla last answered it with no samples, and whether that answer is final. */
+export interface EmptyDayState {
+    dayStart: Date;
+    fetchedAt: Date;
+    settled: boolean;
+}
 
 export const currentTariffTimelineRevision = (tariffId: number): string => `current-tariff:${tariffId}`;
 

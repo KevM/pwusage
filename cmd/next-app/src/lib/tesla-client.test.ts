@@ -193,6 +193,81 @@ describe('TeslaClient.getSoeHistory', () => {
     });
 });
 
+// Shapes observed from Tesla (Harrison, 2026-10-25): a day with no data answers
+// energy with an empty serial_number and no time_series, and SOE with "".
+const EMPTY_DAY_ENERGY = { response: { serial_number: '', period: 'day', SmartBreakerEnergyLogs: null } };
+const EMPTY_DAY_SOE = { response: '' };
+
+describe('TeslaClient calendar_history response validation', () => {
+    const start = new Date('2026-02-16T06:00:00.000Z');
+    const end = new Date('2026-02-17T05:59:59.000Z');
+    const client = () => new TeslaClient({ accessToken: 'test-access-token' });
+    const answer = (payload: unknown) => vi.spyOn(globalThis, 'fetch').mockResolvedValue(makeJsonResponse(payload));
+
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('treats Tesla\'s no-data day answers as empty', async () => {
+        answer(EMPTY_DAY_ENERGY);
+        await expect(client().getEnergyHistory('1', start, end, 'day', 'America/Chicago')).resolves.toEqual([]);
+        vi.restoreAllMocks();
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        answer(EMPTY_DAY_SOE);
+        await expect(client().getSoeHistory('1', start, end, 'day', 'America/Chicago')).resolves.toEqual([]);
+    });
+
+    it('keeps an explicit empty time_series as empty', async () => {
+        answer({ response: { serial_number: 'X', time_series: [] } });
+        await expect(client().getEnergyHistory('1', start, end, 'day', 'America/Chicago')).resolves.toEqual([]);
+        await expect(client().getSoeHistory('1', start, end, 'day', 'America/Chicago')).resolves.toEqual([]);
+    });
+
+    it.each([
+        ['no response', {}],
+        ['an empty response object', { response: {} }],
+        ['a site serial without time_series', { response: { serial_number: 'X', period: 'day' } }],
+        ['a non-array time_series', { response: { serial_number: 'X', time_series: null } }],
+        ['a string response', { response: 'oops' }],
+    ])('rejects an energy answer with %s', async (_label, payload) => {
+        answer(payload);
+        await expect(client().getEnergyHistory('1', start, end, 'day', 'America/Chicago')).rejects.toThrow(/Malformed Tesla energy history/);
+    });
+
+    it.each([
+        ['energy', { response: { error: 'invalid_grant', time_series: null } }],
+        ['energy', { response: { error: 'login_required' } }],
+        ['soe', { response: 'invalid authentication' }],
+    ] as const)('keeps a malformed %s answer that quotes an auth error non-terminal', async (kind, payload) => {
+        // isTeslaAuthError matches message substrings, and a terminal error revokes the owner
+        // (DesignDecisions.md, "Terminal vs transient failures"): the body must not reach the message.
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        answer(payload);
+        const c = client();
+        const error = await (kind === 'energy'
+            ? c.getEnergyHistory('1', start, end, 'day', 'America/Chicago')
+            : c.getSoeHistory('1', start, end, 'day', 'America/Chicago')).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(Error);
+        expect(isTeslaAuthError(error)).toBe(false);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Malformed'), JSON.stringify(payload).substring(0, 200));
+    });
+
+    it.each([
+        ['no response', {}],
+        ['an empty response object', { response: {} }],
+        ['the energy no-data shape', EMPTY_DAY_ENERGY],
+        ['a non-array time_series', { response: { serial_number: 'X', time_series: {} } }],
+        ['a non-empty string response', { response: 'oops' }],
+    ])('rejects an SOE answer with %s', async (_label, payload) => {
+        answer(payload);
+        await expect(client().getSoeHistory('1', start, end, 'day', 'America/Chicago')).rejects.toThrow(/Malformed Tesla SOE history/);
+    });
+});
+
 describe('TeslaClient.setBackupReserve', () => {
     beforeEach(() => {
         vi.spyOn(console, 'log').mockImplementation(() => {});

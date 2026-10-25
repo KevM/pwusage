@@ -100,9 +100,15 @@ if [[ -n "$daily" ]]; then
 SET session_replication_role = replica;
 CREATE TEMP TABLE energy_weekly (LIKE public."EnergyData" INCLUDING DEFAULTS) ON COMMIT DROP;
 \i '$work/energy-weekly.sql'
+-- A day pruned to its archive after the full backup has only its archive now:
+-- its old raw rows would sit under it and break that day's invariant.
+CREATE TEMP VIEW pruned_day AS
+SELECT site_id, day_start, day_end FROM public."EnergyDayArchive" WHERE raw_pruned;
 INSERT INTO public."EnergyData"
 SELECT w.* FROM energy_weekly w
 WHERE EXISTS (SELECT 1 FROM public."Site" s WHERE s.id = w.site_id)
+  AND NOT EXISTS (SELECT 1 FROM pruned_day p
+                  WHERE p.site_id = w.site_id AND w."timestamp" >= p.day_start AND w."timestamp" < p.day_end)
 ON CONFLICT DO NOTHING;
 CREATE TEMP TABLE energy_recent (LIKE public."EnergyData" INCLUDING DEFAULTS) ON COMMIT DROP;
 \copy energy_recent ($columns) FROM '$daily_dir/energy-recent.csv' WITH (FORMAT csv, HEADER true)
@@ -110,7 +116,9 @@ DELETE FROM public."EnergyData" e USING energy_recent r
 WHERE e."timestamp" = r."timestamp" AND e.site_id = r.site_id;
 INSERT INTO public."EnergyData"
 SELECT r.* FROM energy_recent r
-WHERE EXISTS (SELECT 1 FROM public."Site" s WHERE s.id = r.site_id);
+WHERE EXISTS (SELECT 1 FROM public."Site" s WHERE s.id = r.site_id)
+  AND NOT EXISTS (SELECT 1 FROM pruned_day p
+                  WHERE p.site_id = r.site_id AND r."timestamp" >= p.day_start AND r."timestamp" < p.day_end);
 -- The daily dump records EnergyData's sequence before the recent readings are
 -- copied, so readings imported in between can carry higher ids. Move the
 -- sequence past every restored row (never backwards) so new inserts, which

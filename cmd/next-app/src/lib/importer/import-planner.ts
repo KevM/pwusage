@@ -1,6 +1,6 @@
 import { formatSiteDate, getSiteMidnight } from '../date-utils';
 import type { DailyCoverageStat } from '../energy-repo';
-import { DAY_GAP_HEAL_DAYS } from '../prototypes/day-attribution';
+import { DAY_GAP_HEAL_DAYS, type EmptyDayState } from '../prototypes/day-attribution';
 
 export interface DateWindow {
     start: Date;
@@ -19,6 +19,12 @@ export interface PlanOptions {
      * records are settled and never refetched automatically.
      */
     refetchOpenDays?: boolean;
+    /**
+     * Empty day records in the range (`CompactHistoryStore.getEmptyDays`). A settled
+     * one is never refetched unless forced, like a settled archive day; an unsettled
+     * one is retried with its check time, so a window cap rotates through them.
+     */
+    emptyDays?: EmptyDayState[];
     gapThresholdMs?: number;
     now?: Date;
 }
@@ -34,6 +40,8 @@ export interface DayAuditResult extends DayWindow {
     archived: boolean;
     /** An `open` v2 day record (see `DailyCoverageStat.open`). */
     open: boolean;
+    /** A day record's fetch time (see `DailyCoverageStat.fetchedAt`). */
+    fetchedAt?: Date;
 }
 
 export interface GenerateDayWindowsOptions {
@@ -141,6 +149,7 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             hasInteriorGap: stat.maxInteriorGapMs > gapThresholdMs,
             archived: stat.archived === true || aged,
             open: stat.open === true && !aged,
+            ...(stat.fetchedAt ? { fetchedAt: stat.fetchedAt } : {}),
         });
     }
 
@@ -154,19 +163,43 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
  */
 export interface PlannedWindow extends DateWindow {
     openRetry?: true;
+    /** When the day was last fetched from Tesla; absent if never (or only raw rows are stored). */
+    fetchedAt?: Date;
 }
 
 export function planImport(options: PlanOptions): PlannedWindow[] {
     const { forceRefetch = false, refetchOpenDays = false } = options;
+    const emptyDays = new Map((options.emptyDays ?? []).map(e => [+e.dayStart, e]));
     return auditDays(options).flatMap(d => {
         const window = { start: d.windowStart, end: d.effectiveWindowEnd };
         if (forceRefetch) return [window];
+        const empty = emptyDays.get(+d.windowStart);
         // Re-fetching a settled archive day rewrites its raw rows, which drops the
         // archive (and restores a trimmed day): a churn loop for days Tesla can't fill.
-        if (d.archived) return [];
-        if (d.count === 0 || d.missingStart || d.missingEnd || d.hasInteriorGap) return [window];
-        return refetchOpenDays && d.open && !d.isToday ? [{ ...window, openRetry: true as const }] : [];
+        // A settled empty day would only return the same empty answer again.
+        if (d.archived || empty?.settled) return [];
+        const fetchedAt = empty?.fetchedAt ?? d.fetchedAt;
+        const planned = fetchedAt ? { ...window, fetchedAt } : window;
+        if (d.count === 0 || d.missingStart || d.missingEnd || d.hasInteriorGap) return [planned];
+        return refetchOpenDays && d.open && !d.isToday ? [{ ...planned, openRetry: true as const }] : [];
     });
+}
+
+/**
+ * The windows a capped run imports. Never-fetched days come first, newest first
+ * (the most useful to recent-history readers); then days fetched before, least
+ * recently fetched first, so days Tesla keeps answering the same way take turns
+ * instead of the newest few taking the cap every run; open-record retries come
+ * after every other day. The rest are re-planned next run.
+ */
+export function selectWindows(windows: PlannedWindow[], maxWindows: number | undefined): PlannedWindow[] {
+    if (maxWindows === undefined) return windows;
+    const fetched = (w: PlannedWindow) => w.fetchedAt === undefined ? -Infinity : +w.fetchedAt;
+    return [...windows]
+        .sort((a, b) => Number(a.openRetry === true) - Number(b.openRetry === true)
+            || fetched(a) - fetched(b)
+            || +b.start - +a.start)
+        .slice(0, maxWindows);
 }
 
 export function splitAtSiteMidnight(window: DateWindow, timezone: string): DateWindow[] {

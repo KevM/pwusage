@@ -295,7 +295,8 @@ one.
 
 - A **malformed-but-200** upstream body must throw a plain `Error` whose message
   contains **neither** `login_required` **nor** `invalid_grant`.
-  `parseRefreshedTokens` in `src/lib/tesla-auth.ts` does exactly that. Echoing
+  `parseRefreshedTokens` in `src/lib/tesla-auth.ts` does exactly that, and so does
+  `calendarTimeSeries` in `src/lib/tesla-client.ts` (it logs the body instead). Echoing
   upstream text verbatim into the message would match the substring test and
   mass-de-authenticate every user during a transient upstream malformation - a
   credential incident with no credential cause.

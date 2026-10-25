@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { planImport, splitAtSiteMidnight, auditDays, generateDayWindows } from './import-planner';
+import { planImport, selectWindows, splitAtSiteMidnight, auditDays, generateDayWindows } from './import-planner';
+import type { PlannedWindow } from './import-planner';
 import { formatSiteDate } from '../date-utils';
 import type { DailyCoverageStat } from '../energy-repo';
 
@@ -322,6 +323,74 @@ describe('planImport — settled archive days', () => {
     });
 });
 
+describe('planImport — empty days', () => {
+    const DAY2_START = DAY1_END;
+    const DAY2_END = new Date('2026-01-12T06:00:00.000Z');
+    const LATER = new Date('2026-02-20T12:00:00.000Z');
+    const CHECKED = new Date('2026-01-12T07:00:00.000Z');
+
+    it('skips a day Tesla settled as empty, and still fetches other missing days', () => {
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY2_END },
+            existingCoverage: [],
+            timezone: TZ,
+            emptyDays: [{ dayStart: DAY1_START, fetchedAt: CHECKED, settled: true }],
+            now: LATER,
+        })).toEqual([{ start: DAY2_START, end: DAY2_END }]);
+    });
+
+    it('re-fetches a settled empty day when forced', () => {
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [],
+            timezone: TZ,
+            emptyDays: [{ dayStart: DAY1_START, fetchedAt: CHECKED, settled: true }],
+            forceRefetch: true,
+            now: LATER,
+        })).toEqual([{ start: DAY1_START, end: DAY1_END }]);
+    });
+
+    it('retries an unsettled empty day, carrying when it was last checked', () => {
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [],
+            timezone: TZ,
+            emptyDays: [{ dayStart: DAY1_START, fetchedAt: CHECKED, settled: false }],
+            now: FUTURE,
+        })).toEqual([{ start: DAY1_START, end: DAY1_END, fetchedAt: CHECKED }]);
+    });
+});
+
+describe('selectWindows', () => {
+    const day = (n: number, extra: Partial<PlannedWindow> = {}): PlannedWindow =>
+        ({ start: new Date(+DAY1_START + n * 86400000), end: new Date(+DAY1_START + (n + 1) * 86400000), ...extra });
+    const at = (hour: number) => new Date(Date.UTC(2026, 0, 20, hour));
+    const starts = (w: PlannedWindow[]) => w.map(x => Math.round((+x.start - +DAY1_START) / 86400000));
+
+    it('keeps every window, oldest first, without a cap', () => {
+        const windows = [day(0), day(1, { openRetry: true }), day(2)];
+        expect(selectWindows(windows, undefined)).toBe(windows);
+    });
+
+    it('takes never-fetched days newest first, then fetched days least recently fetched first, open retries last', () => {
+        const windows = [day(0, { fetchedAt: at(3) }), day(1), day(2, { fetchedAt: at(1) }), day(3, { openRetry: true, fetchedAt: at(0) }), day(4)];
+        expect(starts(selectWindows(windows, 5))).toEqual([4, 1, 2, 0, 3]);
+    });
+
+    it('rotates through more retries than the cap as each fetch moves its day to the back', () => {
+        // Four open records Tesla keeps answering the same way, three windows per run.
+        let windows = [0, 1, 2, 3].map(n => day(n, { openRetry: true, fetchedAt: at(0) }));
+        const served = new Set<number>();
+        for (let run = 1; run <= 2; run++) {
+            const chosen = selectWindows(windows, 3);
+            starts(chosen).forEach(n => served.add(n));
+            const refetched = new Set(chosen);
+            windows = windows.map(w => refetched.has(w) ? { ...w, fetchedAt: at(run) } : w);
+        }
+        expect([...served].sort()).toEqual([0, 1, 2, 3]);
+    });
+});
+
 describe('splitAtSiteMidnight', () => {
     it('returns a single window that does not cross site midnight', () => {
         const w = {
@@ -566,6 +635,11 @@ describe('planImport from day record status', () => {
         // Marked as a retry, so a window cap serves days with real gaps first.
         expect(plan(nearlyFull({ open: true }), true)).toEqual([{ start: DAY1_START, end: DAY1_END, openRetry: true }]);
         expect(plan(nearlyFull({ open: true, count: 100, maxInteriorGapMs: 12 * 3600000 }), true)).toEqual([{ start: DAY1_START, end: DAY1_END }]);
+    });
+
+    it('carries a record\'s fetch time onto its retry window', () => {
+        const fetchedAt = new Date('2026-01-11T07:00:00.000Z');
+        expect(plan(nearlyFull({ open: true, fetchedAt }), true)).toEqual([{ start: DAY1_START, end: DAY1_END, openRetry: true, fetchedAt }]);
     });
 
     it('never refetches complete or gapped days automatically', () => {

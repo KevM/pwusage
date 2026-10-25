@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TeslaClient } from './tesla-client';
-import type { DayStatus } from './prototypes/day-attribution';
+import type { DayRecordStatus, EmptyDayState } from './prototypes/day-attribution';
 
 const mocks = vi.hoisted(() => ({
     coverage: vi.fn(),
@@ -47,10 +47,11 @@ function teslaClient(options: { soe?: 'fail' } = {}) {
     };
 }
 
-function dayStore(state: { status: DayStatus | null; fetchedAt: Date | null } | null = null) {
+function dayStore(state: { status: DayRecordStatus | null; fetchedAt: Date | null } | null = null, emptyDays: EmptyDayState[] = []) {
     return {
         writeDay: vi.fn(async () => ({ status: 'written' as const })),
         getDayRecordState: vi.fn(async () => state),
+        getEmptyDays: vi.fn(async () => emptyDays),
     };
 }
 
@@ -97,6 +98,47 @@ describe('range imports', () => {
             .ensureDataForRange('site', day, new Date(+nextDay + 86400000), undefined, { maxWindows: 1 });
         expect(result).toMatchObject({ processedWindows: 1, totalWindows: 2 });
         expect((store.writeDay.mock.calls as unknown as [string, Date][]).map(c => c[1])).toEqual([day]);
+    });
+
+    it('never re-requests a day Tesla settled as empty, and looks empty days up only when a missing day is planned', async () => {
+        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-10-22T12:00:00Z'));
+        // Two old days with nothing stored; Tesla answered the first with no samples long ago.
+        const old = new Date('2026-09-01T05:00:00Z'), next = new Date('2026-09-02T05:00:00Z'), after = new Date('2026-09-03T05:00:00Z');
+        mocks.coverage.mockResolvedValue([]);
+        const store = dayStore(null, [{ dayStart: old, fetchedAt: new Date('2026-09-05T00:00:00Z'), settled: true }]);
+        const result = await new Importer(teslaClient() as unknown as TeslaClient, store).ensureDataForRange('site', old, after);
+        expect(result).toMatchObject({ totalWindows: 1, processedWindows: 1 });
+        expect((store.writeDay.mock.calls as unknown as [string, Date][]).map(c => c[1])).toEqual([next]);
+        expect(store.getEmptyDays).toHaveBeenCalledWith('site', old, after, expect.any(Date));
+        // A forced refetch requests it anyway, without the lookup.
+        const forced = dayStore(null, [{ dayStart: old, fetchedAt: new Date('2026-09-05T00:00:00Z'), settled: true }]);
+        await new Importer(teslaClient() as unknown as TeslaClient, forced).ensureDataForRange('site', old, after, undefined, { force: true });
+        expect(forced.writeDay).toHaveBeenCalledTimes(2);
+        expect(forced.getEmptyDays).not.toHaveBeenCalled();
+        // Only open-record retries planned: no empty record can be among them.
+        mocks.coverage.mockResolvedValue([{ localDayKey: '2026-09-01', count: 287, first: old, last: new Date(+old + 287 * 300000),
+            maxInteriorGapMs: 600000, open: true, fetchedAt: new Date('2026-09-02T06:00:00Z') }]);
+        const retries = dayStore();
+        await new Importer(teslaClient() as unknown as TeslaClient, retries).ensureDataForRange('site', old, next);
+        expect(retries.getEmptyDays).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+
+    it('with a window cap, rotates retries of recent empty days instead of retrying the newest ones every run', async () => {
+        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-10-24T12:00:00Z'));
+        // Days 10-20..10-23 (Chicago) are recent empty records; 10-23 was checked most recently, 10-21 longest ago.
+        const days = [0, 1, 2, 3].map(n => new Date(+day + n * 86400000));
+        const checked = [3, 1, 2, 4].map(h => new Date(Date.UTC(2026, 9, 24, h)));
+        mocks.coverage.mockResolvedValue([]);
+        const store = dayStore(null, days.map((d, n) => ({ dayStart: d, fetchedAt: checked[n], settled: false })));
+        await new Importer(teslaClient() as unknown as TeslaClient, store)
+            .ensureDataForRange('site', day, new Date('2026-10-24T05:00:00Z'), undefined, { maxWindows: 3 });
+        expect((store.writeDay.mock.calls as unknown as [string, Date][]).map(c => c[1])).toEqual([days[1], days[2], days[0]]);
+        vi.useRealTimers();
     });
 
     it('with day writes on, leaves the stored day untouched when the SOE request fails', async () => {

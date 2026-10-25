@@ -8,7 +8,7 @@ import { UserRepo } from '../user-repo';
 import { TariffRepo } from '../tariff-repo';
 import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
-import { planImport, splitAtSiteMidnight, auditDays, type DateWindow, type PlannedWindow } from './import-planner';
+import { planImport, selectWindows, splitAtSiteMidnight, auditDays, type DateWindow, type PlannedWindow } from './import-planner';
 import { addDaysInSiteTimezone, getSiteMidnight } from '../date-utils';
 import { withImportLock } from '../import-lock';
 import { archiveHealedDays } from '../healed-day-archive';
@@ -30,14 +30,19 @@ export type { EnergyDataRow } from './energy-transformer';
 /**
  * Audit stored coverage for [site midnight of `start`, `end`) and return the
  * day windows planImport says must be fetched. Needs no Tesla client, so a
- * caller can skip token and site loads when nothing is missing.
+ * caller can skip token and site loads when nothing is missing. Empty day
+ * records (`getEmptyDays`) are looked up once something is planned: settled
+ * ones are skipped unless forced, the rest carry their check time so a window
+ * cap rotates through them (`selectWindows`).
  */
 export async function planMissingWindows(
     rawRepo: EnergyRepo,
     site: { id: string; timezone: string; installed: Date | string },
     start: Date,
     end: Date,
-    force = false
+    force = false,
+    emptyDays: Pick<CompactHistoryStore, 'getEmptyDays'> = new CompactHistoryStore(pool),
+    now = new Date()
 ): Promise<PlannedWindow[]> {
     const auditStartTime = getSiteMidnight(start, site.timezone);
     const existingCoverage = await createEnergyRepo(site.timezone, rawRepo).getDailyCoverage(
@@ -46,18 +51,24 @@ export async function planMissingWindows(
         end,
         site.timezone
     );
-    return planImport({
+    const options = {
         requestedRange: { start: auditStartTime, end },
         existingCoverage,
         timezone: site.timezone,
         installationDate: new Date(site.installed),
         forceRefetch: force,
         refetchOpenDays: compactDayWritesEnabled(),
-    });
+        now,
+    };
+    const windows = planImport(options);
+    // An empty record has no samples, so it plans like a missing day; only those need the lookup.
+    if (force || !windows.some(w => w.fetchedAt === undefined && !w.openRetry)) return windows;
+    const empty = await emptyDays.getEmptyDays(site.id, windows[0].start, windows[windows.length - 1].end, now);
+    return empty.length === 0 ? windows : planImport({ ...options, emptyDays: empty });
 }
 
-/** Where the importer writes v2 day records when day writes are on. */
-export type DayRecordStore = Pick<CompactHistoryStore, 'writeDay' | 'getDayRecordState'>;
+/** Where the importer writes v2 day records when day writes are on, and finds days Tesla settled as empty. */
+export type DayRecordStore = Pick<CompactHistoryStore, 'writeDay' | 'getDayRecordState' | 'getEmptyDays'>;
 
 export interface EnsureDataResult {
     complete: boolean;
@@ -217,14 +228,9 @@ export class Importer {
             logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
             if (onProgress) onProgress(`Checking data coverage...`);
 
-            const windows = await planMissingWindows(this.repo, site, start, end, force);
+            const windows = await planMissingWindows(this.repo, site, start, end, force, this.getDayStore());
 
-            // A window cap takes the newest days first (the most useful
-            // to recent-history readers), open-record retries after every other
-            // day (stable sort); the rest are re-planned next run.
-            const toImport = maxWindows === undefined
-                ? windows
-                : [...windows].reverse().sort((a, b) => Number(a.openRetry === true) - Number(b.openRetry === true)).slice(0, maxWindows);
+            const toImport = selectWindows(windows, maxWindows);
 
             // The archive pass shares the caller's budget; days it can't reach are left to the archive cron.
             const deadline = options?.maxTimeMs === undefined ? undefined : Date.now() + options.maxTimeMs;

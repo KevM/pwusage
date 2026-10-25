@@ -20,7 +20,8 @@ cleanup() {
 }
 trap cleanup EXIT
 "$archive_pg_bin/initdb" -D "$archive_socket/data" -A trust --no-locale -E UTF8 >"$archive_socket/init.log"
-"$archive_pg_bin/pg_ctl" -D "$archive_socket/data" -l "$archive_socket/server.log" \
+# macOS Postgres aborts at startup ("became multithreaded") without a valid locale.
+LC_ALL=C "$archive_pg_bin/pg_ctl" -D "$archive_socket/data" -l "$archive_socket/server.log" \
   -o "-k $archive_socket -p 55439 -h ''" -w start >/dev/null
 archive_started=true
 export COMPACT_HISTORY_TEST_SOCKET="$archive_socket"

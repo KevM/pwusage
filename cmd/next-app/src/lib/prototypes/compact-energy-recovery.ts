@@ -4,14 +4,14 @@ import {createHash} from 'node:crypto';
 import type {EnergyData} from '../db-types';
 import {decodeDay,decodeDaySamples,rollupDay,type ArchiveCodec,type DayRollup} from './compact-energy';
 import {buildDayMetadata,buildDayMetadataV3} from './compact-day-metadata';
-import {attributeSamples,type DayAttribution} from './day-attribution';
+import {attributeSamples,type DayAttribution,type DayRecordStatus} from './day-attribution';
 import {buildLatestMetadata,verifyLatestMetadata,type LatestMetadata} from './compact-latest-metadata';
 export interface RecoveryArchive {
     site_id:string;day_start:Date;day_end:Date;revision:string;format_version:number;codec:ArchiveCodec;axis:'grid'|'offsets';checksum:string;payload:Buffer;
     expected_slots:number;sample_count:number;attribution_complete:boolean;first_timestamp:Date|null;last_timestamp:Date|null;max_interior_gap_ms:number|null;
     metadata_checksum:string|null;metadata_version:1|2|3;latest_metadata:LatestMetadata|null;latest_checksum:string|null;payload_checksum:string|null;raw_pruned:boolean;
     /** Format 2 (metadata 3) only. */
-    attribution:DayAttribution|null;status:'open'|'complete'|'gapped'|null;fetched_at:Date|null;
+    attribution:DayAttribution|null;status:DayRecordStatus|null;fetched_at:Date|null;
 }
 export function equalRecoveryValue(left:unknown,right:unknown):boolean {
     try {deepStrictEqual(left,right);return true;}catch {return false;}

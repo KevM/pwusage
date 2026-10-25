@@ -86,7 +86,10 @@ application's transaction pool; direct and local URLs are preserved.
 
    The schema and all tables except `EnergyData` come from the daily backup.
    `EnergyData` history comes from the weekly backup, minus rows for sites deleted
-   since, and the daily backup's last 3 days replace any overlap. `EnergyData`'s
+   since, and the daily backup's last 3 days replace any overlap. Rows inside a day
+   the daily backup holds only as a pruned archive (`raw_pruned`) are skipped: that
+   day was compacted after the weekly backup, and its archive is its only copy.
+   `EnergyData`'s
    id sequence is then moved past every restored row, so new readings cannot
    reuse an id. Readings between
    the weekly backup and those 3 days are not in either backup; re-import them
