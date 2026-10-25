@@ -53,13 +53,18 @@ export function deriveDayAttribution(schedule: Pick<Schedule, 'getTariffPeriod'>
     return attribution;
 }
 
+/** The schedule a tariff version assigns to the slot labeled `timestamp` (`getTariffPeriod`), or null. */
+export type GapPricer = (timestamp: Date, tariffId: number) => number | null;
+
 /**
  * Segments for a v1 day from its per-sample IDs, preserving what each sample was
  * priced with. Slots without a sample take the neighbouring attribution when the
- * samples on both sides agree (or the only neighbour, at the day's edges);
- * otherwise they are `scheduleId: null` because the boundary is unknown.
+ * samples on both sides agree (or the only neighbour, at the day's edges).
+ * Where they disagree the boundary is unknown: with `price`, the gap is priced
+ * under the tariff version both neighbours recorded, but only if that version
+ * reproduces both neighbours' schedules; otherwise it is `scheduleId: null`.
  */
-export function segmentsFromV1Rows(rows: EnergyData[], start: Date, end: Date): TariffSegment[] {
+export function segmentsFromV1Rows(rows: EnergyData[], start: Date, end: Date, price?: GapPricer): TariffSegment[] {
     const count = dayMinutes(start, end) / SLOT_MINUTES;
     if (!rows.length) throw new Error('No day samples');
     const known: (Omit<TariffSegment, 'offset'> | undefined)[] = new Array(count);
@@ -69,16 +74,21 @@ export function segmentsFromV1Rows(rows: EnergyData[], start: Date, end: Date): 
         if (!Number.isSafeInteger(row.tariff_id) || (row.tariff_schedule_id !== null && !Number.isSafeInteger(row.tariff_schedule_id))) throw new Error('Invalid tariff ID');
         known[ms / SLOT_MS] = { tariffId: row.tariff_id, scheduleId: row.tariff_schedule_id };
     }
-    const next: (Omit<TariffSegment, 'offset'> | undefined)[] = new Array(count);
-    for (let i = count - 1; i >= 0; i--) next[i] = known[i] ?? next[i + 1];
+    const next: (number | undefined)[] = new Array(count);
+    for (let i = count - 1; i >= 0; i--) next[i] = known[i] ? i : next[i + 1];
+    const slotTime = (i: number) => new Date(+start + i * SLOT_MS);
     const slots: Omit<TariffSegment, 'offset'>[] = [];
-    let previous: Omit<TariffSegment, 'offset'> | undefined;
+    let previousIndex: number | undefined;
     for (let i = 0; i < count; i++) {
-        const after = next[i];
-        if (known[i]) previous = known[i];
-        else if (previous && after && !sameAttribution(previous, after)) {
-            // Unknown boundary: unattributed, under the earlier sample's tariff version.
-            slots.push({ tariffId: previous.tariffId, scheduleId: null });
+        if (known[i]) previousIndex = i;
+        const previous = previousIndex === undefined ? undefined : known[previousIndex];
+        const after = next[i] === undefined ? undefined : known[next[i]!];
+        if (!known[i] && previous && after && !sameAttribution(previous, after)) {
+            const tariffId = previous.tariffId;
+            const consistent = price && after.tariffId === tariffId
+                && price(slotTime(previousIndex!), tariffId) === previous.scheduleId && price(slotTime(next[i]!), tariffId) === after.scheduleId;
+            // Otherwise unattributed, under the earlier sample's tariff version.
+            slots.push({ tariffId, scheduleId: consistent ? price(slotTime(i), tariffId) : null });
             continue;
         }
         slots.push((previous ?? after)!);
