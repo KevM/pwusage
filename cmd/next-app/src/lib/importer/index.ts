@@ -8,7 +8,7 @@ import { UserRepo } from '../user-repo';
 import { TariffRepo } from '../tariff-repo';
 import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
-import { planImport, splitAtSiteMidnight, auditDays, type DateWindow } from './import-planner';
+import { planImport, splitAtSiteMidnight, auditDays, type DateWindow, type PlannedWindow } from './import-planner';
 import { addDaysInSiteTimezone, getSiteMidnight } from '../date-utils';
 import { withImportLock } from '../import-lock';
 import { archiveHealedDays } from '../healed-day-archive';
@@ -38,7 +38,7 @@ export async function planMissingWindows(
     start: Date,
     end: Date,
     force = false
-): Promise<DateWindow[]> {
+): Promise<PlannedWindow[]> {
     const auditStartTime = getSiteMidnight(start, site.timezone);
     const existingCoverage = await createEnergyRepo(site.timezone, rawRepo).getDailyCoverage(
         site.id,
@@ -220,10 +220,11 @@ export class Importer {
             const windows = await planMissingWindows(this.repo, site, start, end, force);
 
             // A window cap takes the newest days first (the most useful
-            // to recent-history readers); the rest are re-planned next run.
+            // to recent-history readers), open-record retries after every other
+            // day (stable sort); the rest are re-planned next run.
             const toImport = maxWindows === undefined
                 ? windows
-                : [...windows].reverse().slice(0, maxWindows);
+                : [...windows].reverse().sort((a, b) => Number(a.openRetry === true) - Number(b.openRetry === true)).slice(0, maxWindows);
 
             // The archive pass shares the caller's budget; days it can't reach are left to the archive cron.
             const deadline = options?.maxTimeMs === undefined ? undefined : Date.now() + options.maxTimeMs;

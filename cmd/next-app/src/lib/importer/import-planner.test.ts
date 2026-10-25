@@ -563,7 +563,9 @@ describe('planImport from day record status', () => {
     });
 
     it('refetches an open day however small its gaps', () => {
-        expect(plan(nearlyFull({ open: true }), true)).toEqual([{ start: DAY1_START, end: DAY1_END }]);
+        // Marked as a retry, so a window cap serves days with real gaps first.
+        expect(plan(nearlyFull({ open: true }), true)).toEqual([{ start: DAY1_START, end: DAY1_END, openRetry: true }]);
+        expect(plan(nearlyFull({ open: true, count: 100, maxInteriorGapMs: 12 * 3600000 }), true)).toEqual([{ start: DAY1_START, end: DAY1_END }]);
     });
 
     it('never refetches complete or gapped days automatically', () => {

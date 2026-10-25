@@ -147,14 +147,26 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
     return results;
 }
 
-export function planImport(options: PlanOptions): DateWindow[] {
+/**
+ * `openRetry`: planned only because it is an open record (its gaps are under
+ * the thresholds). Tesla often returns the same gaps, so a window cap serves
+ * other days first or these retries would take the cap every run.
+ */
+export interface PlannedWindow extends DateWindow {
+    openRetry?: true;
+}
+
+export function planImport(options: PlanOptions): PlannedWindow[] {
     const { forceRefetch = false, refetchOpenDays = false } = options;
-    return auditDays(options)
+    return auditDays(options).flatMap(d => {
+        const window = { start: d.windowStart, end: d.effectiveWindowEnd };
+        if (forceRefetch) return [window];
         // Re-fetching a settled archive day rewrites its raw rows, which drops the
         // archive (and restores a trimmed day): a churn loop for days Tesla can't fill.
-        .filter(d => forceRefetch || (!d.archived && (d.count === 0 || d.missingStart || d.missingEnd || d.hasInteriorGap
-            || (refetchOpenDays && d.open && !d.isToday))))
-        .map(d => ({ start: d.windowStart, end: d.effectiveWindowEnd }));
+        if (d.archived) return [];
+        if (d.count === 0 || d.missingStart || d.missingEnd || d.hasInteriorGap) return [window];
+        return refetchOpenDays && d.open && !d.isToday ? [{ ...window, openRetry: true as const }] : [];
+    });
 }
 
 export function splitAtSiteMidnight(window: DateWindow, timezone: string): DateWindow[] {
