@@ -50,6 +50,22 @@ describe('dev-only database scripts stay away from prod', () => {
         }
     });
 
+    it('re-runs the dev copy in any PR that changes it, without gating prod jobs on that', () => {
+        const ci = readFileSync(join(WORKFLOWS, 'ci.yml'), 'utf8');
+        const filter = jobs(ci)['check-db-changes'];
+        expect(filter).toContain("- 'cmd/next-app/scripts/*-dev-*'");
+        expect(filter).toContain("- '.github/workflows/ci.yml'");
+        // Every script the copy runs falls under that glob.
+        for (const script of [...DEV_ONLY_SCRIPTS, 'export-dev-energy-data.sql']) {
+            expect(verifyDb, script).toContain(script);
+            expect(script).toMatch(/^[^/]*-dev-[^/]*$/);
+        }
+        expect(verifyDb).toMatch(/outputs\.migrations == 'true' \|\| needs\.check-db-changes\.outputs\.dev_copy == 'true'/);
+        for (const [name, job] of Object.entries(jobs(ci))) {
+            if (name !== 'verify-db') expect(job, name).not.toContain('needs.check-db-changes.outputs.dev_copy');
+        }
+    });
+
     it('every verify-db step that writes to dev is given only the dev URL', () => {
         for (const step of steps(verifyDb)) {
             if (!DEV_ONLY_SCRIPTS.some((script) => step.includes(script)) && !step.includes('DEV_DATABASE_URL')) continue;
@@ -81,11 +97,13 @@ describe('dev-only database scripts stay away from prod', () => {
         );
     });
 
-    it('downloads only the EnergyData subset dev keeps, not the full history', () => {
+    it('downloads only the energy history subset dev keeps, not the full history', () => {
         const dump = stepNamed(verifyDb, 'Dump Production DB');
         const data = dump.split('\n').find((line) => line.includes('-f data.sql'));
-        // Unquoted: the CLI reads -x as a CSV list (see dump-db-backup.sh).
-        expect(data).toMatch(/ -x public\.EnergyData(?:\s|$)/);
+        // Unquoted: the CLI reads -x as a CSV list (see dump-db-backup.sh). Raw rows and the
+        // day records that replace them both come from the export instead.
+        const excluded = data?.match(/ -x (\S+)/)?.[1].split(',').sort();
+        expect(excluded).toEqual(['public.EnergyData', 'public.EnergyDayArchive', 'public.EnergyDaySummary']);
         expect(dump).toMatch(/-f scripts\/export-dev-energy-data\.sql > dev-energy-data\.csv/);
         // Exported first, so every Site and Tariff a row references is already in data.sql.
         expect(dump.indexOf('export-dev-energy-data.sql')).toBeLessThan(dump.indexOf('-f data.sql'));

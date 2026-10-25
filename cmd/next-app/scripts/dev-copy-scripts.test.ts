@@ -1,4 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -42,9 +45,21 @@ CREATE TABLE public."EnergyDayArchive" (
     day_end timestamptz NOT NULL,
     sample_count integer NOT NULL,
     raw_pruned boolean NOT NULL DEFAULT false,
-    PRIMARY KEY (site_id, day_start)
+    revision text NOT NULL DEFAULT 'r1',
+    PRIMARY KEY (site_id, day_start),
+    UNIQUE (site_id, day_start, revision)
+);
+CREATE TABLE public."EnergyDaySummary" (
+    site_id text NOT NULL,
+    day_start timestamptz NOT NULL,
+    revision text NOT NULL,
+    tariff_id integer NOT NULL REFERENCES public."Tariff"(id),
+    tariff_schedule_id integer REFERENCES public."TariffSchedule"(id),
+    FOREIGN KEY (site_id, day_start, revision) REFERENCES public."EnergyDayArchive"(site_id, day_start, revision) ON DELETE CASCADE
 );
 `;
+const ARCHIVE_HEADER = 'site_id,day_start,day_end,sample_count,raw_pruned,revision\n';
+const SUMMARY_HEADER = 'site_id,day_start,revision,tariff_id,tariff_schedule_id\n';
 
 const MARK_DEV = `CREATE SCHEMA pwusage_env; CREATE TABLE pwusage_env.environment (name text PRIMARY KEY); INSERT INTO pwusage_env.environment VALUES ('dev');`;
 const DEV_SCRIPTS = ['scripts/assert-dev-database.sql', 'scripts/load-dev-energy-data.sql', 'scripts/sanitize-dev-copy.sql', 'scripts/prune-dev-copy.sql'];
@@ -66,7 +81,15 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         target = new Pool({ host: socket, port: PORT, user: process.env.USER, database, max: 2 });
         await target.query(SCHEMA);
     });
-    afterEach(async () => { await target?.end(); });
+    let work = '';
+    beforeEach(async () => { work = await mkdtemp(join(tmpdir(), 'pwusage-dev-copy-')); });
+    afterEach(async () => { await target?.end(); await rm(work, { recursive: true }); });
+    const script = (file: string) => resolve(file);
+    // The day-record CSVs the export writes, in the load's working directory.
+    const dayRecordFiles = async (archive = '', summary = '') => {
+        await writeFile(join(work, 'dev-day-archive.csv'), ARCHIVE_HEADER + archive);
+        await writeFile(join(work, 'dev-day-summary.csv'), SUMMARY_HEADER + summary);
+    };
 
     const targetUrl = () => `postgresql:///${database}?host=${encodeURIComponent(socket!)}&port=${PORT}`;
     const rows = async (sql: string) => (await target!.query(sql)).rows;
@@ -83,10 +106,13 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         }
     }
 
-    // Feeds stdin, as CI redirects the exported CSV into the restore's psql.
-    function psqlWithInput(input: string, ...args: string[]) {
+    // Feeds stdin, as CI redirects the exported CSV into the restore's psql, and runs
+    // where the day-record CSVs are (empty unless a test wrote them).
+    async function psqlWithInput(input: string, ...args: string[]) {
+        await readFile(join(work, 'dev-day-archive.csv')).catch(() => dayRecordFiles());
+        const absolute = args.map((arg) => arg.startsWith('scripts/') ? script(arg) : arg);
         return new Promise<{ code: number; out: string }>((resolve) => {
-            const child = spawn('psql', [targetUrl(), '-X', '-q', ...args]);
+            const child = spawn('psql', [targetUrl(), '-X', '-q', ...absolute], { cwd: work });
             let out = '';
             child.stdout.on('data', (chunk) => { out += chunk; });
             child.stderr.on('data', (chunk) => { out += chunk; });
@@ -153,7 +179,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
     });
 
     it('skips rules for tables that do not exist yet', async () => {
-        await target!.query(`${MARK_DEV} DROP TABLE public."MobileLoginHandoff"; DROP TABLE public."TrmnlInstallation"; DROP TABLE public."EnergyData"; DROP TABLE public."BatteryHoldActivity"; DROP TABLE public."EnergyDayArchive";`);
+        await target!.query(`${MARK_DEV} DROP TABLE public."MobileLoginHandoff"; DROP TABLE public."TrmnlInstallation"; DROP TABLE public."EnergyData"; DROP TABLE public."BatteryHoldActivity"; DROP TABLE public."EnergyDaySummary"; DROP TABLE public."EnergyDayArchive";`);
         expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
         expect((await psql('scripts/prune-dev-copy.sql')).code).toBe(0);
     });
@@ -169,7 +195,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
             INSERT INTO public."EnergyData" ("timestamp", site_id, load_power)
                 SELECT now() - interval '46 days', id, 20 FROM public."Site" WHERE id <> 's1';`);
         // Read-only and unguarded: it runs against prod, which has no dev marker.
-        const result = await run('psql', [targetUrl(), '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', 'scripts/export-dev-energy-data.sql']);
+        const result = await run('psql', [targetUrl(), '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', script('scripts/export-dev-energy-data.sql')], { cwd: work });
         const [header, ...lines] = result.stdout.trim().split('\n');
         expect(header).toBe('id,timestamp,site_id,tariff_id,tariff_schedule_id,load_power');
         const sites = lines.map((line) => line.split(',')[2]).sort();
@@ -202,6 +228,55 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         // Sites left without readings look idle, so beta's crons skip them.
         expect(await rows(`SELECT id, last_live_refresh_at::int AS t FROM public."Site" ORDER BY id`))
             .toEqual([{ id: 's1', t: 500 }, { id: 's2', t: 0 }]);
+    });
+
+    it('exports day records and their summaries for the same sites and window, in one snapshot', async () => {
+        await target!.query(`
+            INSERT INTO public."Site" (id, last_live_refresh_at) SELECT 'live' || n, 1000 + n FROM generate_series(1, 6) AS n;
+            INSERT INTO public."EnergyDayArchive" (site_id, day_start, day_end, sample_count, raw_pruned) VALUES
+                ('live6', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288, true),
+                ('live6', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288, true),
+                ('live1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288, true);
+            INSERT INTO public."EnergyDaySummary" SELECT site_id, day_start, revision, 1, 1 FROM public."EnergyDayArchive";`);
+        const result = await run('psql', [targetUrl(), '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', script('scripts/export-dev-energy-data.sql')], { cwd: work });
+        // stdout stays the EnergyData CSV alone.
+        expect(result.stdout.trim().split('\n')[0]).toBe('id,timestamp,site_id,tariff_id,tariff_schedule_id,load_power');
+        const csvSites = async (file: string) => (await readFile(join(work, file), 'utf8')).trim().split('\n').slice(1).map((line) => line.split(',')[0]);
+        // live1 is not among the 5 most recently live; live6's 50-day-old record is outside the window.
+        expect(await csvSites('dev-day-archive.csv')).toEqual(['live6']);
+        expect(await csvSites('dev-day-summary.csv')).toEqual(['live6']);
+        expect((await readFile(join(work, 'dev-day-archive.csv'), 'utf8')).split('\n')[0] + '\n').toBe(ARCHIVE_HEADER);
+    });
+
+    it('loads day records and summaries, dropping whole days whose site or tariff was deleted before the dump', async () => {
+        await target!.query(`${MARK_DEV} DELETE FROM public."EnergyData";`);
+        await dayRecordFiles(
+            's1,2026-10-01 00:00:00+00,2026-10-02 00:00:00+00,288,t,r1\n'
+            + 'gone,2026-10-01 00:00:00+00,2026-10-02 00:00:00+00,288,t,r1\n'
+            + 's1,2026-10-02 00:00:00+00,2026-10-03 00:00:00+00,288,t,r1\n'
+            + 's1,2026-10-03 00:00:00+00,2026-10-04 00:00:00+00,288,t,r1\n',
+            's1,2026-10-01 00:00:00+00,r1,1,1\n'
+            + 'gone,2026-10-01 00:00:00+00,r1,1,1\n'
+            + 's1,2026-10-02 00:00:00+00,r1,1,1\n'
+            + 's1,2026-10-02 00:00:00+00,r1,99,1\n'
+            + 's1,2026-10-03 00:00:00+00,r1,1,99\n');
+        const result = await psqlWithInput('id,timestamp,site_id,tariff_id,tariff_schedule_id,load_power\n',
+            '--single-transaction', '-v', 'ON_ERROR_STOP=1', '-f', 'scripts/load-dev-energy-data.sql');
+        expect(result.code, result.out).toBe(0);
+        // Kept: 10-01. Dropped with their summaries: the deleted site's day, and the days naming a deleted tariff or schedule.
+        expect(await rows(`SELECT site_id, to_char(day_start AT TIME ZONE 'UTC', 'MM-DD') AS day FROM public."EnergyDayArchive"`))
+            .toEqual([{ site_id: 's1', day: '10-01' }]);
+        expect(await rows(`SELECT site_id, to_char(day_start AT TIME ZONE 'UTC', 'MM-DD') AS day FROM public."EnergyDaySummary"`))
+            .toEqual([{ site_id: 's1', day: '10-01' }]);
+    });
+
+    it('refuses day-record files whose columns do not match the dev tables', async () => {
+        await target!.query(`${MARK_DEV} DELETE FROM public."EnergyData";`);
+        await writeFile(join(work, 'dev-day-archive.csv'), 'site_id,day_start\n');
+        await writeFile(join(work, 'dev-day-summary.csv'), SUMMARY_HEADER);
+        const result = await psqlWithInput('id,timestamp,site_id,tariff_id,tariff_schedule_id,load_power\n',
+            '--single-transaction', '-v', 'ON_ERROR_STOP=1', '-f', 'scripts/load-dev-energy-data.sql');
+        expect(result.code).not.toBe(0);
     });
 
     it('applies prod\'s foreign-key actions to rows whose parents were deleted before the data dump', async () => {
@@ -248,6 +323,15 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         expect(result.code, result.out).toBe(0);
         expect(await rows(`SELECT load_power FROM public."EnergyData" ORDER BY "timestamp"`))
             .toEqual([{ load_power: 3 }, { load_power: 4 }]);
+        // Day records too, with their summaries by cascade.
+        await target!.query(`
+            INSERT INTO public."EnergyDayArchive" (site_id, day_start, day_end, sample_count, raw_pruned) VALUES
+                ('s1', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288, true),
+                ('s1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288, true);
+            INSERT INTO public."EnergyDaySummary" SELECT site_id, day_start, revision, 1, 1 FROM public."EnergyDayArchive";`);
+        expect((await psql('scripts/prune-dev-copy.sql')).code).toBe(0);
+        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 1 }]);
+        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDaySummary"`)).toEqual([{ n: 1 }]);
         // The marker survives; the scripts never touch it.
         expect(await rows(`SELECT name FROM pwusage_env.environment`)).toEqual([{ name: 'dev' }]);
     });

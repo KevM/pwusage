@@ -171,15 +171,23 @@ jobs:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     outputs:
       migrations: ${{ steps.filter.outputs.migrations }}
+      dev_copy: ${{ steps.filter.outputs.dev_copy }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dorny/paths-filter@v4.0.3
         id: filter
         with:
+          # dev_copy re-runs verify-db when the prod -> dev copy itself changes, so the
+          # change is tested against Supabase in its own PR. Only verify-db reads it:
+          # prod backups and migrations stay gated on migrations alone.
           filters: |
             migrations:
               - 'cmd/next-app/db-migrations/**'
               - 'cmd/next-app/supabase/migrations/**'
+            # Every dev-copy script is named *-dev-* (a glob, so no other job names them).
+            dev_copy:
+              - 'cmd/next-app/scripts/*-dev-*'
+              - '.github/workflows/ci.yml'
 
   verify-db:
     name: Verify Migrations (Prod -> Dev)
@@ -188,7 +196,7 @@ jobs:
     if: |
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      needs.check-db-changes.outputs.migrations == 'true'
+      (needs.check-db-changes.outputs.migrations == 'true' || needs.check-db-changes.outputs.dev_copy == 'true')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -218,14 +226,17 @@ jobs:
           supabase db dump --db-url "$DATABASE_URL" -f schema.sql
           # Only public is reset below. Managed auth/storage data can include
           # protected tables (e.g. storage.buckets_vectors) we cannot restore.
-          # EnergyData history is most of prod and of its egress, and dev keeps
-          # only a slice of it: download just that slice, then skip its data in
-          # the dump (unquoted, see dump-db-backup.sh). The slice goes first, so
+          # Energy history (raw EnergyData and the day records that replace it)
+          # is most of prod and of its egress, and dev keeps only a slice of it:
+          # download just that slice, then skip those tables' data in the dump
+          # (unquoted CSV list, see dump-db-backup.sh). The slice goes first, so
           # every row it references is already in data.sql; the two cannot share
-          # a snapshot (see export-dev-energy-data.sql).
+          # a snapshot (see export-dev-energy-data.sql). It also writes
+          # dev-day-archive.csv and dev-day-summary.csv here.
           psql -X -q -v ON_ERROR_STOP=1 "$DATABASE_URL" -f scripts/export-dev-energy-data.sql > dev-energy-data.csv
           echo "EnergyData rows for dev: $(( $(wc -l < dev-energy-data.csv) - 1 ))"
-          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public -x public.EnergyData
+          echo "Day records for dev: $(( $(wc -l < dev-day-archive.csv) - 1 )), summary rows: $(( $(wc -l < dev-day-summary.csv) - 1 ))"
+          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public -x public.EnergyData,public.EnergyDayArchive,public.EnergyDaySummary
           
           # Dump Migration History (using Supabase CLI for reliability)
           # We use "|| true" to prevent failure if the schema doesn't exist yet (soft fail)
@@ -252,7 +263,8 @@ jobs:
           
           # Restore Data and scrub it in one transaction, so beta and the dev
           # pg_cron jobs never see unscrubbed rows. Any error rolls back both.
-          # The EnergyData slice is read from stdin by load-dev-energy-data.sql.
+          # load-dev-energy-data.sql reads the EnergyData slice from stdin and the
+          # day-record CSVs from this directory.
           psql -X --single-transaction -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f data.sql -f scripts/load-dev-energy-data.sql -f scripts/sanitize-dev-copy.sql < dev-energy-data.csv
           
           # Restore Migration History
