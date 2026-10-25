@@ -74,7 +74,7 @@ export class HistoryArchiveRepo implements ArchiveJobRepo {
         // Archive days start at site midnight, so the containing day is found within a two-day index range.
         const archived=(ts:string)=>`EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=s.id
             AND a.day_start<=${ts} AND a.day_start>${ts}-interval '2 days' AND ${ts}<a.day_end
-            AND a.metadata_version=2 AND a.metadata_checksum IS NOT NULL AND a.payload_checksum IS NOT NULL)`;
+            AND a.metadata_version IN (2,3) AND a.metadata_checksum IS NOT NULL AND a.payload_checksum IS NOT NULL)`;
         const eligible=(ts:string)=>`(${trimDay(ts)} OR ((s.archive_all OR (s.listed AND ${inBounds(ts)})) AND ${before('$2',ts)} AND NOT ${archived(ts)}))`;
         const retried=(ts:string)=>`EXISTS (SELECT 1 FROM "HistoryArchiveRetry" r WHERE r.site_id=s.id AND ${ts}>=r.day_start AND ${ts}<r.day_end)`;
         const nextMidnight=`((((s.ts AT TIME ZONE s.timezone)::date + 1)::timestamp) AT TIME ZONE s.timezone)`;

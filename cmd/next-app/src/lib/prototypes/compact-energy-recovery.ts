@@ -2,23 +2,31 @@
 import {deepStrictEqual} from 'node:assert';
 import {createHash} from 'node:crypto';
 import type {EnergyData} from '../db-types';
-import {decodeDay,rollupDay,type ArchiveCodec,type DayRollup} from './compact-energy';
-import {buildDayMetadata} from './compact-day-metadata';
+import {decodeDay,decodeDaySamples,rollupDay,type ArchiveCodec,type DayRollup} from './compact-energy';
+import {buildDayMetadata,buildDayMetadataV3} from './compact-day-metadata';
+import {attributeSamples,type DayAttribution} from './day-attribution';
 import {buildLatestMetadata,verifyLatestMetadata,type LatestMetadata} from './compact-latest-metadata';
 export interface RecoveryArchive {
     site_id:string;day_start:Date;day_end:Date;revision:string;format_version:number;codec:ArchiveCodec;axis:'grid'|'offsets';checksum:string;payload:Buffer;
     expected_slots:number;sample_count:number;attribution_complete:boolean;first_timestamp:Date|null;last_timestamp:Date|null;max_interior_gap_ms:number|null;
-    metadata_checksum:string|null;metadata_version:1|2;latest_metadata:LatestMetadata|null;latest_checksum:string|null;payload_checksum:string|null;raw_pruned:boolean;
+    metadata_checksum:string|null;metadata_version:1|2|3;latest_metadata:LatestMetadata|null;latest_checksum:string|null;payload_checksum:string|null;raw_pruned:boolean;
+    /** Format 2 (metadata 3) only. */
+    attribution:DayAttribution|null;status:'open'|'complete'|'gapped'|null;fetched_at:Date|null;
 }
 export function equalRecoveryValue(left:unknown,right:unknown):boolean {
     try {deepStrictEqual(left,right);return true;}catch {return false;}
 }
 export function recoverVerifiedSamples(a:RecoveryArchive,summaries:DayRollup[]):EnergyData[] {
-    if(a.format_version!==1||a.metadata_version!==2||!a.payload_checksum||!a.latest_metadata||!a.latest_checksum
+    const v2=a.format_version===2&&a.metadata_version===3&&!!a.attribution;
+    if(!(v2||(a.format_version===1&&a.metadata_version===2))||!a.payload_checksum||!a.latest_metadata||!a.latest_checksum
         ||createHash('sha256').update(a.payload).digest('hex')!==a.payload_checksum)throw new Error('Recovery archive integrity mismatch');
     const start=new Date(a.day_start),end=new Date(a.day_end);
-    const rows=decodeDay({codec:a.codec,axis:a.axis,sha256:a.checksum,data:a.payload,expectedSlots:a.expected_slots},{siteId:a.site_id,start,end});
-    const metadata=buildDayMetadata(rows,start,end,a.attribution_complete);
+    const archive={codec:a.codec,axis:a.axis,sha256:a.checksum,data:a.payload,expectedSlots:a.expected_slots},id={siteId:a.site_id,start,end};
+    // Format 2 rows take their tariff IDs from the segment covering each label.
+    const samples=v2?decodeDaySamples(archive,id):[];
+    const rows=v2?attributeSamples(samples,a.attribution!,start,end):decodeDay(archive,id);
+    const metadata=v2?buildDayMetadataV3(samples,a.attribution!,start,end):buildDayMetadata(rows,start,end,a.attribution_complete);
+    if(metadata.attributionComplete!==a.attribution_complete)throw new Error('Recovery summary integrity mismatch');
     const sort=(values:DayRollup[])=>[...values].sort((x,y)=>x.tariff_id-y.tariff_id||(x.tariff_schedule_id??-1)-(y.tariff_schedule_id??-1));
     if(a.metadata_checksum!==metadata.checksum||a.sample_count!==metadata.sampleCount||a.expected_slots!== (+end-+start)/300000
         ||+(a.first_timestamp??NaN)!==+metadata.first||+(a.last_timestamp??NaN)!==+metadata.last||a.max_interior_gap_ms!==metadata.maxInteriorGapMs

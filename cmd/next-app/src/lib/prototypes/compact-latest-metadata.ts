@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import type {EnergyData} from '../db-types';
+import type {EnergySample} from './compact-energy';
 export interface LatestSample {timestamp:number;batterySoc:number|null;batteryPower:number;solarPower:number;gridPower:number;loadPower:number}
 export interface LatestMetadata {version:1;sample:LatestSample;soc:{timestamp:number;value:number}|null}
 export interface LatestIdentity {siteId:string;start:Date;end:Date;archiveChecksum:string}
@@ -21,7 +21,7 @@ export function verifyLatestMetadata(data:LatestMetadata,checksum:string,id:Late
         || (soc!==null&&(!Number.isSafeInteger(soc.timestamp)||soc.timestamp<+id.start||soc.timestamp>s.timestamp||!Number.isFinite(soc.value)))
         || checksum!==digest(data,id))throw new Error('Latest metadata mismatch');
 }
-export function buildLatestMetadata(rows:EnergyData[],id:LatestIdentity):{data:LatestMetadata;checksum:string} {
+export function buildLatestMetadata(rows:EnergySample[],id:LatestIdentity):{data:LatestMetadata;checksum:string} {
     const last=rows.at(-1);if(!last)throw new Error('No day samples');
     const charge=rows.findLast(r=>r.battery_soc!==null&&r.battery_soc!==undefined);
     const data:LatestMetadata={version:1,sample:{timestamp:+last.timestamp,batterySoc:last.battery_soc??null,batteryPower:last.battery_power,
