@@ -191,11 +191,19 @@ a failed request is not.
 - **Backfill and planning:** `scripts/backfill-compact-from-tesla.ts` reports
   `checked-empty` and skips settled empty days (`settled-empty`) without a Tesla
   request. `planMissingWindows` (every `ensureDataForRange`: sync, import,
-  gap-heal, migrate) drops the same days unless forced; it queries them only when a
-  planned day is old enough to be settled, so gap-heal's 14 days and today cost no
-  extra query. `Site.history_backfill_from` stays as the cheap lower bound for the
+  gap-heal, migrate) drops the same days unless forced. It reads empty records
+  (`getEmptyDays`) only when it planned a day with no samples, since only those can
+  be one. `Site.history_backfill_from` stays as the cheap lower bound for the
   leading pre-provisioning run; empty records cover interior days, which a single
   checkpoint cannot (one failing day would pin it).
+- **Retry rotation (`selectWindows`):** a capped run (gap-heal takes 3 days per
+  site) imports never-fetched days first, newest first, then days fetched before,
+  least recently fetched first, then open-record retries. Each fetch moves its day's
+  `fetched_at` forward (a repeated empty answer moves an empty record's), so days
+  Tesla keeps answering the same way take turns instead of the newest few taking
+  the cap every run until the older ones age out of the window unretried. Records
+  carry `fetched_at` into planning's coverage; empty records carry it through
+  `getEmptyDays`.
 - **Today-refresh:** an `empty` yesterday is refetched until a fetch made after
   the day ended answers (`isDayFetchFinal`), as an `open` one is.
 - A timezone change drops the site's empty records with its other archives

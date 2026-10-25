@@ -11,7 +11,7 @@ import { auditTariffAttribution } from './compact-tariff-audit';
 import { decodeDay, decodeDaySamples, encodeDay, encodeDaySamples, rollupDay, toSample, type DayArchive, type DayRollup, type EnergySample } from './compact-energy';
 import {buildLatestMetadata,verifyLatestMetadata,type LatestMetadata,type LatestSample} from './compact-latest-metadata';
 import { buildDayMetadata, buildDayMetadataV3, type SummarizedHistoryDay } from './compact-day-metadata';
-import { DAY_GAP_HEAL_DAYS, dayStatus, deriveDayAttribution, type DayAttribution, type DayRecordStatus, type DayStatus, type GapPricer } from './day-attribution';
+import { DAY_GAP_HEAL_DAYS, dayStatus, deriveDayAttribution, type DayAttribution, type DayRecordStatus, type DayStatus, type EmptyDayState, type GapPricer } from './day-attribution';
 import { Schedule } from '../schedule';
 import {beginTransaction} from '../pg-transaction';
 import {REATTRIBUTABLE,convertV1Day,type V1ConversionReason} from './compact-v1-conversion';
@@ -490,7 +490,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const timezone=site.rows[0]?.timezone??null;
             const aggregates:CycleAggregateRow[]=[];const coverage:DailyCoverageStat[]=[];
             const eligible=`SELECT a.site_id,a.day_start,a.revision,a.first_timestamp,a.last_timestamp,a.sample_count,a.max_interior_gap_ms,
-                ${SETTLED_ARCHIVE_DAY_SQL} AS settled,(a.metadata_version=3 AND a.status='open') AS is_open FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
+                ${SETTLED_ARCHIVE_DAY_SQL} AS settled,(a.metadata_version=3 AND a.status='open') AS is_open,a.fetched_at FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
                 AND ${MODERN_METADATA_SQL('a.')}`;
             if(mode.billing) {
                 const result=await client.query<CycleAggregateRow>(`WITH eligible AS MATERIALIZED (${eligible})
@@ -500,10 +500,11 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                     load_power:Number(r.load_power),solar_power:Number(r.solar_power),grid_power:Number(r.grid_power),battery_power:Number(r.battery_power)})));
             }
             if(mode.coverage && timezone) {
-                const result=await client.query<{key:string;count:number;first:Date;last:Date;gap:number;settled:boolean;is_open:boolean}>(`WITH eligible AS MATERIALIZED (${eligible})
+                const result=await client.query<{key:string;count:number;first:Date;last:Date;gap:number;settled:boolean;is_open:boolean;fetched_at:Date|null}>(`WITH eligible AS MATERIALIZED (${eligible})
                     SELECT to_char(day_start AT TIME ZONE $4::text,'YYYY-MM-DD') AS key,sample_count AS count,
-                        first_timestamp AS first,last_timestamp AS last,max_interior_gap_ms AS gap,settled,is_open FROM eligible ORDER BY day_start`,[siteId,start,end,timezone]);
-                coverage.push(...result.rows.map(r=>({localDayKey:r.key,count:r.count,first:new Date(r.first),last:new Date(r.last),maxInteriorGapMs:r.gap,archived:r.settled,...(r.is_open?{open:true}:{})})));
+                        first_timestamp AS first,last_timestamp AS last,max_interior_gap_ms AS gap,settled,is_open,fetched_at FROM eligible ORDER BY day_start`,[siteId,start,end,timezone]);
+                coverage.push(...result.rows.map(r=>({localDayKey:r.key,count:r.count,first:new Date(r.first),last:new Date(r.last),maxInteriorGapMs:r.gap,archived:r.settled,
+                    ...(r.is_open?{open:true}:{}),...(r.fetched_at?{fetchedAt:new Date(r.fetched_at)}:{})})));
             }
             const partial=site.rows[0]?.has_detail?await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<$3 AND day_end>$2
                 AND NOT (day_start >= $2 AND day_end <= $3 AND ${MODERN_METADATA_SQL()}) AND ${HAS_SAMPLES_SQL()} ORDER BY day_start`,[siteId,start,end]):{rows:[]};
@@ -657,12 +658,21 @@ export class CompactHistoryStore implements HistorySnapshotStore {
      * inside the window an empty day is retried like an `open` one.
      */
     async getSettledEmptyDays(siteId:string,from:Date,before:Date,now:Date):Promise<Date[]> {
-        const rows=(await this.pool.query<{day_start:Date}>(`SELECT a.day_start FROM "EnergyDayArchive" a
+        return (await this.getEmptyDays(siteId,from,before,now)).filter(d=>d.settled).map(d=>d.dayStart);
+    }
+
+    /**
+     * Every empty day record starting in [from, before) with its check time, and whether
+     * that answer is final (`getSettledEmptyDays`'s rule), so planning can skip settled
+     * days and rotate retries of the rest by when they were last checked.
+     */
+    async getEmptyDays(siteId:string,from:Date,before:Date,now:Date):Promise<EmptyDayState[]> {
+        const rows=(await this.pool.query<{day_start:Date;fetched_at:Date;settled:boolean}>(`SELECT a.day_start,a.fetched_at,
+            (a.fetched_at >= a.day_end AND a.day_end < $4::timestamptz - make_interval(days => $5)) AS settled FROM "EnergyDayArchive" a
             WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_start < $3 AND a.status='empty'
-            AND a.fetched_at >= a.day_end AND a.day_end < $4::timestamptz - make_interval(days => $5)
             AND NOT EXISTS(SELECT 1 FROM "EnergyData" r WHERE r.site_id=a.site_id AND r.timestamp >= a.day_start AND r.timestamp < a.day_end)
             ORDER BY a.day_start`,[siteId,from,before,now,DAY_GAP_HEAL_DAYS])).rows;
-        return rows.map(r=>new Date(r.day_start));
+        return rows.map(r=>({dayStart:new Date(r.day_start),fetchedAt:new Date(r.fetched_at),settled:r.settled}));
     }
 
     /**

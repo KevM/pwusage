@@ -113,7 +113,7 @@ describe('Importer Sync Logic', () => {
         vi.clearAllMocks();
         mockClient = new TeslaClient({ accessToken: 'test' });
         // No day Tesla settled as empty: every missing day is planned.
-        importer = new Importer(mockClient, { writeDay: vi.fn(), getDayRecordState: vi.fn(), getSettledEmptyDays: vi.fn(async () => []) });
+        importer = new Importer(mockClient, { writeDay: vi.fn(), getDayRecordState: vi.fn(), getEmptyDays: vi.fn(async () => []) });
 
         // Mock Repo
         mockRepo = {

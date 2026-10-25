@@ -521,11 +521,16 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             expect(await store.writeDay('site',day(0),samplesAt(day(0),288),at(day(1),1),at(day(1),1))).toMatchObject({status:'written'});
             expect(await store.writeDay('site',day(1),[],at(day(2),1),at(day(2),1))).toEqual({status:'checked-empty'});
             expect(await store.writeDay('site',day(2),samplesAt(day(2),288),at(day(3),1),at(day(3),1))).toMatchObject({status:'written'});
+            // Planning's coverage carries each record's fetch time.
+            expect((await new CompactHistoryReader(store,tz).getDailyCoverage('site',day(0),day(1),tz))[0]).toMatchObject({count:288,fetchedAt:at(day(1),1)});
             // Day 3's fetch failed (fetchDayForWrite throws before writeDay), so it has no record: never fetched.
             expect(await marker()).toEqual([{day_start:day(1),checked_at:at(day(2),1)}]);
             // Retried like an open day inside the gap-heal window, settled after it.
             expect(await settled(at(day(2),5))).toEqual([]);
             expect(await settled(at(day(2),20))).toEqual([day(1)]);
+            // Planning sees every empty record with its check time, settled or not.
+            expect(await store.getEmptyDays('site',day(0),day(4),at(day(2),5))).toEqual([{dayStart:day(1),fetchedAt:at(day(2),1),settled:false}]);
+            expect(await store.getEmptyDays('site',day(0),day(4),at(day(2),20))).toEqual([{dayStart:day(1),fetchedAt:at(day(2),1),settled:true}]);
             // An older empty answer never moves the check back.
             expect(await store.writeDay('site',day(1),[],at(day(2),0.5),at(day(2),20))).toEqual({status:'checked-empty'});
             expect((await marker())[0].checked_at).toEqual(at(day(2),1));
@@ -1470,13 +1475,16 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         const rawRows=async()=>(await pool.query('SELECT * FROM "EnergyData" ORDER BY site_id,timestamp')).rows;
         const archiveRow=async(site='site')=>(await pool.query(`SELECT format_version,metadata_version,revision,raw_pruned,status,fetched_at,created_at,attribution,attribution_complete,
             public.verify_compact_day_metadata(site_id,day_start,false) AS verified FROM "EnergyDayArchive" WHERE site_id=$1`,[site])).rows[0];
+        const withoutFetchTime=(c:DailyCoverageStat)=>{const copy={...c};delete copy.fetchedAt;return copy;};
         /** Every read path a converted day serves: charts, buckets, coverage, billing, freshness, SOC. */
         const reads=async(site:string,from:Date,until:Date)=>{
             const reader=new CompactHistoryReader(store,'America/Chicago');
             return {chart:await reader.getRawEnergyData(site,from,until),buckets:await reader.getBucketedEnergyData(site,from,until),
                 partial:await reader.getRawEnergyData(site,new Date(+from+3600000),new Date(+until-3600000)),
-                billing:await readBillingAvailability(()=>reader.getCycleAggregatesAndCoverage(site,from,until,'America/Chicago'),{aggregates:[],coverage:[]}),
-                coverage:await reader.getDailyCoverage(site,from,until,'America/Chicago'),
+                // Conversion records a fetch time (planning metadata), so coverage is compared without it.
+                billing:await readBillingAvailability(async()=>{const r=await reader.getCycleAggregatesAndCoverage(site,from,until,'America/Chicago');
+                    return {...r,coverage:r.coverage.map(withoutFetchTime)};},{aggregates:[],coverage:[]}),
+                coverage:(await reader.getDailyCoverage(site,from,until,'America/Chicago')).map(withoutFetchTime),
                 latest:await store.getLatestEnergyData(site,jobOptions.now),stamp:await store.getLatestTimestamp(site,jobOptions.now),soc:await store.getLatestBatterySoc(site,from,jobOptions.now)};
         };
         const convert=(site:string,day:Date,apply=true,at=later)=>store.convertDayToV2(site,day,{apply,now:at});

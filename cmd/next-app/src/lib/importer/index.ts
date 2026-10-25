@@ -8,7 +8,7 @@ import { UserRepo } from '../user-repo';
 import { TariffRepo } from '../tariff-repo';
 import { parseTariffContent, buildDefaultTariff } from './tariff-parser';
 import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer';
-import { planImport, splitAtSiteMidnight, auditDays, type DateWindow, type PlannedWindow } from './import-planner';
+import { planImport, selectWindows, splitAtSiteMidnight, auditDays, type DateWindow, type PlannedWindow } from './import-planner';
 import { addDaysInSiteTimezone, getSiteMidnight } from '../date-utils';
 import { withImportLock } from '../import-lock';
 import { archiveHealedDays } from '../healed-day-archive';
@@ -16,7 +16,6 @@ import { pool } from '../db';
 import { CompactHistoryStore } from '../prototypes/compact-history-store';
 import { fetchDayForWrite } from '../prototypes/compact-day-fetch';
 import { isDayFetchFinal } from '../tesla-sample-timing';
-import { DAY_GAP_HEAL_DAYS } from '../prototypes/day-attribution';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -31,10 +30,10 @@ export type { EnergyDataRow } from './energy-transformer';
 /**
  * Audit stored coverage for [site midnight of `start`, `end`) and return the
  * day windows planImport says must be fetched. Needs no Tesla client, so a
- * caller can skip token and site loads when nothing is missing. Days Tesla
- * settled as empty (`getSettledEmptyDays`) are skipped unless forced; they are
- * looked up only when a planned day is old enough to be settled, so recent
- * windows (gap-heal's 14 days, today) cost no extra query.
+ * caller can skip token and site loads when nothing is missing. Empty day
+ * records (`getEmptyDays`) are looked up once something is planned: settled
+ * ones are skipped unless forced, the rest carry their check time so a window
+ * cap rotates through them (`selectWindows`).
  */
 export async function planMissingWindows(
     rawRepo: EnergyRepo,
@@ -42,7 +41,7 @@ export async function planMissingWindows(
     start: Date,
     end: Date,
     force = false,
-    emptyDays: Pick<CompactHistoryStore, 'getSettledEmptyDays'> = new CompactHistoryStore(pool),
+    emptyDays: Pick<CompactHistoryStore, 'getEmptyDays'> = new CompactHistoryStore(pool),
     now = new Date()
 ): Promise<PlannedWindow[]> {
     const auditStartTime = getSiteMidnight(start, site.timezone);
@@ -62,17 +61,14 @@ export async function planMissingWindows(
         now,
     };
     const windows = planImport(options);
-    if (force) return windows;
-    // Same age rule as getSettledEmptyDays: only a day that ended before the gap-heal window can be settled.
-    const settledBefore = now.getTime() - DAY_GAP_HEAL_DAYS * 24 * 3600000;
-    const candidates = windows.filter(w => w.end.getTime() < settledBefore);
-    if (candidates.length === 0) return windows;
-    const settledEmptyDays = await emptyDays.getSettledEmptyDays(site.id, candidates[0].start, candidates[candidates.length - 1].end, now);
-    return settledEmptyDays.length === 0 ? windows : planImport({ ...options, settledEmptyDays });
+    // An empty record has no samples, so it plans like a missing day; only those need the lookup.
+    if (force || !windows.some(w => w.fetchedAt === undefined && !w.openRetry)) return windows;
+    const empty = await emptyDays.getEmptyDays(site.id, windows[0].start, windows[windows.length - 1].end, now);
+    return empty.length === 0 ? windows : planImport({ ...options, emptyDays: empty });
 }
 
 /** Where the importer writes v2 day records when day writes are on, and finds days Tesla settled as empty. */
-export type DayRecordStore = Pick<CompactHistoryStore, 'writeDay' | 'getDayRecordState' | 'getSettledEmptyDays'>;
+export type DayRecordStore = Pick<CompactHistoryStore, 'writeDay' | 'getDayRecordState' | 'getEmptyDays'>;
 
 export interface EnsureDataResult {
     complete: boolean;
@@ -234,12 +230,7 @@ export class Importer {
 
             const windows = await planMissingWindows(this.repo, site, start, end, force, this.getDayStore());
 
-            // A window cap takes the newest days first (the most useful
-            // to recent-history readers), open-record retries after every other
-            // day (stable sort); the rest are re-planned next run.
-            const toImport = maxWindows === undefined
-                ? windows
-                : [...windows].reverse().sort((a, b) => Number(a.openRetry === true) - Number(b.openRetry === true)).slice(0, maxWindows);
+            const toImport = selectWindows(windows, maxWindows);
 
             // The archive pass shares the caller's budget; days it can't reach are left to the archive cron.
             const deadline = options?.maxTimeMs === undefined ? undefined : Date.now() + options.maxTimeMs;

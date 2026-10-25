@@ -23,6 +23,13 @@ export type DayStatus = 'open' | 'complete' | 'gapped';
  */
 export type DayRecordStatus = DayStatus | 'empty';
 
+/** An empty day record: when Tesla last answered it with no samples, and whether that answer is final. */
+export interface EmptyDayState {
+    dayStart: Date;
+    fetchedAt: Date;
+    settled: boolean;
+}
+
 export const currentTariffTimelineRevision = (tariffId: number): string => `current-tariff:${tariffId}`;
 
 const dayMinutes = (start: Date, end: Date): number => {
