@@ -114,7 +114,7 @@ describe('UserRepo class methods (folded from module functions)', () => {
         const result = await repo.getTokens('u1');
         expect(result).toEqual({ access_token: 'a', refresh_token: 'r' });
         expect(queryMock).toHaveBeenCalledWith(
-            'SELECT access_token, refresh_token FROM "User" WHERE id = $1',
+            'SELECT access_token, refresh_token, fleet_api_base_url FROM "User" WHERE id = $1',
             ['u1']
         );
     });
@@ -181,7 +181,7 @@ describe('UserRepo new commands', () => {
         });
         expect(queryMock.mock.calls[0][0]).toContain('INSERT INTO "User"');
         expect(queryMock.mock.calls[0][0]).toContain('ON CONFLICT (id) DO UPDATE');
-        expect(queryMock.mock.calls[0][1]).toEqual(['u1', 'a@b.c', 'at', 'rt', expiresAt]);
+        expect(queryMock.mock.calls[0][1]).toEqual(['u1', 'a@b.c', 'at', 'rt', expiresAt, null]);
     });
 
     it('updateTokens updates access and refresh tokens', async () => {
@@ -257,3 +257,45 @@ describe('UserRepo.verifyUserStatus', () => {
     });
 });
 
+
+describe('UserRepo Fleet API base URL', () => {
+    const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
+
+    beforeEach(() => {
+        queryMock.mockReset();
+        queryMock.mockResolvedValue({ rows: [] });
+    });
+
+    it('stores an allowlisted host', async () => {
+        await new UserRepo().setFleetApiBaseUrl('user-1', `${EU}/`);
+        expect(queryMock).toHaveBeenCalledWith(
+            expect.stringContaining('SET fleet_api_base_url = $1'),
+            [EU, 'user-1']
+        );
+    });
+
+    it('never stores an unrecognized host', async () => {
+        await new UserRepo().setFleetApiBaseUrl('user-1', 'https://evil.example.com');
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    it('records the host on Tesla login, keeping the old one when unknown', async () => {
+        const repo = new UserRepo();
+        const base = { userId: 'u', email: null, accessToken: 'a', refreshToken: 'r', tokenExpiresAt: 1 };
+
+        await repo.upsertOnTeslaAuth({ ...base, fleetApiBaseUrl: EU });
+        await repo.upsertOnTeslaAuth({ ...base, fleetApiBaseUrl: 'https://evil.example.com' });
+
+        expect(queryMock.mock.calls[0][0]).toContain('fleet_api_base_url = COALESCE(EXCLUDED.fleet_api_base_url, "User".fleet_api_base_url)');
+        expect(queryMock.mock.calls[0][1]).toEqual(['u', null, 'a', 'r', 1, EU]);
+        expect(queryMock.mock.calls[1][1]).toEqual(['u', null, 'a', 'r', 1, null]);
+    });
+
+    it('returns the stored host with tokens', async () => {
+        const repo = new UserRepo();
+        await repo.getTokens('u');
+        await repo.getTokensForSite('s');
+        expect(queryMock.mock.calls[0][0]).toContain('fleet_api_base_url');
+        expect(queryMock.mock.calls[1][0]).toContain('u.fleet_api_base_url');
+    });
+});

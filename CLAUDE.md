@@ -86,7 +86,7 @@ cmd/next-app/
 ## Key Data Models
 
 Tables (PascalCase quoted identifiers):
-- `User`: User accounts with Tesla refresh tokens, auth status
+- `User`: User accounts with Tesla refresh tokens, auth status, and regional Fleet API host (`fleet_api_base_url`, allowlisted in `src/lib/tesla-region.ts`; NULL = North America)
 - `Site`: Energy sites (Powerwalls) owned by users; references `User`
 - `Tariff`: Billing rate plans per site. Append-only versioned: each save inserts a new row (`version` + `is_current`, deduped by `content_hash`) rather than replacing; only one row per `(site_id, name)` has `is_current = true`. See [`DesignDecisions.md`](./DesignDecisions.md).
 - `TariffSeason`: Seasonal date ranges within a tariff (`from_month`/`from_day` → `to_month`/`to_day`) with buy/sell rates

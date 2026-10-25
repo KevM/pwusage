@@ -118,6 +118,7 @@ export async function POST(request: Request) {
 
         // Initialize Tesla Client if we can resolve an access token from the DB for the current user
         let accessToken: string | undefined;
+        let fleetApiBaseUrl: string | null = null;
 
         if (siteAuthToken) {
             const { UserRepo } = await import('@/lib/user-repo');
@@ -128,6 +129,7 @@ export async function POST(request: Request) {
                 const userTokens = await new UserRepo().getTokens(currentUser.id);
                 if (userTokens) {
                     accessToken = userTokens.access_token;
+                    fleetApiBaseUrl = userTokens.fleet_api_base_url;
                 }
             }
         }
@@ -135,7 +137,7 @@ export async function POST(request: Request) {
         let teslaClient;
         if (accessToken) {
             const { createTeslaClientForAccessToken } = await import('@/lib/tesla-client-factory');
-            teslaClient = createTeslaClientForAccessToken(accessToken);
+            teslaClient = createTeslaClientForAccessToken(accessToken, undefined, { baseUrl: fleetApiBaseUrl });
         }
 
         const siteService = new SiteService({

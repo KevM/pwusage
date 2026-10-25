@@ -9,6 +9,7 @@ vi.mock('jwks-rsa');
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
+import { TeslaClient, type TeslaClientConfig } from './tesla-client';
 
 describe('TeslaAuthService', () => {
     const mockUserRepo = {
@@ -27,6 +28,8 @@ describe('TeslaAuthService', () => {
     };
 
     const mockTeslaClient = {
+        resolveRegion: vi.fn(),
+        getBaseUrl: vi.fn(),
         getUserInfo: vi.fn(),
         getProducts: vi.fn()
     };
@@ -1964,3 +1967,106 @@ describe('jwks client configuration', () => {
     });
 });
 
+describe('TeslaAuthService regional Fleet host', () => {
+    const NA = 'https://fleet-api.prd.na.vn.cloud.tesla.com';
+    const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
+    const outOfRegion = `{"response":null,"error":"user out of region, use base URL: ${EU}, see https://developer.tesla.com/docs/fleet-api#endpoints-and-regions","error_description":""}`;
+
+    function respond(status: number, body: unknown): Response {
+        const text = typeof body === 'string' ? body : JSON.stringify(body);
+        return {
+            ok: status >= 200 && status < 300,
+            status,
+            headers: new Headers(),
+            json: async () => JSON.parse(text),
+            text: async () => text,
+        } as unknown as Response;
+    }
+
+    /** A Fleet API that only serves this EU account from the EU host. */
+    function euAccountFleet(regionEndpoint: 'ok' | 'down') {
+        return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+            const url = String(input);
+            if (url.endsWith('/api/1/users/region')) {
+                return regionEndpoint === 'ok'
+                    ? respond(200, { response: { region: 'eu', fleet_api_base_url: EU } })
+                    : respond(503, 'unavailable');
+            }
+            if (!url.startsWith(EU)) return respond(421, outOfRegion);
+            if (url.endsWith('/api/1/users/me')) return respond(200, { response: { email: 'eu@example.com' } });
+            if (url.endsWith('/api/1/products')) {
+                return respond(200, { response: [{ energy_site_id: 4242, resource_type: 'battery', site_name: 'Berlin' }], count: 1 });
+            }
+            return respond(404, 'not found');
+        });
+    }
+
+    function makeService() {
+        const userRepo = {
+            upsertOnTeslaAuth: vi.fn(),
+            getById: vi.fn().mockResolvedValue({ id: 'eu-sub', roles: [] }),
+            getByEmail: vi.fn().mockResolvedValue(null),
+        };
+        const siteRepo = { assignSiteToUser: vi.fn() };
+        const teslaTokenRepo = { updateSiteTokens: vi.fn(), releaseRefreshLock: vi.fn() };
+        const importerClients: TeslaClient[] = [];
+        const importer = { ensureSite: vi.fn() };
+        const service = new TeslaAuthService({
+            userRepo: userRepo as unknown as UserRepo,
+            siteRepo: siteRepo as unknown as SiteRepo,
+            teslaTokenRepo: teslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: (config: TeslaClientConfig) => new TeslaClient(config),
+            importerCreator: vi.fn((client: TeslaClient) => {
+                importerClients.push(client);
+                return importer;
+            }) as never,
+            tokenExchange: vi.fn().mockResolvedValue({
+                id_token: 'id', access_token: 'eu-access', refresh_token: 'eu-refresh', expires_in: 3600,
+            }),
+            verifyIdToken: vi.fn().mockResolvedValue({ nonce: 'n', sub: 'eu-sub', email: 'eu@example.com' }),
+        });
+        return { service, userRepo, siteRepo, importer, importerClients };
+    }
+
+    const params: TeslaCallbackParams = {
+        code: 'c', state: 's', savedState: 's', savedNonce: 'n', callbackUrl: 'http://localhost/callback',
+    };
+
+    beforeEach(() => {
+        process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID = 'client-id-123';
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('resolves the region first, then imports an EU user\'s sites from the EU host', async () => {
+        const fetchMock = euAccountFleet('ok');
+        const { service, userRepo, siteRepo, importer, importerClients } = makeService();
+
+        const result = await service.handleTeslaCallback(params);
+
+        expect(result).toMatchObject({ status: 'success', userId: 'eu-sub', siteIds: ['4242'] });
+        expect(String(fetchMock.mock.calls[0][0])).toBe(`${NA}/api/1/users/region`);
+        // Every call after the region lookup goes straight to the EU host.
+        expect(fetchMock.mock.calls.slice(1).every(([url]) => String(url).startsWith(EU))).toBe(true);
+        expect(userRepo.upsertOnTeslaAuth).toHaveBeenCalledWith(expect.objectContaining({ userId: 'eu-sub', fleetApiBaseUrl: EU }));
+        expect(importerClients[0].getBaseUrl()).toBe(EU);
+        expect(importer.ensureSite).toHaveBeenCalledWith('4242');
+        expect(siteRepo.assignSiteToUser).toHaveBeenCalledWith('4242', 'eu-sub');
+    });
+
+    it('falls back to the 421 base URL when users/region is unavailable', async () => {
+        euAccountFleet('down');
+        const { service, userRepo, importer } = makeService();
+
+        const result = await service.handleTeslaCallback(params);
+
+        expect(result).toMatchObject({ status: 'success', siteIds: ['4242'] });
+        expect(userRepo.upsertOnTeslaAuth).toHaveBeenCalledWith(expect.objectContaining({ fleetApiBaseUrl: EU }));
+        expect(importer.ensureSite).toHaveBeenCalledWith('4242');
+    });
+});

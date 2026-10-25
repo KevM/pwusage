@@ -110,7 +110,7 @@ export class SiteRepo {
 
     private async loadSitesFromDB(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
         const jsonCol = options?.includeJson ? ', s.json' : '';
-        const tokenCols = options?.includeTokens ? ', u.access_token, u.refresh_token, u.auth_status' : '';
+        const tokenCols = options?.includeTokens ? ', u.access_token, u.refresh_token, u.auth_status, u.fleet_api_base_url' : '';
         const userJoin = options?.includeTokens ? 'LEFT JOIN "User" u ON u.id = s.user_id' : '';
         // Site-level columns are fetched one row per site, separately from the
         // tariff tree. Selecting them through the Site × Tariff × Season ×
@@ -186,6 +186,7 @@ export class SiteRepo {
                 access_token: options?.includeTokens ? (row.access_token as string | null) ?? null : undefined,
                 refresh_token: options?.includeTokens ? (row.refresh_token as string | null) ?? null : undefined,
                 auth_status: options?.includeTokens ? (row.auth_status as string | null) ?? null : undefined,
+                fleet_api_base_url: options?.includeTokens ? (row.fleet_api_base_url as string | null) ?? null : undefined,
                 tariffs: [],
             });
         }

@@ -375,3 +375,126 @@ describe('TeslaClient authentication errors', () => {
         expect(isTeslaAuthError(new Error('some random error'))).toBe(false);
     });
 });
+
+describe('TeslaClient regional base URL', () => {
+    const NA = 'https://fleet-api.prd.na.vn.cloud.tesla.com';
+    const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
+    const outOfRegionBody = `{"response":null,"error":"user out of region, use base URL: ${EU}, see https://developer.tesla.com/docs/fleet-api#endpoints-and-regions","error_description":""}`;
+
+    function make421Response(body: string): Response {
+        return {
+            ok: false,
+            status: 421,
+            headers: new Headers(),
+            json: async () => JSON.parse(body),
+            text: async () => body,
+        } as unknown as Response;
+    }
+
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('defaults to the North America host', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(makeJsonResponse({ response: [], count: 0 }));
+        const client = new TeslaClient({ accessToken: 'tok' });
+        await client.getProducts();
+        expect(fetchMock.mock.calls[0][0]).toBe(`${NA}/api/1/products`);
+        expect(client.getBaseUrl()).toBe(NA);
+    });
+
+    it('uses a stored allowlisted host and ignores an unrecognized one', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(makeJsonResponse({ response: [], count: 0 }))
+            .mockResolvedValueOnce(makeJsonResponse({ response: [], count: 0 }));
+        await new TeslaClient({ accessToken: 'tok', baseUrl: EU }).getProducts();
+        await new TeslaClient({ accessToken: 'tok', baseUrl: 'https://evil.example.com' }).getProducts();
+        expect(fetchMock.mock.calls[0][0]).toBe(`${EU}/api/1/products`);
+        expect(fetchMock.mock.calls[1][0]).toBe(`${NA}/api/1/products`);
+    });
+
+    it('on a 421 naming an allowlisted host, switches host, reports it, and retries once', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(make421Response(outOfRegionBody))
+            .mockResolvedValueOnce(makeJsonResponse({ response: { email: 'eu@example.com' } }));
+        const onBaseUrlChange = vi.fn();
+        const client = new TeslaClient({ accessToken: 'tok', onBaseUrlChange });
+
+        const info = await client.getUserInfo();
+
+        expect(info.email).toBe('eu@example.com');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls[0][0]).toBe(`${NA}/api/1/users/me`);
+        expect(fetchMock.mock.calls[1][0]).toBe(`${EU}/api/1/users/me`);
+        expect(client.getBaseUrl()).toBe(EU);
+        expect(onBaseUrlChange).toHaveBeenCalledWith(EU);
+    });
+
+    it('does not follow a 421 naming an unrecognized host', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(make421Response('{"error":"user out of region, use base URL: https://evil.example.com"}'));
+        const onBaseUrlChange = vi.fn();
+        const client = new TeslaClient({ accessToken: 'tok', onBaseUrlChange });
+
+        await expect(client.getUserInfo()).rejects.toThrow('Tesla API Error: 421');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(onBaseUrlChange).not.toHaveBeenCalled();
+        expect(client.getBaseUrl()).toBe(NA);
+    });
+
+    it('retries a 421 only once', async () => {
+        const naBody = outOfRegionBody.replace(EU, NA);
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(make421Response(outOfRegionBody))
+            .mockResolvedValueOnce(make421Response(naBody));
+        const client = new TeslaClient({ accessToken: 'tok' });
+
+        await expect(client.getProducts()).rejects.toThrow('Tesla API Error: 421');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries every in-flight 421 even after another request already switched host', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+            const url = String(input);
+            if (!url.startsWith(EU)) return make421Response(outOfRegionBody);
+            return makeJsonResponse({ response: [], count: 0 });
+        });
+        const onBaseUrlChange = vi.fn();
+        const client = new TeslaClient({ accessToken: 'tok', onBaseUrlChange });
+
+        await expect(Promise.all([client.getProducts(), client.getProducts()])).resolves.toEqual([[], []]);
+        expect(fetchMock).toHaveBeenCalledTimes(4);
+        expect(onBaseUrlChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolveRegion adopts the users/region base URL', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(makeJsonResponse({ response: { region: 'eu', fleet_api_base_url: EU } }))
+            .mockResolvedValueOnce(makeJsonResponse({ response: [], count: 0 }));
+        const onBaseUrlChange = vi.fn();
+        const client = new TeslaClient({ accessToken: 'tok', onBaseUrlChange });
+
+        await expect(client.resolveRegion()).resolves.toBe(EU);
+        await client.getProducts();
+
+        expect(fetchMock.mock.calls[0][0]).toBe(`${NA}/api/1/users/region`);
+        expect(fetchMock.mock.calls[1][0]).toBe(`${EU}/api/1/products`);
+        expect(onBaseUrlChange).toHaveBeenCalledWith(EU);
+    });
+
+    it('resolveRegion keeps the current host when users/region returns an unrecognized URL', async () => {
+        vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(makeJsonResponse({ response: { region: 'xx', fleet_api_base_url: 'https://evil.example.com' } }));
+        const onBaseUrlChange = vi.fn();
+        const client = new TeslaClient({ accessToken: 'tok', onBaseUrlChange });
+
+        await expect(client.resolveRegion()).resolves.toBe(NA);
+        expect(onBaseUrlChange).not.toHaveBeenCalled();
+    });
+});
