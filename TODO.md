@@ -107,10 +107,13 @@ Candidates that remain, in rough value order:
   rows.
   **Update 2026-10-25:** `idx_energy_timestamp` is gone (dropped on Prod/Dev
   2026-10-24 and removed by migration `20261024120000`), and both timestamp
-  indexes were reindexed, so the planner can no longer choose that path.
-  Re-measure `pg_stat_statements` and `EXPLAIN (ANALYZE, BUFFERS)` before
-  building anything. Only escalate to `EnergyDailyAggregate` if the composite
-  path is still the bottleneck.
+  indexes were reindexed, so the planner can no longer choose that path. A
+  30-day Prod `EXPLAIN (ANALYZE, BUFFERS)` (8,640 rows, one site) now uses
+  `idx_energy_site_ts`: 729 buffers (~6 MB), ~104 ms. The remaining cost is the
+  bitmap heap scan plus sort, not a wrong index. `pg_stat_statements` was last
+  reset 2026-07-18, so the old 849 ms mean predates these changes. Re-measure a
+  full cycle and only escalate to `EnergyDailyAggregate` if ~100 ms per call is
+  still material.
 - **`getRawEnergyData` is the top egress line** — re-added 2026-10-01, same
   origin. `energy-repo.ts:633` still ships every 5-min row in the window. The
   original postmortem framing ("sum in SQL") is wrong: the markup route uses
