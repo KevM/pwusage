@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ImportLockOptions, ImportLockResult } from './import-lock';
 import type { EnergyHistoryEntry, EnergySiteLiveStatus } from './tesla-client';
 
@@ -81,6 +81,7 @@ const teslaClientMock = {
 const importerMock = {
     getTodayData: vi.fn(),
     persistHistory: vi.fn(),
+    refreshTodayRecords: vi.fn(),
 };
 
 vi.mock('./user-repo', () => ({
@@ -99,6 +100,7 @@ const createEnergyRepoMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./energy-repo-factory', () => ({
     createEnergyRepo: createEnergyRepoMock,
+    compactDayWritesEnabled: () => process.env.COMPACT_DAY_WRITES_ENABLED === 'true',
 }));
 
 vi.mock('./tesla-token-repo', () => ({
@@ -148,6 +150,7 @@ describe('refreshTodayData', () => {
         teslaClientMock.getLiveStatus.mockResolvedValue({ percentage_charged: 72 });
         importerMock.getTodayData.mockResolvedValue([]);
         importerMock.persistHistory.mockResolvedValue(0);
+        importerMock.refreshTodayRecords.mockResolvedValue({ rows: [], rowsPersisted: 0 });
     });
 
     async function importRefreshTodayData() {
@@ -253,6 +256,102 @@ describe('refreshTodayData', () => {
 
         await expect(refreshTodayData('site-1')).resolves.toMatchObject({ status: 'error', errorMessage: 'tesla down' });
         expect(siteRepoMock.releaseImportLock).toHaveBeenCalledWith('site-1', expect.any(String));
+    });
+});
+
+describe('refreshTodayData latch', () => {
+    // 10:00 CDT on 2026-10-24; Chicago midnight is 05:00Z.
+    const latest = new Date('2026-10-24T15:00:00Z');
+
+    beforeEach(() => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        vi.unstubAllEnvs();
+        delete (globalThis as unknown as { __todayRefreshState?: Map<string, unknown> }).__todayRefreshState;
+        userRepoMock.getTokensForSite.mockResolvedValue(tokens);
+        siteRepoMock.acquireImportLock.mockResolvedValue(true);
+        siteRepoMock.releaseImportLock.mockResolvedValue(true);
+        siteRepoMock.getImportStatus.mockResolvedValue({ isImporting: false, lastImportAt: 0 });
+        siteRepoMock.getSite.mockResolvedValue({ id: 'site-1', timezone: 'America/Chicago' });
+        createEnergyRepoMock.mockReturnValue(energyRepoMock);
+        teslaTokenRepoMock.getLockedRefreshHandler.mockReturnValue(tokenRefreshHandlers);
+        energyRepoMock.getLatestEnergyData.mockResolvedValue({ timestamp: latest });
+        importerMock.getTodayData.mockResolvedValue([]);
+        importerMock.persistHistory.mockResolvedValue(0);
+        importerMock.refreshTodayRecords.mockResolvedValue({ rows: [], rowsPersisted: 0 });
+        vi.useFakeTimers({ toFake: ['Date'] });
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+    });
+
+    const refresh = async (now: string, options = {}) => {
+        vi.setSystemTime(new Date(now));
+        const { refreshTodayData } = await import('./today-refresh');
+        return refreshTodayData('site-1', options);
+    };
+
+    it('skips Tesla, tokens and the import lock until the next sample is due', async () => {
+        await expect(refresh('2026-10-24T15:06:59Z')).resolves.toEqual({ status: 'not-due' });
+        expect(userRepoMock.getTokensForSite).not.toHaveBeenCalled();
+        expect(siteRepoMock.acquireImportLock).not.toHaveBeenCalled();
+        expect(importerMock.getTodayData).not.toHaveBeenCalled();
+    });
+
+    it('fetches once the next sample is due (label + 5 min + publish lag)', async () => {
+        await refresh('2026-10-24T15:07:00Z');
+        expect(importerMock.getTodayData).toHaveBeenCalledWith('site-1', latest);
+    });
+
+    it('fetches when nothing is stored yet', async () => {
+        energyRepoMock.getLatestEnergyData.mockResolvedValue(null);
+        await refresh('2026-10-24T15:01:00Z');
+        expect(importerMock.getTodayData).toHaveBeenCalledWith('site-1', null);
+    });
+
+    it('lets force callers bypass the latch', async () => {
+        await refresh('2026-10-24T15:01:00Z', { force: true });
+        expect(importerMock.getTodayData).toHaveBeenCalledOnce();
+    });
+
+    it('still fetches yesterday\'s last samples across midnight', async () => {
+        // Stored up to 23:50 CDT: the 23:55 sample is due 00:02, after midnight.
+        const lastEvening = new Date('2026-10-25T04:50:00Z');
+        energyRepoMock.getLatestEnergyData.mockResolvedValue({ timestamp: lastEvening });
+        await expect(refresh('2026-10-25T04:56:59Z')).resolves.toEqual({ status: 'not-due' });
+        await refresh('2026-10-25T05:00:30Z');
+        expect(importerMock.getTodayData).toHaveBeenCalledWith('site-1', lastEvening);
+    });
+
+    it('waits for today\'s first sample once yesterday is fully stored', async () => {
+        energyRepoMock.getLatestEnergyData.mockResolvedValue({ timestamp: new Date('2026-10-25T04:55:00Z') });
+        await expect(refresh('2026-10-25T05:01:59Z')).resolves.toEqual({ status: 'not-due' });
+        await refresh('2026-10-25T05:02:00Z');
+        expect(importerMock.getTodayData).toHaveBeenCalledOnce();
+    });
+
+    it('with day writes off, keeps the raw path', async () => {
+        await refresh('2026-10-24T15:07:00Z');
+        expect(importerMock.persistHistory).not.toHaveBeenCalled(); // no rows fetched
+        expect(importerMock.refreshTodayRecords).not.toHaveBeenCalled();
+    });
+
+    it('with day writes on, writes day records instead of raw rows', async () => {
+        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
+        const rows = [{ timestamp: new Date('2026-10-24T15:05:00Z') }];
+        importerMock.refreshTodayRecords.mockResolvedValue({ rows, rowsPersisted: 126 });
+        await expect(refresh('2026-10-24T15:07:00Z')).resolves.toEqual({ status: 'persisted', rowsPersisted: 126 });
+        expect(importerMock.refreshTodayRecords).toHaveBeenCalledWith('site-1', latest);
+        expect(importerMock.getTodayData).not.toHaveBeenCalled();
+        expect(importerMock.persistHistory).not.toHaveBeenCalled();
+    });
+
+    it('with day writes on, reports no new rows when Tesla had nothing newer', async () => {
+        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
+        importerMock.refreshTodayRecords.mockResolvedValue({ rows: [{ timestamp: latest }], rowsPersisted: 121 });
+        await expect(refresh('2026-10-24T15:07:00Z')).resolves.toEqual({ status: 'no-new-rows' });
     });
 });
 

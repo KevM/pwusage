@@ -45,6 +45,8 @@ export interface DailyCoverageStat {
      * its samples have gaps Tesla never filled.
      */
     archived?: boolean;
+    /** Set by compact reads: a v2 day record still `open` (today, or a recent day short of samples). */
+    open?: boolean;
 }
 
 export interface CycleAggregateRow {

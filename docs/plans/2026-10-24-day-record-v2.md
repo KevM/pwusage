@@ -245,5 +245,39 @@ read support is removed.
    raw import touches it, as v1 days could, until the writers switch.
 3. **v1 → v2 migration script** with verification and batching. *(Done.)*
 4. **Writers behind a flag:** today-refresh (+ latch), gap-heal, sync, repair.
+   *(Done; flag off everywhere.)* `COMPACT_DAY_WRITES_ENABLED=true`
+   (`compactDayWritesEnabled`, off by default) switches every importer write to
+   `writeDay(..., {replaceRaw:true})`; off, the raw path is unchanged.
+   - **Raw rows are replaced, not refused** (option a): `replaceRaw` deletes the
+     day's archive and then its raw `EnergyData` rows inside the `writeDay`
+     transaction, after the `fetched_at` guard (a superseded write deletes
+     nothing) and before the v2 insert. Archive first, because the
+     `invalidate_compact_energy_day` raw-delete trigger refuses an unpruned
+     archive whose `sample_count` no longer matches raw; with no archive left it
+     only deletes the rows. No raw read-back. Without `replaceRaw` (the backfill
+     script) a day with raw rows is still refused.
+   - **Range imports** (`ensureDataForRange` / `refetchDays` → `importWindows`;
+     sync, import, gap-heal, repair, migrate script): one `fetchDayForWrite` +
+     `writeDay` per site-local day a window touches, the whole day even for a
+     partial window. A failed fetch (SOE included) or a `busy` claim fails the
+     window and leaves the day as stored. `archiveHealedDays` is skipped (the
+     record is the archive). Planning (`planMissingWindows` → `planImport`
+     `refetchOpenDays`) refetches every `open` record but today's, however small
+     its gaps; `complete`/`gapped` stay settled. Coverage carries `open` from the
+     record status.
+   - **Today-refresh** (`Importer.refreshTodayRecords`): today's open record from
+     the whole day so far, plus yesterday's while it is not `complete` and its
+     stored fetch predates its last sample's publication (`isDayFetchFinal`);
+     after that, its remaining gaps are gap-heal's. With no record for yesterday,
+     only a missing stored tail fetches it (as the raw path does). Writes run one
+     at a time (one per-site claim).
+   - **Latch** (flag on or off, `tesla-sample-timing.ts`): `refreshTodayData`
+     skips with `not-due`, before tokens or the import lock, unless
+     `now >= latestStoredLabel + 5 min + TESLA_PUBLISH_LAG_MS` (2 min; measured
+     2026-10-24: new samples appear 16–97 s after their label, typically
+     75–85 s, and never change). Labels are absolute, so midnight needs no
+     special case: yesterday's 23:55 sample is due at 00:02 and that fetch covers
+     yesterday's tail. `force` bypasses it; the import lock still collapses
+     concurrent callers; the `live_status` cache is unchanged.
 5. **Cutover:** Tesla backfill for tokened sites, ops tooling, pause the
    archive job, stop raw writes, later drop `EnergyData`.

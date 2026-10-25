@@ -12,6 +12,12 @@ export interface PlanOptions {
     timezone: string;
     installationDate?: Date;
     forceRefetch?: boolean;
+    /**
+     * Day writes on: refetch every `open` day record but today's (the today
+     * refresh owns it), however small its gaps; `complete` and `gapped`
+     * records are settled and never refetched automatically.
+     */
+    refetchOpenDays?: boolean;
     gapThresholdMs?: number;
     now?: Date;
 }
@@ -25,6 +31,8 @@ export interface DayAuditResult extends DayWindow {
     hasInteriorGap: boolean;
     /** A settled archive day: covered unless the caller forces a re-fetch. */
     archived: boolean;
+    /** An `open` v2 day record (see `DailyCoverageStat.open`). */
+    open: boolean;
 }
 
 export interface GenerateDayWindowsOptions {
@@ -128,6 +136,7 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
             missingEnd: lastInWindow !== null && (day.effectiveWindowEnd.getTime() - lastInWindow > gapThresholdMs),
             hasInteriorGap: stat.maxInteriorGapMs > gapThresholdMs,
             archived: stat.archived === true,
+            open: stat.open === true,
         });
     }
 
@@ -135,11 +144,12 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
 }
 
 export function planImport(options: PlanOptions): DateWindow[] {
-    const { forceRefetch = false } = options;
+    const { forceRefetch = false, refetchOpenDays = false } = options;
     return auditDays(options)
         // Re-fetching a settled archive day rewrites its raw rows, which drops the
         // archive (and restores a trimmed day): a churn loop for days Tesla can't fill.
-        .filter(d => forceRefetch || (!d.archived && (d.count === 0 || d.missingStart || d.missingEnd || d.hasInteriorGap)))
+        .filter(d => forceRefetch || (!d.archived && (d.count === 0 || d.missingStart || d.missingEnd || d.hasInteriorGap
+            || (refetchOpenDays && d.open && !d.isToday))))
         .map(d => ({ start: d.windowStart, end: d.effectiveWindowEnd }));
 }
 

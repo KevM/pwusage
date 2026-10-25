@@ -1,4 +1,4 @@
-vi.mock('./energy-repo-factory',()=>({createEnergyRepo:(_timezone:string,rawRepo:EnergyRepo)=>rawRepo}));
+vi.mock('./energy-repo-factory',()=>({createEnergyRepo:(_timezone:string,rawRepo:EnergyRepo)=>rawRepo,compactDayWritesEnabled:()=>false}));
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Importer } from './importer';

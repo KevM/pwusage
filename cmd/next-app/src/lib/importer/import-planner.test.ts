@@ -552,3 +552,31 @@ describe('generateDayWindows', () => {
         expect(windows.every(w => w.windowStart.getTime() <= now.getTime())).toBe(true);
     });
 });
+
+describe('planImport from day record status', () => {
+    // 287 of 288 samples: a 10-minute hole, under the 30-minute gap threshold.
+    const nearlyFull = (extra: Partial<DailyCoverageStat>): DailyCoverageStat => ({
+        localDayKey: DAY1_KEY, count: 287, first: DAY1_START, last: new Date(+DAY1_END - 300000), maxInteriorGapMs: 600000, ...extra,
+    });
+    const plan = (stat: DailyCoverageStat, refetchOpenDays: boolean, now = FUTURE) => planImport({
+        requestedRange: { start: DAY1_START, end: DAY1_END }, existingCoverage: [stat], timezone: TZ, now, refetchOpenDays,
+    });
+
+    it('refetches an open day however small its gaps', () => {
+        expect(plan(nearlyFull({ open: true }), true)).toEqual([{ start: DAY1_START, end: DAY1_END }]);
+    });
+
+    it('never refetches complete or gapped days automatically', () => {
+        expect(plan(nearlyFull({ archived: true }), true)).toEqual([]);
+        expect(plan(nearlyFull({ archived: true, count: 100, maxInteriorGapMs: 12 * 3600000 }), true)).toEqual([]);
+    });
+
+    it('leaves today\'s open record to the today refresh', () => {
+        const midday = new Date(+DAY1_START + 12 * 3600000);
+        expect(plan(nearlyFull({ open: true, last: new Date(+midday - 300000), count: 143 }), true, midday)).toEqual([]);
+    });
+
+    it('keeps the gap thresholds with day writes off', () => {
+        expect(plan(nearlyFull({ open: true }), false)).toEqual([]);
+    });
+});
