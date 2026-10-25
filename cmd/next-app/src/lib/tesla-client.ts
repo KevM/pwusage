@@ -186,7 +186,11 @@ function calendarTimeSeries<T>(result: unknown, kind: 'energy' | 'soe'): T[] {
     } else if (kind === 'soe' && response === '') {
         return [];
     }
-    throw new Error(`Malformed Tesla ${kind === 'energy' ? 'energy' : 'SOE'} history response: ${JSON.stringify(result).substring(0, 200)}`);
+    // The body is logged, never put in the message: isTeslaAuthError matches message substrings
+    // (e.g. `invalid_grant`), and a terminal error revokes the owner (DesignDecisions.md).
+    const message = `Malformed Tesla ${kind === 'energy' ? 'energy' : 'SOE'} history response`;
+    console.warn(`[TeslaClient] ${message}:`, JSON.stringify(result).substring(0, 200));
+    throw new Error(message);
 }
 
 export class TeslaClient {

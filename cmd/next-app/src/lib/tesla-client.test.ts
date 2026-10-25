@@ -239,6 +239,24 @@ describe('TeslaClient calendar_history response validation', () => {
     });
 
     it.each([
+        ['energy', { response: { error: 'invalid_grant', time_series: null } }],
+        ['energy', { response: { error: 'login_required' } }],
+        ['soe', { response: 'invalid authentication' }],
+    ] as const)('keeps a malformed %s answer that quotes an auth error non-terminal', async (kind, payload) => {
+        // isTeslaAuthError matches message substrings, and a terminal error revokes the owner
+        // (DesignDecisions.md, "Terminal vs transient failures"): the body must not reach the message.
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        answer(payload);
+        const c = client();
+        const error = await (kind === 'energy'
+            ? c.getEnergyHistory('1', start, end, 'day', 'America/Chicago')
+            : c.getSoeHistory('1', start, end, 'day', 'America/Chicago')).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(Error);
+        expect(isTeslaAuthError(error)).toBe(false);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Malformed'), JSON.stringify(payload).substring(0, 200));
+    });
+
+    it.each([
         ['no response', {}],
         ['an empty response object', { response: {} }],
         ['the energy no-data shape', EMPTY_DAY_ENERGY],
