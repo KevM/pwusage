@@ -383,6 +383,26 @@ leaves v1 by design has a disposition (decided 2026-10-25):
   prints `resumeAfter`; `--after <siteId>/<day>` continues past the days it
   examined, so days left v1 never block later ones.
 
+## Operational consumers of `EnergyData` (inventory added 2026-10-25)
+
+The sections above cover the app's reads and writes, which go through
+`createEnergyRepo` / `CompactHistoryStore`. This plan first missed the tooling
+outside the app that assumes history *is* `EnergyData`. Two review findings and
+the dev-copy gap all came from that. Once raw storage drains, each item below
+either moves to day records or becomes a no-op. Check this list before draining
+raw, and add to it when new tooling touches history.
+
+| Consumer | Assumes | Status |
+|---|---|---|
+| Backup verify (`scripts/verify-db-backup.ts`) | A full backup has `EnergyData` rows | Done in PR #210: needs `EnergyData` or day records with samples, plus their summaries; `empty` records need none |
+| Backup restore (`scripts/restore-db-backup.sh`) | History comes from the weekly raw rows | Done in PR #210: skips weekly/recent raw rows inside a day the daily backup holds as `raw_pruned` |
+| Daily backup (`scripts/dump-db-backup.sh`, `db-backup-kinds.ts`, `docs/database-backups.md`) | Skipping `EnergyData` (`-x`) skips history; daily ≈ 3 MB; `energy-recent.csv` holds the last 3 days | **Open** (TODO.md): day records are not excluded, so every daily backup carries all history. The size and egress figures need re-measuring, `energy-recent.csv` empties once raw drains, and the restore runbook's "history comes from the weekly" stops being true |
+| Prod → dev copy (`.github/workflows/ci.yml`, `export-dev-energy-data.sql`, `load-dev-energy-data.sql`, `prune-dev-copy.sql`, `docs/dev-database-copy.md`) | Excluding `EnergyData` and copying a 45-day / 6-site slice bounds Dev's history | **Open** (TODO.md, separate PR after #210): `EnergyDayArchive`/`EnergyDaySummary` are copied in full on every PR push and never pruned. Correct today (v2 records are `raw_pruned`; `empty` records pass the load's sample-count cleanup), but it costs the shared 500 MB quota and egress |
+| Raw retention (`DATA_RETENTION_DAYS`, `history-archive-service.ts`) | Trimming raw frees history space | Fine: it trims raw only; day records are the history |
+| Raw-fix scripts (`backfill-soc.ts`, `backfill-tariff-schedule.ts`, `fix-tariff-schedule-range.ts`) | `UPDATE "EnergyData"` repairs history | **No-op on v2 days** (no raw rows). An SOC or schedule fix for a day record is a refetch or re-attribution ("Re-attribution"), not these scripts. Retire them once raw drains |
+| Raw diagnostics (`check-sites.ts`, `check-soc-coverage.ts`, `validate-import.ts`, `verify-sync-daily-coverage.ts`, `load-planning-context-capture.ts`, `measure-compact-history-egress.ts`) | Raw rows are the data | Report nothing useful for v2 days; update or retire when raw drains |
+| Project docs (`CLAUDE.md` "Key Data Models") | `EnergyData` is *the* 5-minute store | Update at cutover to name day records as the history |
+
 ## Decisions (settled 2026-10-24)
 
 1. **`gapped`:** an ended, incomplete day older than the gap-heal window.
