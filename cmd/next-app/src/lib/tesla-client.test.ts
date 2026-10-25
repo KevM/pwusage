@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TeslaClient, TeslaAuthError, isTeslaAuthError } from './tesla-client';
+import { TeslaClient, TeslaAuthError, TeslaRegionError, isTeslaAuthError } from './tesla-client';
 
 function makeJsonResponse<T>(payload: T): Response {
     return {
@@ -380,6 +380,7 @@ describe('TeslaClient regional base URL', () => {
     const NA = 'https://fleet-api.prd.na.vn.cloud.tesla.com';
     const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
     const outOfRegionBody = `{"response":null,"error":"user out of region, use base URL: ${EU}, see https://developer.tesla.com/docs/fleet-api#endpoints-and-regions","error_description":""}`;
+    const partnerNotRegisteredBody = `{"response":null,"error":"Account abc must be registered in the current region ${EU}, please see https://developer.tesla.com/docs/fleet-api/getting-started/regions-countries"}`;
 
     function make421Response(body: string): Response {
         return {
@@ -442,10 +443,33 @@ describe('TeslaClient regional base URL', () => {
         const onBaseUrlChange = vi.fn();
         const client = new TeslaClient({ accessToken: 'tok', onBaseUrlChange });
 
-        await expect(client.getUserInfo()).rejects.toThrow('Tesla API Error: 421');
+        const error = await client.getUserInfo().catch((err: unknown) => err);
+
+        expect(error).toBeInstanceOf(TeslaRegionError);
+        expect((error as TeslaRegionError).kind).toBe('unknown');
+        expect((error as Error).message).toContain('Tesla API Error: 421');
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(onBaseUrlChange).not.toHaveBeenCalled();
         expect(client.getBaseUrl()).toBe(NA);
+    });
+
+    it('throws a region error instead of retrying when the partner app is not registered in the current region', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(make421Response(partnerNotRegisteredBody));
+        const onBaseUrlChange = vi.fn();
+        const client = new TeslaClient({ accessToken: 'tok', baseUrl: EU, onBaseUrlChange });
+
+        const error = await client.getProducts().catch((err: unknown) => err);
+
+        expect(error).toBeInstanceOf(TeslaRegionError);
+        expect((error as TeslaRegionError).kind).toBe('partner-not-registered');
+        expect((error as TeslaRegionError).host).toBe(EU);
+        expect((error as Error).message).toContain('Tesla API Error: 421');
+        expect((error as Error).message).not.toContain('Account abc');
+        expect(isTeslaAuthError(error)).toBe(false);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(onBaseUrlChange).not.toHaveBeenCalled();
+        expect(client.getBaseUrl()).toBe(EU);
     });
 
     it('retries a 421 only once', async () => {

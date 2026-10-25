@@ -119,6 +119,20 @@ export async function GET(request: NextRequest) {
         }
         return NextResponse.json({ error: 'Nonce mismatch' }, { status: 401 });
     }
+    if (result.status === 'db-error') {
+        clearAuthAttemptCookies(cookieStore);
+        if (mobileState && isValidAppState(mobileState)) {
+            return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
+        }
+        return NextResponse.json({ error: 'Could not finish Tesla sign-in' }, { status: 500 });
+    }
+    if (result.status === 'fleet-api-failed') {
+        clearAuthAttemptCookies(cookieStore);
+        if (mobileState && isValidAppState(mobileState)) {
+            return mobileCallbackResponse({ error: 'product_import_failed', state: mobileState });
+        }
+        return NextResponse.json({ error: 'Failed to load Tesla products' }, { status: 502 });
+    }
 
     // Success flow - generate cookie & sign JWT
     if (result.status === 'success') {

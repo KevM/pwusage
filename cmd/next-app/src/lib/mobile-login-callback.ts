@@ -18,7 +18,8 @@ export type MobileLoginErrorCode =
   | 'token_exchange_failed'
   | 'invalid_id_token'
   | 'nonce_mismatch'
-  | 'no_sites';
+  | 'no_sites'
+  | 'product_import_failed';
 
 /**
  * Either a failure (which the app surfaces as `AuthError.serverRejectedLogin`)

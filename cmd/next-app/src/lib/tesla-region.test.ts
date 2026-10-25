@@ -4,6 +4,7 @@ import {
     EU_FLEET_BASE_URL,
     fleetBaseUrlFrom421,
     normalizeFleetBaseUrl,
+    parseTesla421,
 } from './tesla-region';
 
 describe('normalizeFleetBaseUrl', () => {
@@ -45,5 +46,35 @@ describe('fleetBaseUrlFrom421', () => {
     it('ignores hosts outside the allowlist', () => {
         expect(fleetBaseUrlFrom421('{"error":"user out of region, use base URL: https://evil.example.com"}')).toBeNull();
         expect(fleetBaseUrlFrom421('misdirected')).toBeNull();
+    });
+});
+
+describe('parseTesla421', () => {
+    it('classifies an out-of-region answer and returns the named host', () => {
+        const body = `{"response":null,"error":"user out of region, use base URL: ${EU_FLEET_BASE_URL}, see https://developer.tesla.com/docs/fleet-api#endpoints-and-regions"}`;
+        expect(parseTesla421(body)).toEqual({
+            kind: 'out-of-region',
+            baseUrl: EU_FLEET_BASE_URL,
+        });
+    });
+
+    it('classifies an unregistered partner even when the named host is the current host', () => {
+        const body = `{"response":null,"error":"Account abc must be registered in the current region ${EU_FLEET_BASE_URL}, please see https://developer.tesla.com/docs/fleet-api/getting-started/regions-countries"}`;
+        expect(parseTesla421(body)).toEqual({
+            kind: 'partner-not-registered',
+            baseUrl: EU_FLEET_BASE_URL,
+        });
+    });
+
+    it('does not classify unrelated 421 bodies as a region change', () => {
+        expect(parseTesla421('{"error":"teapot"}')).toEqual({ kind: 'unknown', baseUrl: null });
+        expect(parseTesla421('')).toEqual({ kind: 'unknown', baseUrl: null });
+    });
+
+    it('ignores unallowlisted hosts in a registration message', () => {
+        expect(parseTesla421('{"error":"Account abc must be registered in the current region https://evil.example.com"}')).toEqual({
+            kind: 'partner-not-registered',
+            baseUrl: null,
+        });
     });
 });

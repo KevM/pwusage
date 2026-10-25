@@ -3,7 +3,12 @@ import jwksClient from 'jwks-rsa';
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { SiteRepo } from './site-repo';
 import { UserRepo } from './user-repo';
-import { TeslaClient, TeslaClientConfig } from './tesla-client';
+import {
+    TeslaClient,
+    TeslaClientConfig,
+    TeslaRegionError,
+    type FleetProduct,
+} from './tesla-client';
 import { Importer } from './importer';
 import { isUniqueViolation } from './db';
 import { requireEnv } from './env';
@@ -417,6 +422,11 @@ export type TeslaCallbackResult =
     | { status: 'token-exchange-failed'; statusCode: number }
     | { status: 'invalid-id-token' }
     | { status: 'nonce-mismatch' }
+    | { status: 'db-error' }
+    | {
+        status: 'fleet-api-failed';
+        reason: 'region' | 'upstream' | 'sites';
+      }
     | {
         status: 'success';
         userId: string;
@@ -613,6 +623,7 @@ export class TeslaAuthService {
         let userId: string | undefined;
 
         let userInfo: { email?: string; id?: string; sub?: string; vault_uuid?: string } | null = null;
+        let userInfoError: unknown;
         try {
             userInfo = await client.getUserInfo();
             if (userInfo) {
@@ -622,6 +633,7 @@ export class TeslaAuthService {
                 }
             }
         } catch (e) {
+            userInfoError = e;
             console.error('[TeslaAuthService] Failed to fetch user info:', e);
         }
 
@@ -652,6 +664,9 @@ export class TeslaAuthService {
         } else {
             // Degraded path (unpublished kid): getUserInfo() is MANDATORY!
             if (!userInfo || !userEmail) {
+                if (userInfoError instanceof TeslaRegionError) {
+                    return { status: 'fleet-api-failed', reason: 'region' };
+                }
                 console.error('[TeslaAuthService] Fallback auth failed: getUserInfo() call failed or returned no user email');
                 return { status: 'invalid-id-token' };
             }
@@ -715,19 +730,20 @@ export class TeslaAuthService {
         const siteIds: string[] = [];
         let roles: string[] = [];
 
-        try {
-            console.log('[TeslaAuthService] Fetching products to ensure sites exist in DB...');
-            const products = await client.getProducts();
+        const persistCredentials = (targetUserId: string) => userRepo.upsertOnTeslaAuth({
+            userId: targetUserId,
+            email: userEmail ?? null,
+            accessToken: authData.access_token,
+            refreshToken: authData.refresh_token,
+            tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
+            fleetApiBaseUrl: client.getBaseUrl(),
+        });
 
+        // Persist before any product import: a Fleet failure must not discard a
+        // rotated refresh token, and it must not be reported as a successful login.
+        try {
             try {
-                await userRepo.upsertOnTeslaAuth({
-                    userId,
-                    email: userEmail ?? null,
-                    accessToken: authData.access_token,
-                    refreshToken: authData.refresh_token,
-                    tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
-                    fleetApiBaseUrl: client.getBaseUrl(),
-                });
+                await persistCredentials(userId);
             } catch (err) {
                 // idx_user_email_lower rejected the insert: a concurrent login
                 // created a row with this email after our getByEmail lookup.
@@ -740,45 +756,82 @@ export class TeslaAuthService {
                     existingUserId: existingUser.id
                 });
                 userId = existingUser.id;
-                await userRepo.upsertOnTeslaAuth({
-                    userId,
-                    email: userEmail ?? null,
-                    accessToken: authData.access_token,
-                    refreshToken: authData.refresh_token,
-                    tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
-                    fleetApiBaseUrl: client.getBaseUrl(),
-                });
-            }
-
-            const userRow = await userRepo.getById(userId);
-            roles = (userRow as { roles?: string[] } | null)?.roles ?? [];
-
-            if (products.length > 0 || roles.includes('admin')) {
-                const importer = this.deps.importerCreator
-                    ? this.deps.importerCreator(client)
-                    : new Importer(client);
-
-                for (const product of products) {
-                    if (!product.energy_site_id) {
-                        continue;
-                    }
-                    const siteId = product.energy_site_id.toString();
-
-                    try {
-                        await importer.ensureSite(siteId);
-                        await siteRepo.assignSiteToUser(siteId, userId);
-                        await teslaTokenRepo.updateSiteTokens(siteId, authData.access_token, authData.refresh_token);
-                        await teslaTokenRepo.releaseRefreshLock(siteId);
-                        siteIds.push(siteId);
-                        console.log(`[TeslaAuthService] Linked site ${siteId} to User ${userId} and updated tokens.`);
-                    } catch (err) {
-                        console.error(`[TeslaAuthService] Failed to import/assign site ${siteId}:`, err);
-                    }
-                }
+                await persistCredentials(userId);
             }
         } catch (dbError) {
-            console.error('[TeslaAuthService] Failed to update/import sites in DB:', dbError);
+            console.error('[TeslaAuthService] Failed to persist Tesla credentials:', dbError);
+            return { status: 'db-error' };
         }
+
+        let persistedBaseUrl = client.getBaseUrl();
+        const storeLearnedBaseUrl = async () => {
+            const learnedBaseUrl = client.getBaseUrl();
+            if (learnedBaseUrl === persistedBaseUrl) return;
+            try {
+                await persistCredentials(userId);
+                persistedBaseUrl = learnedBaseUrl;
+            } catch (err) {
+                // Tokens are already stored; a later call re-learns the host.
+                console.error('[TeslaAuthService] Failed to store learned Fleet host:', err);
+            }
+        };
+
+        try {
+            const userRow = await userRepo.getById(userId);
+            roles = (userRow as { roles?: string[] } | null)?.roles ?? [];
+        } catch (dbError) {
+            console.error('[TeslaAuthService] Failed to load user roles:', dbError);
+            return { status: 'db-error' };
+        }
+
+        let products: FleetProduct[] = [];
+        try {
+            console.log('[TeslaAuthService] Fetching products to ensure sites exist in DB...');
+            products = await client.getProducts();
+        } catch (err) {
+            const reason = err instanceof TeslaRegionError ? 'region' : 'upstream';
+            console.error(`[TeslaAuthService] Failed to fetch Tesla products (${reason}):`, err);
+            // An admin needs access even when Fleet is unavailable or this
+            // region's partner registration is missing.
+            if (!roles.includes('admin')) {
+                await storeLearnedBaseUrl();
+                return { status: 'fleet-api-failed', reason };
+            }
+        }
+
+        await storeLearnedBaseUrl();
+
+        const importableProducts = products.filter(
+            (product): product is FleetProduct & { energy_site_id: number } => Boolean(product.energy_site_id)
+        );
+
+        if (importableProducts.length > 0) {
+            const importer = this.deps.importerCreator
+                ? this.deps.importerCreator(client)
+                : new Importer(client);
+
+            for (const product of importableProducts) {
+                const siteId = product.energy_site_id.toString();
+
+                try {
+                    await importer.ensureSite(siteId);
+                    await siteRepo.assignSiteToUser(siteId, userId);
+                    await teslaTokenRepo.updateSiteTokens(siteId, authData.access_token, authData.refresh_token);
+                    await teslaTokenRepo.releaseRefreshLock(siteId);
+                    siteIds.push(siteId);
+                    console.log(`[TeslaAuthService] Linked site ${siteId} to User ${userId} and updated tokens.`);
+                } catch (err) {
+                    console.error(`[TeslaAuthService] Failed to import/assign site ${siteId}:`, err);
+                }
+            }
+
+            if (siteIds.length === 0 && !roles.includes('admin')) {
+                await storeLearnedBaseUrl();
+                return { status: 'fleet-api-failed', reason: 'sites' };
+            }
+        }
+
+        await storeLearnedBaseUrl();
 
         return {
             status: 'success',
