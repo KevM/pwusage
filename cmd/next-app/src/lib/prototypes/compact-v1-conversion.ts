@@ -74,6 +74,8 @@ export function convertV1Day(day: V1Day): { day: ConvertedDay } | { reason: V1Co
 
 export interface ConversionCandidate { siteId: string; start: Date; payloadBytes: number }
 export interface V1ConversionRepo {
+    /** Whether the database has the day record v2 columns, which a write needs (a preview reads only v1 columns). */
+    schemaReady(): Promise<boolean>;
     /** v1 and v2 record counts in scope (`null` = every site). */
     counts(sites: string[] | null): Promise<{ v1: number; v2: number }>;
     /** v1 days after the keyset cursor, in (day, site) order, so a batch spans sites. */
@@ -114,6 +116,8 @@ const LISTING_BYTES = 4096;
 
 export async function runV1Conversion(repo: V1ConversionRepo, options: V1ConversionOptions): Promise<V1ConversionReport> {
     const batchSize = options.batchSize ?? 50, concurrency = options.concurrency ?? 1;
+    // Checked in preview too, so a preview never passes where every write would fail.
+    if (!await repo.schemaReady()) throw new ConversionUsageError(SCHEMA_MISSING);
     const start = await repo.counts(options.sites);
     const report: V1ConversionReport = { mode: options.apply ? 'apply' : 'preview', stopped: 'caught-up', considered: 0, counts: {}, alreadyV2: start.v2,
         remainingV1: start.v1, leftV1: { byReason: {}, days: [] }, reservedBytes: LISTING_BYTES };
@@ -173,9 +177,17 @@ async function convertBySite(repo: V1ConversionRepo, days: ConversionCandidate[]
     return results;
 }
 
+const SCHEMA_MISSING = 'This database lacks the day record v2 columns: run migration 20261024190000_day_record_v2_schema.sql first. Nothing was read or written.';
+
 /** PostgreSQL candidates and counts; payload sizes are computed server side, never transferred. */
 export class V1ConversionPgRepo implements V1ConversionRepo {
     constructor(private readonly pool: Pool, private readonly store: CompactHistoryStore) {}
+    async schemaReady() {
+        // The migration file applies as one transaction, so its three columns mark all of it.
+        const row = (await this.pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_schema='public'
+            AND table_name='EnergyDayArchive' AND column_name IN ('attribution','status','fetched_at')`)).rows[0];
+        return row.n === 3;
+    }
     async counts(sites: string[] | null) {
         const row = (await this.pool.query<{ v1: number; v2: number }>(`SELECT count(*) FILTER (WHERE format_version=1)::int AS v1,
             count(*) FILTER (WHERE format_version=2)::int AS v2 FROM "EnergyDayArchive" WHERE $1::text[] IS NULL OR site_id=ANY($1)`, [sites])).rows[0];

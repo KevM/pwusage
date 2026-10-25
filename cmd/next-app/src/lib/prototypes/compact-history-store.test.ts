@@ -1329,6 +1329,16 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             const report=await runV1Conversion(new V1ConversionPgRepo(pool,store),{sites:null,apply:true,maxDays:10,maxReservedBytes:1024*1024,now:new Date('2026-12-01'),concurrency:2});
             expect(report).toMatchObject({stopped:'caught-up',considered:3,counts:{converted:3},remainingV1:0});
         });
+        it('detects whether the day record v2 schema has been migrated',async()=>{
+            expect(await new V1ConversionPgRepo(pool,store).schemaReady()).toBe(true);
+            const bare=`${database}_unmigrated`;
+            await admin.query(`CREATE DATABASE ${bare}`);
+            const unmigrated=new Pool({host:socket,port:55439,database:bare,user:process.env.USER,max:1});
+            try {
+                await unmigrated.query('CREATE TABLE "EnergyDayArchive" (site_id text, day_start timestamptz, format_version int)');
+                expect(await new V1ConversionPgRepo(unmigrated,new CompactHistoryStore(unmigrated)).schemaReady()).toBe(false);
+            } finally {await unmigrated.end();await admin.query(`DROP DATABASE IF EXISTS ${bare}`);}
+        });
         it('runs resumably over all sites within its reservation, reporting counts only',async()=>{
             await insertRaw('site',start,end,'1','2');await store.finalizeDay('site',start,now);
             await insertRaw('site',end,addDaysInSiteTimezone(end,1,'America/Chicago'),'1','2');await store.finalizeDay('site',end,now);
