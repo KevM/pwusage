@@ -167,6 +167,35 @@ Convert every v1 archive to v2 once this format is final:
 Readers support v1 and v2 until the migration reports zero v1 rows, then v1
 read support is removed.
 
+**Implemented (slice 3):** `scripts/convert-archives-v2.ts` →
+`CompactHistoryStore.convertDayToV2` and `compact-v1-conversion.ts`.
+
+- **Verification** (any failure leaves the day v1 with a reason): the v1
+  archive passes reader/recovery verification (payload, metadata, summaries,
+  projection); decoded v2 samples equal the v1 samples minus the tariff
+  columns; samples × segments reproduce every v1 sample's IDs and the stored
+  summaries exactly; `attribution_complete` is unchanged; the new record reads
+  back through recovery to the v1 rows; the database's v3 digest check passes
+  before commit. `timelineRevision` is `v1-conversion:<v1 revision>`.
+- **Days that still have raw rows convert too.** Every Prod archive (2,428 on
+  2026-10-24) is unpruned, so skipping them would convert nothing. The archive
+  stays the read source either way, trim reconciles a v2 record against raw
+  (its rows recover with the same IDs), and `finalizeDay` now keeps a converted
+  record while it recovers to exactly the raw rows, so neither the archive job
+  nor a rebuild reverts it to v1. `raw_pruned` is kept as stored.
+- **Settled flag:** chart, bucket, billing, freshness and coverage counts read
+  the same. Coverage's `archived` (settled) flag follows v2 status, so it moves
+  only for an ended short day older than 14 days (now `gapped`, so gap-heal
+  stops refetching samples Tesla never had) and for a v1 day with incomplete
+  attribution (v2 settles by samples; a refetch cannot fix tariff setup).
+- **Left v1 by design:** a gap spanning a period boundary on a day v1 billed as
+  fully attributed (`unattributed-gap`: v2 would mark those minutes `null`
+  and refuse billing), samples off the 5-minute grid, and v1 days flagged
+  incomplete although every sample has a schedule.
+- **Cost:** reads only the archive row and its summaries; measured ~5 KB per
+  day of PostgreSQL responses, reserved conservatively at the payload + 24 KB
+  (`--max-mb`, default 16; `--max-days`, default 500).
+
 ## Decisions (settled 2026-10-24)
 
 1. **`gapped`:** an ended, incomplete day older than the gap-heal window.
@@ -205,7 +234,7 @@ read support is removed.
    `getLatestBatterySoc`) take an optional as-of time and include today's open
    record. A v2 day can be restored to raw rows (samples × segments) when a late
    raw import touches it, as v1 days could, until the writers switch.
-3. **v1 → v2 migration script** with verification and batching.
+3. **v1 → v2 migration script** with verification and batching. *(Done.)*
 4. **Writers behind a flag:** today-refresh (+ latch), gap-heal, sync, repair.
 5. **Cutover:** Tesla backfill for tokened sites, ops tooling, pause the
    archive job, stop raw writes, later drop `EnergyData`.

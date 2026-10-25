@@ -15,6 +15,8 @@ import {latestStoredSampleSql} from '../latest-stored-sample-sql';
 import { CompactHistoryReader } from './compact-history-reader';
 import {HistoryArchiveRepo} from '../history-archive-repo';
 import {archiveCutoff,runHistoryArchive} from '../history-archive-service';
+import type {DailyCoverageStat} from '../energy-repo';
+import {V1ConversionPgRepo,runV1Conversion} from './compact-v1-conversion';
 
 const socket = process.env.COMPACT_HISTORY_TEST_SOCKET;
 const start = new Date('2026-01-01T06:00:00Z');
@@ -1167,6 +1169,141 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             const grants=await pool.query(`SELECT has_function_privilege('anon',$1,'EXECUTE') AS anon,has_function_privilege('authenticated',$1,'EXECUTE') AS authenticated,has_function_privilege('service_role',$1,'EXECUTE') AS service`,[signature]);
             expect(grants.rows[0]).toEqual({anon:false,authenticated:false,service:true});
         }
+    });
+    describe('v1 archive conversion to day record v2',()=>{
+        const later=new Date('2026-01-25T12:00:00Z');
+        beforeAll(async()=>{
+            await pool.query(`INSERT INTO "Site" VALUES ('tou','America/Chicago') ON CONFLICT DO NOTHING;
+                INSERT INTO "Tariff" (id,site_id,name,updated) VALUES (3,'tou','TOU',now()) ON CONFLICT DO NOTHING;
+                INSERT INTO "TariffSeason" VALUES (3,3,'All',1,1,12,31,.2,.04) ON CONFLICT DO NOTHING;
+                INSERT INTO "TariffSchedule" VALUES (4,3,'Peak',.4,.04,0,6,16,21,0,0),(5,3,'Off',.1,.04,0,6,0,16,0,0),(6,3,'Late',.1,.04,0,6,21,24,0,0) ON CONFLICT DO NOTHING;
+                INSERT INTO "Tariff" (id,site_id,name,updated,is_current) VALUES (7,'site','Before the save',now(),false) ON CONFLICT DO NOTHING;
+                INSERT INTO "TariffSeason" VALUES (7,7,'All',1,1,12,31,.25,.04) ON CONFLICT DO NOTHING;
+                INSERT INTO "TariffSchedule" VALUES (8,7,'Flat',.25,.04,0,6,0,24,0,0) ON CONFLICT DO NOTHING;`);
+        });
+        beforeEach(async()=>{await pool.query('TRUNCATE "EnergyData"');});
+        const rawRows=async()=>(await pool.query('SELECT * FROM "EnergyData" ORDER BY site_id,timestamp')).rows;
+        const archiveRow=async(site='site')=>(await pool.query(`SELECT format_version,metadata_version,revision,raw_pruned,status,fetched_at,created_at,attribution,attribution_complete,
+            public.verify_compact_day_metadata(site_id,day_start,false) AS verified FROM "EnergyDayArchive" WHERE site_id=$1`,[site])).rows[0];
+        /** Every read path a converted day serves: charts, buckets, coverage, billing, freshness, SOC. */
+        const reads=async(site:string,from:Date,until:Date)=>{
+            const reader=new CompactHistoryReader(store,'America/Chicago');
+            return {chart:await reader.getRawEnergyData(site,from,until),buckets:await reader.getBucketedEnergyData(site,from,until),
+                partial:await reader.getRawEnergyData(site,new Date(+from+3600000),new Date(+until-3600000)),
+                billing:await readBillingAvailability(()=>reader.getCycleAggregatesAndCoverage(site,from,until,'America/Chicago'),{aggregates:[],coverage:[]}),
+                coverage:await reader.getDailyCoverage(site,from,until,'America/Chicago'),
+                latest:await store.getLatestEnergyData(site,jobOptions.now),stamp:await store.getLatestTimestamp(site,jobOptions.now),soc:await store.getLatestBatterySoc(site,from,jobOptions.now)};
+        };
+        const convert=(site:string,day:Date,apply=true,at=later)=>store.convertDayToV2(site,day,{apply,now:at});
+        const insertRaw=(site:string,day:Date,dayEnd:Date,tariff:string,schedule:string,where='true')=>pool.query(`INSERT INTO "EnergyData"
+            SELECT $1,t,${tariff},${schedule},20+n%7,n%5,(n%9)-4.5,(n%3)-1,CASE WHEN n%4=0 THEN 40+n/10.0 END
+            FROM generate_series($2::timestamptz,$3::timestamptz-interval '5 minutes',interval '5 minutes') WITH ORDINALITY g(t,n) WHERE ${where}`,[site,day,dayEnd]);
+        it('converts a full v1 day in place: samples, attribution and every read unchanged; raw rows untouched',async()=>{
+            await insertRaw('site',start,end,'1','2');
+            expect((await store.finalizeDay('site',start,now)).status).toBe('finalized');
+            const v1=await archiveRow();const before=await reads('site',start,end);const raw=await rawRows();
+            expect(await convert('site',start,false)).toEqual({status:'convertible',dayStatus:'complete'});
+            expect(await archiveRow()).toEqual(v1);
+            const result=await convert('site',start);
+            expect(result).toMatchObject({status:'converted',dayStatus:'complete'});
+            const v2=await archiveRow();
+            expect(v2).toMatchObject({format_version:2,metadata_version:3,raw_pruned:false,status:'complete',fetched_at:v1.created_at,attribution_complete:true,verified:true,
+                attribution:{timelineRevision:`v1-conversion:${v1.revision}`,segments:[{offset:0,tariffId:1,scheduleId:2}]}});
+            expect(v2.revision).toBe(result.revision);expect(v2.revision).not.toBe(v1.revision);
+            expect(await reads('site',start,end)).toEqual(before);
+            expect(await rawRows()).toEqual(raw);
+            // Re-running is a no-op; the job's finalization keeps the converted record.
+            expect(await convert('site',start)).toEqual({status:'already-v2'});
+            expect(await store.finalizeDay('site',start,now)).toEqual({status:'unchanged',revision:v2.revision,attributionComplete:true});
+            expect((await archiveRow()).revision).toBe(v2.revision);
+            // Trim reconciles the converted record against raw, and restore brings raw back exactly.
+            expect(await store.trimDay('site',start,v2.revision,later)).toEqual({status:'trimmed',samples:288});
+            expect(await reads('site',start,end)).toEqual(before);
+            await store.restoreDay('site',start,v2.revision);
+            expect(await rawRows()).toEqual(raw);
+        });
+        it('converts a gappy day: same reads; an old short day becomes gapped, so planning settles it',async()=>{
+            await insertRaw('site',start,end,'1','2','n<100 OR n>180');
+            await store.finalizeDay('site',start,now);
+            const before=await reads('site',start,end);
+            expect(before.coverage).toEqual([expect.objectContaining({count:207,archived:false})]);
+            expect(await convert('site',start,false,jobOptions.now)).toMatchObject({status:'convertible',dayStatus:'open'});
+            expect(await convert('site',start)).toMatchObject({status:'converted',dayStatus:'gapped'});
+            // Only the settled flag moves: Tesla never had the missing samples, so gap-heal stops refetching.
+            const settled=(c:DailyCoverageStat)=>({...c,archived:true});
+            expect(await reads('site',start,end)).toEqual({...before,coverage:before.coverage.map(settled),
+                billing:{...before.billing,value:{...before.billing.value,coverage:before.billing.value.coverage.map(settled)}}});
+        });
+        it('converts a DST fall-back day with a TOU tariff to the timeline a v2 write derives',async()=>{
+            const day=new Date('2026-11-01T05:00:00Z'),dayEnd=addDaysInSiteTimezone(day,1,'America/Chicago');
+            await insertRaw('tou',day,dayEnd,'3',`CASE WHEN extract(hour FROM t AT TIME ZONE 'America/Chicago')<16 THEN 5
+                WHEN extract(hour FROM t AT TIME ZONE 'America/Chicago')<21 THEN 4 ELSE 6 END`);
+            expect(await store.finalizeDay('tou',day,new Date('2026-12-01'))).toMatchObject({status:'finalized',attributionComplete:true});
+            const before=await reads('tou',day,dayEnd);
+            expect(await convert('tou',day,true,new Date('2026-12-01'))).toMatchObject({status:'converted',dayStatus:'complete'});
+            expect((await archiveRow('tou')).attribution.segments).toEqual([{offset:0,tariffId:3,scheduleId:5},{offset:1020,tariffId:3,scheduleId:4},{offset:1320,tariffId:3,scheduleId:6}]);
+            expect(await reads('tou',day,dayEnd)).toEqual(before);
+            expect(before.chart).toHaveLength(300);
+        });
+        it('keeps mixed schedules across a tariff version boundary as each sample was priced',async()=>{
+            await insertRaw('site',start,end,`CASE WHEN n<=144 THEN 7 ELSE 1 END`,`CASE WHEN n<=144 THEN 8 ELSE 2 END`);
+            expect(await store.finalizeDay('site',start,now)).toMatchObject({attributionComplete:true});
+            const before=await reads('site',start,end);
+            expect(await convert('site',start)).toMatchObject({status:'converted'});
+            expect((await archiveRow()).attribution.segments).toEqual([{offset:0,tariffId:7,scheduleId:8},{offset:720,tariffId:1,scheduleId:2}]);
+            expect(await reads('site',start,end)).toEqual(before);
+            expect(before.billing.value.aggregates.map(a=>a.tariff_schedule_id)).toEqual([2,8]);
+        });
+        it('converts a null-schedule (fallback) day as unattributed, billing still refused',async()=>{
+            await insertRaw('site',start,end,'1','NULL');
+            expect(await store.finalizeDay('site',start,now)).toMatchObject({attributionComplete:false});
+            const before=await reads('site',start,end);
+            expect(before.billing.status).toBe('incomplete-attribution');
+            expect(await convert('site',start)).toMatchObject({status:'converted'});
+            expect(await archiveRow()).toMatchObject({attribution_complete:false,attribution:{segments:[{offset:0,tariffId:1,scheduleId:null}]}});
+            // v2 settles a day by its samples alone (a refetch cannot fix tariff configuration); nothing else moves.
+            expect(await reads('site',start,end)).toEqual({...before,coverage:before.coverage.map(c=>({...c,archived:true}))});
+        });
+        it('leaves a day that fails verification as v1 and writes nothing',async()=>{
+            await insertRaw('site',start,end,'1','2');
+            await store.finalizeDay('site',start,now);
+            await pool.query('UPDATE "EnergyDaySummary" SET load_power=load_power+1');
+            const stored=async()=>(await pool.query('SELECT a.*,s.load_power FROM "EnergyDayArchive" a JOIN "EnergyDaySummary" s USING (site_id,day_start,revision)')).rows;
+            const v1=await stored();
+            expect(await convert('site',start)).toEqual({status:'left-v1',reason:'integrity'});
+            expect(await stored()).toEqual(v1);
+        });
+        it('requires a mutation guard to apply, and skips a day whose site claim is held',async()=>{
+            await insertRaw('site',start,end,'1','2');
+            await store.finalizeDay('site',start,now);
+            await expect(new CompactHistoryStore(pool).convertDayToV2('site',start,{apply:true,now:later})).rejects.toThrow('mutation guard');
+            const holder=await pool.connect();
+            try {
+                await holder.query('BEGIN');
+                await holder.query("SELECT pg_advisory_xact_lock(hashtextextended('compact-energy:site',0))");
+                expect(await convert('site',start)).toEqual({status:'busy'});
+            } finally {await holder.query('ROLLBACK');holder.release();}
+            expect((await archiveRow()).format_version).toBe(1);
+        });
+        it('runs resumably over all sites within its reservation, reporting counts only',async()=>{
+            await insertRaw('site',start,end,'1','2');await store.finalizeDay('site',start,now);
+            await insertRaw('site',end,addDaysInSiteTimezone(end,1,'America/Chicago'),'1','2');await store.finalizeDay('site',end,now);
+            await pool.query('UPDATE "EnergyDaySummary" SET load_power=load_power+1 WHERE day_start=$1',[end]);
+            const {PostgresTransferMeter}=await import('./postgres-transfer-meter');
+            const meter=new PostgresTransferMeter(socket!);await meter.start();
+            const metered=new Pool({host:meter.host,port:55439,database,user:process.env.USER,max:1});
+            try {
+                const repo=new V1ConversionPgRepo(metered,new CompactHistoryStore(metered,15000,async client=>{await client.query('SELECT 1');}));
+                await repo.counts(null);
+                const options={sites:null,apply:true,maxDays:10,maxReservedBytes:1024*1024,batchSize:1,now:later};
+                const {value:report,transfer}=await meter.measure(()=>runV1Conversion(repo,options));
+                expect(report).toMatchObject({mode:'apply',stopped:'caught-up',considered:2,counts:{converted:1,'left-v1':1},alreadyV2:0,remainingV1:1,
+                    leftV1:{byReason:{integrity:1},days:[{siteId:'site',day:end.toISOString(),reason:'integrity'}]}});
+                expect(transfer.bytes).toBeLessThanOrEqual(report.reservedBytes);
+                expect(JSON.stringify(report)).not.toMatch(/load_power|payload|token/);
+                expect(await runV1Conversion(repo,options)).toMatchObject({considered:1,counts:{'left-v1':1},alreadyV2:1,remainingV1:1});
+            } finally {await metered.end();await meter.close();}
+        });
     });
     describe('day record v2 schema',()=>{
         const segments=[{offset:0,tariffId:1,scheduleId:2},{offset:480,tariffId:1,scheduleId:null}];

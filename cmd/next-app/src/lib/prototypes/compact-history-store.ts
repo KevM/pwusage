@@ -5,7 +5,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow,DailyCoverageStat } from '../energy-repo';
 import type { EnergyData, Tariff, TariffSchedule, TariffSeason } from '../db-types';
 import { addDaysInSiteTimezone, getSiteMidnight,parseSiteLocalDateToMidnight,formatSiteDate } from '../date-utils';
-import {recoverVerifiedSamples,rawDayDigest,type RecoveryArchive,type EnergyWrite} from './compact-energy-recovery';
+import {equalRecoveryValue,recoverVerifiedSamples,rawDayDigest,type RecoveryArchive,type EnergyWrite} from './compact-energy-recovery';
 import {validateMaintenanceDates,type MaintenanceSnapshot} from './compact-history-maintenance';
 import { auditTariffAttribution } from './compact-tariff-audit';
 import { decodeDay, decodeDaySamples, encodeDay, encodeDaySamples, rollupDay, toSample, type DayArchive, type DayRollup, type EnergySample } from './compact-energy';
@@ -14,6 +14,7 @@ import { buildDayMetadata, buildDayMetadataV3, type SummarizedHistoryDay } from 
 import { dayStatus, deriveDayAttribution, type DayAttribution, type DayStatus } from './day-attribution';
 import { Schedule } from '../schedule';
 import {beginTransaction} from '../pg-transaction';
+import {convertV1Day,type V1ConversionReason} from './compact-v1-conversion';
 import type { ScalarHistorySnapshot, AggregateHistorySnapshot, FinalizedHistoryDay, HistorySnapshot, HistorySnapshotStore } from './compact-history-reader';
 
 type RawRecord = { site_id: string; timestamp: Date; tariff_id: number; tariff_schedule_id: number | null;
@@ -73,6 +74,8 @@ export interface ArchiveMutationResult {status:'busy'|'trimmed'|'already-trimmed
 export interface FinalizationResult { status: 'busy' | 'empty' | 'finalized' | 'unchanged'; revision?: string;attributionComplete?:boolean }
 /** `superseded`: the stored record came from a newer (or the same) fetch and was kept. */
 export interface DayWriteResult { status:'busy'|'empty'|'written'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
+/** v1 -> v2 conversion of one archive; `convertible` is a preview's verified result. */
+export interface DayConversionResult { status:'busy'|'converted'|'convertible'|'already-v2'|'left-v1'; reason?:V1ConversionReason; revision?:string; dayStatus?:DayStatus }
 type PreparedDay={archive:DayArchive;summaries:DayRollup[];attributionComplete:boolean;metadata:SummarizedHistoryDay;payloadChecksum:string;
     latest:{data:LatestMetadata;checksum:string};record?:{attribution:DayAttribution;status:DayStatus;fetchedAt:Date}};
 
@@ -535,6 +538,12 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             if(old && rows.length!==old.sample_count)throw new Error('Raw archive source incomplete; restore before rebuilding');
             if (!rows.length) { await client.query('COMMIT'); return { status:'empty' }; }
             const {archive,summaries,attributionComplete,metadata,payloadChecksum,latest}=await this.prepareDay(client,siteId,timezone,start,end,rows);
+            // A day converted from v1 keeps its record while it still recovers to exactly the raw rows.
+            if(old?.format_version===2&&old.attribution_complete===attributionComplete&&+old.day_end===+end) {
+                let same=false;
+                try {same=equalRecoveryValue(await this.recoverySamples(client,old),rows);} catch { /* Rebuild a damaged record from raw. */ }
+                if(same) {await client.query('COMMIT');return {status:'unchanged',revision:old.revision,attributionComplete};}
+            }
             let oldLatestValid=false;
             if(old) {try {verifyLatest(old);oldLatestValid=true;}catch { /* Retry repairs stale/missing projections. */ }}
             const previousSummaries = old ? (await client.query<SummaryRecord>(
@@ -592,6 +601,60 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             return {status:'written',revision,attributionComplete:prepared.attributionComplete,dayStatus:prepared.record!.status};
         } catch(error) {await client.query('ROLLBACK');throw error;}
         finally {client.release(this.transactionTimeoutMs!==undefined);}
+    }
+
+    /**
+     * Convert one v1 archive to a format 2 record in place (new revision), keeping
+     * the attribution each sample was priced with and `raw_pruned` as stored; raw
+     * rows are not read or written. Only a day whose v2 record reads back exactly
+     * as the verified v1 archive did is written; otherwise it stays v1 with a
+     * reason. Preview runs the same verification read-only and writes nothing.
+     */
+    async convertDayToV2(siteId:string,start:Date,{apply,now}:{apply:boolean;now:Date}):Promise<DayConversionResult> {
+        if(!siteId?.trim()||siteId.length>200||!Number.isSafeInteger(+start)||!Number.isSafeInteger(+now))throw new Error('Invalid conversion request');
+        if(apply&&!this.mutationGuard)throw new Error('A mutation guard is required to convert an archive');
+        const client=await this.pool.connect();
+        try {
+            await beginTransaction(client,apply?'ISOLATION LEVEL READ COMMITTED':'ISOLATION LEVEL REPEATABLE READ READ ONLY');
+            if(apply)await this.boundTransaction(client);
+            await client.query("SET LOCAL statement_timeout='15s'");
+            if(apply) {
+                await client.query("SET LOCAL lock_timeout='3s'");
+                await this.mutationGuard!(client);
+                if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy'};}
+            }
+            const old=(await client.query<ArchiveRecord&{created_at:Date}>(`SELECT * FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start=$2${apply?' FOR UPDATE':''}`,[siteId,start])).rows[0];
+            if(!old)throw new Error('Archive day not found');
+            const result=await this.convertArchive(client,old,apply,now);
+            await client.query('COMMIT');return result;
+        } catch(error) {await client.query('ROLLBACK');throw error;}
+        finally {client.release(apply&&this.transactionTimeoutMs!==undefined);}
+    }
+
+    private async convertArchive(client:PoolClient,old:ArchiveRecord&{created_at:Date},apply:boolean,now:Date):Promise<DayConversionResult> {
+        if(old.format_version===2)return {status:'already-v2'};
+        const left=(reason:V1ConversionReason):DayConversionResult=>({status:'left-v1',reason});
+        if(old.format_version!==1||old.metadata_version!==2)return left('legacy-metadata');
+        const start=new Date(old.day_start),end=new Date(old.day_end);
+        const timezone=(await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1',[old.site_id])).rows[0]?.timezone;
+        try {
+            if(!timezone||+start!==+getSiteMidnight(start,timezone)||+end!==+addDaysInSiteTimezone(start,1,timezone))return left('day-bounds');
+        } catch {return left('day-bounds');}
+        const stored=(await client.query<SummaryRecord>('SELECT * FROM "EnergyDaySummary" WHERE site_id=$1 AND day_start=$2 AND revision=$3',
+            [old.site_id,old.day_start,old.revision])).rows.map(summary);
+        let rows:EnergyData[];
+        // Verified exactly as recovery and trim do: payload, metadata, summaries and projection.
+        try {rows=recoverVerifiedSamples(old,stored);} catch {return left('integrity');}
+        const converted=convertV1Day({siteId:old.site_id,start,end,revision:old.revision,createdAt:new Date(old.created_at),
+            attributionComplete:old.attribution_complete,rows,summaries:stored,now});
+        if('reason' in converted)return left(converted.reason);
+        const {archive,attribution,metadata,status,fetchedAt,latest,payloadChecksum}=converted.day;
+        if(!apply)return {status:'convertible',dayStatus:status};
+        const revision=await this.replaceDay(client,old.site_id,start,end,rows.length,{archive,summaries:metadata.summaries,
+            attributionComplete:metadata.attributionComplete,metadata,payloadChecksum,latest,record:{attribution,status,fetchedAt}},old.raw_pruned);
+        // The database's own digest check must agree before the conversion commits.
+        await client.query('SELECT public.verify_compact_day_metadata($1,$2,false)',[old.site_id,start]);
+        return {status:'converted',revision,dayStatus:status};
     }
 
     /** Format 2: verify the lossless round trip, derive segments from the current tariff, then summaries, status and projections. */
