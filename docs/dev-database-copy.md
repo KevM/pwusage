@@ -5,10 +5,12 @@ job (`verify-db` in `.github/workflows/ci.yml`) overwrites the dev database with
 copy of production, runs the new migrations on it, and scrubs it. The beta site
 (pwusagebeta.fm.rodeo) and the dev pg_cron jobs run against that copy.
 
-Every table is copied in full except `EnergyData`, which is cut down to a slice
-on the prod side (see step 2) so that its history is never downloaded. Full
-`EnergyData` dumps were the largest use of production's 5 GB/month Free-plan
-egress, since a full copy was downloaded only for most of it to be deleted.
+Every table is copied in full except the energy history: raw `EnergyData` and
+the day records that replace it (`EnergyDayArchive`, `EnergyDaySummary`). Those
+are cut down to a slice on the prod side (see step 2) so that their history is
+never downloaded. Full `EnergyData` dumps were the largest use of production's
+5 GB/month Free-plan egress, since a full copy was downloaded only for most of it
+to be deleted; day records would have grown the same way once raw drained.
 
 ## What the job does
 
@@ -21,9 +23,13 @@ egress, since a full copy was downloaded only for most of it to be deleted.
    are copied. Supabase-managed `auth` and `storage` tables stay untouched;
    protected tables such as `storage.buckets_vectors` cannot be restored by
    `postgres`. Migration history is dumped separately from `supabase_migrations`.
-   The data dump skips `EnergyData` rows (`-x public.EnergyData`; its sequence is
-   kept). Just before it, `scripts/export-dev-energy-data.sql`, which is
-   read-only, writes `dev-energy-data.csv` with just the rows dev keeps. The two
+   The data dump skips the rows of `EnergyData`, `EnergyDayArchive` and
+   `EnergyDaySummary` (`-x public.EnergyData,public.EnergyDayArchive,public.EnergyDaySummary`;
+   `EnergyData`'s sequence is kept). Just before it, `scripts/export-dev-energy-data.sql`,
+   which is read-only, writes just the rows dev keeps, in one REPEATABLE READ
+   snapshot: raw rows to stdout (`dev-energy-data.csv`), and day records and their
+   summaries to `dev-day-archive.csv` and `dev-day-summary.csv`. A day record is kept
+   when its day starts inside the window, for the same sites. The two
    cannot share a snapshot, so the export goes first: every `Site` and `Tariff`
    a row references then already exists when `data.sql` is taken. The rows kept are the last 45 days for the
    5 sites with the most recent live status refresh, plus Harrison (the site used
@@ -36,12 +42,15 @@ egress, since a full copy was downloaded only for most of it to be deleted.
    `psql --single-transaction -v ON_ERROR_STOP=1 -f data.sql -f scripts/load-dev-energy-data.sql -f scripts/sanitize-dev-copy.sql < dev-energy-data.csv`.
    Beta and the dev pg_cron jobs never see unscrubbed rows, and a failed load
    leaves the data tables empty instead of half-loaded.
-   `load-dev-energy-data.sql` loads the `EnergyData` slice from stdin with
-   triggers paused, as the dump's own load does, and refuses a CSV whose columns
-   differ from the table (`HEADER MATCH`). Because paused triggers also skip
-   foreign-key checks, it applies `EnergyData`'s own `ON DELETE` actions by hand
-   to rows whose `Site`, `Tariff` or `TariffSchedule` was deleted on prod between
-   the export and the dump. It then:
+   `load-dev-energy-data.sql` loads the `EnergyData` slice from stdin and the
+   day-record files from its working directory, with triggers paused, as the
+   dump's own load does, and refuses a CSV whose columns differ from the table
+   (`HEADER MATCH`). Because paused triggers also skip foreign-key checks, it
+   applies `EnergyData`'s own `ON DELETE` actions by hand to rows whose `Site`,
+   `Tariff` or `TariffSchedule` was deleted on prod between the export and the
+   dump. It drops a whole day record (summaries by cascade) whose `Site` was
+   deleted, or whose summaries name a deleted `Tariff` or `TariffSchedule` (those
+   keys have no `ON DELETE` action). It then:
    - drops the `EnergyDayArchive` days (and, by cascade, their `EnergyDaySummary`
      rows) whose raw rows were not copied or changed in that gap, as the `invalidate_compact_energy_day`
      trigger does when raw rows are deleted. Otherwise a later write to such a
@@ -50,14 +59,15 @@ egress, since a full copy was downloaded only for most of it to be deleted.
    - sets `Site.last_live_refresh_at` to 0 for sites left without readings, so
      beta's live-site crons (heal-gaps) do not re-import their history from
      Tesla.
-4. **Runs migrations on dev**. Every table except `EnergyData` is at full prod
-   size; `EnergyData` holds only the slice. A migration that rewrites or
-   re-indexes `EnergyData` is therefore not timed against prod's row count
-   here. Check such migrations against prod's size separately.
-5. **Prunes the copy** (`scripts/prune-dev-copy.sql`): deletes `EnergyData` older
-   than 45 days, then `VACUUM FULL "EnergyData"`. The slice already covers only
-   45 days, so this is a safety net. A test checks that the export and the prune
-   use the same interval.
+4. **Runs migrations on dev**. Every table except the energy history is at full
+   prod size; `EnergyData`, `EnergyDayArchive` and `EnergyDaySummary` hold only the
+   slice. A migration that rewrites or re-indexes them is therefore not timed
+   against prod's row count here. Check such migrations against prod's size
+   separately.
+5. **Prunes the copy** (`scripts/prune-dev-copy.sql`): deletes `EnergyData` and day
+   records (summaries by cascade) older than 45 days, then `VACUUM FULL`s the three
+   tables. The slice already covers only 45 days, so this is a safety net. A test
+   checks that the export and the prune use the same interval.
 
 ## What the scrub changes
 
@@ -99,12 +109,13 @@ Until then, the verify-db job fails at the guard and dev is left untouched.
 - `npm run test:dev-copy:postgres` runs `scripts/dev-copy-scripts.test.ts` against
   a disposable local PostgreSQL: the guard refuses without the marker and changes
   nothing, it stops a following file, and sanitize and prune do the right thing
-  with the marker. It also covers which rows the export picks, and how the load
-  handles the archive, idle sites, paused triggers and a column mismatch. CI runs
+  with the marker. It also covers which rows and day records the export picks,
+  and how the load handles day records, deleted parents, idle sites, paused
+  triggers and a column mismatch. CI runs
   it in the **Run Tests** job.
 - `scripts/dev-copy-guards.test.ts` (part of `npm test`) checks that no migration
   mentions the marker, that no job other than `verify-db` references the dev-only
   scripts, that the guard runs before the `DROP SCHEMA`, that the secret check
   runs before any database step, that prune runs after the migrations, that the
-  data dump excludes `EnergyData` and the export stays read-only and unguarded
+  data dump excludes the three energy-history tables and the export stays read-only and unguarded
   (it runs against prod), and the project-ref check itself.

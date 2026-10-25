@@ -81,11 +81,13 @@ describe('dev-only database scripts stay away from prod', () => {
         );
     });
 
-    it('downloads only the EnergyData subset dev keeps, not the full history', () => {
+    it('downloads only the energy history subset dev keeps, not the full history', () => {
         const dump = stepNamed(verifyDb, 'Dump Production DB');
         const data = dump.split('\n').find((line) => line.includes('-f data.sql'));
-        // Unquoted: the CLI reads -x as a CSV list (see dump-db-backup.sh).
-        expect(data).toMatch(/ -x public\.EnergyData(?:\s|$)/);
+        // Unquoted: the CLI reads -x as a CSV list (see dump-db-backup.sh). Raw rows and the
+        // day records that replace them both come from the export instead.
+        const excluded = data?.match(/ -x (\S+)/)?.[1].split(',').sort();
+        expect(excluded).toEqual(['public.EnergyData', 'public.EnergyDayArchive', 'public.EnergyDaySummary']);
         expect(dump).toMatch(/-f scripts\/export-dev-energy-data\.sql > dev-energy-data\.csv/);
         // Exported first, so every Site and Tariff a row references is already in data.sql.
         expect(dump.indexOf('export-dev-energy-data.sql')).toBeLessThan(dump.indexOf('-f data.sql'));

@@ -1,6 +1,8 @@
--- Dev-only: loads the EnergyData subset made by scripts/export-dev-energy-data.sql,
--- read from psql's stdin. CI runs it in the restore transaction, after data.sql
--- (which has every other table, EnergyDayArchive included) and before the scrub:
+-- Dev-only: loads the energy history made by scripts/export-dev-energy-data.sql:
+-- the EnergyData subset from psql's stdin, and the day records and their summaries
+-- from dev-day-archive.csv and dev-day-summary.csv in psql's working directory.
+-- CI runs it in the restore transaction, after data.sql (which has every other
+-- table) and before the scrub:
 --   psql --single-transaction -f data.sql -f scripts/load-dev-energy-data.sql \
 --        -f scripts/sanitize-dev-copy.sql < dev-energy-data.csv
 -- Set here, not only in the guard: psql ignores a \set made inside an included
@@ -24,8 +26,26 @@ WHERE NOT EXISTS (SELECT 1 FROM public."Site" s WHERE s.id = e.site_id)
 UPDATE public."EnergyData" e SET tariff_schedule_id = NULL
 WHERE e.tariff_schedule_id IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM public."TariffSchedule" ts WHERE ts.id = e.tariff_schedule_id);
+SELECT to_regclass('public."EnergyDayArchive"') IS NOT NULL AS has_day_records \gset
+\if :has_day_records
+\copy public."EnergyDayArchive" FROM 'dev-day-archive.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public."EnergyDaySummary" FROM 'dev-day-summary.csv' WITH (FORMAT csv, HEADER MATCH)
+\endif
 -- Back on, so the archive deletes below cascade to EnergyDaySummary.
 RESET session_replication_role;
+
+\if :has_day_records
+-- Day records whose Site was deleted on prod before the dump go (ON DELETE CASCADE),
+-- and so does a whole day whose summaries name a Tariff or TariffSchedule deleted
+-- in between: those keys have no ON DELETE action, and a record is all or nothing.
+DELETE FROM public."EnergyDayArchive" a
+WHERE NOT EXISTS (SELECT 1 FROM public."Site" s WHERE s.id = a.site_id)
+   OR EXISTS (SELECT 1 FROM public."EnergyDaySummary" ds
+              WHERE ds.site_id = a.site_id AND ds.day_start = a.day_start
+                AND (NOT EXISTS (SELECT 1 FROM public."Tariff" t WHERE t.id = ds.tariff_id)
+                     OR (ds.tariff_schedule_id IS NOT NULL
+                         AND NOT EXISTS (SELECT 1 FROM public."TariffSchedule" ts WHERE ts.id = ds.tariff_schedule_id))));
+\endif
 
 -- Archive days whose raw rows were not copied, or changed on prod between the
 -- export and the dump: drop them, as deleting those raw rows would have
