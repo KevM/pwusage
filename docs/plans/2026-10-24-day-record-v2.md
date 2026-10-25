@@ -226,7 +226,9 @@ instead a change is a coordinated rebuild, and the site refresh never fails on i
   claim and the archive control row, so readers and writers see either the old
   partition or the new one, never both.
   1. Decode every pruned day (verified as recovery does). Unpruned archives are
-     not read: their raw rows already hold the samples.
+     not read: their raw rows already hold the samples. An unpruned archive
+     whose raw row count differs (a damaged pruning marker) aborts the rebuild
+     before anything is deleted, as the trigger would.
   2. Delete the site's markers and archives, then update `Site.timezone` (the
      trigger now allows it).
   3. Regroup the pruned samples by the new local midnight. A new day built only

@@ -697,6 +697,15 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             const reader=new CompactHistoryReader(store,'America/Chicago');
             expect(values((await reader.getRawEnergyData('moved',day,utcDay('2026-11-01'))))).toEqual(values(record));
         });
+        it('refuses to drop an unpruned archive whose raw rows no longer hold its samples',async()=>{
+            const day=utcDay('2026-10-31');
+            await store.writeDay('moved',day,samples(day,288),later,later);
+            // A damaged pruning marker: the archive is the only copy although it says raw still has it.
+            await pool.query(`UPDATE "EnergyDayArchive" SET raw_pruned=false WHERE site_id='moved'`);
+            await expect(store.rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).rejects.toThrow('raw rows');
+            expect(await rows()).toHaveLength(1);
+            expect((await pool.query(`SELECT timezone FROM "Site" WHERE id='moved'`)).rows[0].timezone).toBe('UTC');
+        });
         it('keeps a reported timezone back while pruned days exist, instead of failing the site refresh',async()=>{
             const {UPSERT_SITE_SQL}=await import('../site-upsert-sql');
             await pool.query(`ALTER TABLE "Site" ADD COLUMN IF NOT EXISTS name text, ADD COLUMN IF NOT EXISTS utility text, ADD COLUMN IF NOT EXISTS updated timestamptz,

@@ -677,7 +677,11 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const from=(await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1 FOR UPDATE',[siteId])).rows[0]?.timezone;
             if(!from)throw new Error('Site not found');
             if(from===timezone) {await client.query('COMMIT');return {status:'unchanged',from};}
-            // Only pruned days are read: an unpruned archive's raw rows already hold its samples.
+            // Only pruned days are read: an unpruned archive's raw rows must already hold its samples. Checked in
+            // the database as the timezone trigger does, so a damaged pruning marker never drops the only copy.
+            const unbacked=(await client.query<{n:number}>(`SELECT count(*)::int AS n FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND NOT a.raw_pruned
+                AND a.sample_count<>(SELECT count(*) FROM "EnergyData" e WHERE e.site_id=a.site_id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end)`,[siteId])).rows[0].n;
+            if(unbacked)throw new Error(`${unbacked} unpruned archive day(s) do not match their raw rows; restore them before a timezone rebuild`);
             const pruned=(await client.query<ArchiveRecord&{created_at:Date;summaries:SummaryRecord[]}>(`SELECT a.*,COALESCE((SELECT json_agg(x) FROM "EnergyDaySummary" x
                 WHERE x.site_id=a.site_id AND x.day_start=a.day_start AND x.revision=a.revision),'[]') AS summaries
                 FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.raw_pruned ORDER BY a.day_start`,[siteId])).rows;
