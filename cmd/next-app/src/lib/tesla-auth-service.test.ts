@@ -10,6 +10,7 @@ import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { TeslaClient, TeslaRegionError, type TeslaClientConfig } from './tesla-client';
+import { DEFAULT_FLEET_BASE_URL } from './tesla-region';
 
 describe('TeslaAuthService', () => {
     const mockUserRepo = {
@@ -1413,7 +1414,6 @@ describe('ID token audience is compared against the normalized client id', () =>
     it('accepts an ID token whose audience is the trimmed client id when the env var is padded', async () => {
         process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID = PADDED_CLIENT_ID;
         process.env.TESLA_OAUTH_SECRET = 'secret-123';
-        process.env.PUBLIC_TESLA_OAUTH_AUDIENCE = 'audience-123';
 
         const idToken = jwt.sign(
             {
@@ -1517,7 +1517,6 @@ describe('authorization code exchange', () => {
     beforeEach(() => {
         process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID = 'client-id-123';
         process.env.TESLA_OAUTH_SECRET = 'secret-123';
-        process.env.PUBLIC_TESLA_OAUTH_AUDIENCE = 'audience-123';
     });
 
     afterEach(() => {
@@ -1558,7 +1557,7 @@ describe('authorization code exchange', () => {
         expect(Object.fromEntries(new URLSearchParams(String(init.body)))).toEqual({
             client_id: 'client-id-123',
             client_secret: 'secret-123',
-            audience: 'audience-123',
+            audience: DEFAULT_FLEET_BASE_URL,
             redirect_uri: 'http://localhost/callback',
             grant_type: 'authorization_code',
             code: 'bad-code',

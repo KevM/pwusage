@@ -78,6 +78,9 @@ Route: `GET /auth/tesla-callback`
 - Validates `code` and `state`.
 - Verifies `state` against cookie.
 - Exchanges authorization code for Tesla tokens.
+  The exchange `audience` is the documented Fleet host
+  (`DEFAULT_FLEET_BASE_URL`), not an environment variable. Refresh grants omit
+  `audience`; they send `client_id`, `client_secret`, `refresh_token`, and scope.
 - Decodes `id_token` and validates `nonce`.
 
 User and site provisioning:

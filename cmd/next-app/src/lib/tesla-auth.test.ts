@@ -5,7 +5,6 @@ import { TeslaAuthError } from './tesla-client';
 const ORIGINAL_ENV = {
     PUBLIC_TESLA_OAUTH_CLIENT_ID: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID,
     TESLA_OAUTH_SECRET: process.env.TESLA_OAUTH_SECRET,
-    PUBLIC_TESLA_OAUTH_AUDIENCE: process.env.PUBLIC_TESLA_OAUTH_AUDIENCE,
 };
 
 // Restore whatever the ambient environment had: process.env is shared with every
@@ -28,7 +27,6 @@ describe('refreshAccessToken', () => {
     beforeEach(() => {
         process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID = 'client-id-123';
         process.env.TESLA_OAUTH_SECRET = 'secret-123';
-        process.env.PUBLIC_TESLA_OAUTH_AUDIENCE = 'audience-123';
     });
 
     afterEach(() => {
@@ -38,10 +36,9 @@ describe('refreshAccessToken', () => {
     afterAll(() => {
         restoreEnvVar('PUBLIC_TESLA_OAUTH_CLIENT_ID');
         restoreEnvVar('TESLA_OAUTH_SECRET');
-        restoreEnvVar('PUBLIC_TESLA_OAUTH_AUDIENCE');
     });
 
-    it('posts a form-encoded refresh request with audience to the documented fleet-auth host', async () => {
+    it('posts a form-encoded refresh request without audience to the documented fleet-auth host', async () => {
         const fetchMock = vi.fn().mockResolvedValue(
             okResponse({ access_token: 'new-access', refresh_token: 'new-refresh' })
         );
@@ -63,14 +60,13 @@ describe('refreshAccessToken', () => {
         );
 
         // Exact equality over the parsed body, not four params.get() calls: a
-        // dropped *or* an unexpected extra param must fail. Tesla rejects the
-        // exchange outright if audience is missing, and scope/client_secret
-        // were previously unpinned by any test.
+        // dropped *or* an unexpected extra param must fail. Tesla's refresh
+        // grant takes client_id and refresh_token; audience belongs only to the
+        // authorization-code exchange.
         expect(Object.fromEntries(new URLSearchParams(String(init.body)))).toEqual({
             grant_type: 'refresh_token',
             client_id: 'client-id-123',
             client_secret: 'secret-123',
-            audience: 'audience-123',
             refresh_token: 'old-refresh',
             scope: 'openid email offline_access',
         });
@@ -92,23 +88,6 @@ describe('refreshAccessToken', () => {
         // live request instead of failing.
         await expect(refreshAccessToken('old-refresh')).rejects.toThrow(
             /PUBLIC_TESLA_OAUTH_CLIENT_ID/
-        );
-        expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it('never sends a request when the audience env var is unset', async () => {
-        delete process.env.PUBLIC_TESLA_OAUTH_AUDIENCE;
-        const fetchMock = vi.fn().mockResolvedValue(
-            okResponse({ access_token: 'new-access', refresh_token: 'new-refresh' })
-        );
-        vi.stubGlobal('fetch', fetchMock);
-
-        // New behavior: audience is now required, so a deployment missing it
-        // fails at refresh time instead of posting a request Tesla rejects.
-        // Deliberately not a TeslaAuthError — that would make
-        // TeslaTokenRepo revoke the user's tokens over a config mistake.
-        await expect(refreshAccessToken('old-refresh')).rejects.toThrow(
-            /PUBLIC_TESLA_OAUTH_AUDIENCE/
         );
         expect(fetchMock).not.toHaveBeenCalled();
     });

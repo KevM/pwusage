@@ -81,12 +81,10 @@ function summarize(rows: SoeSample[]): void {
 
 async function run(): Promise<void> {
     const { SiteRepo } = await import('../src/lib/site-repo');
-    const { TeslaTokenRepo } = await import('../src/lib/tesla-token-repo');
-    const { TeslaClient } = await import('../src/lib/tesla-client');
+    const { createTeslaClientForSite } = await import('../src/lib/tesla-client-factory');
 
     const args = parseArgs(process.argv.slice(2));
     const siteRepo = new SiteRepo();
-    const tokenRepo = new TeslaTokenRepo(siteRepo);
 
     let siteId = args.siteId;
     if (!siteId) {
@@ -102,17 +100,10 @@ async function run(): Promise<void> {
     if (!site) {
         throw new Error(`Site not found: ${siteId}`);
     }
-    if (!site.access_token || !site.refresh_token) {
+    const client = await createTeslaClientForSite(siteId);
+    if (!client) {
         throw new Error(`Site ${siteId} is missing Tesla tokens (access/refresh).`);
     }
-
-    const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-    const client = new TeslaClient({
-        accessToken: site.access_token,
-        refreshToken: site.refresh_token,
-        tokenRefreshHandler: handlers.refreshHandler,
-        onTokenError: handlers.errorHandler
-    });
 
     const end = args.endIso ? new Date(args.endIso) : new Date();
     const start = args.startIso ? new Date(args.startIso) : new Date(end.getTime() - args.hours * 60 * 60 * 1000);

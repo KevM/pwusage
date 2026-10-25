@@ -120,11 +120,9 @@ async function run(): Promise<void> {
     const { pool } = await import('../src/lib/db');
     const { EnergyRepo } = await import('../src/lib/energy-repo');
     const { SiteRepo } = await import('../src/lib/site-repo');
-    const { TeslaTokenRepo } = await import('../src/lib/tesla-token-repo');
-    const { TeslaClient } = await import('../src/lib/tesla-client');
+    const { createTeslaClientForSite } = await import('../src/lib/tesla-client-factory');
 
     const siteRepo = new SiteRepo();
-    const tokenRepo = new TeslaTokenRepo(siteRepo);
     let siteId = args.siteId;
     if (!siteId) {
         const siteIds = await siteRepo.getSiteIds();
@@ -135,17 +133,10 @@ async function run(): Promise<void> {
 
     const site = await siteRepo.getSite(siteId);
     if (!site) throw new Error(`Site not found: ${siteId}`);
-    if (!site.access_token || !site.refresh_token) {
+    const client = await createTeslaClientForSite(siteId);
+    if (!client) {
         throw new Error(`Site ${siteId} is missing Tesla tokens (access/refresh).`);
     }
-
-    const handlers = tokenRepo.getLockedRefreshHandler(siteId);
-    const client = new TeslaClient({
-        accessToken: site.access_token,
-        refreshToken: site.refresh_token,
-        tokenRefreshHandler: handlers.refreshHandler,
-        onTokenError: handlers.errorHandler
-    });
 
     const tz = site.timezone || 'UTC';
     const startPivot = args.startDate

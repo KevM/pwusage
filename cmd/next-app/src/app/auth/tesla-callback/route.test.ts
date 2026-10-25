@@ -52,7 +52,6 @@ describe('GET /auth/tesla-callback', () => {
         process.env = {
             ...origEnv,
             PUBLIC_TESLA_OAUTH_CLIENT_ID: 'client-123',
-            PUBLIC_TESLA_OAUTH_AUDIENCE: 'https://fleet-api.prd.na.vn.cloud.tesla.com',
             TESLA_OAUTH_SECRET: 'secret-123'
         };
 
@@ -80,13 +79,12 @@ describe('GET /auth/tesla-callback', () => {
         expect(res.status).toBe(500);
     });
 
-    // handleTeslaCallback reads all three via requireEnv and throws on a missing
+    // handleTeslaCallback reads both via requireEnv and throws on a missing
     // one, so without this check a deploy missing TESLA_OAUTH_SECRET would
     // surface as an unhandled throw (raw 500 from Next) rather than this route's
     // own JSON. Asserted per-variable so adding a fourth cannot silently skip it.
     it.each([
         'PUBLIC_TESLA_OAUTH_CLIENT_ID',
-        'PUBLIC_TESLA_OAUTH_AUDIENCE',
         'TESLA_OAUTH_SECRET',
     ])('returns 500 without reaching the auth service when %s is missing', async (variable) => {
         delete process.env[variable];
@@ -102,11 +100,10 @@ describe('GET /auth/tesla-callback', () => {
     // A whitespace-only value is not a value: requireEnv trims and then rejects it,
     // so the guard above has to agree. Truthiness alone would pass it, and the
     // request would then die downstream as `invalid-id-token` (or a raw throw) -
-    // the exact misleading outcome this guard exists to prevent. Same three
-    // variables as the missing-var case above, so a fourth cannot skip this.
+    // the exact misleading outcome this guard exists to prevent. Same two
+    // variables as the missing-var case above, so a third cannot skip this.
     it.each([
         'PUBLIC_TESLA_OAUTH_CLIENT_ID',
-        'PUBLIC_TESLA_OAUTH_AUDIENCE',
         'TESLA_OAUTH_SECRET',
     ])('treats a whitespace-only %s as missing', async (variable) => {
         process.env[variable] = '   ';
@@ -117,6 +114,17 @@ describe('GET /auth/tesla-callback', () => {
         expect(res.status).toBe(500);
         expect(await res.json()).toEqual({ error: 'Server misconfigured' });
         expect(mocks.handleTeslaCallback).not.toHaveBeenCalled();
+    });
+
+    it('does not require the retired audience environment variable', async () => {
+        delete process.env.PUBLIC_TESLA_OAUTH_AUDIENCE;
+        mocks.handleTeslaCallback.mockResolvedValue({ status: 'state-mismatch' });
+
+        const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
+        const res = await GET(req);
+
+        expect(mocks.handleTeslaCallback).toHaveBeenCalled();
+        expect(res.status).toBe(401);
     });
 
     it('returns mobile login to the app when the client id is whitespace-only', async () => {

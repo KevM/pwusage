@@ -17,6 +17,7 @@ import {
     postToTeslaTokenEndpoint,
 } from './tesla-token-endpoint';
 import { parseRefreshedTokens } from './tesla-auth';
+import { DEFAULT_FLEET_BASE_URL } from './tesla-region';
 
 
 // Whitelist of allowed Tesla OAuth issuers.
@@ -478,7 +479,7 @@ export class TeslaAuthService {
                 const exchange = await postToTeslaTokenEndpoint({
                     client_id: requireEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID'),
                     client_secret: requireEnv('TESLA_OAUTH_SECRET'),
-                    audience: requireEnv('PUBLIC_TESLA_OAUTH_AUDIENCE'),
+                    audience: DEFAULT_FLEET_BASE_URL,
                     redirect_uri: callbackUrl,
                     grant_type: 'authorization_code',
                     code,

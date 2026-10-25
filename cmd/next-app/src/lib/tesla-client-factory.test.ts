@@ -147,5 +147,24 @@ describe('TeslaClientFactory', () => {
             const client = createTeslaClientForAccessToken('raw-access-token', undefined, { baseUrl: EU });
             expect(client.getBaseUrl()).toBe(EU);
         });
+
+        it('persists a learned Fleet host for the token owner', async () => {
+            const client = createTeslaClientForAccessToken('raw-access-token', undefined, { userId: 'user-1' });
+
+            vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+                ok: false,
+                status: 421,
+                text: async () => `user out of region, use base URL: ${EU}`,
+            } as unknown as Response).mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ response: [], count: 0 }),
+            } as unknown as Response);
+
+            await client.getProducts();
+
+            expect(client.getBaseUrl()).toBe(EU);
+            expect(mockSetFleetApiBaseUrl).toHaveBeenCalledWith('user-1', EU);
+        });
     });
 });

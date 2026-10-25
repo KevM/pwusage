@@ -3,11 +3,14 @@ import { TeslaAuthError } from './tesla-client';
 import { requireEnv } from './env';
 import { postToTeslaTokenEndpoint } from './tesla-token-endpoint';
 
-// Tesla requires `audience` on token requests and documents form encoding for
-// server-to-server calls. The previous implementation sent JSON, omitted
-// audience, and defaulted client_id to the literal 'ownerapi', which would have
-// presented our client_secret to the first-party Owner API if the environment
-// variable were ever missing.
+// Tesla requires form encoding for server-to-server token calls. The previous
+// implementation sent JSON and defaulted client_id to the literal 'ownerapi',
+// which would have presented our client_secret to the first-party Owner API if
+// the environment variable were ever missing.
+//
+// The refresh grant takes client_id and refresh_token; `audience` is only
+// required on the authorization-code exchange, so it is deliberately absent
+// here and has no environment variable.
 const REFRESH_SCOPE = 'openid email offline_access';
 
 interface RefreshedTokens {
@@ -61,7 +64,6 @@ export async function refreshAccessToken(refreshToken: string): Promise<Refreshe
         grant_type: 'refresh_token',
         client_id: requireEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID'),
         client_secret: requireEnv('TESLA_OAUTH_SECRET'),
-        audience: requireEnv('PUBLIC_TESLA_OAUTH_AUDIENCE'),
         refresh_token: refreshToken,
         scope: REFRESH_SCOPE,
     });

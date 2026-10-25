@@ -5,6 +5,7 @@ import { TeslaTokenRepo } from './tesla-token-repo';
 
 export interface TeslaClientFactoryOptions {
     onTokenUpdate?: () => void;
+    onBaseUrlChange?: (baseUrl: string) => void | Promise<void>;
 }
 
 /** Store a regional Fleet host Tesla pointed this user at (best effort; see TeslaClient). */
@@ -34,7 +35,7 @@ export async function createTeslaClientForSite(
         onTokenError: handlers.errorHandler,
         onTokenUpdate: options?.onTokenUpdate,
         baseUrl: tokens.fleet_api_base_url,
-        onBaseUrlChange: tokens.user_id ? recordFleetBaseUrl(tokens.user_id) : undefined
+        onBaseUrlChange: options?.onBaseUrlChange ?? (tokens.user_id ? recordFleetBaseUrl(tokens.user_id) : undefined)
     });
 }
 
@@ -55,22 +56,26 @@ export async function createTeslaClientForUser(
         refreshToken: userTokens.refresh_token || undefined,
         onTokenUpdate: options?.onTokenUpdate,
         baseUrl: userTokens.fleet_api_base_url,
-        onBaseUrlChange: recordFleetBaseUrl(userId)
+        onBaseUrlChange: options?.onBaseUrlChange ?? recordFleetBaseUrl(userId)
     });
 }
 
 /**
  * Construct a TeslaClient directly from an access token and optional refresh token.
+ * Pass `userId` when the token belongs to a user so a learned regional host is stored.
  */
 export function createTeslaClientForAccessToken(
     accessToken: string,
     refreshToken?: string,
-    options?: TeslaClientFactoryOptions & { baseUrl?: string | null }
+    options?: TeslaClientFactoryOptions & { baseUrl?: string | null; userId?: string }
 ): TeslaClient {
+    const onBaseUrlChange = options?.onBaseUrlChange
+        ?? (options?.userId ? recordFleetBaseUrl(options.userId) : undefined);
     return new TeslaClient({
         accessToken,
         refreshToken: refreshToken || undefined,
         onTokenUpdate: options?.onTokenUpdate,
-        baseUrl: options?.baseUrl
+        baseUrl: options?.baseUrl,
+        onBaseUrlChange
     });
 }
