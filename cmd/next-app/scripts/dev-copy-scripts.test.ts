@@ -66,7 +66,9 @@ const DEV_SCRIPTS = ['scripts/assert-dev-database.sql', 'scripts/load-dev-energy
 // Harrison, always part of the dev EnergyData subset (scripts/export-dev-energy-data.sql).
 const PINNED_SITE = '2252268092126997';
 
-describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL', () => {
+// Each case loads and dumps real data through psql; shared CI runners can exceed
+// Vitest's 5s unit-test default even when the database operations succeed.
+describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL', { timeout: 30000 }, () => {
     let admin: Pool;
     let target: Pool | undefined;
     let caseNumber = 0;
