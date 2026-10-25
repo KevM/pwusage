@@ -50,6 +50,22 @@ describe('dev-only database scripts stay away from prod', () => {
         }
     });
 
+    it('re-runs the dev copy in any PR that changes it, without gating prod jobs on that', () => {
+        const ci = readFileSync(join(WORKFLOWS, 'ci.yml'), 'utf8');
+        const filter = jobs(ci)['check-db-changes'];
+        expect(filter).toContain("- 'cmd/next-app/scripts/*-dev-*'");
+        expect(filter).toContain("- '.github/workflows/ci.yml'");
+        // Every script the copy runs falls under that glob.
+        for (const script of [...DEV_ONLY_SCRIPTS, 'export-dev-energy-data.sql']) {
+            expect(verifyDb, script).toContain(script);
+            expect(script).toMatch(/^[^/]*-dev-[^/]*$/);
+        }
+        expect(verifyDb).toMatch(/outputs\.migrations == 'true' \|\| needs\.check-db-changes\.outputs\.dev_copy == 'true'/);
+        for (const [name, job] of Object.entries(jobs(ci))) {
+            if (name !== 'verify-db') expect(job, name).not.toContain('needs.check-db-changes.outputs.dev_copy');
+        }
+    });
+
     it('every verify-db step that writes to dev is given only the dev URL', () => {
         for (const step of steps(verifyDb)) {
             if (!DEV_ONLY_SCRIPTS.some((script) => step.includes(script)) && !step.includes('DEV_DATABASE_URL')) continue;

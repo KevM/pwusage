@@ -171,15 +171,23 @@ jobs:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     outputs:
       migrations: ${{ steps.filter.outputs.migrations }}
+      dev_copy: ${{ steps.filter.outputs.dev_copy }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dorny/paths-filter@v4.0.3
         id: filter
         with:
+          # dev_copy re-runs verify-db when the prod -> dev copy itself changes, so the
+          # change is tested against Supabase in its own PR. Only verify-db reads it:
+          # prod backups and migrations stay gated on migrations alone.
           filters: |
             migrations:
               - 'cmd/next-app/db-migrations/**'
               - 'cmd/next-app/supabase/migrations/**'
+            # Every dev-copy script is named *-dev-* (a glob, so no other job names them).
+            dev_copy:
+              - 'cmd/next-app/scripts/*-dev-*'
+              - '.github/workflows/ci.yml'
 
   verify-db:
     name: Verify Migrations (Prod -> Dev)
@@ -188,7 +196,7 @@ jobs:
     if: |
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      needs.check-db-changes.outputs.migrations == 'true'
+      (needs.check-db-changes.outputs.migrations == 'true' || needs.check-db-changes.outputs.dev_copy == 'true')
     runs-on: ubuntu-latest
     defaults:
       run:
