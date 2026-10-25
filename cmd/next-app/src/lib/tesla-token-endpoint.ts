@@ -23,7 +23,7 @@ export class TeslaTokenEndpointError extends Error {
     }
 }
 
-function describeError(err: unknown): string {
+function describeErrorForLog(err: unknown): string {
     if (err instanceof Error) {
         const cause = err.cause instanceof Error ? `: ${err.cause.message}` : '';
         return `${err.message}${cause}`;
@@ -84,8 +84,13 @@ export async function postToTeslaTokenEndpoint(
             // an earlier host so `status` and the message cannot disagree, and
             // so Task 6 does not report 503 for what was a network failure.
             lastStatus = null;
-            lastFailure = `transport error: ${describeError(err)}`;
-            console.warn(`[TeslaTokenEndpoint] Transport failure calling ${host}; trying next host: ${lastFailure}`);
+            // The thrown message is classified by isTeslaAuthError, so it must
+            // not carry transport or proxy text. Details stay in this log line.
+            lastFailure = 'transport error';
+            console.warn(
+                `[TeslaTokenEndpoint] Transport failure calling ${host}; trying next host: `
+                + describeErrorForLog(err)
+            );
             continue;
         }
 

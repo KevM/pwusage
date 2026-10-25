@@ -194,16 +194,19 @@ billing-window date math on a V8 experimental flag.
 **Change:** Once `eslint-plugin-react` (and `eslint-config-next`) declare eslint 10 support, bump `eslint` to `^10` and re-run `npm run lint`.
 
 
-## Tesla OAuth: stop interpolating upstream bodies into classified errors (2026-10-01)
+## Tesla OAuth: stop interpolating upstream bodies into classified errors (fixed 2026-10-25)
+
+**Fixed.** Refresh errors now classify from the parsed JSON `error` code and echo
+only a recognized terminal code; `TeslaTokenEndpointError` keeps transport text
+in `console.warn` and throws the fixed summary `transport error`. The original
+finding is retained below for context.
 
 **This item replaces an earlier, partly-stale framing.** The old text claimed the
 callback reports `invalid-id-token` when both token-endpoint hosts fail. That is
 already fixed: `tesla-auth-service.ts:477-485` catches `TeslaTokenEndpointError`
 and returns `token-exchange-failed` with the upstream status (pinned by four
-tests). The real remaining defect is the second half, and
-`DesignDecisions.md:346-381` already names both sites under "Known remaining
-violations", states *"**Neither is fixed here**"*, and calls it a doc/code
-contradiction. So this is a **known bug awaiting a fix**, not a new finding.
+tests). The real remaining defect was the second half, and
+`DesignDecisions.md` named both sites under "Previously known violations".
 
 `isTeslaAuthError` (`tesla-client.ts:154-169`) classifies **by substring**. Two
 paths build messages that classifier inspects out of upstream-controlled text:
@@ -219,14 +222,13 @@ paths build messages that classifier inspects out of upstream-controlled text:
    in verbatim, so a proxy/TLS cause string containing a trigger substring makes
    a `TeslaTokenEndpointError` classify as terminal.
 
-**Change:** stop putting upstream bodies into messages on paths whose errors are
-inspected by `isTeslaAuthError` — classify from the parsed error code or a typed
-error field instead. Preserve the substring list itself: `DesignDecisions.md:311-326`
-records it as load-bearing and pins it with `tesla-token-repo.test.ts`, and the
-guardrail assertions in `tesla-auth.test.ts` (`not.toMatch(/login_required|invalid_grant/)`)
-must survive. A separate, still-open question: transport/5xx failures on the
-**JWKS** leg still surface as `invalid-id-token` (`tesla-auth-service.ts:526-539`),
-which is the outage-vs-invalid-login conflation in its current form.
+**Preserved:** the substring list itself remains load-bearing (pinned by
+`tesla-token-repo.test.ts`), and the `tesla-auth.test.ts` guardrail assertions
+(`not.toMatch(/login_required|invalid_grant/)`) still pass.
+
+**Still open:** transport/5xx failures on the **JWKS** leg surface as
+`invalid-id-token` (`tesla-auth-service.ts:526-539`), the outage-vs-invalid-login
+conflation in its current form.
 
 ## Tesla OAuth: issuer-keyed JWKS client, and re-resolve after the discovery TTL (2026-09-30, PR #118)
 
