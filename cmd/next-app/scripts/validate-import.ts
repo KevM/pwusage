@@ -21,7 +21,7 @@ loadEnv(path.resolve(__dirname, '../.env'));
 
 async function main() {
     // Dynamic import to avoid initialization order issues
-    const { TeslaClient } = await import('../src/lib/tesla-client');
+    const { createTeslaClientForSite } = await import('../src/lib/tesla-client-factory');
     const { Importer } = await import('../src/lib/importer');
     const { pool } = await import('../src/lib/db');
 
@@ -47,11 +47,9 @@ async function main() {
     if (!site) { console.error('No site found!'); process.exit(1); }
     console.log(`Site: ${site.name} (${site.id})`);
 
-    const userRes = await pool.query('SELECT access_token FROM "User" WHERE id = $1', [site.user_id]);
-    const token = userRes.rows[0]?.access_token;
-    if (!token) { console.error('No access token found!'); process.exit(1); }
+    const client = await createTeslaClientForSite(site.id);
+    if (!client) { console.error('No Tesla tokens found!'); process.exit(1); }
 
-    const client = new TeslaClient({ accessToken: token });
     const importer = new Importer(client);
 
     // 2. Download Raw Data (for inspection)

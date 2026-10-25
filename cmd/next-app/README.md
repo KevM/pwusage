@@ -16,7 +16,6 @@ Create a `.env` file in the root directory (or use `env_file` in Docker) with th
 - `NEXT_PUBLIC_APP_URL`: The base URL of your application. Used for API calls and OAuth redirects. Example: `http://localhost:3000`
 - `PUBLIC_TESLA_OAUTH_CLIENT_ID`: Your Tesla Fleet API Client ID.
 - `TESLA_OAUTH_SECRET`: Your Tesla Fleet API Client Secret.
-- `PUBLIC_TESLA_OAUTH_AUDIENCE`: The Tesla API audience. Example: `https://fleet-api.prd.na.vn.cloud.tesla.com`
 - `AUTH_SECRET`: A strong, random string used to sign session tokens. **Crucial for security and session persistence across deployments.**
 
 ### Optional / Integrations

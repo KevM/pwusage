@@ -336,9 +336,8 @@ one.
 **Pinned by:** `throws a plain, non-terminal error when a 200 response omits the
 tokens` in `cmd/next-app/src/lib/tesla-auth.test.ts` (its fixture carries
 `error: 'invalid_grant'` precisely so an interpolating implementation fails), and
-the `never sends a request when the audience env var is unset` /
-`never posts "undefined" as the client secret when the secret env var is unset`
-guards for the non-terminal missing-env path. The 400/401 decision table itself is
+the `never posts "undefined" as the client secret when the secret env var is
+unset` guard for the non-terminal missing-env path. The 400/401 decision table itself is
 pinned by `raises TeslaAuthError on a 401 regardless of the response body` and
 `does not raise TeslaAuthError on a 400 with a non-trigger body` — before those,
 deleting the 401 branch, or widening the 400 branch to bare `status === 400`,
@@ -410,6 +409,12 @@ so following it is a no-op. `parseTesla421` classifies the body; only
 421 without interpolating the raw body (which `isTeslaAuthError` substring
 matching could otherwise misread as a terminal auth failure). The partner case
 must be fixed by registering the app for that region, not by retrying the request.
+A learned host is persisted for the token owner (or the site's user), so later
+clients start from the correct region instead of rediscovering it with a 421.
+
+The authorization-code exchange sends `audience` set to the documented Fleet
+host; the refresh grant deliberately omits it. There is no audience environment
+variable, so a bad or region-specific value cannot silently break either flow.
 
 **Pinned by:** `tesla-auth-service.test.ts` persistence/product/import-failure
 tests, `tesla-region.test.ts` `parseTesla421`, `tesla-client.test.ts`

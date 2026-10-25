@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     getTokens: vi.fn(),
     verifySiteAccess: vi.fn(),
     getCurrentUser: vi.fn(),
+    createTeslaClientForAccessToken: vi.fn(),
 }));
 
 vi.mock('@/lib/auth-checks', () => ({
@@ -55,6 +56,10 @@ vi.mock('@/lib/site-service', () => ({
     SiteService: class {
         validateSiteAccess = mocks.validateSiteAccess;
     }
+}));
+
+vi.mock('@/lib/tesla-client-factory', () => ({
+    createTeslaClientForAccessToken: mocks.createTeslaClientForAccessToken
 }));
 
 import { GET, POST } from './route';
@@ -205,6 +210,33 @@ describe('/api/trmnl/manage', () => {
             });
             const res = await POST(req);
             expect(res.status).toBe(200);
+        });
+
+        it('passes the token owner id so a learned Fleet host is persisted', async () => {
+            const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
+            mocks.cookies.mockResolvedValue({
+                get: vi.fn((name: string) => name === 'site_auth' ? { value: 'site-cookie-jwt' } : undefined)
+            });
+            mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+            mocks.getTokens.mockResolvedValue({ access_token: 'acc-token', fleet_api_base_url: EU });
+            mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['site-1'], roles: [] });
+            mocks.getInstallationByUuid.mockResolvedValue(null);
+
+            const req = new Request('http://localhost/api/trmnl/manage', {
+                method: 'POST',
+                body: JSON.stringify({
+                    uuid: 'dev-1',
+                    site_id: 'site-1',
+                    component_screens: ['solar_overview']
+                })
+            });
+            await POST(req);
+
+            expect(mocks.createTeslaClientForAccessToken).toHaveBeenCalledWith(
+                'acc-token',
+                undefined,
+                { baseUrl: EU, userId: 'user-1' }
+            );
         });
 
         it('does not load Tesla tokens for a revoked session cookie', async () => {
