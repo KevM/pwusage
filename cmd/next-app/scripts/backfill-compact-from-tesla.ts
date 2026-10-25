@@ -7,9 +7,10 @@
  * the raw source), and so is any day whose energy or SOE request fails
  * (`fetch-failed`), so a re-run never replaces stored SOC with nulls. A day
  * already written from a newer fetch is left as is (`superseded`). A day Tesla
- * answers with no samples is recorded as checked (`checked-empty`, see
- * "EnergyDayEmpty"); once that answer is final and older than the gap-heal
- * window, later runs skip the day (`settled-empty`) without a Tesla request.
+ * answers with no samples is recorded as checked (`checked-empty`: an `empty`
+ * day record); once that answer is final and older than the gap-heal window,
+ * later runs (and import planning) skip the day (`settled-empty`) without a
+ * Tesla request.
  *
  *   npx tsx scripts/backfill-compact-from-tesla.ts --site-id <id> --from YYYY-MM-DD --before YYYY-MM-DD [--apply] [--concurrency N]
  *

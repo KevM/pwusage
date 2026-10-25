@@ -322,6 +322,33 @@ describe('planImport — settled archive days', () => {
     });
 });
 
+describe('planImport — settled empty days', () => {
+    const DAY2_START = DAY1_END;
+    const DAY2_END = new Date('2026-01-12T06:00:00.000Z');
+    const LATER = new Date('2026-02-20T12:00:00.000Z');
+
+    it('skips a day Tesla settled as empty, and still fetches other missing days', () => {
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY2_END },
+            existingCoverage: [],
+            timezone: TZ,
+            settledEmptyDays: [DAY1_START],
+            now: LATER,
+        })).toEqual([{ start: DAY2_START, end: DAY2_END }]);
+    });
+
+    it('re-fetches a settled empty day when forced', () => {
+        expect(planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END },
+            existingCoverage: [],
+            timezone: TZ,
+            settledEmptyDays: [DAY1_START],
+            forceRefetch: true,
+            now: LATER,
+        })).toEqual([{ start: DAY1_START, end: DAY1_END }]);
+    });
+});
+
 describe('splitAtSiteMidnight', () => {
     it('returns a single window that does not cross site midnight', () => {
         const w = {

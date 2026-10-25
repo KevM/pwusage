@@ -78,7 +78,7 @@ minus the two tariff columns. The site-day grid is 5 minutes.
 
 ### Status and freshness (new columns)
 
-- **`status`** `open | complete | gapped`:
+- **`status`** `open | complete | gapped | empty`:
   - `complete`: the day has ended and `sample_count = expected_slots`. Never
     refetched.
   - `open`: today, or an ended day with missing samples. Refetched by
@@ -88,6 +88,7 @@ minus the two tariff columns. The site-day grid is 5 minutes.
     install-to-utility-approval gap, Tesla-side loss), so refetching would only
     return the same gaps. Kept as is, never refetched automatically; a repair
     can still replace it. No fetch counters: age alone decides.
+  - `empty`: Tesla answered the day with no samples (see "Empty days" below).
   - Status is stored when the record is written, so it can go stale with no
     further write: an `open` day older than the gap-heal window is read as
     `gapped` by planning (`auditDays`), the same age rule `dayStatus` applies
@@ -138,45 +139,76 @@ sample" and freshness reads never decode the payload.
 Backfill walks every day from the newest missing day back to `Site.installed`,
 fetching each once. It writes `complete` or `gapped` records as Tesla returns
 them; a `gapped` day never stops the walk (`gapped` only means "don't retry
-this day automatically"). Days that come back empty get no record; the empty
-stretch right after install (hardware install → utility approval, e.g.
+this day automatically"). Days that come back empty get an `empty` record (see
+below); the empty stretch right after install (hardware install → utility approval, e.g.
 Harrison 11-14 → 11-28) is recorded once in `Site.history_backfill_from` so
 later runs start there. The 14-day gap-heal window governs automatic retries
 only, never how far back a backfill goes.
 
-### Empty days (decided 2026-10-25)
+### Empty days (decided 2026-10-25, representation changed the same day)
 
 A successful Tesla answer with no samples for a day is a fact worth keeping;
 a failed request is not.
 
-- **Marker, not a record:** `writeDay(..., [])` for a day with no record and no
-  raw rows inserts `EnergyDayEmpty (site_id, day_start, day_end, checked_at)`
-  (migration `20261025120000_day_record_empty_days.sql`; `checked_at` is the
-  request time, like `fetched_at`, and only moves forward) and returns
-  `checked-empty`. No payload, summaries or reader changes: readers never see
-  it. A marker is a few dozen bytes, so even years of empty days cost nothing
-  against the 500 MB quota.
+- **An `empty` day record:** `writeDay(..., [])` for a day with no record and no
+  raw rows writes an `EnergyDayArchive` row with `status = 'empty'` and returns
+  `checked-empty`. Its `fetched_at` is the request time and only moves forward on
+  repeated empty answers. A record is a few dozen bytes, so even years of empty
+  days cost nothing against the 500 MB quota.
+- **Exact shape** (migration `20261025131043_day_record_empty_status.sql`,
+  `EnergyDayArchive_empty_record_check`): format 2, metadata 3, `sample_count = 0`,
+  `expected_slots` from the day length, `fetched_at` set, `attribution_complete`
+  and `raw_pruned` false, and nothing else: no payload, checksums, codec, axis,
+  first/last timestamps, gap, latest projection, attribution or metadata digest.
+  A trigger refuses summary rows for it. Every other row still has
+  `sample_count >= 1` and a payload, so non-empty records keep every guarantee.
+  Having no digest, it is never passed to `verify_compact_day_metadata` or
+  `verify_compact_latest_metadata`.
+- **Readers skip it** (`HAS_SAMPLES_SQL` in `compact-history-store.ts`): charts,
+  detail/partial and aggregate reads, latest sample/SOC/freshness (and
+  `latestStoredSampleSql`, which takes the newest record *with samples*),
+  `hasData`, the health and admin day counts, and the v2 conversion count. It never
+  hides raw rows. Settled-archive coverage, `countAlignedSamples`, maintenance,
+  trim/restore and the archive job never selected it (no digest, no payload
+  checksum, never `raw_pruned`), so it reads as "checked, no data".
 - **Fetch failure stays distinct:** `fetchDayForWrite` throws on a failed energy
-  or SOE request before `writeDay` runs, so a failure leaves no marker and the
+  or SOE request before `writeDay` runs, so a failure leaves no record and the
   day reads as "never fetched".
 - **Empty after non-empty:** published samples never disappear, so an empty
-  answer for a day that has a record (or raw rows) is a Tesla failure. It returns
-  `empty` and changes nothing: no marker, the record stays.
-- **Samples later:** a non-empty `writeDay` deletes the day's marker in the same
-  transaction.
-- **Retry age (same rule as `gapped`):** `getSettledEmptyDays` treats a marker as
-  final only when its check was requested after the day ended
-  (`checked_at >= day_end`, as `isDayFetchFinal`) and the day is older than the
-  14-day gap-heal window, and nothing has been stored for the day since. Inside
-  the window an empty day is retried like an `open` one (gap-heal still sees 0
-  samples); after it, a backfill skips it. No fetch counters.
-- **Backfill:** `scripts/backfill-compact-from-tesla.ts` reports `checked-empty`
-  and skips settled empty days (`settled-empty`) without a Tesla request. Slice
-  5's planner uses the same query. `Site.history_backfill_from` stays as the
-  cheap lower bound for the leading pre-provisioning run; markers cover interior
-  days, which a single checkpoint cannot (one failing day would pin it).
-- A timezone change drops the site's markers with its archives (re-checking an
-  empty day costs one request).
+  answer for a day that has a record with samples (or raw rows) is a Tesla
+  failure. It returns `empty` and changes nothing.
+- **Samples later:** a non-empty `writeDay` replaces the empty record through the
+  normal path, in one transaction, even from a request made before the empty
+  answer (that answer was a failure). A raw insert into the day drops it too
+  (`invalidate_compact_energy_day` deletes the day's archive; its 0 = 0 raw-count
+  guard passes), and `finalizeDay` treats it as absent.
+- **Retry age (same rule as `gapped`):** `getSettledEmptyDays` treats an empty
+  record as final only when its check was requested after the day ended
+  (`fetched_at >= day_end`, as `isDayFetchFinal`), the day is older than the
+  14-day gap-heal window, and the day has no raw rows. Inside the window an empty
+  day is retried like an `open` one (gap-heal still sees 0 samples); after it,
+  neither a backfill nor import planning requests it. No fetch counters.
+- **Backfill and planning:** `scripts/backfill-compact-from-tesla.ts` reports
+  `checked-empty` and skips settled empty days (`settled-empty`) without a Tesla
+  request. `planMissingWindows` (every `ensureDataForRange`: sync, import,
+  gap-heal, migrate) drops the same days unless forced; it queries them only when a
+  planned day is old enough to be settled, so gap-heal's 14 days and today cost no
+  extra query. `Site.history_backfill_from` stays as the cheap lower bound for the
+  leading pre-provisioning run; empty records cover interior days, which a single
+  checkpoint cannot (one failing day would pin it).
+- **Today-refresh:** an `empty` yesterday is refetched until a fetch made after
+  the day ended answers (`isDayFetchFinal`), as an `open` one is.
+- A timezone change drops the site's empty records with its other archives
+  (`rebuildTimezone` reports them as `droppedEmptyDays`; re-checking an empty day
+  costs one request).
+- **Why not a marker table:** the first cut (`20261025120000_day_record_empty_days.sql`)
+  kept a separate `EnergyDayEmpty (site_id, day_start, day_end, checked_at)` table
+  so no reader had to change. That left two sources of truth per day (a marker
+  and a record could disagree, and every write and the timezone paths had to
+  keep both in step), unlike `gapped`, which is just a status. The later
+  migration moves any markers into empty records (skipping days that already
+  have a record or raw rows) and drops the table. Prod should have none (day
+  writes were not on there yet); the Dev DB may, since Preview has day writes on.
 
 ## Reads
 
@@ -229,8 +261,8 @@ instead a change is a coordinated rebuild, and the site refresh never fails on i
      not read: their raw rows already hold the samples. An unpruned archive
      whose raw row count differs (a damaged pruning marker) aborts the rebuild
      before anything is deleted, as the trigger would.
-  2. Delete the site's markers and archives, then update `Site.timezone` (the
-     trigger now allows it).
+  2. Delete the site's archives (empty records included), then update
+     `Site.timezone` (the trigger now allows it).
   3. Regroup the pruned samples by the new local midnight. A new day built only
      from pruned samples becomes a v2 record: segments from the current tariff
      under the new timezone (TOU periods are local-clock, so the old attribution

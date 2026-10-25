@@ -16,6 +16,7 @@ import { pool } from '../db';
 import { CompactHistoryStore } from '../prototypes/compact-history-store';
 import { fetchDayForWrite } from '../prototypes/compact-day-fetch';
 import { isDayFetchFinal } from '../tesla-sample-timing';
+import { DAY_GAP_HEAL_DAYS } from '../prototypes/day-attribution';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -30,14 +31,19 @@ export type { EnergyDataRow } from './energy-transformer';
 /**
  * Audit stored coverage for [site midnight of `start`, `end`) and return the
  * day windows planImport says must be fetched. Needs no Tesla client, so a
- * caller can skip token and site loads when nothing is missing.
+ * caller can skip token and site loads when nothing is missing. Days Tesla
+ * settled as empty (`getSettledEmptyDays`) are skipped unless forced; they are
+ * looked up only when a planned day is old enough to be settled, so recent
+ * windows (gap-heal's 14 days, today) cost no extra query.
  */
 export async function planMissingWindows(
     rawRepo: EnergyRepo,
     site: { id: string; timezone: string; installed: Date | string },
     start: Date,
     end: Date,
-    force = false
+    force = false,
+    emptyDays: Pick<CompactHistoryStore, 'getSettledEmptyDays'> = new CompactHistoryStore(pool),
+    now = new Date()
 ): Promise<PlannedWindow[]> {
     const auditStartTime = getSiteMidnight(start, site.timezone);
     const existingCoverage = await createEnergyRepo(site.timezone, rawRepo).getDailyCoverage(
@@ -46,18 +52,27 @@ export async function planMissingWindows(
         end,
         site.timezone
     );
-    return planImport({
+    const options = {
         requestedRange: { start: auditStartTime, end },
         existingCoverage,
         timezone: site.timezone,
         installationDate: new Date(site.installed),
         forceRefetch: force,
         refetchOpenDays: compactDayWritesEnabled(),
-    });
+        now,
+    };
+    const windows = planImport(options);
+    if (force) return windows;
+    // Same age rule as getSettledEmptyDays: only a day that ended before the gap-heal window can be settled.
+    const settledBefore = now.getTime() - DAY_GAP_HEAL_DAYS * 24 * 3600000;
+    const candidates = windows.filter(w => w.end.getTime() < settledBefore);
+    if (candidates.length === 0) return windows;
+    const settledEmptyDays = await emptyDays.getSettledEmptyDays(site.id, candidates[0].start, candidates[candidates.length - 1].end, now);
+    return settledEmptyDays.length === 0 ? windows : planImport({ ...options, settledEmptyDays });
 }
 
-/** Where the importer writes v2 day records when day writes are on. */
-export type DayRecordStore = Pick<CompactHistoryStore, 'writeDay' | 'getDayRecordState'>;
+/** Where the importer writes v2 day records when day writes are on, and finds days Tesla settled as empty. */
+export type DayRecordStore = Pick<CompactHistoryStore, 'writeDay' | 'getDayRecordState' | 'getSettledEmptyDays'>;
 
 export interface EnsureDataResult {
     complete: boolean;
@@ -217,7 +232,7 @@ export class Importer {
             logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
             if (onProgress) onProgress(`Checking data coverage...`);
 
-            const windows = await planMissingWindows(this.repo, site, start, end, force);
+            const windows = await planMissingWindows(this.repo, site, start, end, force, this.getDayStore());
 
             // A window cap takes the newest days first (the most useful
             // to recent-history readers), open-record retries after every other

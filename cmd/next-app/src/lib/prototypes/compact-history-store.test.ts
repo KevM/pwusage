@@ -67,11 +67,12 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         // Applied twice: migrations must be idempotent.
         for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261024190000_day_record_v2_schema.sql',import.meta.url),'utf8'));
         for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261025120000_day_record_empty_days.sql',import.meta.url),'utf8'));
+        for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261025131043_day_record_empty_status.sql',import.meta.url),'utf8'));
         await pool.query("ALTER TABLE \"Site\" ADD COLUMN user_id text DEFAULT 'owner'");
         store = new CompactHistoryStore(pool,15000,async client=>{await client.query('SELECT 1');});
     });
     beforeEach(async () => {
-        await pool.query('TRUNCATE "EnergyData", "LoadTag", "EnergyDayArchive", "HistoryArchiveRetry", "EnergyDayEmpty" CASCADE');
+        await pool.query('TRUNCATE "EnergyData", "LoadTag", "EnergyDayArchive", "HistoryArchiveRetry" CASCADE');
         await pool.query(`UPDATE "HistoryArchiveControl" SET paused=true,trim=false,archive_all=false,last_report=null,site_ids=ARRAY['site'],from_date=null,before_date=null`);
         await pool.query(`UPDATE "Site" SET timezone='America/Chicago' WHERE id='site'`);
         await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null),('site',$2,1,2,20,3,-5,-2,50)`, [start, new Date(+start+300000)]);
@@ -470,13 +471,20 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         await expect(store.writeDay('site',start,daySamples(),new Date(+jobOptions.now+1),jobOptions.now)).rejects.toThrow();
         await expect(store.writeDay('site',start,daySamples(),new Date(NaN),jobOptions.now)).rejects.toThrow();
         expect(await store.writeDay('site',start,[],fetched,jobOptions.now)).toEqual({status:'checked-empty'});
-        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
-        // A day with raw rows keeps them and gets no marker.
-        await pool.query('TRUNCATE "EnergyDayEmpty"');
+        // The day's record says Tesla answered it with nothing: no payload, digests, projection or summaries.
+        expect((await pool.query(`SELECT status,format_version,metadata_version,sample_count,expected_slots,payload,checksum,codec,axis,payload_checksum,
+            metadata_checksum,first_timestamp,last_timestamp,max_interior_gap_ms,latest_metadata,latest_checksum,attribution,attribution_complete,raw_pruned,fetched_at
+            FROM "EnergyDayArchive"`)).rows).toEqual([{status:'empty',format_version:2,metadata_version:3,sample_count:0,expected_slots:288,payload:null,checksum:null,
+            codec:null,axis:null,payload_checksum:null,metadata_checksum:null,first_timestamp:null,last_timestamp:null,max_interior_gap_ms:null,latest_metadata:null,
+            latest_checksum:null,attribution:null,attribution_complete:false,raw_pruned:false,fetched_at:fetched}]);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDaySummary"')).rows[0].n).toBe(0);
+        expect(await store.getDayRecordState('site',start)).toEqual({status:'empty',fetchedAt:fetched});
+        // A day with raw rows keeps them and gets no empty record.
+        await pool.query('TRUNCATE "EnergyDayArchive" CASCADE');
         await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null)`,[start]);
         expect(await store.writeDay('site',start,[],fetched,jobOptions.now,{replaceRaw:true})).toEqual({status:'empty'});
         expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyData"')).rows[0].n).toBe(1);
-        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayEmpty"')).rows[0].n).toBe(0);
+        expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
     });
     describe('writeDay for open days (day record v2)',()=>{
         const samplesAt=(day:Date,count:number,solar=3,site='site')=>Array.from({length:count},(_,n)=>({site_id:site,timestamp:new Date(+day+n*300000),
@@ -507,13 +515,13 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         });
         it('records an empty interior day as checked, never a failed or unmade fetch, and settles it by age',async()=>{
             const tz='America/Chicago',day=(n:number)=>addDaysInSiteTimezone(start,n,tz),at=(d:Date,days:number)=>new Date(+d+days*86400000);
-            const marker=async()=>(await pool.query('SELECT day_start,checked_at FROM "EnergyDayEmpty" ORDER BY day_start')).rows;
+            const marker=async()=>(await pool.query(`SELECT day_start,fetched_at AS checked_at FROM "EnergyDayArchive" WHERE status='empty' ORDER BY day_start`)).rows;
             const settled=(asOf:Date)=>store.getSettledEmptyDays('site',day(0),day(4),asOf);
             // Tesla has days 0 and 2 but answers day 1, between them, with no samples.
             expect(await store.writeDay('site',day(0),samplesAt(day(0),288),at(day(1),1),at(day(1),1))).toMatchObject({status:'written'});
             expect(await store.writeDay('site',day(1),[],at(day(2),1),at(day(2),1))).toEqual({status:'checked-empty'});
             expect(await store.writeDay('site',day(2),samplesAt(day(2),288),at(day(3),1),at(day(3),1))).toMatchObject({status:'written'});
-            // Day 3's fetch failed (fetchDayForWrite throws before writeDay), so it has no marker: never fetched.
+            // Day 3's fetch failed (fetchDayForWrite throws before writeDay), so it has no record: never fetched.
             expect(await marker()).toEqual([{day_start:day(1),checked_at:at(day(2),1)}]);
             // Retried like an open day inside the gap-heal window, settled after it.
             expect(await settled(at(day(2),5))).toEqual([]);
@@ -524,11 +532,12 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             // A check made before the day ended is not Tesla's final answer.
             expect(await store.writeDay('site',day(3),[],at(day(3),0.5),at(day(3),0.5))).toEqual({status:'checked-empty'});
             expect(await settled(at(day(4),20))).toEqual([day(1)]);
-            // Samples that appear later replace the marker.
-            expect(await store.writeDay('site',day(1),samplesAt(day(1),12),at(day(2),21),at(day(2),21))).toMatchObject({status:'written',dayStatus:'gapped'});
+            // Samples that appear later replace the empty record, even from a request made before its empty answer
+            // (an empty answer after published samples is a Tesla failure).
+            expect(await store.writeDay('site',day(1),samplesAt(day(1),12),at(day(2),0.75),at(day(2),21))).toMatchObject({status:'written',dayStatus:'gapped'});
             expect((await marker()).map(m=>m.day_start)).toEqual([day(3)]);
             expect(await settled(at(day(4),20))).toEqual([]);
-            // An empty answer after a non-empty one is a Tesla failure: the record stays, no marker.
+            // An empty answer after a non-empty one is a Tesla failure: the record stays.
             expect(await store.writeDay('site',day(1),[],at(day(2),22),at(day(2),22))).toEqual({status:'empty'});
             expect((await pool.query('SELECT sample_count FROM "EnergyDayArchive" WHERE day_start=$1',[day(1)])).rows[0].sample_count).toBe(12);
             expect((await marker()).map(m=>m.day_start)).toEqual([day(3)]);
@@ -633,12 +642,102 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             expect(raw.slice(0,50)).toEqual(samples.map(s=>({...s,tariff_id:1,tariff_schedule_id:2})));
         });
     });
+    describe('empty day records (Tesla answered a day with no samples)',()=>{
+        const tz='America/Chicago',day=(n:number)=>addDaysInSiteTimezone(start,n,tz);
+        const full=(d:Date,site='site')=>Array.from({length:288},(_,n)=>({site_id:site,timestamp:new Date(+d+n*300000),
+            load_power:20,solar_power:3,grid_power:10,battery_power:-2,battery_soc:n%12===0?50:null}));
+        const after=(d:Date,hours:number)=>new Date(+d+hours*3600000);
+        const reader=()=>new CompactHistoryReader(store,tz);
+        const emptyRow=(overrides:Record<string,unknown>={})=>({site_id:'site',day_start:start,day_end:end,revision:randomUUID(),format_version:2,
+            sample_count:0,expected_slots:288,attribution_complete:false,metadata_version:3,raw_pruned:false,status:'empty',fetched_at:now,...overrides});
+        const insertRow=async(row:Record<string,unknown>)=>{
+            const keys=Object.keys(row);
+            await pool.query(`INSERT INTO "EnergyDayArchive" (${keys.join(',')}) VALUES (${keys.map((_,i)=>`$${i+1}`).join(',')})`,Object.values(row));
+        };
+        beforeEach(async()=>{await pool.query('TRUNCATE "EnergyData"');});
+        it('never takes the latest sample, SOC or freshness from an empty newest day',async()=>{
+            await store.writeDay('site',day(0),full(day(0)),after(day(1),1),after(day(1),1));
+            const asOf=after(day(1),12);
+            expect(await store.writeDay('site',day(1),[],after(day(1),11),asOf)).toEqual({status:'checked-empty'});
+            const last=new Date(+day(0)+287*300000);
+            expect((await pool.query<{at:Date|null}>(`SELECT ${latestStoredSampleSql('$1')} AS at`,['site'])).rows[0].at).toEqual(last);
+            expect(await store.getLatestTimestamp('site',asOf)).toEqual(last);
+            expect((await store.getLatestEnergyData('site',asOf))?.timestamp).toEqual(last);
+            expect(await store.getLatestBatterySoc('site',day(0),asOf)).toEqual({timestamp:new Date(+day(0)+276*300000),value:50});
+            // Only empty records: no data, nothing latest.
+            expect(await store.writeDay('other',day(1),[],after(day(1),11),asOf)).toEqual({status:'checked-empty'});
+            expect(await store.hasData('other')).toBe(false);
+            expect(await store.hasData('site')).toBe(true);
+            expect((await pool.query<{at:Date|null}>(`SELECT ${latestStoredSampleSql('$1')} AS at`,['other'])).rows[0].at).toBeNull();
+            expect(await store.getLatestTimestamp('other',asOf)).toBeNull();
+            expect(await store.getLatestEnergyData('other',asOf)).toBeNull();
+            expect(await store.getLatestBatterySoc('other',day(0),asOf)).toBeNull();
+        });
+        it('reads charts, billing and coverage over a span containing an empty day as checked, no data',async()=>{
+            for(const n of [0,2]) await store.writeDay('site',day(n),full(day(n)),after(day(n+1),1),jobOptions.now);
+            expect(await store.writeDay('site',day(1),[],after(day(2),1),jobOptions.now)).toEqual({status:'checked-empty'});
+            const priced=(rows:ReturnType<typeof full>)=>rows.map(r=>({...r,tariff_id:1,tariff_schedule_id:2}));
+            const expected=priced([...full(day(0)),...full(day(2))]);
+            expect(await reader().getRawEnergyData('site',day(0),day(3))).toEqual(expected);
+            expect((await store.readVerificationSnapshot('site',day(0),day(3))).days.map(d=>d.start)).toEqual([day(0),day(2)]);
+            const whole=await reader().getCycleAggregatesAndCoverage('site',day(0),day(3),tz);
+            expect(whole.coverage.map(c=>[c.localDayKey,c.count,c.archived])).toEqual([['2026-01-01',288,true],['2026-01-03',288,true]]);
+            expect([...new Set(whole.aggregates.map(a=>+a.day))]).toEqual([+day(0),+day(2)]);
+            // Partial windows take the detail path, which must skip the empty day too.
+            const partial=await reader().getCycleAggregatesAndCoverage('site',after(day(1),6),after(day(2),6),tz);
+            expect(partial.coverage.map(c=>[c.localDayKey,c.count])).toEqual([['2026-01-03',72]]);
+            expect(await reader().getRawEnergyData('site',after(day(1),6),after(day(2),6))).toEqual(priced(full(day(2)).slice(0,72)));
+            expect((await reader().getBucketedEnergyData('site',day(0),day(3))).length).toBeGreaterThan(0);
+            expect((await new EnergyRepo().countAlignedSamples([{siteId:'site',start:day(0),end:day(3)}],pool)).get('site')).toBe(576);
+            const maintenance=await store.getMaintenanceSnapshot('site','2026-01-01','2026-01-04',false,jobOptions.now);
+            expect(maintenance.coverage.map(c=>c.localDayKey)).toEqual(['2026-01-01','2026-01-03']);
+            expect(maintenance.archives.map(a=>a.start)).toEqual([day(0),day(2)]);
+        });
+        it('keeps the empty shape exact and every other record holding samples',async()=>{
+            await insertRow(emptyRow());
+            await expect(pool.query(`INSERT INTO "EnergyDaySummary" VALUES ('site',$1,(SELECT revision FROM "EnergyDayArchive"),1,2,0,0,0,0,0,0,0,0,1)`,[start]))
+                .rejects.toThrow('An empty day record has no summaries');
+            await pool.query('TRUNCATE "EnergyDayArchive" CASCADE');
+            for(const overrides of [{payload:Buffer.from('x')},{checksum:'0'.repeat(64)},{codec:'brotli'},{axis:'grid'},{payload_checksum:'0'.repeat(64)},
+                {sample_count:1},{expected_slots:287},{format_version:1},{metadata_version:2},{fetched_at:null},{raw_pruned:true},{attribution_complete:true},
+                {attribution:JSON.stringify({timelineRevision:'x',segments:[]})},{status:'open'},{status:null}])
+                await expect(insertRow(emptyRow(overrides))).rejects.toThrow(/violates (check|not-null) constraint/);
+        });
+        it('is replaced by a raw import into the day, and left alone by finalization of an empty raw day',async()=>{
+            expect(await store.writeDay('site',start,[],fetched,jobOptions.now)).toEqual({status:'checked-empty'});
+            expect(await store.finalizeDay('site',start,now)).toEqual({status:'empty'});
+            expect((await pool.query('SELECT status FROM "EnergyDayArchive"')).rows).toEqual([{status:'empty'}]);
+            await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null)`,[start]);
+            expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
+            expect(await reader().getRawEnergyData('site',start,end)).toHaveLength(1);
+        });
+        it('moves EnergyDayEmpty markers into empty records once, then drops the table',async()=>{
+            const migration=(file:string)=>readFileSync(new URL(`../../../db-migrations/${file}`,import.meta.url),'utf8');
+            await pool.query(migration('20261025120000_day_record_empty_days.sql'));
+            await store.writeDay('site',day(0),full(day(0)),after(day(1),1),jobOptions.now);
+            await pool.query(`INSERT INTO "EnergyData" VALUES ('site',$1,1,2,20,3,10,-2,null)`,[day(2)]);
+            // A marker for a day with a record, one for a day with nothing stored, one for a day with raw rows.
+            await pool.query(`INSERT INTO "EnergyDayEmpty" VALUES ('site',$1,$2,$3),('site',$2,$4,$5),('site',$4,$6,$7)`,
+                [day(0),day(1),after(day(1),2),day(2),after(day(2),3),day(3),after(day(3),4)]);
+            for(let run=0;run<2;run++) await pool.query(migration('20261025131043_day_record_empty_status.sql'));
+            expect((await pool.query(`SELECT to_regclass('public."EnergyDayEmpty"') AS t`)).rows[0].t).toBeNull();
+            expect((await pool.query('SELECT day_start,status,sample_count,fetched_at FROM "EnergyDayArchive" ORDER BY day_start')).rows).toEqual([
+                {day_start:day(0),status:'complete',sample_count:288,fetched_at:after(day(1),1)},
+                {day_start:day(1),status:'empty',sample_count:0,fetched_at:after(day(2),3)}]);
+            // The timezone trigger drops empty records with the other archives and no longer needs the marker table.
+            expect(await store.writeDay('other',day(1),[],after(day(2),1),jobOptions.now)).toEqual({status:'checked-empty'});
+            await pool.query(`UPDATE "Site" SET timezone='UTC' WHERE id='other'`);
+            expect((await pool.query(`SELECT count(*)::int AS n FROM "EnergyDayArchive" WHERE site_id='other'`)).rows[0].n).toBe(0);
+            await pool.query(`UPDATE "Site" SET timezone='America/Chicago' WHERE id='other'`);
+        });
+    });
     describe('timezone rebuild (day records re-keyed in one transaction)',()=>{
         const utcDay=(iso:string)=>new Date(`${iso}T00:00:00Z`);
         const samples=(from:Date,count:number)=>Array.from({length:count},(_,n)=>({site_id:'moved',timestamp:new Date(+from+n*300000),
             load_power:20+n%7,solar_power:n%5,grid_power:(n%9)-4.5,battery_power:(n%3)-1,battery_soc:n%4===0?40+n/10:null}));
         const rows=async()=>(await pool.query(`SELECT day_start,day_end,sample_count,expected_slots,status,fetched_at,raw_pruned,attribution,
-            public.verify_compact_day_metadata(site_id,day_start,false) AS verified FROM "EnergyDayArchive" WHERE site_id='moved' ORDER BY day_start`)).rows;
+            public.verify_compact_day_metadata(site_id,day_start,false) AS verified FROM "EnergyDayArchive" WHERE site_id='moved' AND status IS DISTINCT FROM 'empty' ORDER BY day_start`)).rows;
+        const emptyDays=async()=>(await pool.query(`SELECT count(*)::int AS n FROM "EnergyDayArchive" WHERE site_id='moved' AND status='empty'`)).rows[0].n;
         const values=(list:{timestamp:Date;load_power:number;solar_power:number;grid_power:number;battery_power:number;battery_soc:number|null}[])=>
             list.map(({timestamp,load_power,solar_power,grid_power,battery_power,battery_soc})=>({timestamp,load_power,solar_power,grid_power,battery_power,battery_soc}));
         const later=new Date('2026-12-01T00:00:00Z');
@@ -656,16 +755,17 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
                 const fetchedAt=new Date(+d+(25+i)*3600000);
                 expect(await store.writeDay('moved',d,all.slice(i*288,(i+1)*288),fetchedAt,fetchedAt)).toMatchObject({status:'written',dayStatus:'complete'});
             }
-            await pool.query(`INSERT INTO "EnergyDayEmpty" VALUES ('moved',$1,$2,$2)`,[utcDay('2026-10-30'),days[0]]);
+            expect(await store.writeDay('moved',utcDay('2026-10-30'),[],days[0],days[0])).toEqual({status:'checked-empty'});
             const before=await rows();
             // Preview does the work and rolls it back.
-            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:false,now:later})).toEqual({status:'previewed',from:'UTC',sourceDays:3,records:4,restoredRawSamples:0,reattributedRawSamples:0,droppedEmptyMarkers:1});
+            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:false,now:later})).toEqual({status:'previewed',from:'UTC',sourceDays:3,records:4,restoredRawSamples:0,reattributedRawSamples:0,droppedEmptyDays:1});
             expect(await rows()).toEqual(before);
+            expect(await emptyDays()).toBe(1);
             await expect(new CompactHistoryStore(pool).rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).rejects.toThrow('mutation guard');
             await expect(store.rebuildTimezone('moved','Mars/Olympus',{apply:true,now:later})).rejects.toThrow();
-            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).toEqual({status:'rebuilt',from:'UTC',sourceDays:3,records:4,restoredRawSamples:0,reattributedRawSamples:0,droppedEmptyMarkers:1});
+            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).toEqual({status:'rebuilt',from:'UTC',sourceDays:3,records:4,restoredRawSamples:0,reattributedRawSamples:0,droppedEmptyDays:1});
             expect((await pool.query(`SELECT timezone FROM "Site" WHERE id='moved'`)).rows[0].timezone).toBe('America/Chicago');
-            expect((await pool.query(`SELECT count(*)::int AS n FROM "EnergyDayEmpty" WHERE site_id='moved'`)).rows[0].n).toBe(0);
+            expect(await emptyDays()).toBe(0);
             const rebuilt=await rows();
             // Chicago days: 10-30 from 19:00 (60 samples), 10-31, the 25-hour 11-01 (300 slots), 11-02 until 18:00 (216).
             expect(rebuilt.map(r=>[r.day_start.toISOString(),r.day_end.toISOString(),r.sample_count,r.expected_slots,r.status])).toEqual([
