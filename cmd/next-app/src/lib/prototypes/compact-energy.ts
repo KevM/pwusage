@@ -112,9 +112,9 @@ function decode(archive: DayArchive, identity?: { siteId: string; start: Date; e
     return { version: h.version, rows };
 }
 
-/** A v1 row as measurements only. */
-export const toSample = (row: EnergyData): EnergySample => ({ site_id: row.site_id, timestamp: row.timestamp, load_power: row.load_power,
-    solar_power: row.solar_power, grid_power: row.grid_power, battery_power: row.battery_power, battery_soc: row.battery_soc });
+/** A row (v1 or not) as measurements only. */
+export const toSample = (row: EnergySample): EnergySample => ({ site_id: row.site_id, timestamp: row.timestamp, load_power: row.load_power,
+    solar_power: row.solar_power, grid_power: row.grid_power, battery_power: row.battery_power, battery_soc: row.battery_soc ?? null });
 
 /** Format 1 only: a v2 payload has no per-sample tariff IDs to return. */
 export function decodeDay(archive: DayArchive, identity?: { siteId: string; start: Date; end: Date }): EnergyData[] {

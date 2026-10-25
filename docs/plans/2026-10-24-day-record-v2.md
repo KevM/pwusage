@@ -189,8 +189,22 @@ read support is removed.
    which also lets `verify_compact_day_metadata` check v3 digests in
    PostgreSQL. In `segmentsFromV1Rows`, an edge gap (before the first or after
    the last sample) takes its single neighbour's attribution.
-2. **`writeDay`** (open days, `fetched_at` guard, `requireSoe`) and reader
-   support for open days.
+2. **`writeDay`** (done): open days, `fetched_at` guard, `requireSoe`, and
+   reader support for open days. Landed as `CompactHistoryStore.writeDay(siteId,
+   dayStart, samples, fetchedAt, now)`, which replaces `writeDayFromSamples`:
+   writes any started day (today included), refuses samples off the site day or
+   its 5-minute grid and days that still have raw rows, derives segments from the
+   site's `is_current` tariff (lowest ID names the `timelineRevision`), and
+   returns `superseded` when the stored `fetched_at` is the same or newer.
+   `fetchDayForWrite` (`compact-day-fetch.ts`) is the one Tesla fetch for a day
+   (SOE required, up to `now` for today, `fetchedAt` = response time); the backfill
+   script uses both. Readers decode format 2 through its segments (charts,
+   coverage, billing, latest sample/SOC, maintenance); `SETTLED_ARCHIVE_DAY_SQL`
+   treats a v2 record as settled only when `complete` or `gapped`, so an `open`
+   day counts its real samples for gap-heal. Freshness reads (`getLatestTimestamp`,
+   `getLatestBatterySoc`) take an optional as-of time and include today's open
+   record. A v2 day can be restored to raw rows (samples × segments) when a late
+   raw import touches it, as v1 days could, until the writers switch.
 3. **v1 → v2 migration script** with verification and batching.
 4. **Writers behind a flag:** today-refresh (+ latch), gap-heal, sync, repair.
 5. **Cutover:** Tesla backfill for tokened sites, ops tooling, pause the
