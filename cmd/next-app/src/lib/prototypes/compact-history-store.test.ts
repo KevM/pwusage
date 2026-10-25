@@ -8,6 +8,9 @@ import { randomUUID } from 'node:crypto';
 import {addDaysInSiteTimezone} from '../date-utils';
 import { readFileSync, statSync } from 'node:fs';
 import { CompactHistoryStore } from './compact-history-store';
+import { encodeDaySamples } from './compact-energy';
+import { buildDayMetadataV3 } from './compact-day-metadata';
+import type { DayAttribution } from './day-attribution';
 import {latestStoredSampleSql} from '../latest-stored-sample-sql';
 import { CompactHistoryReader } from './compact-history-reader';
 import {HistoryArchiveRepo} from '../history-archive-repo';
@@ -58,6 +61,8 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007144600_compact_energy_trim_recovery.sql',import.meta.url),'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007190945_history_archive_job.sql',import.meta.url),'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261024180000_history_archive_all_sites.sql',import.meta.url),'utf8'));
+        // Applied twice: migrations must be idempotent.
+        for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261024190000_day_record_v2_schema.sql',import.meta.url),'utf8'));
         await pool.query("ALTER TABLE \"Site\" ADD COLUMN user_id text DEFAULT 'owner'");
         store = new CompactHistoryStore(pool,15000,async client=>{await client.query('SELECT 1');});
     });
@@ -1018,5 +1023,59 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             const grants=await pool.query(`SELECT has_function_privilege('anon',$1,'EXECUTE') AS anon,has_function_privilege('authenticated',$1,'EXECUTE') AS authenticated,has_function_privilege('service_role',$1,'EXECUTE') AS service`,[signature]);
             expect(grants.rows[0]).toEqual({anon:false,authenticated:false,service:true});
         }
+    });
+    describe('day record v2 schema',()=>{
+        const segments=[{offset:0,tariffId:1,scheduleId:2},{offset:480,tariffId:1,scheduleId:null}];
+        const samples=[0,1,2,100,101].map(i=>({site_id:'site',timestamp:new Date(+start+i*300000),load_power:20+i,solar_power:3,grid_power:i%2?-5:10,battery_power:-2,battery_soc:i%2?50:null}));
+        const insertV2=async(overrides:Record<string,unknown>={},attribution:DayAttribution={timelineRevision:'current-tariff:1',segments})=>{
+            const archive=encodeDaySamples(samples,start,end,'brotli');
+            const meta=buildDayMetadataV3(samples,attribution,start,end);
+            const row={site_id:'site',day_start:start,day_end:end,revision:randomUUID(),format_version:2,codec:archive.codec,axis:archive.axis,checksum:archive.sha256,
+                payload:archive.data,sample_count:meta.sampleCount,expected_slots:archive.expectedSlots,attribution_complete:meta.attributionComplete,
+                first_timestamp:meta.first,last_timestamp:meta.last,max_interior_gap_ms:meta.maxInteriorGapMs,metadata_checksum:meta.checksum,metadata_version:3,
+                attribution:JSON.stringify(meta.attribution),status:'open',fetched_at:now,raw_pruned:true,...overrides};
+            const keys=Object.keys(row);
+            await pool.query(`INSERT INTO "EnergyDayArchive" (${keys.join(',')}) VALUES (${keys.map((_,i)=>`$${i+1}`).join(',')})`,Object.values(row));
+            for(const s of meta.summaries) await pool.query(`INSERT INTO "EnergyDaySummary" VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+                ['site',start,row.revision,s.tariff_id,s.tariff_schedule_id,s.load_power,s.solar_power,s.grid_power,s.battery_power,
+                    s.sample_import_wh,s.sample_export_wh,s.sample_charge_wh,s.sample_discharge_wh,s.sample_count]);
+            return meta;
+        };
+        const verify=(billing=false)=>pool.query<{ok:boolean}>('SELECT public.verify_compact_day_metadata($1,$2,$3) AS ok',['site',start,billing]);
+        it('adds nullable columns so existing v1 archives stay valid and verifiable',async()=>{
+            await store.finalizeDay('site',start,now);
+            const row=(await pool.query('SELECT format_version,metadata_version,attribution,status,fetched_at FROM "EnergyDayArchive"')).rows[0];
+            expect(row).toEqual({format_version:1,metadata_version:2,attribution:null,status:null,fetched_at:null});
+            expect((await verify()).rows[0].ok).toBe(true);
+        });
+        it('verifies the v3 digest, attribution included, inside PostgreSQL',async()=>{
+            const meta=await insertV2();
+            expect(meta.attributionComplete).toBe(false);
+            expect((await verify()).rows[0].ok).toBe(true);
+            await expect(verify(true)).rejects.toThrow('Incomplete tariff attribution');
+            for(const tamper of [`jsonb_set(attribution,'{segments,1,offset}','485')`,`jsonb_set(attribution,'{segments,1,scheduleId}','2')`,
+                `jsonb_set(attribution,'{timelineRevision}','"current-tariff:9"')`,`jsonb_set(attribution,'{segments}',(attribution->'segments')-1)`]) {
+                await pool.query(`UPDATE "EnergyDayArchive" SET attribution=${tamper}`);
+                await expect(verify()).rejects.toThrow('Day metadata mismatch');
+                await pool.query(`UPDATE "EnergyDayArchive" SET attribution=$1`,[JSON.stringify(meta.attribution)]);
+                expect((await verify()).rows[0].ok).toBe(true);
+            }
+        });
+        it('passes billing verification for a fully attributed v2 day',async()=>{
+            await insertV2({},{timelineRevision:'current-tariff:1',segments:[{offset:0,tariffId:1,scheduleId:2}]});
+            expect((await verify(true)).rows[0].ok).toBe(true);
+        });
+        it.each([
+            ['an unknown status',{status:'stale'}],
+            ['complete while short of slots',{status:'complete'}],
+            ['a v2 record without status',{status:null}],
+            ['a v2 record without fetched_at',{fetched_at:null}],
+            ['a v2 record on metadata 2',{metadata_version:2}],
+            ['metadata 3 without attribution',{attribution:null}],
+            ['an attribution without segments',{attribution:JSON.stringify({timelineRevision:'x'})}],
+            ['format 3',{format_version:3}],
+        ])('rejects %s',async(_,overrides)=>{
+            await expect(insertV2(overrides)).rejects.toThrow(/violates check constraint/);
+        });
     });
 });
