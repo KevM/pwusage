@@ -101,10 +101,9 @@ struct DashboardPresentationTests {
     }
 
     @Test("Unchanged readings expire locally before the next five-minute refresh")
-    func powerFlowExpiresWithoutNewResponse() throws {
+    func powerFlowExpiresWithoutNewResponse() {
         let sourceTime = flowNow.addingTimeInterval(-899)
-        let updates = DashboardPresentation.livePowerUpdateDates(sourceTime: sourceTime, now: flowNow)
-        let expiry = try #require(updates.last)
+        let expiry = sourceTime.addingTimeInterval(15 * 60 + 0.001)
         #expect(expiry > flowNow)
         #expect(expiry.timeIntervalSince(flowNow) < 2)
         func cards(at now: Date) -> [DashboardPresentation.PowerCard] {
@@ -118,10 +117,6 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.liveFreshnessNotice(sourceTime, now: flowNow) == nil)
         #expect(cards(at: expiry).allSatisfy { $0.role == .unknown })
         #expect(DashboardPresentation.liveFreshnessNotice(sourceTime, now: expiry) != nil)
-        #expect(DashboardPresentation.livePowerUpdateDates(sourceTime: nil, now: flowNow) == [flowNow])
-        #expect(DashboardPresentation.livePowerUpdateDates(sourceTime: flowNow.addingTimeInterval(-901), now: flowNow) == [flowNow])
-        let replacement = DashboardPresentation.livePowerUpdateDates(sourceTime: flowNow, now: flowNow)
-        #expect(try #require(replacement.last) > expiry)
     }
 
     @Test("Battery direction matches website power threshold and signs")
@@ -162,23 +157,6 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.batteryDescription(stateOfCharge: 0, powerWatts: 0) == "Battery 0%, Idle")
     }
 
-    @Test("Battery power reports idle when under 10W")
-    func batteryPowerReportsIdleWhenUnder10W() {
-        #expect(DashboardPresentation.batteryPower(0) == "Idle")
-        #expect(DashboardPresentation.batteryPower(5) == "Idle")
-        #expect(DashboardPresentation.batteryPower(-9.9) == "Idle")
-        #expect(DashboardPresentation.batteryPower(10) == "10 W")
-        #expect(DashboardPresentation.batteryPower(-10) == "-10 W")
-        #expect(DashboardPresentation.batteryPower(-2400) == "-2.4 kW")
-        #expect(DashboardPresentation.batteryPower(1800) == "1.8 kW")
-
-        #expect(DashboardPresentation.batteryPowerDetail(0) == nil)
-        #expect(DashboardPresentation.batteryPowerDetail(9.9) == nil)
-        #expect(DashboardPresentation.batteryPowerDetail(-9.9) == nil)
-        #expect(DashboardPresentation.batteryPowerDetail(-10) == "Charging")
-        #expect(DashboardPresentation.batteryPowerDetail(10) == "Discharging")
-    }
-
     @Test("Power formatting formats watts as integers and kilowatts with one decimal place")
     func powerFormattingFormatsWattsAsIntegersAndKilowattsWithOneDecimalPlace() {
         #expect(DashboardPresentation.power(0) == "0 W")
@@ -188,21 +166,6 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.power(1000) == "1.0 kW")
         #expect(DashboardPresentation.power(-2400) == "-2.4 kW")
         #expect(DashboardPresentation.power(1800) == "1.8 kW")
-    }
-
-    @Test("Grid and battery daily signs describe import export and charge direction")
-    func gridAndBatteryDailySignsDescribeImportExportAndChargeDirection() {
-        #expect(DashboardPresentation.signedGridEnergy(4.2) == "↓ 4.2 kWh")
-        #expect(DashboardPresentation.signedGridEnergy(-1.1) == "↑ 1.1 kWh")
-        #expect(DashboardPresentation.signedBatteryEnergy(3) == "↓ 3.0 kWh")
-        #expect(DashboardPresentation.signedBatteryEnergy(-2) == "↑ 2.0 kWh")
-    }
-
-    @Test("Rate period total names export cushion and import gap from net grid energy")
-    func ratePeriodTotalNamesExportCushionAndImportGap() {
-        #expect(DashboardPresentation.tariffBalance(-42.34) == "Export cushion 42.3 kWh")
-        #expect(DashboardPresentation.tariffBalance(17.06) == "Import gap 17.1 kWh")
-        #expect(DashboardPresentation.tariffBalance(0) == "Even 0.0 kWh")
     }
 
     @Test("Freshness uses the supplied source time and shows missing and stale states")
@@ -228,11 +191,11 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.loadRate(0.14, code: "USD", locale: Locale(identifier: "en_US")) == "14¢/kWh")
         #expect(DashboardPresentation.loadRate(0.12345, code: "USD", locale: Locale(identifier: "en_US")) == "12.34¢/kWh")
         #expect(DashboardPresentation.loadRate(0.04, code: "GBP", locale: Locale(identifier: "en_GB")) == "£0.04/kWh")
-        #expect(DashboardPresentation.loadBalance(-3.25) == "Banked 3.3 kWh")
-        #expect(DashboardPresentation.loadBalance(4) == "Owed 4.0 kWh")
-        #expect(DashboardPresentation.loadBalance(0) == "Even 0.0 kWh")
-        #expect(DashboardPresentation.loadBalance(nil) == "No bank yet")
-        #expect(DashboardPresentation.loadBalanceAccessibilityLabel(-3.25) == "Banked 3.3 kilowatt-hours")
+        #expect(DashboardPresentation.liveLoadBalance(3.25) == "Banked 3.3 kWh")
+        #expect(DashboardPresentation.liveLoadBalance(-4) == "Owed 4.0 kWh")
+        #expect(DashboardPresentation.liveLoadBalance(0) == "Even 0.0 kWh")
+        #expect(DashboardPresentation.liveLoadBalance(nil) == "No bank yet")
+        #expect(DashboardPresentation.liveLoadBalanceAccessibilityLabel(3.25) == "Banked 3.3 kilowatt-hours")
         #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12, code: "USD", locale: Locale(identifier: "en_US")) == "12 cents per kilowatt-hour")
         #expect(DashboardPresentation.loadRateAccessibilityLabel(0.01, code: "USD", locale: Locale(identifier: "en_US")) == "1 cent per kilowatt-hour")
         #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12345, code: "USD", locale: Locale(identifier: "en_US")) == "12.34 cents per kilowatt-hour")
@@ -256,28 +219,6 @@ struct DashboardPresentationTests {
                 == "Stale · updated 16 min ago"
         )
         #expect(DashboardPresentation.liveFreshnessNotice(nil, now: now) == "Source time unavailable")
-    }
-
-    @Test("A future-dated load timing source is stale, not current")
-    func futureDatedLoadTimingSourceIsStale() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        // The heading for this card is built by `freshness`, which says "Source
-        // time is in the future" for a source ahead of the clock. Reporting the
-        // summary as current underneath it is the §8.18 shape: the two halves of
-        // one card disagreeing about the same timestamp.
-        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(30 * 60), now: now))
-        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(1), now: now))
-        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(-31 * 60), now: now))
-        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(-30 * 60), now: now) == false)
-        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: now.addingTimeInterval(-5 * 60), now: now) == false)
-        #expect(DashboardPresentation.loadTimingSummaryIsStale(source: nil, now: now) == false)
-    }
-
-    @Test("Older charge is clearly dated")
-    func olderChargeIsClearlyDated() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        #expect(DashboardPresentation.chargeAgeLabel(now.addingTimeInterval(-5 * 60), now: now) == nil)
-        #expect(DashboardPresentation.chargeAgeLabel(now.addingTimeInterval(-30 * 60), now: now) == "Charge as of 30 min ago")
     }
 
     @Test("Home uses two columns only when wide, regular and not at accessibility sizes",

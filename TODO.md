@@ -32,6 +32,7 @@ Audit and evidence: [multiplatform readiness audit](docs/superpowers/specs/2026-
 The energy weather redesign replaced the old Job card, but left its presentation code in place, now unreachable from any view. It still ships "export cushion" / "grid rate" copy.
 
 - [x] **Delete the dead copy and models (done 2026-10-25):** removed the overlay/placement presentation, unused `LoadTimingPresentation` statics, `LoadTimingRecommendation`, `LoadTimingAffordance`, and the StartNow/cost estimator APIs. Live forecast-note coverage now exercises `forecastAvailability` / `forecastUnavailableNote`.
+- [x] **Delete the remaining dashboard presentation helpers (done 2026-10-25):** removed the test-only live-update, battery, signed-energy, tariff-balance, and balance-formatting helpers, the unreachable stale Smart Shift summary path, and `chargeAgeLabel`. Tests now exercise the live balance semantics and `TodayEnergyPresentation` signed-energy formatting directly.
 - [ ] **Smart Shift polish from the branch review:**
   - "Covers all of this run" ignores periods the run crosses into.
   - After picking a Job, adding or editing another in Manage Jobs doesn't switch the card to it.

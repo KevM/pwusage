@@ -9,7 +9,6 @@ struct LoadTimingViewTests {
         let summary = DashboardPresentation.loadTimingSummary(
             .init(periodName: "Off peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.12, basis: "sell", balanceKwh: 10, energyDataThrough: nil),
             hasTariff: true,
-            isStale: false,
             currencyCode: "USD"
         )
         #expect(summary.title == "Off peak")
@@ -23,7 +22,6 @@ struct LoadTimingViewTests {
         let summary = DashboardPresentation.loadTimingSummary(
             .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: nil, basis: "unobserved", balanceKwh: nil, energyDataThrough: nil),
             hasTariff: true,
-            isStale: false,
             currencyCode: "USD"
         )
         #expect(summary.rate == "48¢/kWh")
@@ -31,23 +29,20 @@ struct LoadTimingViewTests {
         #expect(!summary.isBanked)
     }
 
-    @Test("Live tariff summary preserves missing tariff and stale source cues")
-    func dashboardSummaryRetainsUnavailableAndStaleStates() {
-        #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: false, isStale: false).message == "No rate plan is set up")
-        #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: true, isStale: false).message == "No live summary is available")
-        let stale = DashboardPresentation.loadTimingSummary(
+    @Test("Live tariff summary preserves missing tariff and unobserved balance states")
+    func dashboardSummaryRetainsUnavailableAndUnobservedStates() {
+        #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: false).message == "No rate plan is set up")
+        #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: true).message == "No live summary is available")
+        let owed = DashboardPresentation.loadTimingSummary(
             .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.48, basis: "buy", balanceKwh: -4, energyDataThrough: nil),
             hasTariff: true,
-            isStale: true,
             currencyCode: "USD"
         )
-        #expect(stale.freshness == "Showing the last successful live summary")
-        #expect(stale.balance == "Owed 4.0 kWh")
-        #expect(!stale.isBanked)
+        #expect(owed.balance == "Owed 4.0 kWh")
+        #expect(!owed.isBanked)
         let unobservedWithBalance = DashboardPresentation.loadTimingSummary(
             .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: nil, basis: "unobserved", balanceKwh: 5, energyDataThrough: nil),
-            hasTariff: true,
-            isStale: false
+            hasTariff: true
         )
         #expect(unobservedWithBalance.balance == "No bank yet")
         #expect(!unobservedWithBalance.isBanked)
@@ -56,10 +51,10 @@ struct LoadTimingViewTests {
     @Test("Live rate stays hidden until bill currency is known")
     func liveSummaryWaitsForCurrency() {
         let timing = ActiveLoadTiming(periodName: "Peak", buyRate: 0.485, sellRate: 0.12, marginalCost: 0.485, basis: "buy", balanceKwh: 2, energyDataThrough: nil)
-        let unlocalized = DashboardPresentation.loadTimingSummary(timing, hasTariff: true, isStale: false)
+        let unlocalized = DashboardPresentation.loadTimingSummary(timing, hasTariff: true)
         #expect(unlocalized.rate == nil)
         #expect(!unlocalized.accessibilityLabel.contains("cents per kilowatt-hour"))
-        let localized = DashboardPresentation.loadTimingSummary(timing, hasTariff: true, isStale: false, currencyCode: "USD")
+        let localized = DashboardPresentation.loadTimingSummary(timing, hasTariff: true, currencyCode: "USD")
         #expect(localized.rate == "48.5¢/kWh")
         #expect(localized.accessibilityLabel.contains("48.5 cents per kilowatt-hour"))
     }
