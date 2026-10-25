@@ -1281,6 +1281,25 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             expect(await reads('tou',day,dayEnd)).toEqual({...before,coverage:before.coverage.map(settled),
                 billing:{...before.billing,value:{...before.billing.value,coverage:before.billing.value.coverage.map(settled)}}});
         });
+        it('repairs a converted day missing its tail: refetched raw drops the record, the rebuild archives it, conversion makes it complete',async()=>{
+            const {archiveSiteHistory}=await import('../history-migration');
+            await insertRaw('site',start,end,'1','2','n<=270');
+            await store.finalizeDay('site',start,now);
+            expect(await convert('site',start)).toMatchObject({status:'converted',dayStatus:'gapped'});
+            const scope={siteId:'site',start,end,timezone:'America/Chicago',now:later};
+            // The repair step picks the converted gapped day from raw coverage.
+            expect((await archiveSiteHistory(store,{...scope,apply:false})).repairable).toEqual(['2026-01-01']);
+            // A refetch writes the missing tail; the raw trigger drops the stale record.
+            const tail=Array.from({length:18},(_,i)=>({site_id:'site',timestamp:new Date(+start+(270+i)*300000),tariff_id:1,tariff_schedule_id:2,
+                load_power:20,solar_power:1,grid_power:2,battery_power:-1,battery_soc:null}));
+            await store.writeEnergyDataBatch(tail);
+            expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDayArchive"')).rows[0].n).toBe(0);
+            const rebuilt=await archiveSiteHistory(store,{...scope,apply:true});
+            expect(rebuilt).toMatchObject({archived:['2026-01-01'],repairable:[]});
+            expect(await convert('site',start)).toMatchObject({status:'converted',dayStatus:'complete'});
+            expect(await archiveRow()).toMatchObject({format_version:2,status:'complete',attribution_complete:true,verified:true});
+            expect((await reads('site',start,end)).chart).toHaveLength(288);
+        });
         it('leaves a day that fails verification as v1 and writes nothing',async()=>{
             await insertRaw('site',start,end,'1','2');
             await store.finalizeDay('site',start,now);
