@@ -1,6 +1,7 @@
 import { pool, Site, SiteWithTariffs, Tariff, TariffSeason } from './db';
 import { getRequestContext } from './request-context';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
+import { UPSERT_SITE_SQL } from './site-upsert-sql';
 
 // Use global cache to persist across reloads in dev
 const globalForCache = global as unknown as { siteCache: Map<string, { data: SiteWithTariffs; expires: number }> };
@@ -325,23 +326,16 @@ export class SiteRepo {
         installed?: Date | string | null;
         timezone?: string | null;
         json?: unknown;
-    }): Promise<void> {
+    }): Promise<string | undefined> {
         const name = (params.name && params.name.trim() !== '') ? params.name.trim() : 'Unnamed Site';
         const timezone = (params.timezone && params.timezone.trim() !== '') ? params.timezone.trim() : 'UTC';
         const hasInstalled = params.installed !== undefined && params.installed !== null && params.installed !== '';
         const installed = hasInstalled ? params.installed! : new Date().toISOString();
 
-        await pool.query(`
-            INSERT INTO "Site"(id, name, utility, updated, installed, timezone, json)
-            VALUES ($1, $2, $3, NOW(), $4, $5, $6)
-            ON CONFLICT(id) DO UPDATE SET
-                name = CASE WHEN EXCLUDED.name = 'Unnamed Site' AND "Site".name IS NOT NULL AND "Site".name != '' THEN "Site".name ELSE EXCLUDED.name END,
-                utility = EXCLUDED.utility,
-                installed = CASE WHEN $7 = false AND "Site".installed IS NOT NULL THEN "Site".installed ELSE EXCLUDED.installed END,
-                timezone = CASE WHEN EXCLUDED.timezone = 'UTC' AND "Site".timezone IS NOT NULL AND "Site".timezone != '' THEN "Site".timezone ELSE EXCLUDED.timezone END,
-                json = EXCLUDED.json
-        `, [params.id, name, params.utility ?? null, installed, timezone, JSON.stringify(params.json ?? {}), hasInstalled]);
+        const { rows } = await pool.query<{ timezone: string }>(UPSERT_SITE_SQL,
+            [params.id, name, params.utility ?? null, installed, timezone, JSON.stringify(params.json ?? {}), hasInstalled]);
         this.invalidateCache(params.id);
+        return rows?.[0]?.timezone;
     }
 
 
