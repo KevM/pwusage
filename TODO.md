@@ -277,13 +277,19 @@ first scope addition.
 **Change:** set `require_requested_scopes` alongside `prompt_missing_scopes`, or document
 why a partial grant is acceptable.
 
-## Tesla: bound the unbounded network calls in the Tesla callback path (2026-09-30, PR #118)
+## Tesla: bound the unbounded network calls in the Tesla callback path (2026-09-30, PR #118) — fixed 2026-10-25
+
+**Fixed 2026-10-25.** Every `TeslaClient` attempt now carries an 8-second
+`AbortSignal.timeout`, combined with the request-local I/O deadline and any
+caller signal. Retries (401, 421, 429) each get a fresh per-attempt deadline.
+This covers `getUserInfo`, `getProducts`, `resolveRegion`, and the
+`getEnergySiteInfo` call `ensureSite` makes for each site.
 
 `src/lib/tesla-client.ts` — `getUserInfo` and `getProducts` — and `importer.ensureSite`
-have **no timeouts whatsoever**. Verified: zero occurrences of `AbortSignal` in either
-file. An earlier version of this item also claimed the token exchange was a bare `fetch`
-with no `AbortSignal`; that is stale, PR #118 routed it through `postToTeslaTokenEndpoint`,
-which sets `AbortSignal.timeout(8000)`.
+previously had **no timeouts whatsoever**. An earlier version of this item also
+claimed the token exchange was a bare `fetch` with no `AbortSignal`; that was
+stale, PR #118 routed it through `postToTeslaTokenEndpoint`, which sets
+`AbortSignal.timeout(8000)`.
 
 **Arithmetic.** The bounded legs stack to **≈18 s** for a login that *completes*: at most
 one timed-out host attempt (8 s) before the exchange succeeds, then 5 s of OIDC discovery
