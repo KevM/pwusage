@@ -472,6 +472,9 @@ Request-local I/O deadlines reach Fleet fetch/body reads, token endpoint failove
 refresh lock polling, rate-limit waits, and bounded database connections/queries.
 Fleet requests also carry their own 8-second per-attempt deadline, so a caller
 that forgets to establish an outer deadline still cannot hang on one host.
+Shorter caller budgets must use `withIoDeadline`; a promise race only abandons
+the result, leaving the Fleet call running until the backstop and risking
+duplicate billable work after the claim is released.
 Database timeout scopes use a separate small pool so shorter monitor waits do not
 change ordinary queries. Guard connections arriving after cancellation before
 issuing SQL. Failure telemetry and lease cleanup each have isolated budgets and

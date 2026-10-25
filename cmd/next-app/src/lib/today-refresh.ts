@@ -43,12 +43,15 @@ function getState(siteId: string): RefreshState {
     return state;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error(`${label}_timeout`)), ms);
-        promise.then((v) => { clearTimeout(t); resolve(v); },
-            (e) => { clearTimeout(t); reject(e); });
-    });
+async function withTimeout<T>(work: () => Promise<T>, ms: number, label: string): Promise<T> {
+    try {
+        return await withIoDeadline(ms, work);
+    } catch (error) {
+        if (error instanceof Error && error.message === 'I/O deadline exceeded') {
+            throw new Error(`${label}_timeout`);
+        }
+        throw error;
+    }
 }
 
 export interface RefreshTodayOptions {
@@ -278,7 +281,7 @@ export async function refreshLiveStatus(
 
             try {
                 const timeoutMs = options.timeoutMs ?? TESLA_LIVE_TIMEOUT_MS;
-                const liveStatus = await withTimeout(client.getLiveStatus(siteId), timeoutMs, 'tesla_live');
+                const liveStatus = await withTimeout(() => client.getLiveStatus(siteId), timeoutMs, 'tesla_live');
                 const refreshedAt = Date.now();
                 state.lastLiveRefreshAt = refreshedAt;
 
