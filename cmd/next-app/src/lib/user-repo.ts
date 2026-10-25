@@ -2,6 +2,7 @@ import { cache } from 'react';
 import { pool, User, Site } from './db';
 import { TeslaClient, isTeslaAuthError } from './tesla-client';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
+import { normalizeFleetBaseUrl } from './tesla-region';
 
 export interface UserWithSites extends User {
     sites: Site[];
@@ -22,15 +23,15 @@ export class UserRepo {
         return res.rows[0];
     }
 
-    async getTokens(userId: string): Promise<{ access_token: string, refresh_token: string } | null> {
-        const res = await pool.query('SELECT access_token, refresh_token FROM "User" WHERE id = $1', [userId]);
+    async getTokens(userId: string): Promise<{ access_token: string, refresh_token: string, fleet_api_base_url: string | null } | null> {
+        const res = await pool.query('SELECT access_token, refresh_token, fleet_api_base_url FROM "User" WHERE id = $1', [userId]);
         if (res.rows.length === 0) return null;
         return res.rows[0];
     }
 
-    async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string } | null> {
+    async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string, fleet_api_base_url: string | null } | null> {
         const res = await pool.query(`
-            SELECT u.access_token, u.refresh_token, u.id as user_id
+            SELECT u.access_token, u.refresh_token, u.id as user_id, u.fleet_api_base_url
             FROM "User" u
             JOIN "Site" s ON s.user_id = u.id
             WHERE s.id = $1
@@ -154,17 +155,31 @@ export class UserRepo {
         accessToken: string;
         refreshToken: string;
         tokenExpiresAt: number;
+        /** The account's regional Fleet host; unknown keeps the stored one. */
+        fleetApiBaseUrl?: string | null;
     }): Promise<void> {
         await pool.query(`
-            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active)
-            VALUES ($1, $2, $3, $4, $5, 'active', true)
+            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active, fleet_api_base_url)
+            VALUES ($1, $2, $3, $4, $5, 'active', true, $6)
             ON CONFLICT (id) DO UPDATE SET
                 access_token = EXCLUDED.access_token,
                 refresh_token = EXCLUDED.refresh_token,
                 email = COALESCE(EXCLUDED.email, "User".email),
+                fleet_api_base_url = COALESCE(EXCLUDED.fleet_api_base_url, "User".fleet_api_base_url),
                 auth_status = 'active',
                 is_active = true
-        `, [params.userId, params.email, params.accessToken, params.refreshToken, params.tokenExpiresAt]);
+        `, [params.userId, params.email, params.accessToken, params.refreshToken, params.tokenExpiresAt,
+            normalizeFleetBaseUrl(params.fleetApiBaseUrl)]);
+    }
+
+    /** Record the account's regional Fleet host. Only allowlisted Tesla hosts are stored. */
+    async setFleetApiBaseUrl(userId: string, baseUrl: string): Promise<void> {
+        const normalized = normalizeFleetBaseUrl(baseUrl);
+        if (!normalized) {
+            console.warn('[UserRepo] Refusing to store unrecognized Fleet API host for user', userId);
+            return;
+        }
+        await pool.query('UPDATE "User" SET fleet_api_base_url = $1 WHERE id = $2', [normalized, userId]);
     }
 
     async updateTokens(userId: string, accessToken: string, refreshToken: string): Promise<void> {

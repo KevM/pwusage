@@ -7,6 +7,11 @@ export interface TeslaClientFactoryOptions {
     onTokenUpdate?: () => void;
 }
 
+/** Store a regional Fleet host Tesla pointed this user at (best effort; see TeslaClient). */
+function recordFleetBaseUrl(userId: string) {
+    return (baseUrl: string) => new UserRepo().setFleetApiBaseUrl(userId, baseUrl);
+}
+
 /**
  * Construct a TeslaClient for a specific site, wired with site-level locked token refresh handlers.
  * Returns null if no valid refresh_token exists for the site.
@@ -27,7 +32,9 @@ export async function createTeslaClientForSite(
         refreshToken: tokens.refresh_token,
         tokenRefreshHandler: handlers.refreshHandler,
         onTokenError: handlers.errorHandler,
-        onTokenUpdate: options?.onTokenUpdate
+        onTokenUpdate: options?.onTokenUpdate,
+        baseUrl: tokens.fleet_api_base_url,
+        onBaseUrlChange: tokens.user_id ? recordFleetBaseUrl(tokens.user_id) : undefined
     });
 }
 
@@ -46,7 +53,9 @@ export async function createTeslaClientForUser(
     return new TeslaClient({
         accessToken: userTokens.access_token,
         refreshToken: userTokens.refresh_token || undefined,
-        onTokenUpdate: options?.onTokenUpdate
+        onTokenUpdate: options?.onTokenUpdate,
+        baseUrl: userTokens.fleet_api_base_url,
+        onBaseUrlChange: recordFleetBaseUrl(userId)
     });
 }
 
@@ -56,11 +65,12 @@ export async function createTeslaClientForUser(
 export function createTeslaClientForAccessToken(
     accessToken: string,
     refreshToken?: string,
-    options?: TeslaClientFactoryOptions
+    options?: TeslaClientFactoryOptions & { baseUrl?: string | null }
 ): TeslaClient {
     return new TeslaClient({
         accessToken,
         refreshToken: refreshToken || undefined,
-        onTokenUpdate: options?.onTokenUpdate
+        onTokenUpdate: options?.onTokenUpdate,
+        baseUrl: options?.baseUrl
     });
 }

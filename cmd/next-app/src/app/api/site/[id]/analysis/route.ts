@@ -81,10 +81,10 @@ export async function GET(
 
         if (teslaClient) {
             importer = new Importer(teslaClient);
-            console.error(`[Analysis] Calling ensureDataForRange for ${siteId}, force=${force}`);
+            console.log(`[Analysis] Calling ensureDataForRange for ${siteId}, force=${force}`);
             try {
                 await importer.ensureDataForRange(siteId, start, queryEnd, (msg) => {
-                    console.error(`[Analysis Progress] ${msg}`);
+                    console.log(`[Analysis Progress] ${msg}`);
                 }, { force });
             } catch (err) {
                 console.error(`[Analysis] Auto-sync failed (gracefully continuing with DB data):`, err);

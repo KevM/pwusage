@@ -36,6 +36,13 @@ type ArchiveRecord=RecoveryArchive;
  * re-fetching would restore and drop it). An unpruned v1 archive with holes is
  * not settled, so its raw coverage still decides.
  */
+/**
+ * The archive day of `alias` containing timestamp `ts`. Days start at site-local
+ * midnight and last at most 25 hours, so the lower bound on `day_start` keeps the
+ * index range to a day or two; without it, a per-row probe scans every earlier
+ * day of the site (5.5 s on production for gap-heal's 14-day pre-check).
+ */
+export const ARCHIVE_DAY_CONTAINS_SQL=(ts:string,alias='a')=>`${alias}.day_start<=${ts} AND ${alias}.day_start>${ts}-interval '2 days' AND ${ts}<${alias}.day_end`;
 export const SETTLED_ARCHIVE_DAY_SQL=`(a.metadata_checksum IS NOT NULL AND CASE WHEN a.metadata_version=3 THEN a.status IN ('complete','gapped')
     ELSE a.metadata_version=2 AND a.attribution_complete AND (a.raw_pruned OR a.sample_count>=a.expected_slots) END)`;
 /** Archive rows whose day metadata is checksummed (v1 archives on metadata 2, v2 records on metadata 3). */
@@ -132,7 +139,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const samples = await client.query<RawRecord>(`SELECT ${columns} FROM "EnergyData"
                 WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3
                 AND ($4::boolean OR NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id="EnergyData".site_id
-                    AND "EnergyData".timestamp >= a.day_start AND "EnergyData".timestamp < a.day_end AND ${HAS_SAMPLES_SQL('a.')}))
+                    AND ${ARCHIVE_DAY_CONTAINS_SQL('"EnergyData".timestamp')} AND ${HAS_SAMPLES_SQL('a.')}))
                 ORDER BY timestamp LIMIT 105409`, [siteId,start,end,verifyRawOverlap]);
             if (samples.rows.length > 105408) throw new Error('History sample limit exceeded');
             const days = archives.rows.map(a => detailDay(a,summaries.rows));
@@ -347,7 +354,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             await client.query("SET LOCAL statement_timeout='15s'");await client.query("SET LOCAL lock_timeout='3s'");
             for(const site of sites)if(!await this.claimMutation(client,site))throw new Error('Energy mutation claim busy');
             const candidates=(await client.query<{site_id:string;day_start:Date}>(`SELECT a.site_id,a.day_start FROM "EnergyDayArchive" a WHERE raw_pruned AND a.site_id=ANY($3::text[]) AND a.day_start<=$5 AND a.day_end>$4 AND
-                EXISTS(SELECT 1 FROM unnest($1::text[],$2::timestamptz[]) t(site_id,timestamp) WHERE t.site_id=a.site_id AND t.timestamp>=a.day_start AND t.timestamp<a.day_end)
+                EXISTS(SELECT 1 FROM unnest($1::text[],$2::timestamptz[]) t(site_id,timestamp) WHERE t.site_id=a.site_id AND ${ARCHIVE_DAY_CONTAINS_SQL('t.timestamp')})
                 ORDER BY a.site_id,a.day_start LIMIT 8`,[rows.map(r=>r.site_id),rows.map(r=>r.timestamp),sites,first,last])).rows;
             if(candidates.length>7)throw new Error('Energy batch restoration exceeds seven days');
             for(const candidate of candidates) {
@@ -453,7 +460,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const summaries=(await client.query<SummaryRecord>(`SELECT s.* FROM "EnergyDaySummary" s JOIN "EnergyDayArchive" a USING (site_id,day_start,revision)
                 WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2 ORDER BY s.day_start,s.tariff_id,s.tariff_schedule_id NULLS FIRST`,[siteId,start,end])).rows;
             const samples=await client.query<RawRecord>(`SELECT ${columns} FROM "EnergyData" e WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3
-                AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp >= a.day_start AND e.timestamp < a.day_end AND ${HAS_SAMPLES_SQL('a.')})
+                AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND ${ARCHIVE_DAY_CONTAINS_SQL('e.timestamp')} AND ${HAS_SAMPLES_SQL('a.')})
                 ORDER BY timestamp LIMIT 105409`,[siteId,start,end]);
             if (samples.rows.length>105408) throw new Error('History sample limit exceeded');
             const parts=partial.rows.map(a=>detailDay(a,summaries));
@@ -477,7 +484,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2
                     AND NOT(a.day_start >= $2 AND a.day_end <= $3 AND ${MODERN_METADATA_SQL('a.')}) AND ${HAS_SAMPLES_SQL('a.')}) AS has_detail,
                 EXISTS (SELECT 1 FROM "EnergyData" e WHERE e.site_id=$1 AND e.timestamp >= $2 AND e.timestamp < $3
-                    AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end AND ${HAS_SAMPLES_SQL('a.')})) AS has_raw,
+                    AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND ${ARCHIVE_DAY_CONTAINS_SQL('e.timestamp')} AND ${HAS_SAMPLES_SQL('a.')})) AS has_raw,
                 COALESCE((SELECT bool_and(public.verify_compact_day_metadata(a.site_id,a.day_start,false))
                     FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
                     AND ${MODERN_METADATA_SQL('a.')}),true) AS verified,
@@ -512,7 +519,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2 AND NOT (a.day_start >= $2 AND a.day_end <= $3 AND ${MODERN_METADATA_SQL('a.')})
                 ORDER BY s.day_start,s.tariff_id,s.tariff_schedule_id NULLS FIRST`,[siteId,start,end])).rows:[];
             const rawRows=site.rows[0]?.has_raw?await client.query<RawRecord>(`SELECT ${columns} FROM "EnergyData" e WHERE site_id=$1 AND timestamp >= $2 AND timestamp < $3
-                AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND e.timestamp>=a.day_start AND e.timestamp<a.day_end AND ${HAS_SAMPLES_SQL('a.')})
+                AND NOT EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=e.site_id AND ${ARCHIVE_DAY_CONTAINS_SQL('e.timestamp')} AND ${HAS_SAMPLES_SQL('a.')})
                 ORDER BY timestamp LIMIT 105409`,[siteId,start,end]):{rows:[]};
             if(rawRows.rows.length>105408) throw new Error('History sample limit exceeded');
             const days=partial.rows.map(a=>detailDay(a,summaries));

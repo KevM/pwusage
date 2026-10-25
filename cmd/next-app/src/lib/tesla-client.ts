@@ -1,4 +1,10 @@
 import { ioSignal, checkIoDeadline, abortable, ioDelay } from './io-deadline';
+import {
+    DEFAULT_FLEET_BASE_URL,
+    normalizeFleetBaseUrl,
+    parseTesla421,
+    type Tesla421Kind,
+} from './tesla-region';
 export interface FleetProduct {
     energy_site_id?: number;
     resource_type: string;
@@ -112,6 +118,10 @@ export interface TeslaClientConfig {
     onTokenUpdate?: (accessToken: string, refreshToken: string) => void;
     onTokenError?: (error: Error) => void;
     tokenRefreshHandler?: (refreshToken: string) => Promise<{ access_token: string; refresh_token: string }>;
+    /** The account's regional Fleet host; unknown or unrecognized hosts use North America. */
+    baseUrl?: string | null;
+    /** Called when Tesla points this account at another regional host (users/region or a 421). */
+    onBaseUrlChange?: (baseUrl: string) => void | Promise<void>;
 }
 
 const RATE_LIMIT_MAX_RETRIES = 2;
@@ -149,6 +159,37 @@ export class TeslaAuthError extends Error {
         this.status = status;
         if (Error.captureStackTrace) {
             Error.captureStackTrace(this, TeslaAuthError);
+        }
+    }
+}
+
+function regionErrorMessage(kind: Tesla421Kind, host: string): string {
+    if (kind === 'partner-not-registered') {
+        return `Tesla API Error: 421 Tesla partner account is not registered in ${host}`;
+    }
+    if (kind === 'out-of-region') {
+        return `Tesla API Error: 421 region response did not resolve to a different host than ${host}`;
+    }
+    return 'Tesla API Error: 421 response did not identify a supported regional host';
+}
+
+/**
+ * A 421 that must not be followed as a host redirect: the partner app is not
+ * registered in the region, the body named no allowlisted host, or following
+ * the redirect did not fix the response. The raw Tesla body is never included
+ * in the message because isTeslaAuthError matches message substrings.
+ */
+export class TeslaRegionError extends Error {
+    readonly kind: Tesla421Kind;
+    readonly host: string;
+
+    constructor(kind: Tesla421Kind, host: string) {
+        super(regionErrorMessage(kind, host));
+        this.name = 'TeslaRegionError';
+        this.kind = kind;
+        this.host = host;
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, TeslaRegionError);
         }
     }
 }
@@ -194,7 +235,7 @@ function calendarTimeSeries<T>(result: unknown, kind: 'energy' | 'soe'): T[] {
 }
 
 export class TeslaClient {
-    private baseUrl = "https://fleet-api.prd.na.vn.cloud.tesla.com";
+    private baseUrl: string;
     private config: TeslaClientConfig;
 
     constructor(config: TeslaClientConfig | string) {
@@ -203,11 +244,33 @@ export class TeslaClient {
         } else {
             this.config = config;
         }
+        this.baseUrl = normalizeFleetBaseUrl(this.config.baseUrl) ?? DEFAULT_FLEET_BASE_URL;
+    }
+
+    getBaseUrl(): string {
+        return this.baseUrl;
+    }
+
+    /** Switch to an allowlisted regional host and tell the owner so it can be stored. */
+    private async adoptBaseUrl(baseUrl: string): Promise<void> {
+        if (baseUrl === this.baseUrl) return;
+        console.log(`[TeslaClient] Switching Fleet API host ${this.baseUrl} -> ${baseUrl}`);
+        this.baseUrl = baseUrl;
+        try {
+            await this.config.onBaseUrlChange?.(baseUrl);
+        } catch (err) {
+            // Persisting is best effort: a later 421 re-learns the host.
+            console.error('[TeslaClient] Failed to record Fleet API host:', err);
+        }
     }
 
     private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
+        // The host this request last went to. Concurrent requests share this.baseUrl,
+        // so a 421 is judged against the host that answered it, not the current one.
+        let requestBaseUrl = this.baseUrl;
         const makeRequest = async (token: string) => {
-            const url = `${this.baseUrl}${path}`;
+            requestBaseUrl = this.baseUrl;
+            const url = `${requestBaseUrl}${path}`;
             const headers = {
                 "Authorization": `Bearer ${token}`,
                 "Content-Type": "application/json",
@@ -224,6 +287,9 @@ export class TeslaClient {
         // refresh path instead of falling straight through to a hard error.
         let refreshAttempted = false;
         let rateLimitAttempt = 0;
+        let regionRetried = false;
+        let regionError: TeslaRegionError | undefined;
+        let errorBody: string | undefined;
         while (true) {
             if (response.status === 401 && this.config.refreshToken && !refreshAttempted) {
                 refreshAttempted = true;
@@ -267,11 +333,50 @@ export class TeslaClient {
                 continue;
             }
 
+            // Wrong region: Tesla names the account's host in the body. Follow an
+            // out-of-region redirect once, and only to an allowlisted Fleet host.
+            // A 421 can also mean the partner app is not registered in the region
+            // that answered; that host is usually the current one, so retrying is
+            // a no-op and must surface as a region error instead.
+            if (response.status === 421) {
+                errorBody = await abortable(response.text());
+                const parsed = parseTesla421(errorBody);
+                const kind: Tesla421Kind = parsed.kind === 'out-of-region' && !parsed.baseUrl
+                    ? 'unknown'
+                    : parsed.kind;
+
+                if (kind === 'out-of-region' && !regionRetried
+                    && parsed.baseUrl && parsed.baseUrl !== requestBaseUrl) {
+                    regionRetried = true;
+                    await this.adoptBaseUrl(parsed.baseUrl);
+                    errorBody = undefined;
+                    response = await makeRequest(this.config.accessToken);
+                    continue;
+                }
+
+                regionError = new TeslaRegionError(kind, requestBaseUrl);
+                if (kind === 'partner-not-registered') {
+                    console.error(
+                        `[TeslaClient] Tesla partner app is not registered for ${requestBaseUrl}. Register the app for this region.`
+                    );
+                } else if (kind === 'out-of-region') {
+                    console.warn(
+                        `[TeslaClient] Tesla 421 did not resolve to a different host than ${requestBaseUrl}`
+                    );
+                } else {
+                    console.warn('[TeslaClient] Tesla 421 named no supported regional host');
+                }
+            }
+
             break;
         }
 
+        if (regionError) {
+            throw regionError;
+        }
+
         if (!response.ok) {
-            const body = await abortable(response.text());
+            const body = errorBody ?? await abortable(response.text());
             const shortBody = body.length > 200 ? body.substring(0, 200) + '...' : body;
             if (response.status === 401 || response.status === 403) {
                 throw new TeslaAuthError(`Tesla API Error: ${response.status} ${shortBody}`, response.status);
@@ -354,6 +459,21 @@ export class TeslaClient {
         // Delegate to standalone auth module
         const { refreshAccessToken } = await import('./tesla-auth');
         return refreshAccessToken(refreshToken);
+    }
+
+    /**
+     * Ask Tesla which regional host serves this account (GET /api/1/users/region,
+     * answered by any region) and use it for later calls. Returns the host in use.
+     */
+    async resolveRegion(): Promise<string> {
+        const result = await this.fetch<{ response?: { region?: string; fleet_api_base_url?: string } }>("/api/1/users/region");
+        const baseUrl = normalizeFleetBaseUrl(result.response?.fleet_api_base_url);
+        if (baseUrl) {
+            await this.adoptBaseUrl(baseUrl);
+        } else {
+            console.warn('[TeslaClient] users/region returned no recognized Fleet host:', JSON.stringify(result).substring(0, 200));
+        }
+        return this.baseUrl;
     }
 
     async getUserInfo(): Promise<TeslaUserInfo> {

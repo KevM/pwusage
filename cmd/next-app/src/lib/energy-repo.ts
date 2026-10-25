@@ -9,7 +9,7 @@ import { getSiteMidnight, getValidTimezone } from './date-utils';
 import { Schedule } from './schedule';
 import { SiteRepo } from './site-repo';
 import { TariffRepo } from './tariff-repo';
-import {CompactHistoryStore,SETTLED_ARCHIVE_DAY_SQL} from './prototypes/compact-history-store';
+import {ARCHIVE_DAY_CONTAINS_SQL,CompactHistoryStore,SETTLED_ARCHIVE_DAY_SQL} from './prototypes/compact-history-store';
 import type {Pool} from 'pg';
 
 export interface LatestEnergySnapshot {timestamp:Date;batterySoc:number|null;batteryPower:number;solarPower:number;gridPower:number;loadPower:number}
@@ -253,7 +253,7 @@ SELECT w.site_id, (
       AND EXTRACT(EPOCH FROM e.timestamp)::bigint % 300 = 0
       AND NOT EXISTS (
           SELECT 1 FROM "EnergyDayArchive" a
-          WHERE a.site_id = e.site_id AND e.timestamp >= a.day_start AND e.timestamp < a.day_end
+          WHERE a.site_id = e.site_id AND ${ARCHIVE_DAY_CONTAINS_SQL('e.timestamp')}
             AND ${SETTLED_ARCHIVE_DAY_SQL})
 ) + (
     SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (a.day_end - a.day_start))::int / 300), 0)::int

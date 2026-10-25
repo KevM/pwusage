@@ -9,6 +9,7 @@ vi.mock('jwks-rsa');
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
+import { TeslaClient, TeslaRegionError, type TeslaClientConfig } from './tesla-client';
 
 describe('TeslaAuthService', () => {
     const mockUserRepo = {
@@ -27,6 +28,8 @@ describe('TeslaAuthService', () => {
     };
 
     const mockTeslaClient = {
+        resolveRegion: vi.fn(),
+        getBaseUrl: vi.fn(),
         getUserInfo: vi.fn(),
         getProducts: vi.fn()
     };
@@ -146,7 +149,7 @@ describe('TeslaAuthService', () => {
         expect(mockTeslaTokenRepo.releaseRefreshLock).toHaveBeenCalledWith('98765');
     });
 
-    it('returns success but logs error when DB update / getProducts throws an error', async () => {
+    it('persists credentials before fetching products and reports an upstream product failure', async () => {
         const tokenExchange = vi.fn().mockResolvedValue({
             id_token: 'valid_id_token',
             access_token: 'access_123',
@@ -160,7 +163,9 @@ describe('TeslaAuthService', () => {
             email: 'user@example.com'
         });
 
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com' });
         mockTeslaClient.getProducts.mockRejectedValue(new Error('Tesla Fleet API Down'));
+        mockUserRepo.getById.mockResolvedValue({ id: 'tesla-user-sub', roles: ['user'] });
 
         const service = new TeslaAuthService({
             userRepo: mockUserRepo as unknown as UserRepo,
@@ -182,12 +187,282 @@ describe('TeslaAuthService', () => {
 
         const result = await service.handleTeslaCallback(params);
 
+        expect(result).toEqual({ status: 'fleet-api-failed', reason: 'upstream' });
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userId: 'tesla-user-sub',
+                accessToken: 'access_123',
+                refreshToken: 'refresh_123'
+            })
+        );
+        expect(mockUserRepo.upsertOnTeslaAuth.mock.invocationCallOrder[0])
+            .toBeLessThan(mockTeslaClient.getProducts.mock.invocationCallOrder[0]);
+    });
+
+    it('reports a region product failure after persisting credentials', async () => {
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'valid_id_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockResolvedValue({
+            nonce: 'good-nonce',
+            sub: 'tesla-user-sub',
+            email: 'user@example.com'
+        });
+
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com' });
+        mockTeslaClient.getProducts.mockRejectedValue(
+            new TeslaRegionError('partner-not-registered', 'https://fleet-api.prd.eu.vn.cloud.tesla.com')
+        );
+        mockUserRepo.getById.mockResolvedValue({ id: 'tesla-user-sub', roles: ['user'] });
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const result = await service.handleTeslaCallback({
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        });
+
+        expect(result).toEqual({ status: 'fleet-api-failed', reason: 'region' });
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+    });
+
+    it('stores a Fleet host learned during product fetch', async () => {
+        const NA = 'https://fleet-api.prd.na.vn.cloud.tesla.com';
+        const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'valid_id_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockResolvedValue({
+            nonce: 'good-nonce',
+            sub: 'tesla-user-sub',
+            email: 'user@example.com'
+        });
+
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com' });
+        mockTeslaClient.getBaseUrl.mockReturnValue(NA);
+        mockTeslaClient.getProducts.mockImplementation(async () => {
+            mockTeslaClient.getBaseUrl.mockReturnValue(EU);
+            return [];
+        });
+        mockUserRepo.getById.mockResolvedValue({ id: 'tesla-user-sub', roles: ['user'] });
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const result = await service.handleTeslaCallback({
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        });
+
         expect(result.status).toBe('success');
-        if (result.status === 'success') {
-            expect(result.userId).toBe('tesla-user-sub');
-            expect(result.siteIds).toEqual([]);
-            expect(result.roles).toEqual([]);
-        }
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(2);
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenLastCalledWith(
+            expect.objectContaining({ fleetApiBaseUrl: EU })
+        );
+    });
+
+    it('returns db-error and does not fetch products when credential persistence fails', async () => {
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'valid_id_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockResolvedValue({
+            nonce: 'good-nonce',
+            sub: 'tesla-user-sub',
+            email: 'user@example.com'
+        });
+
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com' });
+        mockUserRepo.upsertOnTeslaAuth.mockRejectedValue(new Error('database unavailable'));
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const result = await service.handleTeslaCallback({
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        });
+
+        expect(result).toEqual({ status: 'db-error' });
+        expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
+        expect(mockUserRepo.getById).not.toHaveBeenCalled();
+    });
+
+    it('lets an admin sign in when products cannot be fetched', async () => {
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'valid_id_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockResolvedValue({
+            nonce: 'good-nonce',
+            sub: 'tesla-user-sub',
+            email: 'user@example.com'
+        });
+
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com' });
+        mockTeslaClient.getProducts.mockRejectedValue(new Error('Tesla Fleet API Down'));
+        mockUserRepo.getById.mockResolvedValue({ id: 'tesla-user-sub', roles: ['admin'] });
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const result = await service.handleTeslaCallback({
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        });
+
+        expect(result).toEqual({
+            status: 'success',
+            userId: 'tesla-user-sub',
+            siteIds: [],
+            roles: ['admin']
+        });
+    });
+
+    it('reports a site import failure when every energy site fails for a non-admin', async () => {
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'valid_id_token',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockResolvedValue({
+            nonce: 'good-nonce',
+            sub: 'tesla-user-sub',
+            email: 'user@example.com'
+        });
+
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com' });
+        mockTeslaClient.getProducts.mockResolvedValue([
+            { energy_site_id: 11111, resource_type: 'battery', site_name: 'Site A' },
+            { energy_site_id: 22222, resource_type: 'battery', site_name: 'Site B' }
+        ]);
+        mockUserRepo.getById.mockResolvedValue({ id: 'tesla-user-sub', roles: ['user'] });
+        mockImporter.ensureSite.mockRejectedValue(new Error('Import error'));
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const result = await service.handleTeslaCallback({
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        });
+
+        expect(result).toEqual({ status: 'fleet-api-failed', reason: 'sites' });
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a region failure instead of invalid-id-token when degraded getUserInfo hits an unregistered region', async () => {
+        const { KidNotFoundError } = await import('./tesla-auth-service');
+        const tokenExchange = vi.fn().mockResolvedValue({
+            id_token: 'id_token_unpublished_kid',
+            access_token: 'access_123',
+            refresh_token: 'refresh_123',
+            expires_in: 3600
+        });
+
+        const verifyIdToken = vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6'));
+        mockTeslaClient.getUserInfo.mockRejectedValue(
+            new TeslaRegionError('partner-not-registered', 'https://fleet-api.prd.eu.vn.cloud.tesla.com')
+        );
+
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange,
+            verifyIdToken
+        });
+
+        const jwt = await import('jsonwebtoken');
+        vi.spyOn(jwt.default, 'decode').mockReturnValue({
+            iss: 'https://auth.tesla.com/oauth2/v3',
+            aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            nonce: 'good-nonce',
+            sub: 'user-sub-123',
+            email: 'user@example.com'
+        } as unknown as JwtPayload);
+
+        const result = await service.handleTeslaCallback({
+            code: 'auth_code_xyz',
+            state: 'valid_state',
+            savedState: 'valid_state',
+            savedNonce: 'good-nonce',
+            callbackUrl: 'http://localhost/callback'
+        });
+
+        expect(result).toEqual({ status: 'fleet-api-failed', reason: 'region' });
+        expect(mockUserRepo.upsertOnTeslaAuth).not.toHaveBeenCalled();
     });
 
     it('excludes failed sites from final success siteIds list when importing some sites fails', async () => {
@@ -1347,6 +1622,7 @@ describe('authorization code exchange', () => {
             siteRepo: mockSiteRepo as unknown as SiteRepo,
             teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
             teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
             verifyIdToken: vi.fn().mockResolvedValue({
                 nonce: 'good-nonce',
                 sub: 'sub-123',
@@ -1964,3 +2240,106 @@ describe('jwks client configuration', () => {
     });
 });
 
+describe('TeslaAuthService regional Fleet host', () => {
+    const NA = 'https://fleet-api.prd.na.vn.cloud.tesla.com';
+    const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
+    const outOfRegion = `{"response":null,"error":"user out of region, use base URL: ${EU}, see https://developer.tesla.com/docs/fleet-api#endpoints-and-regions","error_description":""}`;
+
+    function respond(status: number, body: unknown): Response {
+        const text = typeof body === 'string' ? body : JSON.stringify(body);
+        return {
+            ok: status >= 200 && status < 300,
+            status,
+            headers: new Headers(),
+            json: async () => JSON.parse(text),
+            text: async () => text,
+        } as unknown as Response;
+    }
+
+    /** A Fleet API that only serves this EU account from the EU host. */
+    function euAccountFleet(regionEndpoint: 'ok' | 'down') {
+        return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+            const url = String(input);
+            if (url.endsWith('/api/1/users/region')) {
+                return regionEndpoint === 'ok'
+                    ? respond(200, { response: { region: 'eu', fleet_api_base_url: EU } })
+                    : respond(503, 'unavailable');
+            }
+            if (!url.startsWith(EU)) return respond(421, outOfRegion);
+            if (url.endsWith('/api/1/users/me')) return respond(200, { response: { email: 'eu@example.com' } });
+            if (url.endsWith('/api/1/products')) {
+                return respond(200, { response: [{ energy_site_id: 4242, resource_type: 'battery', site_name: 'Berlin' }], count: 1 });
+            }
+            return respond(404, 'not found');
+        });
+    }
+
+    function makeService() {
+        const userRepo = {
+            upsertOnTeslaAuth: vi.fn(),
+            getById: vi.fn().mockResolvedValue({ id: 'eu-sub', roles: [] }),
+            getByEmail: vi.fn().mockResolvedValue(null),
+        };
+        const siteRepo = { assignSiteToUser: vi.fn() };
+        const teslaTokenRepo = { updateSiteTokens: vi.fn(), releaseRefreshLock: vi.fn() };
+        const importerClients: TeslaClient[] = [];
+        const importer = { ensureSite: vi.fn() };
+        const service = new TeslaAuthService({
+            userRepo: userRepo as unknown as UserRepo,
+            siteRepo: siteRepo as unknown as SiteRepo,
+            teslaTokenRepo: teslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: (config: TeslaClientConfig) => new TeslaClient(config),
+            importerCreator: vi.fn((client: TeslaClient) => {
+                importerClients.push(client);
+                return importer;
+            }) as never,
+            tokenExchange: vi.fn().mockResolvedValue({
+                id_token: 'id', access_token: 'eu-access', refresh_token: 'eu-refresh', expires_in: 3600,
+            }),
+            verifyIdToken: vi.fn().mockResolvedValue({ nonce: 'n', sub: 'eu-sub', email: 'eu@example.com' }),
+        });
+        return { service, userRepo, siteRepo, importer, importerClients };
+    }
+
+    const params: TeslaCallbackParams = {
+        code: 'c', state: 's', savedState: 's', savedNonce: 'n', callbackUrl: 'http://localhost/callback',
+    };
+
+    beforeEach(() => {
+        process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID = 'client-id-123';
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('resolves the region first, then imports an EU user\'s sites from the EU host', async () => {
+        const fetchMock = euAccountFleet('ok');
+        const { service, userRepo, siteRepo, importer, importerClients } = makeService();
+
+        const result = await service.handleTeslaCallback(params);
+
+        expect(result).toMatchObject({ status: 'success', userId: 'eu-sub', siteIds: ['4242'] });
+        expect(String(fetchMock.mock.calls[0][0])).toBe(`${NA}/api/1/users/region`);
+        // Every call after the region lookup goes straight to the EU host.
+        expect(fetchMock.mock.calls.slice(1).every(([url]) => String(url).startsWith(EU))).toBe(true);
+        expect(userRepo.upsertOnTeslaAuth).toHaveBeenCalledWith(expect.objectContaining({ userId: 'eu-sub', fleetApiBaseUrl: EU }));
+        expect(importerClients[0].getBaseUrl()).toBe(EU);
+        expect(importer.ensureSite).toHaveBeenCalledWith('4242');
+        expect(siteRepo.assignSiteToUser).toHaveBeenCalledWith('4242', 'eu-sub');
+    });
+
+    it('falls back to the 421 base URL when users/region is unavailable', async () => {
+        euAccountFleet('down');
+        const { service, userRepo, importer } = makeService();
+
+        const result = await service.handleTeslaCallback(params);
+
+        expect(result).toMatchObject({ status: 'success', siteIds: ['4242'] });
+        expect(userRepo.upsertOnTeslaAuth).toHaveBeenCalledWith(expect.objectContaining({ fleetApiBaseUrl: EU }));
+        expect(importer.ensureSite).toHaveBeenCalledWith('4242');
+    });
+});
