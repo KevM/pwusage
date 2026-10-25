@@ -261,7 +261,6 @@ struct DashboardView: View {
             let summary = DashboardPresentation.loadTimingSummary(
                 live?.activeLoadTiming,
                 hasTariff: DashboardPresentation.hasActiveTariff(label: live?.activeTariff),
-                isStale: false,
                 currencyCode: bill?.currentBill.currency
             )
             Button { onOpenTab(.smartShift) } label: {

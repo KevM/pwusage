@@ -33,16 +33,6 @@ enum DashboardPresentation {
         var receiving: [PowerCard]
     }
 
-    static func livePowerUpdateDates(sourceTime: Date?, now: Date = .now) -> [Date] {
-        var dates = [now]
-        guard let sourceTime else { return dates }
-        if sourceTime > now { dates.append(sourceTime) }
-        // The freshness check includes exactly 15 minutes, so invalidate just beyond it.
-        let expiry = sourceTime.addingTimeInterval(15 * 60 + 0.001)
-        if expiry > now { dates.append(expiry) }
-        return dates
-    }
-
     static func powerFlow(solarPower: Double, loadPower: Double, batteryPower: Double, gridPower: Double,
                           sourceTime: Date?, isUnavailable: Bool,
                           now: Date = .now) -> PowerFlow {
@@ -104,7 +94,6 @@ enum DashboardPresentation {
         let rate: String?
         let balance: String?
         let message: String?
-        let freshness: String?
         let accessibilityLabel: String
         var isBanked = false
     }
@@ -171,30 +160,8 @@ enum DashboardPresentation {
         return "\(Int(watts.rounded())) W"
     }
 
-    static func batteryPower(_ watts: Double) -> String {
-        abs(watts) < 10 ? "Idle" : power(watts)
-    }
-
-    static func batteryPowerDetail(_ watts: Double) -> String? {
-        if abs(watts) < 10 { return nil }
-        return watts < 0 ? "Charging" : "Discharging"
-    }
-
     static func energy(_ kWh: Double) -> String {
         TodayEnergyPresentation.energy(kWh)
-    }
-
-    static func signedGridEnergy(_ kWh: Double) -> String {
-        TodayEnergyPresentation.signedEnergy(kWh)
-    }
-
-    static func tariffBalance(_ netGridKwh: Double) -> String {
-        let status = netGridKwh < 0 ? "Export cushion" : (netGridKwh > 0 ? "Import gap" : "Even")
-        return "\(status) \(energy(abs(netGridKwh)))"
-    }
-
-    static func signedBatteryEnergy(_ kWh: Double) -> String {
-        TodayEnergyPresentation.signedEnergy(kWh)
     }
 
     static func currency(_ amount: Double?, code: String, locale: Locale = .current) -> String {
@@ -214,22 +181,10 @@ enum DashboardPresentation {
         return "\(currency(amountPerKwh, code: code, locale: locale))/kWh"
     }
 
-    static func loadBalance(_ balanceKwh: Double?) -> String {
-        guard let balanceKwh else { return "No bank yet" }
-        let status = balanceKwh < 0 ? "Banked" : (balanceKwh > 0 ? "Owed" : "Even")
-        return "\(status) \(loadEnergyNumber(abs(balanceKwh))) kWh"
-    }
-
     static func liveLoadBalance(_ cycleNetExportKwh: Double?) -> String {
         guard let cycleNetExportKwh else { return "No bank yet" }
         let status = cycleNetExportKwh > 0 ? "Banked" : (cycleNetExportKwh < 0 ? "Owed" : "Even")
         return "\(status) \(loadEnergyNumber(abs(cycleNetExportKwh))) kWh"
-    }
-
-    static func loadBalanceAccessibilityLabel(_ balanceKwh: Double?) -> String {
-        guard let balanceKwh else { return "No bank yet" }
-        let status = balanceKwh < 0 ? "Banked" : (balanceKwh > 0 ? "Owed" : "Even")
-        return "\(status) \(loadEnergyNumber(abs(balanceKwh))) kilowatt-hours"
     }
 
     static func liveLoadBalanceAccessibilityLabel(_ cycleNetExportKwh: Double?) -> String {
@@ -251,14 +206,13 @@ enum DashboardPresentation {
     static func loadTimingSummary(
         _ timing: ActiveLoadTiming?,
         hasTariff: Bool,
-        isStale: Bool,
         currencyCode: String? = nil
     ) -> LoadTimingSummary {
         guard hasTariff else {
-            return LoadTimingSummary(title: "Smart Shift unavailable", rate: nil, balance: nil, message: "No rate plan is set up", freshness: nil, accessibilityLabel: "Smart Shift unavailable. No rate plan is set up")
+            return LoadTimingSummary(title: "Smart Shift unavailable", rate: nil, balance: nil, message: "No rate plan is set up", accessibilityLabel: "Smart Shift unavailable. No rate plan is set up")
         }
         guard let timing else {
-            return LoadTimingSummary(title: "Smart Shift unavailable", rate: nil, balance: nil, message: "No live summary is available", freshness: nil, accessibilityLabel: "Smart Shift unavailable. No live summary is available")
+            return LoadTimingSummary(title: "Smart Shift unavailable", rate: nil, balance: nil, message: "No live summary is available", accessibilityLabel: "Smart Shift unavailable. No live summary is available")
         }
 
         let title = tariffPeriodTitle(timing.periodName)
@@ -266,31 +220,12 @@ enum DashboardPresentation {
         let rateValue = isUnobserved ? timing.buyRate : timing.marginalCost
         let rate = currencyCode.map { loadRate(rateValue, code: $0) }
         let balance = isUnobserved ? "No bank yet" : (timing.balanceKwh.map(liveLoadBalance) ?? "No bank data")
-        let freshness = isStale ? "Showing the last successful live summary" : nil
         let spokenRate = currencyCode.map { loadRateAccessibilityLabel(rateValue, code: $0) }
-        let label = [title, spokenRate, isUnobserved ? "No bank yet" : liveLoadBalanceAccessibilityLabel(timing.balanceKwh), freshness]
+        let label = [title, spokenRate, isUnobserved ? "No bank yet" : liveLoadBalanceAccessibilityLabel(timing.balanceKwh)]
             .compactMap { $0 }
             .joined(separator: ", ")
         let isBanked = !isUnobserved && (timing.balanceKwh ?? 0) > 0
-        return LoadTimingSummary(title: title, rate: rate, balance: balance, message: nil, freshness: freshness, accessibilityLabel: label, isBanked: isBanked)
-    }
-
-    /// Whether the Load timing card must say it is showing a stale summary.
-    ///
-    /// A negative age counts as stale, and it has to: the summary's own heading is
-    /// built by `freshness(_:staleAfter:)`, which renders "Source time is in the
-    /// future" for exactly this case. An upper bound alone reported the summary as
-    /// current while the heading two lines above said the opposite — the same
-    /// self-contradiction §5.7 fixed for the forecast overlay and §8.18 for the
-    /// battery glyph. `liveFreshnessNotice` already treats a negative age the same
-    /// way, so this keeps the two on one rule.
-    ///
-    /// A `nil` source is not stale: there is nothing dated to be out of date, and
-    /// the heading is already saying the source time is unavailable.
-    static func loadTimingSummaryIsStale(source: Date?, now: Date = .now, staleAfter: TimeInterval = 30 * 60) -> Bool {
-        guard let source else { return false }
-        let age = now.timeIntervalSince(source)
-        return age < 0 || age > staleAfter
+        return LoadTimingSummary(title: title, rate: rate, balance: balance, message: nil, accessibilityLabel: label, isBanked: isBanked)
     }
 
     static func hasActiveTariff(label: String?) -> Bool {
@@ -350,14 +285,6 @@ enum DashboardPresentation {
         let age = now.timeIntervalSince(date)
         guard age < 0 || age > 15 * 60 else { return nil }
         return freshness(date, now: now)
-    }
-
-    static func chargeAgeLabel(_ date: Date?, now: Date = .now) -> String? {
-        guard let date else { return nil }
-        let age = now.timeIntervalSince(date)
-        guard age > 20 * 60 else { return nil }
-        let minutes = Int(age / 60)
-        return minutes < 60 ? "Charge as of \(minutes) min ago" : "Charge as of \(minutes / 60) hr ago"
     }
 
     static func date(_ date: Date, timeZoneIdentifier: String, dateStyle: DateFormatter.Style = .medium, timeStyle: DateFormatter.Style = .none) -> String {
