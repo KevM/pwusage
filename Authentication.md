@@ -127,6 +127,11 @@ already refetches the full key set on an unknown `kid`, rate-limited. **Do not
 add a manual JWKS refetch** — it would bypass the rate limiter and can only ever
 look at the cached URI.
 
+Attempts to validate the well-known key set directly have run into the published
+keys and issued-token `kid`s being out of sync. Do not revive that approach
+without a reproduced live mismatch and the revisit evidence recorded in
+`TODO.md`.
+
 The key cache is fresh for **10 minutes**, with a further **60 minutes** of
 stale-serving tolerance while the JWKS endpoint is unreachable. That 70-minute
 total is a deliberate bound on how long we will verify against a key set we

@@ -230,6 +230,25 @@ paths build messages that classifier inspects out of upstream-controlled text:
 `invalid-id-token` (`tesla-auth-service.ts:526-539`), the outage-vs-invalid-login
 conflation in its current form.
 
+## Tesla OAuth: manual JWKS well-known key validation (paused 2026-10-25)
+
+**Do not retry without new evidence.** We have attempted to validate Tesla's
+published well-known key sets more directly a few times. Each attempt ran into
+the `kid` on issued tokens not being present in the published set at the time we
+checked, which makes stricter validation fail or pushes logins onto the degraded
+`KidNotFoundError` path.
+
+The current design deliberately delegates lookup to `jwks-rsa`: it refetches on
+an unknown `kid`, rate-limits that refetch, and serves the bounded stale cache
+during an outage. `handleTeslaCallback` only bypasses signature verification for
+a confirmed `SigningKeyNotFoundError`, then validates claims and calls
+`getUserInfo` over authenticated TLS.
+
+**Revisit when:** Tesla reports a fix, or we can reproduce a mismatch against a
+live issued token and both the `/nts` and `/v3` key sets. Capture the token
+`kid`, the discovery `jwks_uri`, and both key-set contents before proposing a
+change. Related historical work: #92, #104, #118.
+
 ## Tesla OAuth: issuer-keyed JWKS client, and re-resolve after the discovery TTL (2026-09-30, PR #118)
 
 Raised by review on PR #118. Both are pre-existing and unchanged by that branch, verified
