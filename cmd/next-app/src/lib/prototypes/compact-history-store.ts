@@ -155,17 +155,27 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         try {
             await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
             const rawRow=(await client.query<{timestamp:Date;battery_soc:number}>(`SELECT timestamp,battery_soc FROM "EnergyData" WHERE site_id=$1 AND timestamp>=$2 AND timestamp<=$3 AND battery_soc IS NOT NULL ORDER BY timestamp DESC LIMIT 1`,[siteId,since,now])).rows[0];
-            const guard=(await client.query<{verified:boolean;legacy:boolean}>(`SELECT COALESCE(bool_and(CASE WHEN latest_metadata IS NOT NULL THEN public.verify_compact_latest_metadata(site_id,day_start) ELSE true END),true) AS verified,
-                COALESCE(bool_or(latest_metadata IS NULL),false) AS legacy FROM "EnergyDayArchive" WHERE site_id=$1 AND day_end>$2 AND day_start<=$3`,[siteId,since,now])).rows[0];
+            const guard=(await client.query<{verified:boolean;legacy:boolean;cut:boolean}>(`SELECT COALESCE(bool_and(CASE WHEN latest_metadata IS NOT NULL THEN public.verify_compact_latest_metadata(site_id,day_start) ELSE true END),true) AS verified,
+                COALESCE(bool_or(latest_metadata IS NULL),false) AS legacy,
+                COALESCE(bool_or(day_end>$3 AND (latest_metadata->'soc'->>'timestamp')::bigint>$4),false) AS cut
+                FROM "EnergyDayArchive" WHERE site_id=$1 AND day_end>$2 AND day_start<=$3`,[siteId,since,now,+now])).rows[0];
             if(!guard.verified)throw new Error('Latest metadata mismatch');
             if(guard.legacy)throw new Error('Latest SOC metadata requires rebuild');
             const archive=(await client.query<LatestArchiveRecord>(`SELECT ${latestColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND latest_metadata IS NOT NULL
                 AND (latest_metadata->'soc'->>'timestamp')::bigint >= $2 AND (latest_metadata->'soc'->>'timestamp')::bigint <= $3
                 ORDER BY (latest_metadata->'soc'->>'timestamp')::bigint DESC LIMIT 1`,[siteId,+since,+now])).rows[0];
             let result:LatestBatterySoc|null=rawRow?{timestamp:new Date(rawRow.timestamp),value:Number(rawRow.battery_soc)}:null;
+            const consider=(timestamp:number,value:number)=>{if(!result||timestamp>+result.timestamp)result={timestamp:new Date(timestamp),value};};
             if(archive) {
                 const charge=verifyLatest(archive).soc;
-                if(charge && (!result||charge.timestamp>+result.timestamp))result={timestamp:new Date(charge.timestamp),value:charge.value};
+                if(charge)consider(charge.timestamp,charge.value);
+            }
+            // Only the day containing the cutoff can project a SOC after it while holding earlier SOC
+            // samples (a historical cutoff); its payload is read just then.
+            if(guard.cut) {
+                const detail=(await client.query<DetailArchiveRecord>(`SELECT ${detailColumns} FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2 AND day_end>$2`,[siteId,now])).rows[0];
+                const sample=this.decodeSamples(detail).findLast(s=>s.battery_soc!==null&&s.timestamp>=since&&s.timestamp<=now);
+                if(sample)consider(+sample.timestamp,sample.battery_soc!);
             }
             await client.query('COMMIT');return result;
         }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
@@ -183,13 +193,14 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             await client.query("SET LOCAL statement_timeout='15s'");
             const rawLatest=(await client.query<{timestamp:Date}>(`SELECT timestamp FROM "EnergyData"
                 WHERE site_id=$1 AND timestamp<=$2 ORDER BY timestamp DESC LIMIT 1`,[siteId,asOf])).rows[0]?.timestamp;
-            const archive=(await client.query<{day_start:Date;day_end:Date;last_timestamp:Date|null;modern:boolean;verified:boolean}>(`SELECT day_start,day_end,last_timestamp,
+            // The day containing asOf may have no sample at or before it yet; the previous day then has the latest.
+            const archives=(await client.query<{day_start:Date;day_end:Date;last_timestamp:Date|null;modern:boolean;verified:boolean}>(`SELECT day_start,day_end,last_timestamp,
                 (${MODERN_METADATA_SQL()}) AS modern,
                 CASE WHEN ${MODERN_METADATA_SQL()}
                     THEN public.verify_compact_day_metadata(site_id,day_start,false) ELSE true END AS verified
-                FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2 ORDER BY day_start DESC LIMIT 1`,[siteId,asOf])).rows[0];
+                FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start<=$2 ORDER BY day_start DESC LIMIT 2`,[siteId,asOf])).rows;
             let archivedLatest:Date|null=null;
-            if(archive) {
+            for(const archive of archives) {
                 if(!archive.verified) throw new Error('Day metadata mismatch');
                 if(archive.modern&&archive.last_timestamp&&archive.last_timestamp<=asOf) archivedLatest=new Date(archive.last_timestamp);
                 else {
@@ -197,6 +208,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                         WHERE site_id=$1 AND day_start=$2`,[siteId,archive.day_start])).rows[0];
                     archivedLatest=this.decodeSamples(a).findLast(sample=>sample.timestamp<=asOf)?.timestamp??null;
                 }
+                if(archivedLatest)break;
             }
             const candidates=[rawLatest?new Date(rawLatest):null,archivedLatest].filter((d):d is Date=>d!==null);
             await client.query('COMMIT');

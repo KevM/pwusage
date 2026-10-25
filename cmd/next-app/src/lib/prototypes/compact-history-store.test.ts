@@ -520,6 +520,16 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             const maintenance=await store.getMaintenanceSnapshot('site','2026-01-01','2026-01-03',false,jobOptions.now);
             expect(maintenance.archives).toHaveLength(2);
         });
+        it('reads historical freshness and SOC from before a record\'s latest projection',async()=>{
+            await store.writeDay('site',start,samplesAt(start,288),fetched,jobOptions.now);
+            // The next day's first stored sample is at 00:05, after an as-of of midnight.
+            await store.writeDay('site',end,samplesAt(end,100).slice(1),fetched,jobOptions.now);
+            expect(await store.getLatestTimestamp('site',end)).toEqual(new Date(+end-300000));
+            expect(await store.getLatestTimestamp('site',new Date(+start-1))).toBeNull();
+            // SOC at 02:00 and later; a 02:30 cutoff must not skip the day for its later projection.
+            expect(await store.getLatestBatterySoc('site',start,new Date(+start+30*300000))).toEqual({timestamp:new Date(+start+24*300000),value:42});
+            expect(await store.getLatestBatterySoc('site',new Date(+start+25*300000),new Date(+start+30*300000))).toBeNull();
+        });
         it('restores a v2 day to raw rows before a late raw import touches it',async()=>{
             const samples=samplesAt(start,50);
             await store.writeDay('site',start,samples,fetched,jobOptions.now);
