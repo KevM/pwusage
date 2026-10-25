@@ -31,7 +31,7 @@ Audit and evidence: [multiplatform readiness audit](docs/superpowers/specs/2026-
 
 The energy weather redesign replaced the old Job card, but left its presentation code in place, now unreachable from any view. It still ships "export cushion" / "grid rate" copy.
 
-- [ ] **Delete the dead copy and models:** `LoadTimingForecastPresentation.overlay` / `placement` (`Enhanced`, `Overlay`, `Card`, `Placement`), the unused `LoadTimingPresentation` statics (`recommendationMessage`, `energyImpact`, `costDifference`, `startNowSummary`, `runCardSummary`, `breakdownRows`, `missingBalanceNote`, `unavailableMessage`, `noChargeMessage`, `cycleObservationMessage`, `activeBalanceSummary`, `observedBalances`, `noResponseExplorationMessage`), and `LoadTimingRecommendation` if nothing else adopts it. Migrate the ~30 overlay tests in `LoadTimingViewTests` that guard the forecast note copy onto `forecastAvailability` / `forecastUnavailableNote` first, since those reuse the same note details.
+- [x] **Delete the dead copy and models (done 2026-10-25):** removed the overlay/placement presentation, unused `LoadTimingPresentation` statics, `LoadTimingRecommendation`, `LoadTimingAffordance`, and the StartNow/cost estimator APIs. Live forecast-note coverage now exercises `forecastAvailability` / `forecastUnavailableNote`.
 - [ ] **Smart Shift polish from the branch review:**
   - "Covers all of this run" ignores periods the run crosses into.
   - After picking a Job, adding or editing another in Manage Jobs doesn't switch the card to it.
@@ -54,19 +54,15 @@ Smart Shift now projects rate-period banks to the bill date from 7 days of Solca
 Phase 1 (`scripts/migrate-site-history.ts`, `src/lib/history-migration.ts`) backfills a site's raw history to `Site.installed` and archives every finished day before the 2-day floor, deleting nothing. See [the spec](docs/superpowers/specs/2026-10-19-history-backfill-and-archive-migration-design.md).
 
 - [ ] **Production rollout:** one explicit site ID per run (preview, then `--apply`), oldest-installed first. Re-run later to archive days finished since. Backfill records `Site.history_backfill_from` once it confirms the pre-provisioning gap (Tesla's install date is the hardware install; Harrison had no data 2023-11-15 → 11-28 until the utility provisioned it), so re-runs stop re-fetching it. Harrison took 52 min on the Dev DB (39 MB DB read, 61 MB written); with the between-pass pause that keeps today-refresh working, expect roughly double.
-  - **Status 2026-10-24:** Prod and Dev share a 500 MB quota, so full-history backfill is on hold until raw can be trimmed (needs compact reads on). All 8 active sites are archived through 2026-10-21 (`--skip-backfill --apply`, +4 MB), and the last 45 days' gaps were healed with `--repair-from 2026-09-09` (186 days, +7 MB). The daily archive cron is still off in Prod (`HISTORY_ARCHIVE_JOB_ENABLED` unset), so re-run to archive newer days. Freed ~85 MB by dropping `idx_energy_timestamp` and `REINDEX CONCURRENTLY` of the two `EnergyData` (timestamp, site_id) indexes, which the out-of-order backfill had bloated.
+  - **Status 2026-10-25:** Prod and Dev share a 500 MB quota, so full-history backfill is on hold until raw can be trimmed (compact reads are on). All 8 active sites are archived through 2026-10-21 (`--skip-backfill --apply`, +4 MB), and the last 45 days' gaps were healed with `--repair-from 2026-09-09` (186 days, +7 MB). The daily archive cron remains off in Prod. The Prod flags are now Config and readable: `COMPACT_HISTORY_READS_ENABLED=true`, `COMPACT_DAY_WRITES_ENABLED=true`, `HISTORY_ARCHIVE_JOB_ENABLED=false`, `HISTORY_ARCHIVE_MAX_DAYS=10`, `HISTORY_ARCHIVE_MAX_ESTIMATED_BYTES=8388608` (8 MiB). Archive-aware sync/gap-heal planning landed in #193 and is verified; archive-all and trim-mode control landed in #194. Re-run manually to archive newer days until the job is enabled. Freed ~85 MB by dropping `idx_energy_timestamp` and `REINDEX CONCURRENTLY` of the two `EnergyData` (timestamp, site_id) indexes, which the out-of-order backfill had bloated.
 - [x] **Repaired gapped day tails on tokened sites (2026-10-25):** after the v1 → v2 conversion, Prod had 918 `gapped` days. About 97% ended early: the day was imported before it ended and its tail was never fetched, an old-import artifact. Days since the 2026-10-21 repair heal normally for sites in use. `migrate-site-history.ts --site-id <id> --skip-backfill --repair-from <first gapped date> --apply` refetched 519 days on 6 sites, and every one came back full. That also cleared all 3 `attribution-flag` days (2026-07-03). `convert-archives-v2.ts --apply` then converted everything to v2: **0 v1 days, 2,567 v2 days, all verified.**
   - **Left:** 511 `gapped` days on revoked sites, waiting for re-auth (same command once a user signs in). Two sites' tokens were refused during the repair and are now revoked: 282084616922, which stops ~13:40 local and has no import since 2026-10-07, and 189176704371. Also 3 `gapped` days on active sites that Tesla doesn't have: Harrison's 2023-11 pre-provisioning days, and 2252488382882515's install day (data starts 02:50).
   - **Not attributed:** 7 complete days on 189176704371 (2026-08-31 to 09-06) have `scheduleId: null` because their raw rows were imported without a matching tariff period. Re-attribution from stored samples (see the day record v2 spec) would fix them.
   - **Empty days inside history:** 268546532166 has no data for 2026-04-03 to 04-05. Repair skips empty days; only a backfill would try them.
 - [ ] **Rolling backfill for older history:** backfill a month or two per active site → archive → trim that chunk's raw, repeat, capped at 1–2 years. Keeps peak DB size near today's instead of staging years of raw rows. Needs compact reads enabled and a per-run window cap in `migrateSiteHistory`.
-- [ ] **Enable `COMPACT_HISTORY_READS_ENABLED`** in production.
-- [ ] **Turn on unattended archiving in Prod** after the archive-all PR lands: `control-history-archive.ts archive-all` (commands in `docs/plans/2026-10-07-daily-history-archive-operations.md`). The job now archives after `HISTORY_ARCHIVE_AFTER_DAYS` (default 2) separately from `DATA_RETENTION_DAYS`, covers every owned site, and runs hourly from pg_cron. Backlog on 2026-10-24: ~2,500 unarchived site-days (mostly inactive sites), about 53 days at the default 2 per run; Prod runs `HISTORY_ARCHIVE_MAX_DAYS` at the cap (7 → 10 with this change; a 7-day run took ~13 s), about 10–15 days to drain. Archive-all was turned on 2026-10-24.
-- [ ] **Archive cron trim mode** for migrated sites (`control-history-archive.ts trim …`); archive-all stays on, and only the listed sites are trimmed.
-- [ ] **Archive-aware `/api/sync`:** `DataSyncer` (dashboard and usage pages) calls `/api/sync` → `ensureDataForRange` for the viewed range, and `planImport` counts raw rows only, so viewing a trimmed month would re-fetch it from Tesla and rewrite raw (dropping the archive). Same fix as gap-heal below: have the planner count archived days as covered. Blocks trim mode. (2026-10-24: compact reads verified to match raw on 5 Prod sites across archived and mixed ranges; only bucketed `id` differs, string vs number.)
-- [ ] **Archive-aware gap-heal:** count archived days as covered, and when it heals a day older than the retention cutoff, finalize that day into the archive instead of leaving raw rows. Without this, gap-heal (`GAP_HEAL_DAYS = 14`, raw-only `countAlignedSamples`) sees trimmed days as holes, re-fetches from Tesla, rewrites raw rows, and the invalidation trigger drops the archive: a churn loop.
+- [ ] **Turn on unattended archiving in Prod** after the mixed raw+archive read check and a final manual run: `control-history-archive.ts archive-all` (commands in `docs/plans/2026-10-07-daily-history-archive-operations.md`). The job archives after `HISTORY_ARCHIVE_AFTER_DAYS` (default 2) separately from `DATA_RETENTION_DAYS`, covers every owned site, and runs hourly from pg_cron. Backlog on 2026-10-24: ~2,500 unarchived site-days (mostly inactive sites), about 53 days at the default 2 per run; Prod is configured for 10 days and 8 MiB per run (a 7-day run took ~13 s), so expect about 10–15 days to drain.
 - [ ] **Lower `DATA_RETENTION_DAYS` in steps** (365 → 30 → 7). Archiving no longer waits on retention (`HISTORY_ARCHIVE_AFTER_DAYS`), so this only changes how long raw rows stay. Both cutoffs floor at 2 days (`archiveCutoff`, `HistoryArchiveRepo.next`); going lower needs a change there.
-- [ ] **Re-check raw-only reads with a short raw window:** `today-refresh.ts` (latest raw row), `battery-hold-monitor-service.ts` (last 30 min raw), `user-repo.ts` admin `last_data_import` (MAX raw timestamp).
+- [x] **Raw-only read audit (2026-10-25):** No changes needed with a short raw window. `today-refresh.ts` uses the compact-aware `getLatestEnergyData`; `battery-hold-monitor-service.ts` reads only the hold's last 30 minutes, inside the 2-day raw floor and through the compact-aware repo; `user-repo.ts` admin `last_data_import` already uses `latestStoredSampleSql` (raw or archive).
 - [ ] **Daily backup sizing for day records:** `dump-db-backup.sh` excludes only `EnergyData`, so every daily backup now carries all day-record history, and `docs/database-backups.md`'s figures (daily ≈ 3 MB, ~0.38 GB/month egress) no longer hold. Re-measure daily and weekly sizes and egress. Decide whether daily keeps full day-record history: it makes daily a complete restore on its own, so the weekly merge may simplify. Once raw drains, either drop `energy-recent.csv` or switch it to recent day records. Update the restore runbook, which assumes history comes from the weekly. See the "Operational consumers" table in `docs/plans/2026-10-24-day-record-v2.md`.
 - [ ] **New-site history onboarding:** automatic, budgeted backfill for new sites so Smart Shift gets years of history without an operator run. Likely a pg_cron-driven route (60 s Hobby cap) reusing `migrateSiteHistory` with a per-run window cap and per-site progress (e.g. `history_backfilled_through`), stopping at the 2-day floor. It should honor `Site.history_backfill_from` (pre-provisioning gap) and must not re-fetch other days Tesla can't fill on every run. Needs its own design (spec "Follow-up" section).
 
@@ -98,24 +94,28 @@ Candidates that remain, in rough value order:
   `addTariffVersion` only inserts when `tariffContentHash` differs, so a stable
   tariff never grows the table. Lowest value of the candidates; skip unless a
   site's version count actually climbs.
-- **`getCycleAggregates` is the top compute cost, not egress** — re-added
+- **`getCycleAggregates` was the top compute cost, not egress** — re-added
   2026-10-01; it was in the 2026-07-19 postmortem but never made it onto this
-  list. `energy-repo.ts:422` still re-aggregates the whole cycle per 15-min poll.
-  Live `pg_stat_statements` on production: **327 calls, 849 ms mean, 278 s
-  total** — the heaviest non-`net.http_get` statement measured. The postmortem
-  claimed the `(site_id, timestamp)` index "already exists, so the only lever is
-  a pre-aggregated daily rollup". **That claim is wrong.** `EXPLAIN (ANALYZE,
-  BUFFERS)` shows the planner *ignoring* `idx_energy_site_ts` in favour of the
-  single-column `idx_energy_timestamp`, discarding ~120k rows per call on the
-  `site_id` filter (~61k buffers, ~120–180 ms) to return ~43 rows. Same
-  predicate via `count(*)` uses the composite index for 464 buffers / 10 ms, so
-  the composite path is both available and far cheaper.
-  **Change:** establish why the planner rejects `idx_energy_site_ts` (planner
-  GUCs, `site_id` selectivity/correlation, or an index-only-scan opportunity via
-  a covering index) *before* building a rollup table. Only escalate to
-  `EnergyDailyAggregate` if the plan cannot be fixed.
+  list. `energy-repo.ts:600` still re-aggregates the whole cycle per 15-min poll.
+  Live `pg_stat_statements` on production before the index changes: **327
+  calls, 849 ms mean, 278 s total** — the heaviest non-`net.http_get` statement
+  measured. The original postmortem claimed the `(site_id, timestamp)` index
+  "already exists, so the only lever is a pre-aggregated daily rollup". Later
+  `EXPLAIN (ANALYZE, BUFFERS)` showed the planner *ignoring* `idx_energy_site_ts`
+  in favour of the single-column `idx_energy_timestamp`, discarding ~120k rows
+  per call on the `site_id` filter (~61k buffers, ~120–180 ms) to return ~43
+  rows.
+  **Update 2026-10-25:** `idx_energy_timestamp` is gone (dropped on Prod/Dev
+  2026-10-24 and removed by migration `20261024120000`), and both timestamp
+  indexes were reindexed, so the planner can no longer choose that path. A
+  30-day Prod `EXPLAIN (ANALYZE, BUFFERS)` (8,640 rows, one site) now uses
+  `idx_energy_site_ts`: 729 buffers (~6 MB), ~104 ms. The remaining cost is the
+  bitmap heap scan plus sort, not a wrong index. `pg_stat_statements` was last
+  reset 2026-07-18, so the old 849 ms mean predates these changes. Re-measure a
+  full cycle and only escalate to `EnergyDailyAggregate` if ~100 ms per call is
+  still material.
 - **`getRawEnergyData` is the top egress line** — re-added 2026-10-01, same
-  origin. `energy-repo.ts:454` still ships every 5-min row in the window. The
+  origin. `energy-repo.ts:633` still ships every 5-min row in the window. The
   original postmortem framing ("sum in SQL") is wrong: the markup route uses
   today's raw rows for three things, and **per-TOU bill pricing walks each row
   through `schedule.getTariffPeriod(ts)`**, so a scalar `SUM` cannot replace it.
