@@ -67,6 +67,19 @@ describe('verifyBackupDirectory', () => {
         await expect(verifyBackupDirectory(dir, 'small')).rejects.toThrow('EnergyDaySummary');
     });
 
+    it('accepts empty day records, which have no summaries, alongside raw history', async () => {
+        const empty = copyBlock('EnergyDayArchive', '"site_id", "day_start", "status"', ['s1\t2026-10-13 05:00:00+00\tempty']);
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES + ENERGY + empty });
+        await expect(verifyBackupDirectory(dir, 'full')).resolves.toEqual({ User: 1, Site: 2, EnergyData: 1, EnergyDayArchive: 1 });
+        // Empty records alone are not energy history.
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES + empty });
+        await expect(verifyBackupDirectory(dir, 'full')).rejects.toThrow('no energy history');
+        // A record with samples still needs its summaries.
+        const mixed = copyBlock('EnergyDayArchive', '"site_id", "day_start", "status"', ['s1\t2026-10-13 05:00:00+00\tempty', 's1\t2026-10-14 05:00:00+00\tcomplete']);
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES + ENERGY + mixed });
+        await expect(verifyBackupDirectory(dir, 'full')).rejects.toThrow('EnergyDaySummary');
+    });
+
     it('rejects a small backup whose data still contains EnergyData, so a failed exclusion is caught', async () => {
         await backup({ 'data.sql': PREAMBLE + USERS + SITES + ENERGY, 'energy-recent.csv': RECENT, 'backup-info': DAILY_INFO });
         await expect(verifyBackupDirectory(dir, 'small')).rejects.toThrow('EnergyData was not excluded');

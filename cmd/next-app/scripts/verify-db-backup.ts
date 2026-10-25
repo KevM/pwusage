@@ -45,6 +45,30 @@ export function countCopyRows(data: string): Record<string, number> {
 }
 
 /**
+ * Day records in a pg_dump data file that hold samples. An `empty` record (Tesla
+ * answered the day with no samples) has no summary rows, so it is not counted.
+ */
+export function countDayRecordsWithSamples(data: string): number {
+    let status: number | undefined;
+    let copying = false;
+    let count = 0;
+    for (const line of data.split('\n')) {
+        if (!copying) {
+            const match = COPY_HEADER.exec(line);
+            if (match?.[1] !== 'EnergyDayArchive') continue;
+            copying = true;
+            const columns = /\((.*)\)/.exec(line)?.[1].split(',').map((c) => c.trim().replace(/"/g, '')) ?? [];
+            status = columns.indexOf('status');
+        } else if (line === '\\.') {
+            copying = false;
+        } else if (status === undefined || status < 0 || line.split('\t')[status] !== 'empty') {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+/**
  * Checks an unpacked backup before it is uploaded, so an empty, truncated or
  * mis-scoped dump fails the run instead of being stored as a good backup.
  */
@@ -69,11 +93,12 @@ export async function verifyBackupDirectory(dir: string, dump: BackupDump): Prom
     for (const table of ['User', 'Site']) {
         if (!rows[table]) throw new Error(`data.sql has no rows for ${table}`);
     }
-    // Day records carry their totals in summary rows; records without any were cut off.
-    if (rows.EnergyDayArchive && !rows.EnergyDaySummary) throw new Error('data.sql has day records but no rows for EnergyDaySummary');
+    // Day records with samples carry their totals in summary rows; records without any were cut off.
+    const recordsWithSamples = rows.EnergyDayArchive ? countDayRecordsWithSamples(data) : 0;
+    if (recordsWithSamples && !rows.EnergyDaySummary) throw new Error('data.sql has day records but no rows for EnergyDaySummary');
     if (dump === 'full') {
         // History lives in raw EnergyData, day records, or both while the migration drains raw.
-        if (!rows.EnergyData && !rows.EnergyDayArchive) throw new Error('data.sql has no energy history (EnergyData or EnergyDayArchive)');
+        if (!rows.EnergyData && !recordsWithSamples) throw new Error('data.sql has no energy history (EnergyData or EnergyDayArchive)');
         return rows;
     }
 
