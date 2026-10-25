@@ -42,6 +42,8 @@ async function run():Promise<void> {
     } finally {await pool.end();}
 }
 run().catch(error=>{
-    console.error(error instanceof ConversionUsageError?error.message:'Archive conversion failed; days already converted stay converted and a re-run resumes. No raw rows are touched.');
+    // A PostgreSQL error code (e.g. 42703, undefined column) says what failed without printing row data.
+    const code=typeof (error as {code?:unknown})?.code==='string'?` (database error ${(error as {code:string}).code})`:'';
+    console.error(error instanceof ConversionUsageError?error.message:`Archive conversion failed${code}; days already converted stay converted and a re-run resumes. No raw rows are touched.`);
     process.exitCode=1;
 });

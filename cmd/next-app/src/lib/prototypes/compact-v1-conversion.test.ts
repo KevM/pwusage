@@ -6,7 +6,7 @@ import { decodeDaySamples, rollupDay, toSample } from './compact-energy';
 import { recoverVerifiedSamples } from './compact-energy-recovery';
 import { deriveDayAttribution } from './day-attribution';
 import {
-    CONVERSION_DAY_BYTES, convertV1Day, parseConversionArgs, runV1Conversion, v1ConversionTimelineRevision,
+    CONVERSION_DAY_BYTES, ConversionUsageError, convertV1Day, parseConversionArgs, runV1Conversion, v1ConversionTimelineRevision,
     type ConversionCandidate, type V1ConversionRepo,
 } from './compact-v1-conversion';
 import type { DayConversionResult } from './compact-history-store';
@@ -133,6 +133,7 @@ describe('runV1Conversion', () => {
         const done = new Set<string>();
         const key = (c: ConversionCandidate) => `${c.siteId}/${+c.start}`;
         const repo: V1ConversionRepo = {
+            async schemaReady() { return true; },
             async counts(sites) {
                 const scoped = days.filter(d => !sites || sites.includes(d.siteId));
                 return { v1: scoped.filter(d => !done.has(key(d))).length, v2: scoped.filter(d => done.has(key(d))).length };
@@ -235,6 +236,17 @@ describe('runV1Conversion', () => {
         } };
         await expect(runV1Conversion(repo, { ...options, concurrency: 2, batchSize: 6 })).rejects.toThrow('connection lost');
         expect(seen).toEqual(['a1', 'b1']);
+    });
+    it('refuses to start, preview included, until the v2 schema migration has run', async () => {
+        const { repo, calls } = fakeRepo([candidate('a', 1)]);
+        const counted: unknown[] = [];
+        const unmigrated: V1ConversionRepo = { ...repo, async schemaReady() { return false; }, async counts(sites) { counted.push(sites); return repo.counts(sites); } };
+        for (const apply of [false, true]) {
+            await expect(runV1Conversion(unmigrated, { ...options, apply })).rejects.toThrow(ConversionUsageError);
+            await expect(runV1Conversion(unmigrated, { ...options, apply })).rejects.toThrow(/20261024190000_day_record_v2_schema/);
+        }
+        expect(calls).toEqual([]);
+        expect(counted).toEqual([]);
     });
     it('counts busy days without stopping', async () => {
         const { repo } = fakeRepo([candidate('a', 1), candidate('a', 2)], c => c.start.getUTCDate() === 1 ? { status: 'busy' } : { status: 'converted' });
