@@ -90,7 +90,7 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - **Framework**: All iOS tests must use Swift Testing (`SwiftTest` via `import Testing`, `@Suite`, `@Test`, `#expect`, `#require`). Do not use legacy `XCTest`.
 - **Targeting Specific Tests**: Target individual suites/fixtures (e.g., `./run-tests.sh AppConfigurationTests`) or specific test methods (e.g., `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin`). The script automatically normalizes the target prefix and method parentheses. `./run-tests.sh PWUsageTests` runs the whole bundle. A run that executes zero tests (for example a misspelled suite) exits non-zero even though `xcodebuild` prints `TEST SUCCEEDED`. After changing the script, run `./test-run-tests.sh`.
 - **Waiting in tests**: Never assert after a fixed `Task.sleep`. Use `eventually` for a state that must be reached and `staysTrue` for one that must not change, both in `PWUsageTests/test-waits.swift`.
-- **Lint**: `swiftlint --strict` from the repository root uses `.swiftlint.yml`. CI runs it as a non-blocking step until the baseline in `CODE_AUDIT.md` §14.4 is cleared; do not add new violations.
+- **Lint**: `swiftlint lint --strict --baseline .swiftlint-baseline.json` from the repository root uses `.swiftlint.yml`. CI pins SwiftLint 0.65.1 and fails on new violations; existing violations are tracked in the baseline. Do not grow the baseline, and regenerate it when fixes land. The remaining cleanup is tracked in `CODE_AUDIT.md` §14.4.
 
 ## Communication Style
 - **Task Management**: Use `task.md` to track huge chunks of work.

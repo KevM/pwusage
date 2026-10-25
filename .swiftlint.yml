@@ -1,4 +1,5 @@
-# SwiftLint for the iOS app. Run from the repository root: `swiftlint --strict`.
+# SwiftLint for the iOS app. Run from the repository root:
+# `swiftlint lint --strict --baseline .swiftlint-baseline.json`.
 # Size limits are raised to fit the largest existing files rather than
 # reformatting them; lower them as those files are split (CODE_AUDIT.md §9.8, §9.9).
 included:
