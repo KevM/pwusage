@@ -208,6 +208,11 @@ in the log before concluding the endpoint is down.
   fallback URI is the wrong key set, so a transient discovery failure would
   downgrade an `/nts` token to the base `/v3` key set and manufacture a
   spurious kid miss. This is the exact bug fixed in Task 2.
+- Adding manual validation of Tesla's well-known keys or an eager key-set check.
+  This has been attempted a few times, and each attempt hit Tesla-published keys
+  and issued-token `kid`s being out of sync. The current refetch-on-miss plus
+  bounded stale-cache behavior is the stable path; revisit only with a reproduced
+  live mismatch (see `TODO.md`).
 - Downgrading `onStaleCacheFallback` to `debug`. It is the only signal that the
   availability trade is actively being paid.
 
