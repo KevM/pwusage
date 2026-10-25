@@ -408,6 +408,38 @@ describe('refreshLiveStatus', () => {
         expect(siteRepoMock.updateLiveStatusCache).toHaveBeenCalledWith('site-1', liveStatus, expect.any(Number));
     });
 
+    it('cancels the Tesla request when the live deadline expires', async () => {
+        vi.useFakeTimers();
+        try {
+            siteRepoMock.getSite.mockResolvedValue({
+                id: 'site-1',
+                live_status_cache: null,
+                last_live_refresh_at: null,
+            });
+            userRepoMock.getTokensForSite.mockResolvedValue(tokens);
+            const { refreshLiveStatus } = await importRefreshLiveStatus();
+            const { ioSignal } = await import('./io-deadline');
+            let signal: AbortSignal | undefined;
+            teslaClientMock.getLiveStatus.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+                signal = ioSignal();
+                signal?.addEventListener('abort', () => reject(signal?.reason), { once: true });
+            }));
+
+            const pending = refreshLiveStatus('site-1', { timeoutMs: 100 });
+            await vi.advanceTimersByTimeAsync(100);
+
+            await expect(pending).resolves.toMatchObject({
+                status: 'error',
+                errorMessage: 'tesla_live_timeout',
+            });
+            expect(signal).toBeInstanceOf(AbortSignal);
+            expect(signal?.aborted).toBe(true);
+            expect(siteRepoMock.updateLiveStatusCache).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('refreshLiveStatus returns no-tokens without fetching Tesla', async () => {
         siteRepoMock.getSite.mockResolvedValue({ id: 'site-1', live_status_cache: null, last_live_refresh_at: null });
         userRepoMock.getTokensForSite.mockResolvedValue(null);

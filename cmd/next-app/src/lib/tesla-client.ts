@@ -125,6 +125,10 @@ export interface TeslaClientConfig {
 }
 
 const RATE_LIMIT_MAX_RETRIES = 2;
+// Per-attempt Fleet API deadline. Without it a blackholed host can hold the
+// login callback open until the route's maxDuration. Retries (401/421/429) each
+// get their own attempt, so this bounds one request rather than the whole call.
+const FLEET_REQUEST_TIMEOUT_MS = 8000;
 const RATE_LIMIT_DEFAULT_DELAY_MS = 1000;
 const RATE_LIMIT_MAX_DELAY_MS = 60_000;
 
@@ -277,7 +281,12 @@ export class TeslaClient {
                 ...options?.headers,
             };
             checkIoDeadline();
-            return abortable(fetch(url, { ...options, headers, signal: ioSignal() ?? options?.signal }));
+            const signals: AbortSignal[] = [AbortSignal.timeout(FLEET_REQUEST_TIMEOUT_MS)];
+            const inherited = ioSignal();
+            if (inherited) signals.push(inherited);
+            if (options?.signal) signals.push(options.signal);
+            const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+            return abortable(fetch(url, { ...options, headers, signal }), signal);
         };
 
         let response = await makeRequest(this.config.accessToken);

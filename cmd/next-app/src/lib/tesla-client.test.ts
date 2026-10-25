@@ -143,6 +143,50 @@ describe('TeslaClient rate limiting (429)', () => {
     });
 });
 
+describe('TeslaClient request deadlines', () => {
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    function hangUntilAborted(): void {
+        vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise<Response>(() => {}));
+    }
+
+    async function expectDeadline(
+        call: (client: TeslaClient) => Promise<unknown>,
+    ): Promise<void> {
+        const timeout = new AbortController();
+        const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal);
+        hangUntilAborted();
+
+        const promise = call(new TeslaClient({ accessToken: 'tok' }));
+        promise.catch(() => undefined);
+
+        expect(timeoutSpy).toHaveBeenCalledWith(8000);
+        const assertion = expect(promise).rejects.toThrow(/timed out/i);
+        timeout.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+        await assertion;
+    }
+
+    it('bounds getUserInfo with a per-request deadline', async () => {
+        await expectDeadline((client) => client.getUserInfo());
+    });
+
+    it('bounds getProducts with a per-request deadline', async () => {
+        await expectDeadline((client) => client.getProducts());
+    });
+
+    it('bounds getEnergySiteInfo, which ensureSite calls for every site', async () => {
+        await expectDeadline((client) => client.getEnergySiteInfo('123'));
+    });
+});
+
 describe('TeslaClient.getSoeHistory', () => {
     beforeEach(() => {
         vi.spyOn(console, 'log').mockImplementation(() => {});
