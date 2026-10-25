@@ -94,24 +94,25 @@ Candidates that remain, in rough value order:
   `addTariffVersion` only inserts when `tariffContentHash` differs, so a stable
   tariff never grows the table. Lowest value of the candidates; skip unless a
   site's version count actually climbs.
-- **`getCycleAggregates` is the top compute cost, not egress** — re-added
+- **`getCycleAggregates` was the top compute cost, not egress** — re-added
   2026-10-01; it was in the 2026-07-19 postmortem but never made it onto this
-  list. `energy-repo.ts:422` still re-aggregates the whole cycle per 15-min poll.
-  Live `pg_stat_statements` on production: **327 calls, 849 ms mean, 278 s
-  total** — the heaviest non-`net.http_get` statement measured. The postmortem
-  claimed the `(site_id, timestamp)` index "already exists, so the only lever is
-  a pre-aggregated daily rollup". **That claim is wrong.** `EXPLAIN (ANALYZE,
-  BUFFERS)` shows the planner *ignoring* `idx_energy_site_ts` in favour of the
-  single-column `idx_energy_timestamp`, discarding ~120k rows per call on the
-  `site_id` filter (~61k buffers, ~120–180 ms) to return ~43 rows. Same
-  predicate via `count(*)` uses the composite index for 464 buffers / 10 ms, so
-  the composite path is both available and far cheaper.
-  **Change:** establish why the planner rejects `idx_energy_site_ts` (planner
-  GUCs, `site_id` selectivity/correlation, or an index-only-scan opportunity via
-  a covering index) *before* building a rollup table. Only escalate to
-  `EnergyDailyAggregate` if the plan cannot be fixed.
+  list. `energy-repo.ts:600` still re-aggregates the whole cycle per 15-min poll.
+  Live `pg_stat_statements` on production before the index changes: **327
+  calls, 849 ms mean, 278 s total** — the heaviest non-`net.http_get` statement
+  measured. The original postmortem claimed the `(site_id, timestamp)` index
+  "already exists, so the only lever is a pre-aggregated daily rollup". Later
+  `EXPLAIN (ANALYZE, BUFFERS)` showed the planner *ignoring* `idx_energy_site_ts`
+  in favour of the single-column `idx_energy_timestamp`, discarding ~120k rows
+  per call on the `site_id` filter (~61k buffers, ~120–180 ms) to return ~43
+  rows.
+  **Update 2026-10-25:** `idx_energy_timestamp` is gone (dropped on Prod/Dev
+  2026-10-24 and removed by migration `20261024120000`), and both timestamp
+  indexes were reindexed, so the planner can no longer choose that path.
+  Re-measure `pg_stat_statements` and `EXPLAIN (ANALYZE, BUFFERS)` before
+  building anything. Only escalate to `EnergyDailyAggregate` if the composite
+  path is still the bottleneck.
 - **`getRawEnergyData` is the top egress line** — re-added 2026-10-01, same
-  origin. `energy-repo.ts:454` still ships every 5-min row in the window. The
+  origin. `energy-repo.ts:633` still ships every 5-min row in the window. The
   original postmortem framing ("sum in SQL") is wrong: the markup route uses
   today's raw rows for three things, and **per-TOU bill pricing walks each row
   through `schedule.getTariffPeriod(ts)`**, so a scalar `SUM` cannot replace it.
