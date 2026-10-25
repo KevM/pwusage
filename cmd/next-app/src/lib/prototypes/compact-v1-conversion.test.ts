@@ -185,6 +185,18 @@ describe('runV1Conversion', () => {
         expect(capped.reservedBytes).toBeGreaterThan(2 * perDay);
         expect(capped.reservedBytes).toBeLessThanOrEqual(3 * perDay - 1);
     });
+    it('resumes a capped run after the last day it examined, past days left v1', async () => {
+        const days = [candidate('a', 1), candidate('a', 2), candidate('b', 1)];
+        const { repo, calls } = fakeRepo(days, c => c.siteId === 'a' && c.start.getUTCDate() === 1 ? { status: 'left-v1', reason: 'off-grid' } : { status: 'converted' });
+        const first = await runV1Conversion(repo, { ...options, apply: true, maxDays: 1 });
+        expect(first).toMatchObject({ stopped: 'day-cap', considered: 1, resumeAfter: { siteId: 'a', day: days[0].start.toISOString() } });
+        const second = await runV1Conversion(repo, { ...options, apply: true, maxDays: 1, after: { siteId: 'a', start: new Date(first.resumeAfter!.day) } });
+        expect(second).toMatchObject({ considered: 1, counts: { converted: 1 }, resumeAfter: { siteId: 'a', day: days[1].start.toISOString() } });
+        const rest = await runV1Conversion(repo, { ...options, apply: true, after: { siteId: 'a', start: days[1].start } });
+        expect(rest).toMatchObject({ stopped: 'caught-up', considered: 1, remainingV1: 1 });
+        expect(rest.resumeAfter).toBeUndefined();
+        expect(calls.map(c => c.candidate)).toEqual(days);
+    });
     it('counts busy days without stopping', async () => {
         const { repo } = fakeRepo([candidate('a', 1), candidate('a', 2)], c => c.start.getUTCDate() === 1 ? { status: 'busy' } : { status: 'converted' });
         expect(await runV1Conversion(repo, { ...options, apply: true })).toMatchObject({ counts: { busy: 1, converted: 1 }, remainingV1: 1 });
@@ -193,11 +205,13 @@ describe('runV1Conversion', () => {
 
 describe('parseConversionArgs', () => {
     it('previews all sites by default and takes repeatable site IDs, apply and caps', () => {
-        expect(parseConversionArgs([])).toEqual({ sites: null, apply: false, maxDays: 500, maxReservedBytes: 16 * 1024 * 1024 });
+        expect(parseConversionArgs([])).toEqual({ sites: null, apply: false, maxDays: 500, maxReservedBytes: 16 * 1024 * 1024, after: null });
         expect(parseConversionArgs(['--site-id', 'a', '--site-id', 'b', '--apply', '--max-days', '50', '--max-mb', '4']))
-            .toEqual({ sites: ['a', 'b'], apply: true, maxDays: 50, maxReservedBytes: 4 * 1024 * 1024 });
+            .toEqual({ sites: ['a', 'b'], apply: true, maxDays: 50, maxReservedBytes: 4 * 1024 * 1024, after: null });
+        // The report's resumeAfter, passed back as is.
+        expect(parseConversionArgs(['--after', 'site 1/2026-10-01T05:00:00.000Z']).after).toEqual({ siteId: 'site 1', start: new Date('2026-10-01T05:00:00.000Z') });
     });
-    it.each([[['--max-days', '0']], [['--max-days', '5001']], [['--max-mb', '257']], [['--site-id']], [['--bogus', '1']]])('rejects %j', args => {
+    it.each([[['--max-days', '0']], [['--max-days', '5001']], [['--max-mb', '257']], [['--site-id']], [['--bogus', '1']], [['--after', 'site']], [['--after', 'site/yesterday']]])('rejects %j', args => {
         expect(() => parseConversionArgs(args)).toThrow();
     });
 });

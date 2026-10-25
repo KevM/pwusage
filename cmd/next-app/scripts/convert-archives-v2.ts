@@ -10,7 +10,10 @@
  * raw rows stay until the cutover, and finalization keeps the converted record
  * while it matches them).
  *
- *   npx tsx scripts/convert-archives-v2.ts [--site-id <id>]... [--apply] [--max-days 500] [--max-mb 16]
+ *   npx tsx scripts/convert-archives-v2.ts [--site-id <id>]... [--apply] [--max-days 500] [--max-mb 16] [--after <siteId>/<day>]
+ *
+ * A run stopped by a cap prints `resumeAfter`; pass it back as `--after` to
+ * continue past the days it examined (days left v1 are not re-examined first).
  *
  * `--max-mb` caps the run's conservative read reservation (stored payload plus
  * a fixed per-day overhead; measured real cost is a few KB per day), to stay

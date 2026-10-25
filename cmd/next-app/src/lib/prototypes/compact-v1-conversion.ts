@@ -80,7 +80,11 @@ export interface V1ConversionRepo {
     candidates(sites: string[] | null, after: { siteId: string; start: Date } | null, limit: number): Promise<ConversionCandidate[]>;
     convert(candidate: ConversionCandidate, apply: boolean, now: Date): Promise<DayConversionResult>;
 }
-export interface V1ConversionOptions { sites: string[] | null; apply: boolean; maxDays: number; maxReservedBytes: number; batchSize?: number; now: Date }
+export interface V1ConversionOptions {
+    sites: string[] | null; apply: boolean; maxDays: number; maxReservedBytes: number; batchSize?: number; now: Date;
+    /** Start after this (site, day): a capped run's `resumeAfter`, so days left v1 are not re-examined first. */
+    after?: { siteId: string; start: Date } | null;
+}
 export interface V1ConversionReport {
     mode: 'preview' | 'apply'; stopped: 'caught-up' | 'day-cap' | 'byte-cap';
     /** v1 days examined this run. */
@@ -93,6 +97,8 @@ export interface V1ConversionReport {
     leftV1: { byReason: Partial<Record<V1ConversionReason, number>>; days: { siteId: string; day: string; reason: V1ConversionReason }[] };
     /** Conservative read reservation (not wire bytes), compared with `maxReservedBytes`. */
     reservedBytes: number;
+    /** When a cap stopped the run: pass back as `--after <siteId>/<day>` to continue past it. */
+    resumeAfter?: { siteId: string; day: string };
 }
 
 /**
@@ -110,7 +116,7 @@ export async function runV1Conversion(repo: V1ConversionRepo, options: V1Convers
     const report: V1ConversionReport = { mode: options.apply ? 'apply' : 'preview', stopped: 'caught-up', considered: 0, counts: {}, alreadyV2: start.v2,
         remainingV1: start.v1, leftV1: { byReason: {}, days: [] }, reservedBytes: LISTING_BYTES };
     // Keyset cursor: a day left v1 is examined once per run, so a run always ends.
-    let after: { siteId: string; start: Date } | null = null;
+    let after: { siteId: string; start: Date } | null = options.after ?? null;
     scan: for (;;) {
         report.reservedBytes += LISTING_BYTES;
         const batch = await repo.candidates(options.sites, after, batchSize);
@@ -132,6 +138,7 @@ export async function runV1Conversion(repo: V1ConversionRepo, options: V1Convers
         }
         if (batch.length < batchSize) break;
     }
+    if (report.stopped !== 'caught-up' && after) report.resumeAfter = { siteId: after.siteId, day: after.start.toISOString() };
     report.remainingV1 = (await repo.counts(options.sites)).v1;
     return report;
 }
@@ -159,10 +166,17 @@ export class V1ConversionPgRepo implements V1ConversionRepo {
 
 /** Operator input errors, safe to print. */
 export class ConversionUsageError extends Error {}
-const USAGE = 'Usage: [--site-id <id>]... [--apply] [--max-days 1-5000] [--max-mb 1-256]';
+const USAGE = 'Usage: [--site-id <id>]... [--apply] [--max-days 1-5000] [--max-mb 1-256] [--after <siteId>/<ISO day>]';
+/** `<siteId>/<ISO day>`, as a report's `resumeAfter` prints them. */
+function parseCursor(value: string): { siteId: string; start: Date } {
+    const split = value.lastIndexOf('/');
+    const siteId = value.slice(0, split), day = value.slice(split + 1), start = new Date(day);
+    if (split < 1 || siteId.length > 200 || !Number.isSafeInteger(+start) || start.toISOString() !== day) throw new ConversionUsageError(`Invalid --after cursor. ${USAGE}`);
+    return { siteId, start };
+}
 export function parseConversionArgs(args: string[]): Omit<V1ConversionOptions, 'now' | 'batchSize'> {
     const sites: string[] = [];
-    let apply = false, maxDays = 500, maxMb = 16;
+    let apply = false, maxDays = 500, maxMb = 16, after: { siteId: string; start: Date } | null = null;
     for (let i = 0; i < args.length; i++) {
         const key = args[i];
         if (key === '--apply') { apply = true; continue; }
@@ -171,8 +185,9 @@ export function parseConversionArgs(args: string[]): Omit<V1ConversionOptions, '
         if (key === '--site-id' && value.trim() && value.length <= 200) sites.push(value);
         else if (key === '--max-days') maxDays = Number(value);
         else if (key === '--max-mb') maxMb = Number(value);
+        else if (key === '--after') after = parseCursor(value);
         else throw new ConversionUsageError(`Unknown argument ${key}. ${USAGE}`);
     }
     if (!Number.isInteger(maxDays) || maxDays < 1 || maxDays > 5000 || !Number.isInteger(maxMb) || maxMb < 1 || maxMb > 256) throw new ConversionUsageError(USAGE);
-    return { sites: sites.length ? [...new Set(sites)] : null, apply, maxDays, maxReservedBytes: maxMb * 1024 * 1024 };
+    return { sites: sites.length ? [...new Set(sites)] : null, apply, maxDays, maxReservedBytes: maxMb * 1024 * 1024, after };
 }

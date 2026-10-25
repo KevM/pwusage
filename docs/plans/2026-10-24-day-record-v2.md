@@ -195,6 +195,9 @@ read support is removed.
 - **Cost:** reads only the archive row and its summaries; measured ~5 KB per
   day of PostgreSQL responses, reserved conservatively at the payload + 24 KB
   (`--max-mb`, default 16; `--max-days`, default 500).
+- **Resuming:** v2 rows are never selected again. A run stopped by a cap
+  prints `resumeAfter`; `--after <siteId>/<day>` continues past the days it
+  examined, so days left v1 never block later ones.
 
 ## Decisions (settled 2026-10-24)
 
