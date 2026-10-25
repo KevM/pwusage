@@ -424,3 +424,11 @@ leaves v1 by design has a disposition (decided 2026-10-25):
    backfill, a timezone change goes through `rebuild-site-timezone.ts`, and the
    converter runs with `--reattribute` (plus refetches for `off-grid`) until it
    reports zero v1 rows, after which v1 read support is removed.
+
+   **Cutover log:**
+   - 2026-10-25: `convert-archives-v2.ts --apply` on Prod converted the last
+     100 v1 days; all 2,667 Prod archive days are format 2 with a status (the
+     archive job still writes v1 until day writes are on, so re-run it before
+     removing v1 reads).
+   - 2026-10-25: `COMPACT_DAY_WRITES_ENABLED=true` set for Preview (beta, Dev
+     DB) to verify day writes before Prod.
