@@ -212,8 +212,8 @@ export async function GET(request: Request) {
 
         // On cache miss, do a short inline live-status fetch to avoid blank SoC on this response.
         if (hasTeslaTokens && !liveStatus) {
+            const liveInlineStart = Date.now();
             try {
-                const liveInlineStart = Date.now();
                 const inlineResult = await refreshLiveStatus(site.id, {
                     timeoutMs: 900,
                     useCached: false,
@@ -228,14 +228,29 @@ export async function GET(request: Request) {
                 } else if (inlineResult.errorMessage?.includes('timeout')) {
                     liveInlineStatus = 'timeout';
                     fetchStatus = 'inline-timeout';
-                    console.info('[TrmnlMarkup] Inline live status fetch timed out; continuing with stale-while-refresh.');
+                    console.info('[TrmnlMarkup] Inline live status fetch timed out; continuing with stale-while-refresh.', {
+                        siteId: site.id,
+                        status: inlineResult.status,
+                        durationMs: liveInlineMs,
+                        error: inlineResult.errorMessage,
+                    });
                 } else {
-                    liveInlineStatus = 'error';
-                    console.warn('[TrmnlMarkup] Inline live status fetch failed:', inlineResult.errorMessage);
+                    liveInlineStatus = inlineResult.status === 'error' ? 'error' : inlineResult.status;
+                    const log = inlineResult.status === 'error' ? console.warn : console.info;
+                    log('[TrmnlMarkup] Inline live status fetch did not return fresh data; continuing with stale-while-refresh.', {
+                        siteId: site.id,
+                        status: inlineResult.status,
+                        durationMs: liveInlineMs,
+                        error: inlineResult.errorMessage ?? null,
+                    });
                 }
             } catch (error) {
                 liveInlineStatus = 'error';
-                console.warn('[TrmnlMarkup] Inline live status fetch failed:', error);
+                console.warn('[TrmnlMarkup] Inline live status fetch threw; continuing with stale-while-refresh.', {
+                    siteId: site.id,
+                    durationMs: Date.now() - liveInlineStart,
+                    error: error instanceof Error ? error.message : String(error),
+                });
             }
         }
 
