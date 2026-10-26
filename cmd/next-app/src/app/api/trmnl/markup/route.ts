@@ -215,8 +215,8 @@ async function handleGET(request: Request) {
 
         // On cache miss, do a short inline live-status fetch to avoid blank SoC on this response.
         if (hasTeslaTokens && !liveStatus) {
+            const liveInlineStart = Date.now();
             try {
-                const liveInlineStart = Date.now();
                 const inlineResult = await refreshLiveStatus(site.id, {
                     timeoutMs: 900,
                     useCached: false,
@@ -231,14 +231,32 @@ async function handleGET(request: Request) {
                 } else if (inlineResult.errorMessage?.includes('timeout')) {
                     liveInlineStatus = 'timeout';
                     fetchStatus = 'inline-timeout';
-                    logEvent('info', 'trmnl.live-refresh.timed-out', { siteId: site.id });
+                    logEvent('info', 'trmnl.live-refresh.timed-out', { siteId: site.id, outcome: inlineResult.status, durationMs: liveInlineMs });
+                    console.info('[TrmnlMarkup] Inline live status fetch timed out; continuing with stale-while-refresh.', {
+                        siteId: site.id,
+                        status: inlineResult.status,
+                        durationMs: liveInlineMs,
+                        error: inlineResult.errorMessage,
+                    });
                 } else {
-                    liveInlineStatus = 'error';
-                    logEvent('warn', 'trmnl.live-refresh.failed', { siteId: site.id, outcome: inlineResult.status });
+                    liveInlineStatus = inlineResult.status === 'error' ? 'error' : inlineResult.status;
+                    logEvent(inlineResult.status === 'error' ? 'warn' : 'info', 'trmnl.live-refresh.no-fresh-data', { siteId: site.id, outcome: inlineResult.status, durationMs: liveInlineMs });
+                    const log = inlineResult.status === 'error' ? console.warn : console.info;
+                    log('[TrmnlMarkup] Inline live status fetch did not return fresh data; continuing with stale-while-refresh.', {
+                        siteId: site.id,
+                        status: inlineResult.status,
+                        durationMs: liveInlineMs,
+                        error: inlineResult.errorMessage ?? null,
+                    });
                 }
             } catch (error) {
                 liveInlineStatus = 'error';
-                logEvent('warn', 'trmnl.live-refresh.threw', { siteId: site.id, error });
+                logEvent('warn', 'trmnl.live-refresh.threw', { siteId: site.id, durationMs: Date.now() - liveInlineStart, error });
+                console.warn('[TrmnlMarkup] Inline live status fetch threw; continuing with stale-while-refresh.', {
+                    siteId: site.id,
+                    durationMs: Date.now() - liveInlineStart,
+                    error: error instanceof Error ? error.message : String(error),
+                });
             }
         }
 
