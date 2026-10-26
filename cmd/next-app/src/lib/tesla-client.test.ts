@@ -114,7 +114,7 @@ describe('TeslaClient rate limiting (429)', () => {
             onTokenError,
         });
         const promise = client.getProducts();
-        const assertion = expect(promise).rejects.toThrow(/401/);
+        const assertion = expect(promise).rejects.toMatchObject({ name: 'Error', message: 'refresh boom' });
 
         await vi.advanceTimersByTimeAsync(1000);
         await assertion;
