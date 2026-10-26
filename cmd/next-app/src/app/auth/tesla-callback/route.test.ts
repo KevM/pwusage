@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
     cookies: vi.fn(),
-    redirect: vi.fn(),
+    redirect: vi.fn((path: string) => { throw Object.assign(new Error('Redirect'), { digest: `NEXT_REDIRECT;replace;${path};307;` }); }),
     handleTeslaCallback: vi.fn(),
     signSiteToken: vi.fn(() => 'signed-site-token'),
     cookieDelete: vi.fn(),
@@ -196,7 +196,7 @@ describe('GET /auth/tesla-callback', () => {
         mocks.getCookie.mockReturnValue(undefined);
 
         const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
-        await GET(req);
+        await expect(GET(req)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
 
         expect(mocks.cookieSet).toHaveBeenCalledWith('site_auth', 'signed-site-token', expect.any(Object));
         expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_state');
@@ -220,7 +220,7 @@ describe('GET /auth/tesla-callback', () => {
         mocks.getAuthState.mockResolvedValueOnce({ isActive: true, sessionVersion: 4, roles: ['user'] });
 
         const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
-        await GET(req);
+        await expect(GET(req)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
 
         expect(mocks.signSiteToken).toHaveBeenCalledWith(['site-1'], ['user'], 'user-123', undefined, 4);
     });
@@ -234,7 +234,7 @@ describe('GET /auth/tesla-callback', () => {
         });
 
         const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
-        await GET(req);
+        await expect(GET(req)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
 
         expect(mocks.cookieSet).not.toHaveBeenCalledWith('site_auth', expect.any(String), expect.any(Object));
         expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_state');
@@ -252,14 +252,14 @@ describe('GET /auth/tesla-callback', () => {
         // Test safe path
         mocks.getCookie.mockImplementation((name: string) => name === 'auth_callback' ? { value: '/dashboard' } : undefined);
         const req1 = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
-        await GET(req1);
+        await expect(GET(req1)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
         expect(mocks.redirect).toHaveBeenCalledWith('/dashboard');
 
         // Test unsafe path falls back to '/'
         vi.clearAllMocks();
         mocks.getCookie.mockImplementation((name: string) => name === 'auth_callback' ? { value: '//evil.com' } : undefined);
         const req2 = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
-        await GET(req2);
+        await expect(GET(req2)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
         expect(mocks.redirect).toHaveBeenCalledWith('/');
     });
 

@@ -1,3 +1,4 @@
+import { observeRoute, setLogContext } from '@/lib/observability';
 import type { MobileTodayCost } from '@/lib/mobile-dashboard-contract';
 import { NextResponse } from 'next/server';
 import { isTeslaAuthError } from '@/lib/tesla-client';
@@ -27,7 +28,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 const MOBILE_ENERGY_STALE_AFTER_MS = 30 * 60 * 1000;
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
     return withRequestContext(async () => {
         try {
             const { searchParams } = new URL(request.url);
@@ -41,6 +42,7 @@ export async function GET(request: Request) {
                 return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
             }
 
+            setLogContext({ siteId });
             const siteRepo = new SiteRepo();
 
             const now = new Date();
@@ -269,3 +271,5 @@ export async function GET(request: Request) {
         }
     });
 }
+
+export const GET = observeRoute('/api/site-live-data', handleGET);

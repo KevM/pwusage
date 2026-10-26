@@ -1,9 +1,10 @@
+import { logEvent, observeRoute } from '@/lib/observability';
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { UserRepo } from '@/lib/user-repo';
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
     try {
         const authHeader = request.headers.get('authorization');
         const cronSecret = process.env.CRON_SECRET;
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
         const userRepo = new UserRepo();
         const result = await userRepo.verifyAllUserStatuses();
 
-        console.log(`[CRON] User status verification completed: ${JSON.stringify(result)}`);
+        logEvent('info', 'cron.check-users.completed', { summary: result });
 
         return NextResponse.json({
             success: true,
@@ -23,7 +24,9 @@ export async function GET(request: NextRequest) {
         });
 
     } catch (error) {
-        console.error('[CRON] User status verification failed:', error);
+        logEvent('error', 'cron.check-users.failed', { error });
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
 }
+
+export const GET = observeRoute('/api/cron/check-users', handleGET);

@@ -1,3 +1,4 @@
+import { logEvent } from './observability';
 import { ioDelay, checkIoDeadline, withIoDeadline } from './io-deadline';
 import { pool } from './db';
 import { SiteRepo } from './site-repo';
@@ -57,7 +58,7 @@ export class TeslaTokenRepo {
 
         if (site && site.user_id) {
             await this.userRepo.updateTokens(site.user_id, accessToken, refreshToken);
-            console.log(`[TeslaTokenRepo] Updated tokens for USER ${site.user_id} (via site ${siteId})`);
+            logEvent('info', 'tesla.credentials.updated', { siteId });
         } else {
             console.warn(`[TeslaTokenRepo] Cannot update tokens for site ${siteId} - No User Linked!`);
         }
@@ -83,15 +84,17 @@ export class TeslaTokenRepo {
                 checkIoDeadline();
                 console.log(`[TokenLock] Attempting to acquire lock for site ${siteId}...`);
                 if (await this.acquireRefreshLock(siteId)) {
-                    console.log(`[TokenLock] Lock acquired for site ${siteId}. Refreshing...`);
+                    logEvent('info', 'tesla.refresh.started', { siteId });
                     let terminalFailure = false;
                     try {
                         const { refreshAccessToken } = await import('./tesla-auth');
                         const newTokens = await refreshAccessToken(refreshToken);
 
                         await this.updateSiteTokens(siteId, newTokens.access_token, newTokens.refresh_token);
+                        logEvent('info', 'tesla.refresh.succeeded', { siteId });
                         return newTokens;
                     } catch (err) {
+                        logEvent('warn', 'tesla.refresh.failed', { siteId, terminal: this.isTerminalAuthError(err), error: err });
                         if (this.isTerminalAuthError(err)) {
                             terminalFailure = true;
                         }
@@ -113,6 +116,7 @@ export class TeslaTokenRepo {
                                             ['revoked', false, site.user_id]
                                         );
                                         this.siteRepo.invalidateCache(siteId);
+                                        logEvent('warn', 'tesla.auth.revoked', { siteId, reason: 'terminal-refresh-failure' });
                                     }
                                 } else {
                                     await this.releaseRefreshLock(siteId);
@@ -124,7 +128,7 @@ export class TeslaTokenRepo {
                         }
                     }
                 } else {
-                    console.log(`[TokenLock] Lock busy for site ${siteId}. Waiting...`);
+                    logEvent('info', 'tesla.refresh.waiting', { siteId });
                     return this.waitForTokenRefresh(siteId);
                 }
             },
@@ -137,6 +141,7 @@ export class TeslaTokenRepo {
                     if (site && site.user_id) {
                         console.warn(`[TokenLock] Secondary revoke guard for site ${siteId} (User ${site.user_id}).`);
                         await this.userRepo.updateUserStatus(site.user_id, 'revoked', false);
+                        logEvent('warn', 'tesla.auth.revoked', { siteId, reason: 'secondary-auth-guard' });
                         this.siteRepo.invalidateCache(siteId);
                     }
                 }
