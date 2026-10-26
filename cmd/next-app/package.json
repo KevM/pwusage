@@ -23,6 +23,7 @@
     "test:hold:timing": "BATTERY_HOLD_TIMING_REALTIME=1 vitest --run src/lib/battery-hold-monitor-timing.test.ts"
   },
   "dependencies": {
+    "@axiomhq/js": "^2.0.0",
     "@js-temporal/polyfill": "^0.5.1",
     "@tailwindcss/typography": "^0.5.19",
     "@types/jsonwebtoken": "^9.0.10",

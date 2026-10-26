@@ -1,3 +1,4 @@
+import { logEvent } from './observability';
 import { abortable } from './io-deadline';
 import { TeslaAuthError } from './tesla-client';
 import { requireEnv } from './env';
@@ -71,7 +72,7 @@ export function parseRefreshedTokens(payload: unknown): RefreshedTokens {
 }
 
 export async function refreshAccessToken(refreshToken: string): Promise<RefreshedTokens> {
-    const { response } = await postToTeslaTokenEndpoint({
+    const { response, host } = await postToTeslaTokenEndpoint({
         grant_type: 'refresh_token',
         client_id: requireEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID'),
         client_secret: requireEnv('TESLA_OAUTH_SECRET'),
@@ -90,6 +91,11 @@ export async function refreshAccessToken(refreshToken: string): Promise<Refreshe
         // Only a recognized terminal code is safe to echo.
         const detail = terminalCode ? ` ${errorCode}` : '';
         const message = `Failed to refresh token: ${response.status}${detail}`;
+        logEvent('warn', 'tesla.token-endpoint.rejected', {
+            host, status: response.status, terminal,
+            errorCode: errorCode === 'invalid_grant' || errorCode === 'login_required'
+                || errorCode === 'invalid_client' ? errorCode : 'other',
+        });
         if (terminal) {
             throw new TeslaAuthError(message, response.status);
         }

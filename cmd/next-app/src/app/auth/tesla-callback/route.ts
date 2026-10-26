@@ -1,3 +1,4 @@
+import { logEvent, observeRoute, setLogContext } from '@/lib/observability';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { NextRequest, NextResponse } from 'next/server';
@@ -10,7 +11,7 @@ import { isSecureRequest } from '@/lib/request-security';
 
 export const maxDuration = 60; // Allow up to 60 seconds on Vercel to avoid timeouts during slow Tesla API / JWKS calls
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get('code');
     const state = searchParams.get('state');
@@ -88,6 +89,9 @@ export async function GET(request: NextRequest) {
         }
         return NextResponse.json({ error: 'Mobile login failed' }, { status: 500 });
     }
+
+    if (result.status === 'success') setLogContext({ siteIds: result.siteIds });
+    logEvent(result.status === 'success' ? 'info' : 'warn', 'tesla.sign-in.result', { outcome: result.status });
 
     if (result.status === 'state-mismatch') {
         if (hasMobileCookies) clearAuthAttemptCookies(cookieStore);
@@ -197,3 +201,5 @@ function clearAuthAttemptCookies(cookieStore: Awaited<ReturnType<typeof cookies>
     cookieStore.delete('auth_mobile_state');
 }
 
+
+export const GET = observeRoute('/auth/tesla-callback', handleGET);

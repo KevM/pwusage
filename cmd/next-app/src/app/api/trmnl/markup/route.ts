@@ -1,3 +1,4 @@
+import { logEvent, observeRoute, setLogContext } from '@/lib/observability';
 import {readBillingAvailability} from '@/lib/billing-availability';
 import { after, NextResponse } from 'next/server';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
@@ -32,7 +33,7 @@ const TESLA_REFRESH_MIN_INTERVAL_MS = 14 * 60 * 1000;
 const LIVE_STATUS_CACHE_TTL_MS = 16 * 60 * 1000;
 const SOC_STALE_AFTER_MS = 20 * 60 * 1000;
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
     return withRequestContext(async () => {
         const routeStart = Date.now();
         try {
@@ -113,9 +114,11 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Site not found' }, { status: 404 });
         }
 
+        setLogContext({ siteId: site.id });
+
         // --- TESLA AUTH CHECK (Revoked) ---
         if (site.auth_status === 'revoked') {
-            console.warn(`[TrmnlMarkup] Tesla auth revoked for site ${site.id}. Showing re-auth QR code.`);
+            logEvent('warn', 'trmnl.auth-required', { siteId: site.id });
             return getQrResponse(request, uuid, site.id, 'Tesla Auth Expired', 'Scan to Re-authenticate');
         }
 
@@ -228,14 +231,14 @@ export async function GET(request: Request) {
                 } else if (inlineResult.errorMessage?.includes('timeout')) {
                     liveInlineStatus = 'timeout';
                     fetchStatus = 'inline-timeout';
-                    console.info('[TrmnlMarkup] Inline live status fetch timed out; continuing with stale-while-refresh.');
+                    logEvent('info', 'trmnl.live-refresh.timed-out', { siteId: site.id });
                 } else {
                     liveInlineStatus = 'error';
-                    console.warn('[TrmnlMarkup] Inline live status fetch failed:', inlineResult.errorMessage);
+                    logEvent('warn', 'trmnl.live-refresh.failed', { siteId: site.id, outcome: inlineResult.status });
                 }
             } catch (error) {
                 liveInlineStatus = 'error';
-                console.warn('[TrmnlMarkup] Inline live status fetch failed:', error);
+                logEvent('warn', 'trmnl.live-refresh.threw', { siteId: site.id, error });
             }
         }
 
@@ -252,7 +255,7 @@ export async function GET(request: Request) {
                         refreshLiveStatus(siteId, { cacheTtlMs: TESLA_REFRESH_MIN_INTERVAL_MS, timeoutMs: 3000 }),
                     ]);
                 } catch (error) {
-                    console.error(`[TrmnlMarkup] Background Tesla refresh failed:`, error);
+                    logEvent('error', 'trmnl.background-refresh.failed', { siteId, error });
                 }
             });
         } else if (hasCachedLiveStatus) {
@@ -441,13 +444,13 @@ export async function GET(request: Request) {
 
 
         } catch (error) {
-            console.error('Markup error:', error);
+            logEvent('error', 'trmnl.markup.failed', { error });
             return NextResponse.json({ error: (error as Error).message }, { status: 500 });
         }
     });
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
     return withRequestContext(async () => {
         let uuid = new URL(request.url).searchParams.get('uuid');
 
@@ -533,3 +536,7 @@ async function getQrResponse(request: Request, uuid: string | null, siteId: stri
         }
     });
 }
+
+export const GET = observeRoute('/api/trmnl/markup', handleGET);
+
+export const POST = observeRoute('/api/trmnl/markup', handlePOST);

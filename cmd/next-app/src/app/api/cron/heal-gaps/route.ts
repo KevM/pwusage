@@ -1,3 +1,4 @@
+import { logEvent, observeRoute, setLogContext } from '@/lib/observability';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 // Hobby caps maxDuration at 60 s. healTrailingGaps stops starting new sites at
@@ -10,17 +11,24 @@ import { withIoDeadline } from '@/lib/io-deadline';
 
 const HARD_DEADLINE_MS = 50_000;
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || request.headers.get('authorization') !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
     const summary = await withIoDeadline(HARD_DEADLINE_MS, () => healTrailingGaps());
-    console.log('[CRON] heal-gaps', JSON.stringify(summary));
+    setLogContext({ siteIds: summary.sites.map(site => site.siteId) });
+    for (const site of summary.sites) logEvent(site.status === 'error' ? 'warn' : 'info', 'cron.heal-gaps.site', { siteId: site.siteId, outcome: site.status });
+    logEvent('info', 'cron.heal-gaps.completed', {
+      checked: summary.checked, stopped: summary.stopped,
+      sites: summary.sites.map(site => ({ siteId: site.siteId, status: site.status })),
+    });
     return NextResponse.json({ success: true, ...summary });
   } catch (e) {
-    console.error('[CRON] heal-gaps unavailable', e instanceof Error ? e.message : String(e));
+    logEvent('error', 'cron.heal-gaps.failed', { error: e });
     return NextResponse.json({ error: 'Gap heal unavailable' }, { status: 503 });
   }
 }
+
+export const GET = observeRoute('/api/cron/heal-gaps', handleGET);
