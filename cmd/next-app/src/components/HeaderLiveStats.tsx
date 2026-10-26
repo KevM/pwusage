@@ -330,10 +330,9 @@ export function HeaderMetricsStrip({
 }
 
 export function HeaderLiveStats({ siteId }: { siteId: string }) {
-    const router = useRouter();
     const [stats, setStats] = useState<SiteLiveData | null>(null);
     const [loading, setLoading] = useState(isValidSiteId(siteId));
-    const [redirectedToLogin, setRedirectedToLogin] = useState(false);
+    const redirectedToLogin = useRef(false);
     const [isExpanded, setIsExpanded] = useState(false);
     const shellRef = useRef<HTMLDivElement | null>(null);
 
@@ -371,10 +370,12 @@ export function HeaderLiveStats({ siteId }: { siteId: string }) {
         } catch (error) {
             if (error instanceof DOMException && error.name === 'AbortError') return;
             if (error instanceof SiteLiveDataFetchError && error.status === 401) {
-                if (!redirectedToLogin) {
-                    setRedirectedToLogin(true);
+                if (!redirectedToLogin.current) {
+                    redirectedToLogin.current = true;
                     console.warn('[HeaderLiveStats] Unauthorized. Redirecting to login...');
-                    router.push('/login');
+                    // OAuth starts in a route handler; use document navigation to avoid RSC retries.
+                    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+                    window.location.assign('/login');
                 }
                 return;
             }

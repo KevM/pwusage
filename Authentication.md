@@ -48,8 +48,19 @@ Three auth artifacts are used for different concerns:
 
 ### 1. Login entry
 Route: `GET /login`
-- Generates OAuth `state` and `nonce`.
-- Stores `auth_state`, `auth_nonce`, optional `auth_callback` cookies.
+- Production login requests on another origin redirect to `https://pwusage.fm.rodeo`
+  before writing cookies. Production OAuth callbacks use that same fixed origin.
+  Preview/local environments retain their configured origin.
+- Ignores speculative prefetch requests without issuing cookies or starting OAuth.
+  Login links and client redirects use full document navigation.
+- Generates a `v2.<random>` OAuth state and a random nonce. Stores each attempt in
+  its own host-only, HttpOnly, SameSite=Lax cookie (`auth_attempt_<random>`), with
+  Secure on HTTPS and a 10-minute lifetime. The cookie contains the nonce,
+  optional return destination, and that attempt's mobile PKCE/handoff metadata.
+- Multiple tabs can start and finish independent attempts in either order. New
+  attempts never overwrite or clear an existing attempt. Eight pending cookies
+  prevent further starts until one finishes or expires (a browser-local bound,
+  not a server-side rate limiter or an atomic limit across concurrent requests).
 - Redirects to Tesla authorize endpoint with required scopes.
 
 Requested Fleet API scopes (`src/app/login/route.ts`): `openid`, `energy_device_data`,
@@ -76,7 +87,13 @@ claim about Tesla internals — do not word it as if it were.
 ### 2. OAuth callback processing
 Route: `GET /auth/tesla-callback`
 - Validates `code` and `state`.
-- Verifies `state` against cookie.
+- For v2 state, requires the matching, unexpired attempt cookie. Never borrows
+  legacy cookies or another attempt's mobile state. Clears only the matching
+  attempt cookie, including on errors or Tesla denial. A missing state cannot
+  identify an attempt; unrelated attempts remain untouched until expiry.
+- Retains the old `auth_state`/`auth_nonce`/mobile-cookie reader for legacy logins
+  already in flight during deployment. New logins never write those shared cookies.
+- Verifies `state` against the saved attempt and then checks the ID-token nonce.
 - Exchanges authorization code for Tesla tokens.
   The exchange `audience` is the documented Fleet host
   (`DEFAULT_FLEET_BASE_URL`), not an environment variable. Refresh grants omit
@@ -96,7 +113,7 @@ Session issuance:
   current DB value so a login after a sign-out-everywhere bump is not treated as
   a revoked session.
 - Sets `site_auth` cookie.
-- Clears one-time auth cookies.
+- Clears only this attempt's one-time cookie (legacy callbacks clear legacy cookies).
 - Redirects to saved callback (or `/`).
 
 Important implementation note:
@@ -104,6 +121,18 @@ Important implementation note:
   it resolves active status, `session_version`, roles, and site memberships from
   the DB on every request. Stale `sites`/`roles` claims cannot outlive the DB
   state they were derived from. Legacy `access_token` cookie fallback was removed.
+
+Login diagnostics:
+- `tesla.sign-in.started` and `tesla.sign-in.callback` share an independent,
+  non-secret `loginId` and report the login kind, pending count or attempt age.
+- `tesla.sign-in.continuity-rejected` distinguishes missing, invalid/expired,
+  and legacy-mismatched cookies. Hostnames are logged without URLs or queries.
+- State, nonce, authorization codes, PKCE values, cookie contents, and return
+  destinations are never included in these events. `requestId` still correlates
+  events within one request; `loginId` correlates the two requests for an attempt.
+- Cookies are browser continuity checks, not an atomic server-side replay ledger.
+  Tesla's authorization code and the database-backed mobile handoff keep their
+  existing one-use checks.
 
 ### ID token signature verification
 
@@ -317,9 +346,9 @@ cookies being shared between `ASWebAuthenticationSession` and the app's
 1. The app creates a PKCE verifier, its SHA-256 challenge, and a random app state,
    then opens `/login?mobile_challenge=...&mobile_state=...` in
    `ASWebAuthenticationSession`.
-2. `/login` validates the challenge/state formats and stores them with a random
-   server-side attempt UUID in short-lived, HTTP-only cookies. It then uses the
-   existing Tesla OAuth state and nonce flow.
+2. `/login` validates the challenge/state formats and stores them in the isolated
+   attempt cookie with a random handoff attempt UUID. It then uses the existing
+   Tesla OAuth state and nonce flow.
 3. The normal Tesla callback validates OAuth state and nonce and provisions the
    user/sites as it does for web login. For the mobile path only, it stores a
    five-minute handoff row containing the user/site/role claims, PKCE challenge,

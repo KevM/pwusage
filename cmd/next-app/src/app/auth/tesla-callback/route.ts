@@ -8,20 +8,61 @@ import { createMobileLoginHandoff } from '@/lib/mobile-login-handoff';
 import { mobileCallbackResponse } from '@/lib/mobile-login-callback';
 import { isValidAppState, isValidMobileLoginParameters } from '@/lib/mobile-login-validation';
 import { isSecureRequest } from '@/lib/request-security';
+import {
+    LOGIN_ATTEMPT_SECONDS, isLoginPrefetch, loginAttemptCookieName, productionLoginRedirect, readLoginAttempt, teslaLoginBaseUrl,
+} from '@/lib/tesla-login-attempt';
 
 export const maxDuration = 60; // Allow up to 60 seconds on Vercel to avoid timeouts during slow Tesla API / JWKS calls
 
 async function handleGET(request: NextRequest) {
+    if (isLoginPrefetch(request)) return new NextResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+    const canonical = productionLoginRedirect(request);
+    if (canonical) return NextResponse.redirect(canonical);
     const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get('code');
     const state = searchParams.get('state');
-    const redirectBaseUrl = getAppBaseUrl(request);
+    const redirectBaseUrl = teslaLoginBaseUrl(getAppBaseUrl(request));
     const callbackUrl = `${redirectBaseUrl}/auth/tesla-callback`;
     const cookieStore = await cookies();
-    const mobileAttemptId = cookieStore.get('auth_mobile_attempt')?.value;
-    const mobileChallenge = cookieStore.get('auth_mobile_challenge')?.value;
-    const mobileState = cookieStore.get('auth_mobile_state')?.value;
+    // v2 callbacks never borrow legacy cookies or another attempt's mobile metadata.
+    // Keep the legacy reader for logins already in flight during deployment.
+    const scoped = state?.startsWith('v2.') ?? false;
+    const attemptName = state ? loginAttemptCookieName(state) : undefined;
+    const attemptValue = attemptName ? cookieStore.get(attemptName)?.value : undefined;
+    const attempt = readLoginAttempt(attemptValue);
+    const savedState = scoped ? (attempt ? state : undefined) : cookieStore.get('auth_state')?.value;
+    const savedNonce = scoped ? attempt?.nonce : cookieStore.get('auth_nonce')?.value;
+    const savedCallback = scoped ? attempt?.callback : cookieStore.get('auth_callback')?.value;
+    const mobileAttemptId = scoped ? attempt?.mobileAttemptId : cookieStore.get('auth_mobile_attempt')?.value;
+    const mobileChallenge = scoped ? attempt?.mobileChallenge : cookieStore.get('auth_mobile_challenge')?.value;
+    const mobileState = scoped ? attempt?.mobileState : cookieStore.get('auth_mobile_state')?.value;
     const hasMobileCookies = !!(mobileAttemptId || mobileChallenge || mobileState);
+    let cleared = false;
+    const clearAttempt = () => {
+        if (cleared) return;
+        cleared = true;
+        if (scoped) {
+            if (attemptName) cookieStore.delete(attemptName);
+        } else {
+            clearAuthAttemptCookies(cookieStore);
+        }
+    };
+    // Consume this browser's attempt on every terminal path, including denial or throws.
+    // Tesla's authorization code and the mobile handoff retain their server-side replay checks.
+    if (scoped) clearAttempt();
+    logEvent('info', 'tesla.sign-in.callback', {
+        loginId: attempt?.loginId, attemptFormat: scoped ? 'v2' : 'legacy',
+        ageMs: attempt ? Date.now() - (attempt.expiresAt - LOGIN_ATTEMPT_SECONDS * 1000) : undefined,
+    });
+    if (!savedState || savedState !== state) {
+        logEvent('warn', 'tesla.sign-in.continuity-rejected', {
+            reason: scoped ? (attemptValue ? 'invalid-or-expired-attempt' : 'missing-attempt')
+                : (savedState ? 'legacy-mismatch' : 'missing-legacy-cookie'),
+            attemptFormat: scoped ? 'v2' : 'legacy',
+            loginHost: request.nextUrl.host,
+            callbackHost: new URL(callbackUrl).host,
+        });
+    }
 
     // Validate required environment variables. Both are read by
     // handleTeslaCallback via requireEnv: it throws on a missing one (deliberately,
@@ -40,7 +81,7 @@ async function handleGET(request: NextRequest) {
             hasClientId: !!clientId,
             hasClientSecret: !!clientSecret
         });
-        if (hasMobileCookies) clearAuthAttemptCookies(cookieStore);
+        if (hasMobileCookies) clearAttempt();
         if (mobileState && isValidAppState(mobileState)) {
             return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
         }
@@ -48,7 +89,7 @@ async function handleGET(request: NextRequest) {
     }
 
     if (!code || !state) {
-        if (hasMobileCookies) clearAuthAttemptCookies(cookieStore);
+        if (hasMobileCookies) clearAttempt();
         if (mobileState && isValidAppState(mobileState)) {
             return mobileCallbackResponse({
                 error: searchParams.get('error') === 'access_denied' ? 'access_denied' : 'missing_code_or_state',
@@ -58,12 +99,9 @@ async function handleGET(request: NextRequest) {
         return NextResponse.json({ error: 'Missing code or state' }, { status: 400 });
     }
 
-    const savedState = cookieStore.get('auth_state')?.value;
-    const savedNonce = cookieStore.get('auth_nonce')?.value;
-    const savedCallback = cookieStore.get('auth_callback')?.value;
     if (hasMobileCookies && (!mobileAttemptId || !mobileChallenge || !mobileState
         || !isValidMobileLoginParameters(mobileChallenge, mobileState))) {
-        clearAuthAttemptCookies(cookieStore);
+        clearAttempt();
         if (mobileState && isValidAppState(mobileState)) {
             return mobileCallbackResponse({ error: 'invalid_login_attempt', state: mobileState });
         }
@@ -83,7 +121,7 @@ async function handleGET(request: NextRequest) {
     } catch (error) {
         if (!hasMobileCookies) throw error;
         console.error('[AuthCallback] Mobile Tesla callback failed unexpectedly', error);
-        clearAuthAttemptCookies(cookieStore);
+        clearAttempt();
         if (mobileState && isValidAppState(mobileState)) {
             return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
         }
@@ -94,42 +132,42 @@ async function handleGET(request: NextRequest) {
     logEvent(result.status === 'success' ? 'info' : 'warn', 'tesla.sign-in.result', { outcome: result.status });
 
     if (result.status === 'state-mismatch') {
-        if (hasMobileCookies) clearAuthAttemptCookies(cookieStore);
+        if (hasMobileCookies) clearAttempt();
         if (mobileState && isValidAppState(mobileState)) {
             return mobileCallbackResponse({ error: 'state_mismatch', state: mobileState });
         }
         return NextResponse.json({ error: 'State mismatch' }, { status: 401 });
     }
     if (result.status === 'token-exchange-failed') {
-        if (hasMobileCookies) clearAuthAttemptCookies(cookieStore);
+        if (hasMobileCookies) clearAttempt();
         if (mobileState && isValidAppState(mobileState)) {
             return mobileCallbackResponse({ error: 'token_exchange_failed', state: mobileState });
         }
         return NextResponse.json({ error: 'Failed to exchange token' }, { status: result.statusCode });
     }
     if (result.status === 'invalid-id-token') {
-        if (hasMobileCookies) clearAuthAttemptCookies(cookieStore);
+        if (hasMobileCookies) clearAttempt();
         if (mobileState && isValidAppState(mobileState)) {
             return mobileCallbackResponse({ error: 'invalid_id_token', state: mobileState });
         }
         return NextResponse.json({ error: 'Invalid ID token' }, { status: 401 });
     }
     if (result.status === 'nonce-mismatch') {
-        if (hasMobileCookies) clearAuthAttemptCookies(cookieStore);
+        if (hasMobileCookies) clearAttempt();
         if (mobileState && isValidAppState(mobileState)) {
             return mobileCallbackResponse({ error: 'nonce_mismatch', state: mobileState });
         }
         return NextResponse.json({ error: 'Nonce mismatch' }, { status: 401 });
     }
     if (result.status === 'db-error') {
-        clearAuthAttemptCookies(cookieStore);
+        clearAttempt();
         if (mobileState && isValidAppState(mobileState)) {
             return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
         }
         return NextResponse.json({ error: 'Could not finish Tesla sign-in' }, { status: 500 });
     }
     if (result.status === 'fleet-api-failed') {
-        clearAuthAttemptCookies(cookieStore);
+        clearAttempt();
         if (mobileState && isValidAppState(mobileState)) {
             return mobileCallbackResponse({ error: 'product_import_failed', state: mobileState });
         }
@@ -140,7 +178,7 @@ async function handleGET(request: NextRequest) {
     if (result.status === 'success') {
         if (mobileAttemptId && mobileChallenge && mobileState) {
             if (result.siteIds.length === 0 && !result.roles.includes('admin')) {
-                clearAuthAttemptCookies(cookieStore);
+                clearAttempt();
                 return mobileCallbackResponse({ error: 'no_sites', state: mobileState });
             }
             let handoff: { code: string; attemptId: string };
@@ -155,10 +193,10 @@ async function handleGET(request: NextRequest) {
                 });
             } catch (error) {
                 console.error('[AuthCallback] Failed to create mobile login handoff', error);
-                clearAuthAttemptCookies(cookieStore);
+                clearAttempt();
                 return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
             }
-            clearAuthAttemptCookies(cookieStore);
+            clearAttempt();
             return mobileCallbackResponse({ code: handoff.code, attempt: handoff.attemptId, state: mobileState });
         }
 
@@ -183,7 +221,7 @@ async function handleGET(request: NextRequest) {
     }
 
     // Clean up auth cookies
-    clearAuthAttemptCookies(cookieStore);
+    clearAttempt();
 
     if (savedCallback && savedCallback.startsWith('/') && !savedCallback.startsWith('//') && !savedCallback.startsWith('/\\')) {
         redirect(savedCallback);
