@@ -322,8 +322,10 @@ export class TeslaClient {
                     if (this.config.onTokenError && refreshError instanceof Error) {
                         await this.config.onTokenError(refreshError);
                     }
-                    // Fall through to original error
-                    break;
+                    // Preserve the refresh failure. The original 401 only says
+                    // the access token expired; a transient token-endpoint error
+                    // must not be reclassified as revoked credentials.
+                    throw refreshError;
                 }
                 // A retry can reach Tesla and then lose its response. Keep that
                 // transport failure distinct from the original rejected request.
