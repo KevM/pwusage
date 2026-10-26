@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
@@ -39,7 +39,6 @@ function getScreenLabel(index: number): string {
 }
 
 function ManageContent() {
-    const router = useRouter();
     const searchParams = useSearchParams();
     const uuid = searchParams.get('uuid');
     const token = searchParams.get('token') || searchParams.get('jwt');
@@ -99,7 +98,9 @@ function ManageContent() {
                     const siteToken = token || searchParams.get('jwt') || searchParams.get('token');
                     const tokenParam = siteToken ? `&jwt=${encodeURIComponent(siteToken)}` : '';
                     const callbackUrl = encodeURIComponent(`/trmnl/manage?uuid=${uuid}${tokenParam}`);
-                    router.push(`/login?callback=${callbackUrl}`);
+                    // OAuth starts in a route handler; use document navigation to avoid RSC retries.
+                    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+                    window.location.assign(`/login?callback=${callbackUrl}`);
                     return;
                 }
 
@@ -139,7 +140,7 @@ function ManageContent() {
         };
 
         fetchData();
-    }, [uuid, token, searchParams, pluginSettingIdParam, router]);
+    }, [uuid, token, searchParams, pluginSettingIdParam]);
 
     useEffect(() => {
         if (!selectedSite) return;

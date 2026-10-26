@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { getCurrentUser } from '@/lib/auth-checks';
@@ -47,9 +46,9 @@ export default async function ContinuePage({
       <SectionCard className="w-full" title="Sign in to continue" description="We couldn't find your session on this device.">
         <div className="space-y-6">
           {/* Primary path: just sign in. */}
-          <Link href={signInHref} className="block">
+          <a href={signInHref} className="block">
             <Button className="w-full sm:w-auto">Sign in</Button>
-          </Link>
+          </a>
 
           {/* Secondary: for folks who expected to already be signed in. */}
           <div className="space-y-3 border-t border-gray-100 pt-5 dark:border-slate-800">

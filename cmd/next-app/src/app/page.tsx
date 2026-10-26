@@ -52,11 +52,11 @@ export default async function Home() {
                 priority
               />
               <div className="flex flex-col items-center gap-3 sm:flex-row">
-                <Link href="/login">
+                <a href="/login">
                   <Button renderAs="span" size="lg">
                     Login with Tesla
                   </Button>
-                </Link>
+                </a>
                 <Link href="/about">
                   <Button renderAs="span" size="lg" variant="outline">
                     Learn More

@@ -7,8 +7,18 @@ import { mobileCallbackResponse } from '@/lib/mobile-login-callback';
 import { isValidAppState, isValidMobileLoginParameters } from '@/lib/mobile-login-validation';
 import { isSecureRequest } from '@/lib/request-security';
 import { buildTeslaAuthorizeUrl } from '@/lib/tesla-authorize-url';
+import { logEvent, observeRoute } from '@/lib/observability';
+import {
+  LOGIN_ATTEMPT_SECONDS, MAX_LOGIN_ATTEMPTS, isAttemptCookie, isLoginPrefetch,
+  loginAttemptCookieName, productionLoginRedirect, safeLoginCallback, teslaLoginBaseUrl,
+  type TeslaLoginAttempt,
+} from '@/lib/tesla-login-attempt';
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
+  if (isLoginPrefetch(request)) return new NextResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+  const canonical = productionLoginRedirect(request);
+  if (canonical) return NextResponse.redirect(canonical);
+
   const searchParams = request.nextUrl.searchParams;
   const callback = searchParams.get('callback');
   const mobileChallenge = searchParams.get('mobile_challenge');
@@ -37,54 +47,46 @@ export async function GET(request: NextRequest) {
       missing: 'PUBLIC_TESLA_OAUTH_CLIENT_ID',
       isMobileLogin,
     });
-    // Nothing downstream will clear these: we never redirect to Tesla, so the
-    // callback route that normally does it is never reached.
-    clearAuthAttemptCookies(await cookies());
     if (mobileState && isValidAppState(mobileState)) {
       return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
     }
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const state = crypto.randomBytes(16).toString('hex');
-  const nonce = crypto.randomBytes(16).toString('hex');
-
   const cookieStore = await cookies();
-  const authCookieOptions = {
-    httpOnly: true,
-    secure: isSecureRequest(request),
+  const pendingCount = cookieStore.getAll().filter(cookie => isAttemptCookie(cookie.name)).length;
+  if (pendingCount >= MAX_LOGIN_ATTEMPTS) {
+    logEvent('warn', 'tesla.sign-in.limited', { pendingCount });
+    if (mobileState && isValidAppState(mobileState)) {
+      return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
+    }
+    return NextResponse.json({ error: 'Several sign-ins are already in progress. Finish one or try again in 10 minutes.' },
+      { status: 429, headers: { 'Cache-Control': 'no-store', 'Retry-After': String(LOGIN_ATTEMPT_SECONDS) } });
+  }
+  const state = `v2.${crypto.randomBytes(16).toString('hex')}`;
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const attempt: TeslaLoginAttempt = {
+    nonce,
+    loginId: crypto.randomUUID(),
+    expiresAt: Date.now() + LOGIN_ATTEMPT_SECONDS * 1000,
+    callback: safeLoginCallback(callback),
+    ...(isMobileLogin && mobileChallenge && mobileState ? {
+      mobileAttemptId: crypto.randomUUID(), mobileChallenge, mobileState,
+    } : {}),
   };
-  cookieStore.set('auth_state', state, authCookieOptions);
-  cookieStore.set('auth_nonce', nonce, authCookieOptions);
-  cookieStore.delete('auth_mobile_attempt');
-  cookieStore.delete('auth_mobile_challenge');
-  cookieStore.delete('auth_mobile_state');
-  if (isMobileLogin && mobileChallenge && mobileState) {
-    const mobileCookieOptions = { ...authCookieOptions, sameSite: 'lax' as const, path: '/', maxAge: 10 * 60 };
-    cookieStore.set('auth_mobile_attempt', crypto.randomUUID(), mobileCookieOptions);
-    cookieStore.set('auth_mobile_challenge', mobileChallenge, mobileCookieOptions);
-    cookieStore.set('auth_mobile_state', mobileState, mobileCookieOptions);
-  }
-  if (callback && callback.startsWith('/') && !callback.startsWith('//') && !callback.startsWith('/\\')) {
-    cookieStore.set('auth_callback', callback, { httpOnly: true, secure: isSecureRequest(request) });
-  }
+  const cookieName = loginAttemptCookieName(state);
+  if (!cookieName) throw new Error('Invalid generated login attempt');
+  cookieStore.set(cookieName, JSON.stringify(attempt), {
+    httpOnly: true, secure: isSecureRequest(request), sameSite: 'lax', path: '/', maxAge: LOGIN_ATTEMPT_SECONDS,
+  });
+  logEvent('info', 'tesla.sign-in.started', {
+    loginId: attempt.loginId, loginKind: isMobileLogin ? 'mobile' : 'web', pendingCount,
+    loginHost: request.nextUrl.host, callbackHost: new URL(teslaLoginBaseUrl(getAppBaseUrl(request))).host,
+  });
 
-  const redirectBaseUrl = getAppBaseUrl(request);
+  const redirectBaseUrl = teslaLoginBaseUrl(getAppBaseUrl(request));
   const callbackUrl = `${redirectBaseUrl}/auth/tesla-callback`;
-
   redirect(buildTeslaAuthorizeUrl({ state, nonce, callbackUrl, clientId }));
 }
 
-/**
- * The six cookies a login attempt owns. Mirrors `clearAuthAttemptCookies` in
- * /auth/tesla-callback, which clears the same set on every one of its own
- * failure paths.
- */
-function clearAuthAttemptCookies(cookieStore: Awaited<ReturnType<typeof cookies>>): void {
-  cookieStore.delete('auth_state');
-  cookieStore.delete('auth_nonce');
-  cookieStore.delete('auth_callback');
-  cookieStore.delete('auth_mobile_attempt');
-  cookieStore.delete('auth_mobile_challenge');
-  cookieStore.delete('auth_mobile_state');
-}
+export const GET = observeRoute('/login', handleGET);
