@@ -331,15 +331,12 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
                 await expect(insertRow(emptyRow(overrides))).rejects.toThrow(/violates (check|not-null) constraint/);
         });
     });
-    describe('timezone rebuild (day records re-keyed in one transaction)',()=>{
+    describe('timezone changes (day records are keyed to the site timezone)',()=>{
         const utcDay=(iso:string)=>new Date(`${iso}T00:00:00Z`);
         const samples=(from:Date,count:number)=>Array.from({length:count},(_,n)=>({site_id:'moved',timestamp:new Date(+from+n*300000),
             load_power:20+n%7,solar_power:n%5,grid_power:(n%9)-4.5,battery_power:(n%3)-1,battery_soc:n%4===0?40+n/10:null}));
         const rows=async()=>(await pool.query(`SELECT day_start,day_end,sample_count,expected_slots,status,fetched_at,raw_pruned,attribution,
             public.verify_compact_day_metadata(site_id,day_start,false) AS verified FROM "EnergyDayArchive" WHERE site_id='moved' AND status IS DISTINCT FROM 'empty' ORDER BY day_start`)).rows;
-        const emptyDays=async()=>(await pool.query(`SELECT count(*)::int AS n FROM "EnergyDayArchive" WHERE site_id='moved' AND status='empty'`)).rows[0].n;
-        const values=(list:{timestamp:Date;load_power:number;solar_power:number;grid_power:number;battery_power:number;battery_soc:number|null}[])=>
-            list.map(({timestamp,load_power,solar_power,grid_power,battery_power,battery_soc})=>({timestamp,load_power,solar_power,grid_power,battery_power,battery_soc}));
         const later=new Date('2026-12-01T00:00:00Z');
         beforeAll(async()=>{
             await pool.query(`INSERT INTO "Site" VALUES ('moved','UTC') ON CONFLICT DO NOTHING;
@@ -348,43 +345,6 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
                 INSERT INTO "TariffSchedule" VALUES (10,9,'Peak',.4,.04,0,6,16,21,0,0),(11,9,'Off',.1,.04,0,6,0,16,0,0),(12,9,'Late',.1,.04,0,6,21,24,0,0) ON CONFLICT DO NOTHING;`);
         });
         beforeEach(async()=>{await pool.query(`DELETE FROM "EnergyDayArchive" WHERE site_id='moved'`);await pool.query(`UPDATE "Site" SET timezone='UTC' WHERE id='moved'`);});
-        it('re-keys day records across the DST fall-back to the new local midnights, with no overlapping partitions',async()=>{
-            // Recorded under a wrong UTC timezone: three whole UTC days around Chicago's 2026-11-01 fall-back.
-            const days=['2026-10-31','2026-11-01','2026-11-02'].map(utcDay),all=days.flatMap(d=>samples(d,288));
-            for(const [i,d] of days.entries()) {
-                const fetchedAt=new Date(+d+(25+i)*3600000);
-                expect(await store.writeDay('moved',d,all.slice(i*288,(i+1)*288),fetchedAt,fetchedAt)).toMatchObject({status:'written',dayStatus:'complete'});
-            }
-            expect(await store.writeDay('moved',utcDay('2026-10-30'),[],days[0],days[0])).toEqual({status:'checked-empty'});
-            const before=await rows();
-            // Preview does the work and rolls it back.
-            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:false,now:later})).toEqual({status:'previewed',from:'UTC',sourceDays:3,records:4,droppedEmptyDays:1});
-            expect(await rows()).toEqual(before);
-            expect(await emptyDays()).toBe(1);
-            await expect(store.rebuildTimezone('moved','Mars/Olympus',{apply:true,now:later})).rejects.toThrow();
-            // As scripts/rebuild-site-timezone.ts runs it: no mutation guard.
-            expect(await new CompactHistoryStore(pool).rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).toEqual({status:'rebuilt',from:'UTC',sourceDays:3,records:4,droppedEmptyDays:1});
-            expect((await pool.query(`SELECT timezone FROM "Site" WHERE id='moved'`)).rows[0].timezone).toBe('America/Chicago');
-            expect(await emptyDays()).toBe(0);
-            const rebuilt=await rows();
-            // Chicago days: 10-30 from 19:00 (60 samples), 10-31, the 25-hour 11-01 (300 slots), 11-02 until 18:00 (216).
-            expect(rebuilt.map(r=>[r.day_start.toISOString(),r.day_end.toISOString(),r.sample_count,r.expected_slots,r.status])).toEqual([
-                ['2026-10-30T05:00:00.000Z','2026-10-31T05:00:00.000Z',60,288,'gapped'],
-                ['2026-10-31T05:00:00.000Z','2026-11-01T05:00:00.000Z',288,288,'complete'],
-                ['2026-11-01T05:00:00.000Z','2026-11-02T06:00:00.000Z',300,300,'complete'],
-                ['2026-11-02T06:00:00.000Z','2026-11-03T06:00:00.000Z',216,288,'gapped']]);
-            // Contiguous, every record verifies, each keeps its oldest source's fetch time.
-            rebuilt.slice(1).forEach((r,i)=>expect(r.day_start).toEqual(rebuilt[i].day_end));
-            expect(rebuilt.every(r=>r.verified&&r.raw_pruned)).toBe(true);
-            expect(rebuilt.map(r=>r.fetched_at)).toEqual([before[0].fetched_at,before[0].fetched_at,before[1].fetched_at,before[2].fetched_at]);
-            // Segments are Chicago local time: peak 16:00-21:00 is minutes 1020-1320 on the fall-back day.
-            expect(rebuilt[2].attribution).toEqual({timelineRevision:'current-tariff:9',segments:[{offset:0,tariffId:9,scheduleId:11},{offset:1020,tariffId:9,scheduleId:10},{offset:1320,tariffId:9,scheduleId:12}]});
-            const reader=new CompactHistoryReader(store,'America/Chicago');
-            expect(values(await reader.getRawEnergyData('moved',days[0],utcDay('2026-11-03')))).toEqual(values(all));
-            const fallBack=await reader.getCycleAggregatesAndCoverage('moved',rebuilt[2].day_start,rebuilt[2].day_end,'America/Chicago');
-            expect(fallBack.coverage).toEqual([expect.objectContaining({count:300,archived:true})]);
-            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).toEqual({status:'unchanged',from:'America/Chicago'});
-        });
         it('keeps a reported timezone back while day records exist, instead of failing the site refresh',async()=>{
             const {UPSERT_SITE_SQL}=await import('../site-upsert-sql');
             await pool.query(`ALTER TABLE "Site" ADD COLUMN IF NOT EXISTS name text, ADD COLUMN IF NOT EXISTS utility text, ADD COLUMN IF NOT EXISTS updated timestamptz,
@@ -393,12 +353,12 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             await store.writeDay('moved',utcDay('2026-10-31'),samples(utcDay('2026-10-31'),288),later,later);
             expect(await upsert('America/Chicago')).toBe('UTC');
             expect((await rows())).toHaveLength(1);
-            // An empty record is a record too: the change waits for the rebuild.
+            // An empty record is a record too: the stored timezone stays.
             await pool.query(`DELETE FROM "EnergyDayArchive" WHERE site_id='moved'`);
             expect(await store.writeDay('moved',utcDay('2026-10-31'),[],later,later)).toEqual({status:'checked-empty'});
             expect(await upsert('America/Chicago')).toBe('UTC');
             // A direct change is refused by the trigger rather than dropping the only copy.
-            await expect(pool.query(`UPDATE "Site" SET timezone='America/Chicago' WHERE id='moved'`)).rejects.toThrow('rebuild-site-timezone');
+            await expect(pool.query(`UPDATE "Site" SET timezone='America/Chicago' WHERE id='moved'`)).rejects.toThrow('keyed to its current timezone');
             // With no day record the change goes through.
             await pool.query(`DELETE FROM "EnergyDayArchive" WHERE site_id='moved'`);
             expect(await upsert('America/Chicago')).toBe('America/Chicago');

@@ -11,11 +11,11 @@ const local = 'postgresql://postgres:pw@localhost:6543/postgres';
 const direct = 'postgresql://postgres:pw@db.project.supabase.co:5432/postgres';
 
 it.each([
-    {kind: 'weekly', source: pooler, expected: pooler.replace('.com:6543/', '.com:5432/')},
+    {kind: 'daily', source: pooler, expected: pooler.replace('.com:6543/', '.com:5432/')},
     {kind: 'daily', source: pooler, expected: pooler.replace('.com:6543/', '.com:5432/')},
     {kind: 'pre-migration', source: pooler, expected: pooler.replace('.com:6543/', '.com:5432/')},
-    {kind: 'weekly', source: local, expected: local},
-    {kind: 'weekly', source: direct, expected: direct},
+    {kind: 'daily', source: local, expected: local},
+    {kind: 'daily', source: direct, expected: direct},
 ])('uses the maintenance connection for $kind: $source', async ({kind, source, expected}) => {
     const dir = await mkdtemp(join(tmpdir(), 'backup-connection-'));
     const log = join(dir, 'calls');

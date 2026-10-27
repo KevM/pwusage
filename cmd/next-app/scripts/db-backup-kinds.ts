@@ -1,13 +1,14 @@
 import { pathToFileURL } from 'node:url';
 
-export type BackupKindConfig = { folder: string; keep: number };
+/** `keepWeekly`: past the newest `keep`, also keep the newest backup of each of that many older UTC weeks. */
+export type BackupKindConfig = { folder: string; keep: number; keepWeekly?: number };
 
 // Single source of truth for where each backup goes and how many are kept.
 // Every kind is a complete dump: energy history is compact day records, small
-// enough to include every day. See docs/database-backups.md.
+// enough to include every day, so one daily run also provides the weekly
+// copies. See docs/database-backups.md.
 export const BACKUP_KINDS = {
-    daily: { folder: 'db-backup/daily/', keep: 14 },
-    weekly: { folder: 'db-backup/weekly/', keep: 8 },
+    daily: { folder: 'db-backup/daily/', keep: 14, keepWeekly: 8 },
     'pre-migration': { folder: 'db-backup/pre-migration/', keep: 10 },
 } as const satisfies Record<string, BackupKindConfig>;
 

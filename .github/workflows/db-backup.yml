@@ -1,21 +1,21 @@
 name: Database Backup
-run-name: Database backup (${{ inputs.kind || (github.event.schedule == '41 9 * * 0' && 'weekly') || 'daily' }})
+run-name: Database backup (${{ inputs.kind || 'daily' }})
 
 # Private production backups. Kinds, folders and retention live in
 # cmd/next-app/scripts/db-backup-kinds.ts; restore steps in docs/database-backups.md.
-# Every kind is a complete dump; energy history is compact day records, about
+# Every backup is a complete dump; energy history is compact day records, about
 # 20 MB of Supabase egress per dump (Free plan: 5 GB a month, shared with the
-# app), estimated 2026-10-27 from the day-record tables' size.
+# app), estimated 2026-10-27 from the day-record tables' size. Daily retention
+# also keeps one backup per week for 8 weeks, so there is no weekly run.
 on:
   schedule:
-    - cron: '23 9 * * *'  # daily
-    - cron: '41 9 * * 0'  # weekly, Sunday (kept longer)
+    - cron: '23 9 * * *'
   workflow_dispatch:
     inputs:
       kind:
         description: Backup kind
         type: choice
-        options: [daily, weekly]
+        options: [daily]
         default: daily
   workflow_call:
     inputs:
@@ -36,9 +36,9 @@ jobs:
     name: Back up database
     runs-on: ubuntu-latest
     env:
-      BACKUP_KIND: ${{ inputs.kind || (github.event.schedule == '41 9 * * 0' && 'weekly') || 'daily' }}
+      BACKUP_KIND: ${{ inputs.kind || 'daily' }}
     concurrency:
-      group: db-backup-${{ inputs.kind || (github.event.schedule == '41 9 * * 0' && 'weekly') || 'daily' }}
+      group: db-backup-${{ inputs.kind || 'daily' }}
       cancel-in-progress: false
     defaults:
       run:

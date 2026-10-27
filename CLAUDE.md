@@ -169,7 +169,7 @@ npm test -- --ui           # Open test UI
 **Database:**
 - Production: Supabase PostgreSQL (Free plan: no automatic backups, 5 GB/month egress)
 - Dev: PostgreSQL (from backup) or local SQLite
-- Private backups in Vercel Blob: daily, weekly and before migrations, each a complete dump. See [`docs/database-backups.md`](./docs/database-backups.md) for retention and the restore runbook.
+- Private backups in Vercel Blob: daily (kept 14 days plus one per week for 8 weeks) and before migrations, each a complete dump. See [`docs/database-backups.md`](./docs/database-backups.md) for retention and the restore runbook.
 
 ## Environment Variables
 

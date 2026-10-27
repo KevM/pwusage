@@ -409,7 +409,7 @@ export class Importer {
             });
             // Kept back while the site has day records (see UPSERT_SITE_SQL); an operator re-keys them.
             if (storedTimezone && info.installation_time_zone && info.installation_time_zone !== 'UTC' && storedTimezone !== info.installation_time_zone) {
-                console.warn(`[Import] Site ${siteId} reports timezone ${info.installation_time_zone} but keeps ${storedTimezone}: run scripts/rebuild-site-timezone.ts`);
+                console.warn(`[Import] Site ${siteId} reports timezone ${info.installation_time_zone} but keeps ${storedTimezone}: its day records are keyed to the stored timezone`);
             }
 
             if (tariffsChanged) {

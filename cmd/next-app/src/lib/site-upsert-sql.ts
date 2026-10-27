@@ -3,9 +3,8 @@
  * $4 installed, $5 timezone, $6 json, $7 whether $4 came from Tesla); returns
  * the stored timezone. A timezone change re-keys every local day, so it is
  * kept back while the site has any day record (records are the only copy, and
- * the `invalidate_compact_energy_timezone` trigger would refuse the change):
- * scripts/rebuild-site-timezone.ts re-keys the stored days and changes it in
- * one transaction. Tesla's value stays visible in `json`.
+ * the `invalidate_compact_energy_timezone` trigger would refuse the change).
+ * Tesla's value stays visible in `json`.
  */
 export const UPSERT_SITE_SQL = `
     INSERT INTO "Site"(id, name, utility, updated, installed, timezone, json)

@@ -3,8 +3,8 @@ import { BACKUP_KINDS, backupKind } from './db-backup-kinds';
 
 describe('database backup kinds', () => {
     it('maps each kind to its own folder and retention', () => {
-        expect(backupKind('daily')).toEqual({ folder: 'db-backup/daily/', keep: 14 });
-        expect(backupKind('weekly')).toEqual({ folder: 'db-backup/weekly/', keep: 8 });
+        expect(backupKind('daily')).toEqual({ folder: 'db-backup/daily/', keep: 14, keepWeekly: 8 });
+        expect(() => backupKind('weekly')).toThrow('Unknown backup kind');
         expect(backupKind('pre-migration')).toEqual({ folder: 'db-backup/pre-migration/', keep: 10 });
     });
 

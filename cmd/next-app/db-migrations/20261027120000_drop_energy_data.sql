@@ -30,8 +30,9 @@ DROP FUNCTION IF EXISTS public.compact_raw_day_digest(text, timestamptz, timesta
 
 -- Day records are keyed by site-local midnight, so a timezone change must re-key
 -- them. They are now the only copy of the history: refuse the change while any
--- exist instead of deleting them. scripts/rebuild-site-timezone.ts re-keys the
--- records and changes the timezone in one transaction.
+-- exist instead of deleting them. Tesla does not change a site's timezone, so a
+-- correction is a manual step: delete the site's records (only those of a site
+-- with working Tesla tokens can be refetched), change the timezone, refetch.
 CREATE OR REPLACE FUNCTION public.invalidate_compact_energy_timezone()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -40,7 +41,7 @@ AS $function$
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('compact-energy:' || OLD.id, 0));
     IF EXISTS (SELECT 1 FROM public."EnergyDayArchive" WHERE site_id = OLD.id) THEN
-        RAISE EXCEPTION 'Rebuild energy day records for the new timezone first (scripts/rebuild-site-timezone.ts)';
+        RAISE EXCEPTION 'Site has energy day records keyed to its current timezone; delete them (and refetch from Tesla) before changing it';
     END IF;
     RETURN NEW;
 END;

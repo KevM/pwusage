@@ -3,9 +3,9 @@ import { deepStrictEqual } from 'node:assert';
 import { createHash,randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow,DailyCoverageStat } from '../energy-repo';
-import type { EnergyData, Tariff, TariffSchedule, TariffSeason } from '../db-types';
+import type { Tariff, TariffSchedule, TariffSeason } from '../db-types';
 import { addDaysInSiteTimezone, getSiteMidnight } from '../date-utils';
-import {recoverVerifiedSamples,type RecoveryArchive} from './compact-energy-recovery';
+import type {RecoveryArchive} from './compact-energy-recovery';
 import { decodeDaySamples, encodeDaySamples, toSample, type DayArchive, type DayRollup, type EnergySample } from './compact-energy';
 import {buildLatestMetadata,verifyLatestMetadata,type LatestMetadata,type LatestSample} from './compact-latest-metadata';
 import { buildDayMetadataV3, type SummarizedHistoryDay } from './compact-day-metadata';
@@ -74,8 +74,6 @@ function detailDay(a:DetailArchiveRecord,summaries:SummaryRecord[]):FinalizedHis
  * `empty`: Tesla answered with no samples for a day that has a record or raw rows, which were kept.
  */
 export interface DayWriteResult { status:'busy'|'empty'|'checked-empty'|'written'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
-/** One site's day records re-keyed to a new timezone (see `rebuildTimezone`). */
-export interface TimezoneRebuildResult { status:'busy'|'unchanged'|'previewed'|'rebuilt'; from?:string; sourceDays?:number; records?:number; droppedEmptyDays?:number }
 type PreparedDay={archive:DayArchive;summaries:DayRollup[];attributionComplete:boolean;metadata:SummarizedHistoryDay;payloadChecksum:string;
     latest:{data:LatestMetadata;checksum:string};record?:{attribution:DayAttribution;status:DayStatus;fetchedAt:Date}};
 
@@ -367,62 +365,6 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_start < $3 AND a.status='empty'
             ORDER BY a.day_start`,[siteId,from,before,now,DAY_GAP_HEAL_DAYS])).rows;
         return rows.map(r=>({dayStart:new Date(r.day_start),fetchedAt:new Date(r.fetched_at),settled:r.settled}));
-    }
-
-    /**
-     * Re-key every stored day of a site to a new timezone in one transaction, so old
-     * and new local-day partitions never coexist and no Tesla request is needed
-     * (tokenless sites included). Every record's samples are decoded (verified as
-     * recovery does) and regrouped by the new local midnight; each new day becomes a
-     * v2 record, segments from the current tariff under the new timezone,
-     * `fetched_at` its oldest source's. Empty records are dropped. Preview does the
-     * same work and rolls back.
-     */
-    async rebuildTimezone(siteId:string,timezone:string,{apply,now}:{apply:boolean;now:Date}):Promise<TimezoneRebuildResult> {
-        if(!siteId?.trim()||siteId.length>200||!Number.isSafeInteger(+now))throw new Error('Invalid timezone rebuild request');
-        new Intl.DateTimeFormat('en-US',{timeZone:timezone});
-        const client=await this.pool.connect();
-        try {
-            await beginTransaction(client,'ISOLATION LEVEL READ COMMITTED');
-            await this.boundTransaction(client);
-            await client.query("SET LOCAL statement_timeout='15s'; SET LOCAL lock_timeout='3s'");
-            if(apply)await this.mutationGuard?.(client);
-            if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy'};}
-            const from=(await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1 FOR UPDATE',[siteId])).rows[0]?.timezone;
-            if(!from)throw new Error('Site not found');
-            if(from===timezone) {await client.query('COMMIT');return {status:'unchanged',from};}
-            const stored=(await client.query<ArchiveRecord&{created_at:Date;summaries:SummaryRecord[]}>(`SELECT a.*,COALESCE((SELECT json_agg(x) FROM "EnergyDaySummary" x
-                WHERE x.site_id=a.site_id AND x.day_start=a.day_start AND x.revision=a.revision),'[]') AS summaries
-                FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND ${HAS_SAMPLES_SQL('a.')} ORDER BY a.day_start`,[siteId])).rows;
-            const days=new Map<number,{rows:EnergyData[];fetchedAt:Date}>();
-            for(const archive of stored) {
-                const fetchedAt=new Date(archive.fetched_at??archive.created_at);
-                for(const row of recoverVerifiedSamples(archive,archive.summaries.map(summary))) {
-                    const key=+getSiteMidnight(row.timestamp,timezone);
-                    const day=days.get(key);
-                    if(!day)days.set(key,{rows:[row],fetchedAt});
-                    else {day.rows.push(row);if(fetchedAt<day.fetchedAt)day.fetchedAt=fetchedAt;}
-                }
-            }
-            const deleted=(await client.query<{empty:boolean}>(`DELETE FROM "EnergyDayArchive" WHERE site_id=$1 RETURNING status IS NOT DISTINCT FROM 'empty' AS empty`,[siteId])).rows;
-            const droppedEmptyDays=deleted.filter(r=>r.empty).length,sourceDays=deleted.length-droppedEmptyDays;
-            // With no archive left the timezone trigger allows the change.
-            await client.query('UPDATE "Site" SET timezone=$2 WHERE id=$1',[siteId,timezone]);
-            const starts=[...days.keys()].sort((a,b)=>a-b).map(key=>new Date(key));
-            const ends=starts.map(start=>addDaysInSiteTimezone(start,1,timezone));
-            const {tariffs}=await this.tariffs(client,siteId,true);
-            let records=0;
-            for(let i=0;i<starts.length;i++) {
-                const day=days.get(+starts[i])!;
-                const samples=day.rows.map(toSample).sort((a,b)=>+a.timestamp-+b.timestamp);
-                if(samples.some(r=>(+r.timestamp-+starts[i])%300000))throw new Error('Samples off the 5-minute grid in the new timezone');
-                await this.replaceDay(client,siteId,starts[i],ends[i],samples.length,this.prepareSamples(siteId,timezone,starts[i],ends[i],samples,tariffs,day.fetchedAt,now),true);
-                records++;
-            }
-            await client.query(apply?'COMMIT':'ROLLBACK');
-            return {status:apply?'rebuilt':'previewed',from,sourceDays,records,droppedEmptyDays};
-        } catch(error) {await client.query('ROLLBACK');throw error;}
-        finally {client.release(this.transactionTimeoutMs!==undefined);}
     }
 
     /** Format 2: verify the lossless round trip, derive segments from the current tariff, then summaries, status and projections. */

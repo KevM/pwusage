@@ -8,14 +8,16 @@ has no automatic backups and a 5 GB monthly egress quota shared with the app.
 
 | Kind | When | Folder | Kept |
 |---|---|---|---|
-| `daily` | Every day, 09:23 UTC | `db-backup/daily/` | 14 |
-| `weekly` | Sundays, 09:41 UTC | `db-backup/weekly/` | 8 |
+| `daily` | Every day, 09:23 UTC | `db-backup/daily/` | the newest 14, plus the newest of each of the 8 weeks before them |
 | `pre-migration` | Before migrations, on merges to `main` that change them | `db-backup/pre-migration/` | 10 |
 
-Every kind is a complete dump of the `public` schema. Energy history is compact
+Every backup is a complete dump of the `public` schema. Energy history is compact
 day records (`EnergyDayArchive` + `EnergyDaySummary`, about 20 MB on production
-on 2026-10-27), so every backup holds all of it. The kinds differ only in when
-they run and how long they are kept.
+on 2026-10-27), so every backup holds all of it. Daily retention keeps weekly
+copies too, so there is no separate weekly run (weeks are UTC, Monday to Sunday).
+The `db-backup/weekly/` folder holds the last weekly backups from before
+2026-10-27; retention no longer touches it, so delete them by hand once the
+daily folder has eight weeks of its own.
 
 Until 2026-10-27 raw 5-minute `EnergyData` held the history: daily backups then
 skipped it (keeping 3 days in `energy-recent.csv`) and only weekly and
@@ -62,7 +64,7 @@ application's transaction pool; direct and local URLs are preserved.
 
 ## Restoring
 
-1. **Pick the backup.** The newest one of any kind (usually the newest daily).
+1. **Pick the backup.** The newest one (usually the newest daily).
 
    ```bash
    export BLOB_READ_WRITE_TOKEN=<BACKUP_BLOB_READ_WRITE_TOKEN value>
