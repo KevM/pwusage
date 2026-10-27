@@ -118,9 +118,9 @@ just removed.
 - Keep the existing opt-in rules (`sorted_imports`, `empty_count`, `force_unwrapping`,
   `unhandled_throwing_task`) and add the cleanup rules that encode this campaign:
   `file_length`, `type_body_length`, `function_body_length`, `cyclomatic_complexity`, `nesting`,
-  `large_tuple`, `function_parameter_count`, `unused_declaration` where reliable.
-- Start at default thresholds (120 columns; file 400 warning / 500 error; type body 350/450;
-  function body 60/100; complexity 10/15; nesting 1/2; large tuple 3/4; parameters 5/8). Relax a
+  `large_tuple`, `function_parameter_count`; use Periphery for unused declarations.
+- Start at the target thresholds (120 columns; file 400 warning / 500 error; type body 350/450;
+  function body 50/100; complexity 10/20; nesting 1/2; large tuple 2/3; parameters 5/8). Relax a
   rule only when an entire category is legitimate project style, never per file.
 - No file-wide suppressions. A `swiftlint:disable` must be `:next` and carry a reason.
 - Regenerate the baseline only in a PR that removes violations. Review the violation-count delta in
@@ -130,7 +130,7 @@ just removed.
 ### SwiftFormat
 
 - Add a root `.swiftformat` scoped by invocation to `cmd/ios-app`:
-  `--swiftversion 6.0`, `--maxwidth 120`, sorted imports, trailing commas, consistent whitespace.
+  `--swift-version 6.0`, `--max-width 120`, sorted imports, trailing commas, consistent whitespace.
 - Add `cmd/ios-app/format.sh` as the documented wrapper.
 - Formatting-only changes land in their own PRs and are recorded in `.git-blame-ignore-revs`.
 - CI runs `swiftformat --lint cmd/ios-app` once the mechanical pass lands; semantic edits remain
