@@ -386,7 +386,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             await beginTransaction(client,'ISOLATION LEVEL READ COMMITTED');
             await this.boundTransaction(client);
             await client.query("SET LOCAL statement_timeout='15s'; SET LOCAL lock_timeout='3s'");
-            if(apply)await this.mutationGuard!(client);
+            if(apply)await this.mutationGuard?.(client);
             if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy'};}
             const from=(await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1 FOR UPDATE',[siteId])).rows[0]?.timezone;
             if(!from)throw new Error('Site not found');

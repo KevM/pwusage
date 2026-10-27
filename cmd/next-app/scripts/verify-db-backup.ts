@@ -81,6 +81,10 @@ export async function verifyBackupDirectory(dir: string): Promise<Record<string,
     if (info !== undefined && !TAKEN_AT.test(info.taken_at ?? '')) {
         throw new Error(`${BACKUP_INFO} has no valid taken_at (expected UTC like 2026-10-15T09:23:05Z)`);
     }
+    // Daily backups before 2026-10-27 skipped raw EnergyData history; on their own they are incomplete.
+    if (info?.dump === 'small') {
+        throw new Error('This is a partial daily backup from before 2026-10-27 (no raw EnergyData history). Restore it together with a full backup using restore-db-backup.sh from that time; see docs/database-backups.md.');
+    }
 
     const rows = countCopyRows(data);
 

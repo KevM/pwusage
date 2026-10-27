@@ -65,6 +65,11 @@ describe('verifyBackupDirectory', () => {
         await expect(verifyBackupDirectory(dir)).resolves.toEqual({ User: 1, Site: 2, EnergyDayArchive: 1, EnergyData: 1 });
     });
 
+    it('rejects a partial daily backup from before the single compact store', async () => {
+        await backup({ 'data.sql': PREAMBLE + USERS + SITES + ARCHIVES + SUMMARIES, 'backup-info': 'kind=daily\ndump=small\ntaken_at=2026-10-15T09:23:05Z\n' });
+        await expect(verifyBackupDirectory(dir)).rejects.toThrow('partial daily backup');
+    });
+
     it('requires a valid timestamp when backup-info is present', async () => {
         await backup({ 'data.sql': PREAMBLE + USERS + SITES + ARCHIVES + SUMMARIES, 'backup-info': 'kind=daily\ntaken_at=yesterday\n' });
         await expect(verifyBackupDirectory(dir)).rejects.toThrow('taken_at');

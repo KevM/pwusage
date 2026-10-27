@@ -362,7 +362,8 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             expect(await rows()).toEqual(before);
             expect(await emptyDays()).toBe(1);
             await expect(store.rebuildTimezone('moved','Mars/Olympus',{apply:true,now:later})).rejects.toThrow();
-            expect(await store.rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).toEqual({status:'rebuilt',from:'UTC',sourceDays:3,records:4,droppedEmptyDays:1});
+            // As scripts/rebuild-site-timezone.ts runs it: no mutation guard.
+            expect(await new CompactHistoryStore(pool).rebuildTimezone('moved','America/Chicago',{apply:true,now:later})).toEqual({status:'rebuilt',from:'UTC',sourceDays:3,records:4,droppedEmptyDays:1});
             expect((await pool.query(`SELECT timezone FROM "Site" WHERE id='moved'`)).rows[0].timezone).toBe('America/Chicago');
             expect(await emptyDays()).toBe(0);
             const rebuilt=await rows();
