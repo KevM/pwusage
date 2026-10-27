@@ -6,7 +6,11 @@ const mocks = vi.hoisted(() => ({
     ensureDataForRange: vi.fn(),
     countAlignedSamples: vi.fn(),
     planMissingWindows: vi.fn(),
+    logEvent: vi.fn(),
+    flushLogEvents: vi.fn(),
 }));
+
+vi.mock('./observability', () => ({ logEvent: mocks.logEvent, flushLogEvents: mocks.flushLogEvents }));
 
 vi.mock('./site-repo', () => ({
     SiteRepo: vi.fn(function SiteRepo() {
@@ -99,10 +103,67 @@ describe('healTrailingGaps', () => {
             .toEqual(['2026-10-03T05:00:00.000Z', '2026-10-03T05:00:00.000Z']);
     });
 
-    it('only heals sites with live activity (web, mobile, TRMNL, battery hold) in the last 7 days', async () => {
+    it('includes seven-day live activity and a separate fourteen-day auth recovery window', async () => {
         await run();
 
-        expect(mocks.getSitesForGapHeal).toHaveBeenCalledWith(NOW.getTime() - 7 * 24 * 60 * 60 * 1000);
+        expect(mocks.getSitesForGapHeal).toHaveBeenCalledWith(
+            NOW.getTime() - 7 * 24 * 60 * 60 * 1000,
+            NOW.getTime() - 14 * 24 * 60 * 60 * 1000,
+        );
+    });
+
+    it('checkpoints a recovered site before its import and reports bounded repair progress immediately', async () => {
+        const site = { id: 'site-a', timezone: 'America/Chicago', installed: INSTALLED,
+            auth_lost_at: new Date('2026-09-20T18:00:00Z'), auth_restored_at: new Date('2026-10-15T12:00:00Z') };
+        mocks.getSitesForGapHeal.mockResolvedValue([site]);
+        mocks.ensureDataForRange.mockImplementationOnce(async () => {
+            expect(mocks.logEvent).toHaveBeenCalledWith('info', 'cron.heal-gaps.site.started', expect.objectContaining({
+                siteId: 'site-a', recovering: true, authLostAt: '2026-09-20T18:00:00.000Z',
+                authRestoredAt: '2026-10-15T12:00:00.000Z', windowStart: '2026-09-20T05:00:00.000Z',
+                windowEnd: '2026-10-17T05:00:00.000Z', maxWindows: 3,
+            }));
+            expect(mocks.flushLogEvents).toHaveBeenCalled();
+            return { complete: false, rows: [], processedWindows: 3, totalWindows: 25 };
+        });
+
+        await run();
+
+        expect(mocks.logEvent).toHaveBeenCalledWith('info', 'cron.heal-gaps.site', expect.objectContaining({
+            siteId: 'site-a', recovering: true, outcome: 'partial', processedWindows: 3, totalWindows: 25,
+        }));
+        expect(mocks.flushLogEvents).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports a recovered site whose entire window is stored without fetching or auditing', async () => {
+        mocks.getSitesForGapHeal.mockResolvedValue([{ id: 'site-a', timezone: 'America/Chicago', installed: INSTALLED,
+            auth_lost_at: new Date('2026-10-10T18:00:00Z'), auth_restored_at: new Date('2026-10-15T12:00:00Z') }]);
+        mocks.countAlignedSamples.mockResolvedValue(new Map([['site-a', FULL_14_DAYS]]));
+
+        await run();
+
+        expect(mocks.planMissingWindows).not.toHaveBeenCalled();
+        expect(mocks.createTeslaClientForSite).not.toHaveBeenCalled();
+        expect(mocks.logEvent).toHaveBeenCalledWith('info', 'cron.heal-gaps.site', expect.objectContaining({
+            siteId: 'site-a', recovering: true, outcome: 'complete', processedWindows: 0, totalWindows: 0,
+        }));
+    });
+
+    it('checkpoints each result before starting the next site and keeps raw error messages out of events', async () => {
+        mocks.ensureDataForRange.mockRejectedValueOnce(new Error('private upstream text'));
+        mocks.ensureDataForRange.mockImplementationOnce(async () => {
+            expect(mocks.logEvent).toHaveBeenCalledWith('warn', 'cron.heal-gaps.site', expect.objectContaining({
+                siteId: 'site-a', outcome: 'error',
+            }));
+            expect(mocks.flushLogEvents).toHaveBeenCalledTimes(3);
+            return { complete: true, rows: [], processedWindows: 1, totalWindows: 1 };
+        });
+
+        await run();
+
+        expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain('private upstream text');
+        expect(mocks.logEvent).toHaveBeenCalledWith('info', 'cron.heal-gaps.site', expect.objectContaining({
+            siteId: 'site-b', outcome: 'complete',
+        }));
     });
 
     it('reports partial when windows remain, and passes only the remaining time budget on', async () => {

@@ -3,6 +3,7 @@ import { EnergyRepo } from './energy-repo';
 import { Importer, planMissingWindows } from './importer';
 import { createTeslaClientForSite } from './tesla-client-factory';
 import { addDaysInSiteTimezone, getSiteMidnight } from './date-utils';
+import { flushLogEvents, logEvent } from './observability';
 
 /**
  * Bounded trailing-window heal for day-record gaps.
@@ -11,7 +12,7 @@ import { addDaysInSiteTimezone, getSiteMidnight } from './date-utils';
  * /api/sync), and the today refresh only covers today plus yesterday's tail, so
  * older holes (whole missing days, interior gaps) were never healed for sites
  * only used from iOS. That broke the 14-day load-planning profile. This walks
- * each recently used site's trailing complete site-local days through
+ * each recently used or recovered site's trailing complete site-local days through
  * ensureDataForRange (planImport under the import lock), capped per site and
  * by a shared time budget sized for the Vercel Hobby 60s function limit.
  * Unhealed windows are simply re-planned by the next run. Settled day records
@@ -31,7 +32,7 @@ export type HealSiteResult =
     | { siteId: string; status: 'error'; errorMessage: string };
 
 export interface HealTrailingGapsResult {
-    /** Sites in recent use whose trailing window was checked. */
+    /** Recently used or recovered sites whose trailing window was checked. */
     checked: number;
     /** Only sites whose window was short of samples; complete sites are omitted. */
     sites: HealSiteResult[];
@@ -41,8 +42,9 @@ export interface HealTrailingGapsResult {
 export const GAP_HEAL_DAYS = 14;
 export const GAP_HEAL_MAX_WINDOWS_PER_SITE = 3;
 export const GAP_HEAL_MAX_TIME_MS = 35_000;
-/** Idle sites are left alone; a returning site re-enters on its next live refresh. */
+/** Idle sites are left alone unless their last auth outage ended recently. */
 export const GAP_HEAL_ACTIVE_WITHIN_MS = 7 * 24 * 60 * 60 * 1000;
+export const GAP_HEAL_RECOVERED_WITHIN_MS = GAP_HEAL_DAYS * 24 * 60 * 60 * 1000;
 
 export async function healTrailingGaps(options: HealTrailingGapsOptions = {}): Promise<HealTrailingGapsResult> {
     const days = options.days ?? GAP_HEAL_DAYS;
@@ -53,7 +55,10 @@ export async function healTrailingGaps(options: HealTrailingGapsOptions = {}): P
 
     const startedAt = clock();
     const at = now();
-    const sites = await new SiteRepo().getSitesForGapHeal(at.getTime() - GAP_HEAL_ACTIVE_WITHIN_MS);
+    const sites = await new SiteRepo().getSitesForGapHeal(
+        at.getTime() - GAP_HEAL_ACTIVE_WITHIN_MS,
+        at.getTime() - GAP_HEAL_RECOVERED_WITHIN_MS,
+    );
     const windows = sites.map(site => trailingWindow(site, days, at));
 
     // Egress: one small count query covers every site. Only sites short of a
@@ -61,16 +66,34 @@ export async function healTrailingGaps(options: HealTrailingGapsOptions = {}): P
     // lock and the per-day coverage audit (planImport) that decides what to fetch.
     const counts = await EnergyRepo.countAlignedSamples(
         windows.map(w => ({ siteId: w.site.id, start: w.countStart, end: w.end })));
-    const short = windows.filter(w => (counts.get(w.site.id) ?? 0) < (w.end.getTime() - w.countStart.getTime()) / SLOT_MS);
-
     const result: HealTrailingGapsResult = { checked: sites.length, sites: [] };
-    for (const w of short) {
+    for (const w of windows) {
+        const fields = siteLogFields(w, at);
+        if ((counts.get(w.site.id) ?? 0) >= (w.end.getTime() - w.countStart.getTime()) / SLOT_MS) {
+            // Recovered sites with full coverage also need an observable outcome,
+            // without paying for a coverage audit, tokens or a Tesla request.
+            if (fields.recovering) {
+                logEvent('info', 'cron.heal-gaps.site', { ...fields, outcome: 'complete', processedWindows: 0, totalWindows: 0 });
+                flushLogEvents();
+            }
+            continue;
+        }
         const remainingMs = maxTimeMs - (clock() - startedAt);
         if (remainingMs <= 0) {
             result.stopped = 'time-budget';
             break;
         }
-        result.sites.push(await healSite(w.site, w.start, w.end, maxWindows, remainingMs));
+        logEvent('info', 'cron.heal-gaps.site.started', { ...fields, maxWindows });
+        flushLogEvents();
+        const siteResult = await healSite(w.site, w.start, w.end, maxWindows, remainingMs);
+        result.sites.push(siteResult);
+        logEvent(siteResult.status === 'error' ? 'warn' : 'info', 'cron.heal-gaps.site', {
+            ...fields, outcome: siteResult.status,
+            ...('processedWindows' in siteResult ? {
+                processedWindows: siteResult.processedWindows, totalWindows: siteResult.totalWindows,
+            } : {}),
+        });
+        flushLogEvents();
     }
     return result;
 }
@@ -86,6 +109,20 @@ interface TrailingWindow {
     end: Date;
     /** Same clamp for counting, so a new site isn't always short. */
     countStart: Date;
+}
+
+function siteLogFields(window: TrailingWindow, at: Date) {
+    const { site } = window;
+    const lost = site.auth_lost_at;
+    const restored = site.auth_restored_at;
+    return {
+        siteId: site.id,
+        recovering: !!(lost && restored && +restored > +lost && +restored >= +at - GAP_HEAL_RECOVERED_WITHIN_MS),
+        authLostAt: lost?.toISOString() ?? null,
+        authRestoredAt: restored?.toISOString() ?? null,
+        windowStart: window.countStart.toISOString(),
+        windowEnd: window.end.toISOString(),
+    };
 }
 
 function trailingWindow(site: HealSite, days: number, at: Date): TrailingWindow {
