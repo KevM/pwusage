@@ -84,7 +84,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         const result=await store.writeDay('site',start,samples,fetched,jobOptions.now);
         expect(result).toMatchObject({status:'written',attributionComplete:true,dayStatus:'complete',revision:expect.any(String)});
         expect((await pool.query('SELECT raw_pruned,sample_count,format_version,metadata_version,status FROM "EnergyDayArchive"')).rows)
-            .toEqual([{raw_pruned:true,sample_count:288,format_version:2,metadata_version:3,status:'complete'}]);
+            .toEqual([{raw_pruned:false,sample_count:288,format_version:2,metadata_version:3,status:'complete'}]);
         const reader=new CompactHistoryReader(store,'America/Chicago');
         expect(await reader.getRawEnergyData('site',start,end)).toEqual(samples);
         expect((await reader.getDailyCoverage('site',start,end,'America/Chicago'))[0]).toMatchObject({count:288,archived:true});

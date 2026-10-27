@@ -1054,3 +1054,10 @@ Added regression tests covering offline failure and session expiration when boot
 control validation. Full native test suite passed (484 tests in 29 suites). Generic iOS app/extension
 build passed. Web lint, webpack production build, and 1,202 web tests passed (82 configured skips).
 
+# V2 reader cleanup (2026-10-27)
+
+- [x] Remove raw snapshot merge paths and migrate retained tests to v2.
+- [x] Remove v1 codec/metadata paths and unused prototype helpers.
+- [x] Stop referencing `raw_pruned` in deployed code; verify and open code PR.
+- [ ] Prepare a separately staged, generated schema cleanup migration and verify its invariants.
+

@@ -65,49 +65,6 @@ export function deriveDayAttribution(schedule: Pick<Schedule, 'getTariffPeriod'>
     return attribution;
 }
 
-/** The schedule a tariff version assigns to the slot labeled `timestamp` (`getTariffPeriod`), or null. */
-export type GapPricer = (timestamp: Date, tariffId: number) => number | null;
-
-/**
- * Segments for a v1 day from its per-sample IDs, preserving what each sample was
- * priced with. Slots without a sample take the neighbouring attribution when the
- * samples on both sides agree (or the only neighbour, at the day's edges).
- * Where they disagree the boundary is unknown: with `price`, the gap is priced
- * under the tariff version both neighbours recorded, but only if that version
- * reproduces both neighbours' schedules; otherwise it is `scheduleId: null`.
- */
-export function segmentsFromV1Rows(rows: EnergyData[], start: Date, end: Date, price?: GapPricer): TariffSegment[] {
-    const count = dayMinutes(start, end) / SLOT_MINUTES;
-    if (!rows.length) throw new Error('No day samples');
-    const known: (Omit<TariffSegment, 'offset'> | undefined)[] = new Array(count);
-    for (const row of rows) {
-        const ms = +row.timestamp - +start;
-        if (ms < 0 || ms >= +end - +start || ms % SLOT_MS) throw new Error('Invalid sample identity/time');
-        if (!Number.isSafeInteger(row.tariff_id) || (row.tariff_schedule_id !== null && !Number.isSafeInteger(row.tariff_schedule_id))) throw new Error('Invalid tariff ID');
-        known[ms / SLOT_MS] = { tariffId: row.tariff_id, scheduleId: row.tariff_schedule_id };
-    }
-    const next: (number | undefined)[] = new Array(count);
-    for (let i = count - 1; i >= 0; i--) next[i] = known[i] ? i : next[i + 1];
-    const slotTime = (i: number) => new Date(+start + i * SLOT_MS);
-    const slots: Omit<TariffSegment, 'offset'>[] = [];
-    let previousIndex: number | undefined;
-    for (let i = 0; i < count; i++) {
-        if (known[i]) previousIndex = i;
-        const previous = previousIndex === undefined ? undefined : known[previousIndex];
-        const after = next[i] === undefined ? undefined : known[next[i]!];
-        if (!known[i] && previous && after && !sameAttribution(previous, after)) {
-            const tariffId = previous.tariffId;
-            const consistent = price && after.tariffId === tariffId
-                && price(slotTime(previousIndex!), tariffId) === previous.scheduleId && price(slotTime(next[i]!), tariffId) === after.scheduleId;
-            // Otherwise unattributed, under the earlier sample's tariff version.
-            slots.push({ tariffId, scheduleId: consistent ? price(slotTime(i), tariffId) : null });
-            continue;
-        }
-        slots.push((previous ?? after)!);
-    }
-    return encodeSlots(slots);
-}
-
 /** Canonical timeline: starts at 0, strictly increasing 5-minute offsets inside the day, no repeated neighbours. */
 export function validateDayAttribution(attribution: DayAttribution, start: Date, end: Date): void {
     const minutes = dayMinutes(start, end);
@@ -122,7 +79,7 @@ export function validateDayAttribution(attribution: DayAttribution, start: Date,
 
 export const isAttributionComplete = (attribution: DayAttribution): boolean => attribution.segments.every(s => s.scheduleId !== null);
 
-/** Tags each sample with the segment covering its label, as v1 rows. */
+/** Tags each sample with the segment covering its label, as tariff-tagged rows. */
 export function attributeSamples(samples: EnergySample[], attribution: DayAttribution, start: Date, end: Date): EnergyData[] {
     validateDayAttribution(attribution, start, end);
     const { segments } = attribution;
@@ -137,7 +94,7 @@ export function attributeSamples(samples: EnergySample[], attribution: DayAttrib
     });
 }
 
-/** `EnergyDaySummary` rows from samples × segments; identical to `rollupDay` over equivalently tagged v1 rows. */
+/** `EnergyDaySummary` rows from samples × segments; identical to `rollupDay` over equivalently tagged measurements. */
 export function rollupSamples(samples: EnergySample[], attribution: DayAttribution, start: Date, end: Date): DayRollup[] {
     return rollupDay(attributeSamples(samples, attribution, start, end), start);
 }
