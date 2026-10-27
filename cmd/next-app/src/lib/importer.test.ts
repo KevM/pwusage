@@ -1,6 +1,8 @@
-vi.mock('./energy-repo-factory',()=>({createEnergyRepo:(_timezone:string,rawRepo:EnergyRepo)=>rawRepo,compactDayWritesEnabled:()=>false}));
+// Coverage reads go through the factory; each test installs its repo here.
+const coverage = vi.hoisted(() => ({ repo: undefined as unknown }));
+vi.mock('./energy-repo-factory',()=>({createEnergyRepo:()=>coverage.repo}));
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Importer } from './importer';
 import { EnergyHistoryEntry, TeslaClient } from './tesla-client';
 import { EnergyRepo } from './energy-repo';
@@ -71,7 +73,6 @@ vi.mock('./energy-repo', () => {
         getLatestEnergyData = vi.fn();
         getDailyCoverage = vi.fn();
         getLatestTimestamp = vi.fn();
-        insertEnergyDataBatch = vi.fn();
         static getSiteMidnight = vi.fn((d: Date) => {
             const date = new Date(d);
             date.setUTCHours(0, 0, 0, 0);
@@ -98,11 +99,13 @@ vi.mock('./user-repo', () => {
     return { UserRepo };
 });
 vi.mock('./tesla-client');
-const healedArchiveMock = vi.hoisted(() => ({ archiveHealedDays: vi.fn<(...args: unknown[]) => Promise<never[]>>(async () => []) }));
-vi.mock('./healed-day-archive', () => healedArchiveMock);
 vi.mock('./import-lock', () => ({
     withImportLock: importLockMock.withImportLock,
 }));
+
+/** Spy on the per-window day-record import (one Tesla fetch and `writeDay` per day). */
+const importDays = (importer: Importer) =>
+    vi.spyOn(importer as unknown as { importDayRecords: (siteId: string, start: Date, end: Date) => Promise<unknown[]> }, 'importDayRecords');
 
 describe('Importer Sync Logic', () => {
     let importer: Importer;
@@ -134,22 +137,20 @@ describe('Importer Sync Logic', () => {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn(),
             getDailyCoverage: vi.fn(),
-            insertEnergyDataBatch: vi.fn()
         };
-        (importer as unknown as { repo: unknown }).repo = energyRepoMock;
+        coverage.repo = energyRepoMock;
     });
 
     it('should trigger import when data is missing', async () => {
         // Mock repo methods
-        (importer as unknown as { repo: unknown }).repo = {
+        coverage.repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
             getDailyCoverage: vi.fn().mockResolvedValue([]),
-            insertEnergyDataBatch: vi.fn()
         };
         
         // Mock Import Call
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const importSpy = importDays(importer).mockResolvedValue([]);
 
         const start = new Date('2026-01-10T00:00:00Z');
         const end = new Date('2026-01-10T23:59:59Z');
@@ -157,12 +158,12 @@ describe('Importer Sync Logic', () => {
         await importer.ensureDataForRange('site-123', start, end);
 
         expect(importSpy).toHaveBeenCalled();
-        expect(importSpy).toHaveBeenCalledWith('site-123', expect.anything(), expect.anything(), 'day');
+        expect(importSpy).toHaveBeenCalledWith('site-123', expect.anything(), expect.anything());
     });
 
     it('returns an empty result when the DB import lock is not acquired', async () => {
         mockRepo.acquireImportLock.mockResolvedValue(false);
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const importSpy = importDays(importer).mockResolvedValue([]);
 
         const start = new Date('2026-01-10T00:00:00Z');
         const end = new Date('2026-01-10T23:59:59Z');
@@ -177,13 +178,12 @@ describe('Importer Sync Logic', () => {
     });
 
     it('releases the DB import lock when a planned window import throws', async () => {
-        (importer as unknown as { repo: unknown }).repo = {
+        coverage.repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
             getDailyCoverage: vi.fn().mockResolvedValue([]),
-            insertEnergyDataBatch: vi.fn()
         };
-        vi.spyOn(importer, 'importRange').mockRejectedValue(new Error('Tesla API Offline'));
+        importDays(importer).mockRejectedValue(new Error('Tesla API Offline'));
 
         const start = new Date('2026-01-10T00:00:00Z');
         const end = new Date('2026-01-10T23:59:59Z');
@@ -193,13 +193,12 @@ describe('Importer Sync Logic', () => {
     });
 
     it('uses the shared import lock helper with 90s duration and releases after successful window import', async () => {
-        (importer as unknown as { repo: unknown }).repo = {
+        coverage.repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
             getDailyCoverage: vi.fn().mockResolvedValue([]),
-            insertEnergyDataBatch: vi.fn()
         };
-        vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        importDays(importer).mockResolvedValue([]);
 
         const start = new Date('2026-01-10T00:00:00Z');
         const end = new Date('2026-01-10T23:59:59Z');
@@ -221,14 +220,13 @@ describe('Importer Sync Logic', () => {
     });
 
     it('should throw an error when all planned windows fail to import', async () => {
-        (importer as unknown as { repo: unknown }).repo = {
+        coverage.repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
             getDailyCoverage: vi.fn().mockResolvedValue([]),
-            insertEnergyDataBatch: vi.fn()
         };
         
-        vi.spyOn(importer, 'importRange').mockRejectedValue(new Error('Tesla API Offline'));
+        importDays(importer).mockRejectedValue(new Error('Tesla API Offline'));
 
         const start = new Date('2026-01-10T00:00:00Z');
         const end = new Date('2026-01-10T23:59:59Z');
@@ -250,14 +248,13 @@ describe('Importer Sync Logic', () => {
             },
         ];
 
-        (importer as unknown as { repo: unknown }).repo = {
+        coverage.repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
             getDailyCoverage: vi.fn().mockResolvedValue(existingCoverage),
-            insertEnergyDataBatch: vi.fn()
         };
 
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const importSpy = importDays(importer).mockResolvedValue([]);
 
         const s = new Date('2026-01-10T00:00:00Z');
         const e = new Date('2026-01-10T23:59:59Z');
@@ -345,14 +342,13 @@ describe('Importer Sync Logic', () => {
 
         const getDailyCoverageMock = vi.fn().mockResolvedValue(existingCoverage);
 
-        (importer as unknown as { repo: unknown }).repo = {
+        coverage.repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
             getDailyCoverage: getDailyCoverageMock,
-            insertEnergyDataBatch: vi.fn()
         };
 
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const importSpy = importDays(importer).mockResolvedValue([]);
 
         await importer.ensureDataForRange('site-123', start, end);
 
@@ -370,11 +366,10 @@ describe('Importer Sync Logic', () => {
     });
 
     it('stops importing and returns complete: false when maxTimeMs time budget is reached', async () => {
-        (importer as unknown as { repo: unknown }).repo = {
+        coverage.repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
             getDailyCoverage: vi.fn().mockResolvedValue([]),
-            insertEnergyDataBatch: vi.fn()
         };
 
         const start = new Date('2026-01-10T00:00:00Z');
@@ -383,7 +378,7 @@ describe('Importer Sync Logic', () => {
         let currentTime = 10000;
         vi.spyOn(Date, 'now').mockImplementation(() => currentTime);
 
-        const importSpy = vi.spyOn(importer, 'importRange').mockImplementation(async () => {
+        const importSpy = importDays(importer).mockImplementation(async () => {
             currentTime += 50000; // Advance time by 50s on each imported window
             return [];
         });
@@ -398,13 +393,12 @@ describe('Importer Sync Logic', () => {
     });
 
     it('imports only the newest maxWindows planned windows and reports incomplete', async () => {
-        (importer as unknown as { repo: unknown }).repo = {
+        coverage.repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
             getDailyCoverage: vi.fn().mockResolvedValue([]),
-            insertEnergyDataBatch: vi.fn()
         };
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const importSpy = importDays(importer).mockResolvedValue([]);
 
         const start = new Date('2026-01-10T00:00:00Z');
         const end = new Date('2026-01-15T00:00:00Z');
@@ -420,71 +414,14 @@ describe('Importer Sync Logic', () => {
         expect(result.complete).toBe(false);
     });
 
-    it('hands successfully imported days to the healed-day archiver when asked', async () => {
-        (importer as unknown as { repo: unknown }).repo = {
-            getSiteMidnight: EnergyRepo.getSiteMidnight,
-            getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getDailyCoverage: vi.fn().mockResolvedValue([]),
-            insertEnergyDataBatch: vi.fn()
-        };
-        vi.spyOn(importer, 'importRange')
-            .mockResolvedValueOnce([])
-            .mockRejectedValueOnce(new Error('Tesla flaked on this day'));
-
-        await importer.ensureDataForRange('site-123', new Date('2026-01-10T00:00:00Z'), new Date('2026-01-12T00:00:00Z'),
-            undefined, { archiveHealedDays: true });
-
-        expect(healedArchiveMock.archiveHealedDays).toHaveBeenCalledTimes(1);
-        expect(healedArchiveMock.archiveHealedDays).toHaveBeenCalledWith(
-            { id: 'site-123', timezone: 'America/Chicago' },
-            [{ start: new Date('2026-01-10T00:00:00Z'), end: new Date('2026-01-11T00:00:00Z') }],
-            expect.any(Date),
-            {});
-    });
-
-    it('bounds healed-day archiving by the remaining request time budget', async () => {
-        (importer as unknown as { repo: unknown }).repo = {
-            getSiteMidnight: EnergyRepo.getSiteMidnight,
-            getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getDailyCoverage: vi.fn().mockResolvedValue([]),
-            insertEnergyDataBatch: vi.fn()
-        };
-        vi.spyOn(importer, 'importRange').mockResolvedValue([]);
-        const before = Date.now();
-
-        await importer.ensureDataForRange('site-123', new Date('2026-01-10T00:00:00Z'), new Date('2026-01-11T00:00:00Z'),
-            undefined, { archiveHealedDays: true, maxTimeMs: 40000 });
-
-        const deps = healedArchiveMock.archiveHealedDays.mock.calls[0][3] as { deadline: number };
-        expect(deps.deadline).toBeGreaterThanOrEqual(before + 40000);
-        expect(deps.deadline).toBeLessThanOrEqual(Date.now() + 40000);
-    });
-
-    it('leaves archiving to the caller by default and when nothing imported', async () => {
-        (importer as unknown as { repo: unknown }).repo = {
-            getSiteMidnight: EnergyRepo.getSiteMidnight,
-            getLatestTimestamp: vi.fn().mockResolvedValue(null),
-            getDailyCoverage: vi.fn().mockResolvedValue([]),
-            insertEnergyDataBatch: vi.fn()
-        };
-        vi.spyOn(importer, 'importRange').mockResolvedValue([]);
-        const start = new Date('2026-01-10T00:00:00Z'), end = new Date('2026-01-11T00:00:00Z');
-
-        await importer.ensureDataForRange('site-123', start, end);
-        await importer.ensureDataForRange('site-123', start, end, undefined, { archiveHealedDays: true, maxWindows: 0 });
-
-        expect(healedArchiveMock.archiveHealedDays).not.toHaveBeenCalled();
-    });
-
     it('returns complete: false when some planned windows fail and others succeed', async () => {
-        (importer as unknown as { repo: unknown }).repo = {
+        coverage.repo = {
             getSiteMidnight: EnergyRepo.getSiteMidnight,
             getLatestTimestamp: vi.fn().mockResolvedValue(null),
             getDailyCoverage: vi.fn().mockResolvedValue([]),
-            insertEnergyDataBatch: vi.fn()
         };
         // First window imports, every later window fails.
-        const importSpy = vi.spyOn(importer, 'importRange')
+        const importSpy = importDays(importer)
             .mockResolvedValueOnce([])
             .mockRejectedValue(new Error('Tesla flaked on this day'));
 
@@ -521,7 +458,7 @@ describe('Importer.refetchDays', () => {
     });
 
     it('re-imports exactly the given days, even if coverage says they are complete, under the normal (non-forced) lock', async () => {
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const importSpy = importDays(importer).mockResolvedValue([]);
 
         const result = await importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 30 });
 
@@ -532,7 +469,7 @@ describe('Importer.refetchDays', () => {
 
     it('returns 0/0 without importing when the import lock is busy', async () => {
         mockRepo.acquireImportLock.mockResolvedValue(false);
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const importSpy = importDays(importer).mockResolvedValue([]);
 
         await expect(importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 30 }))
             .resolves.toEqual({ complete: false, rows: [], processedWindows: 0, totalWindows: 0 });
@@ -540,7 +477,7 @@ describe('Importer.refetchDays', () => {
     });
 
     it('caps a call at maxWindows and reports incomplete', async () => {
-        const importSpy = vi.spyOn(importer, 'importRange').mockResolvedValue([]);
+        const importSpy = importDays(importer).mockResolvedValue([]);
 
         const result = await importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 2 });
 
@@ -549,105 +486,12 @@ describe('Importer.refetchDays', () => {
     });
 
     it('reports incomplete when some days fail, and throws when all fail', async () => {
-        vi.spyOn(importer, 'importRange').mockResolvedValueOnce([]).mockRejectedValue(new Error('Tesla flaked'));
+        importDays(importer).mockResolvedValueOnce([]).mockRejectedValue(new Error('Tesla flaked'));
         await expect(importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 30 }))
             .resolves.toMatchObject({ complete: false, processedWindows: 1, totalWindows: 3 });
 
-        vi.spyOn(importer, 'importRange').mockRejectedValue(new Error('Tesla down'));
+        importDays(importer).mockRejectedValue(new Error('Tesla down'));
         await expect(importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 30 })).rejects.toThrow('Tesla down');
     });
 });
 
-describe('Importer.getTodayData previous-day tail', () => {
-    // getSiteMidnight is mocked to floor UTC, so "today" starts 2026-10-16T00:00Z.
-    const NOW = new Date('2026-10-16T01:00:00Z');
-    const TODAY = new Date('2026-10-16T00:00:00Z');
-    const YESTERDAY = new Date('2026-10-15T00:00:00Z');
-
-    let importer: Importer;
-    let mockClient: TeslaClient;
-
-    function entry(timestamp: string): EnergyHistoryEntry {
-        return {
-            timestamp,
-            solar_energy_exported: 0, generator_energy_exported: 0,
-            grid_energy_imported: 10, grid_services_energy_imported: 0, grid_services_energy_exported: 0,
-            grid_energy_exported_from_solar: 0, grid_energy_exported_from_generator: 0,
-            grid_energy_exported_from_battery: 0, battery_energy_exported: 0,
-            battery_energy_imported_from_grid: 0, battery_energy_imported_from_solar: 0,
-            battery_energy_imported_from_generator: 0, consumer_energy_imported_from_grid: 10,
-            consumer_energy_imported_from_solar: 0, consumer_energy_imported_from_battery: 0,
-            consumer_energy_imported_from_generator: 0, total_home_usage: 10,
-            total_solar_generation: 0, total_battery_charge: 0, total_battery_discharge: 0,
-            total_grid_energy_exported: 0,
-        };
-    }
-
-    // Tesla returns the whole calendar day regardless of the requested start time.
-    const yesterdayEntries = ['22:45', '22:50', '22:55', '23:55'].map(t => entry(`2026-10-15T${t}:00.000Z`));
-    const todayEntries = ['00:00', '00:05', '00:55'].map(t => entry(`2026-10-16T${t}:00.000Z`));
-
-    beforeEach(() => {
-        vi.clearAllMocks();
-        vi.useFakeTimers({ toFake: ['Date'] });
-        vi.setSystemTime(NOW);
-        mockClient = new TeslaClient({ accessToken: 'test' });
-        vi.mocked(mockClient.getEnergyHistory).mockImplementation(async (_id, start) =>
-            start.getTime() < TODAY.getTime() ? yesterdayEntries : todayEntries);
-        vi.mocked(mockClient.getSoeHistory).mockResolvedValue([]);
-        importer = new Importer(mockClient);
-        (importer as unknown as { siteRepo: unknown }).siteRepo = {
-            getSite: vi.fn().mockResolvedValue({
-                id: 'site-123',
-                timezone: 'America/Chicago',
-                installed: new Date('2025-01-01T00:00:00Z'),
-                tariffs: [{ id: 1, site_id: 'site-123', updated: new Date('2025-01-01T00:00:00Z'), name: 'Default Tariff', seasons: [] }],
-            }),
-        };
-    });
-
-    afterEach(() => {
-        vi.useRealTimers();
-    });
-
-    const isos = (rows: Array<{ timestamp: Date }>) => rows.map(r => r.timestamp.toISOString());
-
-    it('also fetches the rest of yesterday when the last stored row is before midnight', async () => {
-        const rows = await importer.getTodayData('site-123', new Date('2026-10-15T22:50:00Z'));
-
-        expect(mockClient.getEnergyHistory).toHaveBeenCalledTimes(2);
-        const tailCall = vi.mocked(mockClient.getEnergyHistory).mock.calls.find(c => c[1].getTime() < TODAY.getTime())!;
-        expect(tailCall[1].toISOString()).toBe('2026-10-15T22:50:00.000Z');
-        expect(tailCall[2].getTime()).toBeLessThan(TODAY.getTime());
-        expect(isos(rows)).toEqual([
-            '2026-10-15T22:50:00.000Z',
-            '2026-10-15T22:55:00.000Z',
-            '2026-10-15T23:55:00.000Z',
-            '2026-10-16T00:00:00.000Z',
-            '2026-10-16T00:05:00.000Z',
-            '2026-10-16T00:55:00.000Z',
-        ]);
-    });
-
-    it('bounds the tail to yesterday when the last stored row is older', async () => {
-        const rows = await importer.getTodayData('site-123', new Date('2026-10-13T12:00:00Z'));
-
-        expect(mockClient.getEnergyHistory).toHaveBeenCalledTimes(2);
-        const tailCall = vi.mocked(mockClient.getEnergyHistory).mock.calls.find(c => c[1].getTime() < TODAY.getTime())!;
-        expect(tailCall[1].toISOString()).toBe(YESTERDAY.toISOString());
-        expect(isos(rows)).toContain('2026-10-15T22:45:00.000Z');
-    });
-
-    it.each([
-        ['yesterday is complete', new Date('2026-10-15T23:55:00Z')],
-        ['the latest row is from today', new Date('2026-10-16T00:50:00Z')],
-        ['there is no stored data', null],
-        ['no latest timestamp is passed', undefined],
-    ])('fetches only today when %s', async (_label, latest) => {
-        const rows = await importer.getTodayData('site-123', latest);
-
-        expect(mockClient.getEnergyHistory).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(mockClient.getEnergyHistory).mock.calls[0][1].toISOString()).toBe(TODAY.toISOString());
-        expect(isos(rows)).toEqual(todayEntries.map(e => e.timestamp));
-    });
-});

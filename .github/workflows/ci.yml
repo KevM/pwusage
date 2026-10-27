@@ -226,15 +226,15 @@ jobs:
           supabase db dump --db-url "$DATABASE_URL" -f schema.sql
           # Only public is reset below. Managed auth/storage data can include
           # protected tables (e.g. storage.buckets_vectors) we cannot restore.
-          # Energy history (raw EnergyData and the day records that replace it)
-          # is most of prod and of its egress, and dev keeps only a slice of it:
-          # download just that slice, then skip those tables' data in the dump
-          # (unquoted CSV list, see dump-db-backup.sh). The slice goes first, so
-          # every row it references is already in data.sql; the two cannot share
-          # a snapshot (see export-dev-energy-data.sql). It also writes
-          # dev-day-archive.csv and dev-day-summary.csv here.
-          psql -X -q -v ON_ERROR_STOP=1 "$DATABASE_URL" -f scripts/export-dev-energy-data.sql > dev-energy-data.csv
-          echo "EnergyData rows for dev: $(( $(wc -l < dev-energy-data.csv) - 1 ))"
+          # Energy history (day records) is most of prod and of its egress, and
+          # dev keeps only a slice of it: download just that slice
+          # (dev-day-archive.csv and dev-day-summary.csv), then skip those
+          # tables' data in the dump (unquoted CSV list: the CLI reads -x as
+          # one). The slice goes first, so every row it references is already in
+          # data.sql; the two cannot share a snapshot (see
+          # export-dev-energy-data.sql). EnergyData stays excluded for a
+          # production copy taken before 20261027120000_drop_energy_data drops it.
+          psql -X -q -v ON_ERROR_STOP=1 "$DATABASE_URL" -f scripts/export-dev-energy-data.sql
           echo "Day records for dev: $(( $(wc -l < dev-day-archive.csv) - 1 )), summary rows: $(( $(wc -l < dev-day-summary.csv) - 1 ))"
           supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public -x public.EnergyData,public.EnergyDayArchive,public.EnergyDaySummary
           
@@ -263,9 +263,8 @@ jobs:
           
           # Restore Data and scrub it in one transaction, so beta and the dev
           # pg_cron jobs never see unscrubbed rows. Any error rolls back both.
-          # load-dev-energy-data.sql reads the EnergyData slice from stdin and the
-          # day-record CSVs from this directory.
-          psql -X --single-transaction -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f data.sql -f scripts/load-dev-energy-data.sql -f scripts/sanitize-dev-copy.sql < dev-energy-data.csv
+          # load-dev-energy-data.sql reads the day-record CSVs from this directory.
+          psql -X --single-transaction -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f data.sql -f scripts/load-dev-energy-data.sql -f scripts/sanitize-dev-copy.sql
           
           # Restore Migration History
           # (We truncate first to remove any stale Dev history, then apply Prod's history)

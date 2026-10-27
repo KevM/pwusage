@@ -11,62 +11,32 @@ const socket = process.env.DB_BACKUP_TEST_SOCKET;
 const safeSocket = socket && /^\/(?:private\/)?tmp\/db-backup-pg-[a-zA-Z0-9]+$/.test(socket);
 if (socket && !safeSocket) throw new Error('Backup restore tests require a disposable private local socket');
 
-// Mirrors the parts of the real schema the restore depends on: the EnergyData
-// unique key, its foreign key to Site, a trigger that clears archived days, and
-// the archive's raw_pruned flag (a pruned day's only copy is its archive).
+// Mirrors the parts of the real schema the restore depends on: day records and
+// their summaries, keyed by Site.
 const SCHEMA = `
 CREATE TABLE public."User" (id text PRIMARY KEY, email text);
 CREATE TABLE public."Site" (id text PRIMARY KEY, user_id text REFERENCES public."User"(id));
-CREATE TABLE public."EnergyData" (
-    id serial PRIMARY KEY,
-    "timestamp" timestamptz NOT NULL,
-    site_id text NOT NULL REFERENCES public."Site"(id) ON DELETE CASCADE,
-    load_power double precision,
-    battery_soc double precision DEFAULT 0 NOT NULL
-);
-CREATE UNIQUE INDEX energy_ts_site_uidx ON public."EnergyData"("timestamp", site_id);
-CREATE TABLE public."EnergyDayArchive" (site_id text NOT NULL, day_start timestamptz NOT NULL, day_end timestamptz NOT NULL,
-    raw_pruned boolean NOT NULL DEFAULT false);
-CREATE TABLE public."EnergyDaySummary" (site_id text NOT NULL, day_start timestamptz NOT NULL);
-CREATE FUNCTION public.invalidate_day() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN DELETE FROM public."EnergyDayArchive" WHERE site_id = NEW.site_id; RETURN NEW; END; $$;
-CREATE TRIGGER invalidate_day BEFORE INSERT OR UPDATE ON public."EnergyData"
-FOR EACH ROW EXECUTE FUNCTION public.invalidate_day();
+CREATE TABLE public."EnergyDayArchive" (site_id text NOT NULL REFERENCES public."Site"(id) ON DELETE CASCADE,
+    day_start timestamptz NOT NULL, day_end timestamptz NOT NULL, status text, PRIMARY KEY (site_id, day_start));
+CREATE TABLE public."EnergyDaySummary" (site_id text NOT NULL, day_start timestamptz NOT NULL, load_power double precision);
 `;
 
 const copy = (table: string, columns: string, rows: string[]) =>
     [`COPY public."${table}" (${columns}) FROM stdin;`, ...rows, '\\.', ''].join('\n');
 const T1 = '2026-10-01 00:00:00+00';
-const T2 = '2026-10-14 00:00:00+00';
-const T3 = '2026-10-15 00:00:00+00';
 const T1_END = '2026-10-02 00:00:00+00';
-
-const WEEKLY = {
-    'backup-info': 'kind=weekly\ndump=full\ntaken_at=2026-10-12T09:41:00Z\n',
-    'roles.sql': '-- no custom roles\n',
-    'schema.sql': SCHEMA,
-    'data.sql': 'SET session_replication_role = replica;\n'
-        + copy('User', 'id, email', ['u1\told@example.com'])
-        + copy('Site', 'id, user_id', ['s1\tu1', 's2\tu1'])
-        + copy('EnergyData', 'id, "timestamp", site_id, load_power, battery_soc', [`1\t${T1}\ts1\t100\t50`, `2\t${T2}\ts1\t100\t50`, `3\t${T1}\ts2\t200\t50`])
-        + copy('EnergyDayArchive', 'site_id, day_start, day_end', [`s1\t${T1}\t${T1_END}`])
-        + copy('EnergyDaySummary', 'site_id, day_start', [`s1\t${T1}`])
-        + `SELECT pg_catalog.setval('public."EnergyData_id_seq"', 3, true);\n`,
-};
+const T2 = '2026-10-14 00:00:00+00';
+const T2_END = '2026-10-15 00:00:00+00';
 
 const DAILY = {
-    'backup-info': 'kind=daily\ndump=small\ntaken_at=2026-10-15T09:23:00Z\n',
+    'backup-info': 'kind=daily\ntaken_at=2026-10-15T09:23:00Z\n',
     'roles.sql': '-- no custom roles\n',
     'schema.sql': SCHEMA,
     'data.sql': 'SET session_replication_role = replica;\n'
-        + copy('User', 'id, email', ['u1\tnew@example.com', 'u2\t\\N'])
-        + copy('Site', 'id, user_id', ['s1\tu1', 's3\tu2'])
-        + copy('EnergyDayArchive', 'site_id, day_start, day_end', [`s1\t${T1}\t${T1_END}`])
-        + copy('EnergyDaySummary', 'site_id, day_start', [`s1\t${T1}`])
-        // pg_dump keeps EnergyData's sequence even when the table's data is excluded,
-        // but the recent readings are copied a moment later: id 5 landed in between.
-        + `SELECT pg_catalog.setval('public."EnergyData_id_seq"', 4, true);\n`,
-    'energy-recent.csv': `id,timestamp,site_id,load_power,battery_soc\n2,${T2},s1,150,60\n5,${T3},s3,300,70\n`,
+        + copy('User', 'id, email', ['u1\told@example.com', 'u2\t\\N'])
+        + copy('Site', 'id, user_id', ['s1\tu1', 's2\tu2'])
+        + copy('EnergyDayArchive', 'site_id, day_start, day_end, status', [`s1\t${T1}\t${T1_END}\tcomplete`, `s2\t${T2}\t${T2_END}\tcomplete`])
+        + copy('EnergyDaySummary', 'site_id, day_start, load_power', [`s1\t${T1}\t100`, `s2\t${T2}\t200`]),
 };
 
 describe.skipIf(!safeSocket)('restore-db-backup.sh against isolated PostgreSQL', () => {
@@ -114,104 +84,37 @@ describe.skipIf(!safeSocket)('restore-db-backup.sh against isolated PostgreSQL',
 
     it('refuses a target that already has tables, and leaves it untouched', async () => {
         await target!.query('CREATE TABLE public.keep_me (id int); INSERT INTO public.keep_me VALUES (1)');
-        const result = await restore('--full', await backupDir('weekly', WEEKLY));
+        const result = await restore('--backup', await backupDir('daily', DAILY));
         expect(result.code).not.toBe(0);
         expect(result.out).toContain('already has tables');
         expect(await rows('SELECT id FROM public.keep_me')).toEqual([{ id: 1 }]);
         expect(await tableCount()).toBe(1);
     });
 
-    it('restores a full backup exactly as dumped', async () => {
-        const result = await restore('--full', await backupDir('weekly', WEEKLY));
+    it('restores any backup kind exactly as dumped, from a directory or a zip', async () => {
+        const dir = await backupDir('daily', DAILY);
+        const zip = join(work, 'daily.zip');
+        await run('zip', ['-q', '-j', zip, ...Object.keys(DAILY).map((file) => join(dir, file))]);
+        const result = await restore('--backup', zip);
         expect(result.out).toContain('Restore complete');
         expect(result.code).toBe(0);
-        expect(await rows(`SELECT id FROM public."Site" ORDER BY id`)).toEqual([{ id: 's1' }, { id: 's2' }]);
-        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyData"`)).toEqual([{ n: 3 }]);
-        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 1 }]);
-    });
-
-    it('combines a weekly full with a newer zipped daily backup', async () => {
-        const weekly = await backupDir('weekly', WEEKLY);
-        const dailyDir = await backupDir('daily', DAILY);
-        const dailyZip = join(work, 'daily.zip');
-        await run('zip', ['-q', '-j', dailyZip, ...Object.keys(DAILY).map((file) => join(dailyDir, file))]);
-
-        const result = await restore('--full', weekly, '--daily', dailyZip);
-        expect(result.out).toContain('Restore complete');
-        expect(result.code).toBe(0);
-
-        // Small tables come from the newer daily backup.
         expect(await rows(`SELECT id, email FROM public."User" ORDER BY id`))
-            .toEqual([{ id: 'u1', email: 'new@example.com' }, { id: 'u2', email: null }]);
-        expect(await rows(`SELECT id FROM public."Site" ORDER BY id`)).toEqual([{ id: 's1' }, { id: 's3' }]);
-        // History comes from the weekly; recent readings win; deleted sites' rows are dropped.
-        expect(await rows(`SELECT to_char("timestamp" AT TIME ZONE 'UTC', 'MM-DD') AS day, site_id, load_power, battery_soc
-                           FROM public."EnergyData" ORDER BY site_id, "timestamp"`)).toEqual([
-            { day: '10-01', site_id: 's1', load_power: 100, battery_soc: 50 },
-            { day: '10-14', site_id: 's1', load_power: 150, battery_soc: 60 },
-            { day: '10-15', site_id: 's3', load_power: 300, battery_soc: 70 },
-        ]);
-        // Triggers stay paused, as when the dump itself loads.
-        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 1 }]);
+            .toEqual([{ id: 'u1', email: 'old@example.com' }, { id: 'u2', email: null }]);
+        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 2 }]);
+        expect(await rows(`SELECT site_id, load_power FROM public."EnergyDaySummary" ORDER BY site_id`))
+            .toEqual([{ site_id: 's1', load_power: 100 }, { site_id: 's2', load_power: 200 }]);
     });
 
-    it('drops weekly raw rows for days the newer daily backup holds only in their archive', async () => {
-        // Between the two backups s1's 10-01 was pruned to its archive (raw rows deleted).
-        // Restoring the weekly's raw rows under it would break that day's invariant.
-        const T1_LATE = '2026-10-01 23:55:00+00';
-        const weekly = { ...WEEKLY, 'data.sql': WEEKLY['data.sql'].replace(`3\t${T1}\ts2\t200\t50`, `3\t${T1}\ts2\t200\t50\n4\t${T1_LATE}\ts1\t100\t50`) };
-        const daily = {
-            ...DAILY,
-            'data.sql': DAILY['data.sql'].replace(
-                copy('EnergyDayArchive', 'site_id, day_start, day_end', [`s1\t${T1}\t${T1_END}`]),
-                copy('EnergyDayArchive', 'site_id, day_start, day_end, raw_pruned', [`s1\t${T1}\t${T1_END}\tt`])),
-            // A recent reading inside the pruned day is dropped the same way.
-            'energy-recent.csv': DAILY['energy-recent.csv'] + `6,${T1_LATE},s1,999,99\n`,
-        };
-        const result = await restore('--full', await backupDir('weekly', weekly), '--daily', await backupDir('daily', daily));
+    it('restores a legacy backup without backup-info', async () => {
+        const { 'backup-info': _info, ...legacy } = DAILY;
+        const result = await restore('--backup', await backupDir('weekly', legacy));
         expect(result.out).toContain('Restore complete');
-        expect(await rows(`SELECT to_char("timestamp" AT TIME ZONE 'UTC', 'MM-DD HH24:MI') AS at, site_id
-                           FROM public."EnergyData" ORDER BY site_id, "timestamp"`)).toEqual([
-            { at: '10-14 00:00', site_id: 's1' },
-            { at: '10-15 00:00', site_id: 's3' },
-        ]);
-        expect(await rows(`SELECT raw_pruned FROM public."EnergyDayArchive"`)).toEqual([{ raw_pruned: true }]);
+        expect(await rows(`SELECT id FROM public."Site" ORDER BY id`)).toEqual([{ id: 's1' }, { id: 's2' }]);
     });
 
-    it('advances the EnergyData id sequence past every restored row', async () => {
-        const result = await restore('--full', await backupDir('weekly', WEEKLY), '--daily', await backupDir('daily', DAILY));
-        expect(result.code).toBe(0);
-        // The app inserts readings without an id; the next one must not reuse a restored id.
-        const inserted = await rows(`INSERT INTO public."EnergyData" ("timestamp", site_id, load_power)
-                                     VALUES ('2026-10-16 00:00:00+00', 's1', 1) RETURNING id`);
-        expect(inserted[0].id).toBeGreaterThan(5);
-    });
-
-    it('refuses a daily backup passed as the full backup, before touching the target', async () => {
-        const result = await restore('--full', await backupDir('daily', DAILY));
-        expect(result.code).not.toBe(0);
-        expect(result.out).toContain('not full');
-        expect(await tableCount()).toBe(0);
-    });
-
-    it('refuses a daily backup that is not newer than the full backup', async () => {
-        const staleDaily = { ...DAILY, 'backup-info': 'kind=daily\ndump=small\ntaken_at=2026-10-11T09:23:00Z\n' };
-        const result = await restore('--full', await backupDir('weekly', WEEKLY), '--daily', await backupDir('daily', staleDaily));
-        expect(result.code).not.toBe(0);
-        expect(result.out).toContain('must be newer');
-        expect(await tableCount()).toBe(0);
-    });
-
-    it('combines a legacy full backup without backup-info with a daily one', async () => {
-        const { 'backup-info': _info, ...legacy } = WEEKLY;
-        const result = await restore('--full', await backupDir('weekly', legacy), '--daily', await backupDir('daily', DAILY));
-        expect(result.out).toContain('Restore complete');
-        expect(await rows(`SELECT id FROM public."Site" ORDER BY id`)).toEqual([{ id: 's1' }, { id: 's3' }]);
-    });
-
-    it('rolls back completely when the backups do not fit together', async () => {
-        const mismatched = { ...WEEKLY, 'data.sql': WEEKLY['data.sql'].replace('load_power, battery_soc', 'load_power, removed_column') };
-        const result = await restore('--full', await backupDir('weekly', mismatched), '--daily', await backupDir('daily', DAILY));
+    it('rolls back completely when the backup does not load', async () => {
+        const broken = { ...DAILY, 'data.sql': DAILY['data.sql'].replace('site_id, day_start, load_power', 'site_id, day_start, removed_column') };
+        const result = await restore('--backup', await backupDir('daily', broken));
         expect(result.code).not.toBe(0);
         expect(result.out).toContain('removed_column');
         expect(await tableCount()).toBe(0);
@@ -219,10 +122,10 @@ describe.skipIf(!safeSocket)('restore-db-backup.sh against isolated PostgreSQL',
 
     it('rejects missing arguments and unreadable backups before touching the target', async () => {
         expect((await restore()).out).toContain('Usage');
-        const missing = await restore('--full', join(work, 'nope'));
+        const missing = await restore('--backup', join(work, 'nope'));
         expect(missing.code).not.toBe(0);
         expect(missing.out).toContain('not found');
-        const incomplete = await restore('--full', await backupDir('broken', { 'roles.sql': '-- none\n', 'schema.sql': SCHEMA }));
+        const incomplete = await restore('--backup', await backupDir('broken', { 'roles.sql': '-- none\n', 'schema.sql': SCHEMA }));
         expect(incomplete.code).not.toBe(0);
         expect(incomplete.out).toContain('data.sql');
         expect(await tableCount()).toBe(0);

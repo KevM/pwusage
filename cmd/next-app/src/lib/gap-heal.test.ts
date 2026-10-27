@@ -14,9 +14,7 @@ vi.mock('./site-repo', () => ({
     }),
 }));
 vi.mock('./energy-repo', () => ({
-    EnergyRepo: vi.fn(function EnergyRepo() {
-        return { countAlignedSamples: mocks.countAlignedSamples };
-    }),
+    EnergyRepo: { countAlignedSamples: mocks.countAlignedSamples },
 }));
 vi.mock('./tesla-client-factory', () => ({ createTeslaClientForSite: mocks.createTeslaClientForSite }));
 vi.mock('./importer', () => ({
@@ -67,7 +65,7 @@ describe('healTrailingGaps', () => {
         expect(siteId).toBe('site-a');
         expect(end.toISOString()).toBe('2026-10-17T05:00:00.000Z'); // today's Chicago midnight
         expect(start.toISOString()).toBe('2026-10-03T05:00:00.000Z'); // 14 days earlier
-        expect(options).toEqual({ maxTimeMs: 35_000, maxWindows: 3, archiveHealedDays: true });
+        expect(options).toEqual({ maxTimeMs: 35_000, maxWindows: 3 });
         expect(result.sites.map(s => s.status)).toEqual(['complete', 'complete']);
         expect(result.stopped).toBeUndefined();
     });
@@ -86,7 +84,7 @@ describe('healTrailingGaps', () => {
 
         const result = await run();
 
-        expect(mocks.ensureDataForRange.mock.calls[1][4]).toEqual({ maxTimeMs: 15_000, maxWindows: 3, archiveHealedDays: true });
+        expect(mocks.ensureDataForRange.mock.calls[1][4]).toEqual({ maxTimeMs: 15_000, maxWindows: 3 });
         expect(result.sites[0]).toMatchObject({ siteId: 'site-a', status: 'partial', processedWindows: 3, totalWindows: 5 });
     });
 
@@ -175,7 +173,6 @@ describe('healTrailingGaps', () => {
         const result = await run();
 
         expect(mocks.planMissingWindows).toHaveBeenCalledWith(
-            expect.anything(),
             { id: 'site-a', timezone: 'America/Chicago', installed: INSTALLED },
             new Date('2026-10-03T05:00:00Z'),
             new Date('2026-10-17T05:00:00Z'));

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-import { createEnergyRepo,compactHistoryReadsEnabled } from '@/lib/energy-repo-factory';
+import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { shouldSyncAnalysisHistory } from '@/lib/compact-analysis-sync-policy';
 import { SiteRepo } from '@/lib/site-repo';
 import { LoadTagRepo } from '@/lib/load-tag-repo';
@@ -75,7 +75,7 @@ export async function GET(
         // 0. Auto-Heal / Sync Check
         let importer: Importer | null = null;
         const force = searchParams.get('force') === 'true';
-        const syncAllowed=shouldSyncAnalysisHistory({archiveReads:compactHistoryReadsEnabled(),force,start,end:queryEnd,
+        const syncAllowed=shouldSyncAnalysisHistory({force,start,end:queryEnd,
             todayStart:getSiteTodayMidnight(site.timezone),todayEnd:addDaysInSiteTimezone(getSiteTodayMidnight(site.timezone),1,site.timezone)});
         const teslaClient = syncAllowed?await createTeslaClientForSite(siteId):null;
 

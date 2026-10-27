@@ -248,50 +248,23 @@ a failed request is not.
 - **Timezone changes** are no longer a failing refresh; see "Timezone changes"
   below.
 
-## Timezone changes (decided 2026-10-25)
+## Timezone changes (decided 2026-10-25, simplified 2026-10-27)
 
 Day records are keyed by local midnight, so a `Site.timezone` change moves every
-day boundary. The `invalidate_compact_energy_timezone` trigger still refuses the
-change while any day is pruned (it can't move a record that is the only copy);
-instead a change is a coordinated rebuild, and the site refresh never fails on it.
+day boundary. Tesla does not change a site's timezone and users cannot either
+(site settings only choose whether times display in the site's or the browser's
+timezone), so this is a guard, not a feature:
 
 - **Refresh keeps the old timezone:** `upsertSite` (`UPSERT_SITE_SQL`) keeps the
-  stored timezone while the site has any pruned day, stores Tesla's reported one
+  stored timezone while the site has any day record, stores Tesla's reported one
   in `Site.json` as always, and returns the stored value; `Importer.ensureSite`
-  logs the mismatch with the script to run. Without pruned days the change goes
-  through as before (the trigger drops the unpruned archives, raw rebuilds them).
-- **Rebuild** (`CompactHistoryStore.rebuildTimezone`, operator script
-  `scripts/rebuild-site-timezone.ts --site-id <id> [--timezone <tz>] [--apply]`,
-  default timezone = Tesla's reported one): one transaction under the per-site
-  claim and the archive control row, so readers and writers see either the old
-  partition or the new one, never both.
-  1. Decode every pruned day (verified as recovery does). Unpruned archives are
-     not read: their raw rows already hold the samples. An unpruned archive
-     whose raw row count differs (a damaged pruning marker) aborts the rebuild
-     before anything is deleted, as the trigger would.
-  2. Delete the site's archives (empty records included), then update
-     `Site.timezone` (the trigger now allows it).
-  3. Regroup the pruned samples by the new local midnight. A new day built only
-     from pruned samples becomes a v2 record: segments from the current tariff
-     under the new timezone (TOU periods are local-clock, so the old attribution
-     is wrong after the change anyway), status by the usual rule, `fetched_at`
-     its oldest source's, so any later Tesla fetch replaces it. A new day that
-     raw rows also touch gets its pruned samples back as raw rows (writes only,
-     no read-back), and raw stays its single source until the archive job or a
-     refetch writes it.
-  4. Re-price every raw row (restored or already raw) on the new clock from the
-     current tariff, so billing and later archiving never use old-timezone
-     periods (a 16:00 UTC peak sample is 11:00 off-peak in Chicago). Segments
-     are derived per local day in TypeScript and applied as timestamp ranges in
-     one `UPDATE`; no raw rows are read back and only changed rows are written.
-     Tokenless sites need this, since they can't refetch.
-  5. Preview runs all of it and rolls back.
-  No Tesla request, so tokenless sites rebuild too. Cost: one read of the
-  site's pruned payloads (~3 KB/day: ~3 MB for a three-year site); the
-  transaction has no 15 s budget (operator script, not a function).
-- Tested across the fall-back day: three UTC days re-keyed to Chicago become
-  four contiguous days (60, 288, 300 of 300, 216 samples), every sample
-  preserved, segments at Chicago offsets.
+  logs the mismatch.
+- **The trigger refuses a direct change** (`invalidate_compact_energy_timezone`)
+  while any day record exists, so a stray `UPDATE` can't misalign the only copy.
+- **A genuine correction is manual:** delete the site's day records, change the
+  timezone, and let the importer refetch from Tesla (needs working tokens).
+- The 2026-10-25 operator rebuild (`rebuildTimezone`, `rebuild-site-timezone.ts`,
+  which re-keyed records in one transaction) was removed with the raw table.
 
 ## Re-attribution
 
@@ -481,7 +454,7 @@ raw, and add to it when new tooling touches history.
 5. **Cutover:** Tesla backfill for tokened sites, ops tooling, pause the
    archive job, stop raw writes, later drop `EnergyData`. Relies on the
    decisions above: settled empty days (`getSettledEmptyDays`) bound the
-   backfill, a timezone change goes through `rebuild-site-timezone.ts`, and the
+   backfill, a timezone change is refused while day records exist, and the
    converter runs with `--reattribute` (plus refetches for `off-grid`) until it
    reports zero v1 rows, after which v1 read support is removed.
 
@@ -492,3 +465,26 @@ raw, and add to it when new tooling touches history.
      removing v1 reads).
    - 2026-10-25: `COMPACT_DAY_WRITES_ENABLED=true` set for Preview (beta, Dev
      DB) to verify day writes before Prod.
+   - 2026-10-26: Prod flipped: `COMPACT_DAY_WRITES_ENABLED=true`,
+     `HISTORY_ARCHIVE_JOB_ENABLED=false`, archive job paused. Raw writes stopped.
+   - 2026-10-26/27: the 1,848 raw days with no record (1,572 on 26 tokenless
+     sites, 276 on 16 tokened ones) were archived to v1 by running the archive
+     job locally (`archive-all`, 10 days and 8 MiB per run, ~860 MB reserved,
+     about a fifth of that real egress), then converted with
+     `convert-archives-v2.ts --apply`: 1,834 converted keeping their historical
+     attribution, 14 (06-23 to 07-03, `attribution-flag`) re-attributed from the
+     current tariff with `--reattribute`. The last 8 days (10-24, inside the
+     2-day archive floor) followed the next day. Result: 0 v1 records and every
+     raw day covered by a v2 record.
+   - 2026-10-27: Tesla backfill to install for the tokened sites with older
+     history (`backfill-compact-from-tesla.ts --apply`): 268546532166 from
+     2021-12-01 (1,570 days, ~5 MB, 52 min with 429 back-offs),
+     2252435048108360 from 2025-06-10 (432 days), 2252472664568676 from
+     2025-12-05 (254 days), plus 268546532166's 04-03 to 04-05 hole. Each now
+     has a record for every day from install.
+   - 2026-10-27: cleanup PR: drops `EnergyData`, its trigger and functions, the
+     archive job (route, pg_cron trigger, control tables, code), trim/restore,
+     the v1 conversion and the storage flags; day records are the only store and
+     every backup is a complete dump. The weekly backup run and the timezone
+     rebuild were dropped in the same PR: daily retention keeps weekly copies,
+     and Tesla never changes a site's timezone.
