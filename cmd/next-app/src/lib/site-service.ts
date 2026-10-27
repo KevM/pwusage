@@ -8,6 +8,7 @@ import { EnergyRepo, UsageData } from './energy-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { TrmnlService } from './trmnl-service';
 import { Importer } from './importer';
+import { logSessionRejection } from './observability';
 import { Schedule } from './schedule';
 import { getCurrentCycleStart, getNextCycleStart } from './billing-cycle';
 import {
@@ -78,10 +79,12 @@ export class SiteService {
                 if (decoded.sub) {
                     const authState = await this.getAuthState(decoded.sub);
                     if (!authState || !authState.isActive) {
+                        logSessionRejection(authState ? 'inactive-account' : 'missing-account', decoded.sub);
                         console.warn(`[SiteService] getAuthorizedSites blocked for revoked/inactive user: ${decoded.sub}`);
                         throw new Error('Unauthorized: Revoked or inactive user');
                     }
                     if ((decoded.sv ?? 0) < authState.sessionVersion) {
+                        logSessionRejection('revoked-session', decoded.sub);
                         console.warn(`[SiteService] getAuthorizedSites blocked revoked session for user ${decoded.sub} (token sv=${decoded.sv ?? 0} < db sv=${authState.sessionVersion})`);
                         throw new Error('Unauthorized: Revoked session');
                     }
@@ -299,10 +302,12 @@ export class SiteService {
                     // otherwise keep access until the token expires. Re-check.
                     const authState = await this.getAuthState(decoded.sub);
                     if (!authState || !authState.isActive) {
+                        logSessionRejection(authState ? 'inactive-account' : 'missing-account', decoded.sub);
                         console.warn(`[SiteService] validateSiteAccess blocked for revoked/inactive user: ${decoded.sub}`);
                         return false;
                     }
                     if ((decoded.sv ?? 0) < authState.sessionVersion) {
+                        logSessionRejection('revoked-session', decoded.sub);
                         console.warn(`[SiteService] validateSiteAccess blocked revoked session for user ${decoded.sub} (token sv=${decoded.sv ?? 0} < db sv=${authState.sessionVersion})`);
                         return false;
                     }
@@ -311,12 +316,16 @@ export class SiteService {
                         return true;
                     }
                     const userSites = await this.deps.siteRepo.getSitesForUser(decoded.sub);
-                    return userSites.some(s => s.id === siteId);
+                    const allowed = userSites.some(s => s.id === siteId);
+                    if (!allowed) logSessionRejection('site-not-assigned', decoded.sub);
+                    return allowed;
                 }
                 if (decoded.roles.includes('admin')) {
                     return true;
                 }
-                return decoded.sites.includes(siteId);
+                const allowed = decoded.sites.includes(siteId);
+                if (!allowed) logSessionRejection('site-not-assigned');
+                return allowed;
             }
         }
 
@@ -332,6 +341,7 @@ export class SiteService {
             }
         }
 
+        if (!this.deps.siteAuthToken) logSessionRejection('missing-cookie');
         return false;
     }
 

@@ -243,8 +243,35 @@ Middleware/proxy (`src/proxy.ts`):
 
 Tesla token refresh behavior:
 - `TeslaClient` retries once on Fleet API 401 when refresh token exists.
-- `TeslaTokenRepo.getLockedRefreshHandler(siteId)` serializes refresh with DB lock fields on `User`.
-- Refreshed Tesla tokens are written back to `User`.
+- Site, TRMNL, cron, Profile, Products, and post-identity OAuth provisioning
+  refreshes share `TeslaTokenRepo`'s account-level handler and the DB lease on
+  `User`. Site handlers resolve the owner, so multiple sites and browser tabs
+  coordinate on the same account.
+- Lease acquisition atomically reads current credentials. A stale caller reuses
+  newer stored credentials instead of exchanging an old refresh token. Waiters
+  fail transiently if the owner released the lease without replacing credentials,
+  rather than retrying Fleet with the expired access token.
+- Replacement credentials are saved before returning, with an independent short
+  persistence deadline after a successful exchange. Save, revocation, and cleanup
+  writes check lease ownership; save/revocation also compare the credential
+  generation, protecting a newer login or worker. Revocation releases the lease
+  atomically. No unconditional post-refresh revocation callback runs afterward.
+- OAuth provisioning persists login credentials once, before product/site work;
+  later host changes update only the Fleet host. Site linking never rewrites
+  credentials or releases a background worker's lease. Before identity is
+  established, OAuth Fleet calls cannot silently rotate credentials in memory.
+- Refresh events include hashed `accountId` and `credentialId` values, plus
+  `previousCredentialId` on successful rotation. These are truncated SHA-256
+  fingerprints for correlation, never actual tokens. `tesla.refresh.reused`,
+  `superseded`, and `cleanup-deferred` distinguish reuse, a lost conditional write,
+  and bounded cleanup failures.
+- Home, Profile, Products, and site-page renders establish Axiom scopes alongside
+  the existing API scopes. Page redirects keep their control flow and never log
+  destinations, query strings, or page props. `auth.session.rejected` distinguishes
+  missing cookies, expired/invalid JWTs, missing/inactive accounts, revoked
+  sessions, and denied site membership, using the same hashed account identity
+  where available. JWT renewal diagnostics in the proxy still use runtime logs;
+  Axiom delivery failures also remain runtime-only.
 - Terminal auth failures can mark user `auth_status='revoked'`.
 
 ### 5. Logout
@@ -409,4 +436,7 @@ simulator and device verification in the native app implementation.
 
 ## Current Open Gaps
 
-No known auth gaps as of February 16, 2026.
+`UserRepo.verifyUserStatus` still writes verification status without checking the
+credential generation it verified. A late verification can overwrite a newer
+login or revocation; this predates account refresh coordination and is tracked
+in `TODO.md`. The refresh coordinator's own writes are generation/lease guarded.

@@ -16,7 +16,8 @@ describe('TeslaAuthService', () => {
     const mockUserRepo = {
         upsertOnTeslaAuth: vi.fn(),
         getById: vi.fn(),
-        getByEmail: vi.fn()
+        getByEmail: vi.fn(),
+        setFleetApiBaseUrl: vi.fn(),
     };
 
     const mockSiteRepo = {
@@ -25,7 +26,8 @@ describe('TeslaAuthService', () => {
 
     const mockTeslaTokenRepo = {
         updateSiteTokens: vi.fn(),
-        releaseRefreshLock: vi.fn()
+        releaseRefreshLock: vi.fn(),
+        getLockedUserRefreshHandler: vi.fn(),
     };
 
     const mockTeslaClient = {
@@ -146,8 +148,41 @@ describe('TeslaAuthService', () => {
 
         expect(mockImporter.ensureSite).toHaveBeenCalledWith('98765');
         expect(mockSiteRepo.assignSiteToUser).toHaveBeenCalledWith('98765', 'tesla-user-sub');
-        expect(mockTeslaTokenRepo.updateSiteTokens).toHaveBeenCalledWith('98765', 'access_123', 'refresh_123');
-        expect(mockTeslaTokenRepo.releaseRefreshLock).toHaveBeenCalledWith('98765');
+        // Login already persisted credentials before Fleet calls. Site linking must
+        // not overwrite a concurrent refresh or release another worker's lease.
+        expect(mockTeslaTokenRepo.updateSiteTokens).not.toHaveBeenCalled();
+        expect(mockTeslaTokenRepo.releaseRefreshLock).not.toHaveBeenCalled();
+    });
+
+    it('coordinates refreshes during product import after identity and credentials are saved', async () => {
+        let clientConfig: TeslaClientConfig | undefined;
+        const refresh = vi.fn(async () => {
+            expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+            return { access_token: 'rotated-access', refresh_token: 'rotated-refresh' };
+        });
+        mockTeslaTokenRepo.getLockedUserRefreshHandler.mockReturnValue({ refreshHandler: refresh });
+        mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com' });
+        mockTeslaClient.getProducts.mockImplementation(async () => {
+            await clientConfig?.tokenRefreshHandler?.('refresh_123');
+            return [];
+        });
+        mockUserRepo.getById.mockResolvedValue({ roles: ['user'] });
+        const service = new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: config => {
+                clientConfig = config;
+                return mockTeslaClient as unknown as TeslaClient;
+            },
+            tokenExchange: async () => ({ id_token: 'id', access_token: 'access_123', refresh_token: 'refresh_123', expires_in: 3600 }),
+            verifyIdToken: async () => ({ nonce: 'n', sub: 'owner', email: 'user@example.com' }),
+        });
+        expect(await service.handleTeslaCallback({ code: 'c', state: 's', savedState: 's', savedNonce: 'n', callbackUrl: 'https://example.test/callback' }))
+            .toMatchObject({ status: 'success' });
+        expect(mockTeslaTokenRepo.getLockedUserRefreshHandler).toHaveBeenCalledWith('owner');
+        expect(refresh).toHaveBeenCalledWith('refresh_123');
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
     });
 
     it('persists credentials before fetching products and reports an upstream product failure', async () => {
@@ -286,10 +321,8 @@ describe('TeslaAuthService', () => {
         });
 
         expect(result.status).toBe('success');
-        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(2);
-        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenLastCalledWith(
-            expect.objectContaining({ fleetApiBaseUrl: EU })
-        );
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+        expect(mockUserRepo.setFleetApiBaseUrl).toHaveBeenCalledWith('tesla-user-sub', EU);
     });
 
     it('returns db-error and does not fetch products when credential persistence fails', async () => {

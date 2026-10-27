@@ -1,3 +1,4 @@
+import { observePage } from '@/lib/observability';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -14,7 +15,7 @@ import { SectionCard } from '@/components/ui/SectionCard';
 // Force dynamic rendering to always fetch fresh data
 export const dynamic = 'force-dynamic';
 
-export default async function Home() {
+export default observePage('/', async function Home() {
   const cookieStore = await cookies();
   const siteAuthToken = cookieStore.get('site_auth')?.value;
 
@@ -117,4 +118,4 @@ export default async function Home() {
 
   // This code below is unreachable now due to redirects, but kept for type safety if logic changes
   return null;
-}
+});

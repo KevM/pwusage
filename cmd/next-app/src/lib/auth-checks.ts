@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { verifySiteToken } from './auth-jwt';
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
+import { logSessionRejection } from './observability';
 
 const SITE_AUTH_COOKIE = 'site_auth';
 
@@ -24,7 +25,10 @@ interface ResolvedAuth {
 const resolveAuth = cache(async (): Promise<ResolvedAuth | null> => {
     const cookieStore = await cookies();
     const token = cookieStore.get(SITE_AUTH_COOKIE)?.value;
-    if (!token) return null;
+    if (!token) {
+        logSessionRejection('missing-cookie');
+        return null;
+    }
 
     const decoded = verifySiteToken(token);
     if (!decoded) return null;
@@ -36,6 +40,7 @@ const resolveAuth = cache(async (): Promise<ResolvedAuth | null> => {
 
     const authState = await new UserRepo().getAuthState(decoded.sub);
     if (!authState || !authState.isActive) {
+        logSessionRejection(authState ? 'inactive-account' : 'missing-account', decoded.sub);
         console.warn(`[AuthChecks] Blocking access for revoked/inactive user: ${decoded.sub}`);
         return null;
     }
@@ -43,6 +48,7 @@ const resolveAuth = cache(async (): Promise<ResolvedAuth | null> => {
     // A token whose sv trails the DB session_version was revoked by
     // sign-out-everywhere (or another version bump).
     if ((decoded.sv ?? 0) < authState.sessionVersion) {
+        logSessionRejection('revoked-session', decoded.sub);
         console.warn(`[AuthChecks] Blocking revoked session for user ${decoded.sub} (token sv=${decoded.sv ?? 0} < db sv=${authState.sessionVersion})`);
         return null;
     }

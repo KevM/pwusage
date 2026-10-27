@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import jwt from 'jsonwebtoken';
 import { checkRefreshNeeded, signSiteToken, verifySiteToken } from './auth-jwt';
 
+const { rejectionLog } = vi.hoisted(() => ({ rejectionLog: vi.fn() }));
+vi.mock('./observability', () => ({ logSessionRejection: rejectionLog }));
+
 const mockGetById = vi.fn();
 const mockGetSitesForUser = vi.fn();
 
@@ -33,6 +36,15 @@ vi.mock('./site-repo', () => {
 // value so checkRefreshNeeded can verify them.
 const TEST_SECRET = 'default-dev-secret-do-not-use-in-prod';
 const DAY = 24 * 60 * 60;
+
+it('distinguishes expired sessions from invalid signatures without logging their values', () => {
+    rejectionLog.mockClear();
+    const expired = jwt.sign({ sites: ['s1'] }, TEST_SECRET, { expiresIn: -1 });
+    expect(verifySiteToken(expired)).toBeNull();
+    expect(rejectionLog).toHaveBeenLastCalledWith('expired-session');
+    expect(verifySiteToken('malformed')).toBeNull();
+    expect(rejectionLog).toHaveBeenLastCalledWith('invalid-session');
+});
 
 function nowSeconds() {
     return Math.floor(Date.now() / 1000);

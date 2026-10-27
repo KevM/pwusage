@@ -1,3 +1,4 @@
+import { observePage, logSessionRejection } from '@/lib/observability';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
@@ -17,11 +18,12 @@ import { SectionCard } from '@/components/ui/SectionCard';
 export const dynamic = 'force-dynamic';
 
 
-export default async function ProfilePage() {
+export default observePage('/profile', async function ProfilePage() {
     const cookieStore = await cookies();
     const siteAuthToken = cookieStore.get('site_auth')?.value;
 
     if (!siteAuthToken) {
+        logSessionRejection('missing-cookie');
         redirect('/login');
     }
 
@@ -159,4 +161,4 @@ export default async function ProfilePage() {
             </SectionCard>
         </PageShell>
     );
-}
+});

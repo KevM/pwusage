@@ -8,6 +8,7 @@ import { EnergyRepo } from './energy-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { TrmnlService } from './trmnl-service';
 import * as authJwt from './auth-jwt';
+import * as observability from './observability';
 
 // Mock auth-jwt to verify it's being called
 vi.mock('./auth-jwt', () => ({
@@ -91,6 +92,13 @@ describe('SiteService Security', () => {
     });
 
     describe('validateSiteAccess', () => {
+        it('records a missing browser cookie when no API fallback can authorize the request', async () => {
+            const rejected = vi.spyOn(observability, 'logSessionRejection');
+            const service = new SiteService({ siteRepo: mockEnergyRepo as unknown as SiteRepo });
+            expect(await service.validateSiteAccess('12345')).toBe(false);
+            expect(rejected).toHaveBeenCalledWith('missing-cookie');
+            rejected.mockRestore();
+        });
         it('should return true if JWT validates site', async () => {
             mockTeslaClient.getProducts.mockClear();
             vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [] });
@@ -232,6 +240,7 @@ describe('SiteService Security', () => {
 
         // Stale site claims: membership comes from the DB, not the JWT.
         it('validateSiteAccess denies a site the user no longer belongs to', async () => {
+            const rejected = vi.spyOn(observability, 'logSessionRejection');
             mockTeslaClient.getProducts.mockClear();
             vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['stale-site'], roles: [], sub: 'u1' });
             mockEnergyRepo.getSitesForUser.mockResolvedValue([{ id: 'current-site' }]);
@@ -244,7 +253,9 @@ describe('SiteService Security', () => {
             });
 
             expect(await service.validateSiteAccess('stale-site')).toBe(false);
+            expect(rejected).toHaveBeenCalledWith('site-not-assigned', 'u1');
             expect(await service.validateSiteAccess('current-site')).toBe(true);
+            rejected.mockRestore();
             expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
         });
 

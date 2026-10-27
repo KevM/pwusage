@@ -1,6 +1,6 @@
 import { after } from 'next/server';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { flushLogEvents, logEvent, observeRoute, setLogContext } from './observability';
+import { flushLogEvents, logEvent, observeRoute, observePage, logSessionRejection, setLogContext } from './observability';
 
 const mocks = vi.hoisted(() => ({
     callbacks: [] as Array<() => unknown>,
@@ -41,6 +41,40 @@ describe('production observability', () => {
         vi.spyOn(console, 'error').mockImplementation(() => {});
     });
     afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+    it('exports browser refresh events with page context after rendering', async () => {
+        const page = observePage('/products', async (props: { value: string }) => {
+            logEvent('info', 'tesla.refresh.succeeded', { credentialId: 'abc' });
+            return props.value;
+        });
+        expect(await page({ value: 'rendered' })).toBe('rendered');
+        expect(mocks.ingest).not.toHaveBeenCalled();
+        await finishResponse();
+        expect(entries().map(entry => entry.event)).toEqual(['tesla.refresh.succeeded', 'page.completed']);
+        expect(entries()[0]).toMatchObject({ route: '/products', method: 'RENDER', requestId: expect.any(String) });
+    });
+
+    it('exports rejection reasons and preserves redirects without exposing the redirect destination', async () => {
+        const error = Object.assign(new Error('private destination'), { digest: 'NEXT_REDIRECT;replace;/login?private=secret;307;' });
+        const page = observePage('/profile', async () => {
+            logSessionRejection('inactive-account', 'private-owner');
+            throw error;
+        });
+        await expect(page()).rejects.toBe(error);
+        await finishResponse();
+        expect(entries().map(entry => entry.event)).toEqual(['auth.session.rejected', 'page.redirected']);
+        expect(entries()[0]).toMatchObject({ reason: 'inactive-account', accountId: expect.stringMatching(/^[a-f0-9]{16}$/) });
+        expect(JSON.stringify(entries())).not.toContain('private');
+        expect(JSON.stringify(entries())).not.toContain('secret');
+    });
+
+    it('keeps the existing request scope if a page is rendered within an observed operation', async () => {
+        const page = observePage('/profile', async () => { logEvent('info', 'nested'); return 'ok'; });
+        await observeRoute('/outer', async () => new Response(await page()))(new Request('https://example.test'));
+        await finishResponse();
+        expect(entries().map(entry => entry.event)).toEqual(['nested', 'request.completed']);
+        expect(entries()[0].requestId).toBe(entries()[1].requestId);
+    });
 
     it('delivers only after the response, with correlation but no query strings or headers', async () => {
         const handler = observeRoute('/test', async () => {

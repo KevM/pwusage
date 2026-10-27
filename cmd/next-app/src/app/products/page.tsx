@@ -1,3 +1,4 @@
+import { observePage, logSessionRejection } from '@/lib/observability';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getAuthorizedSiteIds, getCurrentUser, hasValidSession } from '@/lib/auth-checks';
@@ -19,7 +20,7 @@ interface VehicleMeta {
 
 type ProductsSearchParams = Promise<{ debugNoEnergy?: string | string[] }>;
 
-export default async function ProductsPage({ searchParams }: { searchParams: ProductsSearchParams }) {
+export default observePage('/products', async function ProductsPage({ searchParams }: { searchParams: ProductsSearchParams }) {
     const cookieStore = await cookies();
     const siteAuthToken = cookieStore.get('site_auth')?.value;
     const query = await searchParams;
@@ -28,6 +29,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
     const shouldHideEnergyForDebug = process.env.NODE_ENV !== 'production' && debugNoEnergy;
 
     if (!siteAuthToken) {
+        logSessionRejection('missing-cookie');
         redirect('/login');
     }
 
@@ -116,4 +118,4 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
             </div>
         </PageShell>
     );
-}
+});
