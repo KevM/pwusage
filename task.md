@@ -1061,8 +1061,8 @@ build passed. Web lint, webpack production build, and 1,202 web tests passed (82
 - [x] Stop referencing `raw_pruned` in deployed code; verify and open code PR.
 - [x] Prepare a separately staged, generated schema cleanup migration and verify its invariants.
 
-Code cleanup: draft PR #238 (`refactor/v2-history-readers`). Schema cleanup is stacked
-on that branch and must wait for its production deployment. Private PostgreSQL tests
+Code cleanup: PR #238 merged. Schema cleanup PR #239 targets main and must wait
+for the code cleanup's production deployment. Private PostgreSQL tests
 verify preserved samples/summaries, legacy-row refusal, empty-record invariants,
 idempotency and service-only access. Full suite: 1,625 passed, 81 configured skips;
 dev-copy PostgreSQL scripts: 12 passed. Lint and production build passed.
