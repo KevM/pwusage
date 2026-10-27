@@ -2,7 +2,7 @@ import { SiteWithTariffs, TariffSeason, TariffSchedule } from '../db';
 import { Schedule } from '../schedule';
 import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry, isTeslaAuthError } from '../tesla-client';
 import { EnergyRepo } from '../energy-repo';
-import { compactDayWritesEnabled, createEnergyRepo } from '../energy-repo-factory';
+import { createEnergyRepo } from '../energy-repo-factory';
 import { SiteRepo } from '../site-repo';
 import { UserRepo } from '../user-repo';
 import { TariffRepo } from '../tariff-repo';
@@ -11,7 +11,6 @@ import { transformEnergyPoints, type EnergyDataRow } from './energy-transformer'
 import { planImport, selectWindows, splitAtSiteMidnight, auditDays, type DateWindow, type PlannedWindow } from './import-planner';
 import { addDaysInSiteTimezone, getSiteMidnight } from '../date-utils';
 import { withImportLock } from '../import-lock';
-import { archiveHealedDays } from '../healed-day-archive';
 import { pool } from '../db';
 import { CompactHistoryStore } from '../prototypes/compact-history-store';
 import { fetchDayForWrite } from '../prototypes/compact-day-fetch';
@@ -36,7 +35,6 @@ export type { EnergyDataRow } from './energy-transformer';
  * cap rotates through them (`selectWindows`).
  */
 export async function planMissingWindows(
-    rawRepo: EnergyRepo,
     site: { id: string; timezone: string; installed: Date | string },
     start: Date,
     end: Date,
@@ -45,7 +43,7 @@ export async function planMissingWindows(
     now = new Date()
 ): Promise<PlannedWindow[]> {
     const auditStartTime = getSiteMidnight(start, site.timezone);
-    const existingCoverage = await createEnergyRepo(site.timezone, rawRepo).getDailyCoverage(
+    const existingCoverage = await createEnergyRepo(site.timezone).getDailyCoverage(
         site.id,
         auditStartTime,
         end,
@@ -57,7 +55,7 @@ export async function planMissingWindows(
         timezone: site.timezone,
         installationDate: new Date(site.installed),
         forceRefetch: force,
-        refetchOpenDays: compactDayWritesEnabled(),
+        refetchOpenDays: true,
         now,
     };
     const windows = planImport(options);
@@ -67,7 +65,7 @@ export async function planMissingWindows(
     return empty.length === 0 ? windows : planImport({ ...options, emptyDays: empty });
 }
 
-/** Where the importer writes v2 day records when day writes are on, and finds days Tesla settled as empty. */
+/** Where the importer writes v2 day records and finds days Tesla settled as empty. */
 export type DayRecordStore = Pick<CompactHistoryStore, 'writeDay' | 'getDayRecordState' | 'getEmptyDays'>;
 
 export interface EnsureDataResult {
@@ -79,7 +77,6 @@ export interface EnsureDataResult {
 
 export class Importer {
     private client: TeslaClient;
-    private repo: EnergyRepo;
     private siteRepo: SiteRepo;
     private userRepo: UserRepo;
     private tariffRepo: TariffRepo;
@@ -96,37 +93,11 @@ export class Importer {
     constructor(client: TeslaClient, dayStore?: DayRecordStore) {
         this.client = client;
         this.dayStore = dayStore;
-        this.repo = new EnergyRepo();
         this.siteRepo = new SiteRepo();
         this.userRepo = new UserRepo();
         this.tariffRepo = new TariffRepo();
     }
 
-
-    /**
-     * Fetch today's rows (site-local midnight → now). When `latestTimestamp`
-     * (the newest stored row) is before today's midnight, also fetch the rest of
-     * yesterday: otherwise the last refresh before midnight (~22:50) leaves
-     * 22:55–23:55 unimported forever, since the next refresh only asks for the
-     * new day. Bounded to one extra day; older gaps are left to planImport.
-     */
-    async getTodayData(siteId: string, latestTimestamp?: Date | null): Promise<EnergyDataRow[]> {
-        const site = await this.siteRepo.getSite(siteId);
-        if (!site) return [];
-
-        const now = new Date();
-        const start = EnergyRepo.getSiteMidnight(now, site.timezone);
-        const tailStart = this.previousDayTailStart(latestTimestamp, start, site.timezone);
-
-        console.log(`[Importer] Fetching today's data: ${start.toISOString()} to ${now.toISOString()}`);
-
-        // We fetch from Tesla. We don't write to DB yet.
-        const [tail, today] = await Promise.all([
-            tailStart ? this.fetchPreviousDayTail(site, tailStart, start) : Promise.resolve([]),
-            this.fetchRange(site, start, now, 'day'),
-        ]);
-        return [...tail, ...today];
-    }
 
     private previousDayTailStart(latestTimestamp: Date | null | undefined, todayMidnight: Date, timezone: string): Date | null {
         if (!latestTimestamp) return null;
@@ -136,20 +107,13 @@ export class Importer {
         return latestTimestamp > yesterdayMidnight ? latestTimestamp : yesterdayMidnight;
     }
 
-    private async fetchPreviousDayTail(site: SiteWithTariffs, start: Date, todayMidnight: Date): Promise<EnergyDataRow[]> {
-        console.log(`[Importer] Fetching previous-day tail: ${start.toISOString()} to ${todayMidnight.toISOString()}`);
-        // End 1s before midnight so Tesla stays within yesterday (see loadInterval), and
-        // filter since Tesla returns the whole calendar day regardless of start.
-        const rows = await this.fetchRange(site, start, new Date(todayMidnight.getTime() - 1000), 'day');
-        return rows.filter(r => r.timestamp >= start && r.timestamp < todayMidnight);
-    }
-
     /**
-     * Day writes on: write today's open record from Tesla's whole day so far,
-     * and yesterday's until Tesla's answer for it is final (complete, or fetched
-     * after its last sample was published; remaining gaps are gap-heal's). With
-     * no record for yesterday, only a missing stored tail fetches it, as in
-     * getTodayData. `rowsPersisted` counts the samples of days actually written.
+     * Write today's open record from Tesla's whole day so far, and yesterday's
+     * until Tesla's answer for it is final (complete, or fetched after its last
+     * sample was published; remaining gaps are gap-heal's). With no record for
+     * yesterday, only a stored latest sample short of midnight fetches it (the
+     * last refresh before midnight leaves yesterday's tail unfetched otherwise).
+     * `rowsPersisted` counts the samples of days actually written.
      */
     async refreshTodayRecords(siteId: string, latestTimestamp: Date | null): Promise<{ rows: EnergyDataRow[]; rowsPersisted: number }> {
         const site = await this.siteRepo.getSite(siteId);
@@ -173,42 +137,6 @@ export class Importer {
         return { rows, rowsPersisted };
     }
 
-    async persistHistory(siteId: string, rows: EnergyDataRow[], latestTimestamp: Date | null): Promise<number> {
-        if (rows.length === 0) return 0;
-
-        const site = await this.siteRepo.getSite(siteId);
-        if (!site) return 0;
-
-        // Surgical Filter: only insert rows around or newer than what we have.
-        // We allow a 10-minute overlap to catch any points that might have changed or were synthetic.
-        let filteredRows = rows;
-        if (latestTimestamp) {
-            const threshold = latestTimestamp.getTime() - 10 * 60 * 1000;
-            filteredRows = rows.filter(r => r.timestamp.getTime() >= threshold);
-        }
-
-        if (filteredRows.length === 0) {
-            console.log(`[Importer] No new or updated rows to persist for site ${siteId}`);
-            return 0;
-        }
-
-        console.log(`[Importer] Background persisting ${filteredRows.length} rows for site ${siteId} (Filtered from ${rows.length})`);
-
-        await this.repo.insertEnergyDataBatch(filteredRows.map(row => ({
-            site_id: row.site_id,
-            tariff_id: row.tariff_id,
-            tariff_schedule_id: row.tariff_schedule_id ?? null,
-            timestamp: row.timestamp,
-            load_power: row.load_power,
-            solar_power: row.solar_power,
-            grid_power: row.grid_power,
-            battery_power: row.battery_power,
-            battery_soc: row.battery_soc,
-        })));
-        console.log(`[Importer] Background persistence complete for site ${siteId}`);
-        return filteredRows.length;
-    }
-
     async ensureDataForRange(
         siteId: string,
         start: Date,
@@ -218,8 +146,6 @@ export class Importer {
             force?: boolean;
             maxTimeMs?: number;
             maxWindows?: number;
-            /** Put re-imported days past the retention cutoff back into the archive. */
-            archiveHealedDays?: boolean;
         }
     ): Promise<EnsureDataResult> {
         const force = options?.force ?? false;
@@ -228,20 +154,10 @@ export class Importer {
             logSync(`Audit Start: ${siteId}, Range: ${start.toISOString()} to ${end.toISOString()}, force=${force}`);
             if (onProgress) onProgress(`Checking data coverage...`);
 
-            const windows = await planMissingWindows(this.repo, site, start, end, force, this.getDayStore());
+            const windows = await planMissingWindows(site, start, end, force, this.getDayStore());
 
             const toImport = selectWindows(windows, maxWindows);
-
-            // The archive pass shares the caller's budget; days it can't reach are left to the archive cron.
-            const deadline = options?.maxTimeMs === undefined ? undefined : Date.now() + options.maxTimeMs;
-            const imported: DateWindow[] = [];
-            const result = await this.importWindows(siteId, toImport, windows.length, options?.maxTimeMs, onProgress, imported);
-            // Day records need no archiving: they are the archive.
-            if (options?.archiveHealedDays && imported.length > 0 && !compactDayWritesEnabled()) {
-                await archiveHealedDays({ id: site.id, timezone: site.timezone }, imported, new Date(),
-                    deadline === undefined ? {} : { deadline });
-            }
-            return result;
+            return this.importWindows(siteId, toImport, windows.length, options?.maxTimeMs, onProgress);
         });
     }
 
@@ -318,8 +234,7 @@ export class Importer {
         toImport: DateWindow[],
         totalWindows: number,
         maxTimeMs?: number,
-        onProgress?: (msg: string) => void,
-        imported?: DateWindow[]
+        onProgress?: (msg: string) => void
     ): Promise<EnsureDataResult> {
         const allRows: EnergyDataRow[] = [];
         let successCount = 0;
@@ -339,12 +254,9 @@ export class Importer {
             if (onProgress) onProgress(`Importing ${dateStr}...`);
             logSync(`Importing window: ${window.start.toISOString()} - ${window.end.toISOString()}`);
             try {
-                const rows = compactDayWritesEnabled()
-                    ? await this.importDayRecords(siteId, window.start, window.end)
-                    : await this.importRange(siteId, window.start, window.end, 'day');
+                const rows = await this.importDayRecords(siteId, window.start, window.end);
                 allRows.push(...rows);
                 successCount++;
-                imported?.push(window);
             } catch (error) {
                 console.error(`[Importer] Failed to import window ${window.start.toISOString()} - ${window.end.toISOString()}:`, error);
                 if (onProgress) onProgress(`Error importing ${dateStr}: ${error instanceof Error ? error.message : String(error)}`);
@@ -371,26 +283,10 @@ export class Importer {
         };
     }
 
-    async importRange(siteId: string, start: Date, end: Date, period: string = 'day', onProgress?: (date: Date) => void): Promise<EnergyDataRow[]> {
-        const allRows: EnergyDataRow[] = [];
-        const site = await this.siteRepo.getSite(siteId);
-        if (!site) {
-            console.error(`Site ${siteId} not found for importRange`);
-            throw new Error(`Site ${siteId} not found in database`);
-        }
-
-        for (const chunk of splitAtSiteMidnight({ start, end }, site.timezone)) {
-            if (onProgress) onProgress(chunk.start);
-            const rows = await this.loadInterval(site, chunk.start, chunk.end, period);
-            allRows.push(...rows);
-        }
-        return allRows;
-    }
-
     /**
-     * Day writes on: one `writeDay` per site-local day the window touches, from
-     * one Tesla fetch of the whole day (SOE required). The record replaces the
-     * day, raw rows included, so a partial window still writes its whole day.
+     * One `writeDay` per site-local day the window touches, from one Tesla fetch
+     * of the whole day (SOE required). The record replaces the day, so a partial
+     * window still writes its whole day.
      */
     private async importDayRecords(siteId: string, start: Date, end: Date): Promise<EnergyDataRow[]> {
         const site = await this.siteRepo.getSite(siteId);
@@ -417,7 +313,7 @@ export class Importer {
     }
 
     private async writeFetchedDay(site: SiteWithTariffs, start: Date, day: { rows: EnergyDataRow[]; fetchedAt: Date }) {
-        const result = await this.getDayStore().writeDay(site.id, start, day.rows, day.fetchedAt, new Date(), { replaceRaw: true });
+        const result = await this.getDayStore().writeDay(site.id, start, day.rows, day.fetchedAt, new Date());
         if (result.status === 'busy') throw new Error(`Day record write busy for ${start.toISOString()}`);
         logSync(`Day record ${start.toISOString()}: ${result.status} (${day.rows.length} samples${result.dayStatus ? `, ${result.dayStatus}` : ''})`);
         return result.status;
@@ -511,7 +407,7 @@ export class Importer {
                 timezone: info.installation_time_zone,
                 json: info,
             });
-            // Kept back while the site has pruned days (see UPSERT_SITE_SQL); an operator re-keys them.
+            // Kept back while the site has day records (see UPSERT_SITE_SQL); an operator re-keys them.
             if (storedTimezone && info.installation_time_zone && info.installation_time_zone !== 'UTC' && storedTimezone !== info.installation_time_zone) {
                 console.warn(`[Import] Site ${siteId} reports timezone ${info.installation_time_zone} but keeps ${storedTimezone}: run scripts/rebuild-site-timezone.ts`);
             }
@@ -540,77 +436,6 @@ export class Importer {
             }
             console.error(`Error ensuring site ${siteId}`, e);
             throw e;
-        }
-    }
-
-    private async loadInterval(site: SiteWithTariffs, start: Date, end: Date, period: string): Promise<EnergyDataRow[]> {
-        let actualEnd = new Date(end);
-
-        if (period === 'day' || period === 'hour') {
-            // Tesla API can be finicky about exact midnight boundaries for full days.
-            // Subtracting 1s ensures we are safely within the previous day's data availability window.
-            actualEnd = new Date(actualEnd.getTime() - 1000);
-        }
-
-        console.log(`[Import] loadInterval ${start.toISOString()} - ${actualEnd.toISOString()} (${period})`);
-        let history: EnergyHistoryEntry[] = [];
-        let soeHistory: SoeHistoryEntry[] = [];
-
-        try {
-            const [historyRes, soeRes] = await Promise.all([
-                this.client.getEnergyHistory(site.id, start, actualEnd, period, site.timezone),
-                this.client.getSoeHistory(site.id, start, actualEnd, period, site.timezone)
-                    .catch(error => {
-                        console.warn(`[Importer] SOE history fetch failed for ${site.id} (${start.toISOString()}-${actualEnd.toISOString()})`, error);
-                        return [] as SoeHistoryEntry[];
-                    })
-            ]);
-            history = historyRes;
-            soeHistory = soeRes;
-        } catch (err: unknown) {
-            await this.revokeOnAuthError(site, err);
-            throw err;
-        }
-
-        // Update last_checked_at if we successfully called the API
-        if (history && history.length > 0 && site.user_id) {
-            await this.userRepo.updateLastChecked(site.user_id);
-        }
-
-        console.log(`[Import] History Rows Fetched: ${history?.length ?? 0}`);
-
-
-        if (!history || history.length === 0) {
-            // No data from Tesla - just return empty array
-            // Installation date clamping prevents unnecessary requests
-            console.log(`[Importer] No data from Tesla for ${start.toISOString()}.`);
-            return [];
-        }
-        else {
-            const energyDatas = await this.processHistory(site, history, soeHistory);
-
-            // Surgical Filter: Tesla often returns more data than requested (e.g., the whole day).
-            // We only want to write the rows that fall within our requested window.
-            const filteredDatas = energyDatas.filter(d =>
-                d.timestamp.getTime() >= start.getTime() &&
-                d.timestamp.getTime() <= actualEnd.getTime()
-            );
-
-            const msg2 = `[Import] Processed EnergyData Rows: ${filteredDatas.length} (Filtered from ${energyDatas.length})`;
-            console.log(msg2);
-
-            await this.repo.insertEnergyDataBatch(filteredDatas.map(row => ({
-                site_id: row.site_id,
-                tariff_id: row.tariff_id,
-                tariff_schedule_id: row.tariff_schedule_id,
-                timestamp: row.timestamp,
-                load_power: row.load_power,
-                solar_power: row.solar_power,
-                grid_power: row.grid_power,
-                battery_power: row.battery_power,
-                battery_soc: row.battery_soc,
-            })));
-            return energyDatas;
         }
     }
 
@@ -690,7 +515,7 @@ export class Importer {
         const site = await this.siteRepo.getSite(siteId);
         if (!site) return { error: 'Site not found' };
 
-        const existingCoverage = await createEnergyRepo(site.timezone,this.repo).getDailyCoverage(siteId, start, end, site.timezone);
+        const existingCoverage = await createEnergyRepo(site.timezone).getDailyCoverage(siteId, start, end, site.timezone);
         const now = new Date();
 
         const days = auditDays({

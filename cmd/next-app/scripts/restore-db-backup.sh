@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # Restores a backup made by .github/workflows/db-backup.yml into an EMPTY database.
 #
-#   restore-db-backup.sh --target <postgres-url> --full <backup.zip|dir> [--daily <backup.zip|dir>]
+#   restore-db-backup.sh --target <postgres-url> --backup <backup.zip|dir>
 #
-# --full is a weekly or pre-migration backup. --daily, when given, must be newer:
-# the schema and every table except EnergyData come from it, EnergyData history
-# comes from --full (dropping rows for sites that no longer exist), and the
-# daily backup's recent readings replace any overlapping history.
+# Any backup kind (daily, weekly or pre-migration) is a complete dump, so the
+# newest one restores everything.
 #
 # Safety: it refuses any target whose public schema already has tables, so it
 # cannot overwrite prod, dev or anything else. Everything loads in a single
@@ -14,22 +12,21 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 --target <postgres-url> --full <backup.zip|dir> [--daily <backup.zip|dir>]" >&2
+  echo "Usage: $0 --target <postgres-url> --backup <backup.zip|dir>" >&2
   exit 2
 }
 
-target='' full='' daily=''
+target='' backup=''
 while [[ $# -gt 0 ]]; do
   [[ $# -ge 2 ]] || usage
   case "$1" in
     --target) target="$2" ;;
-    --full) full="$2" ;;
-    --daily) daily="$2" ;;
+    --backup) backup="$2" ;;
     *) usage ;;
   esac
   shift 2
 done
-[[ -n "$target" && -n "$full" ]] || usage
+[[ -n "$target" && -n "$backup" ]] || usage
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -52,27 +49,11 @@ require() {
 }
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
-info() { [[ -f "$1/backup-info" ]] || return 0; sed -n "s/^$2=//p" "$1/backup-info" | head -n 1; }
 
-full_dir="$(unpack "$full" full)" || exit 1
-require "$full_dir" roles.sql schema.sql data.sql || exit 1
-# The same checks a backup passes before upload; this also stops a daily
-# backup from being restored as if it were complete.
-npx tsx "$script_dir/verify-db-backup.ts" "$full_dir" full >/dev/null || exit 1
-newest_dir="$full_dir"
-if [[ -n "$daily" ]]; then
-  daily_dir="$(unpack "$daily" daily)" || exit 1
-  require "$daily_dir" roles.sql schema.sql data.sql energy-recent.csv || exit 1
-  npx tsx "$script_dir/verify-db-backup.ts" "$daily_dir" small >/dev/null || exit 1
-  # A full backup without backup-info predates daily backups, so it is older.
-  full_at="$(info "$full_dir" taken_at)"
-  daily_at="$(info "$daily_dir" taken_at)"
-  if [[ -n "$full_at" && ! "$full_at" < "$daily_at" ]]; then
-    echo "The daily backup ($daily_at) must be newer than the full backup ($full_at)." >&2
-    exit 1
-  fi
-  newest_dir="$daily_dir"
-fi
+backup_dir="$(unpack "$backup" backup)" || exit 1
+require "$backup_dir" roles.sql schema.sql data.sql || exit 1
+# The same checks a backup passes before upload.
+npx tsx "$script_dir/verify-db-backup.ts" "$backup_dir" >/dev/null || exit 1
 
 psql_target=(psql "$target" -X -q -v ON_ERROR_STOP=1)
 tables="$("${psql_target[@]}" -A -t -c "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")"
@@ -82,60 +63,12 @@ if [[ "$tables" != 0 ]]; then
   exit 1
 fi
 
-files=(-f "$newest_dir/roles.sql" -f "$newest_dir/schema.sql" -f "$newest_dir/data.sql")
-if [[ -n "$daily" ]]; then
-  # Pull the full backup's EnergyData block out, aimed at a staging table.
-  awk '
-    !copying && /^COPY ("?public"?\.)?"?EnergyData"? / { copying = 1; sub(/^COPY [^ ]+ /, "COPY pg_temp.energy_weekly "); print; next }
-    copying { print; if ($0 == "\\.") copying = 0 }
-  ' "$full_dir/data.sql" > "$work/energy-weekly.sql"
-  if [[ ! -s "$work/energy-weekly.sql" ]]; then
-    echo "The full backup has no EnergyData to combine with the daily backup" >&2
-    exit 1
-  fi
-  columns="$(head -n 1 "$daily_dir/energy-recent.csv" | tr -d '\r' | sed 's/[^,][^,]*/"&"/g')"
-  # Triggers stay paused (as the dump's own data load does), so restored rows
-  # reproduce the snapshot instead of invalidating archived days while loading.
-  cat > "$work/merge-energy.sql" <<SQL
-SET session_replication_role = replica;
-CREATE TEMP TABLE energy_weekly (LIKE public."EnergyData" INCLUDING DEFAULTS) ON COMMIT DROP;
-\i '$work/energy-weekly.sql'
--- A day pruned to its archive after the full backup has only its archive now:
--- its old raw rows would sit under it and break that day's invariant.
-CREATE TEMP VIEW pruned_day AS
-SELECT site_id, day_start, day_end FROM public."EnergyDayArchive" WHERE raw_pruned;
-INSERT INTO public."EnergyData"
-SELECT w.* FROM energy_weekly w
-WHERE EXISTS (SELECT 1 FROM public."Site" s WHERE s.id = w.site_id)
-  AND NOT EXISTS (SELECT 1 FROM pruned_day p
-                  WHERE p.site_id = w.site_id AND w."timestamp" >= p.day_start AND w."timestamp" < p.day_end)
-ON CONFLICT DO NOTHING;
-CREATE TEMP TABLE energy_recent (LIKE public."EnergyData" INCLUDING DEFAULTS) ON COMMIT DROP;
-\copy energy_recent ($columns) FROM '$daily_dir/energy-recent.csv' WITH (FORMAT csv, HEADER true)
-DELETE FROM public."EnergyData" e USING energy_recent r
-WHERE e."timestamp" = r."timestamp" AND e.site_id = r.site_id;
-INSERT INTO public."EnergyData"
-SELECT r.* FROM energy_recent r
-WHERE EXISTS (SELECT 1 FROM public."Site" s WHERE s.id = r.site_id)
-  AND NOT EXISTS (SELECT 1 FROM pruned_day p
-                  WHERE p.site_id = r.site_id AND r."timestamp" >= p.day_start AND r."timestamp" < p.day_end);
--- The daily dump records EnergyData's sequence before the recent readings are
--- copied, so readings imported in between can carry higher ids. Move the
--- sequence past every restored row (never backwards) so new inserts, which
--- omit the id, cannot collide.
-SELECT setval(seq, GREATEST(
-    COALESCE((SELECT max(id) FROM public."EnergyData"), 1),
-    COALESCE(pg_sequence_last_value(seq), 1)))
-FROM (SELECT pg_get_serial_sequence('public."EnergyData"', 'id')::regclass AS seq) AS energy_sequence;
-SQL
-  files+=(-f "$work/merge-energy.sql")
-fi
-
-"${psql_target[@]}" --single-transaction -o /dev/null "${files[@]}"
+"${psql_target[@]}" --single-transaction -o /dev/null \
+  -f "$backup_dir/roles.sql" -f "$backup_dir/schema.sql" -f "$backup_dir/data.sql"
 
 echo "Rows restored:"
 "${psql_target[@]}" -A -t -F ': ' -c "
   SELECT 'User', count(*) FROM public.\"User\"
   UNION ALL SELECT 'Site', count(*) FROM public.\"Site\"
-  UNION ALL SELECT 'EnergyData', count(*) FROM public.\"EnergyData\""
+  UNION ALL SELECT 'EnergyDayArchive', count(*) FROM public.\"EnergyDayArchive\""
 echo "Restore complete."

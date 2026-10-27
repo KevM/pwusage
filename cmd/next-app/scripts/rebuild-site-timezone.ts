@@ -9,7 +9,7 @@
  *
  * Without --timezone the site's Tesla-reported timezone (Site.json
  * installation_time_zone) is used: the one `upsertSite` keeps back while the
- * site has pruned days. Output has counts only: no samples or tokens.
+ * site has day records. Output has counts only: no samples or tokens.
  */
 import 'dotenv/config';
 import {pool} from '../src/lib/db';
@@ -43,12 +43,8 @@ async function run():Promise<void> {
             timezone=site.reported;
         }
         try {new Intl.DateTimeFormat('en-US',{timeZone:timezone});} catch {throw new OperatorError(`Unknown timezone ${timezone}`);}
-        // No transaction budget: a multi-year site re-encodes every pruned day in one transaction.
-        const store=new CompactHistoryStore(pool,undefined,async client=>{
-            // Hold the archive control row through COMMIT, as the archive job's phases do.
-            const control=await client.query('SELECT 1 FROM "HistoryArchiveControl" WHERE id=true FOR SHARE');
-            if(!control.rowCount)throw new Error('Missing archive control');
-        });
+        // No transaction budget: a multi-year site re-encodes every day in one transaction.
+        const store=new CompactHistoryStore(pool);
         const result=await store.rebuildTimezone(options.siteId,timezone,{apply:options.apply,now:new Date()});
         console.log(JSON.stringify({mode:options.apply?'apply':'preview',to:timezone,...result},null,2));
         if(result.status==='busy')process.exitCode=2;

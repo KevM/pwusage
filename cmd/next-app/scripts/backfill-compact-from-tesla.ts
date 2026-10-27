@@ -1,10 +1,8 @@
 /**
  * Backfill site-local days from Tesla straight into compact day records
- * (`CompactHistoryStore.writeDay`), without staging raw "EnergyData" rows or
- * reading them back: one Tesla day request (energy + SOE), segments from the
- * current tariff, one record write. Preview by default (fetch only); `--apply`
- * writes. Days that still have raw rows are skipped (their archive is owned by
- * the raw source), and so is any day whose energy or SOE request fails
+ * (`CompactHistoryStore.writeDay`): one Tesla day request (energy + SOE),
+ * segments from the current tariff, one record write. Preview by default (fetch
+ * only); `--apply` writes. Any day whose energy or SOE request fails is skipped
  * (`fetch-failed`), so a re-run never replaces stored SOC with nulls. A day
  * already written from a newer fetch is left as is (`superseded`). A day Tesla
  * answers with no samples is recorded as checked (`checked-empty`: an `empty`
@@ -85,7 +83,7 @@ async function run():Promise<void> {
                     let status='preview';const t1=performance.now();
                     if(options.apply) {
                         try {status=(await store.writeDay(site.id,start,rows,fetchedAt)).status;}
-                        catch(error) {status=error instanceof Error&&/raw samples/.test(error.message)?'raw-present':'failed';}
+                        catch {status='failed';}
                     }
                     results.push({day,samples:rows.length,status,fetchMs,writeMs:Math.round(performance.now()-t1)});
                 }
@@ -109,6 +107,6 @@ async function run():Promise<void> {
     }
 }
 run().catch(error=>{
-    console.error(error instanceof OperatorError?error.message:'Compact backfill failed. Check arguments, site timezone and Tesla access. No raw rows are written.');
+    console.error(error instanceof OperatorError?error.message:'Compact backfill failed. Check arguments, site timezone and Tesla access.');
     process.exitCode=1;
 });

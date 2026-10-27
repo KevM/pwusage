@@ -89,7 +89,7 @@ describe('GET /api/sync', () => {
         expect(streamText).toContain('{"status":"progress","message":"Syncing day 1..."}');
         expect(streamText).toContain('{"status":"complete"}');
         // Re-fetched days past retention go back into the archive.
-        expect(mocks.ensureDataForRange.mock.calls[0][4]).toEqual({ maxTimeMs: 40000, archiveHealedDays: true });
+        expect(mocks.ensureDataForRange.mock.calls[0][4]).toEqual({ maxTimeMs: 40000 });
     });
 
     it('emits partial SSE frame when importer hits time budget', async () => {

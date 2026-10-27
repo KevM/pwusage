@@ -5,12 +5,11 @@ job (`verify-db` in `.github/workflows/ci.yml`) overwrites the dev database with
 copy of production, runs the new migrations on it, and scrubs it. The beta site
 (pwusagebeta.fm.rodeo) and the dev pg_cron jobs run against that copy.
 
-Every table is copied in full except the energy history: raw `EnergyData` and
-the day records that replace it (`EnergyDayArchive`, `EnergyDaySummary`). Those
-are cut down to a slice on the prod side (see step 2) so that their history is
-never downloaded. Full `EnergyData` dumps were the largest use of production's
-5 GB/month Free-plan egress, since a full copy was downloaded only for most of it
-to be deleted; day records would have grown the same way once raw drained.
+Every table is copied in full except the energy history: the day records
+(`EnergyDayArchive`, `EnergyDaySummary`). Those are cut down to a slice on the
+prod side (see step 2) so that their history is never downloaded. Full energy
+dumps were the largest use of production's 5 GB/month Free-plan egress, since a
+full copy was downloaded only for most of it to be deleted.
 
 ## What the job does
 
@@ -23,50 +22,38 @@ to be deleted; day records would have grown the same way once raw drained.
    are copied. Supabase-managed `auth` and `storage` tables stay untouched;
    protected tables such as `storage.buckets_vectors` cannot be restored by
    `postgres`. Migration history is dumped separately from `supabase_migrations`.
-   The data dump skips the rows of `EnergyData`, `EnergyDayArchive` and
-   `EnergyDaySummary` (`-x public.EnergyData,public.EnergyDayArchive,public.EnergyDaySummary`;
-   `EnergyData`'s sequence is kept). Just before it, `scripts/export-dev-energy-data.sql`,
-   which is read-only, writes just the rows dev keeps, in one REPEATABLE READ
-   snapshot: raw rows to stdout (`dev-energy-data.csv`), and day records and their
-   summaries to `dev-day-archive.csv` and `dev-day-summary.csv`. A day record is kept
-   when its day starts inside the window, for the same sites. The two
-   cannot share a snapshot, so the export goes first: every `Site` and `Tariff`
-   a row references then already exists when `data.sql` is taken. The rows kept are the last 45 days for the
-   5 sites with the most recent live status refresh, plus Harrison (the site used
-   for live tests). Measured 2026-10-19: about 63k rows (4.4 MB) instead of 1.19M
-   rows (about 87 MB).
+   The data dump skips the rows of `EnergyDayArchive` and `EnergyDaySummary`
+   (`-x public.EnergyData,public.EnergyDayArchive,public.EnergyDaySummary`; raw
+   `EnergyData` is listed for a production copy taken before
+   `20261027120000_drop_energy_data` dropped it). Just before it,
+   `scripts/export-dev-energy-data.sql`, which is read-only, writes just the rows
+   dev keeps, in one REPEATABLE READ snapshot: day records and their summaries to
+   `dev-day-archive.csv` and `dev-day-summary.csv`. A day record is kept when its
+   day starts inside the last 45 days, for the 5 sites with the most recent live
+   status refresh plus Harrison (the site used for live tests). The two cannot
+   share a snapshot, so the export goes first: every `Site` and `Tariff` a record
+   references then already exists when `data.sql` is taken.
 3. **Restores to dev.** The first command is the dev guard
    (`scripts/assert-dev-database.sql`); only then does it drop and recreate the
    `public` schema and load the schema. Data is loaded and scrubbed in one
    transaction that stops on the first error:
-   `psql --single-transaction -v ON_ERROR_STOP=1 -f data.sql -f scripts/load-dev-energy-data.sql -f scripts/sanitize-dev-copy.sql < dev-energy-data.csv`.
+   `psql --single-transaction -v ON_ERROR_STOP=1 -f data.sql -f scripts/load-dev-energy-data.sql -f scripts/sanitize-dev-copy.sql`.
    Beta and the dev pg_cron jobs never see unscrubbed rows, and a failed load
    leaves the data tables empty instead of half-loaded.
-   `load-dev-energy-data.sql` loads the `EnergyData` slice from stdin and the
-   day-record files from its working directory, with triggers paused, as the
-   dump's own load does, and refuses a CSV whose columns differ from the table
-   (`HEADER MATCH`). Because paused triggers also skip foreign-key checks, it
-   applies `EnergyData`'s own `ON DELETE` actions by hand to rows whose `Site`,
-   `Tariff` or `TariffSchedule` was deleted on prod between the export and the
-   dump. It drops a whole day record (summaries by cascade) whose `Site` was
-   deleted, or whose summaries name a deleted `Tariff` or `TariffSchedule` (those
-   keys have no `ON DELETE` action). It then:
-   - drops the `EnergyDayArchive` days (and, by cascade, their `EnergyDaySummary`
-     rows) whose raw rows were not copied or changed in that gap, as the `invalidate_compact_energy_day`
-     trigger does when raw rows are deleted. Otherwise a later write to such a
-     day would fail with "Raw archive source incomplete". Archive-only days
-     (`raw_pruned`) have no raw rows to copy and stay;
-   - sets `Site.last_live_refresh_at` to 0 for sites left without readings, so
-     beta's live-site crons (heal-gaps) do not re-import their history from
-     Tesla.
+   `load-dev-energy-data.sql` loads the day-record files from its working
+   directory, with triggers paused, as the dump's own load does, and refuses a
+   CSV whose columns differ from the table (`HEADER MATCH`). It drops a whole day
+   record (summaries by cascade) whose `Site` was deleted on prod between the
+   export and the dump, or whose summaries name a deleted `Tariff` or
+   `TariffSchedule` (those keys have no `ON DELETE` action). It then sets
+   `Site.last_live_refresh_at` to 0 for sites left without day records, so beta's
+   live-site crons (heal-gaps) do not re-import their history from Tesla.
 4. **Runs migrations on dev**. Every table except the energy history is at full
-   prod size; `EnergyData`, `EnergyDayArchive` and `EnergyDaySummary` hold only the
-   slice. A migration that rewrites or re-indexes them is therefore not timed
+   prod size; `EnergyDayArchive` and `EnergyDaySummary` hold only the slice. A migration that rewrites or re-indexes them is therefore not timed
    against prod's row count here. Check such migrations against prod's size
    separately.
-5. **Prunes the copy** (`scripts/prune-dev-copy.sql`): deletes `EnergyData` and day
-   records (summaries by cascade) older than 45 days, then `VACUUM FULL`s the three
-   tables. The slice already covers only 45 days, so this is a safety net. A test
+5. **Prunes the copy** (`scripts/prune-dev-copy.sql`): deletes day records
+   (summaries by cascade) older than 45 days, then `VACUUM FULL`s both tables. The slice already covers only 45 days, so this is a safety net. A test
    checks that the export and the prune use the same interval.
 
 ## What the scrub changes

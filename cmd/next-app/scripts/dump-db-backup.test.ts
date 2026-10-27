@@ -21,15 +21,15 @@ it.each([
     const log = join(dir, 'calls');
     try {
         // Exercise the real shell script, replacing only its external tools.
-        await writeFile(join(dir, 'npx'), '#!/bin/sh\ncase "$*" in *db-backup-kinds*) echo "' + (kind === 'daily' ? 'small' : 'full') + '";; esac\n', {mode: 0o755});
-        for (const command of ['supabase', 'psql']) {
-            await writeFile(join(dir, command), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$BACKUP_CALL_LOG"\n', {mode: 0o755});
-        }
+        await writeFile(join(dir, 'npx'), '#!/bin/sh\n', {mode: 0o755});
+        await writeFile(join(dir, 'supabase'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$BACKUP_CALL_LOG"\n', {mode: 0o755});
         await run('bash', ['scripts/dump-db-backup.sh', kind, join(dir, 'out')], {
             env: {...process.env, PATH: `${dir}:${process.env.PATH}`, DATABASE_URL: source, BACKUP_CALL_LOG: log},
         });
         const calls = (await readFile(log, 'utf8')).trim().split('\n');
-        expect(calls).toHaveLength(kind === 'daily' ? 4 : 3);
+        // Every kind is a complete dump: roles, schema and all public data.
+        expect(calls).toHaveLength(3);
+        expect(calls[2]).not.toContain(' -x ');
         for (const call of calls) {
             expect(call).toContain(expected);
         }

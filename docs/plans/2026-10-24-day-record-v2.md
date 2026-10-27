@@ -492,3 +492,24 @@ raw, and add to it when new tooling touches history.
      removing v1 reads).
    - 2026-10-25: `COMPACT_DAY_WRITES_ENABLED=true` set for Preview (beta, Dev
      DB) to verify day writes before Prod.
+   - 2026-10-26: Prod flipped: `COMPACT_DAY_WRITES_ENABLED=true`,
+     `HISTORY_ARCHIVE_JOB_ENABLED=false`, archive job paused. Raw writes stopped.
+   - 2026-10-26/27: the 1,848 raw days with no record (1,572 on 26 tokenless
+     sites, 276 on 16 tokened ones) were archived to v1 by running the archive
+     job locally (`archive-all`, 10 days and 8 MiB per run, ~860 MB reserved,
+     about a fifth of that real egress), then converted with
+     `convert-archives-v2.ts --apply`: 1,834 converted keeping their historical
+     attribution, 14 (06-23 to 07-03, `attribution-flag`) re-attributed from the
+     current tariff with `--reattribute`. The last 8 days (10-24, inside the
+     2-day archive floor) followed the next day. Result: 0 v1 records and every
+     raw day covered by a v2 record.
+   - 2026-10-27: Tesla backfill to install for the tokened sites with older
+     history (`backfill-compact-from-tesla.ts --apply`): 268546532166 from
+     2021-12-01 (1,570 days, ~5 MB, 52 min with 429 back-offs),
+     2252435048108360 from 2025-06-10 (432 days), 2252472664568676 from
+     2025-12-05 (254 days), plus 268546532166's 04-03 to 04-05 hole. Each now
+     has a record for every day from install.
+   - 2026-10-27: cleanup PR: drops `EnergyData`, its trigger and functions, the
+     archive job (route, pg_cron trigger, control tables, code), trim/restore,
+     the v1 conversion and the storage flags; day records are the only store and
+     every backup is a complete dump.

@@ -4,8 +4,6 @@ import type { DayRecordStatus, EmptyDayState } from './prototypes/day-attributio
 
 const mocks = vi.hoisted(() => ({
     coverage: vi.fn(),
-    insertEnergyDataBatch: vi.fn(),
-    archiveHealedDays: vi.fn(),
     updateLastChecked: vi.fn(),
     updateUserStatus: vi.fn(),
 }));
@@ -14,15 +12,12 @@ const site = { id: 'site', timezone: TZ, installed: new Date('2025-01-01'), user
 vi.mock('./site-repo', () => ({ SiteRepo: class { async getSite() { return site; } invalidateCache() {} } }));
 vi.mock('./user-repo', () => ({ UserRepo: class { updateLastChecked = mocks.updateLastChecked; updateUserStatus = mocks.updateUserStatus; } }));
 vi.mock('./energy-repo', () => ({ EnergyRepo: class {
-    insertEnergyDataBatch = mocks.insertEnergyDataBatch;
     static getSiteMidnight = (d: Date, tz: string) => getSiteMidnightReal(d, tz);
 } }));
 vi.mock('./energy-repo-factory', () => ({
     createEnergyRepo: () => ({ getDailyCoverage: mocks.coverage }),
-    compactDayWritesEnabled: () => process.env.COMPACT_DAY_WRITES_ENABLED === 'true',
 }));
 vi.mock('./import-lock', () => ({ withImportLock: async <T>(_r: unknown, _o: unknown, callback: () => Promise<T>) => ({ status: 'acquired', value: await callback() }) }));
-vi.mock('./healed-day-archive', () => ({ archiveHealedDays: mocks.archiveHealedDays }));
 vi.mock('./db', () => ({ pool: {} }));
 
 import { getSiteMidnight as getSiteMidnightReal } from './date-utils';
@@ -61,35 +56,22 @@ beforeEach(() => {
     mocks.coverage.mockResolvedValue([{ localDayKey: '2026-10-20', count: 100, first: day, last: new Date(+day + 99 * 300000), maxInteriorGapMs: 300000 }]);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
-afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 describe('range imports', () => {
-    it('with day writes off, upserts raw rows and never writes day records', async () => {
-        const store = dayStore();
-        const importer = new Importer(teslaClient() as unknown as TeslaClient, store);
-        await importer.ensureDataForRange('site', day, nextDay);
-        expect(mocks.insertEnergyDataBatch).toHaveBeenCalled();
-        expect(store.writeDay).not.toHaveBeenCalled();
-    });
-
-    it('with day writes on, writes one v2 day record per fetched day, replacing raw rows', async () => {
-        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
+    it('writes one v2 day record per fetched day', async () => {
         const store = dayStore();
         const client = teslaClient();
         const result = await new Importer(client as unknown as TeslaClient, store)
-            .ensureDataForRange('site', day, nextDay, undefined, { archiveHealedDays: true });
+            .ensureDataForRange('site', day, nextDay);
         expect(result).toMatchObject({ complete: true, processedWindows: 1, totalWindows: 1 });
         expect(store.writeDay).toHaveBeenCalledOnce();
-        const [siteId, start, rows, fetchedAt, , options] = store.writeDay.mock.calls[0] as unknown as [string, Date, { timestamp: Date }[], Date, Date, unknown];
-        expect([siteId, start, rows.length, options]).toEqual(['site', day, 288, { replaceRaw: true }]);
+        const [siteId, start, rows, fetchedAt] = store.writeDay.mock.calls[0] as unknown as [string, Date, { timestamp: Date }[], Date];
+        expect([siteId, start, rows.length]).toEqual(['site', day, 288]);
         expect(fetchedAt).toBeInstanceOf(Date);
-        expect(mocks.insertEnergyDataBatch).not.toHaveBeenCalled();
-        // No raw rows to archive: the day record is already the archive.
-        expect(mocks.archiveHealedDays).not.toHaveBeenCalled();
     });
 
-    it('with day writes on, serves a capped run\'s missing days before retrying open records', async () => {
-        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
+    it('serves a capped run\'s missing days before retrying open records', async () => {
         // The older day has no samples; the newer one is an open record with a sub-threshold gap.
         mocks.coverage.mockResolvedValue([{ localDayKey: '2026-10-21', count: 287, first: nextDay, last: new Date(+nextDay + 287 * 300000),
             maxInteriorGapMs: 600000, open: true }]);
@@ -101,7 +83,6 @@ describe('range imports', () => {
     });
 
     it('never re-requests a day Tesla settled as empty, and looks empty days up only when a missing day is planned', async () => {
-        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date('2026-10-22T12:00:00Z'));
         // Two old days with nothing stored; Tesla answered the first with no samples long ago.
@@ -127,7 +108,6 @@ describe('range imports', () => {
     });
 
     it('with a window cap, rotates retries of recent empty days instead of retrying the newest ones every run', async () => {
-        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date('2026-10-24T12:00:00Z'));
         // Days 10-20..10-23 (Chicago) are recent empty records; 10-23 was checked most recently, 10-21 longest ago.
@@ -141,34 +121,29 @@ describe('range imports', () => {
         vi.useRealTimers();
     });
 
-    it('with day writes on, leaves the stored day untouched when the SOE request fails', async () => {
-        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
+    it('leaves the stored day untouched when the SOE request fails', async () => {
         const store = dayStore();
         await expect(new Importer(teslaClient({ soe: 'fail' }) as unknown as TeslaClient, store)
             .ensureDataForRange('site', day, nextDay)).rejects.toThrow('SOE unavailable');
         expect(store.writeDay).not.toHaveBeenCalled();
-        expect(mocks.insertEnergyDataBatch).not.toHaveBeenCalled();
     });
 
-    it('with day writes on, counts a busy day record claim as a failed window', async () => {
-        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
+    it('counts a busy day record claim as a failed window', async () => {
         const store = dayStore();
         store.writeDay.mockResolvedValue({ status: 'busy' } as never);
         await expect(new Importer(teslaClient() as unknown as TeslaClient, store)
             .ensureDataForRange('site', day, nextDay)).rejects.toThrow(/busy/);
     });
 
-    it('with day writes on, refetchDays writes each listed day as a record', async () => {
-        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
+    it('refetchDays writes each listed day as a record', async () => {
         const store = dayStore();
         const result = await new Importer(teslaClient() as unknown as TeslaClient, store)
             .refetchDays('site', [{ start: day, end: nextDay }], {});
         expect(result).toMatchObject({ complete: true, processedWindows: 1 });
-        expect(store.writeDay).toHaveBeenCalledWith('site', day, expect.any(Array), expect.any(Date), expect.any(Date), { replaceRaw: true });
+        expect(store.writeDay).toHaveBeenCalledWith('site', day, expect.any(Array), expect.any(Date), expect.any(Date));
     });
 
     it('marks the owner revoked when Tesla rejects the token', async () => {
-        vi.stubEnv('COMPACT_DAY_WRITES_ENABLED', 'true');
         const client = teslaClient();
         client.getEnergyHistory.mockRejectedValue(new Error('Tesla API Error: 401 unauthorized'));
         await expect(new Importer(client as unknown as TeslaClient, dayStore()).ensureDataForRange('site', day, nextDay)).rejects.toThrow();
@@ -190,7 +165,7 @@ describe('refreshTodayRecords', () => {
         const client = teslaClient();
         const result = await new Importer(client as unknown as TeslaClient, store).refreshTodayRecords('site', new Date(+now - 600000));
         expect(startsWritten(store)).toEqual([today]);
-        expect(store.writeDay).toHaveBeenCalledWith('site', today, expect.any(Array), expect.any(Date), expect.any(Date), { replaceRaw: true });
+        expect(store.writeDay).toHaveBeenCalledWith('site', today, expect.any(Array), expect.any(Date), expect.any(Date));
         // Tesla returns the whole calendar day; only samples up to now are kept.
         const rows = (store.writeDay.mock.calls[0] as unknown as [string, Date, { timestamp: Date }[]])[2];
         expect(rows.every(r => r.timestamp >= today && r.timestamp <= now)).toBe(true);
@@ -198,7 +173,6 @@ describe('refreshTodayRecords', () => {
         expect(result.rowsPersisted).toBe(rows.length);
         expect(store.getDayRecordState).toHaveBeenCalledWith('site', day);
         expect(client.getSoeHistory).toHaveBeenCalled();
-        expect(mocks.insertEnergyDataBatch).not.toHaveBeenCalled();
     });
 
     it('rewrites yesterday while its record is open and was fetched before its last sample was published', async () => {

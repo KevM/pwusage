@@ -2,7 +2,7 @@ import { withIoDeadline, ioSignal, checkIoDeadline } from './io-deadline';
 import { Importer } from './importer';
 import { type EnergySiteLiveStatus } from './tesla-client';
 import { SiteRepo } from './site-repo';
-import { compactDayWritesEnabled, createEnergyRepo } from './energy-repo-factory';
+import { createEnergyRepo } from './energy-repo-factory';
 import { withImportLock } from './import-lock';
 import { createTeslaClientForSite } from './tesla-client-factory';
 import { nextSampleDueAt } from './tesla-sample-timing';
@@ -133,7 +133,7 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
         return { status: 'throttled' };
     }
 
-    // Cached site. The latest stored sample (raw or day record) decides the latch
+    // Cached site. The latest stored sample decides the latch
     // and whether yesterday's tail (after the last pre-midnight refresh) is missing.
     const siteRepo = new SiteRepo();
     const site = await siteRepo.getSite(siteId);
@@ -165,27 +165,8 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
                 const importer = new Importer(client);
                 const latestMs = latest?.timestamp?.getTime() ?? 0;
 
-                if (compactDayWritesEnabled()) {
-                    const { rows, rowsPersisted } = await importer.refreshTodayRecords(siteId, latest?.timestamp ?? null);
-                    if (rowsPersisted === 0 || !rows.some(r => r.timestamp.getTime() > latestMs)) return { status: 'no-new-rows' };
-                    return { status: 'persisted', rowsPersisted };
-                }
-
-                const rows = await importer.getTodayData(siteId, latest?.timestamp ?? null);
-
-                checkIoDeadline();
-                if (rows.length === 0) return { status: 'no-new-rows' };
-
-                const hasNewRows = rows.some((r) => r.timestamp.getTime() > latestMs);
-
-                // Problem 5: Drop strict pre-filter and let persistHistory do the job.
-                const rowsPersisted = await importer.persistHistory(siteId, rows, latest?.timestamp ?? null);
-                if (rowsPersisted === 0) return { status: 'no-new-rows' };
-
-                if (!hasNewRows) {
-                    return { status: 'no-new-rows' };
-                }
-
+                const { rows, rowsPersisted } = await importer.refreshTodayRecords(siteId, latest?.timestamp ?? null);
+                if (rowsPersisted === 0 || !rows.some(r => r.timestamp.getTime() > latestMs)) return { status: 'no-new-rows' };
                 return { status: 'persisted', rowsPersisted };
             } catch (error) {
                 return {

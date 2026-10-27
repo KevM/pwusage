@@ -112,10 +112,10 @@ async function startMeasurement(args: Extract<typeof measurementArgs, { ok: true
 
 async function measure(siteId: string, now: Date, historical: boolean, pool: Pool): Promise<void> {
     const { EnergyRepo } = await import('../src/lib/energy-repo');
+    const { createEnergyRepo } = await import('../src/lib/energy-repo-factory');
     const { TariffRepo } = await import('../src/lib/tariff-repo');
     const { getCurrentCycleStart } = await import('../src/lib/billing-cycle');
 
-    const energyRepo = new EnergyRepo();
     const tariffRepo = new TariffRepo();
     const siteQueryStart = performance.now();
     const siteMetadata = await pool.query<MeasurementRow>(
@@ -132,6 +132,7 @@ async function measure(siteId: string, now: Date, historical: boolean, pool: Poo
         timezone: site.timezone,
         billingStartDay: Number(site.billing_start_day),
     };
+    const energyRepo = createEnergyRepo(context.timezone);
     const todayStart = EnergyRepo.getSiteMidnight(now, context.timezone);
     const cycleStart = getCurrentCycleStart(context.billingStartDay, now, context.timezone);
     const liveWindowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);

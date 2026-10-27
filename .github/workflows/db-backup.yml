@@ -3,12 +3,13 @@ run-name: Database backup (${{ inputs.kind || (github.event.schedule == '41 9 * 
 
 # Private production backups. Kinds, folders and retention live in
 # cmd/next-app/scripts/db-backup-kinds.ts; restore steps in docs/database-backups.md.
-# A daily dump is about 3 MB and a full one about 67 MB of Supabase egress
-# (Free plan: 5 GB a month, shared with the app), measured 2026-10-15.
+# Every kind is a complete dump; energy history is compact day records, about
+# 20 MB of Supabase egress per dump (Free plan: 5 GB a month, shared with the
+# app), estimated 2026-10-27 from the day-record tables' size.
 on:
   schedule:
-    - cron: '23 9 * * *'  # daily: every table except EnergyData history
-    - cron: '41 9 * * 0'  # weekly, Sunday: complete
+    - cron: '23 9 * * *'  # daily
+    - cron: '41 9 * * 0'  # weekly, Sunday (kept longer)
   workflow_dispatch:
     inputs:
       kind:

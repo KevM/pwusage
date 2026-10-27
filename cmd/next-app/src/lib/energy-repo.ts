@@ -1,15 +1,13 @@
 import { buildBillOutlookHistory, type BillOutlookHistory, type BillOutlookDay } from './bill-outlook-history';
-import {energyQueryExecutor,withRawEnergyAccess} from './energy-storage-access';
-import type {EnergyWrite} from './prototypes/compact-energy-recovery';
 import { pool, Tariff, EnergyData, TariffSchedule } from './db';
 import { wattsToKilowatts } from './energy-utils';
 import { priceBillUsage } from './bill-pricing';
-import { getSiteMidnight, getValidTimezone } from './date-utils';
+import { getSiteMidnight } from './date-utils';
 
 import { Schedule } from './schedule';
 import { SiteRepo } from './site-repo';
 import { TariffRepo } from './tariff-repo';
-import {ARCHIVE_DAY_CONTAINS_SQL,CompactHistoryStore,SETTLED_ARCHIVE_DAY_SQL} from './prototypes/compact-history-store';
+import {SETTLED_ARCHIVE_DAY_SQL} from './prototypes/compact-history-store';
 import type {Pool} from 'pg';
 
 export interface LatestEnergySnapshot {timestamp:Date;batterySoc:number|null;batteryPower:number;solarPower:number;gridPower:number;loadPower:number}
@@ -138,22 +136,22 @@ export function sumTodayRows(rows: EnergyData[]): TodayTotals {
 }
 
 
-/** Optional read backend. Production keeps SQL until an archive store is explicitly supplied. */
+/** Read backend: day records (`CompactHistoryReader`), the only energy store. */
 export interface CycleAggregatesAndCoverage { aggregates:CycleAggregateRow[];coverage:DailyCoverageStat[] }
 export interface EnergyHistoryReader {
-    getLatestEnergyData?(siteId:string,asOf?:Date):Promise<LatestEnergySnapshot|null>;
-    getLatestBatterySoc?(siteId:string,since:Date):Promise<LatestBatterySoc|null>;
-    getLatestTimestamp?(siteId:string):Promise<Date|null>;
-    getCycleAggregatesAndCoverage?(siteId:string,start:Date,end:Date,timezone:string):Promise<CycleAggregatesAndCoverage>;
-    getDailyCoverage?(siteId: string, start: Date, end: Date, timezone: string): Promise<DailyCoverageStat[]>;
-    hasData?(siteId: string): Promise<boolean>;
+    getLatestEnergyData(siteId:string,asOf?:Date):Promise<LatestEnergySnapshot|null>;
+    getLatestBatterySoc(siteId:string,since:Date):Promise<LatestBatterySoc|null>;
+    getLatestTimestamp(siteId:string):Promise<Date|null>;
+    getCycleAggregatesAndCoverage(siteId:string,start:Date,end:Date,timezone:string):Promise<CycleAggregatesAndCoverage>;
+    getDailyCoverage(siteId: string, start: Date, end: Date, timezone: string): Promise<DailyCoverageStat[]>;
+    hasData(siteId: string): Promise<boolean>;
     getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]>;
     getCycleAggregates(siteId: string, start: Date, end: Date, timezone?: string): Promise<CycleAggregateRow[]>;
     getBucketedEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]>;
 }
 
 export class EnergyRepo {
-    constructor(private readonly historyReader?: EnergyHistoryReader) {}
+    constructor(private readonly historyReader: EnergyHistoryReader) {}
 
     /**
      * Helper to get site-timezone midnight as a global Date object (UTC timestamp)
@@ -164,81 +162,30 @@ export class EnergyRepo {
 
 // === Queries ===
     async getCycleAggregatesAndCoverage(siteId:string,start:Date,end:Date,timezone:string):Promise<CycleAggregatesAndCoverage> {
-        if (this.historyReader?.getCycleAggregatesAndCoverage) return this.historyReader.getCycleAggregatesAndCoverage(siteId,start,end,timezone);
-        const [aggregates,coverage]=await Promise.all([this.getCycleAggregates(siteId,start,end,timezone),this.getDailyCoverage(siteId,start,end,timezone)]);
-        return {aggregates,coverage};
+        return this.historyReader.getCycleAggregatesAndCoverage(siteId,start,end,timezone);
     }
 
     async getLatestTimestamp(siteId: string): Promise<Date | null> {
-        if(this.historyReader?.getLatestTimestamp) return this.historyReader.getLatestTimestamp(siteId);
-        const res = await energyQueryExecutor().query(
-            'SELECT MAX(timestamp) as timestamp FROM "EnergyData" WHERE site_id = $1 AND timestamp <= NOW() at time zone \'UTC\'',
-            [siteId]
-        );
-        const ts = res.rows[0]?.timestamp;
-        return ts ? new Date(ts) : null;
+        return this.historyReader.getLatestTimestamp(siteId);
     }
 
-    /**
-     * Summarize existing 5-minute rows in [start, end) as one row per
-     * site-local day. Day boundaries are computed server-side with an explicit
-     * `AT TIME ZONE`, so they never depend on the session timezone. `count`,
-     * `first` and `last` describe what is already stored; `maxInteriorGapMs` is
-     * the largest gap *between* consecutive rows of that local day, used to
-     * detect real holes rather than the expected open edges of a day.
-     */
+    /** One row per site-local day in [start, end) describing the stored samples (see `DailyCoverageStat`). */
     async getDailyCoverage(siteId: string, start: Date, end: Date, timezone: string): Promise<DailyCoverageStat[]> {
-        if (this.historyReader?.getDailyCoverage) return this.historyReader.getDailyCoverage(siteId,start,end,timezone);
-        const tz = getValidTimezone(timezone);
-        const res = await energyQueryExecutor().query(
-            `WITH s AS (
-    SELECT
-        timestamp,
-        date_trunc('day', timestamp AT TIME ZONE $4::text) AS local_day,
-        LAG(timestamp) OVER (
-            PARTITION BY date_trunc('day', timestamp AT TIME ZONE $4::text)
-            ORDER BY timestamp
-        ) AS prev_ts
-    FROM "EnergyData"
-    WHERE site_id = $1
-      AND timestamp >= $2
-      AND timestamp < $3
-)
-SELECT
-    to_char(local_day, 'YYYY-MM-DD') AS local_day_key,
-    COUNT(*)::int AS count,
-    MIN(timestamp) AS first,
-    MAX(timestamp) AS last,
-    COALESCE(MAX(EXTRACT(EPOCH FROM (timestamp - COALESCE(prev_ts, timestamp)))), 0) AS max_gap_sec
-FROM s
-GROUP BY local_day
-ORDER BY local_day`,
-            [siteId, start.toISOString(), end.toISOString(), tz]
-        );
-        return res.rows.map((r: { local_day_key: string; count: string | number; first: string | Date | null; last: string | Date | null; max_gap_sec: string | number }) => ({
-            localDayKey: r.local_day_key,
-            count: Number(r.count),
-            first: r.first ? new Date(r.first) : null,
-            last: r.last ? new Date(r.last) : null,
-            maxInteriorGapMs: Number(r.max_gap_sec) * 1000,
-        }));
+        return this.historyReader.getDailyCoverage(siteId,start,end,timezone);
     }
 
     /**
      * Stored samples on a 5-minute mark within each site's [start, end), for all
-     * sites in one query. Rows are unique per (timestamp, site_id), so a count
-     * equal to the number of 5-minute slots means the window has no gaps. A
-     * settled archive day (`SETTLED_ARCHIVE_DAY_SQL`) counts as all of its slots,
-     * since planning treats it as covered even once its raw rows are trimmed.
-     * Any other day with no raw rows left (trimmed, or written straight from
-     * Tesla) counts its archived `sample_count` when every sample is on the
-     * 5-minute grid (`axis = 'grid'`); an off-grid day counts nothing, so the
-     * coverage audit decides. Windows are site-local
-     * midnights, so archive days lie wholly inside them.
+     * sites in one query. A count equal to the number of 5-minute slots means the
+     * window has no gaps. A settled day record (`SETTLED_ARCHIVE_DAY_SQL`) counts
+     * as all of its slots, since planning treats it as covered. Any other record
+     * counts its `sample_count` when every sample is on the 5-minute grid
+     * (`axis = 'grid'`); an off-grid day counts nothing, so the coverage audit
+     * decides. Windows are site-local midnights, so records lie wholly inside them.
      */
-    async countAlignedSamples(
+    static async countAlignedSamples(
         windows: Array<{ siteId: string; start: Date; end: Date }>,
-        database: Pick<Pool, 'query'> = energyQueryExecutor()
+        database: Pick<Pool, 'query'> = pool
     ): Promise<Map<string, number>> {
         if (windows.length === 0) return new Map();
         const res = await database.query(
@@ -246,16 +193,6 @@ ORDER BY local_day`,
     SELECT * FROM unnest($1::text[], $2::timestamptz[], $3::timestamptz[]) AS w(site_id, start_ts, end_ts)
 )
 SELECT w.site_id, (
-    SELECT COUNT(*)::int FROM "EnergyData" e
-    WHERE e.site_id = w.site_id
-      AND e.timestamp >= w.start_ts
-      AND e.timestamp < w.end_ts
-      AND EXTRACT(EPOCH FROM e.timestamp)::bigint % 300 = 0
-      AND NOT EXISTS (
-          SELECT 1 FROM "EnergyDayArchive" a
-          WHERE a.site_id = e.site_id AND ${ARCHIVE_DAY_CONTAINS_SQL('e.timestamp')}
-            AND ${SETTLED_ARCHIVE_DAY_SQL})
-) + (
     SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (a.day_end - a.day_start))::int / 300), 0)::int
     FROM "EnergyDayArchive" a
     WHERE a.site_id = w.site_id
@@ -268,7 +205,6 @@ SELECT w.site_id, (
     WHERE a.site_id = w.site_id
       AND a.day_start >= w.start_ts
       AND a.day_end <= w.end_ts
-      AND a.raw_pruned
       AND a.axis = 'grid'
       AND NOT ${SETTLED_ARCHIVE_DAY_SQL}
 ) AS n
@@ -552,204 +488,27 @@ FROM w`,
     }
 
     async hasData(siteId: string): Promise<boolean> {
-        if (this.historyReader?.hasData) return this.historyReader.hasData(siteId);
-        const { rows } = await energyQueryExecutor().query('SELECT 1 FROM "EnergyData" WHERE site_id = $1 LIMIT 1', [siteId]);
-        return rows.length > 0;
+        return this.historyReader.hasData(siteId);
     }
 
     async getLatestEnergyData(siteId:string,asOf?:Date):Promise<LatestEnergySnapshot|null> {
-        if(this.historyReader?.getLatestEnergyData)return this.historyReader.getLatestEnergyData(siteId,asOf);
-        const timestampLimit = asOf ? 'AND timestamp <= $2' : '';
-        const params = asOf ? [siteId, asOf] : [siteId];
-        const { rows } = await energyQueryExecutor().query(`
-            SELECT timestamp, battery_soc, battery_power, solar_power, grid_power, load_power
-            FROM "EnergyData"
-            WHERE site_id = $1
-            ${timestampLimit}
-            ORDER BY timestamp DESC
-            LIMIT 1
-        `, params);
-
-        if (rows.length === 0) return null;
-        return {
-            timestamp: new Date(rows[0].timestamp),
-            batterySoc: rows[0].battery_soc === null || rows[0].battery_soc === undefined
-                ? null
-                : Number(rows[0].battery_soc),
-            batteryPower: Number(rows[0].battery_power),
-            solarPower: Number(rows[0].solar_power),
-            gridPower: Number(rows[0].grid_power),
-            loadPower: Number(rows[0].load_power),
-        };
+        return this.historyReader.getLatestEnergyData(siteId,asOf);
     }
 
-    /** One indexed row, only used when live status has no usable charge value. */
+    /** Only used when live status has no usable charge value. */
     async getLatestBatterySoc(siteId: string, since: Date): Promise<LatestBatterySoc | null> {
-        if(this.historyReader?.getLatestBatterySoc)return this.historyReader.getLatestBatterySoc(siteId,since);
-        const { rows } = await energyQueryExecutor().query(`
-            SELECT timestamp, battery_soc
-            FROM "EnergyData"
-            WHERE site_id = $1 AND timestamp >= $2 AND battery_soc IS NOT NULL
-            ORDER BY timestamp DESC
-            LIMIT 1
-        `, [siteId, since]);
-        if (rows.length === 0) return null;
-        return { value: Number(rows[0].battery_soc), timestamp: new Date(rows[0].timestamp) };
+        return this.historyReader.getLatestBatterySoc(siteId,since);
     }
 
-    async getCycleAggregates(
-        siteId: string, start: Date, end: Date, timezone?: string
-    ): Promise<CycleAggregateRow[]> {
-        if (this.historyReader) return this.historyReader.getCycleAggregates(siteId, start, end, timezone);
-        const queryStart = Date.now();
-        const res = await energyQueryExecutor().query(`
-            SELECT
-                ${timezone ? "date_trunc('day', timestamp, $4::text)" : "date_trunc('day', timestamp)"} AS day,
-                tariff_id,
-                tariff_schedule_id,
-                SUM(load_power) AS load_power,
-                SUM(solar_power) AS solar_power,
-                SUM(grid_power) AS grid_power,
-                SUM(battery_power) AS battery_power
-            FROM "EnergyData"
-            WHERE site_id = $1 AND timestamp >= $2 AND timestamp < $3
-            GROUP BY day, tariff_id, tariff_schedule_id
-            ORDER BY day ASC
-        `, timezone ? [siteId, start, end, getValidTimezone(timezone)] : [siteId, start, end]);
-        const queryDuration = Date.now() - queryStart;
-        console.log(`[EnergyRepo] getCycleAggregates: Query = ${queryDuration}ms, Rows = ${res.rows.length}`);
-
-        return res.rows.map(row => ({
-            day: new Date(row.day),
-            tariff_id: Number(row.tariff_id),
-            tariff_schedule_id: row.tariff_schedule_id == null ? null : Number(row.tariff_schedule_id),
-            load_power: Number(row.load_power),
-            solar_power: Number(row.solar_power),
-            grid_power: Number(row.grid_power),
-            battery_power: Number(row.battery_power),
-        }));
+    async getCycleAggregates(siteId: string, start: Date, end: Date, timezone?: string): Promise<CycleAggregateRow[]> {
+        return this.historyReader.getCycleAggregates(siteId, start, end, timezone);
     }
 
     async getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
-        if (this.historyReader) return this.historyReader.getRawEnergyData(siteId, start, end);
-        if (start.getTime() >= end.getTime()) return [];
-        const queryStart = Date.now();
-        const res = await energyQueryExecutor().query(`
-            SELECT site_id, timestamp, tariff_id, tariff_schedule_id, load_power, solar_power, grid_power, battery_power, battery_soc
-            FROM "EnergyData"
-            WHERE site_id = $1
-            AND timestamp >= $2
-            AND timestamp < $3
-            ORDER BY timestamp ASC
-        `, [siteId, start, end]);
-        const queryDuration = Date.now() - queryStart;
-        console.log(`[EnergyRepo] getRawEnergyData: Query = ${queryDuration}ms, Rows = ${res.rows.length}`);
-
-        return res.rows.map(row => ({
-            timestamp: new Date(row.timestamp),
-            site_id: row.site_id.toString(),
-            tariff_id: row.tariff_id,
-            tariff_schedule_id: row.tariff_schedule_id,
-            load_power: Number(row.load_power),
-            solar_power: Number(row.solar_power),
-            grid_power: Number(row.grid_power),
-            battery_power: Number(row.battery_power),
-            battery_soc: row.battery_soc === null || row.battery_soc === undefined ? null : Number(row.battery_soc),
-        })) as EnergyData[];
+        return this.historyReader.getRawEnergyData(siteId, start, end);
     }
 
     async getBucketedEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
-        if (this.historyReader) return this.historyReader.getBucketedEnergyData(siteId, start, end);
-        const queryStart = Date.now();
-        const res = await energyQueryExecutor().query(`
-            SELECT
-                date_bin('15 minutes', timestamp, TIMESTAMPTZ '2000-01-01') as timestamp,
-                MAX(timestamp) as sample_timestamp,
-                site_id,
-                tariff_id,
-                tariff_schedule_id,
-                COUNT(*)::int as sample_count,
-                AVG(load_power) as load_power,
-                AVG(solar_power) as solar_power,
-                AVG(grid_power) as grid_power,
-                AVG(battery_power) as battery_power,
-                NULL as battery_soc,
-                ROW_NUMBER() OVER (ORDER BY date_bin('15 minutes', timestamp, TIMESTAMPTZ '2000-01-01')) as id
-            FROM "EnergyData"
-            WHERE site_id = $1
-            AND timestamp >= $2
-            AND timestamp < $3
-            GROUP BY date_bin('15 minutes', timestamp, TIMESTAMPTZ '2000-01-01'), site_id, tariff_id, tariff_schedule_id
-            ORDER BY timestamp ASC
-        `, [siteId, start, end]);
-        const queryDuration = Date.now() - queryStart;
-        console.log(`[EnergyRepo] getBucketedEnergyData: Query = ${queryDuration}ms, Rows = ${res.rows.length}`);
-
-        return res.rows.map(row => ({
-            id: Number(row.id),
-            timestamp: new Date(row.timestamp),
-            sample_timestamp: new Date(row.sample_timestamp),
-            site_id: row.site_id.toString(),
-            tariff_id: row.tariff_id,
-            tariff_schedule_id: row.tariff_schedule_id,
-            load_power: Number(row.load_power),
-            solar_power: Number(row.solar_power),
-            grid_power: Number(row.grid_power),
-            battery_power: Number(row.battery_power),
-            battery_soc: null,
-            sample_count: Number(row.sample_count ?? 3),
-        })) as EnergyData[];
-    }
-
-
-    // === Commands ===
-    async insertEnergyDataBatch(rows:EnergyWrite[]):Promise<void> {
-        if(!rows.length)return;
-        if(process.env.COMPACT_HISTORY_READS_ENABLED!=='true') {
-            const result=await withRawEnergyAccess([...new Set(rows.map(row=>row.site_id))],'write',()=>this.insertRawEnergyDataBatch(rows));
-            if(result.kind==='raw')return;
-        }
-        // Release the selection transaction before taking the archive writer's
-        // exclusive locks and restoring full touched days.
-        await new CompactHistoryStore(pool).writeEnergyDataBatch(rows);
-    }
-
-    private async insertRawEnergyDataBatch(rows:EnergyWrite[]):Promise<void> {
-        const valuePlaceholders: string[] = [];
-        const params: unknown[] = [];
-        let p = 1;
-        for (const r of rows) {
-            valuePlaceholders.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
-            params.push(
-                r.site_id, r.tariff_id, r.timestamp,
-                r.load_power, r.solar_power, r.grid_power, r.battery_power,
-                r.battery_soc, r.tariff_schedule_id ?? null
-            );
-        }
-
-        await energyQueryExecutor().query(`
-            INSERT INTO "EnergyData"(site_id, tariff_id, timestamp, load_power, solar_power, grid_power, battery_power, battery_soc, tariff_schedule_id)
-            VALUES ${valuePlaceholders.join(', ')}
-            ON CONFLICT(timestamp, site_id) DO UPDATE SET
-                tariff_id = EXCLUDED.tariff_id,
-                load_power = EXCLUDED.load_power,
-                solar_power = EXCLUDED.solar_power,
-                grid_power = EXCLUDED.grid_power,
-                battery_power = EXCLUDED.battery_power,
-                battery_soc = COALESCE(EXCLUDED.battery_soc, "EnergyData".battery_soc),
-                tariff_schedule_id = EXCLUDED.tariff_schedule_id
-        `, params);
-    }
-
-    async cleanupOldEnergyData(cutoffDate: Date): Promise<{ energyDeleted: number }> {
-
-        const energyRes = await energyQueryExecutor().query(`
-            DELETE FROM "EnergyData"
-            WHERE timestamp < $1
-        `, [cutoffDate]);
-
-        return {
-            energyDeleted: energyRes.rowCount || 0
-        };
+        return this.historyReader.getBucketedEnergyData(siteId, start, end);
     }
 }
