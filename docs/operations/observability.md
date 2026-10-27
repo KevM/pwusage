@@ -27,6 +27,20 @@ region; a dataset in another edge region needs matching SDK edge configuration.
 - Tesla refreshes inside those routes: start/success/failure, lock contention,
   token endpoint rejection (host, HTTP status, allowlisted OAuth error code),
   credential persistence and committed auth revocation.
+- Account verification: cron start, batch size, checks started/checking/completed,
+  recently-active skips, and interrupted checks. Each check has an independent
+  `verificationId`; checking/results include the selected `siteId`. Batch-selected
+  state is explicitly named `selectedAuthStatus`, `selectedIsActive`, and
+  `selectedLastCheckedAt`; it is a snapshot, not a fresh DB read. Results include
+  `outcome`, a fixed `reason`, and `durationMs`. User IDs (which can be emails)
+  and credentials are not included.
+  Interrupted checks also identify the failed `phase` (site lookup, client
+  construction, live status, or status write); failed writes do not report a
+  completed account transition.
+- Refresh waiters: `tesla.refresh.wait-revoked`, `wait-completed`, and
+  `wait-timeout` identify the site, observed auth status where available, and
+  elapsed `waitedMs`. A waiter observing revoked credentials throws a terminal
+  `TeslaAuthError`, preserving inactivity through account verification.
 
 `src/lib/observability.ts` uses AsyncLocalStorage to attach `requestId`, route,
 method, environment, deployment and commit. Authorized site context is attached
@@ -50,6 +64,12 @@ Events are mirrored to Vercel runtime logs and exported in per-request batches
 with Next.js `after()`. This keeps delivery off the response path and binds it to
 the serverless invocation. Events emitted by background `after()` work schedule
 a further lifecycle-bound batch; concurrent requests do not share buffers.
+The check-users cron also starts nonblocking export checkpoints at cron start,
+before each site's verification, and after each result/interruption. These send
+buffered events immediately while `after()` retains lifecycle ownership, so
+partial progress can reach Axiom even when a later operation times out. The
+existing network deadline, redaction, and per-invocation event cap still apply;
+checkpoints do not guarantee delivery or increase the cap.
 
 Each invocation exports at most 200 events; arrays, object depth, field counts and
 string length are bounded. Export uses a 2.5-second shared network deadline per
@@ -84,6 +104,25 @@ Example APL queries (adjust dataset name if needed):
 | where event == 'tesla.auth.revoked'
 | summarize count() by bin(_time, 15m), siteId
 ```
+
+To trace account verification and refresh-lock decisions together:
+
+```apl
+['pwusage']
+| where route == '/api/cron/check-users'
+| where event startswith 'tesla.user-verification.'
+    or event startswith 'tesla.refresh.'
+    or event == 'tesla.auth.revoked'
+    or event == 'tesla.token-endpoint.rejected'
+| sort by _time asc
+```
+
+Use `requestId` to follow the entire cron invocation and `verificationId` to
+pair a user's start and outcome. Use `siteId` on checking/results to correlate
+TRMNL polls. An `outcome='error'` with `reason='transient-failure'` records the
+path that keeps an account active; `outcome='revoked'` records terminal failure.
+If only a start/checking checkpoint exists, inspect platform timeouts and the
+count-only export-failure diagnostics before assuming the account changed state.
 
 After measuring normal volume, configure Axiom monitors for an unusual increase
 in `tesla.auth.revoked`, failed cron requests and TRMNL errors. Monitor rules and

@@ -1,4 +1,6 @@
 import { cache } from 'react';
+import { randomUUID } from 'node:crypto';
+import { flushLogEvents, logEvent } from './observability';
 import { pool, User, Site } from './db';
 import { TeslaClient, isTeslaAuthError } from './tesla-client';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
@@ -190,59 +192,102 @@ export class UserRepo {
     }
 
     async verifyUserStatus(
-        user: Pick<User, 'id'>,
+        user: Pick<User, 'id' | 'auth_status' | 'is_active' | 'last_checked_at'> & { sites?: Pick<Site, 'id'>[] },
         deps?: { createClient?: (siteId: string) => Promise<Pick<TeslaClient, 'getLiveStatus'> | null> }
     ): Promise<{ status: string; error?: string }> {
-        // Get user's sites to test with
-        const sitesRes = await pool.query('SELECT id FROM "Site" WHERE user_id = $1 LIMIT 1', [user.id]);
-        if (sitesRes.rows.length === 0) {
-            // No sites - can't verify credentials
-            await this.updateUserStatus(user.id, 'no_sites', false);
-            return { status: 'no_sites' };
-        }
-        const siteId = sitesRes.rows[0].id;
-
-        // Build the client through the site factory: it re-reads tokens fresh
-        // from the DB at call time and wires the cross-instance locked refresh
-        // handler. Verifying with tokens bulk-read minutes earlier and a raw
-        // unlocked refresh can burn a rotated refresh token (invalid_grant)
-        // and falsely revoke a healthy user.
-        let createClient = deps?.createClient;
-        if (!createClient) {
-            const { createTeslaClientForSite } = await import('./tesla-client-factory');
-            createClient = createTeslaClientForSite;
-        }
-        const client = await createClient(siteId);
-        if (!client) {
-            await this.updateUserStatus(user.id, 'no_token', false);
-            return { status: 'no_token' };
-        }
-
+        const started = Date.now();
+        const verificationId = randomUUID();
+        let siteId: string | undefined;
+        let phase: 'site-lookup' | 'client-construction' | 'live-status' | 'status-write' = 'site-lookup';
+        // These are the batch-selection snapshot, not a fresh read of auth state.
+        const snapshot = {
+            siteIds: user.sites?.map(site => site.id),
+            selectedAuthStatus: user.auth_status ?? null,
+            selectedIsActive: user.is_active ?? null,
+            selectedLastCheckedAt: user.last_checked_at
+                ? new Date(user.last_checked_at).toISOString() : null,
+        };
+        logEvent('info', 'tesla.user-verification.started', { verificationId, ...snapshot });
+        const finish = (outcome: string, reason: string, error?: unknown, errorMessage?: string) => {
+            logEvent(outcome === 'revoked' || outcome === 'error' ? 'warn' : 'info',
+                'tesla.user-verification.completed', {
+                    verificationId, siteId, ...snapshot, outcome, reason,
+                    durationMs: Date.now() - started, ...(error ? { error } : {}),
+                });
+            flushLogEvents();
+            return { status: outcome, ...(errorMessage ? { error: errorMessage } : {}) };
+        };
         try {
-            await client.getLiveStatus(siteId);
-            await this.updateUserStatus(user.id, 'active', true);
-            return { status: 'active' };
-        } catch (err: unknown) {
-            console.error(`[UserRepo] Error checking user ${user.id}:`, err);
-            const errorMsg = err instanceof Error ? err.message : String(err);
+            // Get user's sites to test with
+            const sitesRes = await pool.query('SELECT id FROM "Site" WHERE user_id = $1 LIMIT 1', [user.id]);
+            if (sitesRes.rows.length === 0) {
+                // No sites - can't verify credentials
+                phase = 'status-write';
+                await this.updateUserStatus(user.id, 'no_sites', false);
+                return finish('no_sites', 'no-linked-site');
+            }
+            siteId = sitesRes.rows[0].id as string;
+            logEvent('info', 'tesla.user-verification.checking', { verificationId, siteId, ...snapshot });
+            flushLogEvents();
 
-            if (isTeslaAuthError(err)) {
-                await this.updateUserStatus(user.id, 'revoked', false);
-                return { status: 'revoked', error: errorMsg };
+            // Build the client through the site factory: it re-reads tokens fresh
+            // from the DB at call time and wires the cross-instance locked refresh
+            // handler. Verifying with tokens bulk-read minutes earlier and a raw
+            // unlocked refresh can burn a rotated refresh token (invalid_grant)
+            // and falsely revoke a healthy user.
+            let createClient = deps?.createClient;
+            if (!createClient) {
+                const { createTeslaClientForSite } = await import('./tesla-client-factory');
+                createClient = createTeslaClientForSite;
+            }
+            phase = 'client-construction';
+            const client = await createClient(siteId);
+            if (!client) {
+                phase = 'status-write';
+                await this.updateUserStatus(user.id, 'no_token', false);
+                return finish('no_token', 'no-credentials');
             }
 
-            // Transient failure (Tesla 5xx, network, exhausted 429 retries):
-            // record it but do NOT deactivate — is_active=false blocks every
-            // authenticated route and JWT refresh, locking the user out over
-            // a blip. auth_status='error' keeps the user in the cron's
-            // "troubled" bucket so it re-verifies next run.
-            await this.updateUserStatus(user.id, 'error', true);
-            return { status: 'error', error: errorMsg };
+            try {
+                phase = 'live-status';
+                await client.getLiveStatus(siteId);
+            } catch (err: unknown) {
+                console.error(`[UserRepo] Error checking user ${user.id}:`, err);
+                const errorMsg = err instanceof Error ? err.message : String(err);
+
+                if (isTeslaAuthError(err)) {
+                    phase = 'status-write';
+                    await this.updateUserStatus(user.id, 'revoked', false);
+                    return finish('revoked', 'terminal-auth-failure', err, errorMsg);
+                }
+
+                // Transient failure (Tesla 5xx, network, exhausted 429 retries):
+                // record it but do NOT deactivate — is_active=false blocks every
+                // authenticated route and JWT refresh, locking the user out over
+                // a blip. auth_status='error' keeps the user in the cron's
+                // "troubled" bucket so it re-verifies next run.
+                phase = 'status-write';
+                await this.updateUserStatus(user.id, 'error', true);
+                return finish('error', 'transient-failure', err, errorMsg);
+            }
+            phase = 'status-write';
+            await this.updateUserStatus(user.id, 'active', true);
+            return finish('active', 'live-status-succeeded');
+        } catch (error) {
+            // Includes site lookup, client construction, and failed status writes.
+            // A start without a completion also exposes platform termination.
+            logEvent('error', 'tesla.user-verification.failed', {
+                verificationId, siteId, ...snapshot, phase, reason: 'verification-interrupted',
+                durationMs: Date.now() - started, error,
+            });
+            flushLogEvents();
+            throw error;
         }
     }
 
     async verifyAllUserStatuses() {
         const users = await this.getAllUsers();
+        logEvent('info', 'tesla.user-verification.batch-started', { userCount: users.length });
         let activeCount = 0;
         let inactiveCount = 0;
         let errorCount = 0;
@@ -258,6 +303,11 @@ export class UserRepo {
 
             if (!isStale && !isTroubled) {
                 skipCount++;
+                logEvent('info', 'tesla.user-verification.skipped', {
+                    siteIds: user.sites.map(site => site.id),
+                    reason: 'recently-checked-active', selectedAuthStatus: user.auth_status,
+                    selectedIsActive: user.is_active, selectedLastCheckedAt: lastChecked?.toISOString(),
+                });
                 activeCount++; // Still considered active
                 continue;
             }

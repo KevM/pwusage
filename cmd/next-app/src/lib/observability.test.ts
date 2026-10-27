@@ -1,6 +1,6 @@
 import { after } from 'next/server';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { logEvent, observeRoute, setLogContext } from './observability';
+import { flushLogEvents, logEvent, observeRoute, setLogContext } from './observability';
 
 const mocks = vi.hoisted(() => ({
     callbacks: [] as Array<() => unknown>,
@@ -70,6 +70,29 @@ describe('production observability', () => {
         expect(console.info).toHaveBeenCalled();
         expect(mocks.callbacks).toHaveLength(0);
         expect(mocks.constructor).not.toHaveBeenCalled();
+    });
+
+    it('exports cron checkpoints before the handler completes and retains later events', async () => {
+        let release: () => void = () => {};
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const response = observeRoute('/api/cron/check-users', async () => {
+            logEvent('info', 'tesla.user-verification.started', { verificationId: 'check-1' });
+            flushLogEvents();
+            await gate;
+            logEvent('warn', 'tesla.user-verification.completed', { verificationId: 'check-1', outcome: 'revoked' });
+            return new Response();
+        })(new Request('https://example.test'));
+
+        // The handler is still blocked; its first checkpoint has already left.
+        expect(entries()).toHaveLength(1);
+        expect(entries()[0].event).toBe('tesla.user-verification.started');
+        release();
+        await response;
+        await finishResponse();
+        expect(entries().map(entry => entry.event)).toEqual([
+            'tesla.user-verification.started', 'tesla.user-verification.completed', 'request.completed',
+        ]);
+        expect(new Set(entries().map(entry => entry.requestId)).size).toBe(1);
     });
 
     it.each(['AXIOM_TOKEN', 'AXIOM_DATASET'])('keeps requests working without %s', async key => {
@@ -174,5 +197,17 @@ describe('production observability', () => {
         const response = await observeRoute('/test', async () => new Response())(new Request('https://example.test'));
         expect(response.status).toBe(200);
         expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('No request lifecycle'));
+    });
+
+    it('does not fail authentication work if the checkpoint lifecycle is unavailable', async () => {
+        const response = await observeRoute('/test', async () => {
+            logEvent('info', 'verification.started');
+            vi.mocked(after).mockImplementationOnce(() => { throw new Error('no lifecycle'); });
+            flushLogEvents();
+            return new Response();
+        })(new Request('https://example.test'));
+        expect(response.status).toBe(200);
+        await finishResponse();
+        expect(entries().map(entry => entry.event)).toEqual(['verification.started', 'request.completed']);
     });
 });
