@@ -35,6 +35,9 @@ export interface SiteHistoryOverview {
 const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode, sankey_renderer, last_live_refresh_at, last_live_claim_at, live_status_cache';
 const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
 
+/** A site gap-heal checks, with its owner's last auth outage window. */
+export type GapHealSite = { id: string; timezone: string; installed: Date; auth_lost_at: Date | null; auth_restored_at: Date | null };
+
 export class SiteRepo {
     // === Queries ===
     /** One narrow row for the fast foreground path; no tariff tree or site JSON. */
@@ -259,9 +262,9 @@ export class SiteRepo {
      * status refresh since `activeSinceMs`: only demand paths set it (web,
      * mobile, TRMNL markup, active battery holds), never the heal itself.
      */
-    async getSitesForGapHeal(activeSinceMs: number): Promise<Array<{ id: string; timezone: string; installed: Date }>> {
-        const { rows } = await pool.query<{ id: string; timezone: string; installed: Date }>(`
-            SELECT s.id, s.timezone, s.installed
+    async getSitesForGapHeal(activeSinceMs: number): Promise<GapHealSite[]> {
+        const { rows } = await pool.query<GapHealSite>(`
+            SELECT s.id, s.timezone, s.installed, u.auth_lost_at, u.auth_restored_at
             FROM "Site" s
             JOIN "User" u ON u.id = s.user_id
             WHERE u.is_active = true

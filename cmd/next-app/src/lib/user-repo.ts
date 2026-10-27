@@ -83,7 +83,7 @@ export class UserRepo {
         const tokenCols = options.includeTokens ? ', u.access_token, u.refresh_token' : '';
         // Fetch users and check for Trmnl integration in a single query using subquery (efficiently handles the join logic)
         const userRes = await pool.query(`
-            SELECT u.id, u.email, u.roles, u.is_active, u.auth_status, u.last_checked_at, u.created_at${tokenCols}, 
+            SELECT u.id, u.email, u.roles, u.is_active, u.auth_status, u.last_checked_at, u.auth_lost_at, u.auth_restored_at, u.created_at${tokenCols}, 
             EXISTS (
                 SELECT 1 
                 FROM "TrmnlInstallation" ti 
@@ -142,6 +142,18 @@ export class UserRepo {
             'UPDATE "User" SET auth_status = $1, is_active = $2, last_checked_at = NOW() WHERE id = $3',
             [authStatus, isActive, userId]
         );
+    }
+
+    /**
+     * When the site owner's Tesla access last came back after an outage
+     * (`auth_restored_at`, stamped by the `stamp_user_auth_outage` trigger), or null.
+     */
+    async getAuthRestoredAtForSite(siteId: string): Promise<Date | null> {
+        const { rows } = await pool.query<{ auth_restored_at: Date | null }>(
+            'SELECT u.auth_restored_at FROM "Site" s JOIN "User" u ON u.id = s.user_id WHERE s.id = $1',
+            [siteId]
+        );
+        return rows[0]?.auth_restored_at ?? null;
     }
 
     async updateLastChecked(userId: string) {

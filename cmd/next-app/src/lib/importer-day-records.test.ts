@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 const TZ = 'America/Chicago';
 const site = { id: 'site', timezone: TZ, installed: new Date('2025-01-01'), user_id: 'owner', tariffs: [{ id: 1, seasons: [] }] };
 vi.mock('./site-repo', () => ({ SiteRepo: class { async getSite() { return site; } invalidateCache() {} } }));
-vi.mock('./user-repo', () => ({ UserRepo: class { updateLastChecked = mocks.updateLastChecked; updateUserStatus = mocks.updateUserStatus; } }));
+vi.mock('./user-repo', () => ({ UserRepo: class { updateLastChecked = mocks.updateLastChecked; updateUserStatus = mocks.updateUserStatus; getAuthRestoredAtForSite = async () => null; } }));
 vi.mock('./energy-repo', () => ({ EnergyRepo: class {
     static getSiteMidnight = (d: Date, tz: string) => getSiteMidnightReal(d, tz);
 } }));

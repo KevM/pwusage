@@ -145,10 +145,12 @@ export function rollupSamples(samples: EnergySample[], attribution: DayAttributi
 /**
  * `complete`: ended with every slot. `open`: not ended, or ended short within the
  * gap-heal window. `gapped`: ended short and older than that window; age alone decides.
+ * The window starts at the later of the day end and `reachableSince` (when the owner's
+ * Tesla access last came back), so days missed during an outage get a full window.
  */
-export function dayStatus({ end, sampleCount, expectedSlots, now }: { end: Date; sampleCount: number; expectedSlots: number; now: Date }): DayStatus {
+export function dayStatus({ end, sampleCount, expectedSlots, now, reachableSince }: { end: Date; sampleCount: number; expectedSlots: number; now: Date; reachableSince?: Date | null }): DayStatus {
     if (!Number.isSafeInteger(sampleCount) || !Number.isSafeInteger(expectedSlots) || sampleCount < 0 || expectedSlots < 1 || sampleCount > expectedSlots) throw new Error('Invalid sample count');
     if (+now < +end) return 'open';
     if (sampleCount === expectedSlots) return 'complete';
-    return +now - +end > DAY_GAP_HEAL_DAYS * 24 * 3600000 ? 'gapped' : 'open';
+    return +now - Math.max(+end, reachableSince ? +reachableSince : 0) > DAY_GAP_HEAL_DAYS * 24 * 3600000 ? 'gapped' : 'open';
 }

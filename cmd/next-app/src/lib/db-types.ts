@@ -11,6 +11,9 @@ export interface User {
   is_active?: boolean;
   auth_status?: string;
   last_checked_at?: Date | string;
+  /** Tesla access lost / restored (`stamp_user_auth_outage` trigger); lost after restored = current outage. */
+  auth_lost_at?: Date | null;
+  auth_restored_at?: Date | null;
   session_version?: number; // Bumped on sign-out-everywhere; embedded in site_auth JWT as `sv`
 }
 
