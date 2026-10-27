@@ -5,13 +5,14 @@
 - [x] Fence verification writes on the User row version and current site ownership.
 - [x] Report retained state and log superseded outcomes without obsolete error messages.
 - [x] Verify private PostgreSQL interleavings, full tests, lint, build, and independent review.
-- [ ] Commit and post a separate draft follow-up PR targeting main after #240 merged.
+- [x] Commit and post draft follow-up PR #241 targeting main after #240 merged.
 
 Plan: `docs/plans/2026-10-27-tesla-verification-status.md`.
-Verified 1,628 tests, 16 private PostgreSQL checks, lint, and the production
+Verified on rebased main: 1,615 tests, 16 private PostgreSQL checks, lint, and the production
 Webpack build. Default Turbopack still fails on the local port-binding restriction.
 Independent review found no blocking issues; membership guards revalidate against
 the final statement snapshot and do not serialize independent Site-only writes.
+Follow-up: https://github.com/KevM/pwusage/pull/241.
 
 # Tesla account refresh coordination (2026-10-27)
 
