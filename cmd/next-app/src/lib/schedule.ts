@@ -229,12 +229,13 @@ export class Schedule {
     }
 
     private matchSeason(month: number, day: number, season: TariffSeason): boolean {
-        if (season.from_month === season.to_month) {
+        if (season.from_month === season.to_month && season.from_day <= season.to_day) {
             return month === season.from_month && day >= season.from_day && day <= season.to_day;
         }
 
         let betweenFromTo = true;
-        if (season.to_month < season.from_month) {
+        if (season.to_month < season.from_month
+            || (season.to_month === season.from_month && season.to_day < season.from_day)) {
             betweenFromTo = false;
         }
 
@@ -249,7 +250,7 @@ export class Schedule {
                 return true;
             }
         } else {
-            // Wrap around year (e.g. Nov to Mar)
+            // Wrap around year (e.g. Nov to Mar, or Sep 11 to the following Sep 7).
             if (month > season.from_month || month < season.to_month) {
                 return true;
             }
