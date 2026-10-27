@@ -256,13 +256,16 @@ export class SiteRepo {
     }
 
     /**
-     * Sites in recent use whose owner can still call Tesla (active, has a
+     * Sites in recent use or whose last auth outage ended recently, whose owner
+     * can still call Tesla (active, has a
      * refresh token, not revoked), least recently imported first so a
      * time-bounded gap heal round-robins across runs. "In use" means a live
      * status refresh since `activeSinceMs`: only demand paths set it (web,
      * mobile, TRMNL markup, active battery holds), never the heal itself.
+     * A restore since `restoredSinceMs` also qualifies an idle site, provided
+     * the last recorded outage ended and the account is currently active.
      */
-    async getSitesForGapHeal(activeSinceMs: number): Promise<GapHealSite[]> {
+    async getSitesForGapHeal(activeSinceMs: number, restoredSinceMs: number): Promise<GapHealSite[]> {
         const { rows } = await pool.query<GapHealSite>(`
             SELECT s.id, s.timezone, s.installed, u.auth_lost_at, u.auth_restored_at
             FROM "Site" s
@@ -270,9 +273,13 @@ export class SiteRepo {
             WHERE u.is_active = true
               AND u.refresh_token IS NOT NULL
               AND u.auth_status IS DISTINCT FROM 'revoked'
-              AND s.last_live_refresh_at >= $1
+              AND (s.last_live_refresh_at >= $1
+                   OR (u.auth_status = 'active'
+                       AND u.auth_lost_at IS NOT NULL
+                       AND u.auth_restored_at > u.auth_lost_at
+                       AND u.auth_restored_at >= to_timestamp($2::double precision / 1000)))
             ORDER BY s.last_import_at ASC NULLS FIRST, s.id
-        `, [activeSinceMs]);
+        `, [activeSinceMs, restoredSinceMs]);
         return rows;
     }
 
