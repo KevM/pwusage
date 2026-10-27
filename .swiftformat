@@ -1,0 +1,9 @@
+--swift-version 6.0
+--max-width 120
+--indent 4
+--linebreaks lf
+--semicolons never
+--trailing-commas always
+--import-grouping alpha
+--disable all
+--enable blankLineAfterImports,blankLinesAtEndOfScope,blankLinesAtStartOfScope,consecutiveBlankLines,duplicateImports,elseOnSameLine,indent,linebreakAtEndOfFile,linebreaks,sortImports,spaceAroundBraces,spaceAroundOperators,spaceInsideBraces,trailingCommas,trailingSpace
