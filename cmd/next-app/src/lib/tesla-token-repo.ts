@@ -3,7 +3,7 @@ import { ioDelay, checkIoDeadline, withIoDeadline } from './io-deadline';
 import { pool } from './db';
 import { SiteRepo } from './site-repo';
 import { UserRepo } from './user-repo';
-import { isTeslaAuthError } from './tesla-client';
+import { isTeslaAuthError, TeslaAuthError } from './tesla-client';
 
 export class TeslaTokenRepo {
     constructor(private siteRepo: SiteRepo, private userRepo: UserRepo = new UserRepo()) {}
@@ -22,12 +22,21 @@ export class TeslaTokenRepo {
             }
             if (!row.is_refreshing) {
                 if (row.auth_status === 'revoked') {
-                    throw new Error('Token refresh failed: auth revoked');
+                    logEvent('warn', 'tesla.refresh.wait-revoked', {
+                        siteId, authStatus: row.auth_status, waitedMs: Date.now() - start,
+                    });
+                    // Preserve the terminal classification across the lock boundary.
+                    // A plain Error here let account verification reactivate the user.
+                    throw new TeslaAuthError('Token refresh failed: auth revoked');
                 }
+                logEvent('info', 'tesla.refresh.wait-completed', {
+                    siteId, authStatus: row.auth_status, waitedMs: Date.now() - start,
+                });
                 return { access_token: row.access_token || '', refresh_token: row.refresh_token || '' };
             }
             await ioDelay(1000);
         }
+        logEvent('warn', 'tesla.refresh.wait-timeout', { siteId, waitedMs: Date.now() - start });
         throw new Error('Timeout waiting for token refresh lock');
     }
 

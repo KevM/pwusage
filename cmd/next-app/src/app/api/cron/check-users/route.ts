@@ -1,4 +1,4 @@
-import { logEvent, observeRoute } from '@/lib/observability';
+import { flushLogEvents, logEvent, observeRoute } from '@/lib/observability';
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -12,7 +12,8 @@ async function handleGET(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        console.log('[CRON] Starting user status verification...');
+        logEvent('info', 'cron.check-users.started');
+        flushLogEvents();
         const userRepo = new UserRepo();
         const result = await userRepo.verifyAllUserStatuses();
 

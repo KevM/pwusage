@@ -22,6 +22,7 @@ vi.mock('./user-repo', () => ({
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { SiteRepo } from './site-repo';
 import { UserRepo } from './user-repo';
+import { isTeslaAuthError, TeslaAuthError } from './tesla-client';
 
 function makeSiteJoinRow(overrides: Record<string, unknown> = {}) {
     return {
@@ -72,7 +73,9 @@ describe('TeslaTokenRepo.waitForTokenRefresh', () => {
             rows: [{ access_token: 'old-token', refresh_token: 'old-refresh', is_refreshing: 0, auth_status: 'revoked' }]
         });
 
-        await expect(tokenRepo.waitForTokenRefresh('site-1')).rejects.toThrow('auth revoked');
+        const error = await tokenRepo.waitForTokenRefresh('site-1').catch((error: unknown) => error);
+        expect(error).toBeInstanceOf(TeslaAuthError);
+        expect(isTeslaAuthError(error)).toBe(true);
     });
 
     it('returns new tokens when a concurrent refresh succeeded', async () => {
