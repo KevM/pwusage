@@ -63,11 +63,13 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         // The single compact store: raw EnergyData, its trigger and the archive job's tables go.
         for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261027120000_drop_energy_data.sql',import.meta.url),'utf8'));
         await pool.query("ALTER TABLE \"Site\" ADD COLUMN user_id text DEFAULT 'owner'");
+        await pool.query(`CREATE TABLE "User" (id text PRIMARY KEY, auth_restored_at timestamptz); INSERT INTO "User" VALUES ('owner', NULL)`);
         store = new CompactHistoryStore(pool,15000,async client=>{await client.query('SELECT 1');});
     });
     beforeEach(async () => {
         await pool.query('TRUNCATE "LoadTag", "EnergyDayArchive" CASCADE');
         await pool.query(`UPDATE "Site" SET timezone='America/Chicago' WHERE id='site'`);
+        await pool.query(`UPDATE "User" SET auth_restored_at=NULL`);
     });
     afterAll(async () => {
         await pool?.end();
@@ -209,6 +211,12 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             expect(await store.writeDay('site',day(1),[],at(day(2),22),at(day(2),22))).toEqual({status:'empty'});
             expect((await pool.query('SELECT sample_count FROM "EnergyDayArchive" WHERE day_start=$1',[day(1)])).rows[0].sample_count).toBe(12);
             expect((await marker()).map(m=>m.day_start)).toEqual([day(3)]);
+        });
+        it('keeps a short outage day open for a gap-heal window after Tesla access comes back',async()=>{
+            const at=(days:number)=>new Date(+end+days*86400000);
+            await pool.query(`UPDATE "User" SET auth_restored_at=$1 WHERE id='owner'`,[at(20)]);
+            expect((await store.writeDay('site',start,samplesAt(start,200),at(21),at(21))).dayStatus).toBe('open');
+            expect((await store.writeDay('site',start,samplesAt(start,200),at(35),at(35))).dayStatus).toBe('gapped');
         });
         it('marks an ended short day open within the gap-heal window and gapped after it; a full day is complete',async()=>{
             const status=async()=>(await pool.query('SELECT status FROM "EnergyDayArchive"')).rows[0].status;
