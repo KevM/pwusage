@@ -23,7 +23,7 @@ region; a dataset in another edge region needs matching SDK edge configuration.
   screens, inline live-refresh failures, background refresh exceptions.
 - `/api/site-live-data`: request outcome/duration and Tesla refresh events.
 - `/auth/tesla-callback`: sign-in outcome, request completion/redirect/failure.
-- All five `/api/cron/*` routes: request outcomes, job summaries and failures.
+- All `/api/cron/*` routes: request outcomes, job summaries and failures.
 - Tesla refreshes inside those routes: start/success/failure, lock contention,
   token endpoint rejection (host, HTTP status, allowlisted OAuth error code),
   credential persistence and committed auth revocation.
@@ -41,6 +41,56 @@ region; a dataset in another edge region needs matching SDK edge configuration.
   `wait-timeout` identify the site, observed auth status where available, and
   elapsed `waitedMs`. A waiter observing revoked credentials throws a terminal
   `TeslaAuthError`, preserving inactivity through account verification.
+- Gap healing: `cron.heal-gaps.started`, per-site `cron.heal-gaps.site.started`
+  and `cron.heal-gaps.site` results, plus the batch completion/failure. Start
+  and result checkpoints export during the run so a later timeout does not
+  discard all earlier progress. Results include `outcome` and, when known,
+  `processedWindows` / `totalWindows`. Each site event includes `recovering`,
+  `authLostAt`, `authRestoredAt`, `windowStart` and `windowEnd` (UTC ISO strings).
+  The timestamps are the DB's last recorded outage, not new transitions per
+  cron run. Repeated snapshots must not be counted as repeated losses/restores.
+
+## History repair after re-authentication
+
+The existing `heal-gaps-trigger` calls `/api/cron/heal-gaps` every two hours.
+Sites qualify after live use within seven days **or** after their last recorded
+auth outage ended within 14 days. Both paths require an active owner, a refresh
+token and a non-revoked auth status; the recovery path also requires an `active`
+status and a restore timestamp later than the loss timestamp. A recovered site
+does not need a web, iOS or TRMNL live refresh to enter the next cron run.
+
+The existing planner extends the audit to the site-local loss day, clamps it to
+installation, and keeps old open records eligible for 14 days after recovery.
+Today belongs to live refresh. Settled complete, gapped and empty records remain
+settled; this is not a forced re-import of all outage days. Repair imports at
+most three day windows per site per run with a shared 35-second work budget,
+50-second I/O deadline, and the existing per-site import locks. Remaining work
+is re-planned from stored coverage on the next run, least-recently-imported sites
+first. No new schedule or production migration is needed.
+
+Monitor `recovering=true` site results: `partial` means more planned work remains,
+`busy` means another import owns the lock, `no-tokens` / `error` means the attempt
+could not proceed. A start without a result can indicate an interrupted run.
+`complete` means no more planned imports in that audit range, not that every
+five-minute slot exists; settled gaps may remain. Recovered sites whose counted
+window is already full emit a zero-work complete result without loading tokens
+or fetching Tesla. Timestamp snapshots can include estimated loss dates from the
+initial migration backfill, and describe only the most recent outage. Recovery
+attempts beyond 14 days and general new-site history onboarding remain separate
+work; this change does not persist an indefinite recovery queue.
+
+```apl
+['pwusage']
+| where environment == 'production' and event == 'cron.heal-gaps.site'
+| where recovering == true
+| order by _time desc
+| project _time, siteId, authLostAt, authRestoredAt, outcome,
+    processedWindows, totalWindows, windowStart, windowEnd, requestId
+```
+
+The new fields appear in Axiom after deploying this code and running the cron.
+
+## Event context
 
 `src/lib/observability.ts` uses AsyncLocalStorage to attach `requestId`, route,
 method, environment, deployment and commit. Authorized site context is attached
