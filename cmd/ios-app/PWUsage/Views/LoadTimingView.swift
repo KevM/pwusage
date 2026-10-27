@@ -507,16 +507,9 @@ private struct LoadTimingCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            if let title, let symbol {
-                Label(title, systemImage: symbol)
-                    .font(.headline)
-                    .accessibilityAddTraits(.isHeader)
-            }
+        CardContainer(title: title, symbol: symbol) {
             content
         }
-        .padding(17)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }

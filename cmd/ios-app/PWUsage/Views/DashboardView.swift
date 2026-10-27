@@ -340,21 +340,19 @@ private struct StatusCard<Content: View>: View {
     var fillAlignment: Alignment = .topLeading
     @ViewBuilder let content: Content
     @Environment(\.dashboardCardsFillHeight) private var fillsHeight
+
     var body: some View {
-        content
-            .padding(16)
-            .frame(maxWidth: .infinity, maxHeight: fillsHeight ? .infinity : nil, alignment: fillAlignment)
-            .background {
-                Group {
-                    if let theme {
-                        theme.cardBackground
-                    } else {
-                        SectionTheme.secondaryGroupedBackground
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            }
-            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.045), lineWidth: 1))
+        CardContainer(
+            theme: theme,
+            padding: 16,
+            cornerRadius: 22,
+            spacing: 0,
+            fillsHeight: fillsHeight,
+            fillAlignment: fillAlignment,
+            showsBorder: true
+        ) {
+            content
+        }
     }
 }
 

@@ -199,13 +199,8 @@ private struct BillInformationCard<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            Label(title, systemImage: symbol)
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
+        CardContainer(title: title, symbol: symbol) {
             content
         }
-        .padding(17)
-        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
