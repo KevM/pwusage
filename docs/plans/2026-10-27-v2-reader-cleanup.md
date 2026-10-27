@@ -12,3 +12,11 @@
 6. On a follow-up branch, generate the schema migration using `npm run db:migration:create`. Refuse unexpected legacy rows, remove `raw_pruned` with its dependent checks, preserve the empty-record invariants and service-only integrity functions, and test against the full migration chain. Keep that draft PR separate until the code cleanup is deployed.
 
 Old backups remain recoverable with their corresponding historical code checkout. This work does not rewrite production samples or apply a remote migration.
+
+## Rollout checklist
+
+- Merge and deploy code cleanup PR #238.
+- Confirm the serving deployment uses the new writer before merging the dependent schema PR. Old deployment rollbacks would need code compatible with the removed column.
+- Apply generated `20261027180001_drop_legacy_day_record_state.sql` through the normal migration workflow. It refuses legacy versions, keeps empty/nonempty record constraints, retains service-only verification, and leaves payloads/summaries unchanged.
+- Refresh dev-copy CSV exports after the schema change: their dynamic column header must match the target schema.
+- Verify history, billing, SOC/freshness and scheduled day writes after rollout.

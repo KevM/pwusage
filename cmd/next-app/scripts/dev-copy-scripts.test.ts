@@ -31,7 +31,6 @@ CREATE TABLE public."EnergyDayArchive" (
     day_start timestamptz NOT NULL,
     day_end timestamptz NOT NULL,
     sample_count integer NOT NULL,
-    raw_pruned boolean NOT NULL DEFAULT false,
     revision text NOT NULL DEFAULT 'r1',
     PRIMARY KEY (site_id, day_start),
     UNIQUE (site_id, day_start, revision)
@@ -47,7 +46,7 @@ CREATE TABLE public."EnergyDaySummary" (
 INSERT INTO public."EnergyDayArchive" (site_id, day_start, day_end, sample_count) VALUES
     ('s1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288);
 `;
-const ARCHIVE_HEADER = 'site_id,day_start,day_end,sample_count,raw_pruned,revision\n';
+const ARCHIVE_HEADER = 'site_id,day_start,day_end,sample_count,revision\n';
 const SUMMARY_HEADER = 'site_id,day_start,revision,tariff_id,tariff_schedule_id\n';
 
 const MARK_DEV = `CREATE SCHEMA pwusage_env; CREATE TABLE pwusage_env.environment (name text PRIMARY KEY); INSERT INTO pwusage_env.environment VALUES ('dev');`;
@@ -179,11 +178,11 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
             DELETE FROM public."EnergyDayArchive";
             INSERT INTO public."Site" (id, last_live_refresh_at) SELECT 'live' || n, 1000 + n FROM generate_series(1, 6) AS n;
             INSERT INTO public."Site" (id, last_live_refresh_at) VALUES ('${PINNED_SITE}', 0);
-            INSERT INTO public."EnergyDayArchive" (site_id, day_start, day_end, sample_count, raw_pruned) VALUES
-                ('live6', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288, true),
-                ('live6', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288, true),
-                ('live1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288, true),
-                ('${PINNED_SITE}', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288, true);
+            INSERT INTO public."EnergyDayArchive" (site_id, day_start, day_end, sample_count) VALUES
+                ('live6', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288),
+                ('live6', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288),
+                ('live1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288),
+                ('${PINNED_SITE}', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288);
             INSERT INTO public."EnergyDaySummary" SELECT site_id, day_start, revision, 1, 1 FROM public."EnergyDayArchive";`);
         const result = await run('psql', [targetUrl(), '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', script('scripts/export-dev-energy-data.sql')], { cwd: work });
         expect(result.stdout).toBe('');
@@ -197,10 +196,10 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
     it('loads day records and summaries, dropping whole days whose site or tariff was deleted before the dump', async () => {
         await target!.query(`${MARK_DEV} DELETE FROM public."EnergyDayArchive"; INSERT INTO public."Site" (id, last_live_refresh_at) VALUES ('s2', 600);`);
         await dayRecordFiles(
-            's1,2026-10-01 00:00:00+00,2026-10-02 00:00:00+00,288,t,r1\n'
-            + 'gone,2026-10-01 00:00:00+00,2026-10-02 00:00:00+00,288,t,r1\n'
-            + 's1,2026-10-02 00:00:00+00,2026-10-03 00:00:00+00,288,t,r1\n'
-            + 's1,2026-10-03 00:00:00+00,2026-10-04 00:00:00+00,288,t,r1\n',
+            's1,2026-10-01 00:00:00+00,2026-10-02 00:00:00+00,288,r1\n'
+            + 'gone,2026-10-01 00:00:00+00,2026-10-02 00:00:00+00,288,r1\n'
+            + 's1,2026-10-02 00:00:00+00,2026-10-03 00:00:00+00,288,r1\n'
+            + 's1,2026-10-03 00:00:00+00,2026-10-04 00:00:00+00,288,r1\n',
             's1,2026-10-01 00:00:00+00,r1,1,1\n'
             + 'gone,2026-10-01 00:00:00+00,r1,1,1\n'
             + 's1,2026-10-02 00:00:00+00,r1,1,1\n'
@@ -228,9 +227,9 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
 
     it('prunes day records older than 45 days on a marked dev copy, with their summaries', async () => {
         await target!.query(`${MARK_DEV} DELETE FROM public."EnergyDayArchive";
-            INSERT INTO public."EnergyDayArchive" (site_id, day_start, day_end, sample_count, raw_pruned) VALUES
-                ('s1', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288, true),
-                ('s1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288, true);
+            INSERT INTO public."EnergyDayArchive" (site_id, day_start, day_end, sample_count) VALUES
+                ('s1', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288),
+                ('s1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288);
             INSERT INTO public."EnergyDaySummary" SELECT site_id, day_start, revision, 1, 1 FROM public."EnergyDayArchive";`);
         const result = await psql('scripts/prune-dev-copy.sql');
         expect(result.code, result.out).toBe(0);
