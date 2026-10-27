@@ -1,12 +1,13 @@
 # TODO
 
-- [ ] **Guard account-verification status writes against newer auth state:**
+- [x] **Guard account-verification status writes against newer auth state:**
   `UserRepo.verifyUserStatus` unconditionally writes revoked/error/active after
   Fleet calls. A late result can disable a newer login or reactivate a newer
   revocation. Bind status writes to the credential generation actually verified;
   preserve genuine terminal failures and transient-error behavior. Add interleaved
-  login/revocation regression tests. This is separate from the guarded shared
-  Tesla refresh handler (2026-10-27).
+  login/revocation regression tests. Fixed with a User row-version guard,
+  ownership rechecks, retained-state reporting, and superseded events; see
+  `docs/plans/2026-10-27-tesla-verification-status.md`.
 
 Cross-session work that didn't fit the current focus. Pull from this list when picking up new work.
 

@@ -9,7 +9,16 @@ vi.mock('./tesla-auth', async importOriginal => ({
 }));
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { createTeslaClientForUser } from './tesla-client-factory';
-import { TeslaAuthError } from './tesla-client';
+import { TeslaAuthError, type EnergySiteLiveStatus } from './tesla-client';
+import { UserRepo } from './user-repo';
+
+const liveStatus: EnergySiteLiveStatus = {
+    percentage_charged: 50, solar_power: 0, backup_capable: true,
+    battery_power: 0, load_power: 0, grid_status: 'Active',
+    grid_services_active: false, grid_power: 0, grid_services_power: 0,
+    generator_power: 0, island_status: 'on_grid', storm_mode_active: false,
+    timestamp: '2026-10-27T12:00:00Z',
+};
 
 // Run with npm run test:compact -- src/lib/tesla-account-refresh.postgres.test.ts.
 // The runner creates a private local cluster; no .env or production DB is used.
@@ -27,8 +36,10 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
             id text PRIMARY KEY, access_token text, refresh_token text,
             fleet_api_base_url text, is_refreshing integer NOT NULL DEFAULT 0,
             refresh_lock_expires bigint NOT NULL DEFAULT 0,
-            auth_status text DEFAULT 'active', is_active boolean DEFAULT true
+            auth_status text DEFAULT 'active', is_active boolean DEFAULT true,
+            last_checked_at timestamp
         )`);
+        await pool.query('CREATE TEMP TABLE "Site" (id text PRIMARY KEY, user_id text)');
         query.mockImplementation((sql: string, values?: unknown[]) => pool.query(sql, values));
         repo = new TeslaTokenRepo({
             getSite: async () => ({ user_id: 'owner' }), invalidateCache: () => {},
@@ -39,7 +50,9 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         exchange.mockReset();
         exchange.mockResolvedValue(rotated);
         await pool.query('TRUNCATE "User"');
+        await pool.query('TRUNCATE "Site"');
         await pool.query(`INSERT INTO "User" (id, access_token, refresh_token) VALUES ('owner', 'access-A', 'refresh-A')`);
+        await pool.query(`INSERT INTO "Site" (id, user_id) VALUES ('site', 'owner')`);
     });
     afterEach(() => vi.restoreAllMocks());
 
@@ -102,5 +115,70 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         const row = (await pool.query('SELECT * FROM "User"')).rows[0];
         expect(Number(row.refresh_lock_expires)).toBeGreaterThan(Date.now() + 60000);
         expect(row.refresh_token).toBe('winner-refresh');
+    });
+
+    it('a late verification failure cannot revoke a newer login', async () => {
+        const result = await new UserRepo().verifyUserStatus({ id: 'owner' }, {
+            createClient: async () => ({ getLiveStatus: async () => {
+                await pool.query(`UPDATE "User" SET access_token = 'login-access', refresh_token = 'login-refresh'`);
+                throw new TeslaAuthError('Old grant rejected');
+            } }),
+        });
+        expect(result).toEqual({ status: 'active' });
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({
+            is_active: true, auth_status: 'active', refresh_token: 'login-refresh', last_checked_at: null,
+        });
+    });
+
+    it.each(['success', 'transient'])('a late verification %s cannot reactivate a revoked account', async outcome => {
+        const result = await new UserRepo().verifyUserStatus({ id: 'owner' }, {
+            createClient: async () => ({ getLiveStatus: async () => {
+                await pool.query(`UPDATE "User" SET auth_status = 'revoked', is_active = false`);
+                if (outcome === 'transient') throw new Error('Tesla unavailable');
+                return liveStatus;
+            } }),
+        });
+        expect(result).toEqual({ status: 'revoked' });
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({
+            is_active: false, auth_status: 'revoked', last_checked_at: null,
+        });
+    });
+
+    it('retains a newer refresh performed by verification itself without marking it checked', async () => {
+        const result = await new UserRepo().verifyUserStatus({ id: 'owner' }, {
+            createClient: async () => ({ getLiveStatus: async () => {
+                await repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A');
+                return liveStatus;
+            } }),
+        });
+        expect(result.status).toBe('active');
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({ ...rotated, last_checked_at: null });
+    });
+
+    it('does not apply a verification for a site reassigned during the Tesla request', async () => {
+        await new UserRepo().verifyUserStatus({ id: 'owner' }, {
+            createClient: async () => ({ getLiveStatus: async () => {
+                await pool.query(`UPDATE "Site" SET user_id = 'somebody-else'`);
+                return liveStatus;
+            } }),
+        });
+        expect((await pool.query('SELECT last_checked_at FROM "User"')).rows[0].last_checked_at).toBeNull();
+    });
+
+    it.each(['success', 'terminal', 'transient', 'no-token', 'no-sites'] as const)('commits an unchanged verification %s', async outcome => {
+        if (outcome === 'no-sites') await pool.query('TRUNCATE "Site"');
+        const result = await new UserRepo().verifyUserStatus({ id: 'owner' }, {
+            createClient: async () => outcome === 'no-token' ? null : { getLiveStatus: async () => {
+                if (outcome === 'terminal') throw new TeslaAuthError('Rejected');
+                if (outcome === 'transient') throw new Error('Tesla unavailable');
+                return liveStatus;
+            } },
+        });
+        const expected = { success: 'active', terminal: 'revoked', transient: 'error', 'no-token': 'no_token', 'no-sites': 'no_sites' }[outcome];
+        const row = (await pool.query('SELECT * FROM "User"')).rows[0];
+        expect(result.status).toBe(expected);
+        expect(row.auth_status).toBe(expected);
+        expect(row.is_active).toBe(outcome === 'success' || outcome === 'transient');
+        expect(row.last_checked_at).toBeInstanceOf(Date);
     });
 });

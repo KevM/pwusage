@@ -274,6 +274,23 @@ Tesla token refresh behavior:
   Axiom delivery failures also remain runtime-only.
 - Terminal auth failures can mark user `auth_status='revoked'`.
 
+Account verification (`UserRepo.verifyUserStatus`):
+- Captures the `User` row's PostgreSQL version (`xmin`) before checking Fleet.
+  Every final active/error/revoked/no-token/no-sites write requires that same
+  version, and rechecks site ownership or the absence of sites as applicable.
+  These membership checks use the final UPDATE's statement snapshot; they do
+  not serialize independent concurrent Site-only changes.
+- A concurrent login, refresh, revocation, or session-version change supersedes
+  the check. The verifier preserves and reports the current account state,
+  emits `tesla.user-verification.superseded`, and leaves `last_checked_at`
+  unchanged. Its completion reason is `auth-state-changed`; old errors are not
+  returned alongside a successful newer login.
+  Verification events include the same hashed account identity as refresh events.
+- This is conservative: even a refresh performed by verification itself skips
+  the final status write. The next eligible check uses the new credentials.
+  No database transaction or row lock spans a Tesla call. Normal unchanged
+  outcomes retain their terminal/transient classification.
+
 ### 5. Logout
 Local logout — Route: `GET|POST /logout`
 - Deletes `site_auth` cookie and redirects to `/`. Does not bump
@@ -436,7 +453,5 @@ simulator and device verification in the native app implementation.
 
 ## Current Open Gaps
 
-`UserRepo.verifyUserStatus` still writes verification status without checking the
-credential generation it verified. A late verification can overwrite a newer
-login or revocation; this predates account refresh coordination and is tracked
-in `TODO.md`. The refresh coordinator's own writes are generation/lease guarded.
+Proxy JWT-renewal diagnostics and Axiom delivery failures remain runtime-only.
+Page/request session-rejection and Tesla refresh/verification events reach Axiom.
