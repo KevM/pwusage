@@ -51,9 +51,12 @@ export async function createTeslaClientForUser(
     if (!userTokens?.access_token) {
         return null;
     }
+    const handlers = new TeslaTokenRepo(new SiteRepo()).getLockedUserRefreshHandler(userId);
     return new TeslaClient({
         accessToken: userTokens.access_token,
         refreshToken: userTokens.refresh_token || undefined,
+        tokenRefreshHandler: handlers.refreshHandler,
+        onTokenError: handlers.errorHandler,
         onTokenUpdate: options?.onTokenUpdate,
         baseUrl: userTokens.fleet_api_base_url,
         onBaseUrlChange: options?.onBaseUrlChange ?? recordFleetBaseUrl(userId)

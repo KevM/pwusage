@@ -9,6 +9,7 @@ import { TeslaClient } from './tesla-client';
 const mockGetTokensForSite = vi.fn();
 const mockGetTokens = vi.fn();
 const mockSetFleetApiBaseUrl = vi.fn();
+const mockUserRefresh = vi.fn();
 const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
 
 vi.mock('./user-repo', () => {
@@ -37,6 +38,10 @@ vi.mock('./tesla-token-repo', () => {
             return {
                 getLockedRefreshHandler: vi.fn().mockReturnValue({
                     refreshHandler: vi.fn(),
+                    errorHandler: vi.fn()
+                }),
+                getLockedUserRefreshHandler: vi.fn().mockReturnValue({
+                    refreshHandler: mockUserRefresh,
                     errorHandler: vi.fn()
                 })
             };
@@ -105,6 +110,17 @@ describe('TeslaClientFactory', () => {
     });
 
     describe('createTeslaClientForUser', () => {
+        it('uses account refresh coordination when a browser Fleet request gets a 401', async () => {
+            mockGetTokens.mockResolvedValue({ access_token: 'old-access', refresh_token: 'old-refresh' });
+            mockUserRefresh.mockResolvedValue({ access_token: 'new-access', refresh_token: 'new-refresh' });
+            const fetchMock = vi.spyOn(globalThis, 'fetch')
+                .mockResolvedValueOnce(new Response('', { status: 401 }))
+                .mockResolvedValueOnce(Response.json({ response: [] }));
+            const client = await createTeslaClientForUser('user-1');
+            await client?.getProducts();
+            expect(mockUserRefresh).toHaveBeenCalledWith('old-refresh');
+            expect(fetchMock.mock.calls[1][1]?.headers).toMatchObject({ Authorization: 'Bearer new-access' });
+        });
         it('returns null if user has no tokens or no access_token', async () => {
             mockGetTokens.mockResolvedValue(null);
             const client1 = await createTeslaClientForUser('user-1');

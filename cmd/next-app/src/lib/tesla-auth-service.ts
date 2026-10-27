@@ -599,12 +599,18 @@ export class TeslaAuthService {
         // Setup Repos / services
         const userRepo = this.deps.userRepo || new UserRepo();
         const siteRepo = this.deps.siteRepo || new SiteRepo();
-        const teslaTokenRepo = this.deps.teslaTokenRepo || new TeslaTokenRepo(siteRepo);
 
-        const teslaClientConfig = {
+        const refreshIdentity: { userId?: string } = {};
+        const teslaClientConfig: TeslaClientConfig = {
             accessToken: authData.access_token,
             refreshToken: authData.refresh_token,
-            onTokenUpdate: async () => {}
+            tokenRefreshHandler: async suppliedRefresh => {
+                // Before identity verification there is no safe account row to
+                // update. Never silently rotate the fresh login grant in memory.
+                if (!refreshIdentity.userId) throw new Error('Tesla login identity is not established for refresh');
+                const repo = this.deps.teslaTokenRepo || new TeslaTokenRepo(siteRepo);
+                return repo.getLockedUserRefreshHandler(refreshIdentity.userId).refreshHandler(suppliedRefresh);
+            },
         };
 
         const client = this.deps.teslaClientCreator
@@ -764,12 +770,13 @@ export class TeslaAuthService {
             return { status: 'db-error' };
         }
 
+        refreshIdentity.userId = userId;
         let persistedBaseUrl = client.getBaseUrl();
         const storeLearnedBaseUrl = async () => {
             const learnedBaseUrl = client.getBaseUrl();
             if (learnedBaseUrl === persistedBaseUrl) return;
             try {
-                await persistCredentials(userId);
+                await userRepo.setFleetApiBaseUrl(userId, learnedBaseUrl);
                 persistedBaseUrl = learnedBaseUrl;
             } catch (err) {
                 // Tokens are already stored; a later call re-learns the host.
@@ -817,10 +824,8 @@ export class TeslaAuthService {
                 try {
                     await importer.ensureSite(siteId);
                     await siteRepo.assignSiteToUser(siteId, userId);
-                    await teslaTokenRepo.updateSiteTokens(siteId, authData.access_token, authData.refresh_token);
-                    await teslaTokenRepo.releaseRefreshLock(siteId);
                     siteIds.push(siteId);
-                    console.log(`[TeslaAuthService] Linked site ${siteId} to User ${userId} and updated tokens.`);
+                    console.log(`[TeslaAuthService] Linked site ${siteId} to User ${userId}.`);
                 } catch (err) {
                     console.error(`[TeslaAuthService] Failed to import/assign site ${siteId}:`, err);
                 }

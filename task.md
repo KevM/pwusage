@@ -1,3 +1,21 @@
+# Tesla account refresh coordination (2026-10-27)
+
+- [x] Trace production rejection and reproduce stale caller/browser persistence bugs.
+- [x] Share account leases across browser, TRMNL, cron, and OAuth provisioning refreshes.
+- [x] Guard rotation/revocation against concurrent logins and replacement leases.
+- [x] Preserve successful rotations through caller cancellation; protect waiters from transient failures.
+- [x] Add safe account/credential fingerprints and update auth documentation.
+- [x] Send browser-page auth/refresh events to Axiom and record fixed session rejection reasons.
+- [x] Verify full tests, private PostgreSQL races, lint, and build; review and commit.
+
+Plan: `docs/plans/2026-10-27-tesla-account-refresh.md`.
+Verified 1,615 tests, six private PostgreSQL checks, lint, and the production
+Webpack build. Default Turbopack builds fail on a local port-binding restriction,
+including an escalated retry. Local production-server smoke checks confirmed
+missing/invalid-session redirects and safe page diagnostics; the server was stopped.
+Independent review caught and covered refresh-only account recovery. The separate
+preexisting cron verification status race is recorded in `TODO.md`. Not deployed.
+
 # Bill outlook (2026-10-21, verified 2026-10-22)
 
 - [x] Approve design and record implementation plan.

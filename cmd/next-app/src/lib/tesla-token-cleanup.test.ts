@@ -10,7 +10,8 @@ async function setup(terminal = false, hungCleanup = false) {
   const query = vi.fn(async (sql: string) => {
     queries.push(sql);
     if (hungCleanup && sql.includes('SET is_refreshing = 0')) return new Promise<never>(() => {});
-    return { rows: [], rowCount: 1 };
+    return { rows: sql.includes('SET is_refreshing = 1')
+      ? [{ access_token: 'access', refresh_token: 'refresh' }] : [], rowCount: 1 };
   });
   const release = vi.fn();
   vi.doMock('pg', () => ({ Pool: class {
@@ -19,7 +20,7 @@ async function setup(terminal = false, hungCleanup = false) {
   } }));
   const { abortable, withIoDeadline } = await import('./io-deadline');
   const { TeslaAuthError } = await import('./tesla-client');
-  vi.doMock('./tesla-auth', () => ({ refreshAccessToken: async () => {
+  vi.doMock('./tesla-auth', async () => ({ ...await vi.importActual<typeof import('./tesla-auth')>('./tesla-auth'), refreshAccessToken: async () => {
     if (terminal) {
       parent.abort(new Error('Parent cancelled'));
       throw new TeslaAuthError('Refresh rejected');
@@ -53,7 +54,7 @@ it('releases the refresh lock through the real database wrapper after the parent
 it('atomically revokes and releases after terminal failure even when the parent was cancelled', async () => {
   const { queries, finished } = await setup(true);
   await finished();
-  expect(queries.some(sql => sql.includes('SET is_refreshing = 0') && sql.includes('auth_status = $1'))).toBe(true);
+  expect(queries.some(sql => sql.includes('SET is_refreshing = 0') && sql.includes("auth_status = 'revoked'"))).toBe(true);
 });
 
 it('bounds cleanup independently when its database query hangs', async () => {
