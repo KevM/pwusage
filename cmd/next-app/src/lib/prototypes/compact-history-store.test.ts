@@ -178,6 +178,13 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             // Planning still sees today as incomplete.
             expect((await EnergyRepo.countAlignedSamples([{siteId:'site',start,end}],pool)).get('site')).toBe(73);
         });
+        it('keeps an empty outage day unsettled for a gap-heal window after Tesla access comes back',async()=>{
+            const at=(days:number)=>new Date(+end+days*86400000);
+            await pool.query(`UPDATE "User" SET auth_restored_at=$1 WHERE id='owner'`,[at(20)]);
+            expect(await store.writeDay('site',start,[],at(21),at(21))).toEqual({status:'checked-empty'});
+            expect((await store.getEmptyDays('site',start,end,at(30)))[0].settled).toBe(false);
+            expect(await store.getSettledEmptyDays('site',start,end,at(35))).toEqual([start]);
+        });
         it('records an empty interior day as checked, never a failed or unmade fetch, and settles it by age',async()=>{
             const tz='America/Chicago',day=(n:number)=>addDaysInSiteTimezone(start,n,tz),at=(d:Date,days:number)=>new Date(+d+days*86400000);
             const marker=async()=>(await pool.query(`SELECT day_start,fetched_at AS checked_at FROM "EnergyDayArchive" WHERE status='empty' ORDER BY day_start`)).rows;

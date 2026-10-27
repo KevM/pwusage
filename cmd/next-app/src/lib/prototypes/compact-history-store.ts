@@ -349,7 +349,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
     /**
      * Days neither a backfill nor import planning need fetch again: `empty` records
      * whose (latest) empty answer was requested after the day ended, older than the
-     * gap-heal window (the age rule that makes a short day `gapped`).
+     * gap-heal window (the age rule that makes a short day `gapped`, restarted when the
+     * owner's Tesla access last came back).
      * A day with no record was never answered (or its fetch failed) and is fetched;
      * inside the window an empty day is retried like an `open` one.
      */
@@ -364,7 +365,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
      */
     async getEmptyDays(siteId:string,from:Date,before:Date,now:Date):Promise<EmptyDayState[]> {
         const rows=(await this.pool.query<{day_start:Date;fetched_at:Date;settled:boolean}>(`SELECT a.day_start,a.fetched_at,
-            (a.fetched_at >= a.day_end AND a.day_end < $4::timestamptz - make_interval(days => $5)) AS settled FROM "EnergyDayArchive" a
+            (a.fetched_at >= a.day_end AND GREATEST(a.day_end,u.auth_restored_at) < $4::timestamptz - make_interval(days => $5)) AS settled
+            FROM "EnergyDayArchive" a JOIN "Site" s ON s.id=a.site_id LEFT JOIN "User" u ON u.id=s.user_id
             WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_start < $3 AND a.status='empty'
             ORDER BY a.day_start`,[siteId,from,before,now,DAY_GAP_HEAL_DAYS])).rows;
         return rows.map(r=>({dayStart:new Date(r.day_start),fetchedAt:new Date(r.fetched_at),settled:r.settled}));
