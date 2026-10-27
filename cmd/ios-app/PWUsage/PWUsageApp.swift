@@ -662,7 +662,7 @@ private struct PWUsageRootView: View {
                         }
                     } else {
                         AppTabView(model: model, coordinator: coordinator, site: site)
-                        .environment(\.reconnectTesla, TeslaReconnectAction(owner: model) { await model.reconnectTesla() })
+                            .environment(\.reconnectTesla, TeslaReconnectAction(owner: model) { await model.reconnectTesla() })
                     }
                 } else {
                     errorState
@@ -719,11 +719,11 @@ private struct PWUsageRootView: View {
 
     private func configureWindowSizeRestrictions() {
         #if canImport(UIKit)
-        for scene in UIApplication.shared.connectedScenes {
-            if let windowScene = scene as? UIWindowScene {
-                windowScene.sizeRestrictions?.minimumSize = CGSize(width: 380, height: 520)
+            for scene in UIApplication.shared.connectedScenes {
+                if let windowScene = scene as? UIWindowScene {
+                    windowScene.sizeRestrictions?.minimumSize = CGSize(width: 380, height: 520)
+                }
             }
-        }
         #endif
     }
 

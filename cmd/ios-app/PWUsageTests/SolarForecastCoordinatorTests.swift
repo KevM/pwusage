@@ -10,7 +10,7 @@ struct SolarForecastCoordinatorTests {
         let forecast = ForecastManagerSpy()
         let api = ForecastDashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-a", api: api, planningAPI: api,
-            forecastStore: forecast, accountScopeID: "local-account", now: { api.now }, timerInterval: nil)
+                                               forecastStore: forecast, accountScopeID: "local-account", now: { api.now }, timerInterval: nil)
         await coordinator.billOutlookAppeared()
         await coordinator.billOutlookAppeared()
         #expect(api.billSiteIDs == ["site-a"])

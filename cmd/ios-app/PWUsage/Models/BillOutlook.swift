@@ -83,12 +83,12 @@ enum BillOutlook {
         static let empty = ProjectionResult(points: [], usesSolar: false, usesHistory: false)
     }
     static func evaluate(history: BillOutlookHistory, context: LoadTimingForecastEstimator.PlanningContext,
-                        forecast: [SolarForecastInterval], now: Date, cycleEnd: Date) -> ProjectionResult {
+                         forecast: [SolarForecastInterval], now: Date, cycleEnd: Date) -> ProjectionResult {
         guard history.complete, let observed = history.points.last, observed.complete,
               observed.date == history.observedThrough, history.observedThrough <= now.addingTimeInterval(300),
               now.timeIntervalSince(history.observedThrough.addingTimeInterval(-LoadTimingForecastEstimator.observedIntervalDuration))
-                <= (forecast.isEmpty || context.hasGridHistory
-                    ? LoadTimingForecastEstimator.maximumFlatBalanceAge : LoadTimingForecastEstimator.maximumBalanceAge),
+              <= (forecast.isEmpty || context.hasGridHistory
+                  ? LoadTimingForecastEstimator.maximumFlatBalanceAge : LoadTimingForecastEstimator.maximumBalanceAge),
               cycleEnd > now, history.observedThrough < cycleEnd,
               observed.buckets.allSatisfy({ $0.netGridKwh.isFinite && $0.buyRate.isFinite && $0.sellRate.isFinite }),
               !history.tariffTimeline.isEmpty else { return .empty }
@@ -98,7 +98,7 @@ enum BillOutlook {
                   index == 0 || tariff.start >= tariffs[index - 1].end else { return .empty }
         }
         let intervals = EnergyFlowProjection.intervals(from: history.observedThrough, to: cycleEnd, now: now,
-            context: context, forecast: forecast, tariffs: tariffs.map(\.segment))
+                                                       context: context, forecast: forecast, tariffs: tariffs.map(\.segment))
         var buckets = observed.buckets
         var points = [observed]
         var calendar = Calendar(identifier: .gregorian)
@@ -106,7 +106,7 @@ enum BillOutlook {
         for interval in intervals {
             let tariff = tariffs[interval.tariffIndex]
             buckets = merged(buckets + [.init(tariffName: tariff.tariffName, periodName: tariff.periodName,
-                netGridKwh: -interval.netExportKwh, buyRate: tariff.buyRate, sellRate: tariff.sellRate)])
+                                              netGridKwh: -interval.netExportKwh, buyRate: tariff.buyRate, sellRate: tariff.sellRate)])
             if calendar.startOfDay(for: interval.end) == interval.end || interval.end == intervals.last?.end {
                 points.append(point(date: interval.end, buckets: buckets))
             }

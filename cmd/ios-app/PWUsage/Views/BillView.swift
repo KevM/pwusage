@@ -65,14 +65,14 @@ struct BillView: View {
             guard let history = response.outlook, let context, context.timeZone == timeZone,
                   !state.isUnavailable else { return .empty }
             return BillOutlook.evaluate(history: history, context: context, forecast: forecast, now: now,
-                                       cycleEnd: response.currentBill.cycleEnd)
+                                        cycleEnd: response.currentBill.cycleEnd)
         }()
         let projected = result.points
         estimateCard(response, result: result, now: now)
         if let history = response.outlook, !history.points.isEmpty {
             BillOutlookChart(history: history, projected: projected, cycleStart: response.currentBill.cycleStart,
-                cycleEnd: response.currentBill.cycleEnd, now: now, timeZone: timeZone, currency: response.currentBill.currency,
-                totals: response.currentBill.periods)
+                             cycleEnd: response.currentBill.cycleEnd, now: now, timeZone: timeZone, currency: response.currentBill.currency,
+                             totals: response.currentBill.periods)
             if projected.isEmpty && history.complete {
                 Text("Forecast unavailable. Showing recorded energy with its original calculation time.")
                     .font(.caption).foregroundStyle(.secondary)

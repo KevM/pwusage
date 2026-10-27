@@ -210,12 +210,12 @@ struct ProfileDraft: Identifiable, Equatable {
     var sheetID: String { id ?? "new-custom" }
     var isValid: Bool {
         energyKwh.isFinite && energyKwh > 0 && durationHours.isFinite && durationHours > 0 &&
-        (kind != .custom || !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) &&
-        (kind != .car || carSettings.map {
-            $0.capacityKwh.isFinite && $0.capacityKwh > 0 && $0.capacityKwh <= LoadProfile.maximumCarCapacityKwh &&
-            (0...100).contains($0.initialStateOfCharge) &&
-            ($0.initialStateOfCharge...100).contains($0.targetStateOfCharge)
-        } == true)
+            (kind != .custom || !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) &&
+            (kind != .car || carSettings.map {
+                $0.capacityKwh.isFinite && $0.capacityKwh > 0 && $0.capacityKwh <= LoadProfile.maximumCarCapacityKwh &&
+                    (0...100).contains($0.initialStateOfCharge) &&
+                    ($0.initialStateOfCharge...100).contains($0.targetStateOfCharge)
+            } == true)
     }
 
     init(profile: LoadProfile) {

@@ -62,9 +62,9 @@ struct BillOutlookRenderTests {
         let history = BillOutlookHistory(points: (0...20).map(point), observedThrough: now, complete: true, tariffTimeline: [])
         for large in [false, true] {
             let chart = BillOutlookChart(history: history, projected: (20...25).map(point), cycleStart: start,
-                cycleEnd: end, now: now, timeZone: "America/Chicago", currency: "USD", totals: [
-                .init(tariffName: "Home", periodName: "Peak", netGridKwh: 12, cost: 4.8),
-                .init(tariffName: "Home", periodName: "Off-Peak", netGridKwh: -24, cost: -0.96)])
+                                         cycleEnd: end, now: now, timeZone: "America/Chicago", currency: "USD", totals: [
+                                             .init(tariffName: "Home", periodName: "Peak", netGridKwh: 12, cost: 4.8),
+                                             .init(tariffName: "Home", periodName: "Off-Peak", netGridKwh: -24, cost: -0.96)])
                 .environment(\.dynamicTypeSize, large ? .accessibility2 : .large)
                 .environment(\.colorScheme, .light).frame(width: 353).padding(20)
                 .background(Color(uiColor: .systemGroupedBackground))

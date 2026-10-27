@@ -380,7 +380,7 @@ enum SmartShiftPresentation {
         guard let (profile, savings) = savingsByJob
             .filter({ $0.0.id != selectedID && $0.1.isFinite })
             .max(by: { $0.1 < $1.1 }),
-              savings > minorUnit, savings - selected > minorUnit else { return nil }
+            savings > minorUnit, savings - selected > minorUnit else { return nil }
         return BetterJobHint(id: profile.id,
                              text: "\(profile.name): save about \(DashboardPresentation.currency(savings, code: currencyCode)) by waiting")
     }

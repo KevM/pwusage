@@ -76,10 +76,10 @@ struct SmartShiftScenario: Codable {
     }
     var projection: LoadTimingForecastEstimator.Projection {
         let context = LoadTimingForecastEstimator.PlanningContext(timeZone: zone,
-            slots: stride(from: 0, to: 1440, by: 30).map {
-                .init(localMinute: $0, homeKw: home, batteryNetChargeKw: battery,
-                      gridNetExportKw: mode == 3 ? nil : grid, cautiousGridNetExportKw: mode == 3 ? nil : dullGrid)
-            }, asOf: now)
+                                                                  slots: stride(from: 0, to: 1440, by: 30).map {
+                                                                      .init(localMinute: $0, homeKw: home, batteryNetChargeKw: battery,
+                                                                            gridNetExportKw: mode == 3 ? nil : grid, cautiousGridNetExportKw: mode == 3 ? nil : dullGrid)
+                                                                  }, asOf: now)
         switch mode {
         case 0: return .flat(timeZone: zone)
         case 1: return .history(context: context)
@@ -93,10 +93,10 @@ struct SmartShiftScenario: Codable {
                              isActive: false, nextStartPhrase: nil, buyRate: buys[bank], sellRate: sells[bank])
         }
         let timing = LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: periods,
-            pricingPeriods: periods, tariffTimeline: segments ?? (reversed ? tariffs.reversed() : tariffs),
-            nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
+                                pricingPeriods: periods, tariffTimeline: segments ?? (reversed ? tariffs.reversed() : tariffs),
+                                nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
         return LoadTimingForecastEstimator.evaluate(profile: profile, now: now, timing: timing, projection: override ?? projection,
-            balanceSourceTime: source, billingCycleEnd: billEnd, currencyCode: "USD")
+                                                    balanceSourceTime: source, billingCycleEnd: billEnd, currencyCode: "USD")
     }
     var diagnostic: String {
         let encoder = JSONEncoder()

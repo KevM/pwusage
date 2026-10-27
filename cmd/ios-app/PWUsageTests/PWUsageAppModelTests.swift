@@ -246,7 +246,7 @@ struct PWUsageAppModelTests {
     func controlOpensActiveHoldWithoutCommands() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
         api.batteryHoldResponse = .init(hold: try MobileContractDecoder.make().decode(BatteryHold.self,
-            from: Data(BatteryHoldTests.holdJSON.utf8)), notice: nil)
+                                                                                      from: Data(BatteryHoldTests.holdJSON.utf8)), notice: nil)
         let model = try makeModel(api: api)
         await model.openBatteryHold(siteID: "site-1")
         let coordinator = try #require(model.coordinator)
@@ -272,8 +272,8 @@ struct PWUsageAppModelTests {
         let hold = try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(BatteryHoldTests.holdJSON.utf8))
         live.show(hold, siteID: "site-1", timeZone: nil)
         live.show(try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(BatteryHoldTests.holdJSON
-            .replacingOccurrences(of: #""id":1"#, with: #""id":2"#)
-            .replacingOccurrences(of: "site-1", with: "site-2").utf8)), siteID: "site-2", timeZone: nil)
+                .replacingOccurrences(of: #""id":1"#, with: #""id":2"#)
+                .replacingOccurrences(of: "site-1", with: "site-2").utf8)), siteID: "site-2", timeZone: nil)
         #expect(host.handles.map(\.attributes.siteID) == ["site-1", "site-2"])
         #expect(host.handles[1].attributes.holdID == 2)
 

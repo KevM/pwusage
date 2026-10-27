@@ -27,22 +27,22 @@ extension SectionTheme {
     /// a platform colour, and another platform's build can supply its own.
     static var groupedBackground: Color {
         #if canImport(UIKit) && !os(tvOS)
-        Color(uiColor: .systemGroupedBackground)
+            Color(uiColor: .systemGroupedBackground)
         #elseif canImport(AppKit)
-        Color(nsColor: .windowBackgroundColor)
+            Color(nsColor: .windowBackgroundColor)
         #else
-        Color.clear
+            Color.clear
         #endif
     }
 
     /// Card background that sits on `groupedBackground`.
     static var secondaryGroupedBackground: Color {
         #if canImport(UIKit) && !os(tvOS)
-        Color(uiColor: .secondarySystemGroupedBackground)
+            Color(uiColor: .secondarySystemGroupedBackground)
         #elseif canImport(AppKit)
-        Color(nsColor: .controlBackgroundColor)
+            Color(nsColor: .controlBackgroundColor)
         #else
-        Color.secondary.opacity(0.1)
+            Color.secondary.opacity(0.1)
         #endif
     }
 

@@ -427,7 +427,7 @@ final class PWUsageAPITests {
         let shared = try #require(URLSessionConfiguration.ephemeral.httpCookieStorage)
         let origin = URL(string: "https://pwusage.test")!
         let cookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "site_auth",
-            .value: "existing-session", .expires: Date().addingTimeInterval(3600)]))
+                                                          .value: "existing-session", .expires: Date().addingTimeInterval(3600)]))
         legacy.setCookie(cookie)
         SharedWebSession.migrateSession(for: origin, from: legacy, to: shared)
         #expect(shared.cookies(for: origin)?.first?.value == "existing-session")
@@ -441,9 +441,9 @@ final class PWUsageAPITests {
     func freshInstallCookieClear() throws {
         let storage = try #require(URLSessionConfiguration.ephemeral.httpCookieStorage)
         let siteCookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "site_auth",
-            .value: "previous-session", .expires: Date().addingTimeInterval(3600)]))
+                                                              .value: "previous-session", .expires: Date().addingTimeInterval(3600)]))
         let otherCookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "display",
-            .value: "compact"]))
+                                                               .value: "compact"]))
         storage.setCookie(siteCookie)
         storage.setCookie(otherCookie)
 

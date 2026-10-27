@@ -5,17 +5,17 @@ import SwiftUI
 extension View {
     func inlineNavigationTitle() -> some View {
         #if os(iOS)
-        navigationBarTitleDisplayMode(.inline)
+            navigationBarTitleDisplayMode(.inline)
         #else
-        self
+            self
         #endif
     }
 
     func pointerHoverEffect() -> some View {
         #if os(iOS)
-        hoverEffect()
+            hoverEffect()
         #else
-        self
+            self
         #endif
     }
 }

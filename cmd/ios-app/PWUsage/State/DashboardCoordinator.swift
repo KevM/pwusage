@@ -936,7 +936,7 @@ final class DashboardCoordinator: ObservableObject {
                 // clock, and telling someone to fix their date is then a dead end.
                 reason = contractError == .timestampSkew ? .contextInvalid : .contextMalformed
             } else if let rejected = error as? PWUsageAPIError,
-                case .requestRejected(let statusCode, _) = rejected, statusCode == 404 {
+                      case .requestRejected(let statusCode, _) = rejected, statusCode == 404 {
                 reason = .serverOutdated
             } else {
                 reason = .requestFailed

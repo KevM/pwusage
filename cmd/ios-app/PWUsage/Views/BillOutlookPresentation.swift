@@ -16,7 +16,7 @@ enum BillOutlookPresentation {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = zone
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
-                                            to: calendar.startOfDay(for: end)).day ?? 0
+                                           to: calendar.startOfDay(for: end)).day ?? 0
         guard days <= 7 else { return nil }
         if days == 0 { return "Cycle ends today" }
         return "Cycle ends in \(days) \(days == 1 ? "day" : "days")"

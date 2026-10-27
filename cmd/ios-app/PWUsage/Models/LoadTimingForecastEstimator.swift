@@ -824,7 +824,7 @@ struct LoadTimingForecastEstimator {
         let now = prepared.now, horizonEnd = prepared.horizonEnd, projectionEnd = prepared.projectionEnd
         let model = prepared.model, tariffs = prepared.tariffs
         let candidates = candidateStarts(now: now, horizonEnd: horizonEnd, duration: load.duration,
-                                        model: model, tariffs: tariffs)
+                                         model: model, tariffs: tariffs)
         var scored: [Candidate] = []
         for candidateStart in candidates {
             let candidateEnd = candidateStart.addingTimeInterval(load.duration)
@@ -921,7 +921,7 @@ struct LoadTimingForecastEstimator {
     private static func select(_ assessed: [Assessment], now: Date, minorUnit: Double) -> Selection {
         func cheapest(_ pool: [Assessment]) -> Assessment? {
             pool.min { $0.candidate.cost == $1.candidate.cost ? $0.candidate.start < $1.candidate.start
-                                                              : $0.candidate.cost < $1.candidate.cost }
+                : $0.candidate.cost < $1.candidate.cost }
         }
         // `evaluate` only calls this with a scored "now".
         let nowAssessment = assessed.first { $0.candidate.start == now }!
@@ -964,9 +964,9 @@ struct LoadTimingForecastEstimator {
         let powerKw = load.energy / (load.duration / 3600)
         guard let nowSeries = balanceSeries(from: now, to: horizonEnd, balances: nowBalances,
                                             run: (startNow.start, startNow.end), powerKw: powerKw, steps: steps),
-              let recommendedSeries = balanceSeries(from: now, to: horizonEnd, balances: nowBalances,
-                                                    run: (recommended.start, recommended.end), powerKw: powerKw,
-                                                    steps: steps)
+            let recommendedSeries = balanceSeries(from: now, to: horizonEnd, balances: nowBalances,
+                                                  run: (recommended.start, recommended.end), powerKw: powerKw,
+                                                  steps: steps)
         else { return nil }
 
         func periods(touching start: Date, _ end: Date) -> Set<String> {

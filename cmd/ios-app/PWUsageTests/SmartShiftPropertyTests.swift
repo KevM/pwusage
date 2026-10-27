@@ -38,7 +38,7 @@ struct SmartShiftPropertyTests {
         let boundary = scenario.now.addingTimeInterval(12 * 3600)
         let segments = scenario.tariffs.map { segment in
             LoadTimingTariffSegment(start: segment.start, end: segment.end, periodKey: segment.periodKey,
-                name: segment.name, buyRate: segment.buyRate + (segment.start >= boundary ? 1 : 0), sellRate: segment.sellRate)
+                                    name: segment.name, buyRate: segment.buyRate + (segment.start >= boundary ? 1 : 0), sellRate: segment.sellRate)
         }
         let comparison = try #require(scenario.evaluate(segments: segments).comparison)
         #expect(comparison.projectionEnd == boundary)
@@ -63,7 +63,7 @@ struct SmartShiftPropertyTests {
         scenario.forecastHours = 1
         scenario.duration = 0.5
         let later = SolarForecastInterval(periodStart: scenario.now.addingTimeInterval(7200),
-            periodEnd: scenario.now.addingTimeInterval(10800), powerKw: 100)
+                                          periodEnd: scenario.now.addingTimeInterval(10800), powerKw: 100)
         let projection = LoadTimingForecastEstimator.Projection.forecast(intervals: scenario.forecast + [later], context: scenario.projection.context!)
         let expected = try #require(scenario.evaluate().comparison)
         let actual = try #require(scenario.evaluate(projection: projection).comparison)
