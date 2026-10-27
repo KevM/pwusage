@@ -100,7 +100,6 @@ struct TodayEnergyWidgetRefresh: Sendable {
     }
 }
 
-
 // Widget kinds share the extension process. Actor reentrancy must not start a second fetch.
 private actor TodayEnergyWidgetRefreshCoordinator {
     static let shared = TodayEnergyWidgetRefreshCoordinator()

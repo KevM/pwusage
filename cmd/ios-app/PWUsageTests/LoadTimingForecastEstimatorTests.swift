@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 struct LoadTimingForecastEstimatorTests {
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
@@ -48,7 +48,7 @@ struct LoadTimingForecastEstimatorTests {
             tariff(0, 21_600, key: "summer_peak", buy: 0.48, sell: 0.10),
             tariff(21_600, 43_200, key: "summer_offpeak", buy: 0.22, sell: 0.08),
             tariff(43_200, 64_800, key: "winter_peak", buy: 0.52, sell: 0.11),
-            tariff(64_800, 86_400, key: "winter_offpeak", buy: 0.20, sell: 0.07)
+            tariff(64_800, 86_400, key: "winter_offpeak", buy: 0.20, sell: 0.07),
         ]
         let result = evaluate(
             now: 0,
@@ -70,7 +70,7 @@ struct LoadTimingForecastEstimatorTests {
         // baseline cannot be projected at all.
         let segments = [
             tariff(-1800, 21_600, key: "q", buy: 0.30, sell: 0.05),
-            tariff(21_600, 43_200, key: "p", buy: 0.30, sell: 0.05)
+            tariff(21_600, 43_200, key: "p", buy: 0.30, sell: 0.05),
         ]
         let result = evaluate(
             now: 0,
@@ -579,7 +579,7 @@ struct LoadTimingForecastEstimatorTests {
     @Test func lanesShowOnlyTouchedPeriodsAndCurrent() throws {
         // Super Off-Peak 00–06, Off-Peak 06–10, Mid 10–14, Peak 14–20, Off-Peak 20–24, on two days.
         let rates: [String: (buy: Double, sell: Double)] = [
-            "Super Off-Peak": (0.40, 0.02), "Off-Peak": (0.30, 0.04), "Mid": (0.35, 0.05), "Peak": (0.50, 0.08)
+            "Super Off-Peak": (0.40, 0.02), "Off-Peak": (0.30, 0.04), "Mid": (0.35, 0.05), "Peak": (0.50, 0.08),
         ]
         let spans: [(Double, Double, String)] = [(0, 6, "Super Off-Peak"), (6, 10, "Off-Peak"), (10, 14, "Mid"),
                                                  (14, 20, "Peak"), (20, 24, "Off-Peak")]

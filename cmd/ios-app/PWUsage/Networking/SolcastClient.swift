@@ -123,7 +123,7 @@ struct SolcastClient: Sendable {
         guard !value.contains("..") else { return false }
         let forbidden: Set<Unicode.Scalar> = [
             "/", "\\", "?", "#", "%", "&", "=", ":", "@", ";", ",", " ",
-            "\u{0}", "\t", "\n", "\r"
+            "\u{0}", "\t", "\n", "\r",
         ]
         return value.unicodeScalars.allSatisfy { scalar in
             !forbidden.contains(scalar) && !CharacterSet.controlCharacters.contains(scalar)

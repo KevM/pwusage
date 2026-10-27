@@ -42,7 +42,7 @@ enum DashboardPresentation {
         } == true
         let readings: [(PowerSource, Double)] = [
             (.solar, solarPower), (.home, loadPower),
-            (.grid, gridPower), (.battery, batteryPower)
+            (.grid, gridPower), (.battery, batteryPower),
         ]
         let cards = readings.map { source, watts -> PowerCard in
             guard isCurrent, watts.isFinite else {

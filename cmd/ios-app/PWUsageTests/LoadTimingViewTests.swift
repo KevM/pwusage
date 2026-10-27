@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("Load Timing Presentation Tests")
 struct LoadTimingViewTests {

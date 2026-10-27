@@ -197,7 +197,6 @@ struct DashboardView: View {
                             homeKwh: today.homeKwh, solarKwh: today.solarKwh,
                             gridNetKwh: today.gridNetKwh, batteryNetKwh: today.batteryNetKwh
                         ))
-
                     }
                 }
             } else {
@@ -328,7 +327,6 @@ struct DashboardView: View {
             .font(.title3.weight(.bold))
             .accessibilityAddTraits(.isHeader)
     }
-
 }
 
 extension EnvironmentValues {

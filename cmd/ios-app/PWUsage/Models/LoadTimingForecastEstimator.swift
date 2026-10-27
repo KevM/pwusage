@@ -1052,7 +1052,7 @@ struct LoadTimingForecastEstimator {
         case .forecast(_, let context):
             baseline = [
                 "Typical household and battery behavior follows the historical local-time profile.",
-                "Battery behavior is assumed unchanged by this added load."
+                "Battery behavior is assumed unchanged by this added load.",
             ] + (context.hasGridHistory
                 ? ["Solar follows your Solcast forecast for the next 7 days, then your last four weeks through the bill date.",
                    safetyAssumption]
@@ -1064,7 +1064,7 @@ struct LoadTimingForecastEstimator {
         }
         return baseline + [
             "Recommendation is the best among evaluated start times, not a continuous-time optimum.",
-            "Estimated cost uses each period's current bank through the shared horizon."
+            "Estimated cost uses each period's current bank through the shared horizon.",
         ]
     }
 

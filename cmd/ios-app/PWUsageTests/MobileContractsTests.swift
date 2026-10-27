@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("Mobile Contracts Tests")
 struct MobileContractsTests {

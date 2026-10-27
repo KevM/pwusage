@@ -835,7 +835,6 @@ actor DeviceSolarForecastPersistence: SolarForecastPersistence {
         try protectedFile.setResourceValues(fileValues)
         cached = state
     }
-
 }
 
 @MainActor

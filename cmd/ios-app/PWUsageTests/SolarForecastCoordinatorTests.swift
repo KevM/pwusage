@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @MainActor
 @Suite("Solar Forecast Coordinator Tests", .serialized)

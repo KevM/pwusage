@@ -1,12 +1,12 @@
+@testable import PWUsage
 import SwiftUI
 import Testing
-@testable import PWUsage
 
 @MainActor
 @Suite("Battery hold previews", .serialized)
 struct BatteryHoldPreviewTests {
     @Test("Preview fixtures cover idle, ambiguous, active and cancelled holds", arguments: [
-        BatteryHoldPreviewAPI.Mode.idle, .ambiguous, .active, .monitoring, .notice
+        BatteryHoldPreviewAPI.Mode.idle, .ambiguous, .active, .monitoring, .notice,
     ])
     func fixtures(_ mode: BatteryHoldPreviewAPI.Mode) async throws {
         let api = BatteryHoldPreviewAPI(mode: mode)

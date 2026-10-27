@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @MainActor
 @Suite("PWUsage API Tests", .serialized)
@@ -234,7 +234,7 @@ final class PWUsageAPITests {
     @Test("Server-refreshed versioned session cookie replaces the stored one opaquely")
     func refreshedSessionCookieReplacesStoredOne() async throws {
         let stale = try #require(HTTPCookie(properties: [
-            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "old.stale.token"
+            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "old.stale.token",
         ]))
         cookieStorage.setCookie(stale)
 
@@ -247,7 +247,7 @@ final class PWUsageAPITests {
                 // Proxy-style sliding refresh: 200 plus a replacement session cookie.
                 guard let replaced = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [
                     "Content-Type": "application/json",
-                    "Set-Cookie": "site_auth=\(refreshedValue); Path=/; HttpOnly; SameSite=Lax"
+                    "Set-Cookie": "site_auth=\(refreshedValue); Path=/; HttpOnly; SameSite=Lax",
                 ]) else { throw URLError(.badServerResponse) }
                 return (replaced, Data(#"[{"id":"site-1","name":"Home","utility":"Utility Co"}]"#.utf8))
             }
@@ -606,4 +606,3 @@ private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func stopLoading() {}
 }
-

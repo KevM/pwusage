@@ -49,7 +49,6 @@ struct TodayEnergySnapshot: Codable, Equatable, Sendable {
         return age >= 0 && age <= 2 * 3600 ? charge : nil
     }
 
-
     enum Availability { case current, stale, missing }
 
     static func localDate(_ date: Date, timezone: String) -> String {

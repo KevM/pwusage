@@ -1,7 +1,7 @@
 import Foundation
+@testable import PWUsage
 import SwiftUI
 import Testing
-@testable import PWUsage
 
 struct BillOutlookPresentationTests {
     @Test func dateSelectionDefaultsToLastCompletePointAfterHistoryGap() {
@@ -45,7 +45,6 @@ struct BillOutlookPresentationTests {
         #expect(BillOutlookPresentation.laneSummary(period: offPeak, totals: [], selected: nil, currency: "USD") == nil)
     }
 }
-
 
 @MainActor
 struct BillOutlookRenderTests {

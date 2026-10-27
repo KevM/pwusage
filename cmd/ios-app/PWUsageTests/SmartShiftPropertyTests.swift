@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite
 struct SmartShiftPropertyTests {
@@ -133,7 +133,6 @@ struct SmartShiftRegressionTests {
         let bank = try #require(comparison.lanes.first { $0.periodKey == "p1" })
         #expect(comparison.safety == .nowSafe, "Projected bank: \(bank.projectedKwh) kWh")
     }
-
 }
 
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["PWUSAGE_FUZZ_STRESS"] == "1"))

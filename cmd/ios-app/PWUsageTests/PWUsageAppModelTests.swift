@@ -1,7 +1,7 @@
 import AuthenticationServices
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @MainActor
 @Suite("PWUsage App Model Tests", .serialized)
@@ -785,7 +785,6 @@ struct PWUsageAppModelTests {
         #expect(relaunched.screenState == .signedOut)
         #expect(relaunched.coordinator == nil)
         #expect(DashboardCache(fileURL: cacheURL).snapshot.sites.isEmpty)
-
     }
 
     @Test("Restored detail actions wait for site authorization, including offline and pending launches")
@@ -904,7 +903,7 @@ struct PWUsageAppModelTests {
 
     @Test("Reconnect cancellation and web failures preserve the signed-in dashboard", arguments: [
         ASWebAuthenticationSessionError.Code.canceledLogin,
-        .presentationContextInvalid
+        .presentationContextInvalid,
     ])
     func reconnectFailurePreservesSession(code: ASWebAuthenticationSessionError.Code) async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
@@ -943,7 +942,7 @@ struct PWUsageAppModelTests {
     }
 
     @Test("Reconnect handles exchange, site reload and confirmed expiry", arguments: [
-        "exchangeFailure", "siteFailure", "success", "expired"
+        "exchangeFailure", "siteFailure", "success", "expired",
     ])
     func reconnectCompletion(outcome: String) async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])

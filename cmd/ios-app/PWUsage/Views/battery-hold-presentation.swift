@@ -101,5 +101,4 @@ enum BatteryHoldPresentation {
         }
         return "Battery Saver. Open Battery Saver."
     }
-
 }

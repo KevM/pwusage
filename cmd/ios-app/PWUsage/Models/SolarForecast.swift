@@ -113,7 +113,7 @@ private struct SolcastTimestamp: Decodable {
     private static func parse(_ value: String) -> Date? {
         for options: ISO8601DateFormatter.Options in [
             [.withInternetDateTime, .withFractionalSeconds],
-            [.withInternetDateTime]
+            [.withInternetDateTime],
         ] {
             let formatter = ISO8601DateFormatter()
             formatter.formatOptions = options

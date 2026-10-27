@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("Battery hold")
 struct BatteryHoldTests {
@@ -9,7 +9,7 @@ struct BatteryHoldTests {
     @Test("Reserve planning matches every website boundary", arguments: [
         (0.0, 0, false), (79.9, 79, false), (80.0, 80, false),
         (80.1, 80, false), (85.0, 80, false), (85.1, 100, true),
-        (94.9, 100, true), (95.0, 100, false), (100.0, 100, false)
+        (94.9, 100, true), (95.0, 100, false), (100.0, 100, false),
     ])
     func reserveBands(_ sample: (Double, Int, Bool)) throws {
         let plan = try #require(BatteryHoldReservePlan.make(stateOfCharge: sample.0))
@@ -126,5 +126,4 @@ struct BatteryHoldTests {
         state.response = .init(hold: nil, notice: nil)
         #expect(BatteryHoldPresentation.toolbarReserve(state: state, at: now) == nil)
     }
-
 }

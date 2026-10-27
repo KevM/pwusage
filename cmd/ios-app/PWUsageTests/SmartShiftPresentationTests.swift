@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 struct SmartShiftPresentationTests {
     typealias Estimator = LoadTimingForecastEstimator

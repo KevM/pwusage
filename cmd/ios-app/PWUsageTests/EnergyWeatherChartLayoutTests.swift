@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 struct EnergyWeatherChartLayoutTests {
     private typealias Layout = SwitchLabelLayout

@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @MainActor
 @Suite("Battery hold coordinator", .serialized, .timeLimit(.minutes(1)))

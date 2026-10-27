@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 /// Checks the decoder against a real Solcast capture when one is available.
 ///

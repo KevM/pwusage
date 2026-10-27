@@ -1,8 +1,8 @@
 import Foundation
+@testable import PWUsage
+import SwiftUI
 import Testing
 import UIKit
-import SwiftUI
-@testable import PWUsage
 
 @MainActor
 @Suite("Battery hold navigation", .serialized)

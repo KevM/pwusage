@@ -19,4 +19,3 @@ final class BatteryHoldNavigationInbox: ObservableObject {
         return request.url
     }
 }
-
