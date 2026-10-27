@@ -70,6 +70,35 @@ describe('healTrailingGaps', () => {
         expect(result.stopped).toBeUndefined();
     });
 
+    it('reaches back to the start of an auth outage that ended within the window', async () => {
+        mocks.getSitesForGapHeal.mockResolvedValue([{
+            id: 'site-a', timezone: 'America/Chicago', installed: INSTALLED,
+            auth_lost_at: new Date('2026-09-20T18:00:00Z'), auth_restored_at: new Date('2026-10-15T12:00:00Z'),
+        }]);
+
+        await run();
+
+        const [, start] = mocks.ensureDataForRange.mock.calls[0];
+        expect(start.toISOString()).toBe('2026-09-20T05:00:00.000Z'); // Chicago midnight of the loss day
+        const [[counted]] = mocks.countAlignedSamples.mock.calls[0];
+        expect(counted.start.toISOString()).toBe('2026-09-20T05:00:00.000Z');
+        expect(mocks.planMissingWindows.mock.calls[0][0]).toMatchObject({ auth_restored_at: new Date('2026-10-15T12:00:00Z') });
+    });
+
+    it('keeps the 14-day window for an older restore or a current outage', async () => {
+        mocks.getSitesForGapHeal.mockResolvedValue([
+            { id: 'old-restore', timezone: 'America/Chicago', installed: INSTALLED,
+                auth_lost_at: new Date('2026-08-01T00:00:00Z'), auth_restored_at: new Date('2026-10-01T00:00:00Z') },
+            { id: 'still-lost', timezone: 'America/Chicago', installed: INSTALLED,
+                auth_lost_at: new Date('2026-10-10T00:00:00Z'), auth_restored_at: new Date('2026-09-01T00:00:00Z') },
+        ]);
+
+        await run();
+
+        expect(mocks.ensureDataForRange.mock.calls.map(c => c[1].toISOString()))
+            .toEqual(['2026-10-03T05:00:00.000Z', '2026-10-03T05:00:00.000Z']);
+    });
+
     it('only heals sites with live activity (web, mobile, TRMNL, battery hold) in the last 7 days', async () => {
         await run();
 

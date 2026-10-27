@@ -95,6 +95,15 @@ minus the two tariff columns. The site-day grid is 5 minutes.
     on a rewrite. A day whose last write came before its end (stored `open`
     even with every sample) is rewritten by today-refresh after midnight, so its
     stored status becomes final.
+  - An `open` day can also be one Tesla still has but we couldn't ask for:
+    the owner's Tesla access was lost. `User.auth_lost_at` / `auth_restored_at`
+    (stamped by the `stamp_user_auth_outage` trigger on `auth_status`
+    transitions) record the outage. Planning ages an open day from the later of
+    its end and `auth_restored_at` (`PlanOptions.reachableSince`), and gap-heal
+    reaches back to `auth_lost_at` for a restore inside its window, so a
+    re-authed site refetches the days it missed instead of settling them as
+    `gapped`. The stored status stays about data only; the reason is read from
+    the user's outage window.
 - **`fetched_at`**: when the Tesla request was made (not when the response
   arrived). A write replaces the record only if its `fetched_at` is newer than
   the stored one. Published samples never change, so a later request sees at

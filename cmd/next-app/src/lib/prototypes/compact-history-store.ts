@@ -303,7 +303,10 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             await client.query("SET LOCAL lock_timeout = '3s'");
             await this.mutationGuard?.(client);
             if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy'};}
-            const timezone=(await client.query<{timezone:string}>('SELECT timezone FROM "Site" WHERE id=$1',[siteId])).rows[0]?.timezone;
+            // The owner's last Tesla access restore restarts the gap-heal window for status.
+            const site=(await client.query<{timezone:string;auth_restored_at:Date|null}>(
+                'SELECT s.timezone,u.auth_restored_at FROM "Site" s LEFT JOIN "User" u ON u.id=s.user_id WHERE s.id=$1',[siteId])).rows[0];
+            const timezone=site?.timezone;
             if(!timezone||!Number.isSafeInteger(+start)||!Number.isSafeInteger(+now)||+start!==+getSiteMidnight(start,timezone)||start>now)throw new Error('Expected a started local day');
             // A fetch time from the future would lock the day against every later fetch.
             if(!Number.isSafeInteger(+fetchedAt)||fetchedAt>now)throw new Error('Invalid fetch time');
@@ -329,7 +332,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             if(stored?.fetched_at&&stored.status!=='empty'&&+fetchedAt<=+stored.fetched_at) {await client.query('COMMIT');return {status:'superseded',revision:stored.revision};}
             const sorted=samples.map(toSample).sort((a,b)=>+a.timestamp-+b.timestamp);
             const {tariffs}=await this.tariffs(client,siteId,true);
-            const prepared=this.prepareSamples(siteId,timezone,start,end,sorted,tariffs,fetchedAt,now);
+            const prepared=this.prepareSamples(siteId,timezone,start,end,sorted,tariffs,fetchedAt,now,site.auth_restored_at);
             const revision=await this.replaceDay(client,siteId,start,end,sorted.length,prepared,true);
             await client.query('COMMIT');
             return {status:'written',revision,attributionComplete:prepared.attributionComplete,dayStatus:prepared.record!.status};
@@ -346,7 +349,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
     /**
      * Days neither a backfill nor import planning need fetch again: `empty` records
      * whose (latest) empty answer was requested after the day ended, older than the
-     * gap-heal window (the age rule that makes a short day `gapped`).
+     * gap-heal window (the age rule that makes a short day `gapped`, restarted when the
+     * owner's Tesla access last came back).
      * A day with no record was never answered (or its fetch failed) and is fetched;
      * inside the window an empty day is retried like an `open` one.
      */
@@ -361,21 +365,22 @@ export class CompactHistoryStore implements HistorySnapshotStore {
      */
     async getEmptyDays(siteId:string,from:Date,before:Date,now:Date):Promise<EmptyDayState[]> {
         const rows=(await this.pool.query<{day_start:Date;fetched_at:Date;settled:boolean}>(`SELECT a.day_start,a.fetched_at,
-            (a.fetched_at >= a.day_end AND a.day_end < $4::timestamptz - make_interval(days => $5)) AS settled FROM "EnergyDayArchive" a
+            (a.fetched_at >= a.day_end AND GREATEST(a.day_end,u.auth_restored_at) < $4::timestamptz - make_interval(days => $5)) AS settled
+            FROM "EnergyDayArchive" a JOIN "Site" s ON s.id=a.site_id LEFT JOIN "User" u ON u.id=s.user_id
             WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_start < $3 AND a.status='empty'
             ORDER BY a.day_start`,[siteId,from,before,now,DAY_GAP_HEAL_DAYS])).rows;
         return rows.map(r=>({dayStart:new Date(r.day_start),fetchedAt:new Date(r.fetched_at),settled:r.settled}));
     }
 
     /** Format 2: verify the lossless round trip, derive segments from the current tariff, then summaries, status and projections. */
-    private prepareSamples(siteId:string,timezone:string,start:Date,end:Date,samples:EnergySample[],tariffs:Tariff[],fetchedAt:Date,now:Date):PreparedDay {
+    private prepareSamples(siteId:string,timezone:string,start:Date,end:Date,samples:EnergySample[],tariffs:Tariff[],fetchedAt:Date,now:Date,reachableSince:Date|null=null):PreparedDay {
         if(!tariffs.length)throw new Error('No current tariff');
         const archive=encodeDaySamples(samples,start,end,'brotli');
         const recovered=decodeDaySamples(archive,{siteId,start,end});
         deepStrictEqual(recovered,samples);
         const attribution=deriveDayAttribution(new Schedule(tariffs,timezone),Number(tariffs[0].id),start,end);
         const metadata=buildDayMetadataV3(recovered,attribution,start,end);
-        const status=dayStatus({end,sampleCount:recovered.length,expectedSlots:archive.expectedSlots,now});
+        const status=dayStatus({end,sampleCount:recovered.length,expectedSlots:archive.expectedSlots,now,reachableSince});
         const payloadChecksum=createHash('sha256').update(archive.data).digest('hex');
         const latest=buildLatestMetadata(recovered,{siteId,start,end,archiveChecksum:archive.sha256});
         return {archive,summaries:metadata.summaries,attributionComplete:metadata.attributionComplete,metadata,payloadChecksum,latest,record:{attribution,status,fetchedAt}};

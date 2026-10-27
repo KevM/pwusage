@@ -160,6 +160,13 @@ describe('dayStatus', () => {
         expect(dayStatus({ end, sampleCount: 287, expectedSlots: 288, now: at(window) })).toBe('open');
         expect(dayStatus({ end, sampleCount: 287, expectedSlots: 288, now: at(window + 1) })).toBe('gapped');
     });
+    it('starts the gap-heal window when Tesla access came back, if that is later than the day end', () => {
+        const window = DAY_GAP_HEAL_DAYS * 24 * h;
+        const restored = at(20 * 24 * h);
+        expect(dayStatus({ end, sampleCount: 287, expectedSlots: 288, now: new Date(+restored + window), reachableSince: restored })).toBe('open');
+        expect(dayStatus({ end, sampleCount: 287, expectedSlots: 288, now: new Date(+restored + window + 1), reachableSince: restored })).toBe('gapped');
+        expect(dayStatus({ end, sampleCount: 287, expectedSlots: 288, now: at(window + 1), reachableSince: at(-h) })).toBe('gapped');
+    });
     it('matches the gap-heal window', async () => {
         expect(DAY_GAP_HEAL_DAYS).toBe((await import('../gap-heal')).GAP_HEAL_DAYS);
     });
