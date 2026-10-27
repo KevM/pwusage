@@ -18,6 +18,8 @@ interface AdminUser {
     is_active?: boolean;
     auth_status?: string;
     last_checked_at?: string | Date;
+    auth_lost_at?: string | Date | null;
+    auth_restored_at?: string | Date | null;
     has_trmnl_integration?: boolean;
     created_at?: string | number | Date;
     last_data_import?: string | number | Date | null;
@@ -25,6 +27,14 @@ interface AdminUser {
         id: string;
         name: string;
     }[];
+}
+
+/** Current outage: "Tesla access lost <date>"; a past one: "Last outage <from> – <to>". */
+function authOutageLabel(lostAt: string | Date, restoredAt?: string | Date | null): string {
+    const lost = new Date(lostAt);
+    const restored = restoredAt ? new Date(restoredAt) : null;
+    if (!restored || restored <= lost) return `Tesla access lost: ${lost.toLocaleDateString()}`;
+    return `Last outage: ${lost.toLocaleDateString()} – ${restored.toLocaleDateString()}`;
 }
 
 interface AdminDashboardProps {
@@ -90,6 +100,11 @@ export function AdminDashboard({ users, sites }: AdminDashboardProps) {
                                                     {user.last_checked_at && (
                                                         <span className="text-[10px] text-gray-400">
                                                             Checked: {new Date(user.last_checked_at).toLocaleDateString()}
+                                                        </span>
+                                                    )}
+                                                    {user.auth_lost_at && (
+                                                        <span className="text-[10px] text-gray-400">
+                                                            {authOutageLabel(user.auth_lost_at, user.auth_restored_at)}
                                                         </span>
                                                     )}
                                                 </div>

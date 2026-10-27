@@ -1,7 +1,7 @@
 import { SiteWithTariffs, TariffSeason, TariffSchedule } from '../db';
 import { Schedule } from '../schedule';
 import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry, isTeslaAuthError } from '../tesla-client';
-import { EnergyRepo } from '../energy-repo';
+import { EnergyRepo, type DailyCoverageStat } from '../energy-repo';
 import { createEnergyRepo } from '../energy-repo-factory';
 import { SiteRepo } from '../site-repo';
 import { UserRepo } from '../user-repo';
@@ -15,6 +15,7 @@ import { pool } from '../db';
 import { CompactHistoryStore } from '../prototypes/compact-history-store';
 import { fetchDayForWrite } from '../prototypes/compact-day-fetch';
 import { isDayFetchFinal } from '../tesla-sample-timing';
+import { DAY_GAP_HEAL_DAYS } from '../prototypes/day-attribution';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -35,7 +36,7 @@ export type { EnergyDataRow } from './energy-transformer';
  * cap rotates through them (`selectWindows`).
  */
 export async function planMissingWindows(
-    site: { id: string; timezone: string; installed: Date | string },
+    site: { id: string; timezone: string; installed: Date | string; auth_restored_at?: Date | null },
     start: Date,
     end: Date,
     force = false,
@@ -56,6 +57,7 @@ export async function planMissingWindows(
         installationDate: new Date(site.installed),
         forceRefetch: force,
         refetchOpenDays: true,
+        reachableSince: await reachableSince(site, existingCoverage, auditStartTime, now),
         now,
     };
     const windows = planImport(options);
@@ -63,6 +65,21 @@ export async function planMissingWindows(
     if (force || !windows.some(w => w.fetchedAt === undefined && !w.openRetry)) return windows;
     const empty = await emptyDays.getEmptyDays(site.id, windows[0].start, windows[windows.length - 1].end, now);
     return empty.length === 0 ? windows : planImport({ ...options, emptyDays: empty });
+}
+
+/**
+ * The site's last Tesla access restore, for aging open days. Only an open day that
+ * ended over a gap-heal window ago can age, so other ranges skip the lookup.
+ */
+async function reachableSince(
+    site: { id: string; auth_restored_at?: Date | null },
+    coverage: DailyCoverageStat[],
+    rangeStart: Date,
+    now: Date
+): Promise<Date | null> {
+    if (site.auth_restored_at !== undefined) return site.auth_restored_at;
+    const ageable = coverage.some(c => c.open) && now.getTime() - rangeStart.getTime() > (DAY_GAP_HEAL_DAYS + 1) * 24 * 3600000;
+    return ageable ? new UserRepo().getAuthRestoredAtForSite(site.id) : null;
 }
 
 /** Where the importer writes v2 day records and finds days Tesla settled as empty. */

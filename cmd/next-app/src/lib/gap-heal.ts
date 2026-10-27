@@ -77,7 +77,7 @@ export async function healTrailingGaps(options: HealTrailingGapsOptions = {}): P
 
 const SLOT_MS = 5 * 60 * 1000;
 
-type HealSite = { id: string; timezone: string; installed: Date };
+type HealSite = { id: string; timezone: string; installed: Date; auth_lost_at?: Date | null; auth_restored_at?: Date | null };
 
 interface TrailingWindow {
     site: HealSite;
@@ -91,10 +91,23 @@ interface TrailingWindow {
 function trailingWindow(site: HealSite, days: number, at: Date): TrailingWindow {
     // Today belongs to refreshTodayData; heal only complete days.
     const end = getSiteMidnight(at, site.timezone);
-    const start = addDaysInSiteTimezone(end, -days, site.timezone);
+    const trailingStart = addDaysInSiteTimezone(end, -days, site.timezone);
+    const start = outageStart(site, trailingStart) ?? trailingStart;
     const installMidnight = getSiteMidnight(new Date(site.installed), site.timezone);
     const countStart = installMidnight > start ? (installMidnight < end ? installMidnight : end) : start;
     return { site, start, end, countStart };
+}
+
+/**
+ * After a re-auth within the window, reach back to the day access was lost so the
+ * outage's missing and open days are fetched (the planner keeps them open for a
+ * gap-heal window after the restore). A current outage has nothing to fetch with.
+ */
+function outageStart(site: HealSite, trailingStart: Date): Date | null {
+    const { auth_lost_at: lost, auth_restored_at: restored } = site;
+    if (!lost || !restored || +restored <= +lost || +restored < +trailingStart) return null;
+    const lostMidnight = getSiteMidnight(lost, site.timezone);
+    return lostMidnight < trailingStart ? lostMidnight : null;
 }
 
 async function healSite(

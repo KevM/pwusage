@@ -655,6 +655,18 @@ describe('planImport from day record status', () => {
             timezone: TZ, now: days(15) })[0]).toMatchObject({ archived: true, open: false });
     });
 
+    it('ages an open record from when Tesla access came back, so an outage stays refetchable', () => {
+        const days = (n: number) => new Date(+DAY1_END + n * 24 * 3600000);
+        const withRestore = (reachableSince: Date, now: Date) => planImport({
+            requestedRange: { start: DAY1_START, end: DAY1_END }, existingCoverage: [nearlyFull({ open: true })], timezone: TZ,
+            now, refetchOpenDays: true, reachableSince,
+        });
+        expect(withRestore(days(20), days(30))).toHaveLength(1);
+        expect(withRestore(days(20), new Date(+days(34) + 1))).toEqual([]);
+        // A restore before the day ended changes nothing.
+        expect(withRestore(days(-1), new Date(+days(14) + 1))).toEqual([]);
+    });
+
     it('leaves today\'s open record to the today refresh', () => {
         const midday = new Date(+DAY1_START + 12 * 3600000);
         expect(plan(nearlyFull({ open: true, last: new Date(+midday - 300000), count: 143 }), true, midday)).toEqual([]);
