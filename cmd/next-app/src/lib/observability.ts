@@ -70,6 +70,24 @@ async function send(scope: LogScope): Promise<void> {
     }
 }
 
+/**
+ * Start a bounded checkpoint now, retaining after() as its lifecycle owner.
+ * Long cron jobs otherwise lose every buffered event if the platform terminates
+ * the invocation before a response. No wait is added to the business operation.
+ */
+export function flushLogEvents(): void {
+    const scope = scopes.getStore();
+    if (!scope?.events.length || !configured()) return;
+    const pending = send(scope);
+    try {
+        after(() => pending);
+    } catch {
+        // send() catches transport errors itself. A missing lifecycle must not
+        // turn a diagnostic checkpoint into an authentication failure.
+        console.warn('[Observability] Checkpoint lifecycle unavailable; delivery is best effort');
+    }
+}
+
 /** Use fixed event names and explicit fields; never pass request objects or raw upstream bodies. */
 export function logEvent(level: Level, event: string, fields: Fields = {}): void {
     const scope = scopes.getStore();
