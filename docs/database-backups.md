@@ -44,6 +44,22 @@ Backups use a direct or session connection. `dump-db-backup.sh` switches hosted
 Supavisor URLs from transaction port 6543 to session port 5432 for every dump. This keeps backup session settings out of the
 application's transaction pool; direct and local URLs are preserved.
 
+### Measured size and transfer
+
+The 2026-10-27 daily backup was **17,337,053 bytes zipped** and contained
+**37,989,353 bytes of SQL** (37,951,149 data, 37,907 schema, 297 roles), plus
+41 bytes of locally generated backup metadata. At the same size, 30 daily
+exports produce about **1.14 GB of SQL a month**, or about **23%** of the
+documented 5 GB quota, before protocol traffic and schema-catalog query results.
+This is an export-size estimate, not a measurement of Supabase's billed egress.
+Compression happens after the database export, so the 17.34 MB ZIP does not
+represent database transfer. Pre-migration dumps and application traffic add to
+the monthly total; history growth changes this estimate.
+
+Keep the daily schedule for now and remeasure as history grows. Reducing backup
+frequency changes the recovery point; do not restore partial dumps to save
+transfer. See the [post-migration validation](plans/2026-10-27-backup-validation-results.md).
+
 ## Safety checks
 
 - **Verified before upload.** `verify-db-backup.ts` rejects a missing or empty
@@ -110,7 +126,7 @@ docker run -d --name pwusage-restore-rehearsal -p 127.0.0.1:55443:5432 \
   -e POSTGRES_PASSWORD=rehearsal public.ecr.aws/supabase/postgres:17.11.0.004
 bash scripts/restore-db-backup.sh --target "postgresql://postgres:rehearsal@127.0.0.1:55443/postgres" \
   --backup backup.zip
-docker rm -f pwusage-restore-rehearsal   # the restored data includes Tesla tokens
+docker rm -fv pwusage-restore-rehearsal  # remove its anonymous volumes too
 ```
 
 As on Supabase, `postgres` is not a superuser there; the restore's paused-trigger
@@ -121,6 +137,20 @@ disposable plain Postgres, in CI and locally (set `DB_BACKUP_PG_BIN` to the
 Postgres `bin` directory if `pg_config` is not on `PATH`).
 
 ### Rehearsal record
+
+**2026-10-27, production after the compact-store cutover.** The actual private
+daily ZIP from the successful [backup run](https://github.com/KevM/pwusage/actions/runs/40530899097)
+restored using the unchanged restore script into a network-isolated local
+Supabase Postgres 17.11.0.004 container in 0.919 seconds (warm image, excluding
+download/startup). All 13 tables matched the dump's row counts and order-independent
+COPY hashes across every column: 79 users, 84 sites, 6,796 day records and
+17,734 summaries. All seven sequence states matched. All 6,792 non-empty days
+decoded to 1,861,732 readings and passed metadata and compressed-payload checksum
+checks; four days were explicitly empty. No summary orphan or disabled public
+trigger remained, both history tables retained RLS, and `EnergyData` was absent.
+The [validation report](plans/2026-10-27-backup-validation-results.md) records
+the ZIP identity, scope and transfer estimate. This verifies application data,
+not a new hosted project's Vault/cron setup or migration ledger.
 
 **2026-10-15**, from the dev database (a copy of production): a full and a daily
 backup, both passing `verify-db-backup.ts`, restored together into the Supabase

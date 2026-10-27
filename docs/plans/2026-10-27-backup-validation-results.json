@@ -1,0 +1,85 @@
+{
+  "checkedAt": "2026-10-27T17:18:21.348Z",
+  "nonemptyTargetRefused": true,
+  "rehearsalDataCleanedUp": true,
+  "tables": [
+    {
+      "table": "User",
+      "rows": 79,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "Site",
+      "rows": 84,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "BatteryHold",
+      "rows": 47,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "BatteryHoldActivity",
+      "rows": 0,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "EnergyDayArchive",
+      "rows": 6796,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "Tariff",
+      "rows": 60,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "TariffSeason",
+      "rows": 111,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "TariffSchedule",
+      "rows": 505,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "EnergyDaySummary",
+      "rows": 17734,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "LoadTag",
+      "rows": 5,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "MobileLoginHandoff",
+      "rows": 1,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "SystemAnnouncement",
+      "rows": 9,
+      "allColumnCopyDigestMatches": true
+    },
+    {
+      "table": "TrmnlInstallation",
+      "rows": 64,
+      "allColumnCopyDigestMatches": true
+    }
+  ],
+  "sequencesVerified": 7,
+  "decodedDays": 6792,
+  "decodedSamples": 1861732,
+  "integrity": {
+    "dayRecords": 6796,
+    "summaryRows": 17734,
+    "metadataVerified": 6792,
+    "payloadChecksumFailures": 0,
+    "summaryOrphans": 0,
+    "legacyRawTableAbsent": true,
+    "disabledPublicTriggers": 0,
+    "historyRlsTables": 2
+  }
+}
