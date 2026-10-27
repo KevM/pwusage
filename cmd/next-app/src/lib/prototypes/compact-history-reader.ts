@@ -1,10 +1,10 @@
 import {IncompleteTariffAttributionError} from '../billing-availability';
-/** Opt-in integration prototype; no remote storage, Tesla calls or default activation. */
+/** Reads measurements and billing projections from versioned energy day records. */
 import type { EnergyData } from '../db-types';
 import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow, CycleAggregatesAndCoverage, DailyCoverageStat, EnergyHistoryReader } from '../energy-repo';
 import { addDaysInSiteTimezone, formatSiteDate, getSiteMidnight } from '../date-utils';
 import { verifyDayMetadata,type SummarizedHistoryDay } from './compact-day-metadata';
-import { decodeDay, decodeDaySamples, rollupDay, type DayArchive, type DayRollup } from './compact-energy';
+import { decodeDaySamples, rollupDay, type DayArchive, type DayRollup } from './compact-energy';
 import { attributeSamples, type DayAttribution } from './day-attribution';
 
 export interface FinalizedHistoryDay {
@@ -16,9 +16,9 @@ export interface FinalizedHistoryDay {
     archive: DayArchive;
     summaries: DayRollup[];
     /** Format 2 records only: samples carry no tariff IDs; each takes the segment covering its label. */
-    attribution?: DayAttribution;
+    attribution: DayAttribution;
 }
-export interface HistorySnapshot { raw: EnergyData[]; days: FinalizedHistoryDay[] }
+export interface HistorySnapshot { days: FinalizedHistoryDay[] }
 export interface AggregateHistorySnapshot { timezone:string|null; fullDays:SummarizedHistoryDay[]; detail:HistorySnapshot }
 export interface ScalarHistorySnapshot {attributionComplete?:boolean;timezone:string|null;aggregates:CycleAggregateRow[];coverage:DailyCoverageStat[];detail:HistorySnapshot}
 export interface HistorySnapshotStore {
@@ -27,16 +27,12 @@ export interface HistorySnapshotStore {
     getLatestTimestamp?(siteId:string):Promise<Date|null>;
     /** Full-day digests verified inside PostgreSQL before projecting scalar results. */
     readScalarSnapshot?(siteId:string,start:Date,end:Date,mode:{billing:boolean;coverage:boolean}):Promise<ScalarHistorySnapshot>;
-    /** One coherent revision: complete intersecting local days plus raw rows in [start,end).
-     * Finalized attributionComplete is earned by the historical tariff audit, not by non-null IDs.
-     * Raw sample attribution remains the importer's responsibility.
-     */
+    /** One coherent revision of intersecting site-local day records and summaries. */
     readSnapshot(siteId: string, start: Date, end: Date): Promise<HistorySnapshot>;
     hasData?(siteId: string): Promise<boolean>;
     readAggregateSnapshot?(siteId:string,start:Date,end:Date):Promise<AggregateHistorySnapshot>;
 }
 const measurements = ['load_power', 'solar_power', 'grid_power', 'battery_power'] as const;
-const sampleFields = [...measurements, 'battery_soc', 'tariff_id', 'tariff_schedule_id'] as const;
 
 interface ValidatedAggregateSnapshot {fullDays:SummarizedHistoryDay[];detail:{rows:EnergyData[];days:FinalizedHistoryDay[]}}
 export class CompactHistoryReader implements EnergyHistoryReader {
@@ -47,7 +43,7 @@ export class CompactHistoryReader implements EnergyHistoryReader {
         if (start >= end) return { rows: [], days: [] };
         const data = snapshot ?? await this.store.readSnapshot(siteId, start, end);
         const days = [...data.days].sort((a, b) => +a.start - +b.start);
-        const samples = new Map<number, EnergyData>();
+        const samples: EnergyData[] = [];
         let priorEnd = -Infinity;
         for (const day of days) {
             if (day.siteId !== siteId || +day.start !== +getSiteMidnight(day.start, this.timezone)
@@ -55,10 +51,9 @@ export class CompactHistoryReader implements EnergyHistoryReader {
                 || day.start >= end || day.end <= start || +day.start < priorEnd) throw new Error('Invalid finalized day');
             priorEnd = +day.end;
             const identity = { siteId, start: day.start, end: day.end };
-            const decoded = day.attribution ? attributeSamples(decodeDaySamples(day.archive, identity), day.attribution, day.start, day.end)
-                : decodeDay(day.archive, identity);
-            // Prototype verifies every snapshot. A production store can trust an immutable,
-            // reconciled revision and fetch just summaries for whole-day billing.
+            const decoded = attributeSamples(decodeDaySamples(day.archive, identity), day.attribution, day.start, day.end);
+            // Detail reads verify summaries against decoded samples. Full-day scalar
+            // reads verify their metadata in PostgreSQL without reading payloads.
             const expected = rollupDay(decoded, day.start);
             if (expected.length !== day.summaries.length) throw new Error('Summary mismatch');
             for (const summary of expected) {
@@ -68,25 +63,9 @@ export class CompactHistoryReader implements EnergyHistoryReader {
                     return field === 'day' ? +actual.day !== +summary.day : !Object.is(actual[field], summary[field]);
                 })) throw new Error('Summary mismatch');
             }
-            for (const sample of decoded) samples.set(+sample.timestamp, sample);
+            samples.push(...decoded);
         }
-        const rawTimes = new Set<number>();
-        for (const sample of data.raw) {
-            if (sample.site_id !== siteId || !Number.isSafeInteger(+sample.timestamp) || sample.timestamp < start || sample.timestamp >= end
-                || rawTimes.has(+sample.timestamp) || !Number.isSafeInteger(sample.tariff_id)
-                || (sample.tariff_schedule_id !== null && !Number.isSafeInteger(sample.tariff_schedule_id))
-                || (sample.battery_soc !== null && !Number.isFinite(sample.battery_soc))
-                || measurements.some(key => !Number.isFinite(sample[key]))) throw new Error('Invalid raw history');
-            rawTimes.add(+sample.timestamp);
-            const finalized = days.some(d => sample.timestamp >= d.start && sample.timestamp < d.end);
-            if (finalized) {
-                const previous = samples.get(+sample.timestamp);
-                if (!previous || sampleFields.some(key => !Object.is(previous[key], sample[key]))) throw new Error('Conflicting finalized data');
-            } else {
-                samples.set(+sample.timestamp, sample);
-            }
-        }
-        return { rows: [...samples.values()].filter(r => r.timestamp >= start && r.timestamp < end)
+        return { rows: samples.filter(r => r.timestamp >= start && r.timestamp < end)
             .sort((a, b) => +a.timestamp - +b.timestamp), days };
     }
 

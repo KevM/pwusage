@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { EnergyData, Tariff, TariffSchedule } from '../db-types';
 import { addDaysInSiteTimezone, parseSiteLocalDateToMidnight } from '../date-utils';
 import { Schedule } from '../schedule';
-import { decodeDaySamples, encodeDaySamples, rollupDay, toSample, type EnergySample } from './compact-energy';
+import { decodeDaySamples, encodeDaySamples, rollupDay, type EnergySample } from './compact-energy';
 import {
     DAY_GAP_HEAL_DAYS, attributeSamples, currentTariffTimelineRevision, dayStatus, deriveDayAttribution,
-    isAttributionComplete, rollupSamples, segmentsFromV1Rows, validateDayAttribution, type DayAttribution,
+    isAttributionComplete, rollupSamples, validateDayAttribution, type DayAttribution,
 } from './day-attribution';
 
 const tz = 'America/Chicago';
@@ -103,42 +103,6 @@ describe('samples x segments rollup', () => {
         const { start, end } = day('2026-10-14');
         const a = deriveDayAttribution(touSchedule, 82, start, end);
         expect(() => attributeSamples([sample(end)], a, start, end)).toThrow();
-    });
-});
-
-describe('segmentsFromV1Rows', () => {
-    const { start, end } = day('2026-11-01');
-    const v1 = (samples: EnergySample[], ids: (s: EnergySample, i: number) => [number, number | null]): EnergyData[] =>
-        samples.map((s, i) => { const [tariff_id, tariff_schedule_id] = ids(s, i); return { ...s, tariff_id, tariff_schedule_id }; });
-    const roundTrip = (rows: EnergyData[]) => {
-        const segments = segmentsFromV1Rows(rows, start, end);
-        const a = { timelineRevision: 'v1-samples', segments };
-        validateDayAttribution(a, start, end);
-        const samples = rows.map(toSample);
-        expect(rollupSamples(samples, a, start, end)).toEqual(rollupDay(rows, start));
-        expect(attributeSamples(samples, a, start, end)).toEqual(rows);
-        return segments;
-    };
-    it('preserves the attribution each sample was priced with, mid-day tariff version changes included', () => {
-        const rows = v1(fullDay(start, end), (_, i) => i < 100 ? [82, 301] : i < 200 ? [82, 302] : i < 250 ? [83, null] : [83, 401]);
-        expect(roundTrip(rows)).toEqual([
-            { offset: 0, tariffId: 82, scheduleId: 301 }, { offset: 500, tariffId: 82, scheduleId: 302 },
-            { offset: 1000, tariffId: 83, scheduleId: null }, { offset: 1250, tariffId: 83, scheduleId: 401 },
-        ]);
-    });
-    it('fills gaps from agreeing neighbours, extends edge segments, and leaves disagreeing gaps null', () => {
-        const all = v1(fullDay(start, end), (_, i) => i < 150 ? [82, 301] : [82, 302]);
-        // Leading gap, an interior gap inside 301, a gap spanning the 301->302 change, trailing gap.
-        const rows = all.filter((_, i) => i >= 10 && !(i >= 40 && i < 60) && !(i >= 140 && i < 160) && i < 290);
-        expect(roundTrip(rows)).toEqual([
-            { offset: 0, tariffId: 82, scheduleId: 301 },
-            { offset: 700, tariffId: 82, scheduleId: null },
-            { offset: 800, tariffId: 82, scheduleId: 302 },
-        ]);
-    });
-    it('rejects an empty day and off-grid labels', () => {
-        expect(() => segmentsFromV1Rows([], start, end)).toThrow();
-        expect(() => segmentsFromV1Rows([{ ...sample(new Date(+start + 1000)), tariff_id: 82, tariff_schedule_id: 301 }], start, end)).toThrow();
     });
 });
 

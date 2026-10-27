@@ -62,6 +62,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261025131043_day_record_empty_status.sql',import.meta.url),'utf8'));
         // The single compact store: raw EnergyData, its trigger and the archive job's tables go.
         for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261027120000_drop_energy_data.sql',import.meta.url),'utf8'));
+        for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261027180001_drop_legacy_day_record_state.sql',import.meta.url),'utf8'));
         await pool.query("ALTER TABLE \"Site\" ADD COLUMN user_id text DEFAULT 'owner'");
         await pool.query(`CREATE TABLE "User" (id text PRIMARY KEY, auth_restored_at timestamptz); INSERT INTO "User" VALUES ('owner', NULL)`);
         store = new CompactHistoryStore(pool,15000,async client=>{await client.query('SELECT 1');});
@@ -83,8 +84,8 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         const samples=daySamples();
         const result=await store.writeDay('site',start,samples,fetched,jobOptions.now);
         expect(result).toMatchObject({status:'written',attributionComplete:true,dayStatus:'complete',revision:expect.any(String)});
-        expect((await pool.query('SELECT raw_pruned,sample_count,format_version,metadata_version,status FROM "EnergyDayArchive"')).rows)
-            .toEqual([{raw_pruned:true,sample_count:288,format_version:2,metadata_version:3,status:'complete'}]);
+        expect((await pool.query('SELECT sample_count,format_version,metadata_version,status FROM "EnergyDayArchive"')).rows)
+            .toEqual([{sample_count:288,format_version:2,metadata_version:3,status:'complete'}]);
         const reader=new CompactHistoryReader(store,'America/Chicago');
         expect(await reader.getRawEnergyData('site',start,end)).toEqual(samples);
         expect((await reader.getDailyCoverage('site',start,end,'America/Chicago'))[0]).toMatchObject({count:288,archived:true});
@@ -145,10 +146,10 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         expect(await store.writeDay('site',start,[],fetched,jobOptions.now)).toEqual({status:'checked-empty'});
         // The day's record says Tesla answered it with nothing: no payload, digests, projection or summaries.
         expect((await pool.query(`SELECT status,format_version,metadata_version,sample_count,expected_slots,payload,checksum,codec,axis,payload_checksum,
-            metadata_checksum,first_timestamp,last_timestamp,max_interior_gap_ms,latest_metadata,latest_checksum,attribution,attribution_complete,raw_pruned,fetched_at
+            metadata_checksum,first_timestamp,last_timestamp,max_interior_gap_ms,latest_metadata,latest_checksum,attribution,attribution_complete,fetched_at
             FROM "EnergyDayArchive"`)).rows).toEqual([{status:'empty',format_version:2,metadata_version:3,sample_count:0,expected_slots:288,payload:null,checksum:null,
             codec:null,axis:null,payload_checksum:null,metadata_checksum:null,first_timestamp:null,last_timestamp:null,max_interior_gap_ms:null,latest_metadata:null,
-            latest_checksum:null,attribution:null,attribution_complete:false,raw_pruned:false,fetched_at:fetched}]);
+            latest_checksum:null,attribution:null,attribution_complete:false,fetched_at:fetched}]);
         expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDaySummary"')).rows[0].n).toBe(0);
         expect(await store.getDayRecordState('site',start)).toEqual({status:'empty',fetchedAt:fetched});
     });
@@ -295,7 +296,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         const after=(d:Date,hours:number)=>new Date(+d+hours*3600000);
         const reader=()=>new CompactHistoryReader(store,tz);
         const emptyRow=(overrides:Record<string,unknown>={})=>({site_id:'site',day_start:start,day_end:end,revision:randomUUID(),format_version:2,
-            sample_count:0,expected_slots:288,attribution_complete:false,metadata_version:3,raw_pruned:false,status:'empty',fetched_at:now,...overrides});
+            sample_count:0,expected_slots:288,attribution_complete:false,metadata_version:3,status:'empty',fetched_at:now,...overrides});
         const insertRow=async(row:Record<string,unknown>)=>{
             const keys=Object.keys(row);
             await pool.query(`INSERT INTO "EnergyDayArchive" (${keys.join(',')}) VALUES (${keys.map((_,i)=>`$${i+1}`).join(',')})`,Object.values(row));
@@ -341,7 +342,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
                 .rejects.toThrow('An empty day record has no summaries');
             await pool.query('TRUNCATE "EnergyDayArchive" CASCADE');
             for(const overrides of [{payload:Buffer.from('x')},{checksum:'0'.repeat(64)},{codec:'brotli'},{axis:'grid'},{payload_checksum:'0'.repeat(64)},
-                {sample_count:1},{expected_slots:287},{format_version:1},{metadata_version:2},{fetched_at:null},{raw_pruned:true},{attribution_complete:true},
+                {sample_count:1},{expected_slots:287},{format_version:1},{metadata_version:2},{fetched_at:null},{attribution_complete:true},
                 {attribution:JSON.stringify({timelineRevision:'x',segments:[]})},{status:'open'},{status:null}])
                 await expect(insertRow(emptyRow(overrides))).rejects.toThrow(/violates (check|not-null) constraint/);
         });
@@ -350,7 +351,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         const utcDay=(iso:string)=>new Date(`${iso}T00:00:00Z`);
         const samples=(from:Date,count:number)=>Array.from({length:count},(_,n)=>({site_id:'moved',timestamp:new Date(+from+n*300000),
             load_power:20+n%7,solar_power:n%5,grid_power:(n%9)-4.5,battery_power:(n%3)-1,battery_soc:n%4===0?40+n/10:null}));
-        const rows=async()=>(await pool.query(`SELECT day_start,day_end,sample_count,expected_slots,status,fetched_at,raw_pruned,attribution,
+        const rows=async()=>(await pool.query(`SELECT day_start,day_end,sample_count,expected_slots,status,fetched_at,attribution,
             public.verify_compact_day_metadata(site_id,day_start,false) AS verified FROM "EnergyDayArchive" WHERE site_id='moved' AND status IS DISTINCT FROM 'empty' ORDER BY day_start`)).rows;
         const later=new Date('2026-12-01T00:00:00Z');
         beforeAll(async()=>{
@@ -379,6 +380,30 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             expect(await upsert('America/Chicago')).toBe('America/Chicago');
         });
     });
+    it('has no obsolete pruning flag and preserves populated days across schema reapplication',async()=>{
+        await store.writeDay('site',start,daySamples(),fetched,jobOptions.now);
+        const before=(await pool.query('SELECT * FROM "EnergyDayArchive"')).rows;
+        expect(before[0]).not.toHaveProperty('raw_pruned');
+        // Simulate the pre-cleanup column on a populated table; only this flag goes.
+        await pool.query('ALTER TABLE "EnergyDayArchive" ADD COLUMN raw_pruned boolean NOT NULL DEFAULT true');
+        await pool.query(readFileSync(new URL('../../../db-migrations/20261027180001_drop_legacy_day_record_state.sql',import.meta.url),'utf8'));
+        expect((await pool.query('SELECT * FROM "EnergyDayArchive"')).rows).toEqual(before);
+        expect(await new CompactHistoryReader(store,'America/Chicago').getRawEnergyData('site',start,end)).toEqual(daySamples());
+        expect((await store.readScalarSnapshot('site',start,end,{billing:true,coverage:true})).coverage[0].count).toBe(288);
+    });
+    it.each(['format_version','metadata_version'])('refuses schema cleanup when legacy %s records remain',async(column)=>{
+        await store.writeDay('site',start,daySamples(),fetched,jobOptions.now);
+        const client=await pool.connect();
+        try {
+            await client.query('BEGIN');
+            // Loosen only the version constraint to model a pre-cleanup legacy row.
+            await client.query(`ALTER TABLE "EnergyDayArchive" DROP CONSTRAINT "EnergyDayArchive_${column}_check",
+                DROP CONSTRAINT "EnergyDayArchive_v2_record_check", DROP CONSTRAINT "EnergyDayArchive_attribution_check"`);
+            await client.query(`UPDATE "EnergyDayArchive" SET ${column}=1`);
+            await expect(client.query(readFileSync(new URL('../../../db-migrations/20261027180001_drop_legacy_day_record_state.sql',import.meta.url),'utf8')))
+                .rejects.toThrow('Legacy energy day records remain');
+        } finally { await client.query('ROLLBACK');client.release(); }
+    });
     it('restricts both tables and function execution to service access'    , async () => {
         for (const table of ['EnergyDayArchive','EnergyDaySummary']) {
             const result = await pool.query(`SELECT relrowsecurity FROM pg_class WHERE oid=$1::regclass`, [`"${table}"`]);
@@ -402,7 +427,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             const row={site_id:'site',day_start:start,day_end:end,revision:randomUUID(),format_version:2,codec:archive.codec,axis:archive.axis,checksum:archive.sha256,
                 payload:archive.data,sample_count:meta.sampleCount,expected_slots:archive.expectedSlots,attribution_complete:meta.attributionComplete,
                 first_timestamp:meta.first,last_timestamp:meta.last,max_interior_gap_ms:meta.maxInteriorGapMs,metadata_checksum:meta.checksum,metadata_version:3,
-                attribution:JSON.stringify(meta.attribution),status:'open',fetched_at:now,raw_pruned:true,...overrides};
+                attribution:JSON.stringify(meta.attribution),status:'open',fetched_at:now,...overrides};
             const keys=Object.keys(row);
             await pool.query(`INSERT INTO "EnergyDayArchive" (${keys.join(',')}) VALUES (${keys.map((_,i)=>`$${i+1}`).join(',')})`,Object.values(row));
             for(const s of meta.summaries) await pool.query(`INSERT INTO "EnergyDaySummary" VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
@@ -436,6 +461,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             ['a v2 record on metadata 2',{metadata_version:2}],
             ['metadata 3 without attribution',{attribution:null}],
             ['an attribution without segments',{attribution:JSON.stringify({timelineRevision:'x'})}],
+            ['format 1',{format_version:1}],
             ['format 3',{format_version:3}],
         ])('rejects %s',async(_,overrides)=>{
             await expect(insertV2(overrides)).rejects.toThrow(/violates check constraint/);

@@ -1,13 +1,19 @@
 import { describe,expect,it } from 'vitest';
-import { buildDayMetadata,buildDayMetadataV3,verifyDayMetadata } from './compact-day-metadata';
+import { buildDayMetadataV3,verifyDayMetadata,type SummarizedHistoryDay } from './compact-day-metadata';
 import type { DayAttribution } from './day-attribution';
 import { toSample } from './compact-energy';
 import type { EnergyData } from '../db-types';
 const start=new Date('2026-10-01T05:00:00Z'); const end=new Date('2026-10-02T05:00:00Z');
 const sample=(offset:number):EnergyData=>({site_id:'site',timestamp:new Date(+start+offset),tariff_id:1,tariff_schedule_id:2,
     load_power:20,solar_power:3,grid_power:5,battery_power:-2,battery_soc:null});
+it('rejects valid legacy metadata rather than keeping an implicit fallback',()=>{
+    const current=buildDayMetadataV3([toSample(sample(0))],{timelineRevision:'fixture',segments:[{offset:0,tariffId:1,scheduleId:2}]},start,end);
+    // Golden metadata-2 digest for this single sample, produced before removing the legacy builder.
+    const legacy={...current,checksumVersion:2,attribution:undefined,checksum:'4163cc4b432fde3feb5c6508d3c6dfade8b13c28076d03629443be9ece9cec31'} as unknown as SummarizedHistoryDay;
+    expect(()=>verifyDayMetadata(legacy)).toThrow('Day metadata mismatch');
+});
 it('checksums daily totals and exact coverage including gaps',()=>{
-    const meta=buildDayMetadata([sample(0),sample(300000),sample(2700000)],start,end,true);
+    const meta=buildDayMetadataV3([sample(0),sample(300000),sample(2700000)].map(toSample),{timelineRevision:'fixture',segments:[{offset:0,tariffId:1,scheduleId:2}]},start,end);
     expect(meta).toMatchObject({sampleCount:3,first:start,last:new Date(+start+2700000),maxInteriorGapMs:2400000});
     expect(()=>verifyDayMetadata(meta)).not.toThrow();
     const corrupted=structuredClone(meta);corrupted.summaries[0].grid_power++;
@@ -30,7 +36,7 @@ describe('metadata checksum v3 (samples x segments)',()=>{
             {...meta,attribution:{...attribution,segments:[attribution.segments[0],{offset:480,tariffId:1,scheduleId:4}]}},
             {...meta,attribution:undefined},
             {...meta,checksumVersion:2 as const},
-        ]) expect(()=>verifyDayMetadata(changed)).toThrow();
+        ]) expect(()=>verifyDayMetadata(changed as unknown as SummarizedHistoryDay)).toThrow();
         const corrupted=structuredClone(meta);corrupted.summaries[0].load_power++;
         expect(()=>verifyDayMetadata(corrupted)).toThrow('Day metadata mismatch');
     });
@@ -41,11 +47,5 @@ describe('metadata checksum v3 (samples x segments)',()=>{
         expect(()=>verifyDayMetadata(meta)).not.toThrow();
         expect(()=>verifyDayMetadata({...meta,attributionComplete:true})).toThrow('Day metadata mismatch');
     });
-    it('keeps v2 digests verifying, and they never carry an attribution',()=>{
-        const v2=buildDayMetadata([sample(0)],start,end,true);
-        expect(v2.checksumVersion).toBe(2);
-        expect(()=>verifyDayMetadata(v2)).not.toThrow();
-        expect(()=>verifyDayMetadata({...v2,attribution})).toThrow('Day metadata mismatch');
-        expect(()=>verifyDayMetadata({...v2,checksumVersion:1})).toThrow('Day metadata mismatch');
-    });
+
 });
