@@ -279,6 +279,13 @@ Tesla token refresh behavior:
   Tesla's rotation outcome unknown. Persistence failures use `stage=persistence`
   on `tesla.refresh.failed`; only `succeeded` confirms a guarded database save.
   Instrumentation does not change refresh deadlines, fallback, or retry policy.
+- Once an account refresh lease is acquired, the token exchange has its own
+  18-second deadline and is registered with the request's `after()` lifecycle.
+  A shorter caller deadline can stop the caller waiting without cancelling the
+  exchange or releasing its lease before the guarded save and cleanup finish.
+  In contexts without a request lifecycle the caller must keep the process alive.
+  Transport failure, process termination, or a failed save can still leave the
+  rotation outcome unknown; a detached deadline cannot recover a lost response.
 - Home, Profile, Products, and site-page renders establish Axiom scopes alongside
   the existing API scopes. Page redirects keep their control flow and never log
   destinations, query strings, or page props. `auth.session.rejected` distinguishes

@@ -47,6 +47,7 @@ async function setup(terminal = false, hungCleanup = false) {
 
 it('releases the refresh lock through the real database wrapper after the parent deadline expires', async () => {
   const { queries, finished } = await setup();
+  await vi.advanceTimersByTimeAsync(18000);
   await finished();
   expect(queries.some(sql => sql.includes('SET is_refreshing = 0'))).toBe(true);
 });
@@ -59,7 +60,7 @@ it('atomically revokes and releases after terminal failure even when the parent 
 
 it('bounds cleanup independently when its database query hangs', async () => {
   const { queries, release, finished } = await setup(false, true);
-  await vi.advanceTimersByTimeAsync(1000);
+  await vi.advanceTimersByTimeAsync(19000);
   await finished();
   expect(queries.some(sql => sql.includes('SET is_refreshing = 0'))).toBe(true);
   expect(release).toHaveBeenCalledWith(true);
