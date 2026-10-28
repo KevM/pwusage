@@ -91,20 +91,20 @@ describe('dev-only database scripts stay away from prod', () => {
         expect(restore.indexOf('psql')).toBe(restore.indexOf('psql -X -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f scripts/assert-dev-database.sql'));
     });
 
-    it('restores data, the EnergyData subset and the scrub in one transaction that stops on errors', () => {
+    it('restores data, the day-record subset and the scrub in one transaction that stops on errors', () => {
         expect(stepNamed(verifyDb, 'Restore to Dev DB')).toMatch(
-            /psql -X --single-transaction -v ON_ERROR_STOP=1 "\$DEV_DATABASE_URL" -f data\.sql -f scripts\/load-dev-energy-data\.sql -f scripts\/sanitize-dev-copy\.sql < dev-energy-data\.csv/,
+            /psql -X --single-transaction -v ON_ERROR_STOP=1 "\$DEV_DATABASE_URL" -f data\.sql -f scripts\/load-dev-energy-data\.sql -f scripts\/sanitize-dev-copy\.sql$/m,
         );
     });
 
     it('downloads only the energy history subset dev keeps, not the full history', () => {
         const dump = stepNamed(verifyDb, 'Dump Production DB');
         const data = dump.split('\n').find((line) => line.includes('-f data.sql'));
-        // Unquoted: the CLI reads -x as a CSV list (see dump-db-backup.sh). Raw rows and the
-        // day records that replace them both come from the export instead.
+        // Unquoted: the CLI reads -x as a CSV list. Day records come from the export instead;
+        // EnergyData stays excluded for a production copy taken before it is dropped.
         const excluded = data?.match(/ -x (\S+)/)?.[1].split(',').sort();
         expect(excluded).toEqual(['public.EnergyData', 'public.EnergyDayArchive', 'public.EnergyDaySummary']);
-        expect(dump).toMatch(/-f scripts\/export-dev-energy-data\.sql > dev-energy-data\.csv/);
+        expect(dump).toMatch(/-f scripts\/export-dev-energy-data\.sql$/m);
         // Exported first, so every Site and Tariff a row references is already in data.sql.
         expect(dump.indexOf('export-dev-energy-data.sql')).toBeLessThan(dump.indexOf('-f data.sql'));
     });
@@ -115,7 +115,7 @@ describe('dev-only database scripts stay away from prod', () => {
         expect(exportSql).not.toMatch(/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE)\b/i);
     });
 
-    it('exports the same EnergyData window that the prune keeps', () => {
+    it('exports the same day-record window that the prune keeps', () => {
         const windowOf = (file: string) => readFileSync(file, 'utf8').match(/interval '(\d+ days)'/)?.[1];
         expect(windowOf('scripts/export-dev-energy-data.sql')).toBeDefined();
         expect(windowOf('scripts/export-dev-energy-data.sql')).toBe(windowOf('scripts/prune-dev-copy.sql'));
@@ -128,10 +128,10 @@ describe('dev-only database scripts stay away from prod', () => {
         expect(dump).toContain('--schema supabase_migrations');
     });
 
-    it('also excludes managed Supabase tables from full and daily backup data', () => {
+    it('also excludes managed Supabase tables from backup data', () => {
         const script = readFileSync('scripts/dump-db-backup.sh', 'utf8');
         const dumps = script.split('\n').filter((line) => line.trimStart().startsWith('supabase db dump') && line.includes('--data-only'));
-        expect(dumps).toHaveLength(2);
+        expect(dumps).toHaveLength(1);
         for (const dump of dumps) expect(dump).toMatch(/--schema public(?:\s|$)/);
     });
 

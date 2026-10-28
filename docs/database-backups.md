@@ -6,23 +6,30 @@ has no automatic backups and a 5 GB monthly egress quota shared with the app.
 
 ## What runs
 
-| Kind | When | Contents | Folder | Kept |
-|---|---|---|---|---|
-| `daily` | Every day, 09:23 UTC | Every table except `EnergyData`, plus the last 3 days of `EnergyData` (`energy-recent.csv`) | `db-backup/daily/` | 14 |
-| `weekly` | Sundays, 09:41 UTC | Complete | `db-backup/weekly/` | 8 |
-| `pre-migration` | Before migrations, on merges to `main` that change them | Complete | `db-backup/pre-migration/` | 10 |
+| Kind | When | Folder | Kept |
+|---|---|---|---|
+| `daily` | Every day, 09:23 UTC | `db-backup/daily/` | the newest 14, plus the newest of each of the 8 weeks before them |
+| `pre-migration` | Before migrations, on merges to `main` that change them | `db-backup/pre-migration/` | 10 |
 
-`EnergyData` history is about 90% of a dump and can be re-imported from Tesla
-(billable), so daily backups skip it. Measured 2026-10-15 against the dev copy of
-production: a full dump is about 67 MB of egress and a daily one about 3 MB
-(2.2 MB of tables plus 0.9 MB of recent readings), roughly 0.38 GB a month.
+Every backup is a complete dump of the `public` schema. Energy history is compact
+day records (`EnergyDayArchive` + `EnergyDaySummary`, about 20 MB on production
+on 2026-10-27), so every backup holds all of it. Daily retention keeps weekly
+copies too, so there is no separate weekly run (weeks are UTC, Monday to Sunday).
+The `db-backup/weekly/` folder holds the last weekly backups from before
+2026-10-27; retention no longer touches it, so delete them by hand once the
+daily folder has eight weeks of its own.
+
+Until 2026-10-27 raw 5-minute `EnergyData` held the history: daily backups then
+skipped it (keeping 3 days in `energy-recent.csv`) and only weekly and
+pre-migration backups were complete. The pre-migration backup taken before
+`20261027120000_drop_energy_data` is the last one that holds `EnergyData`.
 
 Backups made before 2026-10-15 sit directly under `db-backup/` as
 `backup-<timestamp>.zip`. Retention never touches them; delete them by hand when
 they are no longer wanted.
 
 Everything is defined in one place: `cmd/next-app/scripts/db-backup-kinds.ts`
-(folders, retention, full or daily dump) and `.github/workflows/db-backup.yml`
+(folders, retention) and `.github/workflows/db-backup.yml`
 (schedule). To take a backup now: Actions → **Database Backup** → **Run workflow**.
 
 Data dumps explicitly select `--schema public`. Supabase-managed `auth` and
@@ -34,15 +41,31 @@ The separate prod -> dev copy that CI makes for migration PRs is described in
 [`dev-database-copy.md`](./dev-database-copy.md).
 
 Backups use a direct or session connection. `dump-db-backup.sh` switches hosted
-Supavisor URLs from transaction port 6543 to session port 5432 for every dump
-and recent-readings export. This keeps backup session settings out of the
+Supavisor URLs from transaction port 6543 to session port 5432 for every dump. This keeps backup session settings out of the
 application's transaction pool; direct and local URLs are preserved.
+
+### Measured size and transfer
+
+The 2026-10-27 daily backup was **17,337,053 bytes zipped** and contained
+**37,989,353 bytes of SQL** (37,951,149 data, 37,907 schema, 297 roles), plus
+41 bytes of locally generated backup metadata. At the same size, 30 daily
+exports produce about **1.14 GB of SQL a month**, or about **23%** of the
+documented 5 GB quota, before protocol traffic and schema-catalog query results.
+This is an export-size estimate, not a measurement of Supabase's billed egress.
+Compression happens after the database export, so the 17.34 MB ZIP does not
+represent database transfer. Pre-migration dumps and application traffic add to
+the monthly total; history growth changes this estimate.
+
+Keep the daily schedule for now and remeasure as history grows. Reducing backup
+frequency changes the recovery point; do not restore partial dumps to save
+transfer. See the [post-migration validation](plans/2026-10-27-backup-validation-results.md).
 
 ## Safety checks
 
 - **Verified before upload.** `verify-db-backup.ts` rejects a missing or empty
-  file, a dump cut off inside a table, a full backup without `User`, `Site` or
-  `EnergyData` rows, and a daily backup that still contains `EnergyData`. A failed
+  file, a dump cut off inside a table, and a backup without `User` or `Site`
+  rows or without energy history (day records with their summaries; raw
+  `EnergyData` in a backup from before 2026-10-27). A failed
   `supabase db dump` can leave an empty file behind; it fails here instead of
   being stored.
 - **Old backups go only after a new one lands.** Retention runs after a verified
@@ -52,23 +75,17 @@ application's transaction pool; direct and local URLs are preserved.
   target with tables in its `public` schema, so it cannot overwrite production or
   dev. It loads everything in one transaction: a failure leaves the target empty.
 - **Restores check what they are given.** Before touching the target, the restore
-  runs the same verification on `--full` (it must be a complete backup) and
-  `--daily`. Each backup carries a `backup-info` file (kind, dump type, UTC time
-  taken); the restore refuses a daily backup that is not newer than the full one.
-  Full backups from before `backup-info` existed are accepted, since every daily
-  backup is newer than them.
+  runs the same verification on the backup. Each backup carries a `backup-info`
+  file (kind and UTC time taken); backups from before it existed are accepted.
 
 ## Restoring
 
-1. **Pick the backups.** Use the newest daily backup and the newest weekly (or
-   pre-migration) backup taken *before* it. A full backup on its own also works.
+1. **Pick the backup.** The newest one (usually the newest daily).
 
    ```bash
    export BLOB_READ_WRITE_TOKEN=<BACKUP_BLOB_READ_WRITE_TOKEN value>
    vercel blob list --prefix db-backup/daily/
-   vercel blob list --prefix db-backup/weekly/
-   vercel blob get db-backup/weekly/<file>.zip --access private -o weekly.zip
-   vercel blob get db-backup/daily/<file>.zip --access private -o daily.zip
+   vercel blob get db-backup/daily/<file>.zip --access private -o backup.zip
    ```
 
    The backups contain user data and Tesla tokens. Keep the files private and
@@ -81,19 +98,14 @@ application's transaction pool; direct and local URLs are preserved.
 
    ```bash
    cd cmd/next-app
-   bash scripts/restore-db-backup.sh --target "<new database URL>" --full weekly.zip --daily daily.zip
+   bash scripts/restore-db-backup.sh --target "<new database URL>" --backup backup.zip
    ```
 
-   The schema and all tables except `EnergyData` come from the daily backup.
-   `EnergyData` history comes from the weekly backup, minus rows for sites deleted
-   since, and the daily backup's last 3 days replace any overlap. Rows inside a day
-   the daily backup holds only as a pruned archive (`raw_pruned`) are skipped: that
-   day was compacted after the weekly backup, and its archive is its only copy.
-   `EnergyData`'s
-   id sequence is then moved past every restored row, so new readings cannot
-   reuse an id. Readings between
-   the weekly backup and those 3 days are not in either backup; re-import them
-   from Tesla if needed.
+   Days after the backup was taken are not in it; the app refetches them from
+   Tesla (gap-heal and the importer plan missing days).
+
+   A backup from before 2026-10-27 has raw `EnergyData`; restore it with the
+   version of this script from that time (`git show <commit>:cmd/next-app/scripts/restore-db-backup.sh`).
 
 4. **Re-create what the backups do not contain.** Backups cover the `public`
    schema only. A new project also needs:
@@ -113,8 +125,8 @@ against Supabase's Postgres image instead, which the Supabase CLI already pulls:
 docker run -d --name pwusage-restore-rehearsal -p 127.0.0.1:55443:5432 \
   -e POSTGRES_PASSWORD=rehearsal public.ecr.aws/supabase/postgres:17.11.0.004
 bash scripts/restore-db-backup.sh --target "postgresql://postgres:rehearsal@127.0.0.1:55443/postgres" \
-  --full weekly.zip --daily daily.zip
-docker rm -f pwusage-restore-rehearsal   # the restored data includes Tesla tokens
+  --backup backup.zip
+docker rm -fv pwusage-restore-rehearsal  # remove its anonymous volumes too
 ```
 
 As on Supabase, `postgres` is not a superuser there; the restore's paused-trigger
@@ -125,6 +137,20 @@ disposable plain Postgres, in CI and locally (set `DB_BACKUP_PG_BIN` to the
 Postgres `bin` directory if `pg_config` is not on `PATH`).
 
 ### Rehearsal record
+
+**2026-10-27, production after the compact-store cutover.** The actual private
+daily ZIP from the successful [backup run](https://github.com/KevM/pwusage/actions/runs/40530899097)
+restored using the unchanged restore script into a network-isolated local
+Supabase Postgres 17.11.0.004 container in 0.919 seconds (warm image, excluding
+download/startup). All 13 tables matched the dump's row counts and order-independent
+COPY hashes across every column: 79 users, 84 sites, 6,796 day records and
+17,734 summaries. All seven sequence states matched. All 6,792 non-empty days
+decoded to 1,861,732 readings and passed metadata and compressed-payload checksum
+checks; four days were explicitly empty. No summary orphan or disabled public
+trigger remained, both history tables retained RLS, and `EnergyData` was absent.
+The [validation report](plans/2026-10-27-backup-validation-results.md) records
+the ZIP identity, scope and transfer estimate. This verifies application data,
+not a new hosted project's Vault/cron setup or migration ledger.
 
 **2026-10-15**, from the dev database (a copy of production): a full and a daily
 backup, both passing `verify-db-backup.ts`, restored together into the Supabase

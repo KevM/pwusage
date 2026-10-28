@@ -2,6 +2,35 @@ import { describe, it, expect } from 'vitest';
 import { Schedule } from './schedule';
 import { Tariff } from './db';
 
+describe('same-month season spanning the year', () => {
+    const tariff: Tariff = {
+        id: 1, site_id: 'site', name: 'Utility', updated: new Date('2026-09-10T00:00:00Z'),
+        seasons: [{
+            id: 1, tariff_id: 1, name: 'Rest of year', from_month: 9, from_day: 11,
+            to_month: 9, to_day: 7, buy_rate: .3, sell_rate: .04,
+            schedules: [{ id: 1, season_id: 1, name: 'Standard', buy_rate: .3, sell_rate: .04,
+                from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+        }],
+    };
+
+    it.each(['2026-09-01', '2026-09-07', '2026-09-11', '2026-09-30', '2026-10-01', '2027-01-01', '2027-08-31'])
+        ('matches %s within a Sep 11 to Sep 7 year-wrapping season', date => {
+            expect(new Schedule([tariff], 'Australia/Melbourne').getTariffPeriod(new Date(`${date}T02:00:00Z`))?.season.id).toBe(1);
+        });
+
+    it.each(['2026-09-08', '2026-09-09', '2026-09-10'])
+        ('leaves %s for the explicit daily seasons', date => {
+            expect(new Schedule([tariff], 'Australia/Melbourne').getTariffPeriod(new Date(`${date}T02:00:00Z`))).toBeNull();
+        });
+
+    it('keeps a non-wrapping same-month season confined to its inclusive dates', () => {
+        const shorter = { ...tariff, seasons: [{ ...tariff.seasons![0], from_day: 7, to_day: 11 }] };
+        const schedule = new Schedule([shorter], 'Australia/Melbourne');
+        for (const day of [7, 11]) expect(schedule.getTariffPeriod(new Date(`2026-09-${String(day).padStart(2, '0')}T02:00:00Z`))).not.toBeNull();
+        for (const date of ['2026-09-06', '2026-09-12', '2026-10-08']) expect(schedule.getTariffPeriod(new Date(`${date}T02:00:00Z`))).toBeNull();
+    });
+});
+
 // Reproduces the "Harrison" site (We energies / CGS NM):
 //   timezone: America/Chicago (site metadata)
 //   Winter (Oct 1 – May 31): Off-Peak 20:00–08:00 every day, Off-Peak all-day Sat–Sun, On-Peak 08:00–20:00 every day

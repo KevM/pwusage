@@ -1,186 +1,116 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-
+import { loginAttemptCookieName, readLoginAttempt } from '@/lib/tesla-login-attempt';
 const mocks = vi.hoisted(() => ({
-    cookies: vi.fn(),
-    redirect: vi.fn(),
-    getAppBaseUrl: vi.fn(() => 'http://localhost:5173'),
-    cookieSet: vi.fn(),
-    cookieDelete: vi.fn(),
+    cookies: vi.fn(), redirect: vi.fn((path: string) => { throw Object.assign(new Error('Redirect'), { digest: `NEXT_REDIRECT;replace;${path};307;` }); }), cookieSet: vi.fn(), cookieDelete: vi.fn(),
+    getAll: vi.fn((): { name: string; value: string }[] => []),
 }));
-
-vi.mock('next/headers', () => ({
-    cookies: mocks.cookies
-}));
-
-vi.mock('next/navigation', () => ({
-    redirect: mocks.redirect
-}));
-
-vi.mock('@/lib/url-utils', () => ({
-    getAppBaseUrl: mocks.getAppBaseUrl
-}));
-
-import { buildTeslaAuthorizeUrl } from '@/lib/tesla-authorize-url';
+vi.mock('next/headers', () => ({ cookies: mocks.cookies }));
+vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 import { GET } from './route';
-
-// File scope, not inside either describe: the only other reset is the beforeEach
-// in 'GET /login', so a stub leaked from there would reach a test in a sibling or
-// top-level describe with nothing to restore it.
-afterEach(() => {
-    vi.unstubAllEnvs();
+async function startLogin(request: NextRequest) {
+    await expect(GET(request)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
+}
+beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID', 'tesla-client-id');
+    vi.stubEnv('VERCEL_ENV', 'preview');
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'http://localhost:5173');
+    mocks.getAll.mockReturnValue([]);
+    mocks.cookies.mockResolvedValue({ set: mocks.cookieSet, delete: mocks.cookieDelete, getAll: mocks.getAll });
 });
-
+afterEach(() => vi.unstubAllEnvs());
+function issuedAttempt() {
+    const authorize = new URL(mocks.redirect.mock.calls.at(-1)?.[0] as string);
+    const state = authorize.searchParams.get('state') ?? '';
+    const name = loginAttemptCookieName(state);
+    const write = mocks.cookieSet.mock.calls.find(call => call[0] === name);
+    if (!write) throw new Error('No attempt cookie');
+    const attempt = readLoginAttempt(write[1] as string);
+    if (!attempt) throw new Error('Invalid attempt cookie');
+    return { authorize, state, attempt, options: write[2] as Record<string, unknown> };
+}
 describe('GET /login', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-        process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID = 'tesla-client-id';
-        mocks.cookies.mockResolvedValue({
-            set: mocks.cookieSet,
-            delete: mocks.cookieDelete,
+    it('binds state, nonce, destination and mobile PKCE metadata to one expiring cookie', async () => {
+        const challenge = 'A'.repeat(43);
+        const mobileState = 'B'.repeat(32);
+        await startLogin(new NextRequest(`http://localhost:5173/login?callback=/settings&mobile_challenge=${challenge}&mobile_state=${mobileState}`));
+        const { authorize, state, attempt, options } = issuedAttempt();
+        expect(state).toMatch(/^v2\.[a-f0-9]{32}$/);
+        expect(attempt).toMatchObject({ callback: '/settings', mobileChallenge: challenge, mobileState });
+        expect(attempt.mobileAttemptId).toMatch(/^[a-f0-9-]{36}$/);
+        expect(authorize.searchParams.get('nonce')).toBe(attempt.nonce);
+        expect(authorize.searchParams.get('client_id')).toBe('tesla-client-id');
+        expect(authorize.searchParams.get('redirect_uri')).toBe('http://localhost:5173/auth/tesla-callback');
+        expect(authorize.searchParams.get('prompt_missing_scopes')).toBe('true');
+        expect(authorize.searchParams.has('prompt')).toBe(false);
+        expect(options).toMatchObject({ httpOnly: true, sameSite: 'lax', path: '/', maxAge: 600 });
+        expect(mocks.cookieSet).toHaveBeenCalledTimes(1);
+        expect(mocks.cookieDelete).not.toHaveBeenCalled();
+    });
+    it('never overwrites or clears another attempt', async () => {
+        await startLogin(new NextRequest('http://localhost:5173/login'));
+        const first = issuedAttempt();
+        await startLogin(new NextRequest('http://localhost:5173/login'));
+        const second = issuedAttempt();
+        expect(first.state).not.toBe(second.state);
+        expect(first.attempt.nonce).not.toBe(second.attempt.nonce);
+        expect(mocks.cookieSet.mock.calls[0][0]).not.toBe(mocks.cookieSet.mock.calls[1][0]);
+        expect(mocks.cookieDelete).not.toHaveBeenCalled();
+    });
+    it.each(['//evil.com', '/\\evil.com', 'https://evil.com', 'javascript:alert(1)', '/bad\npath', '/' + 'a'.repeat(1024)])(
+        'does not store unsafe or oversized destination %s', async callback => {
+            await startLogin(new NextRequest(`http://localhost:5173/login?callback=${encodeURIComponent(callback)}`));
+            expect(issuedAttempt().attempt.callback).toBeUndefined();
         });
-    });
-
-    it('sets state and nonce cookies and redirects to Tesla OAuth URL', async () => {
-        const req = new NextRequest('http://localhost:5173/login');
-        await GET(req);
-
-        expect(mocks.cookieSet).toHaveBeenCalledWith('auth_state', expect.any(String), expect.any(Object));
-        expect(mocks.cookieSet).toHaveBeenCalledWith('auth_nonce', expect.any(String), expect.any(Object));
-        expect(mocks.redirect).toHaveBeenCalledWith(expect.stringContaining('https://auth.tesla.com/oauth2/v3/authorize'));
-    });
-
-    it('redirects with prompt_missing_scopes and never forces prompt=login', async () => {
-        const req = new NextRequest('http://localhost:5173/login');
-        await GET(req);
-
-        const redirectUrl = mocks.redirect.mock.calls[0][0] as string;
-        expect(redirectUrl).toContain('prompt_missing_scopes=true');
-        expect(redirectUrl).not.toContain('prompt=login');
-    });
-
-    // The route<->builder contract. The builder tests pin the builder and the
-    // other route tests pin the cookies, but nothing connected them: every wiring
-    // change at the call site was silent. Expected clientId is read back from the
-    // env rather than hard-coded, so a hard-coded id at the call site fails here.
-    it('redirects to the authorize URL built from the exact state and nonce it issued as cookies', async () => {
-        const req = new NextRequest('http://localhost:5173/login');
-        await GET(req);
-
-        const cookieValue = (name: string): string => {
-            const call = mocks.cookieSet.mock.calls.find((args) => args[0] === name);
-            if (!call) throw new Error(`expected a ${name} cookie write`);
-            return call[1] as string;
-        };
-        const clientId = process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID;
-        if (clientId === undefined) throw new Error('expected PUBLIC_TESLA_OAUTH_CLIENT_ID to be set');
-
-        expect(mocks.redirect).toHaveBeenCalledWith(buildTeslaAuthorizeUrl({
-            state: cookieValue('auth_state'),
-            nonce: cookieValue('auth_nonce'),
-            callbackUrl: 'http://localhost:5173/auth/tesla-callback',
-            clientId,
-        }));
-    });
-
-    it('stores auth_callback cookie for safe relative paths', async () => {
-        const req = new NextRequest('http://localhost:5173/login?callback=/settings');
-        await GET(req);
-
-        expect(mocks.cookieSet).toHaveBeenCalledWith('auth_callback', '/settings', expect.any(Object));
-    });
-
-    it('rejects //evil, /\\evil, and absolute URLs for auth_callback cookie', async () => {
-        const unsafeCallbacks = [
-            '//evil.com',
-            '/\\evil.com',
-            'https://evil.com',
-            'javascript:alert(1)'
-        ];
-
-        for (const unsafe of unsafeCallbacks) {
-            vi.clearAllMocks();
-            const req = new NextRequest(`http://localhost:5173/login?callback=${encodeURIComponent(unsafe)}`);
-            await GET(req);
-
-            expect(mocks.cookieSet).not.toHaveBeenCalledWith('auth_callback', expect.any(String), expect.any(Object));
-        }
-    });
-
-    it('binds valid native login state and challenge to a short lived server attempt', async () => {
-        const challenge = 'A'.repeat(43);
-        const state = 'B'.repeat(32);
-        const req = new NextRequest(`http://localhost:5173/login?mobile_challenge=${challenge}&mobile_state=${state}`);
-        await GET(req);
-
-        expect(mocks.cookieSet).toHaveBeenCalledWith('auth_mobile_attempt', expect.any(String), expect.objectContaining({
-            httpOnly: true, path: '/', maxAge: 600,
-        }));
-        expect(mocks.cookieSet).toHaveBeenCalledWith('auth_mobile_challenge', challenge, expect.any(Object));
-        expect(mocks.cookieSet).toHaveBeenCalledWith('auth_mobile_state', state, expect.any(Object));
-    });
-
-    it('rejects malformed mobile callbacks instead of starting a web login', async () => {
-        const req = new NextRequest('http://localhost:5173/login?mobile_challenge=bad&mobile_state=also-bad');
-        const response = await GET(req);
+    it('rejects malformed mobile parameters without issuing cookies', async () => {
+        const response = await GET(new NextRequest('http://localhost:5173/login?mobile_challenge=bad&mobile_state=bad'));
         expect(response.status).toBe(400);
-        expect(mocks.redirect).not.toHaveBeenCalled();
+        expect(mocks.cookieSet).not.toHaveBeenCalled();
     });
-
-    it('intercepts instead of throwing when PUBLIC_TESLA_OAUTH_CLIENT_ID is unset', async () => {
-        vi.stubEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID', '');
-        const req = new NextRequest('http://localhost:5173/login');
-
-        const response = await GET(req);
-
+    it.each(['', '   '])('fails cleanly when the client id is missing or blank', async clientId => {
+        vi.stubEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID', clientId);
+        const response = await GET(new NextRequest('http://localhost:5173/login'));
         expect(response.status).toBe(500);
-        expect(await response.json()).toEqual({ error: 'Server misconfigured' });
-        expect(mocks.redirect).not.toHaveBeenCalled();
+        expect(mocks.cookieSet).not.toHaveBeenCalled();
+        expect(mocks.cookieDelete).not.toHaveBeenCalled();
     });
-
-    // The whole point of intercepting: a mobile sign-in must still be handed the
-    // pwusage://auth/callback redirect, or the app reports `invalidCallback` and
-    // shows a raw 500 page rather than `AuthError.serverRejectedLogin`.
-    it('redirects a mobile attempt to the app callback when the client id is unset', async () => {
+    it('returns a mobile configuration error to the fixed app callback', async () => {
         vi.stubEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID', '');
-        const challenge = 'A'.repeat(43);
-        const state = 'B'.repeat(32);
-        const req = new NextRequest(`http://localhost:5173/login?mobile_challenge=${challenge}&mobile_state=${state}`);
-
-        const response = await GET(req);
-
-        const location = new URL(response.headers.get('location') as string);
+        const response = await GET(new NextRequest(`http://localhost:5173/login?mobile_challenge=${'A'.repeat(43)}&mobile_state=${'B'.repeat(32)}`));
+        const location = new URL(response.headers.get('location') ?? '');
         expect(location.protocol).toBe('pwusage:');
         expect(location.searchParams.get('error')).toBe('login_unavailable');
-        expect(location.searchParams.get('state')).toBe(state);
+        expect(location.searchParams.get('state')).toBe('B'.repeat(32));
+    });
+    it.each(['next-router-prefetch', 'purpose', 'sec-purpose'])('ignores speculative %s requests', async header => {
+        const response = await GET(new NextRequest('http://localhost:5173/login', { headers: { [header]: 'prefetch' } }));
+        expect(response.status).toBe(204);
+        expect(response.headers.get('cache-control')).toBe('no-store');
+        expect(mocks.cookies).not.toHaveBeenCalled();
         expect(mocks.redirect).not.toHaveBeenCalled();
     });
-
-    // Guard is positioned before the cookie writes, so a misconfigured deploy
-    // must not leave a half-started attempt behind.
-    it('writes no cookies and clears stale attempt cookies when the client id is unset', async () => {
-        vi.stubEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID', '');
-        const challenge = 'A'.repeat(43);
-        const state = 'B'.repeat(32);
-        const req = new NextRequest(`http://localhost:5173/login?mobile_challenge=${challenge}&mobile_state=${state}`);
-
-        await GET(req);
-
+    it('canonicalizes production aliases before creating cookies and preserves parameters', async () => {
+        vi.stubEnv('VERCEL_ENV', 'production');
+        const response = await GET(new NextRequest('https://deployment.vercel.app/login?callback=%2Fproducts'));
+        expect(response.headers.get('location')).toBe('https://pwusage.fm.rodeo/login?callback=%2Fproducts');
+        expect(mocks.cookies).not.toHaveBeenCalled();
+    });
+    it('pins the production callback even with a misconfigured public URL', async () => {
+        vi.stubEnv('VERCEL_ENV', 'production');
+        vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://wrong.example');
+        await startLogin(new NextRequest('https://pwusage.fm.rodeo/login'));
+        expect(issuedAttempt().authorize.searchParams.get('redirect_uri')).toBe('https://pwusage.fm.rodeo/auth/tesla-callback');
+        expect(issuedAttempt().options.secure).toBe(true);
+    });
+    it('bounds sequential pending attempts without deleting existing attempts', async () => {
+        mocks.getAll.mockReturnValue(Array.from({ length: 8 }, (_, i) => ({
+            name: `auth_attempt_${i.toString(16).padStart(32, '0')}`, value: 'existing',
+        })));
+        const response = await GET(new NextRequest('http://localhost:5173/login'));
+        expect(response.status).toBe(429);
+        expect(response.headers.get('retry-after')).toBe('600');
         expect(mocks.cookieSet).not.toHaveBeenCalled();
-        // Nothing downstream clears these, since we never redirect to Tesla.
-        for (const name of ['auth_state', 'auth_nonce', 'auth_callback', 'auth_mobile_attempt', 'auth_mobile_challenge', 'auth_mobile_state']) {
-            expect(mocks.cookieDelete).toHaveBeenCalledWith(name);
-        }
-    });
-
-    // A whitespace-only value must fail here, not reach Tesla as a blank client_id.
-    it('treats a whitespace-only client id as missing', async () => {
-        vi.stubEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID', '   ');
-        const req = new NextRequest('http://localhost:5173/login');
-
-        const response = await GET(req);
-
-        expect(response.status).toBe(500);
-        expect(mocks.redirect).not.toHaveBeenCalled();
+        expect(mocks.cookieDelete).not.toHaveBeenCalled();
     });
 });

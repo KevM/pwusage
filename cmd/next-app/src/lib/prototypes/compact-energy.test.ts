@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { brotliDecompressSync, gunzipSync } from 'node:zlib';
+import { brotliDecompressSync, gunzipSync, gzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 import type { EnergyData } from '../db-types';
 import { addDaysInSiteTimezone, parseSiteLocalDateToMidnight } from '../date-utils';
-import { encodeDay, decodeDay, decodeDaySamples, encodeDaySamples, rollupDay, type ArchiveCodec, toSample, type EnergySample } from './compact-energy';
+import { decodeDaySamples, encodeDaySamples, rollupDay, type ArchiveCodec, toSample, type EnergySample } from './compact-energy';
+
+import { attributeSamples } from './day-attribution';
 
 const codecs: ArchiveCodec[] = ['gzip', 'brotli'];
 const sample = (timestamp: Date, overrides: Partial<EnergyData> = {}): EnergyData => ({
@@ -13,61 +16,12 @@ const sample = (timestamp: Date, overrides: Partial<EnergyData> = {}): EnergyDat
 const start = new Date('2026-10-01T05:00:00Z');
 const end = new Date('2026-10-02T05:00:00Z');
 
-describe('compact energy prototype', () => {
-    it.each(codecs)('preserves measurements, holes, nullable IDs and exact zero with %s', codec => {
-        const rows = [sample(start), sample(new Date(+start + 600000), { tariff_id: 3, tariff_schedule_id: null, battery_soc: 73.123456789, grid_power: -0 })];
-        const archive = encodeDay(rows, start, end, codec);
-        expect(archive.axis).toBe('grid');
-        expect(archive.expectedSlots).toBe(288);
-        expect(decodeDay(archive)).toEqual(rows);
-    });
-    it.each(['2026-03-08', '2026-11-01'])('preserves every slot across Chicago DST on %s', date => {
-        const from = parseSiteLocalDateToMidnight(date, 'America/Chicago');
-        const to = addDaysInSiteTimezone(from, 1, 'America/Chicago');
-        const rows = Array.from({ length: (+to - +from) / 300000 }, (_, i) => sample(new Date(+from + i * 300000)));
-        const archive = encodeDay(rows, from, to, 'brotli');
-        expect(archive.expectedSlots).toBe(date.includes('03-08') ? 276 : 300);
-        expect(decodeDay(archive)).toEqual(rows);
-    });
-    it('preserves irregular millisecond timestamps without rounding', () => {
-        const rows = [sample(new Date(+start + 123)), sample(new Date(+start + 300456))];
-        const archive = encodeDay(rows, start, end, 'gzip');
-        expect(archive.axis).toBe('offsets');
-        expect(decodeDay(archive)).toEqual(rows);
-    });
-    it('feeds the same detailed analysis inputs after decoding', async () => {
-        const { adaptTeslaData } = await import('../nilm/tesla-adapter');
-        const rows = [sample(start), sample(new Date(+start + 300000), { battery_soc: 0, grid_power: 100 })];
-        expect(adaptTeslaData(decodeDay(encodeDay(rows, start, end, 'brotli')))).toEqual(adaptTeslaData(rows));
-    });
-    it('supports an empty day without inventing zero-energy measurements', () => {
-        const archive = encodeDay([], start, end, 'gzip');
-        expect(decodeDay(archive)).toEqual([]);
-        expect(rollupDay([], start)).toEqual([]);
-    });
-    it('rejects corrupt payloads and checksums', () => {
-        const archive = encodeDay([sample(start)], start, end, 'gzip');
-        expect(() => decodeDay({ ...archive, sha256: 'wrong' })).toThrow();
-        expect(() => decodeDay({ ...archive, data: Buffer.from('broken') })).toThrow();
-    });
-    it('rejects nonfinite, duplicate, unsorted, mixed-site and out-of-day input', () => {
-        for (const rows of [
-            [sample(start, { grid_power: NaN })], [sample(start), sample(start)],
-            [sample(new Date(+start + 300000)), sample(start)],
-            [sample(start), sample(new Date(+start + 300000), { site_id: 'other' })],
-            [sample(end)], [sample(new Date(+start - 1))],
-        ]) expect(() => encodeDay(rows, start, end, 'gzip')).toThrow();
-    });
-    it('groups by historical tariff and schedule and keeps signed energy balances', () => {
-        const rows = [sample(start, { grid_power: 20 }), sample(new Date(+start + 300000), { grid_power: -10 }),
-            sample(new Date(+start + 600000), { tariff_id: 3, tariff_schedule_id: 4, grid_power: 5, battery_power: -2 })];
-        const rollups = rollupDay(rows, start);
-        expect(rollups).toHaveLength(2);
-        expect(rollups[0]).toMatchObject({ tariff_id: 1, tariff_schedule_id: 2, grid_power: 10, sample_count: 2, sample_import_wh: 20, sample_export_wh: 10 });
-        expect(rollups[1]).toMatchObject({ tariff_id: 3, tariff_schedule_id: 4, grid_power: 5, sample_discharge_wh: 2 });
-        const recovered = decodeDay(encodeDay(rows, start, end, 'brotli'));
-        expect(rollupDay(recovered, start)).toEqual(rollups);
-    });
+it('rejects a structurally valid legacy format-1 payload', () => {
+    const header = Buffer.from(JSON.stringify({version:1,site:'site',start:+start,end:+end,axis:'grid',positions:[]}));
+    const length = Buffer.alloc(4); length.writeUInt32LE(header.length);
+    const bytes = Buffer.concat([length,header]);
+    expect(() => decodeDaySamples({codec:'gzip',axis:'grid',expectedSlots:288,
+        sha256:createHash('sha256').update(bytes).digest('hex'),data:gzipSync(bytes)})).toThrow('Invalid header');
 });
 
 describe('compact energy format v2 (samples only)', () => {
@@ -108,13 +62,6 @@ describe('compact energy format v2 (samples only)', () => {
         expect(decodeDaySamples(archive)).toEqual(rows);
         expect(decodeDaySamples(encodeDaySamples([], start, end, 'brotli'))).toEqual([]);
     });
-    it('still reads v1 archives as samples, dropping only the per-sample tariff IDs', () => {
-        const rows = [sample(start, { battery_soc: 40 }), sample(new Date(+start + 300000), { tariff_schedule_id: null })];
-        expect(decodeDaySamples(encodeDay(rows, start, end, 'brotli'))).toEqual(rows.map(toSample));
-    });
-    it('keeps decodeDay v1-only so a v2 payload is never read as tariff-tagged rows', () => {
-        expect(() => decodeDay(encodeDaySamples([v2(start)], start, end, 'gzip'))).toThrow('Invalid header');
-    });
     it('rejects corrupt, mis-identified, nonfinite, duplicate, mixed-site and out-of-day input', () => {
         const archive = encodeDaySamples([v2(start)], start, end, 'gzip');
         expect(() => decodeDaySamples({ ...archive, sha256: 'wrong' })).toThrow();
@@ -124,11 +71,7 @@ describe('compact energy format v2 (samples only)', () => {
             [v2(start), v2(new Date(+start + 300000), { site_id: 'other' })], [v2(end)], [v2(new Date(+start - 1))],
         ]) expect(() => encodeDaySamples(rows, start, end, 'gzip')).toThrow();
     });
-    it('is smaller than v1 for the same day', () => {
-        const rows = Array.from({ length: 288 }, (_, i) => sample(new Date(+start + i * 300000), { load_power: i * 1.37, tariff_schedule_id: i < 100 ? 2 : 5 }));
-        const samples = rows.map(toSample);
-        expect(encodeDaySamples(samples, start, end, 'brotli').data.length).toBeLessThan(encodeDay(rows, start, end, 'brotli').data.length);
-    });
+
 });
 
 it('preserves web and TRMNL cycle billing across historical rate/version changes', async () => {
@@ -144,8 +87,11 @@ it('preserves web and TRMNL cycle billing across historical rate/version changes
     const second = [sample(end, { tariff_id: 3, tariff_schedule_id: 4, grid_power: 10000 }),
         sample(new Date(+end + 300000), { tariff_id: 3, tariff_schedule_id: 4, grid_power: 8243 })];
     const reference = [...first.map(r => ({ ...r, day: start })), ...second.map(r => ({ ...r, day: end }))];
-    const summaries = [...rollupDay(decodeDay(encodeDay(first, start, end, 'brotli')), start),
-        ...rollupDay(decodeDay(encodeDay(second, end, new Date(+end + 86400000), 'brotli')), end)];
+    const roundTrip = (rows: EnergyData[], from: Date, until: Date) => attributeSamples(
+        decodeDaySamples(encodeDaySamples(rows.map(toSample),from,until,'brotli')),
+        {timelineRevision:'fixture',segments:[{offset:0,tariffId:rows[0].tariff_id,scheduleId:rows[0].tariff_schedule_id}]},from,until);
+    const summaries = [...rollupDay(roundTrip(first,start,end),start),
+        ...rollupDay(roundTrip(second,end,new Date(+end+86400000)),end)];
     const web = (priorAggregates: typeof reference | typeof summaries) => EnergyRepo.aggregateUsageByTOU({ siteId: site.id, start, priorAggregates, todayRaw: [], schedule,
         tariffMap: new Map(tariffs.map(t => [t.id, t])), scheduleMap: new Map(schedules.map(s => [s.id, s])) });
     expect(web(summaries)).toEqual(web(reference));

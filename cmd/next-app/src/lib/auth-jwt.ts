@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { logSessionRejection } from './observability';
 
 const AUTH_SECRET = process.env.AUTH_SECRET || 'default-dev-secret-do-not-use-in-prod';
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -61,8 +62,10 @@ export function verifySiteToken(token: string): { sites: string[], roles: string
                 orig_iat: decoded.orig_iat
             };
         }
+        logSessionRejection('invalid-session');
         return null;
-    } catch {
+    } catch (error) {
+        logSessionRejection(error instanceof jwt.TokenExpiredError ? 'expired-session' : 'invalid-session');
         return null;
     }
 }

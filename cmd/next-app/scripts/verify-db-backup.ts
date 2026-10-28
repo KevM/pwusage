@@ -1,11 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { BackupDump } from './db-backup-kinds';
 
 // pg_dump writes `COPY public."User" (...) FROM stdin;`; tolerate quoted or bare names.
 const COPY_HEADER = /^COPY\s+(?:"?public"?\.)?"?([^"\s(]+)"?\s*(?:\(.*\))?\s+FROM\s+stdin;$/;
-const RECENT_ENERGY = 'energy-recent.csv';
 const BACKUP_INFO = 'backup-info';
 const TAKEN_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
@@ -69,23 +67,23 @@ export function countDayRecordsWithSamples(data: string): number {
 }
 
 /**
- * Checks an unpacked backup before it is uploaded, so an empty, truncated or
- * mis-scoped dump fails the run instead of being stored as a good backup.
+ * Checks an unpacked backup before it is uploaded (and before a restore), so an
+ * empty, truncated or mis-scoped dump fails the run instead of being stored as a
+ * good backup. Every backup is a complete dump.
  */
-export async function verifyBackupDirectory(dir: string, dump: BackupDump): Promise<Record<string, number>> {
+export async function verifyBackupDirectory(dir: string): Promise<Record<string, number>> {
     await required(dir, 'roles.sql');
     await required(dir, 'schema.sql');
     const data = await required(dir, 'data.sql');
 
-    // Restores pair a full backup with a newer daily one, so the backup has to
-    // say what it is and when it was taken. Only daily backups require it:
-    // full backups made before backup-info existed are still restorable.
+    // Backups made before backup-info existed are still restorable.
     const info = await readBackupInfo(dir);
-    if (info === undefined) {
-        if (dump === 'small') throw new Error(`${BACKUP_INFO} is missing; daily backups must record when they were taken`);
-    } else {
-        if (info.dump !== dump) throw new Error(`${BACKUP_INFO} says this is a ${info.dump ?? 'unknown'} backup, not ${dump}`);
-        if (!TAKEN_AT.test(info.taken_at ?? '')) throw new Error(`${BACKUP_INFO} has no valid taken_at (expected UTC like 2026-10-15T09:23:05Z)`);
+    if (info !== undefined && !TAKEN_AT.test(info.taken_at ?? '')) {
+        throw new Error(`${BACKUP_INFO} has no valid taken_at (expected UTC like 2026-10-15T09:23:05Z)`);
+    }
+    // Daily backups before 2026-10-27 skipped raw EnergyData history; on their own they are incomplete.
+    if (info?.dump === 'small') {
+        throw new Error('This is a partial daily backup from before 2026-10-27 (no raw EnergyData history). Restore it together with a full backup using restore-db-backup.sh from that time; see docs/database-backups.md.');
     }
 
     const rows = countCopyRows(data);
@@ -96,28 +94,18 @@ export async function verifyBackupDirectory(dir: string, dump: BackupDump): Prom
     // Day records with samples carry their totals in summary rows; records without any were cut off.
     const recordsWithSamples = rows.EnergyDayArchive ? countDayRecordsWithSamples(data) : 0;
     if (recordsWithSamples && !rows.EnergyDaySummary) throw new Error('data.sql has day records but no rows for EnergyDaySummary');
-    if (dump === 'full') {
-        // History lives in raw EnergyData, day records, or both while the migration drains raw.
-        if (!rows.EnergyData && !recordsWithSamples) throw new Error('data.sql has no energy history (EnergyData or EnergyDayArchive)');
-        return rows;
-    }
-
-    if ('EnergyData' in rows) throw new Error('EnergyData was not excluded from the daily data dump');
-    const recent = (await required(dir, RECENT_ENERGY)).split('\n').filter((line) => line.length > 0);
-    const header = recent[0]?.split(',') ?? [];
-    if (!header.includes('timestamp') || !header.includes('site_id')) {
-        throw new Error(`${RECENT_ENERGY} does not start with the EnergyData header`);
-    }
-    return { ...rows, 'EnergyData (recent)': recent.length - 1 };
+    // Backups taken before the single compact store also hold raw EnergyData history.
+    if (!recordsWithSamples && !rows.EnergyData) throw new Error('data.sql has no energy history (EnergyDayArchive)');
+    return rows;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    const [dir, dump] = process.argv.slice(2);
-    if (dump !== 'full' && dump !== 'small') {
-        console.error('Usage: verify-db-backup.ts <dir> <full|small>');
+    const [dir] = process.argv.slice(2);
+    if (!dir) {
+        console.error('Usage: verify-db-backup.ts <dir>');
         process.exitCode = 1;
     } else {
-        verifyBackupDirectory(dir, dump)
+        verifyBackupDirectory(dir)
             .then((rows) => {
                 console.log('Backup verified. Rows per table:');
                 for (const [table, count] of Object.entries(rows)) console.log(`  ${table}: ${count}`);

@@ -5,7 +5,9 @@ const mocks = vi.hoisted(() => ({
     verifySiteToken: vi.fn(),
     getAuthState: vi.fn(),
     getSitesForUser: vi.fn(),
+    logSessionRejection: vi.fn(),
 }));
+vi.mock('./observability', () => ({ logSessionRejection: mocks.logSessionRejection }));
 
 vi.mock('next/headers', () => ({
     cookies: mocks.cookies
@@ -50,6 +52,7 @@ describe('auth-checks.ts', () => {
         expect(await verifySiteAccess('site-1')).toBe(false);
         expect(await getAuthorizedSiteIds()).toEqual([]);
         expect(await isUserAdmin()).toBe(false);
+        expect(mocks.logSessionRejection).toHaveBeenCalledWith('missing-cookie');
     });
 
     it('returns null/false/empty array without throwing when verifySiteToken returns invalid/malformed payload', async () => {
@@ -72,6 +75,7 @@ describe('auth-checks.ts', () => {
         expect(await getCurrentUser()).toBeNull();
         expect(await verifySiteAccess('site-1')).toBe(false);
         expect(await getAuthorizedSiteIds()).toEqual([]);
+        expect(mocks.logSessionRejection).toHaveBeenCalledWith('inactive-account', 'revoked-user-123');
     });
 
     it('blocks getCurrentUser when the user row no longer exists', async () => {

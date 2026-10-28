@@ -1,3 +1,37 @@
+# Tesla verification status races (2026-10-27)
+
+- [x] Post refresh/observability draft PR #240 and isolate the follow-up branch.
+- [x] Reproduce late terminal/success/transient writes overwriting newer account state.
+- [x] Fence verification writes on the User row version and current site ownership.
+- [x] Report retained state and log superseded outcomes without obsolete error messages.
+- [x] Verify private PostgreSQL interleavings, full tests, lint, build, and independent review.
+- [x] Commit and post draft follow-up PR #241 targeting main after #240 merged.
+
+Plan: `docs/plans/2026-10-27-tesla-verification-status.md`.
+Verified on rebased main: 1,615 tests, 16 private PostgreSQL checks, lint, and the production
+Webpack build. Default Turbopack still fails on the local port-binding restriction.
+Independent review found no blocking issues; membership guards revalidate against
+the final statement snapshot and do not serialize independent Site-only writes.
+Follow-up: https://github.com/KevM/pwusage/pull/241.
+
+# Tesla account refresh coordination (2026-10-27)
+
+- [x] Trace production rejection and reproduce stale caller/browser persistence bugs.
+- [x] Share account leases across browser, TRMNL, cron, and OAuth provisioning refreshes.
+- [x] Guard rotation/revocation against concurrent logins and replacement leases.
+- [x] Preserve successful rotations through caller cancellation; protect waiters from transient failures.
+- [x] Add safe account/credential fingerprints and update auth documentation.
+- [x] Send browser-page auth/refresh events to Axiom and record fixed session rejection reasons.
+- [x] Verify full tests, private PostgreSQL races, lint, and build; review and commit.
+
+Plan: `docs/plans/2026-10-27-tesla-account-refresh.md`.
+Verified 1,615 tests, six private PostgreSQL checks, lint, and the production
+Webpack build. Default Turbopack builds fail on a local port-binding restriction,
+including an escalated retry. Local production-server smoke checks confirmed
+missing/invalid-session redirects and safe page diagnostics; the server was stopped.
+Independent review caught and covered refresh-only account recovery. The separate
+preexisting cron verification status race is recorded in `TODO.md`. Not deployed.
+
 # Bill outlook (2026-10-21, verified 2026-10-22)
 
 - [x] Approve design and record implementation plan.
@@ -1053,4 +1087,17 @@ and expired sessions to `signInMessage` when `pendingBatteryHoldSiteID` is prese
 Added regression tests covering offline failure and session expiration when bootstrap supersedes
 control validation. Full native test suite passed (484 tests in 29 suites). Generic iOS app/extension
 build passed. Web lint, webpack production build, and 1,202 web tests passed (82 configured skips).
+
+# V2 reader cleanup (2026-10-27)
+
+- [x] Remove raw snapshot merge paths and migrate retained tests to v2.
+- [x] Remove v1 codec/metadata paths and unused prototype helpers.
+- [x] Stop referencing `raw_pruned` in deployed code; verify and open code PR.
+- [x] Prepare a separately staged, generated schema cleanup migration and verify its invariants.
+
+Code cleanup: PR #238 merged. Schema cleanup PR #239 targets main and must wait
+for the code cleanup's production deployment. Private PostgreSQL tests
+verify preserved samples/summaries, legacy-row refusal, empty-record invariants,
+idempotency and service-only access. Full suite: 1,625 passed, 81 configured skips;
+dev-copy PostgreSQL scripts: 12 passed. Lint and production build passed.
 

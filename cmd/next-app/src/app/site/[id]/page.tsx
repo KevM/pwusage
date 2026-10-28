@@ -1,3 +1,4 @@
+import { observePage, setLogContext } from '@/lib/observability';
 import { SiteRepo } from '@/lib/site-repo';
 import { SiteService } from '@/lib/site-service';
 import { cookies } from 'next/headers';
@@ -22,11 +23,12 @@ import { SectionCard } from '@/components/ui/SectionCard';
 
 export const dynamic = 'force-dynamic';
 
-export default async function SitePage({ params, searchParams }: {
+export default observePage('/site/[id]', async function SitePage({ params, searchParams }: {
     params: Promise<{ id: string }>;
     searchParams: Promise<{ date?: string; view?: string }>;
 }) {
     const { id } = await params;
+    setLogContext({ siteId: id });
     const { date: queryDate } = await searchParams;
 
     const cookieStore = await cookies();
@@ -161,4 +163,4 @@ export default async function SitePage({ params, searchParams }: {
             </SiteTabs>
         </PageShell>
     );
-}
+});

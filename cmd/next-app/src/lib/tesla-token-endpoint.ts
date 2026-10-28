@@ -1,4 +1,5 @@
-import { ioSignal, checkIoDeadline, abortable } from './io-deadline';
+import { logEvent } from './observability';
+import { ioSignal, checkIoDeadline, abortable, ioFailureDetails } from './io-deadline';
 // Tesla's Fleet API documentation states that calls to /token must use the
 // fleet-auth host, because server-to-server calls carry different rate limits.
 // The OIDC discovery document still declares auth.tesla.com, so Tesla's own
@@ -15,6 +16,12 @@ const TOKEN_ENDPOINT_HOSTS: readonly string[] = [
 // the platform kills the function and the fallback never runs — which is the
 // exact failure mode (a regional edge outage) the fallback exists for.
 const TOKEN_REQUEST_TIMEOUT_MS = 8000;
+
+export interface RefreshExchangeContext {
+    exchangeId: string;
+    siteId?: string;
+    accountId?: string;
+}
 
 export class TeslaTokenEndpointError extends Error {
     constructor(message: string, public readonly status: number | null) {
@@ -52,8 +59,9 @@ function discardBody(response: Response): void {
  */
 export async function postToTeslaTokenEndpoint(
     params: Record<string, string>,
-    fetchImpl: typeof fetch = fetch
-): Promise<{ response: Response; host: string }> {
+    fetchImpl: typeof fetch = fetch,
+    context?: RefreshExchangeContext
+): Promise<{ response: Response; host: string; signal: AbortSignal }> {
     const body = new URLSearchParams(params);
     let lastFailure: string | null = null;
     let lastStatus: number | null = null;
@@ -61,9 +69,17 @@ export async function postToTeslaTokenEndpoint(
     for (const host of TOKEN_ENDPOINT_HOSTS) {
         const url = `${host}/oauth2/v3/token`;
 
+        const startedAt = Date.now();
+        const inherited = ioSignal();
+        const timeout = AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS);
+        const signal = inherited ? AbortSignal.any([inherited, timeout]) : timeout;
+        const fields = { ...context, host };
+        let requestInitiated = false;
         let response: Response;
         try {
             checkIoDeadline();
+            if (context) logEvent('info', 'tesla.refresh.request-started', fields);
+            requestInitiated = true;
             response = await abortable(fetchImpl(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -76,9 +92,13 @@ export async function postToTeslaTokenEndpoint(
                 // surfaced here, hits the unexpected-status branch below, and the
                 // target receives nothing.
                 redirect: 'manual',
-                signal: ioSignal() ? AbortSignal.any([ioSignal()!, AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
+                signal,
             }));
         } catch (err) {
+            if (context) logEvent('warn', 'tesla.refresh.exchange-failed', {
+                ...fields, stage: 'request', durationMs: Date.now() - startedAt,
+                ...ioFailureDetails(err, signal), outcomeUnknown: requestInitiated,
+            });
             checkIoDeadline();
             // A transport failure is not an HTTP status. Clear any 5xx seen on
             // an earlier host so `status` and the message cannot disagree, and
@@ -94,14 +114,17 @@ export async function postToTeslaTokenEndpoint(
             continue;
         }
 
+        if (context) logEvent('info', 'tesla.refresh.response-received', {
+            ...fields, status: response.status, durationMs: Date.now() - startedAt,
+        });
         if (response.ok) {
-            return { response, host };
+            return { response, host, signal };
         }
 
         // A 4xx is a genuine authentication failure. Retrying it against a
         // second origin would mask the real error and re-send client_secret.
         if (response.status >= 400 && response.status < 500) {
-            return { response, host };
+            return { response, host, signal };
         }
 
         // Everything else that is neither 2xx nor 4xx: an unexpected 1xx/2xx/3xx,

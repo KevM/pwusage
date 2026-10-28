@@ -91,11 +91,13 @@ Tables (PascalCase quoted identifiers):
 - `Tariff`: Billing rate plans per site. Append-only versioned: each save inserts a new row (`version` + `is_current`, deduped by `content_hash`) rather than replacing; only one row per `(site_id, name)` has `is_current = true`. See [`DesignDecisions.md`](./DesignDecisions.md).
 - `TariffSeason`: Seasonal date ranges within a tariff (`from_month`/`from_day` → `to_month`/`to_day`) with buy/sell rates
 - `TariffSchedule`: TOU period definitions within a season (day-of-week + hour/minute windows) with buy/sell rates
-- `EnergyData`: 5-minute energy samples (`load_power, solar_power, grid_power, battery_power, battery_soc`) keyed by `(timestamp, site_id)` (the `tariff_id` column is retained for billing aggregation but is not part of the uniqueness key)
+- `EnergyDayArchive`: one compact day record per `(site_id, day_start)` (site-local midnight), the only energy history. Holds the day's 5-minute Tesla samples (`load_power, solar_power, grid_power, battery_power, battery_soc`) as a compressed payload, a tariff segment timeline (`attribution`), `status` (`open`/`complete`/`gapped`/`empty`) and `fetched_at`; each Tesla fetch replaces the record (only a newer fetch wins). See [`docs/plans/2026-10-24-day-record-v2.md`](./docs/plans/2026-10-24-day-record-v2.md).
+- `EnergyDaySummary`: per-day billing totals by tariff period, derived from a record's samples and segments
+- `SiteSolarLayout`: per-site home location (rounded to 2 decimals, ~1 km) and the latest solar panel layout detected from the site's own production history (`result` jsonb, `status`, `detected_at`/`attempted_at`). Written by the `detect-solar-layouts` cron for `solar-forecast-beta` users; a failed run keeps the previous result.
 - `TrmnlInstallation`: Trmnl device configs (UUID, linked `site_id`, access token)
 - `AppSettings`: Key/value app config
 
-TOU period assignment for an `EnergyData` row is computed at read time by `Schedule.getTariffPeriod(timestamp)` walking the `TariffSeason → TariffSchedule` chain.
+TOU periods for a day are assigned when its record is written, from the site's current tariff (`Schedule.getTariffPeriod` walking the `TariffSeason → TariffSchedule` chain), and stored as the record's segment timeline.
 
 ## Database Migrations
 
@@ -112,7 +114,7 @@ supabase migration up --db-url "postgresql://user:pass@localhost/pwusage"
 ```
 
 **CI/CD Behavior:**
-- On PR: Migrations are tested against a fresh copy of production dumped into the Dev DB (not a stored backup); `EnergyData` is copied only as a recent slice
+- On PR: Migrations are tested against a fresh copy of production dumped into the Dev DB (not a stored backup); day records are copied only as a recent slice
 - On merge to main: Database is backed up to Vercel Blob, then migrations run
 - Migrations must be idempotent (safe to run multiple times)
 - Note: This may invalidate Trmnl devices in dev database
@@ -168,7 +170,7 @@ npm test -- --ui           # Open test UI
 **Database:**
 - Production: Supabase PostgreSQL (Free plan: no automatic backups, 5 GB/month egress)
 - Dev: PostgreSQL (from backup) or local SQLite
-- Private backups in Vercel Blob: daily (no EnergyData history), weekly full, and before migrations. See [`docs/database-backups.md`](./docs/database-backups.md) for retention and the restore runbook.
+- Private backups in Vercel Blob: daily (kept 14 days plus one per week for 8 weeks) and before migrations, each a complete dump. See [`docs/database-backups.md`](./docs/database-backups.md) for retention and the restore runbook.
 
 ## Environment Variables
 

@@ -48,8 +48,19 @@ Three auth artifacts are used for different concerns:
 
 ### 1. Login entry
 Route: `GET /login`
-- Generates OAuth `state` and `nonce`.
-- Stores `auth_state`, `auth_nonce`, optional `auth_callback` cookies.
+- Production login requests on another origin redirect to `https://pwusage.fm.rodeo`
+  before writing cookies. Production OAuth callbacks use that same fixed origin.
+  Preview/local environments retain their configured origin.
+- Ignores speculative prefetch requests without issuing cookies or starting OAuth.
+  Login links and client redirects use full document navigation.
+- Generates a `v2.<random>` OAuth state and a random nonce. Stores each attempt in
+  its own host-only, HttpOnly, SameSite=Lax cookie (`auth_attempt_<random>`), with
+  Secure on HTTPS and a 10-minute lifetime. The cookie contains the nonce,
+  optional return destination, and that attempt's mobile PKCE/handoff metadata.
+- Multiple tabs can start and finish independent attempts in either order. New
+  attempts never overwrite or clear an existing attempt. Eight pending cookies
+  prevent further starts until one finishes or expires (a browser-local bound,
+  not a server-side rate limiter or an atomic limit across concurrent requests).
 - Redirects to Tesla authorize endpoint with required scopes.
 
 Requested Fleet API scopes (`src/app/login/route.ts`): `openid`, `energy_device_data`,
@@ -76,7 +87,13 @@ claim about Tesla internals — do not word it as if it were.
 ### 2. OAuth callback processing
 Route: `GET /auth/tesla-callback`
 - Validates `code` and `state`.
-- Verifies `state` against cookie.
+- For v2 state, requires the matching, unexpired attempt cookie. Never borrows
+  legacy cookies or another attempt's mobile state. Clears only the matching
+  attempt cookie, including on errors or Tesla denial. A missing state cannot
+  identify an attempt; unrelated attempts remain untouched until expiry.
+- Retains the old `auth_state`/`auth_nonce`/mobile-cookie reader for legacy logins
+  already in flight during deployment. New logins never write those shared cookies.
+- Verifies `state` against the saved attempt and then checks the ID-token nonce.
 - Exchanges authorization code for Tesla tokens.
   The exchange `audience` is the documented Fleet host
   (`DEFAULT_FLEET_BASE_URL`), not an environment variable. Refresh grants omit
@@ -96,7 +113,7 @@ Session issuance:
   current DB value so a login after a sign-out-everywhere bump is not treated as
   a revoked session.
 - Sets `site_auth` cookie.
-- Clears one-time auth cookies.
+- Clears only this attempt's one-time cookie (legacy callbacks clear legacy cookies).
 - Redirects to saved callback (or `/`).
 
 Important implementation note:
@@ -104,6 +121,18 @@ Important implementation note:
   it resolves active status, `session_version`, roles, and site memberships from
   the DB on every request. Stale `sites`/`roles` claims cannot outlive the DB
   state they were derived from. Legacy `access_token` cookie fallback was removed.
+
+Login diagnostics:
+- `tesla.sign-in.started` and `tesla.sign-in.callback` share an independent,
+  non-secret `loginId` and report the login kind, pending count or attempt age.
+- `tesla.sign-in.continuity-rejected` distinguishes missing, invalid/expired,
+  and legacy-mismatched cookies. Hostnames are logged without URLs or queries.
+- State, nonce, authorization codes, PKCE values, cookie contents, and return
+  destinations are never included in these events. `requestId` still correlates
+  events within one request; `loginId` correlates the two requests for an attempt.
+- Cookies are browser continuity checks, not an atomic server-side replay ledger.
+  Tesla's authorization code and the database-backed mobile handoff keep their
+  existing one-use checks.
 
 ### ID token signature verification
 
@@ -214,9 +243,67 @@ Middleware/proxy (`src/proxy.ts`):
 
 Tesla token refresh behavior:
 - `TeslaClient` retries once on Fleet API 401 when refresh token exists.
-- `TeslaTokenRepo.getLockedRefreshHandler(siteId)` serializes refresh with DB lock fields on `User`.
-- Refreshed Tesla tokens are written back to `User`.
+- Site, TRMNL, cron, Profile, Products, and post-identity OAuth provisioning
+  refreshes share `TeslaTokenRepo`'s account-level handler and the DB lease on
+  `User`. Site handlers resolve the owner, so multiple sites and browser tabs
+  coordinate on the same account.
+- Lease acquisition atomically reads current credentials. A stale caller reuses
+  newer stored credentials instead of exchanging an old refresh token. Waiters
+  fail transiently if the owner released the lease without replacing credentials,
+  rather than retrying Fleet with the expired access token.
+- Replacement credentials are saved before returning, with an independent short
+  persistence deadline after a successful exchange. Save, revocation, and cleanup
+  writes check lease ownership; save/revocation also compare the credential
+  generation, protecting a newer login or worker. Revocation releases the lease
+  atomically. No unconditional post-refresh revocation callback runs afterward.
+- OAuth provisioning persists login credentials once, before product/site work;
+  later host changes update only the Fleet host. Site linking never rewrites
+  credentials or releases a background worker's lease. Before identity is
+  established, OAuth Fleet calls cannot silently rotate credentials in memory.
+- Refresh events include hashed `accountId` and `credentialId` values, plus
+  `previousCredentialId` on successful rotation. These are truncated SHA-256
+  fingerprints for correlation, never actual tokens. `tesla.refresh.reused`,
+  `superseded`, and `cleanup-deferred` distinguish reuse, a lost conditional write,
+  and bounded cleanup failures.
+- Each exchange has an `exchangeId`, shared with the account coordinator's
+  start, persistence-started, succeeded, superseded, and failure events. Endpoint
+  events record request initiation and response headers per host; credentials-parsed
+  records successful body parsing/validation. Request initiation means fetch was
+  invoked, not proof Tesla received it. `exchange-failed` records `stage`
+  (`request` or `response-body`), host, elapsed time, safe `failureCode`,
+  `cancellationSource` (`caller`, `endpoint`, or `none`), and `outcomeUnknown`.
+  Caller deadlines use `IO_DEADLINE_EXCEEDED`; endpoint timeouts use
+  `REQUEST_TIMEOUT`; other cancellations use `REQUEST_CANCELLED`. No arbitrary
+  cancellation reasons, response bodies, or credentials are exported. A request
+  transport failure or unsuccessful reading/validation of a 2xx body leaves
+  Tesla's rotation outcome unknown. Persistence failures use `stage=persistence`
+  on `tesla.refresh.failed`; only `succeeded` confirms a guarded database save.
+  Instrumentation does not change refresh deadlines, fallback, or retry policy.
+- Home, Profile, Products, and site-page renders establish Axiom scopes alongside
+  the existing API scopes. Page redirects keep their control flow and never log
+  destinations, query strings, or page props. `auth.session.rejected` distinguishes
+  missing cookies, expired/invalid JWTs, missing/inactive accounts, revoked
+  sessions, and denied site membership, using the same hashed account identity
+  where available. JWT renewal diagnostics in the proxy still use runtime logs;
+  Axiom delivery failures also remain runtime-only.
 - Terminal auth failures can mark user `auth_status='revoked'`.
+
+Account verification (`UserRepo.verifyUserStatus`):
+- Captures the `User` row's PostgreSQL version (`xmin`) before checking Fleet.
+  Every final active/error/revoked/no-token/no-sites write requires that same
+  version, and rechecks site ownership or the absence of sites as applicable.
+  These membership checks use the final UPDATE's statement snapshot; they do
+  not serialize independent concurrent Site-only changes.
+- A concurrent login, refresh, revocation, or session-version change supersedes
+  the check. The verifier preserves and reports the current account state,
+  emits `tesla.user-verification.superseded`, and leaves `last_checked_at`
+  unchanged. Its completion reason is `auth-state-changed`; old errors are not
+  returned alongside a successful newer login.
+  Verification events include the same hashed account identity as refresh events.
+- This is conservative: even a refresh performed by verification itself skips
+  the final status write. The next eligible check uses the new credentials.
+  No database transaction or row lock spans a Tesla call. Normal unchanged
+  outcomes retain their terminal/transient classification.
 
 ### 5. Logout
 Local logout — Route: `GET|POST /logout`
@@ -317,9 +404,9 @@ cookies being shared between `ASWebAuthenticationSession` and the app's
 1. The app creates a PKCE verifier, its SHA-256 challenge, and a random app state,
    then opens `/login?mobile_challenge=...&mobile_state=...` in
    `ASWebAuthenticationSession`.
-2. `/login` validates the challenge/state formats and stores them with a random
-   server-side attempt UUID in short-lived, HTTP-only cookies. It then uses the
-   existing Tesla OAuth state and nonce flow.
+2. `/login` validates the challenge/state formats and stores them in the isolated
+   attempt cookie with a random handoff attempt UUID. It then uses the existing
+   Tesla OAuth state and nonce flow.
 3. The normal Tesla callback validates OAuth state and nonce and provisions the
    user/sites as it does for web login. For the mobile path only, it stores a
    five-minute handoff row containing the user/site/role claims, PKCE challenge,
@@ -380,4 +467,5 @@ simulator and device verification in the native app implementation.
 
 ## Current Open Gaps
 
-No known auth gaps as of February 16, 2026.
+Proxy JWT-renewal diagnostics and Axiom delivery failures remain runtime-only.
+Page/request session-rejection and Tesla refresh/verification events reach Axiom.

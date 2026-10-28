@@ -2,7 +2,6 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
 import { drawQrWithLogo } from '@/lib/qr-generator';
 import { continueUrl } from '@/app/continue/continue-logic';
 import { SectionCard } from '@/components/ui/SectionCard';
@@ -111,7 +110,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
       <Alert variant="warning">
         <AlertDescription>
           Battery control needs the energy command permission.{' '}
-          <Link href="/login" className="underline">Reconnect your Tesla account</Link>.
+          <a href="/login" className="underline">Reconnect your Tesla account</a>.
         </AlertDescription>
       </Alert>
     );

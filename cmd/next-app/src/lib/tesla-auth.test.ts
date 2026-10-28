@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { refreshAccessToken } from './tesla-auth';
+import * as observability from './observability';
 import { isTeslaAuthError, TeslaAuthError } from './tesla-client';
 
 const ORIGINAL_ENV = {
@@ -36,6 +37,20 @@ describe('refreshAccessToken', () => {
     afterAll(() => {
         restoreEnvVar('PUBLIC_TESLA_OAUTH_CLIENT_ID');
         restoreEnvVar('TESLA_OAUTH_SECRET');
+    });
+
+    it('logs the access token lifetime and estimated expiry after refresh', async () => {
+        const log = vi.spyOn(observability, 'logEvent');
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse({ access_token: 'a', refresh_token: 'r', expires_in: 3600 })));
+        const before = Date.now();
+        await refreshAccessToken('old-refresh');
+        expect(log).toHaveBeenCalledWith('info', 'tesla.refresh.credentials-parsed', expect.objectContaining({
+            accessExpiresInSeconds: 3600,
+            accessExpiresAt: expect.any(String),
+        }));
+        const fields = log.mock.calls.find(([, event]) => event === 'tesla.refresh.credentials-parsed')?.[2];
+        expect(Date.parse(String(fields?.accessExpiresAt))).toBeGreaterThanOrEqual(before + 3600000);
+        log.mockRestore();
     });
 
     it('posts a form-encoded refresh request without audience to the documented fleet-auth host', async () => {

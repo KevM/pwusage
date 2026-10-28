@@ -25,6 +25,12 @@ export interface PlanOptions {
      * one is retried with its check time, so a window cap rotates through them.
      */
     emptyDays?: EmptyDayState[];
+    /**
+     * When the site's Tesla access last came back after an outage (`User.auth_restored_at`).
+     * An open day ages from the later of its end and this, so days missed while
+     * access was lost stay refetchable for a full gap-heal window after re-auth.
+     */
+    reachableSince?: Date | null;
     gapThresholdMs?: number;
     now?: Date;
 }
@@ -132,7 +138,9 @@ export function auditDays(options: PlanOptions): DayAuditResult[] {
         };
         // A record's status is computed when written, so an open day that has aged
         // past the gap-heal window counts as gapped (settled), as a rewrite would store it.
-        const aged = stat.open === true && now.getTime() - day.windowEnd.getTime() > DAY_GAP_HEAL_DAYS * 24 * 3600000;
+        // The window restarts when Tesla access comes back (`reachableSince`).
+        const agesFrom = Math.max(day.windowEnd.getTime(), options.reachableSince?.getTime() ?? 0);
+        const aged = stat.open === true && now.getTime() - agesFrom > DAY_GAP_HEAL_DAYS * 24 * 3600000;
         const firstInWindow = stat.first === null ? null : stat.first.getTime();
         const lastInWindow = stat.last === null ? null : stat.last.getTime();
 

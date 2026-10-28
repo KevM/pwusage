@@ -1,4 +1,4 @@
-import { logEvent, observeRoute, setLogContext } from '@/lib/observability';
+import { flushLogEvents, logEvent, observeRoute, setLogContext } from '@/lib/observability';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 // Hobby caps maxDuration at 60 s. healTrailingGaps stops starting new sites at
@@ -17,9 +17,10 @@ async function handleGET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
+    logEvent('info', 'cron.heal-gaps.started');
+    flushLogEvents();
     const summary = await withIoDeadline(HARD_DEADLINE_MS, () => healTrailingGaps());
     setLogContext({ siteIds: summary.sites.map(site => site.siteId) });
-    for (const site of summary.sites) logEvent(site.status === 'error' ? 'warn' : 'info', 'cron.heal-gaps.site', { siteId: site.siteId, outcome: site.status });
     logEvent('info', 'cron.heal-gaps.completed', {
       checked: summary.checked, stopped: summary.stopped,
       sites: summary.sites.map(site => ({ siteId: site.siteId, status: site.status })),

@@ -1,6 +1,7 @@
 import { after } from 'next/server';
+import { IoDeadlineError, ioFailureDetails } from './io-deadline';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { logEvent, observeRoute, setLogContext } from './observability';
+import { flushLogEvents, logEvent, observeRoute, observePage, logSessionRejection, setLogContext } from './observability';
 
 const mocks = vi.hoisted(() => ({
     callbacks: [] as Array<() => unknown>,
@@ -42,6 +43,40 @@ describe('production observability', () => {
     });
     afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
+    it('exports browser refresh events with page context after rendering', async () => {
+        const page = observePage('/products', async (props: { value: string }) => {
+            logEvent('info', 'tesla.refresh.succeeded', { credentialId: 'abc' });
+            return props.value;
+        });
+        expect(await page({ value: 'rendered' })).toBe('rendered');
+        expect(mocks.ingest).not.toHaveBeenCalled();
+        await finishResponse();
+        expect(entries().map(entry => entry.event)).toEqual(['tesla.refresh.succeeded', 'page.completed']);
+        expect(entries()[0]).toMatchObject({ route: '/products', method: 'RENDER', requestId: expect.any(String) });
+    });
+
+    it('exports rejection reasons and preserves redirects without exposing the redirect destination', async () => {
+        const error = Object.assign(new Error('private destination'), { digest: 'NEXT_REDIRECT;replace;/login?private=secret;307;' });
+        const page = observePage('/profile', async () => {
+            logSessionRejection('inactive-account', 'private-owner');
+            throw error;
+        });
+        await expect(page()).rejects.toBe(error);
+        await finishResponse();
+        expect(entries().map(entry => entry.event)).toEqual(['auth.session.rejected', 'page.redirected']);
+        expect(entries()[0]).toMatchObject({ reason: 'inactive-account', accountId: expect.stringMatching(/^[a-f0-9]{16}$/) });
+        expect(JSON.stringify(entries())).not.toContain('private');
+        expect(JSON.stringify(entries())).not.toContain('secret');
+    });
+
+    it('keeps the existing request scope if a page is rendered within an observed operation', async () => {
+        const page = observePage('/profile', async () => { logEvent('info', 'nested'); return 'ok'; });
+        await observeRoute('/outer', async () => new Response(await page()))(new Request('https://example.test'));
+        await finishResponse();
+        expect(entries().map(entry => entry.event)).toEqual(['nested', 'request.completed']);
+        expect(entries()[0].requestId).toBe(entries()[1].requestId);
+    });
+
     it('delivers only after the response, with correlation but no query strings or headers', async () => {
         const handler = observeRoute('/test', async () => {
             setLogContext({ siteId: 'site-1' });
@@ -72,6 +107,29 @@ describe('production observability', () => {
         expect(mocks.constructor).not.toHaveBeenCalled();
     });
 
+    it('exports cron checkpoints before the handler completes and retains later events', async () => {
+        let release: () => void = () => {};
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const response = observeRoute('/api/cron/check-users', async () => {
+            logEvent('info', 'tesla.user-verification.started', { verificationId: 'check-1' });
+            flushLogEvents();
+            await gate;
+            logEvent('warn', 'tesla.user-verification.completed', { verificationId: 'check-1', outcome: 'revoked' });
+            return new Response();
+        })(new Request('https://example.test'));
+
+        // The handler is still blocked; its first checkpoint has already left.
+        expect(entries()).toHaveLength(1);
+        expect(entries()[0].event).toBe('tesla.user-verification.started');
+        release();
+        await response;
+        await finishResponse();
+        expect(entries().map(entry => entry.event)).toEqual([
+            'tesla.user-verification.started', 'tesla.user-verification.completed', 'request.completed',
+        ]);
+        expect(new Set(entries().map(entry => entry.requestId)).size).toBe(1);
+    });
+
     it.each(['AXIOM_TOKEN', 'AXIOM_DATASET'])('keeps requests working without %s', async key => {
         vi.stubEnv(key, '');
         expect((await observeRoute('/test', async () => new Response())(new Request('https://example.test'))).status).toBe(200);
@@ -92,6 +150,22 @@ describe('production observability', () => {
         expect(JSON.stringify(entries())).not.toContain('opaque-secret');
         expect(JSON.stringify(entries())).not.toContain('private@example.com');
         expect(entries()[0].error).toMatchObject({ name: 'Error', status: 503, code: 'ETIMEDOUT' });
+    });
+
+    it('exports safe exchange diagnostics and deadline codes through the production serializer', async () => {
+        await observeRoute('/test', async () => {
+            const error = new IoDeadlineError();
+            logEvent('warn', 'tesla.refresh.exchange-failed', {
+                exchangeId: 'exchange-1', stage: 'response-body', ...ioFailureDetails(error),
+                outcomeUnknown: true, error,
+            });
+            return new Response();
+        })(new Request('https://example.test'));
+        await finishResponse();
+        expect(entries()[0]).toMatchObject({
+            exchangeId: 'exchange-1', stage: 'response-body', failureCode: 'IO_DEADLINE_EXCEEDED', outcomeUnknown: true,
+            error: { name: 'IoDeadlineError', code: 'IO_DEADLINE_EXCEEDED' },
+        });
     });
 
     it('isolates overlapping requests and captures logs from after work', async () => {
@@ -174,5 +248,17 @@ describe('production observability', () => {
         const response = await observeRoute('/test', async () => new Response())(new Request('https://example.test'));
         expect(response.status).toBe(200);
         expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('No request lifecycle'));
+    });
+
+    it('does not fail authentication work if the checkpoint lifecycle is unavailable', async () => {
+        const response = await observeRoute('/test', async () => {
+            logEvent('info', 'verification.started');
+            vi.mocked(after).mockImplementationOnce(() => { throw new Error('no lifecycle'); });
+            flushLogEvents();
+            return new Response();
+        })(new Request('https://example.test'));
+        expect(response.status).toBe(200);
+        await finishResponse();
+        expect(entries().map(entry => entry.event)).toEqual(['verification.started', 'request.completed']);
     });
 });

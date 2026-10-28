@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { AxiomWithoutBatching } from '@axiomhq/js';
 import { after } from 'next/server';
 
@@ -70,6 +70,24 @@ async function send(scope: LogScope): Promise<void> {
     }
 }
 
+/**
+ * Start a bounded checkpoint now, retaining after() as its lifecycle owner.
+ * Long cron jobs otherwise lose every buffered event if the platform terminates
+ * the invocation before a response. No wait is added to the business operation.
+ */
+export function flushLogEvents(): void {
+    const scope = scopes.getStore();
+    if (!scope?.events.length || !configured()) return;
+    const pending = send(scope);
+    try {
+        after(() => pending);
+    } catch {
+        // send() catches transport errors itself. A missing lifecycle must not
+        // turn a diagnostic checkpoint into an authentication failure.
+        console.warn('[Observability] Checkpoint lifecycle unavailable; delivery is best effort');
+    }
+}
+
 /** Use fixed event names and explicit fields; never pass request objects or raw upstream bodies. */
 export function logEvent(level: Level, event: string, fields: Fields = {}): void {
     const scope = scopes.getStore();
@@ -112,6 +130,42 @@ export function setLogContext(fields: { siteId: string } | { siteIds: string[] }
         if (siteIds.length === 1) scope.context.siteId = siteIds[0];
         else delete scope.context.siteId;
     }
+}
+
+type SessionRejection = 'missing-cookie' | 'invalid-session' | 'expired-session'
+    | 'missing-account' | 'inactive-account' | 'revoked-session' | 'site-not-assigned';
+
+/** Fixed reasons and the same account fingerprint used by Tesla refresh events. */
+export function logSessionRejection(reason: SessionRejection, userId?: string): void {
+    logEvent('info', 'auth.session.rejected', {
+        reason, ...(userId ? { accountId: createHash('sha256').update(userId).digest('hex').slice(0, 16) } : {}),
+    });
+}
+
+/** Server pages need a scope too: route-handler scopes do not cover rendering. */
+export function observePage<A extends unknown[], R>(route: string, handler: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+    return async (...args) => {
+        if (scopes.getStore()) return handler(...args);
+        const scope: LogScope = {
+            context: { route, method: 'RENDER', requestId: randomUUID() },
+            events: [], scheduled: false, count: 0,
+        };
+        return scopes.run(scope, async () => {
+            const start = Date.now();
+            try {
+                const result = await handler(...args);
+                logEvent('info', 'page.completed', { durationMs: Date.now() - start });
+                return result;
+            } catch (error) {
+                const redirect = error && typeof error === 'object' && 'digest' in error
+                    && typeof error.digest === 'string' && error.digest.startsWith('NEXT_REDIRECT;');
+                logEvent(redirect ? 'info' : 'error', redirect ? 'page.redirected' : 'page.failed', {
+                    durationMs: Date.now() - start, ...(redirect ? {} : { error }),
+                });
+                throw error;
+            }
+        });
+    };
 }
 
 export function observeRoute<T extends Request, R extends Response>(

@@ -16,6 +16,17 @@ describe('selectExpiredBackups', () => {
             .toEqual(['db-backup/daily/backup-2.zip', 'db-backup/daily/backup-1.zip']);
     });
 
+    it('also keeps the newest backup of each older week, up to keepWeekly weeks', () => {
+        // 30 daily backups, one per day back from NOW (a Thursday).
+        const blobs = Array.from({ length: 30 }, (_, i) => daily(i, i * 24));
+        const kept = new Set(blobs.map((b) => b.pathname));
+        for (const b of selectExpiredBackups(blobs, 'db-backup/daily/', 7, 2)) kept.delete(b.pathname);
+        // The newest 7 (back to Friday 10-09), then Sunday 10-04 and Sunday 09-27,
+        // the newest of the next two weeks that have no kept backup.
+        expect([...kept]).toEqual([...Array.from({ length: 7 }, (_, i) => `db-backup/daily/backup-${i}.zip`),
+            'db-backup/daily/backup-11.zip', 'db-backup/daily/backup-18.zip']);
+    });
+
     it('expires nothing when the folder holds N or fewer backups', () => {
         expect(selectExpiredBackups([daily(1, 24), daily(2, 1)], 'db-backup/daily/', 2)).toEqual([]);
     });
@@ -44,7 +55,7 @@ describe('pruneBackups', () => {
     it('reads every page of the listing before choosing what to delete', async () => {
         const listBlobs = listing([[daily(1, 300), daily(2, 200)], [daily(3, 100), daily(4, 1)]]);
         const deleteBlobs = vi.fn(async () => undefined);
-        const deleted = await pruneBackups({ kind: 'daily', token: 't', now: NOW, keep: 2, listBlobs, deleteBlobs });
+        const deleted = await pruneBackups({ kind: 'daily', token: 't', now: NOW, keep: 2, keepWeekly: 0, listBlobs, deleteBlobs });
         expect(listBlobs).toHaveBeenCalledTimes(2);
         expect(listBlobs).toHaveBeenCalledWith(expect.objectContaining({ prefix: 'db-backup/daily/', token: 't' }));
         expect(deleted).toEqual(['db-backup/daily/backup-2.zip', 'db-backup/daily/backup-1.zip']);
@@ -61,6 +72,14 @@ describe('pruneBackups', () => {
         expect(deleted).toEqual(['db-backup/daily/backup-14.zip', 'db-backup/daily/backup-15.zip']);
     });
 
+    it('keeps the daily kind\'s weekly copies by default', async () => {
+        const blobs = Array.from({ length: 40 }, (_, i) => daily(i, i * 24));
+        const deleteBlobs = vi.fn(async () => undefined);
+        const deleted = await pruneBackups({ kind: 'daily', token: 't', now: NOW, listBlobs: listing([blobs]), deleteBlobs });
+        // 14 newest plus the newest of each older week (there are only 4 older weeks here).
+        expect(deleted).toHaveLength(40 - 14 - 4);
+    });
+
     it('refuses to prune unless the newest backup is fresh, so a failed run never rotates out good ones', async () => {
         const deleteBlobs = vi.fn(async () => undefined);
         await expect(pruneBackups({
@@ -72,7 +91,7 @@ describe('pruneBackups', () => {
 
     it('refuses an empty folder', async () => {
         const deleteBlobs = vi.fn(async () => undefined);
-        await expect(pruneBackups({ kind: 'weekly', token: 't', now: NOW, listBlobs: listing([[]]), deleteBlobs }))
+        await expect(pruneBackups({ kind: 'pre-migration', token: 't', now: NOW, listBlobs: listing([[]]), deleteBlobs }))
             .rejects.toThrow('No backups');
         expect(deleteBlobs).not.toHaveBeenCalled();
     });

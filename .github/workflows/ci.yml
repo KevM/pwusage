@@ -152,12 +152,46 @@ jobs:
       always() &&
       needs.test.result == 'success' &&
       needs.build.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' || needs.check-db-changes.outputs.web == 'true') &&
       (needs.migrate.result == 'success' || needs.migrate.result == 'skipped')
-    needs: [test, build, migrate]
+    needs: [test, build, migrate, check-db-changes]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
+      # Re-running all jobs after a later notification failure must not create
+      # another production deployment. Failed deployments remain retryable.
+      - name: Check previous deployment attempts
+        id: previous
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            let deployed = false;
+            if (runAttempt > 1) {
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+                filter: 'all',
+                per_page: 100,
+              });
+              deployed = jobs.some(job =>
+                job.name === 'Deploy to Vercel' &&
+                job.run_attempt < runAttempt &&
+                job.steps?.some(step => step.name === 'Deploy to Vercel' && step.conclusion === 'success')
+              );
+            }
+            core.setOutput('deployed', String(deployed));
+            await core.summary.addRaw(deployed
+              ? 'Production deployment already succeeded in an earlier attempt; skipping duplicate.'
+              : 'No successful production deployment in an earlier attempt.').write();
       - uses: actions/checkout@v7.0.1
+        if: steps.previous.outputs.deployed != 'true'
       - name: Deploy to Vercel
+        id: deploy
+        if: steps.previous.outputs.deployed != 'true'
         uses: amondnet/vercel-action@v42.3.0
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -172,6 +206,7 @@ jobs:
     outputs:
       migrations: ${{ steps.filter.outputs.migrations }}
       dev_copy: ${{ steps.filter.outputs.dev_copy }}
+      web: ${{ steps.filter.outputs.web }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dorny/paths-filter@v4.0.3
@@ -181,6 +216,12 @@ jobs:
           # change is tested against Supabase in its own PR. Only verify-db reads it:
           # prod backups and migrations stay gated on migrations alone.
           filters: |
+            # Positive scope: root docs, agent settings and iOS tooling do not
+            # change the deployed app. Keep the entire app tree, including SQL.
+            web:
+              - 'cmd/next-app/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/db-backup.yml'
             migrations:
               - 'cmd/next-app/db-migrations/**'
               - 'cmd/next-app/supabase/migrations/**'
@@ -226,15 +267,15 @@ jobs:
           supabase db dump --db-url "$DATABASE_URL" -f schema.sql
           # Only public is reset below. Managed auth/storage data can include
           # protected tables (e.g. storage.buckets_vectors) we cannot restore.
-          # Energy history (raw EnergyData and the day records that replace it)
-          # is most of prod and of its egress, and dev keeps only a slice of it:
-          # download just that slice, then skip those tables' data in the dump
-          # (unquoted CSV list, see dump-db-backup.sh). The slice goes first, so
-          # every row it references is already in data.sql; the two cannot share
-          # a snapshot (see export-dev-energy-data.sql). It also writes
-          # dev-day-archive.csv and dev-day-summary.csv here.
-          psql -X -q -v ON_ERROR_STOP=1 "$DATABASE_URL" -f scripts/export-dev-energy-data.sql > dev-energy-data.csv
-          echo "EnergyData rows for dev: $(( $(wc -l < dev-energy-data.csv) - 1 ))"
+          # Energy history (day records) is most of prod and of its egress, and
+          # dev keeps only a slice of it: download just that slice
+          # (dev-day-archive.csv and dev-day-summary.csv), then skip those
+          # tables' data in the dump (unquoted CSV list: the CLI reads -x as
+          # one). The slice goes first, so every row it references is already in
+          # data.sql; the two cannot share a snapshot (see
+          # export-dev-energy-data.sql). EnergyData stays excluded for a
+          # production copy taken before 20261027120000_drop_energy_data drops it.
+          psql -X -q -v ON_ERROR_STOP=1 "$DATABASE_URL" -f scripts/export-dev-energy-data.sql
           echo "Day records for dev: $(( $(wc -l < dev-day-archive.csv) - 1 )), summary rows: $(( $(wc -l < dev-day-summary.csv) - 1 ))"
           supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public -x public.EnergyData,public.EnergyDayArchive,public.EnergyDaySummary
           
@@ -263,9 +304,8 @@ jobs:
           
           # Restore Data and scrub it in one transaction, so beta and the dev
           # pg_cron jobs never see unscrubbed rows. Any error rolls back both.
-          # load-dev-energy-data.sql reads the EnergyData slice from stdin and the
-          # day-record CSVs from this directory.
-          psql -X --single-transaction -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f data.sql -f scripts/load-dev-energy-data.sql -f scripts/sanitize-dev-copy.sql < dev-energy-data.csv
+          # load-dev-energy-data.sql reads the day-record CSVs from this directory.
+          psql -X --single-transaction -v ON_ERROR_STOP=1 "$DEV_DATABASE_URL" -f data.sql -f scripts/load-dev-energy-data.sql -f scripts/sanitize-dev-copy.sql
           
           # Restore Migration History
           # (We truncate first to remove any stale Dev history, then apply Prod's history)
@@ -319,13 +359,14 @@ jobs:
 
   deploy-preview:
     name: Deploy to Vercel (Preview)
-    needs: [test, build, verify-db]
+    needs: [test, build, verify-db, check-db-changes]
     if: |
       github.event_name == 'pull_request' && 
       github.event.pull_request.head.repo.full_name == github.repository &&
       always() && 
       needs.test.result == 'success' && 
       needs.build.result == 'success' && 
+      needs.check-db-changes.outputs.web == 'true' &&
       (needs.verify-db.result == 'success' || needs.verify-db.result == 'skipped')
     runs-on: ubuntu-latest
     steps:

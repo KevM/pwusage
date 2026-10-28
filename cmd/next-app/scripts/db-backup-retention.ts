@@ -8,9 +8,34 @@ type ListPage = { blobs: StoredBackup[]; hasMore: boolean; cursor?: string };
 type ListBlobs = (options: { prefix: string; token: string; cursor?: string }) => Promise<ListPage>;
 type DeleteBlobs = (urls: string[], options: { token: string }) => Promise<void>;
 
-/** Backups directly inside `folder`, newest first, after the newest `keep`. */
-export function selectExpiredBackups(blobs: StoredBackup[], folder: string, keep: number): StoredBackup[] {
-    return backupsIn(blobs, folder).slice(keep);
+/**
+ * Backups directly inside `folder` past retention: everything after the newest
+ * `keep`, except the newest backup of each of the next `keepWeekly` older UTC
+ * weeks (Monday to Sunday) that has none among the kept ones.
+ */
+export function selectExpiredBackups(blobs: StoredBackup[], folder: string, keep: number, keepWeekly = 0): StoredBackup[] {
+    const backups = backupsIn(blobs, folder);
+    const weeks = new Set(backups.slice(0, keep).map(utcWeek));
+    const expired: StoredBackup[] = [];
+    let weeklyKept = 0;
+    for (const backup of backups.slice(keep)) {
+        const week = utcWeek(backup);
+        if (weeklyKept < keepWeekly && !weeks.has(week)) {
+            weeks.add(week);
+            weeklyKept += 1;
+        } else {
+            expired.push(backup);
+        }
+    }
+    return expired;
+}
+
+/** The UTC Monday that starts the backup's week, as YYYY-MM-DD. */
+function utcWeek(backup: StoredBackup): string {
+    const day = new Date(backup.uploadedAt);
+    day.setUTCHours(0, 0, 0, 0);
+    day.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
+    return day.toISOString().slice(0, 10);
 }
 
 function backupsIn(blobs: StoredBackup[], folder: string): StoredBackup[] {
@@ -32,12 +57,14 @@ export async function pruneBackups(options: {
     token: string | undefined;
     now?: Date;
     keep?: number;
+    keepWeekly?: number;
     freshWithinHours?: number;
     listBlobs?: ListBlobs;
     deleteBlobs?: DeleteBlobs;
 }): Promise<string[]> {
     const config = backupKind(options.kind);
     const keep = options.keep ?? config.keep;
+    const keepWeekly = options.keepWeekly ?? config.keepWeekly ?? 0;
     const token = options.token;
     if (!token) throw new Error('BACKUP_BLOB_READ_WRITE_TOKEN is required to prune backups');
     if (!Number.isInteger(keep) || keep < 1) throw new Error('Retention must keep at least one backup');
@@ -62,7 +89,7 @@ export async function pruneBackups(options: {
         throw new Error(`The newest backup in ${config.folder} is ${Math.round(newestAgeHours)} hours old; refusing to prune without a fresh backup`);
     }
 
-    const expired = backups.slice(keep);
+    const expired = selectExpiredBackups(backups, config.folder, keep, keepWeekly);
     if (expired.length > 0) await deleteBlobs(expired.map((blob) => blob.url), { token });
     return expired.map((blob) => blob.pathname);
 }

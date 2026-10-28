@@ -1,16 +1,15 @@
 import { pathToFileURL } from 'node:url';
 
-export type BackupDump = 'full' | 'small';
-export type BackupKindConfig = { folder: string; dump: BackupDump; keep: number };
+/** `keepWeekly`: past the newest `keep`, also keep the newest backup of each of that many older UTC weeks. */
+export type BackupKindConfig = { folder: string; keep: number; keepWeekly?: number };
 
 // Single source of truth for where each backup goes and how many are kept.
-// Daily backups skip EnergyData history (about 90% of a dump, and backfillable
-// from Tesla) and carry only recent readings; weekly and pre-migration backups
-// are complete. See docs/database-backups.md.
+// Every kind is a complete dump: energy history is compact day records, small
+// enough to include every day, so one daily run also provides the weekly
+// copies. See docs/database-backups.md.
 export const BACKUP_KINDS = {
-    daily: { folder: 'db-backup/daily/', dump: 'small', keep: 14 },
-    weekly: { folder: 'db-backup/weekly/', dump: 'full', keep: 8 },
-    'pre-migration': { folder: 'db-backup/pre-migration/', dump: 'full', keep: 10 },
+    daily: { folder: 'db-backup/daily/', keep: 14, keepWeekly: 8 },
+    'pre-migration': { folder: 'db-backup/pre-migration/', keep: 10 },
 } as const satisfies Record<string, BackupKindConfig>;
 
 export type BackupKind = keyof typeof BACKUP_KINDS;
@@ -20,7 +19,7 @@ export function backupKind(kind: string): BackupKindConfig {
     return { ...BACKUP_KINDS[kind as BackupKind] };
 }
 
-// The workflow asks for one field at a time: `tsx scripts/db-backup-kinds.ts daily dump`.
+// The workflow asks for one field at a time: `tsx scripts/db-backup-kinds.ts daily folder`.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
     try {
         const config = backupKind(process.argv[2] ?? '');

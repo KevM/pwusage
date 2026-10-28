@@ -4,10 +4,6 @@
     },
     "crons": [
         {
-            "path": "/api/cron/cleanup",
-            "schedule": "0 9 * * *"
-        },
-        {
             "path": "/api/cron/check-users",
             "schedule": "0 8 * * *"
         }
