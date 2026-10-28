@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sunAt } from './sun';
-import { diffuseIam, modelKw, physicalIam, poaComponents } from './poa';
+import { diffuseIam, modelKw, physicalIam, poaColumn, poaComponents, poaEffective, toSunArrays } from './poa';
 import { syntheticSeries } from './synthetic';
 
 const LAT = 43.39;
@@ -71,5 +71,16 @@ describe('syntheticSeries', () => {
         const peakWh = Math.max(...s.map(x => x.solarWh));
         expect(peakWh).toBeGreaterThan(300);
         expect(peakWh).toBeLessThan(600);
+    });
+});
+
+describe('poaColumn', () => {
+    it('matches poaEffective row by row', () => {
+        const suns = Array.from({ length: 300 }, (_, i) => sunAt(new Date(Date.parse('2026-04-01T00:00:00Z') + i * 3_600_000 * 2.3), LAT, LON));
+        const arrays = toSunArrays(suns);
+        for (const [az, tilt] of [[180, 20], [90, 35], [300, 5], [0, 0], [45, 50]]) {
+            const col = poaColumn(arrays, az, tilt, new Float64Array(suns.length));
+            suns.forEach((s, i) => expect(col[i]).toBeCloseTo(poaEffective(s, az, tilt) / 1000, 9));
+        }
     });
 });
