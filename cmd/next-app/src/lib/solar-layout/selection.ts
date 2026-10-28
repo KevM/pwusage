@@ -46,7 +46,9 @@ export function toSeries(samples: { timestamp: Date; solarWh: number }[], latitu
     if (samples.length === 0) return [];
     const byTime = new Map<number, number>();
     for (const s of samples) {
-        const t = s.timestamp.getTime();
+        // Snap to the nearest 5-minute boundary: day records allow irregular
+        // timestamps, and one off-grid sample must not shift the whole grid.
+        const t = Math.round(s.timestamp.getTime() / STEP_MS) * STEP_MS;
         if (!byTime.has(t)) byTime.set(t, s.solarWh * 12 / 1000);
     }
     const times = [...byTime.keys()].sort((a, b) => a - b);

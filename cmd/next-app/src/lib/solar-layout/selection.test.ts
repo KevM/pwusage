@@ -83,6 +83,16 @@ describe('toSeries', () => {
         expect(new Set(spring.map(s => s.localDay))).toEqual(new Set(['2026-03-07', '2026-03-08', '2026-03-09']));
     });
 
+    it('snaps off-grid timestamps to the five-minute grid instead of shifting it', () => {
+        const samples = syntheticSeries({ ...base, start: '2026-05-01', days: 3, cloudyFraction: 0 });
+        const shifted = samples.map((s, i) => ({ ...s, timestamp: new Date(s.timestamp.getTime() + (i === 0 ? 123 : i === 5 ? -40_000 : 0)) }));
+        const series = toSeries(shifted, base.latitude, base.longitude, base.timeZone);
+        expect(series).toHaveLength(samples.length);
+        expect(series[0].time.toISOString()).toBe('2026-05-01T07:00:00.000Z');
+        expect(series.filter(p => Number.isNaN(p.kw))).toHaveLength(0);
+        expect(Math.max(...series.map(p => p.kw))).toBeGreaterThan(5);
+    });
+
     it('converts Wh per 5 minutes to kW, fills gaps with NaN and removes a night baseline', () => {
         const t0 = Date.parse('2026-06-01T07:00:00Z');
         const samples = [0, 1, 3].map(i => ({ timestamp: new Date(t0 + i * 300_000), solarWh: 2 }));
