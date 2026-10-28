@@ -8,9 +8,11 @@ export class IoDeadlineError extends Error {
   constructor() { super('I/O deadline exceeded'); this.name = 'IoDeadlineError'; }
 }
 
-/** Allowlisted diagnostics only: arbitrary cancellation reasons may contain secrets. */
-export function ioFailureDetails(error: unknown, signal?: AbortSignal) {
-  const caller = ioSignal();
+/** Allowlisted diagnostics only: arbitrary cancellation reasons may contain secrets.
+ * Detached work must disable inheritCaller when classifying outside its own context.
+ */
+export function ioFailureDetails(error: unknown, signal?: AbortSignal, inheritCaller = true) {
+  const caller = inheritCaller ? ioSignal() : undefined;
   const reason: unknown = caller?.aborted ? caller.reason : signal?.aborted ? signal.reason : error;
   return {
     cancellationSource: caller?.aborted ? 'caller' : signal?.aborted ? 'endpoint' : 'none',

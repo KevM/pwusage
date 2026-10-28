@@ -161,8 +161,10 @@ export class TeslaTokenRepo {
             }
         } catch (error) {
             const terminal = isTeslaAuthError(error);
+            // Persistence has a detached deadline; this catch is back in the
+            // caller's context, whose cancellation cannot explain a save failure.
             logEvent('warn', 'tesla.refresh.failed', {
-                ...exchangeFields, stage, ...ioFailureDetails(error), terminal, error, credentialId: previousRefresh ? credentialId(previousRefresh) : undefined,
+                ...exchangeFields, stage, ...ioFailureDetails(error, undefined, stage !== 'persistence'), terminal, error, credentialId: previousRefresh ? credentialId(previousRefresh) : undefined,
             });
             if (!terminal || !previousRefresh) throw error;
             // Cleanup has its own budget so a parent cancellation does not skip

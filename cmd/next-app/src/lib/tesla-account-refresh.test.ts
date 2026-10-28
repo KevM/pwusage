@@ -86,6 +86,41 @@ describe('account refresh coordination', () => {
         expect(logEvent.mock.calls.some(([, event]) => event === 'tesla.refresh.succeeded')).toBe(false);
     });
 
+    it.each([
+        { failure: new Error('database unavailable'), failureCode: 'EXCHANGE_ERROR' },
+        { failure: null, failureCode: 'IO_DEADLINE_EXCEEDED' },
+    ])('attributes detached save failure $failureCode independently of an expired caller', async ({ failure, failureCode }) => {
+        vi.useFakeTimers();
+        let rejectSave!: (error: Error) => void;
+        let saveStarted!: () => void;
+        const started = new Promise<void>(resolve => { saveStarted = resolve; });
+        query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
+        query.mockImplementationOnce(() => {
+            saveStarted();
+            return new Promise<never>((_resolve, reject) => { rejectSave = reject; });
+        });
+        query.mockResolvedValue({ rowCount: 1, rows: [] });
+        let operation!: Promise<unknown>;
+        const caller = withIoDeadline(50, () => {
+            operation = setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token).catch(error => error);
+            return operation;
+        }).catch(error => error);
+        await started;
+        await vi.advanceTimersByTimeAsync(50);
+        expect(await caller).toBeInstanceOf(IoDeadlineError);
+        if (failure) {
+            rejectSave(failure);
+            expect(await operation).toBe(failure);
+        } else {
+            // The save's independent 1000 ms budget expires after the caller's 50 ms.
+            await vi.advanceTimersByTimeAsync(950);
+            expect(await operation).toBeInstanceOf(IoDeadlineError);
+        }
+        expect(logEvent).toHaveBeenCalledWith('warn', 'tesla.refresh.failed', expect.objectContaining({
+            stage: 'persistence', cancellationSource: 'none', failureCode, terminal: false,
+        }));
+    });
+
     it('lets a waiting browser reuse the credentials saved by a site refresh', async () => {
         let finishExchange!: (value: typeof rotated) => void;
         exchange.mockImplementation(() => new Promise<typeof rotated>(resolve => { finishExchange = resolve; }));
