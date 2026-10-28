@@ -26,6 +26,7 @@ struct HomeLiveTitle: View {
                     EmptyView()
                 }
                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+                .id(scoreboard != nil)
             }
         }
         .accessibilityElement(children: .ignore)
