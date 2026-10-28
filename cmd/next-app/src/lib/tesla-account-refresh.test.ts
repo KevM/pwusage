@@ -12,7 +12,7 @@ vi.mock('./observability', () => ({ logEvent }));
 
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { isTeslaAuthError, TeslaAuthError } from './tesla-client';
-import { checkIoDeadline, withIoDeadline } from './io-deadline';
+import { checkIoDeadline, withIoDeadline, IoDeadlineError } from './io-deadline';
 
 const original = { access_token: 'access-A', refresh_token: 'refresh-A' };
 const rotated = { access_token: 'access-B', refresh_token: 'refresh-B' };
@@ -43,14 +43,14 @@ describe('account refresh coordination', () => {
         query.mockResolvedValueOnce({ rowCount: 1, rows: [{ access_token: access, refresh_token: 'refresh-A' }] });
         query.mockResolvedValue({ rowCount: 1, rows: [] });
         expect(await setup().getLockedRefreshHandler('site').refreshHandler('refresh-A')).toEqual(rotated);
-        expect(exchange).toHaveBeenCalledWith('refresh-A');
+        expect(exchange).toHaveBeenCalledWith('refresh-A', expect.objectContaining({ exchangeId: expect.any(String), accountId: expect.any(String) }));
     });
 
     it('uses the latest stored refresh grant if a stale caller finds no usable access credential', async () => {
         query.mockResolvedValueOnce({ rowCount: 1, rows: [{ access_token: null, refresh_token: 'refresh-current' }] });
         query.mockResolvedValue({ rowCount: 1, rows: [] });
         expect(await setup().getLockedRefreshHandler('site').refreshHandler('refresh-stale')).toEqual(rotated);
-        expect(exchange).toHaveBeenCalledWith('refresh-current');
+        expect(exchange).toHaveBeenCalledWith('refresh-current', expect.objectContaining({ exchangeId: expect.any(String), accountId: expect.any(String) }));
     });
 
     it('persists a user refresh before returning to the browser', async () => {
@@ -58,11 +58,67 @@ describe('account refresh coordination', () => {
         query.mockResolvedValue({ rowCount: 1, rows: [] });
         const result = await setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token);
         expect(result).toEqual(rotated);
-        expect(exchange).toHaveBeenCalledWith(original.refresh_token);
+        expect(exchange).toHaveBeenCalledWith(original.refresh_token, expect.objectContaining({ exchangeId: expect.any(String), accountId: expect.any(String) }));
         expect(query).toHaveBeenCalledWith(expect.stringMatching(/SET access_token = \$1, refresh_token = \$2/),
             expect.arrayContaining([rotated.access_token, rotated.refresh_token, 'owner', original.refresh_token]));
         expect(query.mock.calls.findIndex(([sql]) => sql.includes('SET access_token')))
             .toBeLessThan(query.mock.calls.findIndex(([sql]) => sql.includes('SET is_refreshing = 0')));
+    });
+
+    it('correlates the exchange, persistence start and confirmed save', async () => {
+        query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
+        query.mockResolvedValue({ rowCount: 1, rows: [] });
+        await setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token);
+        const events = logEvent.mock.calls.filter(([, event]) => ['tesla.refresh.started', 'tesla.refresh.persistence-started', 'tesla.refresh.succeeded'].includes(event));
+        expect(events.map(([, event]) => event)).toEqual(['tesla.refresh.started', 'tesla.refresh.persistence-started', 'tesla.refresh.succeeded']);
+        expect(new Set(events.map(([, , fields]) => fields.exchangeId)).size).toBe(1);
+        expect(events[0][2].exchangeId).toBe(exchange.mock.calls[0][1].exchangeId);
+    });
+
+    it('records a persistence deadline separately from an exchange failure', async () => {
+        query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
+        query.mockRejectedValueOnce(new IoDeadlineError());
+        query.mockResolvedValue({ rowCount: 1, rows: [] });
+        await expect(setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token)).rejects.toMatchObject({ code: 'IO_DEADLINE_EXCEEDED' });
+        expect(logEvent).toHaveBeenCalledWith('warn', 'tesla.refresh.failed', expect.objectContaining({
+            stage: 'persistence', failureCode: 'IO_DEADLINE_EXCEEDED', terminal: false,
+        }));
+        expect(logEvent.mock.calls.some(([, event]) => event === 'tesla.refresh.succeeded')).toBe(false);
+    });
+
+    it.each([
+        { failure: new Error('database unavailable'), failureCode: 'EXCHANGE_ERROR' },
+        { failure: null, failureCode: 'IO_DEADLINE_EXCEEDED' },
+    ])('attributes detached save failure $failureCode independently of an expired caller', async ({ failure, failureCode }) => {
+        vi.useFakeTimers();
+        let rejectSave!: (error: Error) => void;
+        let saveStarted!: () => void;
+        const started = new Promise<void>(resolve => { saveStarted = resolve; });
+        query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
+        query.mockImplementationOnce(() => {
+            saveStarted();
+            return new Promise<never>((_resolve, reject) => { rejectSave = reject; });
+        });
+        query.mockResolvedValue({ rowCount: 1, rows: [] });
+        let operation!: Promise<unknown>;
+        const caller = withIoDeadline(50, () => {
+            operation = setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token).catch(error => error);
+            return operation;
+        }).catch(error => error);
+        await started;
+        await vi.advanceTimersByTimeAsync(50);
+        expect(await caller).toBeInstanceOf(IoDeadlineError);
+        if (failure) {
+            rejectSave(failure);
+            expect(await operation).toBe(failure);
+        } else {
+            // The save's independent 1000 ms budget expires after the caller's 50 ms.
+            await vi.advanceTimersByTimeAsync(950);
+            expect(await operation).toBeInstanceOf(IoDeadlineError);
+        }
+        expect(logEvent).toHaveBeenCalledWith('warn', 'tesla.refresh.failed', expect.objectContaining({
+            stage: 'persistence', cancellationSource: 'none', failureCode, terminal: false,
+        }));
     });
 
     it('lets a waiting browser reuse the credentials saved by a site refresh', async () => {

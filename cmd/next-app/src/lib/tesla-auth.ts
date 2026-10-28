@@ -1,8 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { logEvent } from './observability';
-import { abortable } from './io-deadline';
+import { abortable, ioFailureDetails } from './io-deadline';
 import { TeslaAuthError } from './tesla-client';
 import { requireEnv } from './env';
-import { postToTeslaTokenEndpoint } from './tesla-token-endpoint';
+import { postToTeslaTokenEndpoint, type RefreshExchangeContext } from './tesla-token-endpoint';
 
 // Tesla requires form encoding for server-to-server token calls. The previous
 // implementation sent JSON and defaulted client_id to the literal 'ownerapi',
@@ -71,36 +72,48 @@ export function parseRefreshedTokens(payload: unknown): RefreshedTokens {
     return { access_token, refresh_token };
 }
 
-export async function refreshAccessToken(refreshToken: string): Promise<RefreshedTokens> {
-    const { response, host } = await postToTeslaTokenEndpoint({
+export async function refreshAccessToken(refreshToken: string, context: RefreshExchangeContext = { exchangeId: randomUUID() }): Promise<RefreshedTokens> {
+    const { response, host, signal } = await postToTeslaTokenEndpoint({
         grant_type: 'refresh_token',
         client_id: requireEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID'),
         client_secret: requireEnv('TESLA_OAUTH_SECRET'),
         refresh_token: refreshToken,
         scope: REFRESH_SCOPE,
-    });
+    }, fetch, context);
 
-    if (!response.ok) {
-        const body = await abortable(response.text());
-        const errorCode = parseTokenErrorCode(body);
-        const terminalCode = response.status === 400
-            && (errorCode === 'invalid_grant' || errorCode === 'login_required');
-        const terminal = response.status === 401 || terminalCode;
-        // Never interpolate the body: isTeslaAuthError matches message
-        // substrings, so arbitrary upstream text could otherwise revoke a user.
-        // Only a recognized terminal code is safe to echo.
-        const detail = terminalCode ? ` ${errorCode}` : '';
-        const message = `Failed to refresh token: ${response.status}${detail}`;
-        logEvent('warn', 'tesla.token-endpoint.rejected', {
-            host, status: response.status, terminal,
-            errorCode: errorCode === 'invalid_grant' || errorCode === 'login_required'
-                || errorCode === 'invalid_client' ? errorCode : 'other',
-        });
-        if (terminal) {
-            throw new TeslaAuthError(message, response.status);
+    const startedAt = Date.now();
+    try {
+        if (!response.ok) {
+            const body = await abortable(response.text());
+            const errorCode = parseTokenErrorCode(body);
+            const terminalCode = response.status === 400
+                && (errorCode === 'invalid_grant' || errorCode === 'login_required');
+            const terminal = response.status === 401 || terminalCode;
+            // Never interpolate the body: isTeslaAuthError matches message
+            // substrings, so arbitrary upstream text could otherwise revoke a user.
+            // Only a recognized terminal code is safe to echo.
+            const detail = terminalCode ? ` ${errorCode}` : '';
+            const message = `Failed to refresh token: ${response.status}${detail}`;
+            logEvent('warn', 'tesla.token-endpoint.rejected', {
+                ...context, host, status: response.status, terminal,
+                errorCode: errorCode === 'invalid_grant' || errorCode === 'login_required'
+                    || errorCode === 'invalid_client' ? errorCode : 'other',
+            });
+            if (terminal) {
+                throw new TeslaAuthError(message, response.status);
+            }
+            throw new Error(message);
         }
-        throw new Error(message);
-    }
 
-    return parseRefreshedTokens(await abortable(response.json()));
+        const next = parseRefreshedTokens(await abortable(response.json()));
+        logEvent('info', 'tesla.refresh.credentials-parsed', { ...context, host, durationMs: Date.now() - startedAt });
+        return next;
+    } catch (error) {
+        logEvent('warn', 'tesla.refresh.exchange-failed', {
+            ...context, host, stage: 'response-body', status: response.status,
+            durationMs: Date.now() - startedAt, ...ioFailureDetails(error, signal),
+            outcomeUnknown: response.ok,
+        });
+        throw error;
+    }
 }
