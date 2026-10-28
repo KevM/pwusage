@@ -1,12 +1,11 @@
 // Solar layout detection from a site's own 5-minute production history
 // (reference `detect` in scripts/solar-layout-reference/detector.py), plus the
 // confidence rule and a solar-noon location check.
-import { MAX_TILT, toSunArrays, type Plane } from './poa';
-import { sunAt } from './sun';
-import { detectClip, envelopeClear, flatRuns, learnShade, quantile, smoothness, toSeries, type ShadeMask, type ShadeSegment } from './selection';
+import { MAX_TILT, modelKw, type Plane } from './poa';
+import { detectClip, envelopeClear, flatRuns, learnShade, median, quantile, smoothness, toSeries, type ShadeMask, type ShadeSegment } from './selection';
 import {
     azimuthRange90, bootstrapRows, fitFromGram, fitMaskGroup, fitRows, gridColumns, groupGrams, modelRows,
-    packPlanes, planeCountFromRows, refine, rmse, seededRng, subsetRows, toPlanes, type FitRows,
+    planeCountFromRows, seededRng, subsetRows, toPlanes, type FitRows,
 } from './fit';
 
 export const SOLAR_LAYOUT_DETECTOR_VERSION = 1;
@@ -44,27 +43,42 @@ function rangeWidth([lo, hi]: [number, number]): number {
     return ((hi - lo) % 360 + 360) % 360;
 }
 
+/** Longitude error (degrees) above which the stored location is treated as another place. */
+export const LOCATION_MISMATCH_DEGREES = 3;
+
 /**
- * Solar-noon check: refit the layout with the sun computed at longitudes
- * around the given one and return the offset (degrees) with the lowest RMSE.
- * The fitted planes absorb part of a timing error, so comparing production
- * centroids against the fitted model cannot see a wrong location; a timing
- * shift that is not an orientation change only fits well at the true longitude.
+ * Solar-noon check: on each clear day, the midpoint between the interpolated
+ * times production first rises above and last falls below 2% of the day's
+ * peak, measured against the same midpoint of the fitted layout's model.
+ * Production later than the model means the site is further west (4 minutes
+ * per degree). Returns the median over clear days, or null without any.
+ *
+ * Comparing whole-day production centroids misses a wrong location because
+ * the fitted planes absorb most of a timing error; the low-sun edges of the
+ * day are set by the sun, not the panels. Terrain still shifts them (a hill to
+ * the east delays the morning edge by up to ~2.4° at one research site), hence
+ * the 3° threshold rather than a tighter one.
  */
-function longitudeOffset(times: number[], latitude: number, longitude: number, rows: FitRows, best: Plane[], clipKw: number | null, checkDeadline: () => void): number {
-    const steps = [-4, -3, -2, -1, 0, 1, 2, 3, 4];
-    const err = steps.map(d => {
-        const shifted: FitRows = { ...rows, sun: toSunArrays(times.map(t => sunAt(new Date(t), latitude, longitude + d))) };
-        const p = refine(packPlanes(best), shifted, clipKw, 40);
-        checkDeadline();
-        return rmse(modelRows(p, shifted, clipKw), rows.y);
-    });
-    let k = 0;
-    for (let i = 1; i < err.length; i++) if (err[i] < err[k]) k = i;
-    if (k === 0 || k === steps.length - 1) return steps[k];
-    const [a, b, c] = [err[k - 1], err[k], err[k + 1]];
-    const denom = a - 2 * b + c;
-    return steps[k] + (denom > 0 ? 0.5 * (a - c) / denom : 0);
+export function longitudeOffset(days: { t: number[]; measured: number[]; model: number[] }[]): number | null {
+    const crossingMid = (t: number[], v: number[]): number | null => {
+        let peak = 0;
+        for (const x of v) if (x > peak) peak = x;
+        if (!(peak > 0)) return null;
+        const th = 0.02 * peak;
+        let first = -1, last = -1;
+        for (let i = 0; i < v.length; i++) if (v[i] > th) { if (first < 0) first = i; last = i; }
+        if (first < 1 || last >= v.length - 1) return null;
+        const up = t[first - 1] + (t[first] - t[first - 1]) * (th - v[first - 1]) / (v[first] - v[first - 1]);
+        const down = t[last] + (t[last + 1] - t[last]) * (v[last] - th) / (v[last] - v[last + 1]);
+        return (up + down) / 2;
+    };
+    const offsets: number[] = [];
+    for (const d of days) {
+        const m = crossingMid(d.t, d.measured);
+        const k = crossingMid(d.t, d.model);
+        if (m !== null && k !== null) offsets.push((m - k) / 60_000 / 4);
+    }
+    return offsets.length ? median(offsets) : null;
 }
 
 export function detectSolarLayout(input: {
@@ -183,8 +197,16 @@ export function detectSolarLayout(input: {
         };
     });
 
-    const times = keptIdx.map(r => series[clearIdx[r]].time.getTime() + 150_000);
-    const lonOffset = longitudeOffset(times, input.latitude, input.longitude, rows, best, clipKw, checkDeadline);
+    const noonDays = new Map<string, { t: number[]; measured: number[]; model: number[] }>();
+    for (const p of series) {
+        if (!clearDays.has(p.localDay) || !(p.sun.elevation > -2)) continue;
+        let d = noonDays.get(p.localDay);
+        if (!d) noonDays.set(p.localDay, (d = { t: [], measured: [], model: [] }));
+        d.t.push(p.time.getTime() + 150_000);
+        d.measured.push(Number.isFinite(p.kw) ? p.kw : 0);
+        d.model.push(modelKw(p.sun, best, clipKw));
+    }
+    const lonOffset = longitudeOffset([...noonDays.values()]);
 
     const reasons: string[] = [];
     if (clearDays.size < 15) reasons.push('few-clear-days');
@@ -192,7 +214,7 @@ export function detectSolarLayout(input: {
     const largest = planes.reduce((a, b) => (b.effectiveKw > a.effectiveKw ? b : a), planes[0]);
     const azWidth = rangeWidth(largest.azimuthRange90);
     if (azWidth > 60) reasons.push('azimuth-uncertain');
-    if (Math.abs(lonOffset) > 1.5) reasons.push('location-mismatch');
+    if (lonOffset !== null && Math.abs(lonOffset) > LOCATION_MISMATCH_DEGREES) reasons.push('location-mismatch');
     const confidence = reasons.length > 0 ? 'low'
         : clearDays.size >= 40 && producingDays.length >= 180 && azWidth <= 30 ? 'high' : 'medium';
     return {

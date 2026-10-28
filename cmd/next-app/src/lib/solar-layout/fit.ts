@@ -319,6 +319,16 @@ export function refine(params0: ArrayLike<number>, rows: FitRows, clipKw: number
                 H[b * np + a] = s;
             }
         }
+        // Freeze parameters pinned at a bound whose descent direction points outward;
+        // otherwise every clamped step is rejected and the fit runs to max_nfev.
+        for (let a = 0; a < np; a++) {
+            const atLo = p[a] <= lo[a % 3] + 1e-9 && g[a] > 0;
+            const atHi = p[a] >= hi[a % 3] - 1e-9 && g[a] < 0;
+            if (!atLo && !atHi) continue;
+            for (let b = 0; b < np; b++) { H[a * np + b] = 0; H[b * np + a] = 0; }
+            H[a * np + a] = 1;
+            g[a] = 0;
+        }
         let accepted = false;
         let converged = false;
         while (nfev < maxNfev) {

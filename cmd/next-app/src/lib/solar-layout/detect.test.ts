@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { syntheticSeries } from './synthetic';
-import { DetectionDeadlineError, detectSolarLayout } from './detect';
+import { DetectionDeadlineError, detectSolarLayout, longitudeOffset } from './detect';
 
 const loc = { latitude: 43.4, longitude: -87.9, timeZone: 'America/Chicago' };
 const eastWest = [{ azimuth: 90, tilt: 20, effectiveKw: 5 }, { azimuth: 270, tilt: 20, effectiveKw: 4 }];
@@ -44,8 +44,8 @@ describe('detectSolarLayout', () => {
         expect(r.acClipKw).toBeNull();
     }, 120_000);
 
-    it('flags a location three degrees of longitude off', () => {
-        const r = detectSolarLayout({ samples: year, ...loc, longitude: loc.longitude + 3 });
+    it('flags a location five degrees of longitude off', () => {
+        const r = detectSolarLayout({ samples: year, ...loc, longitude: loc.longitude + 5 });
         expect(r.status).toBe('low-confidence');
         expect(r.confidence).toBe('low');
         expect(r.reasons).toContain('location-mismatch');
@@ -63,5 +63,20 @@ describe('detectSolarLayout', () => {
 
     it('throws when the deadline has passed', () => {
         expect(() => detectSolarLayout({ samples: year, ...loc, deadline: Date.now() - 1 })).toThrow(DetectionDeadlineError);
+    });
+});
+
+describe('longitudeOffset', () => {
+    // A symmetric clear day: production rises at 06:00 and falls at 18:00 (minutes as ms).
+    const t = Array.from({ length: 289 }, (_, i) => i * 300_000);
+    const day = (shiftMin: number) => t.map(x => Math.max(0, Math.sin(Math.PI * (x / 60_000 - 360 - shiftMin) / 720)));
+
+    it('converts a later production day into degrees west', () => {
+        const offset = longitudeOffset([{ t, measured: day(12), model: day(0) }]);
+        expect(offset).toBeCloseTo(3, 1);
+    });
+
+    it('returns null without usable days', () => {
+        expect(longitudeOffset([])).toBeNull();
     });
 });
