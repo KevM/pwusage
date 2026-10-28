@@ -1,5 +1,5 @@
-import Testing
 @testable import PWUsage
+import Testing
 
 /// Turning an array on used to change only on-screen state; the selection
 /// persisted only through a separate button below the list. People toggled,

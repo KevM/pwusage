@@ -1,15 +1,15 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite
 struct SmartShiftPropertyTests {
-    @Test(arguments: Array(UInt64(0)..<500))
+    @Test(arguments: Array(UInt64(0) ..< 500))
     func generatedScenario(seed: UInt64) throws {
         try verifySmartShift(SmartShiftScenario(seed: seed))
     }
 
-    @Test(arguments: Array(UInt64(0)..<24))
+    @Test(arguments: Array(UInt64(0) ..< 24))
     func tariffOrderingDoesNotChangeResults(seed: UInt64) throws {
         let scenario = SmartShiftScenario(seed: seed)
         let original = try #require(scenario.evaluate().comparison)
@@ -38,7 +38,7 @@ struct SmartShiftPropertyTests {
         let boundary = scenario.now.addingTimeInterval(12 * 3600)
         let segments = scenario.tariffs.map { segment in
             LoadTimingTariffSegment(start: segment.start, end: segment.end, periodKey: segment.periodKey,
-                name: segment.name, buyRate: segment.buyRate + (segment.start >= boundary ? 1 : 0), sellRate: segment.sellRate)
+                                    name: segment.name, buyRate: segment.buyRate + (segment.start >= boundary ? 1 : 0), sellRate: segment.sellRate)
         }
         let comparison = try #require(scenario.evaluate(segments: segments).comparison)
         #expect(comparison.projectionEnd == boundary)
@@ -63,7 +63,7 @@ struct SmartShiftPropertyTests {
         scenario.forecastHours = 1
         scenario.duration = 0.5
         let later = SolarForecastInterval(periodStart: scenario.now.addingTimeInterval(7200),
-            periodEnd: scenario.now.addingTimeInterval(10800), powerKw: 100)
+                                          periodEnd: scenario.now.addingTimeInterval(10800), powerKw: 100)
         let projection = LoadTimingForecastEstimator.Projection.forecast(intervals: scenario.forecast + [later], context: scenario.projection.context!)
         let expected = try #require(scenario.evaluate().comparison)
         let actual = try #require(scenario.evaluate(projection: projection).comparison)
@@ -73,7 +73,7 @@ struct SmartShiftPropertyTests {
     @Test func corpusExercisesAllProjectionAndSafetyBranches() throws {
         var modes: Set<Int> = []
         var safetyKinds: Set<String> = []
-        for seed in UInt64(0)..<500 {
+        for seed in UInt64(0) ..< 500 {
             let scenario = SmartShiftScenario(seed: seed)
             modes.insert(scenario.mode)
             let comparison = try #require(scenario.evaluate().comparison, "\(scenario.diagnostic)")
@@ -133,12 +133,11 @@ struct SmartShiftRegressionTests {
         let bank = try #require(comparison.lanes.first { $0.periodKey == "p1" })
         #expect(comparison.safety == .nowSafe, "Projected bank: \(bank.projectedKwh) kWh")
     }
-
 }
 
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["PWUSAGE_FUZZ_STRESS"] == "1"))
 struct SmartShiftStressTests {
-    @Test(arguments: Array(UInt64(500)..<10_500))
+    @Test(arguments: Array(UInt64(500) ..< 10_500))
     func generatedScenario(seed: UInt64) throws {
         try verifySmartShift(SmartShiftScenario(seed: seed))
     }

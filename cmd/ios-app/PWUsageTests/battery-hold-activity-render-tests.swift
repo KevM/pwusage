@@ -1,6 +1,6 @@
+@testable import PWUsage
 import SwiftUI
 import Testing
-@testable import PWUsage
 
 /// Renders the Live Activity's Lock Screen card and expanded Dynamic Island to PNGs
 /// for review. The Simulator's widget gallery is unreliable for Live Activities.

@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 /// Preview fixtures are only useful if they exercise the paths that matter. These
 /// guard the properties that silently change what the preview screens show.

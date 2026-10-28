@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("Solar Forecast Aggregation Tests")
 struct SolarForecastTests {
@@ -46,7 +46,7 @@ struct SolarForecastTests {
         let end = date("13:00")
         let intervals = [
             SolarForecastInterval(periodStart: start, periodEnd: end, powerKw: 1),
-            SolarForecastInterval(periodStart: middle, periodEnd: date("13:30"), powerKw: 1)
+            SolarForecastInterval(periodStart: middle, periodEnd: date("13:30"), powerKw: 1),
         ]
         #expect(throws: SolarForecastError.incompleteCoverage) {
             try SolarForecast.energy(in: intervals, from: start, to: date("13:30"))

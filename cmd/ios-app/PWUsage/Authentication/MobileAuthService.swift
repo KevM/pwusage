@@ -90,7 +90,7 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
         let verifier = base64URL(randomBytes(count: 32))
         let challenge = base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
         let state = base64URL(randomBytes(count: 32))
-        guard (43...128).contains(verifier.count), (43...128).contains(state.count) else {
+        guard (43 ... 128).contains(verifier.count), (43 ... 128).contains(state.count) else {
             throw AuthError.webAuthenticationFailed
         }
         return PKCEMaterial(verifier: verifier, challenge: challenge, state: state)
@@ -353,7 +353,7 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
 
     private static func randomBytes(count: Int) -> Data {
         var generator = SystemRandomNumberGenerator()
-        return Data((0..<count).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
+        return Data((0 ..< count).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
     }
 
     private static func base64URL(_ data: Data) -> String {

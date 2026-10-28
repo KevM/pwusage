@@ -39,7 +39,7 @@ struct EnergyFlowProjection {
             ? .forecast(intervals: sorted, context: context) : .history(context: context)
         let clock = LoadTimingForecastEstimator.WallClock(timeZone: zone, from: start, to: end)
         let model = LoadTimingForecastEstimator.FlowModel(projection: projection, clock: clock,
-            forecastStart: forecastStart, forecastEnd: forecastEnd, tariffs: tariffs)
+                                                          forecastStart: forecastStart, forecastEnd: forecastEnd, tariffs: tariffs)
         let edges = model.boundaries(from: start, to: end)
         var result: [Interval] = []
         for (a, b) in zip(edges, edges.dropFirst()) {

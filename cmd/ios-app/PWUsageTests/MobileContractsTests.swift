@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("Mobile Contracts Tests")
 struct MobileContractsTests {
@@ -331,7 +331,7 @@ struct MobileContractsTests {
     }
 
     private static func planningContextJSON(slot: (Int) -> String) -> Data {
-        let slots = (0..<48).map(slot).joined(separator: ",")
+        let slots = (0 ..< 48).map(slot).joined(separator: ",")
         return Data(#"{"version":1,"site":{"id":"site-a","timezone":"America/Chicago"},"units":{"power":"kW","localMinute":"minute-of-day"},"asOf":"2026-10-18T15:00:00Z","availability":"available","usableDayCount":14,"historyStart":"2026-10-04T05:00:00Z","historyEnd":"2026-10-18T05:00:00Z","slots":[\#(slots)]}"#.utf8)
     }
 
@@ -404,7 +404,7 @@ struct MobileContractsTests {
             usableDayCount: usableDayCount,
             historyStart: asOf.addingTimeInterval(-14 * 24 * 60 * 60),
             historyEnd: asOf.addingTimeInterval(-60),
-            slots: (0..<48).map(slot)
+            slots: (0 ..< 48).map(slot)
         )
     }
 }

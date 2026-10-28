@@ -1,0 +1,9 @@
+project:
+  project: PWUsage.xcodeproj
+  schemes:
+    - PWUsage
+  targets:
+    - PWUsage
+    - PWUsageWidgets
+retain_public: true
+retain_objc_accessible: true

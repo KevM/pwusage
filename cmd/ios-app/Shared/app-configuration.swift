@@ -88,9 +88,9 @@ struct AppConfiguration: Equatable {
 
     private static var buildIsDebug: Bool {
         #if DEBUG
-        true
+            true
         #else
-        false
+            false
         #endif
     }
 

@@ -1,5 +1,5 @@
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("Solar Forecast Settings Status Tests")
 struct SolarForecastSettingsStatusTests {

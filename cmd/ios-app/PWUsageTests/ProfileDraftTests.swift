@@ -1,5 +1,5 @@
-import Testing
 @testable import PWUsage
+import Testing
 
 /// Swiping the job editor away used to discard edits silently. The editor now
 /// asks first, but only when something actually changed, so an untouched
