@@ -30,11 +30,14 @@ export function syntheticSeries(opts: {
         const from = day.toZonedDateTime({ timeZone: opts.timeZone }).epochMilliseconds;
         const to = day.add({ days: 1 }).toZonedDateTime({ timeZone: opts.timeZone }).epochMilliseconds;
         const cloudy = rng() < opts.cloudyFraction;
-        const level = cloudy ? 0.1 + 0.6 * rng() : 1;
+        // Clear days vary a little with haze and temperature and every sample carries
+        // ±0.5% meter jitter, as real ones do; noise-free solstice peaks would look
+        // like an AC clip plateau to detectClip (the reference behaves the same).
+        const level = cloudy ? 0.1 + 0.6 * rng() : 0.94 + 0.06 * rng();
         for (let t = from; t < to; t += 300_000) {
             const sun = sunAt(new Date(t + 150_000), opts.latitude, opts.longitude);
             let kw = modelKw(sun, opts.planes, null);
-            if (cloudy) kw *= Math.max(0, level * (0.7 + 0.6 * rng()));
+            kw *= cloudy ? Math.max(0, level * (0.7 + 0.6 * rng())) : level * (0.995 + 0.01 * rng());
             if (opts.shade?.some(s => sun.azimuth >= s.azimuthFrom && sun.azimuth < s.azimuthTo && sun.elevation < s.belowElevation)) kw *= 0.2;
             if (opts.clipKw !== undefined) kw = Math.min(kw, opts.clipKw);
             out.push({ timestamp: new Date(t), solarWh: kw * 1000 / 12 });
