@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SiteRepo } from './site-repo';
 
-const { query, exchange, logEvent } = vi.hoisted(() => ({
-    query: vi.fn(), exchange: vi.fn(), logEvent: vi.fn(),
+const { query, exchange, logEvent, after } = vi.hoisted(() => ({
+    query: vi.fn(), exchange: vi.fn(), logEvent: vi.fn(), after: vi.fn(),
 }));
+vi.mock('next/server', () => ({ after }));
 vi.mock('./db', () => ({ pool: { query } }));
 vi.mock('./tesla-auth', async importOriginal => ({
     ...await importOriginal<typeof import('./tesla-auth')>(), refreshAccessToken: exchange,
@@ -12,7 +13,7 @@ vi.mock('./observability', () => ({ logEvent }));
 
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { isTeslaAuthError, TeslaAuthError } from './tesla-client';
-import { checkIoDeadline, withIoDeadline, IoDeadlineError } from './io-deadline';
+import { checkIoDeadline, withIoDeadline, IoDeadlineError, ioSignal } from './io-deadline';
 
 const original = { access_token: 'access-A', refresh_token: 'refresh-A' };
 const rotated = { access_token: 'access-B', refresh_token: 'refresh-B' };
@@ -214,6 +215,35 @@ describe('account refresh coordination', () => {
             return handler;
         }, parent.signal).catch(() => undefined);
         expect(await handler).toEqual(rotated);
+    });
+
+    it('keeps an in-flight exchange and its lease alive after the caller deadline', async () => {
+        vi.useFakeTimers();
+        let finish!: (value: typeof rotated) => void;
+        let signal: AbortSignal | undefined;
+        exchange.mockImplementation(() => {
+            signal = ioSignal();
+            return new Promise<typeof rotated>(resolve => { finish = resolve; });
+        });
+        query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
+        query.mockResolvedValue({ rowCount: 1, rows: [] });
+        let operation!: Promise<unknown>;
+        const caller = withIoDeadline(50, () => {
+            operation = setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token);
+            return operation;
+        }).catch(error => error);
+        await vi.waitFor(() => expect(exchange).toHaveBeenCalledOnce());
+        expect(after).toHaveBeenCalledOnce();
+        const lifecycle = after.mock.calls[0][0]() as Promise<void>;
+        await vi.advanceTimersByTimeAsync(50);
+        expect(await caller).toBeInstanceOf(IoDeadlineError);
+        expect(signal?.aborted).toBe(false);
+        expect(query.mock.calls.some(([sql]) => sql.includes('SET is_refreshing = 0'))).toBe(false);
+        finish(rotated);
+        expect(await operation).toEqual(rotated);
+        await lifecycle;
+        expect(query).toHaveBeenCalledWith(expect.stringMatching(/SET access_token = \$1, refresh_token = \$2/),
+            expect.arrayContaining([rotated.access_token, rotated.refresh_token]));
     });
 
     it('never releases a replacement worker\'s lease', async () => {

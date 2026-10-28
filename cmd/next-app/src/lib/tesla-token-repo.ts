@@ -6,6 +6,7 @@ import { UserRepo } from './user-repo';
 import { isTeslaAuthError, TeslaAuthError } from './tesla-client';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseRefreshedTokens, type RefreshedTokens } from './tesla-auth';
+import { after } from 'next/server';
 
 interface AccountCredentials {
     access_token: string | null;
@@ -119,12 +120,26 @@ export class TeslaTokenRepo {
             return this.waitForUserRefresh(userId, 20000, siteId, Date.now(), suppliedRefresh);
         }
 
+        // The caller may stop waiting, but a dispatched rotation must run through
+        // persistence under its own deadline and the serverless request lifecycle.
+        const operation = this.refreshClaimedUser(userId, suppliedRefresh, siteId, lease, claim.rows[0], fields);
+        try {
+            after(async () => { await operation.catch(() => undefined); });
+        } catch {
+            // Outside a request lifecycle (e.g. CLI), the caller owns the work.
+        }
+        return operation;
+    }
+
+    private async refreshClaimedUser(
+        userId: string, suppliedRefresh: string, siteId: string | undefined,
+        lease: number, current: AccountCredentials, fields: { siteId: string | undefined; accountId: string },
+    ): Promise<RefreshedTokens> {
         const exchangeId = randomUUID();
         const exchangeFields = { ...fields, exchangeId };
         let stage: 'exchange' | 'persistence' = 'exchange';
         let previousRefresh: string | undefined;
         try {
-            const current = claim.rows[0];
             if (!current?.refresh_token) throw new Error('Stored Tesla credentials do not include a renewal grant');
             previousRefresh = current.refresh_token;
             if (previousRefresh !== suppliedRefresh && current.access_token) {
@@ -135,7 +150,7 @@ export class TeslaTokenRepo {
             }
             logEvent('info', 'tesla.refresh.started', { ...exchangeFields, credentialId: credentialId(previousRefresh) });
             const { refreshAccessToken } = await import('./tesla-auth');
-            const next = await refreshAccessToken(previousRefresh, exchangeFields);
+            const next = await withIoDeadline(18000, () => refreshAccessToken(previousRefresh!, exchangeFields), null);
             stage = 'persistence';
             logEvent('info', 'tesla.refresh.persistence-started', {
                 ...exchangeFields, credentialId: credentialId(next.refresh_token),
@@ -164,7 +179,7 @@ export class TeslaTokenRepo {
             // Persistence has a detached deadline; this catch is back in the
             // caller's context, whose cancellation cannot explain a save failure.
             logEvent('warn', 'tesla.refresh.failed', {
-                ...exchangeFields, stage, ...ioFailureDetails(error, undefined, stage !== 'persistence'), terminal, error, credentialId: previousRefresh ? credentialId(previousRefresh) : undefined,
+                ...exchangeFields, stage, ...ioFailureDetails(error, undefined, false), terminal, error, credentialId: previousRefresh ? credentialId(previousRefresh) : undefined,
             });
             if (!terminal || !previousRefresh) throw error;
             // Cleanup has its own budget so a parent cancellation does not skip
