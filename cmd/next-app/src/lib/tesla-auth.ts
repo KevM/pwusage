@@ -105,8 +105,14 @@ export async function refreshAccessToken(refreshToken: string, context: RefreshE
             throw new Error(message);
         }
 
-        const next = parseRefreshedTokens(await abortable(response.json()));
-        logEvent('info', 'tesla.refresh.credentials-parsed', { ...context, host, durationMs: Date.now() - startedAt });
+        const payload: unknown = await abortable(response.json());
+        const next = parseRefreshedTokens(payload);
+        const expiresIn = (payload as Record<string, unknown>).expires_in;
+        const expiryMs = typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn >= 0
+            ? Date.now() + expiresIn * 1000 : NaN;
+        const expiry = Number.isFinite(expiryMs) && expiryMs <= 8640000000000000
+            ? { accessExpiresInSeconds: expiresIn, accessExpiresAt: new Date(expiryMs).toISOString() } : {};
+        logEvent('info', 'tesla.refresh.credentials-parsed', { ...context, host, durationMs: Date.now() - startedAt, ...expiry });
         return next;
     } catch (error) {
         logEvent('warn', 'tesla.refresh.exchange-failed', {
