@@ -184,18 +184,18 @@ struct LoadProfilesSheet: View {
 
     private func profileSummary(_ profile: LoadProfile) -> String {
         guard profile.kind == .car, let car = profile.carSettings else {
-            return "\(profile.energyKwh.formatted(.number.precision(.fractionLength(0...1)))) kWh · \(profile.durationHours.formatted(.number.precision(.fractionLength(0...1)))) hr"
+            return "\(profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh · \(profile.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hr"
         }
         guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: car) else { return "Car estimate unavailable" }
-        return "\(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0...1)))) kWh to add · about \(estimate.durationHours.formatted(.number.precision(.fractionLength(0...1)))) hr"
+        return "\(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh to add · about \(estimate.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hr"
     }
 
     private func profileAccessibilitySummary(_ profile: LoadProfile) -> String {
         if profile.kind == .car, let car = profile.carSettings,
            let estimate = LoadTimingEstimator.carChargeEstimate(settings: car) {
-            return "\(profile.name), \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours to add, about \(estimate.durationHours.formatted(.number.precision(.fractionLength(0...1)))) hours at Level \(car.chargingLevel == .level1 ? "1" : "2")"
+            return "\(profile.name), \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours to add, about \(estimate.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hours at Level \(car.chargingLevel == .level1 ? "1" : "2")"
         }
-        return "\(profile.name), \(profile.energyKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours, \(profile.durationHours.formatted(.number.precision(.fractionLength(0...1)))) hours"
+        return "\(profile.name), \(profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours, \(profile.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hours"
     }
 }
 
@@ -213,8 +213,8 @@ struct ProfileDraft: Identifiable, Equatable {
             (kind != .custom || !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) &&
             (kind != .car || carSettings.map {
                 $0.capacityKwh.isFinite && $0.capacityKwh > 0 && $0.capacityKwh <= LoadProfile.maximumCarCapacityKwh &&
-                    (0...100).contains($0.initialStateOfCharge) &&
-                    ($0.initialStateOfCharge...100).contains($0.targetStateOfCharge)
+                    (0 ... 100).contains($0.initialStateOfCharge) &&
+                    ($0.initialStateOfCharge ... 100).contains($0.targetStateOfCharge)
             } == true)
     }
 
@@ -288,9 +288,9 @@ private struct ProfileEditorSheet: View {
 
                 if draft.kind == .car, let settings = draft.carSettings {
                     Section("Car") {
-                        decimalStepper("Battery capacity", value: carValue(\.capacityKwh), range: 1...LoadProfile.maximumCarCapacityKwh, step: 1, unit: "kWh")
-                        decimalStepper("Current charge", value: carValue(\.initialStateOfCharge), range: 0...100, step: 1, unit: "%")
-                        decimalStepper("Target charge", value: carValue(\.targetStateOfCharge), range: settings.initialStateOfCharge...100, step: 1, unit: "%")
+                        decimalStepper("Battery capacity", value: carValue(\.capacityKwh), range: 1 ... LoadProfile.maximumCarCapacityKwh, step: 1, unit: "kWh")
+                        decimalStepper("Current charge", value: carValue(\.initialStateOfCharge), range: 0 ... 100, step: 1, unit: "%")
+                        decimalStepper("Target charge", value: carValue(\.targetStateOfCharge), range: settings.initialStateOfCharge ... 100, step: 1, unit: "%")
                         Picker("Charging level", selection: carLevelBinding) {
                             Text("Level 1").tag(CarChargingLevel.level1)
                             Text("Level 2").tag(CarChargingLevel.level2)
@@ -301,8 +301,8 @@ private struct ProfileEditorSheet: View {
 
                 if draft.kind != .car {
                     Section("Job Estimate") {
-                        decimalStepper("Energy", value: $draft.energyKwh, range: 0.1...500, step: 0.5, unit: "kWh")
-                        decimalStepper("Duration", value: $draft.durationHours, range: 0.1...48, step: 0.5, unit: "hours")
+                        decimalStepper("Energy", value: $draft.energyKwh, range: 0.1 ... 500, step: 0.5, unit: "kWh")
+                        decimalStepper("Duration", value: $draft.durationHours, range: 0.1 ... 48, step: 0.5, unit: "hours")
                     }
                 } else {
                     Section {
@@ -347,20 +347,20 @@ private struct ProfileEditorSheet: View {
                 HStack {
                     Text(title)
                     Spacer(minLength: 8)
-                    Text("\(value.wrappedValue.formatted(.number.precision(.fractionLength(0...1)))) \(unit)")
+                    Text("\(value.wrappedValue.formatted(.number.precision(.fractionLength(0 ... 1)))) \(unit)")
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                    Text("\(value.wrappedValue.formatted(.number.precision(.fractionLength(0...1)))) \(unit)")
+                    Text("\(value.wrappedValue.formatted(.number.precision(.fractionLength(0 ... 1)))) \(unit)")
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .accessibilityLabel(title)
-        .accessibilityValue("\(value.wrappedValue.formatted(.number.precision(.fractionLength(0...1)))) \(unit)")
+        .accessibilityValue("\(value.wrappedValue.formatted(.number.precision(.fractionLength(0 ... 1)))) \(unit)")
         .accessibilityHint("Use the stepper to change the value")
     }
 
@@ -390,7 +390,7 @@ private struct ProfileEditorSheet: View {
         guard let settings = draft.carSettings else { return "Enter car settings to calculate the estimate." }
         guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) else { return "Check the car settings to calculate the estimate." }
         guard estimate.batteryKwh > 0 else { return "No energy will be added at this charge target." }
-        return "About \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0...1)))) kWh to add, with charging losses excluded from that amount. Estimated charging time is \(estimate.durationHours.formatted(.number.precision(.fractionLength(0...1)))) hours at Level \(settings.chargingLevel == .level1 ? "1" : "2")."
+        return "About \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh to add, with charging losses excluded from that amount. Estimated charging time is \(estimate.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hours at Level \(settings.chargingLevel == .level1 ? "1" : "2")."
     }
 }
 

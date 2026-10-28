@@ -13,17 +13,17 @@ enum LoadTimingPresentation {
     static func profileChipTitle(_ profile: LoadProfile) -> String {
         if profile.kind == .car, let settings = profile.carSettings,
            let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) {
-            return "\(profile.name) · \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0...1)))) kWh battery"
+            return "\(profile.name) · \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh battery"
         }
-        return "\(profile.name) · \(profile.energyKwh.formatted(.number.precision(.fractionLength(0...1)))) kWh"
+        return "\(profile.name) · \(profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh"
     }
 
     static func profileChipAccessibilityLabel(_ profile: LoadProfile) -> String {
         if profile.kind == .car, let settings = profile.carSettings,
            let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) {
-            return "\(profile.name), \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours to the battery, about \(estimate.wallKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours from the wall, Level \(settings.chargingLevel == .level1 ? "1" : "2")"
+            return "\(profile.name), \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours to the battery, about \(estimate.wallKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours from the wall, Level \(settings.chargingLevel == .level1 ? "1" : "2")"
         }
-        return "\(profile.name), \(profile.energyKwh.formatted(.number.precision(.fractionLength(0...1)))) kilowatt-hours, \(profile.durationHours.formatted(.number.precision(.fractionLength(0...1)))) hours"
+        return "\(profile.name), \(profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours, \(profile.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hours"
     }
 
     static func sourceTimeSummary(_ energyDataThrough: Date?, timeZone: String) -> String {

@@ -10,7 +10,7 @@ struct SmartShiftVerdictView: View {
 
     /// Bar column width beside the why line: about a phone's worth, so a small
     /// saving still shows as a visible gap.
-    static let sideBySideBars: ClosedRange<CGFloat> = 300...380
+    static let sideBySideBars: ClosedRange<CGFloat> = 300 ... 380
     /// Narrowest the why line gets beside the bars; below this they stack.
     static let sideBySideWhyMinWidth: CGFloat = 420
     static let sideBySideSpacing: CGFloat = 24
