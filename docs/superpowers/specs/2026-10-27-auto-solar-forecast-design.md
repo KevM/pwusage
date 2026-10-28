@@ -273,3 +273,6 @@ cherry-picking.
 Note on sequencing: the layout detector is provider-independent (any free
 forecast, including Open-Meteo's tilted irradiance, needs the same planes), so
 the server work can start before the provider question is settled.
+
+
+**Server review status:** The original parity gate remains in force and is partially met, with the plane-count exception and pending owner acceptance documented in the [server plan](../plans/2026-10-27-auto-solar-forecast-server.md#review-follow-up-parity-status). Insufficient-history results retry after 24 hours; successful and low-confidence results retain their 30-day cadence.

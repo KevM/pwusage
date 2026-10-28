@@ -28,17 +28,7 @@ export function median(values: ArrayLike<number>): number {
 
 function localDayFormatter(timeZone: string): (d: Date) => string {
     const fmt = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-    // Offsets change at most on the hour, so cache per UTC hour.
-    const cache = new Map<number, string>();
-    return d => {
-        const key = Math.floor(d.getTime() / 3_600_000);
-        let hit = cache.get(key);
-        if (hit === undefined) {
-            hit = fmt.format(d);
-            cache.set(key, hit);
-        }
-        return hit;
-    };
+    return d => fmt.format(d);
 }
 
 /** Regular 5-minute series with midpoint sun and the night baseline removed (reference `detect` lines 426-432). */
