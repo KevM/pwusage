@@ -50,14 +50,14 @@ struct LoadTimingView: View {
     let site: MobileSite
     let isSelected: Bool
 
-    @StateObject private var profileStore: LoadProfileStore
-    @State private var isProfileSheetPresented = false
-    @State private var isJobPickerPresented = false
-    @State private var isSolarForecastSheetPresented = false
-    @State private var detailsSnapshot: SmartShiftDetailsSnapshot?
-    @State private var exploredProfileID: String?
+    @StateObject var profileStore: LoadProfileStore
+    @State var isProfileSheetPresented = false
+    @State var isJobPickerPresented = false
+    @State var isSolarForecastSheetPresented = false
+    @State var detailsSnapshot: SmartShiftDetailsSnapshot?
+    @State var exploredProfileID: String?
     /// Bumped when the comparison goes stale on its own (see `nextRefresh`), to run a body pass.
-    @State private var staleRefreshes = 0
+    @State var staleRefreshes = 0
 
     init(coordinator: DashboardCoordinator, site: MobileSite, isSelected: Bool = true, profileStore: LoadProfileStore? = nil, initialExploredProfileID: String? = nil) {
         self.coordinator = coordinator
@@ -67,120 +67,19 @@ struct LoadTimingView: View {
         _exploredProfileID = State(initialValue: initialExploredProfileID)
     }
 
-    private var response: MobileBillResponse? { coordinator.bill.response }
-    private var timing: LoadTiming? { response?.loadTiming }
-    private var currencyCode: String { response?.currentBill.currency ?? "USD" }
-    private var timeZone: String { response?.site.timezone ?? "UTC" }
+    var response: MobileBillResponse? { coordinator.bill.response }
+    var timing: LoadTiming? { response?.loadTiming }
+    var currencyCode: String { response?.currentBill.currency ?? "USD" }
+    var timeZone: String { response?.site.timezone ?? "UTC" }
 
     /// The Job on screen: one picked here, else the last one viewed.
     static func initialJobID(store: LoadProfileStore) -> String? {
         store.profile(id: store.selectedProfileID)?.id ?? store.profiles.first?.id
     }
 
-    private var selectedProfile: LoadProfile? {
+    var selectedProfile: LoadProfile? {
         exploredProfileID.flatMap { profileStore.profile(id: $0) }
             ?? Self.initialJobID(store: profileStore).flatMap { profileStore.profile(id: $0) }
-    }
-
-    private struct SmartShiftState {
-        let screen: SmartShiftScreen
-        let profile: LoadProfile?
-        let evaluation: SmartShiftEvaluation?
-        let timing: LoadTiming
-        let now: Date
-        let billingCycleEnd: Date
-        let hint: BetterJobHint?
-        /// What the pass was offered, kept so "Copy diagnostics" can record it.
-        let balanceSourceTime: Date?
-        let intervals: [SolarForecastInterval]?
-        let context: LoadTimingForecastEstimator.PlanningContext?
-    }
-
-    /// Prices the selected Job with the solar forecast when it's usable and with
-    /// balances held still otherwise, then turns that into the card's copy.
-    private func smartShiftState(now: Date, timing: LoadTiming, response: MobileBillResponse) -> SmartShiftState {
-        let profile = selectedProfile
-        let availability = LoadTimingForecastPresentation.forecastAvailability(
-            state: coordinator.solarForecastState,
-            connection: coordinator.solarForecastConnection,
-            cause: coordinator.solarForecastUnavailableCause,
-            reason: coordinator.solarForecastUnavailableReason,
-            forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
-            now: now
-        )
-        // One evaluator per pass, so every Job shares the projection's plan.
-        let intervals = coordinator.solarForecastBatch?.intervals
-        // Without a usable forecast, the household pattern's grid history still projects the banks.
-        let context = coordinator.loadPlanningContext ?? coordinator.householdPattern
-        let evaluate = SmartShiftPresentation.evaluator(
-            now: now,
-            timing: timing,
-            forecast: availability,
-            intervals: intervals,
-            context: context,
-            balanceSourceTime: response.sources.energyDataThrough,
-            billingCycleEnd: response.currentBill.cycleEnd,
-            currencyCode: currencyCode,
-            timeZone: timeZone
-        )
-        let evaluation = profile.map(evaluate)
-        let screen = SmartShiftPresentation.make(
-            profile: profile,
-            result: evaluation?.result ?? .init(comparison: nil, unavailableReason: nil),
-            forecast: evaluation?.forecast ?? .none,
-            refreshUnavailable: coordinator.bill.isUnavailable,
-            timing: timing,
-            now: now,
-            billingCycleEnd: response.currentBill.cycleEnd,
-            currencyCode: currencyCode,
-            timeZone: timeZone
-        )
-        // Every saved Job is priced in this same pass, so the hint costs no extra
-        // passes; Jobs with no comparison right now are left out.
-        var hint: BetterJobHint?
-        if let profile, let savings = evaluation?.result.comparison?.savings, !coordinator.bill.isUnavailable {
-            let others = profileStore.profiles.filter { $0.id != profile.id }.compactMap { other in
-                evaluate(other).result.comparison.map { (other, $0.savings) }
-            }
-            hint = SmartShiftPresentation.betterJobHint(selectedID: profile.id, savingsByJob: [(profile, savings)] + others,
-                                                        currencyCode: currencyCode)
-        }
-        return SmartShiftState(screen: screen, profile: profile, evaluation: evaluation, timing: timing, now: now,
-                               billingCycleEnd: response.currentBill.cycleEnd, hint: hint,
-                               balanceSourceTime: response.sources.energyDataThrough, intervals: intervals, context: context)
-    }
-
-    private func detailsSnapshot(_ state: SmartShiftState, verdict: SmartShiftVerdict) -> SmartShiftDetailsSnapshot {
-        let comparison = state.evaluation?.result.comparison
-        let usedForecast = state.evaluation?.forecast == .ready
-        var breakdowns: [CostBreakdown] = []
-        var ruledOutNote: String?
-        if let comparison, let profile = state.profile {
-            breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: profile, timing: state.timing,
-                                                               now: state.now, billingCycleEnd: state.billingCycleEnd,
-                                                               currencyCode: currencyCode, timeZone: timeZone)
-            ruledOutNote = SmartShiftPresentation.ruledOutNote(comparison: comparison, profile: profile, timing: state.timing,
-                                                               now: state.now, timeZone: timeZone)
-        }
-        var diagnostics: SmartShiftDiagnostics?
-        if let profile = state.profile, let evaluation = state.evaluation {
-            diagnostics = SmartShiftDiagnostics(
-                siteId: site.id, app: .current, job: profile, now: state.now, balanceSourceTime: state.balanceSourceTime,
-                billingCycleEnd: state.billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone, timing: state.timing,
-                evaluation: evaluation, intervals: state.intervals, context: state.context,
-                forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt)
-        }
-        return SmartShiftDetailsSnapshot(
-            verdict: verdict,
-            comparison: comparison,
-            rows: SmartShiftPresentation.periodRows(timing: state.timing, currencyCode: currencyCode),
-            breakdowns: breakdowns,
-            ruledOutNote: ruledOutNote,
-            forecastFetchedAt: usedForecast ? coordinator.solarForecastBatch?.fetchedAt : nil,
-            contextAsOf: usedForecast ? coordinator.loadPlanningContext?.asOf : nil,
-            capturedAt: state.now,
-            diagnostics: diagnostics
-        )
     }
 
     /// The comparison is a multi-candidate search over the horizon, so it is
@@ -283,7 +182,7 @@ struct LoadTimingView: View {
         }
     }
 
-    private func refreshBatteryHoldWhileVisible() async {
+    func refreshBatteryHoldWhileVisible() async {
         guard coordinator.isForeground else { return }
         var force = true
         while !Task.isCancelled {
@@ -293,7 +192,7 @@ struct LoadTimingView: View {
         }
     }
 
-    private func jobCard(_ state: SmartShiftState) -> some View {
+    func jobCard(_ state: SmartShiftState) -> some View {
         LoadTimingCard {
             switch state.screen.content {
             case .verdict(let verdict):
@@ -335,7 +234,7 @@ struct LoadTimingView: View {
     }
 
     @ViewBuilder
-    private func jobRows(hint: BetterJobHint?) -> some View {
+    func jobRows(hint: BetterJobHint?) -> some View {
         if profileStore.profiles.count > 1 {
             Divider()
             Button {
@@ -361,12 +260,12 @@ struct LoadTimingView: View {
         }
     }
 
-    private func selectJob(_ id: String) {
+    func selectJob(_ id: String) {
         exploredProfileID = id
         try? profileStore.selectProfile(id: id)
     }
 
-    private func disclosureRow(_ title: String) -> some View {
+    func disclosureRow(_ title: String) -> some View {
         HStack {
             Text(title)
             Spacer()
@@ -379,7 +278,7 @@ struct LoadTimingView: View {
         .contentShape(Rectangle())
     }
 
-    private var noResponseJobCard: some View {
+    var noResponseJobCard: some View {
         let selected = selectedProfile
         return LoadTimingCard {
             if let selected {
@@ -398,7 +297,7 @@ struct LoadTimingView: View {
         }
     }
 
-    private var jobPicker: some View {
+    var jobPicker: some View {
         NavigationStack {
             List {
                 ForEach(profileStore.profiles) { profile in
@@ -424,7 +323,7 @@ struct LoadTimingView: View {
         .presentationDragIndicator(.visible)
     }
 
-    private func metadata(_ response: MobileBillResponse) -> some View {
+    func metadata(_ response: MobileBillResponse) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Billing cycle \(DashboardPresentation.date(response.currentBill.cycleStart, timeZoneIdentifier: timeZone, dateStyle: .short)) – \(DashboardPresentation.date(response.currentBill.cycleEnd, timeZoneIdentifier: timeZone, dateStyle: .short))")
             Text(LoadTimingPresentation.sourceTimeSummary(response.sources.energyDataThrough, timeZone: timeZone))
@@ -439,77 +338,5 @@ struct LoadTimingView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
         .accessibilityElement(children: .combine)
-    }
-}
-
-/// How stale the energy observations are, in words.
-///
-/// This is one of only two things on the load timing screen that move with the
-/// clock, so it owns a minute timeline of its own. Using the timeline's own date
-/// keeps the label and the tick that redraws it on the same clock instead of a
-/// second one.
-private struct LoadTimingFreshnessLabel: View {
-    let isUnavailable: Bool
-    let energyDataThrough: Date?
-    /// Whether the label carries a `"Source freshness: …"` accessibility prefix.
-    /// This preserves what each call site announced before the label was
-    /// extracted: the recommendation card's caption set that label, and the
-    /// metadata footer — already combined with its neighbours into one
-    /// accessibility element — did not. It is an announcement choice, not an
-    /// attempt to influence how `.combine` groups a nested timeline.
-    var announcesFreshness = true
-
-    var body: some View {
-        TimelineView(.everyMinute) { context in
-            let status = LoadTimingPresentation.sourceStatus(
-                isUnavailable: isUnavailable,
-                energyDataThrough: energyDataThrough,
-                now: context.date
-            )
-            Text(status)
-                .font(.caption)
-                .foregroundStyle(isUnavailable ? .orange : .secondary)
-                .modifier(LoadTimingFreshnessAnnouncement(announces: announcesFreshness, status: status))
-        }
-    }
-}
-
-/// The recommendation card's caption announced what the label meant and wrapped
-/// freely; the metadata footer, already combined into a single accessibility
-/// element, announced only the status text and was left to wrap like its
-/// neighbours. Restoring each call site exactly means the announcement and that
-/// wrapping have to travel together, so they are decided in one place.
-private struct LoadTimingFreshnessAnnouncement: ViewModifier {
-    let announces: Bool
-    let status: String
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if announces {
-            content
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("Source freshness: \(status)")
-        } else {
-            content
-        }
-    }
-}
-
-private struct LoadTimingCard<Content: View>: View {
-    var title: String? = nil
-    var symbol: String? = nil
-    @ViewBuilder let content: Content
-
-    init(title: String? = nil, symbol: String? = nil, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.symbol = symbol
-        self.content = content()
-    }
-
-    var body: some View {
-        CardContainer(title: title, symbol: symbol) {
-            content
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
