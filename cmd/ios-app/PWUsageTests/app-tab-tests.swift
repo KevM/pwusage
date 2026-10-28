@@ -1,5 +1,5 @@
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("App Tab Tests")
 struct AppTabTests {

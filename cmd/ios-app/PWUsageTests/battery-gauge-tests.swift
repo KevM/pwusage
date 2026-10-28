@@ -1,8 +1,8 @@
 import CoreGraphics
+@testable import PWUsage
 import SwiftUI
 import Testing
 import UIKit
-@testable import PWUsage
 
 @Suite("Drawn battery gauge geometry")
 struct BatteryGaugeGeometryTests {

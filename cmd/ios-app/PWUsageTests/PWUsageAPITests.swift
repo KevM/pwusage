@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @MainActor
 @Suite("PWUsage API Tests", .serialized)
@@ -234,7 +234,7 @@ final class PWUsageAPITests {
     @Test("Server-refreshed versioned session cookie replaces the stored one opaquely")
     func refreshedSessionCookieReplacesStoredOne() async throws {
         let stale = try #require(HTTPCookie(properties: [
-            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "old.stale.token"
+            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "old.stale.token",
         ]))
         cookieStorage.setCookie(stale)
 
@@ -247,7 +247,7 @@ final class PWUsageAPITests {
                 // Proxy-style sliding refresh: 200 plus a replacement session cookie.
                 guard let replaced = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [
                     "Content-Type": "application/json",
-                    "Set-Cookie": "site_auth=\(refreshedValue); Path=/; HttpOnly; SameSite=Lax"
+                    "Set-Cookie": "site_auth=\(refreshedValue); Path=/; HttpOnly; SameSite=Lax",
                 ]) else { throw URLError(.badServerResponse) }
                 return (replaced, Data(#"[{"id":"site-1","name":"Home","utility":"Utility Co"}]"#.utf8))
             }
@@ -281,7 +281,7 @@ final class PWUsageAPITests {
     @Test("Planning context uses the authenticated PWUsage transport and typed contract")
     func planningContextUsesPWUsageTransport() async throws {
         var recordedRequest: URLRequest?
-        let slots = (0..<48).map { index in
+        let slots = (0 ..< 48).map { index in
             "{\"localMinute\":\(index * 30),\"homeKw\":1.25,\"batteryNetChargeKw\":-0.1,\"sampleCount\":14,\"coverage\":1}"
         }.joined(separator: ",")
         let fixture = "{\"version\":1,\"site\":{\"id\":\"site/one & two\",\"timezone\":\"UTC\"},\"units\":{\"power\":\"kW\",\"localMinute\":\"minute-of-day\"},\"asOf\":\"2027-01-15T08:00:00Z\",\"availability\":\"available\",\"unavailableReason\":null,\"usableDayCount\":14,\"historyStart\":\"2027-01-01T00:00:00Z\",\"historyEnd\":\"2027-01-15T00:00:00Z\",\"slots\":[\(slots)]}"
@@ -427,7 +427,7 @@ final class PWUsageAPITests {
         let shared = try #require(URLSessionConfiguration.ephemeral.httpCookieStorage)
         let origin = URL(string: "https://pwusage.test")!
         let cookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "site_auth",
-            .value: "existing-session", .expires: Date().addingTimeInterval(3600)]))
+                                                          .value: "existing-session", .expires: Date().addingTimeInterval(3600)]))
         legacy.setCookie(cookie)
         SharedWebSession.migrateSession(for: origin, from: legacy, to: shared)
         #expect(shared.cookies(for: origin)?.first?.value == "existing-session")
@@ -441,9 +441,9 @@ final class PWUsageAPITests {
     func freshInstallCookieClear() throws {
         let storage = try #require(URLSessionConfiguration.ephemeral.httpCookieStorage)
         let siteCookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "site_auth",
-            .value: "previous-session", .expires: Date().addingTimeInterval(3600)]))
+                                                              .value: "previous-session", .expires: Date().addingTimeInterval(3600)]))
         let otherCookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "display",
-            .value: "compact"]))
+                                                               .value: "compact"]))
         storage.setCookie(siteCookie)
         storage.setCookie(otherCookie)
 
@@ -606,4 +606,3 @@ private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func stopLoading() {}
 }
-

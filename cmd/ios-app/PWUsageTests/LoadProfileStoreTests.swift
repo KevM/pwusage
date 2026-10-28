@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("Load Profile Store Tests")
 struct LoadProfileStoreTests {
@@ -216,7 +216,7 @@ struct LoadProfileStoreTests {
             (.invalidProfile, "Enter a name for custom loads, and energy and duration greater than zero. Check the car charge settings too."),
             (.profileNotFound, "That load profile is no longer available. Close and reopen load profiles."),
             (.cannotDeleteBuiltIn, "Built-in load profiles can’t be deleted. Edit them instead, or reset them to their default settings."),
-            (.cannotResetCustom, "Custom loads can’t be reset to defaults. Delete the load and add it again instead.")
+            (.cannotResetCustom, "Custom loads can’t be reset to defaults. Delete the load and add it again instead."),
         ]
         for (error, expected) in cases {
             #expect(error.errorDescription == expected)
