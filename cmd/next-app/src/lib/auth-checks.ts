@@ -71,6 +71,12 @@ export async function getTeslaCredentials() {
     return new UserRepo().getTokensForSite(siteIds[0]);
 }
 
+/** The signed-in user's roles from the DB-checked auth state; [] when signed out. */
+export const getCurrentRoles = cache(async (): Promise<string[]> => {
+    const auth = await resolveAuth();
+    return auth ? auth.roles : [];
+});
+
 export const isUserAdmin = cache(async (): Promise<boolean> => {
     const auth = await resolveAuth();
     return !!auth && auth.roles.includes('admin');
