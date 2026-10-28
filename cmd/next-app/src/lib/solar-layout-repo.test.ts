@@ -51,8 +51,8 @@ describe('SolarLayoutRepo', () => {
         const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
         expect(sql).toContain("'solar-forecast-beta' = ANY(u.roles)");
         expect(sql).toMatch(/l\.latitude IS NOT NULL AND l\.longitude IS NOT NULL/);
-        expect(sql).toMatch(/l\.detected_at IS NULL OR l\.detected_at < \$1::timestamptz - interval '30 days'/);
-        expect(sql).toMatch(/l\.attempted_at IS NULL OR l\.attempted_at < \$1::timestamptz - interval '24 hours'/);
+        expect(sql).toMatch(/l\.status = 'not-enough-history' OR l\.detected_at IS NULL OR l\.detected_at < \$1::timestamptz - interval '30 days'/);
+        expect(sql).toMatch(/l\.attempted_at IS NULL OR l\.attempted_at <= \$1::timestamptz - interval '24 hours'/);
         expect(sql).toMatch(/ORDER BY l\.detected_at NULLS FIRST, l\.attempted_at NULLS FIRST/);
         expect(params).toEqual([now, 5]);
     });

@@ -55,7 +55,7 @@ Commits the Python reference (code only), adds the table and its repository.
     - `get(siteId: string): Promise<SiteSolarLayoutRow | null>` where `SiteSolarLayoutRow = { siteId: string; latitude: number | null; longitude: number | null; locationSetAt: Date | null; result: SolarLayoutResult | null; status: 'pending' | 'detected' | 'not-enough-history' | 'low-confidence' | 'failed'; detectedAt: Date | null; attemptedAt: Date | null; detectorVersion: number | null }` (numeric columns parsed to numbers). `SolarLayoutResult` is defined in Task 7; until then type `result` as `unknown` and narrow in Task 7.
     - `saveResult(siteId: string, result: SolarLayoutResult, detectorVersion: number): Promise<void>` — sets `status` from `result.status`, `detected_at` and `attempted_at` to now. A `failed` status keeps the previous `result`.
     - `recordFailure(siteId: string): Promise<void>` — sets `attempted_at = now()` only.
-    - `listDue(limit: number, now: Date): Promise<DueSite[]>` where `DueSite = { siteId: string; timezone: string; latitude: number; longitude: number }`: sites whose owner has role `solar-forecast-beta`, with a location, where (`detected_at IS NULL` or `detected_at < now - 30 days`) and (`attempted_at IS NULL` or `attempted_at < now - 24 h`), ordered `detected_at NULLS FIRST, attempted_at NULLS FIRST`.
+    - `listDue(limit: number, now: Date): Promise<DueSite[]>` where `DueSite = { siteId: string; timezone: string; latitude: number; longitude: number }`: sites whose owner has role `solar-forecast-beta`, with a location, where (`status = 'not-enough-history'` or `detected_at IS NULL` or `detected_at < now - 30 days`) and (`attempted_at IS NULL` or `attempted_at <= now - 24 h`), ordered `detected_at NULLS FIRST, attempted_at NULLS FIRST`.
 
 - [ ] **Step 1: Write failing repo tests** (use the repo's existing DB test pattern; check `src/lib/site-repo.test.ts` for how a pool is mocked or a test DB is used, and follow it)
   - `setLocation rounds to two decimals` — `setLocation('s1', 43.39321, -87.87154)` then `get('s1')` → `latitude 43.39`, `longitude -87.87`, `status 'pending'`.
@@ -291,7 +291,7 @@ Commits the Python reference (code only), adds the table and its repository.
 **Interfaces:**
 - Consumes: `createEnergyRepo(timezone).getRawEnergyData`.
 - Produces:
-  - `hourlySolarWh(rows: { timestamp: Date; solar_power: number }[]): { hourStart: string; wh: number; complete: boolean }[]` — UTC hour buckets by interval start; `complete` when all 12 samples exist.
+  - `hourlySolarWh(rows: { timestamp: Date; solar_power: number }[]): { hourStart: string; wh: number; complete: boolean }[]` — UTC hour buckets by interval start; `complete` only when all 12 aligned slots contain valid, unambiguous samples and no off-grid or invalid rows occur. Incomplete Wh is the sum of valid unambiguous slots; correction consumers must ignore incomplete hours.
   - `GET /api/mobile/solar-actuals?siteId=` (beta + `verifySiteAccess`) → `{ version: 1, asOf, hours: [...] }` for the 14 full local days before today plus today so far.
 
 - [ ] **Step 1: Failing tests** — 12 samples of 100 Wh in one hour → `{ wh: 1200, complete: true }`; 11 samples → `complete: false`; a sample labelled `10:55` belongs to the `10:00` hour.
@@ -311,3 +311,8 @@ Commits the Python reference (code only), adds the table and its repository.
 - [ ] **Step 1:** Add to the privacy page, in its existing voice: PWUsage stores your home's approximate location (rounded to about 1 km) to work out how your solar panels face, and the app sends that rounded location and your panels' direction, tilt and size to Forecast.Solar to get a solar forecast. Only for users in the solar forecast beta.
 - [ ] **Step 2:** Run `npm run lint && npm run build && npm test -- --run` → all pass.
 - [ ] **Step 3: Commit** — `docs(solar): privacy notice for automatic solar forecast`
+
+
+### Review follow-up: parity status
+
+Parity is **partially met**, not accepted as passing. [PR #244](https://github.com/KevM/pwusage/pull/244) reports Rancho Palos Verdes as medium confidence with one Python plane and two TypeScript planes, versus the unchanged equal-plane-count gate above. Its reported calibrated hourly error is 16.0% Python and 15.3% TypeScript; Python confidence was calculated with the TypeScript rule. Owner acceptance of an exception remains pending. Private research inputs and an independent rerun are pending; reported figures are not new validation. PR #244 also discloses the 3° edge-midpoint location check and fitting-rule deviations. These choices are not retuned here. The independent day-ahead provider evaluation in the design remains a separate rollout gate.

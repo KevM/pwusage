@@ -103,3 +103,23 @@ describe('toSeries', () => {
         expect(s[0].kw).toBe(0);
     });
 });
+
+
+describe('local date grouping', () => {
+    it.each([
+        ['Asia/Kolkata', '2026-10-27T18:25:00Z', '2026-10-27T18:30:00Z'],
+        ['Asia/Kathmandu', '2026-10-27T18:10:00Z', '2026-10-27T18:15:00Z'],
+        ['America/St_Johns', '2026-10-28T02:25:00Z', '2026-10-28T02:30:00Z'],
+        ['Australia/Lord_Howe', '2026-10-27T12:55:00Z', '2026-10-27T13:00:00Z'],
+    ])('uses the local midnight boundary in %s', (zone, before, after) => {
+        const samples = [before, after].map(timestamp => ({ timestamp: new Date(timestamp), solarWh: 0 }));
+        const days = toSeries(samples, 0, 0, zone).map(p => p.localDay);
+        expect(days).toEqual(['2026-10-27', '2026-10-28']);
+    });
+});
+
+it('uses direct local dates across the Lord Howe half-hour DST transition', () => {
+    const samples = ['2026-10-03T15:25:00Z', '2026-10-03T15:35:00Z'].map(timestamp => ({ timestamp: new Date(timestamp), solarWh: 0 }));
+    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Lord_Howe', year: 'numeric', month: '2-digit', day: '2-digit' });
+    for (const point of toSeries(samples, 0, 0, 'Australia/Lord_Howe')) expect(point.localDay).toBe(formatter.format(point.time));
+});

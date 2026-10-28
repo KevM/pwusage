@@ -119,8 +119,8 @@ export class SolarLayoutRepo {
             JOIN "User" u ON u.id = s.user_id
             WHERE '${SOLAR_FORECAST_BETA_ROLE}' = ANY(u.roles)
               AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL
-              AND (l.detected_at IS NULL OR l.detected_at < $1::timestamptz - interval '30 days')
-              AND (l.attempted_at IS NULL OR l.attempted_at < $1::timestamptz - interval '24 hours')
+              AND (l.status = 'not-enough-history' OR l.detected_at IS NULL OR l.detected_at < $1::timestamptz - interval '30 days')
+              AND (l.attempted_at IS NULL OR l.attempted_at <= $1::timestamptz - interval '24 hours')
             ORDER BY l.detected_at NULLS FIRST, l.attempted_at NULLS FIRST
             LIMIT $2
         `, [now, limit]);
