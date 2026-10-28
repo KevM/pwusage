@@ -26,6 +26,7 @@ export function allowedApnsEnvironments(env: Readonly<Record<string, string | un
  */
 export function activityErrorTag(e: unknown): string {
   const code = (e as { code?: unknown } | null | undefined)?.code;
+  if (code === 'IO_DEADLINE_EXCEEDED') return 'deadline';
   if (typeof code === 'string') return code;
   if (e instanceof Error) return e.message === 'I/O deadline exceeded' ? 'deadline' : e.name;
   return 'unknown';

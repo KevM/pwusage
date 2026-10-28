@@ -82,7 +82,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
     it('restores missing access credentials using the stored refresh grant', async () => {
         await pool.query('UPDATE "User" SET access_token = NULL');
         expect(await repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).toEqual(rotated);
-        expect(exchange).toHaveBeenCalledWith('refresh-A');
+        expect(exchange).toHaveBeenCalledWith('refresh-A', expect.objectContaining({ exchangeId: expect.any(String) }));
         expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject(rotated);
     });
 

@@ -1,10 +1,10 @@
 import { logEvent } from './observability';
-import { ioDelay, checkIoDeadline, withIoDeadline } from './io-deadline';
+import { ioDelay, checkIoDeadline, withIoDeadline, ioFailureDetails } from './io-deadline';
 import { pool } from './db';
 import { SiteRepo } from './site-repo';
 import { UserRepo } from './user-repo';
 import { isTeslaAuthError, TeslaAuthError } from './tesla-client';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { parseRefreshedTokens, type RefreshedTokens } from './tesla-auth';
 
 interface AccountCredentials {
@@ -119,6 +119,9 @@ export class TeslaTokenRepo {
             return this.waitForUserRefresh(userId, 20000, siteId, Date.now(), suppliedRefresh);
         }
 
+        const exchangeId = randomUUID();
+        const exchangeFields = { ...fields, exchangeId };
+        let stage: 'exchange' | 'persistence' = 'exchange';
         let previousRefresh: string | undefined;
         try {
             const current = claim.rows[0];
@@ -126,13 +129,17 @@ export class TeslaTokenRepo {
             previousRefresh = current.refresh_token;
             if (previousRefresh !== suppliedRefresh && current.access_token) {
                 logEvent('info', 'tesla.refresh.reused', {
-                    ...fields, previousCredentialId: credentialId(suppliedRefresh), credentialId: credentialId(previousRefresh),
+                    ...exchangeFields, previousCredentialId: credentialId(suppliedRefresh), credentialId: credentialId(previousRefresh),
                 });
                 return parseRefreshedTokens(current);
             }
-            logEvent('info', 'tesla.refresh.started', { ...fields, credentialId: credentialId(previousRefresh) });
+            logEvent('info', 'tesla.refresh.started', { ...exchangeFields, credentialId: credentialId(previousRefresh) });
             const { refreshAccessToken } = await import('./tesla-auth');
-            const next = await refreshAccessToken(previousRefresh);
+            const next = await refreshAccessToken(previousRefresh, exchangeFields);
+            stage = 'persistence';
+            logEvent('info', 'tesla.refresh.persistence-started', {
+                ...exchangeFields, credentialId: credentialId(next.refresh_token),
+            });
             // Once Tesla has rotated the grant, saving it must survive the
             // caller's cancellation, just like releasing the lease does.
             const saved = await withIoDeadline(1000, () => pool.query(`
@@ -142,20 +149,22 @@ export class TeslaTokenRepo {
                   AND auth_status IS DISTINCT FROM 'revoked'
             `, [next.access_token, next.refresh_token, userId, previousRefresh, lease, Date.now()]), null);
             if (!saved.rowCount) {
-                logEvent('info', 'tesla.refresh.superseded', fields);
+                logEvent('info', 'tesla.refresh.superseded', exchangeFields);
                 // Our finally block releases only our lease, then the waiter
                 // observes the winning login/worker's credentials.
             } else {
                 if (siteId) this.siteRepo.invalidateCache(siteId);
                 logEvent('info', 'tesla.refresh.succeeded', {
-                    ...fields, previousCredentialId: credentialId(previousRefresh), credentialId: credentialId(next.refresh_token),
+                    ...exchangeFields, previousCredentialId: credentialId(previousRefresh), credentialId: credentialId(next.refresh_token),
                 });
                 return next;
             }
         } catch (error) {
             const terminal = isTeslaAuthError(error);
+            // Persistence has a detached deadline; this catch is back in the
+            // caller's context, whose cancellation cannot explain a save failure.
             logEvent('warn', 'tesla.refresh.failed', {
-                ...fields, terminal, error, credentialId: previousRefresh ? credentialId(previousRefresh) : undefined,
+                ...exchangeFields, stage, ...ioFailureDetails(error, undefined, stage !== 'persistence'), terminal, error, credentialId: previousRefresh ? credentialId(previousRefresh) : undefined,
             });
             if (!terminal || !previousRefresh) throw error;
             // Cleanup has its own budget so a parent cancellation does not skip
