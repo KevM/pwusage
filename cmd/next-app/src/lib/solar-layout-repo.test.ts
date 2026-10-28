@@ -69,6 +69,17 @@ describe('SolarLayoutRepo', () => {
         expect(params[3]).toBe(1);
     });
 
+    it('saveResult and recordFailure skip a site whose location changed during detection', async () => {
+        queryMock.mockResolvedValue({ rows: [] });
+        const repo = new SolarLayoutRepo();
+        await repo.saveResult('s1', { status: 'detected' } as never, 1, { latitude: 43.39, longitude: -87.87 });
+        await repo.recordFailure('s1', { latitude: 43.39, longitude: -87.87 });
+        for (const [sql, params] of queryMock.mock.calls as [string, unknown[]][]) {
+            expect(sql).toMatch(/AND latitude = \$\d+ AND longitude = \$\d+/);
+            expect(params.slice(-2)).toEqual([43.39, -87.87]);
+        }
+    });
+
     it('recordFailure only stamps attempted_at', async () => {
         queryMock.mockResolvedValue({ rows: [] });
         await new SolarLayoutRepo().recordFailure('s1');

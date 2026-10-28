@@ -28,6 +28,15 @@ export function roundCoordinate(value: number): number {
     return Math.round(value * 100) / 100;
 }
 
+export type DetectionLocation = { latitude: number; longitude: number };
+
+/** Appends `AND latitude = $n AND longitude = $m` (and its parameters) when a location is given. */
+function locationGuard(params: unknown[], location?: DetectionLocation): string {
+    if (!location) return '';
+    params.push(location.latitude, location.longitude);
+    return ` AND latitude = $${params.length - 1} AND longitude = $${params.length}`;
+}
+
 function toNumber(value: unknown): number | null {
     if (value === null || value === undefined) return null;
     const n = Number(value);
@@ -76,9 +85,13 @@ export class SolarLayoutRepo {
     /**
      * Stores a detection. A `failed` result keeps the previous result and its
      * status (when there is one) and leaves detected_at alone, so the site is
-     * retried after 24 hours rather than 30 days.
+     * retried after 24 hours rather than 30 days. With `location`, the write
+     * only applies while the stored location still matches the one detection
+     * used, so a result for a superseded location never overwrites the pending
+     * re-detection.
      */
-    async saveResult(siteId: string, result: SolarLayoutResult, detectorVersion: number): Promise<void> {
+    async saveResult(siteId: string, result: SolarLayoutResult, detectorVersion: number, location?: DetectionLocation): Promise<void> {
+        const params: unknown[] = [siteId, result.status, JSON.stringify(result), detectorVersion];
         await pool.query(`
             UPDATE "SiteSolarLayout"
             SET result = CASE WHEN $2 = 'failed' THEN result ELSE $3::jsonb END,
@@ -86,15 +99,16 @@ export class SolarLayoutRepo {
                 detected_at = CASE WHEN $2 = 'failed' THEN detected_at ELSE now() END,
                 detector_version = CASE WHEN $2 = 'failed' THEN detector_version ELSE $4 END,
                 attempted_at = now()
-            WHERE site_id = $1
-        `, [siteId, result.status, JSON.stringify(result), detectorVersion]);
+            WHERE site_id = $1${locationGuard(params, location)}
+        `, params);
     }
 
-    async recordFailure(siteId: string): Promise<void> {
+    async recordFailure(siteId: string, location?: DetectionLocation): Promise<void> {
+        const params: unknown[] = [siteId];
         await pool.query(`
             UPDATE "SiteSolarLayout" SET attempted_at = now()
-            WHERE site_id = $1
-        `, [siteId]);
+            WHERE site_id = $1${locationGuard(params, location)}
+        `, params);
     }
 
     async listDue(limit: number, now: Date): Promise<DueSite[]> {

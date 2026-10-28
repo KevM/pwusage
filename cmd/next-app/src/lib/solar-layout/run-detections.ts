@@ -2,6 +2,7 @@
 // beta sites per run, each from its last 365 days of day records, inside the
 // Hobby 60 s limit. A site that throws or runs past its deadline keeps its
 // previous result and is not retried for 24 hours; the next site still runs.
+// Writes are skipped if the site's location changed while it was detected.
 import { logEvent } from '@/lib/observability';
 import type { DueSite, SolarLayoutRepo } from '@/lib/solar-layout-repo';
 import { detectSolarLayout, SOLAR_LAYOUT_DETECTOR_VERSION } from './detect';
@@ -32,17 +33,18 @@ export async function runDueDetections(opts: {
             break;
         }
         const siteStarted = clock();
+        const location = { latitude: site.latitude, longitude: site.longitude };
         try {
             const end = opts.now;
             const start = new Date(end.getTime() - DETECTION_HISTORY_DAYS * 86_400_000);
             const samples = await opts.loadSamples(site.siteId, site.timezone, start, end);
             const result = detect({ samples, latitude: site.latitude, longitude: site.longitude, timeZone: site.timezone, deadline });
-            await opts.repo.saveResult(site.siteId, result, SOLAR_LAYOUT_DETECTOR_VERSION);
+            await opts.repo.saveResult(site.siteId, result, SOLAR_LAYOUT_DETECTOR_VERSION, location);
             sites.push({ siteId: site.siteId, status: result.status, ms: clock() - siteStarted });
         } catch (error) {
             logEvent('warn', 'cron.detect-solar-layouts.site-failed', { siteId: site.siteId, error });
             try {
-                await opts.repo.recordFailure(site.siteId);
+                await opts.repo.recordFailure(site.siteId, location);
             } catch (recordError) {
                 logEvent('error', 'cron.detect-solar-layouts.record-failure-failed', { siteId: site.siteId, error: recordError });
             }
