@@ -93,6 +93,7 @@ Tables (PascalCase quoted identifiers):
 - `TariffSchedule`: TOU period definitions within a season (day-of-week + hour/minute windows) with buy/sell rates
 - `EnergyDayArchive`: one compact day record per `(site_id, day_start)` (site-local midnight), the only energy history. Holds the day's 5-minute Tesla samples (`load_power, solar_power, grid_power, battery_power, battery_soc`) as a compressed payload, a tariff segment timeline (`attribution`), `status` (`open`/`complete`/`gapped`/`empty`) and `fetched_at`; each Tesla fetch replaces the record (only a newer fetch wins). See [`docs/plans/2026-10-24-day-record-v2.md`](./docs/plans/2026-10-24-day-record-v2.md).
 - `EnergyDaySummary`: per-day billing totals by tariff period, derived from a record's samples and segments
+- `SiteSolarLayout`: per-site home location (rounded to 2 decimals, ~1 km) and the latest solar panel layout detected from the site's own production history (`result` jsonb, `status`, `detected_at`/`attempted_at`). Written by the `detect-solar-layouts` cron for `solar-forecast-beta` users; a failed run keeps the previous result.
 - `TrmnlInstallation`: Trmnl device configs (UUID, linked `site_id`, access token)
 - `AppSettings`: Key/value app config
 
