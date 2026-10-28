@@ -59,4 +59,45 @@ extension DashboardView {
             liveCardFrameChanged($0)
         }
     }
+
+    private func batteryHeader(power: MobileLivePowerResponse, charge: Double?, isCurrent: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 12) {
+                Text(charge.map { "\(Int($0.rounded()))%" } ?? "--")
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    .monospacedDigit()
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+                    .accessibilityLabel(
+                        charge.map { "Battery charge \(Int($0.rounded())) percent" }
+                            ?? "Battery charge unknown"
+                    )
+                HStack(alignment: .center, spacing: 4) {
+                    Image(systemName: DashboardPresentation.batterySymbol(
+                        powerWatts: isCurrent ? power.live.batteryPower : 0,
+                        stateOfCharge: charge))
+                        .font(.system(size: 44, weight: .bold))
+                        .foregroundStyle(charge == nil ? Color.secondary : Color.green)
+                        .accessibilityHidden(true)
+                    if isCurrent
+                        && DashboardPresentation.batteryDirection(
+                            powerWatts: power.live.batteryPower
+                        ) == .discharging {
+                        DischargeSymbol()
+                            .stroke(Color.secondary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .frame(width: 16, height: 16)
+                            .accessibilityHidden(true)
+                            .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            (isCurrent
+                ? DashboardPresentation.batteryDescription(
+                    stateOfCharge: charge, powerWatts: power.live.batteryPower
+                )
+                : "Battery \(charge.map { "\(Int($0.rounded()))%" } ?? "--"), flow unknown")
+        )
+    }
 }
