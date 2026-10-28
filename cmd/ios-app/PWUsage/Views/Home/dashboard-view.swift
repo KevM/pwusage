@@ -262,5 +262,3 @@ extension EnvironmentValues {
 
 // All four cards keep their identity as the layout changes their column and row.
 // This animates role changes without repeated energy-flow animation or duplicate views.
-
-

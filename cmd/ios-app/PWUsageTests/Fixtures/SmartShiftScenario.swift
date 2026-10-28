@@ -34,9 +34,9 @@ struct SmartShiftScenario: Codable {
         duration = random.pick([0.25, 0.5, 1, 1.75, 3, 12])
         billHours = random.pick([duration, duration + 1.0 / 3600, 24, 72, 168, 168 + 1.0 / 3600, 240])
         energy = random.pick([0.01, 1, 3, 3.000001, 8, 20])
-        balances = (0..<2).map { _ in random.pick([-20, -3.000001, -3, -2.999999, 0, 1, 3, 20, 200]) }
-        buys = (0..<2).map { _ in random.pick([-0.05, 0, 0.10, 0.30, 0.80]) }
-        sells = (0..<2).map { _ in random.pick([-0.02, 0, 0.04, 0.20, 0.90]) }
+        balances = (0 ..< 2).map { _ in random.pick([-20, -3.000001, -3, -2.999999, 0, 1, 3, 20, 200]) }
+        buys = (0 ..< 2).map { _ in random.pick([-0.05, 0, 0.10, 0.30, 0.80]) }
+        sells = (0 ..< 2).map { _ in random.pick([-0.02, 0, 0.04, 0.20, 0.90]) }
         grid = random.pick([-2, -0.1, 0, 0.1, 3])
         dullGrid = grid - random.pick([0, 0.1, 1, 3])
         home = random.pick([0, 0.3, 2])
@@ -88,7 +88,7 @@ struct SmartShiftScenario: Codable {
     }
     func evaluate(reversed: Bool = false, projection override: LoadTimingForecastEstimator.Projection? = nil,
                   segments: [LoadTimingTariffSegment]? = nil) -> LoadTimingForecastEstimator.Result {
-        let periods = (0..<2).map { bank in
+        let periods = (0 ..< 2).map { bank in
             LoadTimingPeriod(name: "p\(bank)", marginalCost: nil, basis: "cycle-net-export", cycleNetExportKwh: balances[bank],
                              isActive: false, nextStartPhrase: nil, buyRate: buys[bank], sellRate: sells[bank])
         }
@@ -159,7 +159,7 @@ struct SmartShiftReference {
         let base = baseline(until: s.expectedEnd)
         let used = draws(start: start, until: s.expectedEnd)
         // Bill change by the exported and imported kWh displaced by the job.
-        return (0..<2).reduce(0) { total, bank in
+        return (0 ..< 2).reduce(0) { total, bank in
             let exportLost = max(0, base[bank]) - max(0, base[bank] - used[bank])
             let importAdded = max(0, used[bank] - base[bank]) - max(0, -base[bank])
             return total + exportLost * s.sells[bank] + importAdded * s.buys[bank]
@@ -174,7 +174,7 @@ struct SmartShiftReference {
         let cautious = baseline(until: end, cautious: true)
         let full = draws(start: start, until: s.expectedEnd)
         let early = draws(start: start, until: end)
-        return (0..<2).filter { typical[$0] > 1e-9 && full[$0] > 0 }.map {
+        return (0 ..< 2).filter { typical[$0] > 1e-9 && full[$0] > 0 }.map {
             max(0, min(early[$0], typical[$0]) - cautious[$0])
         }.max() ?? 0
     }

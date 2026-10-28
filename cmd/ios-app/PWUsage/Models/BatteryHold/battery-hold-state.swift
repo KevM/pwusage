@@ -12,6 +12,6 @@ struct BatteryHoldState: Equatable {
     var isBusy: Bool { isRefreshing || isSubmitting }
     func statusIsCurrent(at now: Date) -> Bool {
         guard isCurrent, let fetchedAt else { return false }
-        return (0...120).contains(now.timeIntervalSince(fetchedAt))
+        return (0 ... 120).contains(now.timeIntervalSince(fetchedAt))
     }
 }

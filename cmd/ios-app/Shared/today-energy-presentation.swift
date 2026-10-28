@@ -31,9 +31,9 @@ enum TodayEnergyPresentation {
         guard let charge else { return "battery.0percent" }
         switch Int(charge.rounded()) {
         case ..<13: return "battery.0percent"
-        case 13..<38: return "battery.25percent"
-        case 38..<63: return "battery.50percent"
-        case 63..<88: return "battery.75percent"
+        case 13 ..< 38: return "battery.25percent"
+        case 38 ..< 63: return "battery.50percent"
+        case 63 ..< 88: return "battery.75percent"
         default: return "battery.100percent"
         }
     }
@@ -130,7 +130,7 @@ struct TodayEnergyWidgetContent: View {
             }
         }
         // The medium widget has fixed height; bound text growth while preserving VoiceOver details.
-        .dynamicTypeSize(.xSmall...(compact ? .xLarge : .accessibility5))
+        .dynamicTypeSize(.xSmall ... (compact ? .xLarge : .accessibility5))
     }
 
     private func todayCost(_ snapshot: TodayEnergySnapshot) -> some View {

@@ -504,7 +504,7 @@ struct SolarForecastCoordinatorTests {
         let first = Task { await coordinator.loadTimingDetailAppeared() }
         let second = Task { await coordinator.loadTimingDetailAppeared() }
         try await waitUntil { !api.contextSiteIDs.isEmpty }
-        for _ in 0..<20 { await Task.yield() }
+        for _ in 0 ..< 20 { await Task.yield() }
 
         #expect(api.contextSiteIDs.count == 1)
         api.resumeContextResponses()
@@ -947,7 +947,7 @@ private actor ForecastManagerSpy: SolarForecastManaging {
     }
     /// Bounded wait so a missing behaviour fails the test instead of hanging it.
     func reachedRefreshCount(_ target: Int, withinMilliseconds budget: Int = 2000) async -> Bool {
-        for _ in 0..<budget {
+        for _ in 0 ..< budget {
             if refreshCount >= target { return true }
             try? await Task.sleep(nanoseconds: 1_000_000)
         }
@@ -1043,7 +1043,7 @@ private extension MobileLoadPlanningContextResponse {
             usableDayCount: usableDayCount,
             historyStart: asOf.addingTimeInterval(-14 * 24 * 60 * 60),
             historyEnd: asOf.addingTimeInterval(-60),
-            slots: (0..<48).map {
+            slots: (0 ..< 48).map {
                 Slot(localMinute: $0 * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: sampleCount, coverage: coverage)
             }
         )
@@ -1113,7 +1113,7 @@ private final class ForecastDashboardAPISpy: MobileDashboardDataAPI, MobileLoadP
 
 @MainActor
 private func waitUntil(_ condition: () -> Bool) async throws {
-    for _ in 0..<100 {
+    for _ in 0 ..< 100 {
         if condition() { return }
         try await Task.sleep(for: .milliseconds(10))
     }

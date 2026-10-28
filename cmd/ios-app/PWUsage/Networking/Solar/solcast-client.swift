@@ -91,7 +91,7 @@ struct SolcastClient: Sendable {
               http.url?.scheme == "https", http.url?.host == "api.solcast.com.au" else {
             throw SolcastClientError.invalidResponse
         }
-        guard (200..<300).contains(http.statusCode) else {
+        guard (200 ..< 300).contains(http.statusCode) else {
             throw SolcastClientError.httpStatus(statusCode: http.statusCode, retryAfter: Self.retryAfter(from: http))
         }
         return data

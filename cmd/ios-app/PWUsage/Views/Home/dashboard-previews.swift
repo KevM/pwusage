@@ -78,7 +78,7 @@
             default: 32.4
             }
             let timelineFormatter = instantFormatter
-            let tariffTimelineJSON = (0..<28).map { index in
+            let tariffTimelineJSON = (0 ..< 28).map { index in
                 let interval: TimeInterval = mode == .tariffCrossing ? 60 * 60 : 6 * 60 * 60
                 // Start the timeline at the balance source instant, as production does.
                 let start = balanceSource.addingTimeInterval(TimeInterval(index) * interval)

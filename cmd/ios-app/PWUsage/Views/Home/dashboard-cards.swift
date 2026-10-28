@@ -21,4 +21,3 @@ struct StatusCard<Content: View>: View {
         }
     }
 }
-

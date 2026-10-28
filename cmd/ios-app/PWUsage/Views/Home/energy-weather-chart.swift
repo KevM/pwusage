@@ -75,8 +75,8 @@ enum SwitchLabelLayout {
         var lastRight = -CGFloat.infinity
         return xs.indices.map { index in
             let x = xs[index]
-            let before = (x - inset - beforeWidths[index])...(x - inset)
-            let after = (x + inset)...(x + inset + afterWidths[index])
+            let before = (x - inset - beforeWidths[index]) ... (x - inset)
+            let after = (x + inset) ... (x + inset + afterWidths[index])
             let options: [(Form, [ClosedRange<CGFloat>])] = [(.both, [before, after]), (.after, [after]), (.before, [before])]
             for (form, parts) in options {
                 guard parts.allSatisfy({ $0.lowerBound >= 0 && $0.upperBound <= chartWidth }),
@@ -102,9 +102,9 @@ private struct LaneChart: View {
         let dates = allPoints.map(\.date)
         guard let first = dates.min(), let last = dates.max(), last > first else {
             let now = dates.first ?? .now
-            return now...now.addingTimeInterval(3600)
+            return now ... now.addingTimeInterval(3600)
         }
-        return first...last
+        return first ... last
     }
 
     /// Always includes zero so the banked/owed split is visible, with headroom for
@@ -116,7 +116,7 @@ private struct LaneChart: View {
         // lines and the axis labels; more on top of the first lane for switch labels.
         let pad = max((high - low) * 0.3, 2)
         let topPad = showsSwitchLabels ? max((high - low) * 0.55, 4) : pad
-        return (low - pad)...(high + topPad)
+        return (low - pad) ... (high + topPad)
     }
 
     /// The halves of each switch's label that fit at the chart's current width (see `SwitchLabelLayout`).

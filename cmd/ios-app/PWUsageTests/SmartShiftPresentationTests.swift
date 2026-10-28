@@ -616,8 +616,8 @@ extension SmartShiftPresentationTests {
     static func historyContext(asOf: Date, forecastHours: Bool = false) -> Estimator.PlanningContext {
         let slots = stride(from: 0, to: 1440, by: 30).map { minute in
             Estimator.PlanningSlot(localMinute: minute, homeKw: 0.5, batteryNetChargeKw: 0,
-                                   gridNetExportKw: (480..<1200).contains(minute) ? 2 : -0.5,
-                                   cautiousGridNetExportKw: (480..<1200).contains(minute) ? 1 : -0.5)
+                                   gridNetExportKw: (480 ..< 1200).contains(minute) ? 2 : -0.5,
+                                   cautiousGridNetExportKw: (480 ..< 1200).contains(minute) ? 1 : -0.5)
         }
         return .init(timeZone: "UTC", slots: slots, asOf: asOf)
     }
@@ -646,7 +646,7 @@ extension SmartShiftPresentationTests {
 
     @Test func forecastWithHistoryStatesBothSources() throws {
         let (timing, _, now, car) = Self.harrisonSunday()
-        let intervals = (0..<96).map { index in
+        let intervals = (0 ..< 96).map { index in
             SolarForecastInterval(periodStart: Self.at(Double(index) / 2), periodEnd: Self.at(Double(index + 1) / 2), powerKw: 1)
         }
         let evaluation = SmartShiftPresentation.evaluate(

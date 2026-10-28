@@ -23,7 +23,7 @@ struct TodayEnergyCost: Codable, Equatable, Sendable {
         [netCost, importCharges, exportCredits].allSatisfy(\.isFinite)
             && importCharges >= 0 && exportCredits >= 0
             && abs(netCost - (importCharges - exportCredits)) < 0.000001
-            && currency.count == 3 && currency.utf8.allSatisfy { (65...90).contains($0) }
+            && currency.count == 3 && currency.utf8.allSatisfy { (65 ... 90).contains($0) }
     }
 }
 
@@ -43,7 +43,7 @@ struct TodayEnergySnapshot: Codable, Equatable, Sendable {
 
     /// SOC freshness is independent of the daily energy source. Match the app's two-hour rule.
     func stateOfCharge(at date: Date) -> Double? {
-        guard let charge = batteryStateOfCharge, charge.isFinite, (0...100).contains(charge),
+        guard let charge = batteryStateOfCharge, charge.isFinite, (0 ... 100).contains(charge),
               let source = batteryStateOfChargeAt else { return nil }
         let age = date.timeIntervalSince(source)
         return age >= 0 && age <= 2 * 3600 ? charge : nil

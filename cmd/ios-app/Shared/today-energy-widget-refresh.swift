@@ -72,7 +72,7 @@ struct TodayEnergyWidgetRefresh: Sendable {
                 save(nil, selection: selection)
                 return nil
             }
-            guard (200..<300).contains(http.statusCode) else { return fallback }
+            guard (200 ..< 300).contains(http.statusCode) else { return fallback }
             // Validate against receipt time: the server may have refreshed SOC during the request.
             let receivedAt = date ?? Date()
             let live = try MobileContractDecoder.make(now: { receivedAt }).decode(MobileLiveResponse.self, from: data)

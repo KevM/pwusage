@@ -248,7 +248,7 @@ struct SolarForecastSettingsSheet: View {
     }
 
     private func saveSelection(_ resourceIDs: [String]) async {
-        guard (1...2).contains(resourceIDs.count), Set(resourceIDs).count == resourceIDs.count else {
+        guard (1 ... 2).contains(resourceIDs.count), Set(resourceIDs).count == resourceIDs.count else {
             statusMessage = "Choose one or two different Solar System IDs."
             return
         }

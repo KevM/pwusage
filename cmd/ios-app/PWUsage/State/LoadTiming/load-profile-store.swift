@@ -107,7 +107,7 @@ final class LoadProfileStore: ObservableObject {
     }
 
     func moveProfiles(fromOffsets offsets: IndexSet, toOffset destination: Int) {
-        guard !offsets.isEmpty, (0...profiles.count).contains(destination),
+        guard !offsets.isEmpty, (0 ... profiles.count).contains(destination),
               offsets.allSatisfy({ profiles.indices.contains($0) }) else { return }
         let moving = profiles.enumerated().compactMap { offsets.contains($0.offset) ? $0.element : nil }
         var reordered = profiles.enumerated().compactMap { offsets.contains($0.offset) ? nil : $0.element }
@@ -126,7 +126,7 @@ final class LoadProfileStore: ObservableObject {
     private static func loadCollection(from userDefaults: UserDefaults) -> PersistedCollection? {
         guard let data = userDefaults.data(forKey: storageKey),
               let saved = try? JSONDecoder().decode(PersistedCollection.self, from: data),
-              (1...schemaVersion).contains(saved.version) else { return nil }
+              (1 ... schemaVersion).contains(saved.version) else { return nil }
 
         var profiles = saved.profiles
         if saved.version == 1 {
@@ -185,8 +185,8 @@ final class LoadProfileStore: ObservableObject {
             guard let settings = profile.carSettings,
                   settings.capacityKwh.isFinite, settings.capacityKwh > 0,
                   settings.capacityKwh <= LoadProfile.maximumCarCapacityKwh,
-                  settings.initialStateOfCharge.isFinite, (0...100).contains(settings.initialStateOfCharge),
-                  settings.targetStateOfCharge.isFinite, (settings.initialStateOfCharge...100).contains(settings.targetStateOfCharge) else {
+                  settings.initialStateOfCharge.isFinite, (0 ... 100).contains(settings.initialStateOfCharge),
+                  settings.targetStateOfCharge.isFinite, (settings.initialStateOfCharge ... 100).contains(settings.targetStateOfCharge) else {
                 throw LoadProfileError.invalidProfile
             }
         } else if profile.carSettings != nil {

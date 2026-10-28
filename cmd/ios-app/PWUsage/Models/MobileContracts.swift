@@ -155,7 +155,7 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
               slots.enumerated().allSatisfy({ index, slot in
                   slot.localMinute == index * 30
                       && slot.sampleCount >= 0
-                      && slot.coverage.isFinite && (0...1).contains(slot.coverage)
+                      && slot.coverage.isFinite && (0 ... 1).contains(slot.coverage)
                       && slot.homeKw.map(\.isFinite) ?? true
                       && slot.batteryNetChargeKw.map(\.isFinite) ?? true
                       && slot.gridNetExportKw.map(\.isFinite) ?? true

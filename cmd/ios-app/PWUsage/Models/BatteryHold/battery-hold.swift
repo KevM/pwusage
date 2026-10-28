@@ -26,10 +26,10 @@ struct BatteryHold: Decodable, Equatable {
 
     func validating(siteID: String, status: Status) throws -> Self {
         guard self.siteID == siteID, self.status == status, id > 0,
-              (0...100).contains(originalReserve), (0...100).contains(targetReserve),
+              (0 ... 100).contains(originalReserve), (0 ... 100).contains(targetReserve),
               targetReserve <= 80 || targetReserve == 100,
               safetyExpiresAt > createdAt,
-              cancelledObservedReserve.map({ (0...100).contains($0) }) ?? true else {
+              cancelledObservedReserve.map({ (0 ... 100).contains($0) }) ?? true else {
             throw PWUsageAPIError.invalidResponse
         }
         return self

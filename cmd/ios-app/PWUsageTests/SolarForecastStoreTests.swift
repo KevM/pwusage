@@ -90,7 +90,7 @@ struct SolarForecastStoreTests {
         let h = Harness()
         try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         await h.transport.failNext(3)
-        for _ in 0..<3 { _ = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") }
+        for _ in 0 ..< 3 { _ = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") }
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == 3)
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").automaticAttempts == 3)
     }
@@ -217,7 +217,7 @@ struct SolarForecastStoreTests {
         let h = Harness()
         try await h.store.connect(apiKey: "synthetic-key", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east", "west"])
         await h.transport.failNext(4)
-        for _ in 0..<4 {
+        for _ in 0 ..< 4 {
             #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .failed(.requestFailed))
         }
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").automaticAttempts == 8)
@@ -418,7 +418,7 @@ struct SolarForecastStoreTests {
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: [])
         _ = try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a", manual: true)
         try await h.store.selectArrays(["east"], accountScopeID: "account-a", siteID: "site-a")
-        for _ in 0..<9 {
+        for _ in 0 ..< 9 {
             #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .refreshed)
         }
         #expect(await h.store.budget(for: "account-a", siteID: "site-a").totalAttempts == 10)
@@ -827,7 +827,7 @@ struct SolarForecastStoreTests {
     func refreshBudgetExhaustionDisablesCache() async throws {
         let h = Harness()
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
-        for _ in 0..<SolarForecastStore.totalAttemptsPerUTCDay {
+        for _ in 0 ..< SolarForecastStore.totalAttemptsPerUTCDay {
             #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .refreshed)
         }
         #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
@@ -842,7 +842,7 @@ struct SolarForecastStoreTests {
     func automaticBudgetExhaustionDisablesCache() async throws {
         let h = Harness(now: SolarForecastStoreTests.date("2026-09-27T01:00:00Z"))
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east", "west"])
-        for attempt in 0..<(SolarForecastStore.automaticAttemptsPerUTCDay / 2) {
+        for attempt in 0 ..< (SolarForecastStore.automaticAttemptsPerUTCDay / 2) {
             if attempt > 0 { h.clock.advance(by: SolarForecastStore.foregroundRefreshThreshold + 1) }
             #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
         }
@@ -860,7 +860,7 @@ struct SolarForecastStoreTests {
         let h = Harness()
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a") == .refreshed)
-        for _ in 0..<(SolarForecastStore.totalAttemptsPerUTCDay - 1) {
+        for _ in 0 ..< (SolarForecastStore.totalAttemptsPerUTCDay - 1) {
             _ = try await h.store.discoverSites(accountScopeID: "account-a", siteID: "site-a", manual: true)
         }
         #expect(await h.store.isRecommendationUsable(accountScopeID: "account-a", siteID: "site-a"))
@@ -952,7 +952,7 @@ struct SolarForecastStoreTests {
     func budgetExhaustionKeepsFreshCache() async throws {
         let h = Harness()
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
-        for _ in 0..<SolarForecastStore.totalAttemptsPerUTCDay {
+        for _ in 0 ..< SolarForecastStore.totalAttemptsPerUTCDay {
             #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .refreshed)
         }
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .budgetExhausted)

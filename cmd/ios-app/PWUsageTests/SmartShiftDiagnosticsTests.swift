@@ -6,7 +6,7 @@ struct SmartShiftDiagnosticsTests {
     typealias Estimator = LoadTimingForecastEstimator
     typealias Fixtures = SmartShiftPresentationTests
 
-    static let intervals = (0..<96).map { index in
+    static let intervals = (0 ..< 96).map { index in
         SolarForecastInterval(periodStart: Fixtures.at(Double(index) / 2), periodEnd: Fixtures.at(Double(index + 1) / 2),
                               powerKw: 1, cautiousPowerKw: index.isMultiple(of: 2) ? 0.4 : nil)
     }

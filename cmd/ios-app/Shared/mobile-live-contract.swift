@@ -145,7 +145,7 @@ struct MobileLiveResponse: Codable, Equatable {
     /// Suppressing towards `nil` is deliberate: a dropped timestamp must show `--`, not a
     /// reading we cannot vouch for.
     static func validatedStateOfCharge(_ reported: Double?, takenAt: Date?, now: Date) -> Double? {
-        guard let reported, reported.isFinite, (0...100).contains(reported) else { return nil }
+        guard let reported, reported.isFinite, (0 ... 100).contains(reported) else { return nil }
         guard let takenAt else { return nil }
         let age = now.timeIntervalSince(takenAt)
         guard age >= 0, age <= stateOfChargeMaximumAge else { return nil }

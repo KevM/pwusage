@@ -281,7 +281,7 @@ final class PWUsageAPITests {
     @Test("Planning context uses the authenticated PWUsage transport and typed contract")
     func planningContextUsesPWUsageTransport() async throws {
         var recordedRequest: URLRequest?
-        let slots = (0..<48).map { index in
+        let slots = (0 ..< 48).map { index in
             "{\"localMinute\":\(index * 30),\"homeKw\":1.25,\"batteryNetChargeKw\":-0.1,\"sampleCount\":14,\"coverage\":1}"
         }.joined(separator: ",")
         let fixture = "{\"version\":1,\"site\":{\"id\":\"site/one & two\",\"timezone\":\"UTC\"},\"units\":{\"power\":\"kW\",\"localMinute\":\"minute-of-day\"},\"asOf\":\"2027-01-15T08:00:00Z\",\"availability\":\"available\",\"unavailableReason\":null,\"usableDayCount\":14,\"historyStart\":\"2027-01-01T00:00:00Z\",\"historyEnd\":\"2027-01-15T00:00:00Z\",\"slots\":[\(slots)]}"

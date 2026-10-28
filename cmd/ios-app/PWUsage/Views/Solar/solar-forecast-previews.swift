@@ -56,16 +56,16 @@
             let start = now.addingTimeInterval(-30 * 60)
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = TimeZone(identifier: SITE_PREVIEW_TIME_ZONE) ?? .current
-            return (0..<48).map { index in
+            return (0 ..< 48).map { index in
                 let periodStart = start.addingTimeInterval(TimeInterval(index) * step)
                 let hour = calendar.component(.hour, from: periodStart)
                 let solarShape: Double
                 switch hour {
-                case 5...8: solarShape = 0.25
-                case 9...11: solarShape = 0.8
-                case 12...14: solarShape = 1.0
-                case 15...17: solarShape = 0.7
-                case 18...19: solarShape = 0.2
+                case 5 ... 8: solarShape = 0.25
+                case 9 ... 11: solarShape = 0.8
+                case 12 ... 14: solarShape = 1.0
+                case 15 ... 17: solarShape = 0.7
+                case 18 ... 19: solarShape = 0.2
                 default: solarShape = 0
                 }
                 // Combined arrays carry a higher ceiling than a single array.
@@ -135,10 +135,10 @@
 
         init(mode: ForecastPreviewMode, now: Date) {
             self.mode = mode
-            let slots: [MobileLoadPlanningContextResponse.Slot] = (0..<48).map { index in
+            let slots: [MobileLoadPlanningContextResponse.Slot] = (0 ..< 48).map { index in
                 let minute = index * 30
                 // Missing context stays absent; it is never reported as zero.
-                let absent = mode == .missingContext && (8...20).contains(minute / 60)
+                let absent = mode == .missingContext && (8 ... 20).contains(minute / 60)
                 return MobileLoadPlanningContextResponse.Slot(
                     localMinute: minute,
                     homeKw: absent ? nil : 0.35,
@@ -319,7 +319,7 @@
 
         private var projection: LoadTimingForecastEstimator.Projection {
             guard self == .laterWithForecast else { return .flat(timeZone: Self.timeZone) }
-            let intervals = (0..<96).map { index -> SolarForecastInterval in
+            let intervals = (0 ..< 96).map { index -> SolarForecastInterval in
                 let start = Self.local(Double(index) / 2)
                 let hour = Self.calendar.component(.hour, from: start)
                 let sun = max(0, sin(Double.pi * (Double(hour) - 7) / 11))

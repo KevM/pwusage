@@ -16,7 +16,7 @@ struct BatteryHoldCommandResult: Decodable, Equatable {
         case (.park, .ok), (.park, .alreadyActive):
             guard hold != nil else { throw PWUsageAPIError.invalidResponse }
         case (.restore, .reserveChanged):
-            guard let current, (0...100).contains(current) else { throw PWUsageAPIError.invalidResponse }
+            guard let current, (0 ... 100).contains(current) else { throw PWUsageAPIError.invalidResponse }
         case (.restore, .ok), (.dismiss, .ok): break
         default: throw PWUsageAPIError.invalidResponse
         }

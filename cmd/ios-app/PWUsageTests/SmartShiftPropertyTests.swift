@@ -4,12 +4,12 @@ import Testing
 
 @Suite
 struct SmartShiftPropertyTests {
-    @Test(arguments: Array(UInt64(0)..<500))
+    @Test(arguments: Array(UInt64(0) ..< 500))
     func generatedScenario(seed: UInt64) throws {
         try verifySmartShift(SmartShiftScenario(seed: seed))
     }
 
-    @Test(arguments: Array(UInt64(0)..<24))
+    @Test(arguments: Array(UInt64(0) ..< 24))
     func tariffOrderingDoesNotChangeResults(seed: UInt64) throws {
         let scenario = SmartShiftScenario(seed: seed)
         let original = try #require(scenario.evaluate().comparison)
@@ -73,7 +73,7 @@ struct SmartShiftPropertyTests {
     @Test func corpusExercisesAllProjectionAndSafetyBranches() throws {
         var modes: Set<Int> = []
         var safetyKinds: Set<String> = []
-        for seed in UInt64(0)..<500 {
+        for seed in UInt64(0) ..< 500 {
             let scenario = SmartShiftScenario(seed: seed)
             modes.insert(scenario.mode)
             let comparison = try #require(scenario.evaluate().comparison, "\(scenario.diagnostic)")
@@ -137,7 +137,7 @@ struct SmartShiftRegressionTests {
 
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["PWUSAGE_FUZZ_STRESS"] == "1"))
 struct SmartShiftStressTests {
-    @Test(arguments: Array(UInt64(500)..<10_500))
+    @Test(arguments: Array(UInt64(500) ..< 10_500))
     func generatedScenario(seed: UInt64) throws {
         try verifySmartShift(SmartShiftScenario(seed: seed))
     }

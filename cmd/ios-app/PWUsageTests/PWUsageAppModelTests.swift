@@ -1045,7 +1045,7 @@ struct PWUsageAppModelTests {
     /// Bounded on purpose: a condition that never comes true must fail the test
     /// rather than hang the run. Async so it can also observe actor state.
     private func waitUntil(_ condition: @MainActor () async -> Bool) async throws {
-        for _ in 0..<100 {
+        for _ in 0 ..< 100 {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }

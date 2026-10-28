@@ -185,9 +185,9 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     private func perform(_ request: URLRequest) async throws -> Data {
         let (data, response): (Data, URLResponse) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw PWUsageAPIError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else {
+        guard (200 ..< 300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw PWUsageAPIError.signInRequired }
-            if (500..<600).contains(http.statusCode) {
+            if (500 ..< 600).contains(http.statusCode) {
                 throw PWUsageAPIError.recoverableServerError(statusCode: http.statusCode)
             }
             let message = (try? JSONDecoder().decode(ErrorResponse.self, from: data).error)

@@ -67,7 +67,7 @@ private struct PowerFlowLayout: Layout {
         var result = Array(repeating: CGRect.zero, count: subviews.count)
         var y: CGFloat = 0
         if useStack {
-            for column in 0...1 {
+            for column in 0 ... 1 {
                 let indices = subviews.indices.filter { subviews[$0][FlowColumn.self] == column }
                     .sorted { subviews[$0][FlowRow.self] < subviews[$1][FlowRow.self] }
                 for index in indices {
@@ -77,7 +77,7 @@ private struct PowerFlowLayout: Layout {
             }
         } else {
             let maxRow = subviews.map { $0[FlowRow.self] }.max() ?? 0
-            for row in 0...maxRow {
+            for row in 0 ... maxRow {
                 let indices = subviews.indices.filter { subviews[$0][FlowRow.self] == row }
                 let height = indices.map { sizes[$0].height }.max() ?? 0
                 for index in indices {
@@ -149,4 +149,3 @@ struct LoadingCard: View {
         .accessibilityElement(children: .combine)
     }
 }
-

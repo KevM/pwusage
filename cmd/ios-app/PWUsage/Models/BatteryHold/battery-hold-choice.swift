@@ -6,7 +6,7 @@ struct BatteryHoldChoice: Equatable {
     var reserveChoice: Int?
 
     var isValid: Bool {
-        (mode == .auto || (1...24).contains(durationHours))
+        (mode == .auto || (1 ... 24).contains(durationHours))
             && (reserveChoice == nil || reserveChoice == 80 || reserveChoice == 100)
     }
 }

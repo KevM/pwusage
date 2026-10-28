@@ -12,7 +12,7 @@ struct DashboardCoordinatorTests {
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
-        for _ in 1..<60 {
+        for _ in 1 ..< 60 {
             clock.advance(minutes: 1)
             await coordinator.refreshDue()
         }
@@ -250,7 +250,7 @@ struct DashboardCoordinatorTests {
         #expect(api.liveSiteIDs == ["site-1"])
         #expect(api.billSiteIDs == ["site-1"])
 
-        for _ in 1..<60 {
+        for _ in 1 ..< 60 {
             clock.advance(minutes: 1)
             await coordinator.refreshDue()
         }
@@ -503,7 +503,7 @@ struct DashboardCoordinatorTests {
         // later would silently make the whole `deinit` unreachable.
         weak let released = coordinator
         coordinator = nil
-        for _ in 0..<200 where released != nil {
+        for _ in 0 ..< 200 where released != nil {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(released == nil, "The polling timer must not keep the coordinator alive.")
@@ -961,7 +961,7 @@ private final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningD
             usableDayCount: 14,
             historyStart: asOf.addingTimeInterval(-14 * 24 * 60 * 60),
             historyEnd: asOf.addingTimeInterval(-60),
-            slots: (0..<48).map { index in
+            slots: (0 ..< 48).map { index in
                 MobileLoadPlanningContextResponse.Slot(
                     localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: 14, coverage: 1
                 )

@@ -38,7 +38,7 @@ struct BatteryHoldPreviewTests {
         // A native Form includes UIKit-backed controls that ImageRenderer cannot
         // capture. Host the real sheet in a test-only window for visual inspection.
         // The test runner can start before the app has connected its first scene.
-        for _ in 0..<50 where UIApplication.shared.connectedScenes.isEmpty {
+        for _ in 0 ..< 50 where UIApplication.shared.connectedScenes.isEmpty {
             try await Task.sleep(for: .milliseconds(100))
         }
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)

@@ -122,9 +122,9 @@ enum DashboardPresentation {
         let level: String
         switch Int(stateOfCharge.rounded()) {
         case ..<13: level = "0percent"
-        case 13..<38: level = "25percent"
-        case 38..<63: level = "50percent"
-        case 63..<88: level = "75percent"
+        case 13 ..< 38: level = "25percent"
+        case 38 ..< 63: level = "50percent"
+        case 63 ..< 88: level = "75percent"
         default: level = "100percent"
         }
         return isCharging ? "battery.\(level).bolt" : "battery.\(level)"
@@ -132,7 +132,7 @@ enum DashboardPresentation {
 
     static func tariffPeriodTitle(_ name: String) -> String {
         guard !name.isEmpty,
-              name.utf8.allSatisfy({ (65...90).contains($0) || $0 == 95 }) else {
+              name.utf8.allSatisfy({ (65 ... 90).contains($0) || $0 == 95 }) else {
             return name
         }
         return name.lowercased()

@@ -59,9 +59,9 @@ struct BillOutlookRenderTests {
                 .init(tariffName: "Home", periodName: "Off-Peak", netGridKwh: -Double(day) * 1.2,
                       buyRate: 0.12, sellRate: 0.04)])
         }
-        let history = BillOutlookHistory(points: (0...20).map(point), observedThrough: now, complete: true, tariffTimeline: [])
+        let history = BillOutlookHistory(points: (0 ... 20).map(point), observedThrough: now, complete: true, tariffTimeline: [])
         for large in [false, true] {
-            let chart = BillOutlookChart(history: history, projected: (20...25).map(point), cycleStart: start,
+            let chart = BillOutlookChart(history: history, projected: (20 ... 25).map(point), cycleStart: start,
                                          cycleEnd: end, now: now, timeZone: "America/Chicago", currency: "USD", totals: [
                                              .init(tariffName: "Home", periodName: "Peak", netGridKwh: 12, cost: 4.8),
                                              .init(tariffName: "Home", periodName: "Off-Peak", netGridKwh: -24, cost: -0.96)])

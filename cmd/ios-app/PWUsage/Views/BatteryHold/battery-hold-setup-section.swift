@@ -53,7 +53,7 @@ struct BatteryHoldSetupSection: View {
                             .accessibilityAddTraits(hours == duration ? .isSelected : [])
                         }
                     }
-                    Stepper("\(hours) hours", value: $hours, in: 1...24)
+                    Stepper("\(hours) hours", value: $hours, in: 1 ... 24)
                         .accessibilityLabel("Custom Battery Saver duration")
                         .accessibilityValue("\(hours) hours")
                     Text("Stays on for the full duration, even if the job finishes early.")

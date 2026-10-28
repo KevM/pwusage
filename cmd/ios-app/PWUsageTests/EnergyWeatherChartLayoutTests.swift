@@ -31,10 +31,10 @@ struct EnergyWeatherChartLayoutTests {
         for (index, form) in placed.enumerated() {
             var parts: [ClosedRange<CGFloat>] = []
             if form == .both || form == .before {
-                parts.append((xs[index] - Layout.inset - before[index])...(xs[index] - Layout.inset))
+                parts.append((xs[index] - Layout.inset - before[index]) ... (xs[index] - Layout.inset))
             }
             if form == .both || form == .after {
-                parts.append((xs[index] + Layout.inset)...(xs[index] + Layout.inset + after[index]))
+                parts.append((xs[index] + Layout.inset) ... (xs[index] + Layout.inset + after[index]))
             }
             for part in parts {
                 #expect(part.lowerBound >= 0 && part.upperBound <= 250)

@@ -62,7 +62,7 @@ enum BatteryHoldPresentation {
         case .watching: return "Waiting for a job to finish."
         case .loadRunning:
             if let watts = monitoring.estimatedLoadW, watts.isFinite, watts >= 0 {
-                let power = (watts / 1000).formatted(.number.precision(.fractionLength(0...1)))
+                let power = (watts / 1000).formatted(.number.precision(.fractionLength(0 ... 1)))
                 return "About \(power) kW above your starting home use. Waiting for the job to finish."
             }
             return "Waiting for higher home use to end."
@@ -78,7 +78,7 @@ enum BatteryHoldPresentation {
         guard monitoring.phase == .loadRunning,
               let sampledAt = monitoring.sampledAt, now.timeIntervalSince(sampledAt) <= 20 * 60,
               let watts = monitoring.estimatedLoadW, watts.isFinite, watts >= 0 else { return nil }
-        let power = (watts / 1000).formatted(.number.precision(.fractionLength(0...1)))
+        let power = (watts / 1000).formatted(.number.precision(.fractionLength(0 ... 1)))
         return "Detected job: about \(power) kW"
     }
 
