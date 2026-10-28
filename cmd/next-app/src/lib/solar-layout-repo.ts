@@ -35,13 +35,21 @@ function toNumber(value: unknown): number | null {
 }
 
 export class SolarLayoutRepo {
+    /**
+     * Stores the rounded location. A changed location queues a fresh detection
+     * (pending, detected_at and attempted_at cleared); re-posting the same one
+     * keeps the current result and schedule.
+     */
     async setLocation(siteId: string, latitude: number, longitude: number): Promise<void> {
+        const moved = '"SiteSolarLayout".latitude IS DISTINCT FROM EXCLUDED.latitude OR "SiteSolarLayout".longitude IS DISTINCT FROM EXCLUDED.longitude';
         await pool.query(`
             INSERT INTO "SiteSolarLayout" (site_id, latitude, longitude, location_set_at, status)
             VALUES ($1, $2, $3, now(), 'pending')
             ON CONFLICT (site_id) DO UPDATE
-            SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, location_set_at = now(),
-                status = 'pending', attempted_at = NULL
+            SET status = CASE WHEN ${moved} THEN 'pending' ELSE "SiteSolarLayout".status END,
+                detected_at = CASE WHEN ${moved} THEN NULL ELSE "SiteSolarLayout".detected_at END,
+                attempted_at = CASE WHEN ${moved} THEN NULL ELSE "SiteSolarLayout".attempted_at END,
+                latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, location_set_at = now()
         `, [siteId, roundCoordinate(latitude), roundCoordinate(longitude)]);
     }
 

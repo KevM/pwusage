@@ -23,10 +23,19 @@ describe('SolarLayoutRepo', () => {
         await repo.setLocation('s1', 43.39321, -87.87154);
         const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
         expect(params).toEqual(['s1', 43.39, -87.87]);
-        expect(sql).toContain("status = 'pending'");
-        expect(sql).toContain('attempted_at = NULL');
+        expect(sql).toContain("'pending'");
         const got = await repo.get('s1');
         expect(got).toMatchObject({ siteId: 's1', latitude: 43.39, longitude: -87.87, status: 'pending' });
+    });
+
+    it('setLocation queues re-detection only when the location changes', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        await new SolarLayoutRepo().setLocation('s1', 43.39, -87.87);
+        const [sql] = queryMock.mock.calls[0] as [string];
+        const moved = '"SiteSolarLayout".latitude IS DISTINCT FROM EXCLUDED.latitude OR "SiteSolarLayout".longitude IS DISTINCT FROM EXCLUDED.longitude';
+        expect(sql).toContain(`detected_at = CASE WHEN ${moved} THEN NULL ELSE "SiteSolarLayout".detected_at END`);
+        expect(sql).toContain(`attempted_at = CASE WHEN ${moved} THEN NULL ELSE "SiteSolarLayout".attempted_at END`);
+        expect(sql).toContain(`status = CASE WHEN ${moved} THEN 'pending' ELSE "SiteSolarLayout".status END`);
     });
 
     it('get returns null for a site without a row', async () => {
