@@ -1,7 +1,7 @@
 // Solar layout detection from a site's own 5-minute production history
 // (reference `detect` in scripts/solar-layout-reference/detector.py), plus the
 // confidence rule and a solar-noon location check.
-import { MAX_TILT, modelKw, type Plane } from './poa';
+import { MAX_TILT, modelKw } from './poa';
 import { detectClip, envelopeClear, flatRuns, learnShade, median, quantile, smoothness, toSeries, type ShadeMask, type ShadeSegment } from './selection';
 import {
     azimuthRange90, bootstrapRows, fitFromGram, fitMaskGroup, fitRows, gridColumns, groupGrams, modelRows,
