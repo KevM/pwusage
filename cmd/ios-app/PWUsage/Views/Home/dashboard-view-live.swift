@@ -36,53 +36,19 @@ extension DashboardView {
         return VStack(alignment: .leading, spacing: 12) {
             sectionHeading("Live power")
             if let power, let readings = liveReadings(now: now) {
-                let charge = readings.charge
                 StatusCard {
                     VStack(alignment: .leading, spacing: 18) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(alignment: .center, spacing: 12) {
-                                Text(charge.map { "\(Int($0.rounded()))%" } ?? "--")
-                                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                                    .monospacedDigit()
-                                    .contentTransition(reduceMotion ? .identity : .numericText())
-                                    .accessibilityLabel(
-                                        charge.map { "Battery charge \(Int($0.rounded())) percent" }
-                                            ?? "Battery charge unknown"
-                                    )
-                                HStack(alignment: .center, spacing: 4) {
-                                    Image(systemName: DashboardPresentation.batterySymbol(
-                                        powerWatts: livePowerIsCurrent ? power.live.batteryPower : 0,
-                                        stateOfCharge: charge))
-                                        .font(.system(size: 44, weight: .bold))
-                                        .foregroundStyle(charge == nil ? Color.secondary : Color.green)
-                                        .accessibilityHidden(true)
-                                    if livePowerIsCurrent
-                                        && DashboardPresentation.batteryDirection(
-                                            powerWatts: power.live.batteryPower
-                                        ) == .discharging {
-                                        DischargeSymbol()
-                                            .stroke(Color.secondary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                                            .frame(width: 16, height: 16)
-                                            .accessibilityHidden(true)
-                                            .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                                    }
-                                }
-                            }
-                        }
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(
-                            (livePowerIsCurrent
-                                ? DashboardPresentation.batteryDescription(
-                                    stateOfCharge: charge, powerWatts: power.live.batteryPower
-                                )
-                                : "Battery \(charge.map { "\(Int($0.rounded()))%" } ?? "--"), flow unknown")
-                        )
+                        batteryHeader(power: power, charge: readings.charge, isCurrent: livePowerIsCurrent)
                         Divider()
                         LivePowerFlowCards(flow: readings.flow)
                     }
                 }
             } else if coordinator.live.isUnavailable {
-                EmptyCard(symbol: "bolt.slash", title: "Live readings unavailable", message: "Try again when your connection is available.")
+                EmptyCard(
+                    symbol: "bolt.slash",
+                    title: "Live readings unavailable",
+                    message: "Try again when your connection is available."
+                )
             } else {
                 LoadingCard(title: "Loading live readings")
             }

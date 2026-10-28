@@ -43,58 +43,63 @@ extension DashboardPresentation {
     static func liveScoreboard(flow: PowerFlow, stateOfCharge: Double?) -> LiveScoreboard? {
         let cards = flow.supplying + flow.receiving
         guard !cards.allSatisfy({ $0.role == .unknown }) else { return nil }
-        func card(_ source: PowerSource) -> PowerCard? { cards.first { $0.id == source } }
-        func stat(_ source: PowerSource, symbol: String) -> ScoreboardStat {
-            // A reading powerFlow could not trust (say, negative solar) shows as unknown.
-            let reading = card(source).flatMap { $0.role == .unknown ? nil : $0.watts }
-            let value = reading.map(power) ?? "--"
-            return ScoreboardStat(symbol: symbol, value: value, spokenLabel: "\(source.title) \(value)")
-        }
-
-        let battery = stateOfCharge.map { charge -> BatteryScoreboardStat in
-            let percent = "\(Int(charge.rounded()))%"
-            let batteryCard = card(.battery)
-            let watts = batteryCard?.watts ?? 0
-            let signedWatts: Double
-            switch batteryCard?.role {
-            case .supplying: signedWatts = watts
-            case .receiving: signedWatts = -watts
-            default: signedWatts = 0
-            }
-            let flowValue = power(watts)
-            let flow: String?
-            let spoken: String
-            switch batteryCard?.role {
-            case .receiving:
-                flow = "+\(flowValue)"
-                spoken = "Battery \(percent), charging \(flowValue)"
-            case .supplying:
-                flow = "\u{2212}\(flowValue)"
-                spoken = "Battery \(percent), discharging \(flowValue)"
-            default:
-                flow = nil
-                spoken = "Battery \(percent)"
-            }
-            return BatteryScoreboardStat(
-                symbol: batterySymbol(powerWatts: signedWatts, stateOfCharge: charge),
-                charge: percent, flow: flow, spokenLabel: spoken
-            )
-        }
-
-        let grid = card(.grid).flatMap { gridCard -> ScoreboardStat? in
-            guard gridCard.role == .supplying || gridCard.role == .receiving, let watts = gridCard.watts else { return nil }
-            let value = power(watts)
-            return ScoreboardStat(
-                symbol: gridCard.role == .supplying ? "arrow.down.to.line" : "arrow.up.to.line",
-                value: value, spokenLabel: "\(gridCard.detail) \(value)"
-            )
-        }
-
         return LiveScoreboard(
-            battery: battery,
-            home: stat(.home, symbol: "house.fill"),
-            solar: stat(.solar, symbol: "sun.max.fill"),
-            grid: grid
+            battery: stateOfCharge.map { scoreboardBattery(cards: cards, charge: $0) },
+            home: scoreboardStat(cards: cards, source: .home, symbol: "house.fill"),
+            solar: scoreboardStat(cards: cards, source: .solar, symbol: "sun.max.fill"),
+            grid: scoreboardGrid(cards: cards)
+        )
+    }
+
+    private static func scoreboardCard(cards: [PowerCard], source: PowerSource) -> PowerCard? {
+        cards.first { $0.id == source }
+    }
+
+    private static func scoreboardStat(cards: [PowerCard], source: PowerSource, symbol: String) -> ScoreboardStat {
+        let reading = scoreboardCard(cards: cards, source: source).flatMap { $0.role == .unknown ? nil : $0.watts }
+        let value = reading.map(power) ?? "--"
+        return ScoreboardStat(symbol: symbol, value: value, spokenLabel: "\(source.title) \(value)")
+    }
+
+    private static func scoreboardBattery(cards: [PowerCard], charge: Double) -> BatteryScoreboardStat {
+        let percent = "\(Int(charge.rounded()))%"
+        let batteryCard = scoreboardCard(cards: cards, source: .battery)
+        let watts = batteryCard?.watts ?? 0
+        let signedWatts: Double
+        switch batteryCard?.role {
+        case .supplying: signedWatts = watts
+        case .receiving: signedWatts = -watts
+        default: signedWatts = 0
+        }
+        let flowValue = power(watts)
+        let flow: String?
+        let spoken: String
+        switch batteryCard?.role {
+        case .receiving:
+            flow = "+\(flowValue)"
+            spoken = "Battery \(percent), charging \(flowValue)"
+        case .supplying:
+            flow = "\u{2212}\(flowValue)"
+            spoken = "Battery \(percent), discharging \(flowValue)"
+        default:
+            flow = nil
+            spoken = "Battery \(percent)"
+        }
+        return BatteryScoreboardStat(
+            symbol: batterySymbol(powerWatts: signedWatts, stateOfCharge: charge),
+            charge: percent, flow: flow, spokenLabel: spoken
+        )
+    }
+
+    private static func scoreboardGrid(cards: [PowerCard]) -> ScoreboardStat? {
+        let gridCard = scoreboardCard(cards: cards, source: .grid)
+        guard gridCard?.role == .supplying || gridCard?.role == .receiving,
+              let watts = gridCard?.watts else { return nil }
+        let value = power(watts)
+        return ScoreboardStat(
+            symbol: gridCard?.role == .supplying ? "arrow.down.to.line" : "arrow.up.to.line",
+            value: value,
+            spokenLabel: "\(gridCard?.detail ?? "Grid") \(value)"
         )
     }
 }
