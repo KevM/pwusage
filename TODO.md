@@ -59,6 +59,15 @@ Smart Shift now projects rate-period banks to the bill date from 7 days of Solca
 - [ ] **A measured 1-in-4 cloudy *week* for the cautious history:** the phone approximates one by moving each typical slot 1/√7 of the way toward the server's 1-in-4 dull day, which assumes days are independent (real cloudy spells cluster). Replace it with weeks ranked from months of history once backfill lands.
 - [ ] **14-day projected-bill views using `pv_estimate10`:** a separate PR. The per-slot solar history (`solarKw`) added here is meant to feed it and to compare Solcast against what the roof actually did.
 
+## Automatic solar forecast (2026-10-27)
+
+Server side is in: `SiteSolarLayout`, the TypeScript layout detector (`src/lib/solar-layout/`), the `detect-solar-layouts` cron and `/api/mobile/solar-layout` + `/api/mobile/solar-actuals`, all gated by the `solar-forecast-beta` role. See the [spec](docs/superpowers/specs/2026-10-27-auto-solar-forecast-design.md).
+
+- [ ] **iOS plan:** provider refactor, `ForecastSolarClient`, location prompt, hourly correction from `/api/mobile/solar-actuals`, settings UI. Not started.
+- [ ] **Provider decision rule:** the forward capture (`.forecast-compare/capture.py`, `score.py`, local only) keeps running until it has 20+ scored days; ship Forecast.Solar only if its day-ahead forecast beats the 14-day history median on both daily and hourly error, else try Open-Meteo.
+- [ ] **Grant the beta role** to test users only after the iOS side lands; run detection on Dev for sites with a location and review the confidence spread first.
+- [ ] **Location check threshold:** the solar-noon check flags a location more than 3° of longitude off (not the spec's 1.5°): terrain shifts one research site's sunrise/sunset edges by ~2.4°. Revisit with more sites.
+
 ## Single compact store follow-ups (2026-10-27)
 
 Day records are the only energy history: raw `EnergyData`, the archive job, trim/restore and the v1 conversion were removed with `20261027120000_drop_energy_data` (cutover log in `docs/plans/2026-10-24-day-record-v2.md`). Before the drop, every raw day had a v2 record, no v1 record remained, and the three tokened sites with older history (268546532166, 2252435048108360, 2252472664568676) were backfilled from Tesla to install.
