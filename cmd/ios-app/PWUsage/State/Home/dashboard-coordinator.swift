@@ -23,16 +23,16 @@ final class DashboardCoordinator: ObservableObject {
     static let forecastEnergyDataRefreshAge: TimeInterval = 20 * 60
     static let planningContextLifetime: TimeInterval = 24 * 60 * 60
 
-    @Published internal(set) var selectedSiteID: String
-    @Published internal(set) var live = DashboardEndpointState<MobileLiveResponse>()
-    @Published internal(set) var power = DashboardEndpointState<MobileLivePowerResponse>()
-    @Published internal(set) var bill = DashboardEndpointState<MobileBillResponse>()
-    @Published internal(set) var isForeground = false
+    @Published var selectedSiteID: String
+    @Published var live = DashboardEndpointState<MobileLiveResponse>()
+    @Published var power = DashboardEndpointState<MobileLivePowerResponse>()
+    @Published var bill = DashboardEndpointState<MobileBillResponse>()
+    @Published var isForeground = false
     /// False from a raise, site switch or sign-in until that refresh finishes,
     /// successful or not, so a stale-data notice waits for it instead of flashing
     /// over cached readings that are about to be replaced.
-    @Published internal(set) var refreshSettled = false
-    @Published internal(set) var requiresSignIn = false
+    @Published var refreshSettled = false
+    @Published var requiresSignIn = false
     /// The dashboard presents one sheet at a time. Keeping that in a single
     /// published value means an external Battery Hold launch can clear whatever
     /// is on screen, so the root view's alert and loading overlay are not left
@@ -46,12 +46,12 @@ final class DashboardCoordinator: ObservableObject {
             else if presentedSheet == .batteryHold { presentedSheet = nil }
         }
     }
-    @Published internal(set) var batteryHold = BatteryHoldState()
+    @Published var batteryHold = BatteryHoldState()
     /// Told about confirmed hold state only; it can never change the hold.
     weak var batteryHoldActivityObserver: (any BatteryHoldActivityObserving)?
-    @Published internal(set) var solarForecastState: SolarForecastEnhancementState = .basic
-    @Published internal(set) var solarForecastConnection: SolarForecastConnectionState = .checking
-    @Published internal(set) var solarForecastUnavailableCause: SolarForecastUnavailableCause?
+    @Published var solarForecastState: SolarForecastEnhancementState = .basic
+    @Published var solarForecastConnection: SolarForecastConnectionState = .checking
+    @Published var solarForecastUnavailableCause: SolarForecastUnavailableCause?
     /// This device could not write its forecast state. Not a cause: the forecast
     /// on screen is usable, so it must not claim to be unavailable.
     ///
@@ -62,15 +62,15 @@ final class DashboardCoordinator: ObservableObject {
     /// inert rather than merely untidy: the overlay reads this only on the
     /// enhanced-and-ready branch, and every one of those returns sets the state to
     /// `.basic` or `.awaitingArraySelection`, which cannot reach it.
-    @Published internal(set) var solarForecastSaveFailure = false
-    @Published internal(set) var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
-    @Published internal(set) var solarForecastBatch: SolarForecastBatch?
+    @Published var solarForecastSaveFailure = false
+    @Published var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
+    @Published var solarForecastBatch: SolarForecastBatch?
     /// The last forecast refresh's outcome, kept for Smart Shift diagnostics only.
-    internal(set) var solarForecastLastRefresh: SolarForecastRefreshResult?
-    @Published internal(set) var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
+    var solarForecastLastRefresh: SolarForecastRefreshResult?
+    @Published var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
     /// The household pattern with grid history, published whether or not Solcast
     /// is connected, so Smart Shift can project banks from history alone.
-    @Published internal(set) var householdPattern: LoadTimingForecastEstimator.PlanningContext?
+    @Published var householdPattern: LoadTimingForecastEstimator.PlanningContext?
 
     var pollingTimerIsActive: Bool { timerTask != nil }
     /// Whichever endpoint supplies Home's power readings owns their availability:

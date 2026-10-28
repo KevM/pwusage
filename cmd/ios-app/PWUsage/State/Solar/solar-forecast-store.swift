@@ -30,7 +30,7 @@ actor SolarForecastStore {
     /// pending write would never be attempted again.
     var dirtyScopes: Set<String> = []
     var activeAccountScopeID: String?
-    internal(set) var lastErrorDescription: String?
+    var lastErrorDescription: String?
 
     init(
         clock: any SolarForecastClock = SystemSolarForecastClock(),

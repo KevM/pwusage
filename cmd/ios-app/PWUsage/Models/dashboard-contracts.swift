@@ -113,12 +113,12 @@ enum SolarForecastEnhancementUnavailableReason: Equatable {
 }
 
 struct DashboardEndpointState<Response: Equatable>: Equatable {
-    internal(set) var response: Response?
-    internal(set) var lastAttempt: Date?
-    internal(set) var lastSuccess: Date?
-    internal(set) var isRestored = false
-    internal(set) var isUnavailable = false
-    internal(set) var unavailableStatusCode: Int?
+    var response: Response?
+    var lastAttempt: Date?
+    var lastSuccess: Date?
+    var isRestored = false
+    var isUnavailable = false
+    var unavailableStatusCode: Int?
 
     mutating func reset() {
         response = nil

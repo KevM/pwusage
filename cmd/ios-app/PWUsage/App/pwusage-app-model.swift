@@ -11,18 +11,18 @@ final class PWUsageAppModel: ObservableObject {
         case unavailable
     }
 
-    @Published internal(set) var screenState: ScreenState = .bootstrapping
-    @Published internal(set) var sites: [MobileSite] = []
-    @Published internal(set) var selectedSiteID: String?
-    @Published internal(set) var coordinator: DashboardCoordinator?
-    @Published internal(set) var isSigningIn = false
-    @Published internal(set) var isSigningOut = false
-    @Published internal(set) var signInMessage: String?
+    @Published var screenState: ScreenState = .bootstrapping
+    @Published var sites: [MobileSite] = []
+    @Published var selectedSiteID: String?
+    @Published var coordinator: DashboardCoordinator?
+    @Published var isSigningIn = false
+    @Published var isSigningOut = false
+    @Published var signInMessage: String?
     @Published var isSitePickerPresented = false
-    @Published internal(set) var accountScopeID: String?
+    @Published var accountScopeID: String?
     /// The tab on screen. Only `selectTab` persists it; an external Battery Saver
     /// launch moves it for one visit, like the saved site.
-    @Published internal(set) var selectedTab: AppTab
+    @Published var selectedTab: AppTab
 
     /// Builds the dashboard coordinator for a site. Injected so tests can control
     /// the polling cadence and the clock.
@@ -34,8 +34,8 @@ final class PWUsageAppModel: ObservableObject {
     let cache: DashboardCache?
     /// Replaced on each external route (widget, Battery Saver control) so every
     /// tab rebuilds its stack, dropping old paths and tab-local modals.
-    @Published internal(set) var externalNavigationID: UUID?
-    @Published internal(set) var pendingBatteryHoldSiteID: String?
+    @Published var externalNavigationID: UUID?
+    @Published var pendingBatteryHoldSiteID: String?
     @Published var batteryHoldNavigationMessage: String?
     let controlSiteStore: BatteryHoldControlSiteStore?
     let liveActivities: BatteryHoldActivityCoordinator?

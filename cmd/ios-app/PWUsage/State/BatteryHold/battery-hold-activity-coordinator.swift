@@ -9,7 +9,7 @@ import os
 @Observable
 final class BatteryHoldActivityCoordinator: BatteryHoldActivityObserving {
     /// Holds this device currently shows, for the sheet's offer.
-    internal(set) var shownHoldIDs: Set<Int> = []
+    var shownHoldIDs: Set<Int> = []
 
     @ObservationIgnored let host: any BatteryHoldActivityHost
     @ObservationIgnored let api: any BatteryHoldActivityAPI
