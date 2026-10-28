@@ -236,7 +236,7 @@ struct LoadTimingForecastEstimatorTests {
                                       isActive: false, nextStartPhrase: nil, buyRate: 0.3, sellRate: 0.05)
         let dstTiming = LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: [period],
                                    pricingPeriods: [period], tariffTimeline: [segment], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-    // swiftlint:disable:next line_length
+        // swiftlint:disable:next line_length
         let slots = (0 ..< 48).map { LoadTimingForecastEstimator.PlanningSlot(localMinute: $0 * 30, homeKw: 0, batteryNetChargeKw: 0) }
         let dstContext = LoadTimingForecastEstimator.PlanningContext(timeZone: "America/Los_Angeles", slots: slots, asOf: dstStart)
         let result = try #require(LoadTimingForecastEstimator.evaluate(profile: profile(), now: dstStart, timing: dstTiming,
@@ -752,7 +752,7 @@ extension LoadTimingForecastEstimatorTests {
         let weekday = { (day: Int) -> Bool in
             !calendar.isDateInWeekend(dayZero.addingTimeInterval(Double(day) * 86_400))
         }
-    // swiftlint:disable:next line_length
+        // swiftlint:disable:next line_length
         let sunday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
         let now = dayZero.addingTimeInterval(Double(sunday) * 86_400 + 10 * 3600)
         let cycleEnd = now.addingTimeInterval(23 * 86_400)
@@ -1029,7 +1029,7 @@ extension LoadTimingForecastEstimatorTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let dayZero = start.addingTimeInterval(-8 * 3600)
-    // swiftlint:disable:next line_length
+        // swiftlint:disable:next line_length
         let sunday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
         let sundayStart = dayZero.addingTimeInterval(Double(sunday) * 86_400)
         let now = sundayStart.addingTimeInterval(13.2 * 3600)
@@ -1063,7 +1063,7 @@ extension LoadTimingForecastEstimatorTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let dayZero = start.addingTimeInterval(-8 * 3600)
-    // swiftlint:disable:next line_length
+        // swiftlint:disable:next line_length
         let sunday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
         let now = dayZero.addingTimeInterval(Double(sunday) * 86_400 + 17 * 3600 + 39 * 60 + 41.869)
         let monday = dayZero.addingTimeInterval(Double(sunday + 1) * 86_400)
@@ -1159,7 +1159,7 @@ extension LoadTimingForecastEstimatorTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let dayZero = start.addingTimeInterval(-8 * 3600)
-    // swiftlint:disable:next line_length
+        // swiftlint:disable:next line_length
         let monday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 2 })
         let mondayStart = dayZero.addingTimeInterval(Double(monday) * 86_400)
         let now = mondayStart.addingTimeInterval(6 * 3600 + 4 * 60)
