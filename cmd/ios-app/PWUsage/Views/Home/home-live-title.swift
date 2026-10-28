@@ -29,6 +29,7 @@ struct HomeLiveTitle: View {
                 .id(scoreboard != nil)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .center)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(scoreboard?.accessibilityLabel(siteName: siteName) ?? siteName)
         .accessibilityAddTraits(.isHeader)
