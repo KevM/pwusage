@@ -16,12 +16,12 @@ final class MobileAuthServiceTests {
     func pkceMaterialUsesBase64URLWithoutPaddingAndSHA256Challenge() throws {
         let material = try MobileAuthService.makePKCEMaterial()
 
-        #expect((43...128).contains(material.verifier.count))
+        #expect((43 ... 128).contains(material.verifier.count))
         #expect(material.verifier.allSatisfy(Self.isBase64URLCharacter))
         #expect(!material.verifier.contains("="))
-        #expect((43...128).contains(material.challenge.count))
+        #expect((43 ... 128).contains(material.challenge.count))
         #expect(material.challenge == Self.base64URL(SHA256.hash(data: Data(material.verifier.utf8))))
-        #expect((43...128).contains(material.state.count))
+        #expect((43 ... 128).contains(material.state.count))
         #expect(material.state.allSatisfy(Self.isBase64URLCharacter))
     }
 
@@ -83,7 +83,7 @@ final class MobileAuthServiceTests {
         let query = Dictionary(uniqueKeysWithValues: try #require(components.queryItems).map { ($0.name, $0.value ?? "") })
         let challenge = try #require(query["mobile_challenge"])
         let state = try #require(query["mobile_state"])
-        #expect((43...128).contains(challenge.count))
+        #expect((43 ... 128).contains(challenge.count))
         #expect(fakeSession.callbackScheme == "pwusage")
         #expect(!fakeSession.prefersEphemeralWebBrowserSession)
 

@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("Dashboard Presentation Tests")
 struct DashboardPresentationTests {
@@ -223,8 +223,8 @@ struct DashboardPresentationTests {
 
     @Test("Home uses two columns only when wide, regular and not at accessibility sizes",
           arguments: [
-            (700.0, true, false, true), (699.0, true, false, false),
-            (1100.0, false, false, false), (1100.0, true, true, false),
+              (700.0, true, false, true), (699.0, true, false, false),
+              (1100.0, false, false, false), (1100.0, true, true, false),
           ])
     func homeColumns(width: Double, regular: Bool, accessibility: Bool, expected: Bool) {
         #expect(DashboardPresentation.homeUsesTwoColumns(

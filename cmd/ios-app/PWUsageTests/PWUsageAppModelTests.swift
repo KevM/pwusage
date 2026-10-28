@@ -1,7 +1,7 @@
 import AuthenticationServices
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @MainActor
 @Suite("PWUsage App Model Tests", .serialized)
@@ -246,7 +246,7 @@ struct PWUsageAppModelTests {
     func controlOpensActiveHoldWithoutCommands() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
         api.batteryHoldResponse = .init(hold: try MobileContractDecoder.make().decode(BatteryHold.self,
-            from: Data(BatteryHoldTests.holdJSON.utf8)), notice: nil)
+                                                                                      from: Data(BatteryHoldTests.holdJSON.utf8)), notice: nil)
         let model = try makeModel(api: api)
         await model.openBatteryHold(siteID: "site-1")
         let coordinator = try #require(model.coordinator)
@@ -272,8 +272,8 @@ struct PWUsageAppModelTests {
         let hold = try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(BatteryHoldTests.holdJSON.utf8))
         live.show(hold, siteID: "site-1", timeZone: nil)
         live.show(try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(BatteryHoldTests.holdJSON
-            .replacingOccurrences(of: #""id":1"#, with: #""id":2"#)
-            .replacingOccurrences(of: "site-1", with: "site-2").utf8)), siteID: "site-2", timeZone: nil)
+                .replacingOccurrences(of: #""id":1"#, with: #""id":2"#)
+                .replacingOccurrences(of: "site-1", with: "site-2").utf8)), siteID: "site-2", timeZone: nil)
         #expect(host.handles.map(\.attributes.siteID) == ["site-1", "site-2"])
         #expect(host.handles[1].attributes.holdID == 2)
 
@@ -785,7 +785,6 @@ struct PWUsageAppModelTests {
         #expect(relaunched.screenState == .signedOut)
         #expect(relaunched.coordinator == nil)
         #expect(DashboardCache(fileURL: cacheURL).snapshot.sites.isEmpty)
-
     }
 
     @Test("Restored detail actions wait for site authorization, including offline and pending launches")
@@ -904,7 +903,7 @@ struct PWUsageAppModelTests {
 
     @Test("Reconnect cancellation and web failures preserve the signed-in dashboard", arguments: [
         ASWebAuthenticationSessionError.Code.canceledLogin,
-        .presentationContextInvalid
+        .presentationContextInvalid,
     ])
     func reconnectFailurePreservesSession(code: ASWebAuthenticationSessionError.Code) async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
@@ -943,7 +942,7 @@ struct PWUsageAppModelTests {
     }
 
     @Test("Reconnect handles exchange, site reload and confirmed expiry", arguments: [
-        "exchangeFailure", "siteFailure", "success", "expired"
+        "exchangeFailure", "siteFailure", "success", "expired",
     ])
     func reconnectCompletion(outcome: String) async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
@@ -1046,7 +1045,7 @@ struct PWUsageAppModelTests {
     /// Bounded on purpose: a condition that never comes true must fail the test
     /// rather than hang the run. Async so it can also observe actor state.
     private func waitUntil(_ condition: @MainActor () async -> Bool) async throws {
-        for _ in 0..<100 {
+        for _ in 0 ..< 100 {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }

@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("Load Timing Presentation Tests")
 struct LoadTimingViewTests {
@@ -110,10 +110,10 @@ struct LoadTimingViewTests {
                                        forecastFetchedAt: fresh, now: now) == .unusable("Solcast is limiting requests."))
         #expect(P.forecastAvailability(state: .failedWithBasic, connection: .ready, cause: nil, reason: .insufficientHistory,
                                        forecastFetchedAt: fresh, now: now)
-            == .unusable("Your household profile needs at least 5 complete days in the last 14 days."))
+                == .unusable("Your household profile needs at least 5 complete days in the last 14 days."))
         #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
                                        forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now)
-            == .unusable("The forecast was too old or incomplete to use."))
+                == .unusable("The forecast was too old or incomplete to use."))
         #expect(P.forecastUnavailableNote(.staleBalance)
             == "Energy observations are too old for the solar comparison, so it's paused.")
     }

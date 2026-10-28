@@ -7,6 +7,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
       - 'cmd/ios-app/**'
+      - '.swiftformat'
+      - 'cmd/ios-app/format.sh'
       - '.github/workflows/ios.yml'
   workflow_dispatch:
 
@@ -42,16 +44,21 @@ jobs:
             HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install xcodegen
           fi
 
-      # Non-blocking until the baseline (CODE_AUDIT.md §14.4) is burned down;
-      # then drop continue-on-error so new violations fail the build.
+      - name: SwiftFormat
+        working-directory: .
+        run: |
+          if ! command -v swiftformat &> /dev/null; then
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install swiftformat
+          fi
+          swiftformat --lint cmd/ios-app --config .swiftformat
+
       - name: SwiftLint
-        continue-on-error: true
         working-directory: .
         run: |
           if ! command -v swiftlint &> /dev/null; then
             HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install swiftlint
           fi
-          swiftlint lint --strict --reporter github-actions-logging
+          swiftlint lint --strict --baseline .swiftlint-baseline.json --reporter github-actions-logging
 
       - name: Run iOS Tests
         env:

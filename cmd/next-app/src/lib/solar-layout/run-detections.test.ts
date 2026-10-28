@@ -27,6 +27,14 @@ describe('runDueDetections', () => {
         expect(end.getTime() - start.getTime()).toBe(365 * 86_400_000);
     });
 
+    it('saves a detected result on a subsequent due attempt', async () => {
+        const repo = fakeRepo(['s1']);
+        const detect = vi.fn().mockReturnValueOnce({ status: 'not-enough-history', confidence: null, reasons: [], planes: [], acClipKw: null, historyDays: 41, clearDays: 0, firstDay: null, lastDay: null, shading: [] }).mockReturnValueOnce({ status: 'detected', confidence: 'high', reasons: [], planes: [], acClipKw: null, historyDays: 42, clearDays: 20, firstDay: null, lastDay: null, shading: [] });
+        await runDueDetections({ now, budgetMs: 35_000, repo, loadSamples: async () => [], detect });
+        await runDueDetections({ now: new Date(now.getTime() + 86_400_000), budgetMs: 35_000, repo, loadSamples: async () => [], detect });
+        expect(repo.saveResult).toHaveBeenLastCalledWith('s1', expect.objectContaining({ status: 'detected' }), 1, { latitude: 43.39, longitude: -87.87 });
+    });
+
     it('records a failure and moves on when one site throws', async () => {
         const repo = fakeRepo(['s1', 's2']);
         const loadSamples = vi.fn(async (siteId: string) => {

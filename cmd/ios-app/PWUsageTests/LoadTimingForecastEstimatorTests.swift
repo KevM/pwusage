@@ -1,6 +1,7 @@
+// swiftlint:disable file_length
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 struct LoadTimingForecastEstimatorTests {
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
@@ -17,16 +18,16 @@ struct LoadTimingForecastEstimatorTests {
                         pricingBalances: [String: Double]? = nil, hasCycleData: Bool = true) -> LoadTiming {
         let periods = balances.map { key, value in
             LoadTimingPeriod(name: key, marginalCost: nil, basis: "cycle-net-export", cycleNetExportKwh: value,
-                isActive: false, nextStartPhrase: nil, buyRate: segments.first(where: { $0.periodKey == key })?.buyRate ?? 0.30,
-                sellRate: segments.first(where: { $0.periodKey == key })?.sellRate ?? 0.05)
+                             isActive: false, nextStartPhrase: nil, buyRate: segments.first(where: { $0.periodKey == key })?.buyRate ?? 0.30,
+                             sellRate: segments.first(where: { $0.periodKey == key })?.sellRate ?? 0.05)
         }
         let pricing = (pricingBalances ?? balances).map { key, value in
             LoadTimingPeriod(name: key, marginalCost: nil, basis: "cycle-net-export", cycleNetExportKwh: value,
-                isActive: false, nextStartPhrase: nil, buyRate: segments.first(where: { $0.periodKey == key })?.buyRate ?? 0.30,
-                sellRate: segments.first(where: { $0.periodKey == key })?.sellRate ?? 0.05)
+                             isActive: false, nextStartPhrase: nil, buyRate: segments.first(where: { $0.periodKey == key })?.buyRate ?? 0.30,
+                             sellRate: segments.first(where: { $0.periodKey == key })?.sellRate ?? 0.05)
         }
         return LoadTiming(hasTariff: true, hasCycleData: hasCycleData, activeIsCheapest: false, periods: periods,
-            pricingPeriods: pricing, tariffTimeline: segments, nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
+                          pricingPeriods: pricing, tariffTimeline: segments, nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
     }
 
     private func forecast(_ power: Double, from: TimeInterval, to: TimeInterval) -> SolarForecastInterval {
@@ -48,14 +49,14 @@ struct LoadTimingForecastEstimatorTests {
             tariff(0, 21_600, key: "summer_peak", buy: 0.48, sell: 0.10),
             tariff(21_600, 43_200, key: "summer_offpeak", buy: 0.22, sell: 0.08),
             tariff(43_200, 64_800, key: "winter_peak", buy: 0.52, sell: 0.11),
-            tariff(64_800, 86_400, key: "winter_offpeak", buy: 0.20, sell: 0.07)
+            tariff(64_800, 86_400, key: "winter_offpeak", buy: 0.20, sell: 0.07),
         ]
         let result = evaluate(
             now: 0,
             tariffs: segments,
             balances: ["summer_peak": 4, "summer_offpeak": 3],
             pricingBalances: ["summer_peak": 4, "summer_offpeak": 3],
-            forecast: (0..<48).map { forecast(4, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+            forecast: (0 ..< 48).map { forecast(4, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
         )
 
         let comparison = try #require(result.comparison, "A season boundary must not disable forecasting")
@@ -70,14 +71,14 @@ struct LoadTimingForecastEstimatorTests {
         // baseline cannot be projected at all.
         let segments = [
             tariff(-1800, 21_600, key: "q", buy: 0.30, sell: 0.05),
-            tariff(21_600, 43_200, key: "p", buy: 0.30, sell: 0.05)
+            tariff(21_600, 43_200, key: "p", buy: 0.30, sell: 0.05),
         ]
         let result = evaluate(
             now: 0,
             tariffs: segments,
             balances: ["p": 2],
             pricingBalances: ["p": 2],
-            forecast: (0..<48).map { forecast(4, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+            forecast: (0 ..< 48).map { forecast(4, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
         )
 
         #expect(result.comparison == nil)
@@ -179,7 +180,7 @@ struct LoadTimingForecastEstimatorTests {
 
     @Test func balanceSourceOverlapIsNeverForecastTwice() throws {
         let result = try #require(evaluate(now: 1800, tariffs: [tariff(0, 7200)], balances: ["p": 2],
-            forecast: [forecast(100, from: 0, to: 1800), forecast(0, from: 1800, to: 7200)], balanceSource: 1800).comparison)
+                                           forecast: [forecast(100, from: 0, to: 1800), forecast(0, from: 1800, to: 7200)], balanceSource: 1800).comparison)
         #expect(result.horizonStart == start.addingTimeInterval(1800))
         #expect(abs(result.costNow - 0.40) < 0.000_001)
     }
@@ -197,7 +198,7 @@ struct LoadTimingForecastEstimatorTests {
 
     @Test func sourceToNowProjectionWithinThirtyMinutesWorksWithCompleteCoverage() throws {
         let result = try #require(evaluate(now: 1800, tariffs: [tariff(0, 7200)],
-            forecast: [forecast(0, from: 0, to: 7200)], balanceSource: 0).comparison)
+                                           forecast: [forecast(0, from: 0, to: 7200)], balanceSource: 0).comparison)
         #expect(result.horizonStart == start.addingTimeInterval(1800))
         #expect(abs(result.costNow - 0.40) < 0.000_001)
     }
@@ -209,7 +210,7 @@ struct LoadTimingForecastEstimatorTests {
 
     @Test func missingContextSlotMakesComparisonUnavailable() {
         let incomplete = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC",
-            slots: [LoadTimingForecastEstimator.PlanningSlot(localMinute: 0, homeKw: nil, batteryNetChargeKw: 0)], asOf: start)
+                                                                     slots: [LoadTimingForecastEstimator.PlanningSlot(localMinute: 0, homeKw: nil, batteryNetChargeKw: 0)], asOf: start)
         let result = evaluate(tariffs: [tariff(0, 3600)], forecast: [forecast(0, from: 0, to: 3600)], context: incomplete)
         #expect(result.unavailableReason == .incompleteContext)
     }
@@ -232,14 +233,15 @@ struct LoadTimingForecastEstimatorTests {
         let end = dstStart.addingTimeInterval(7200)
         let segment = LoadTimingTariffSegment(start: dstStart, end: end, periodKey: "p", name: "p", buyRate: 0.3, sellRate: 0.05)
         let period = LoadTimingPeriod(name: "p", marginalCost: nil, basis: "cycle-net-export", cycleNetExportKwh: 0,
-            isActive: false, nextStartPhrase: nil, buyRate: 0.3, sellRate: 0.05)
+                                      isActive: false, nextStartPhrase: nil, buyRate: 0.3, sellRate: 0.05)
         let dstTiming = LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: [period],
-            pricingPeriods: [period], tariffTimeline: [segment], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-        let slots = (0..<48).map { LoadTimingForecastEstimator.PlanningSlot(localMinute: $0 * 30, homeKw: 0, batteryNetChargeKw: 0) }
+                                   pricingPeriods: [period], tariffTimeline: [segment], nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
+        // swiftlint:disable:next line_length
+        let slots = (0 ..< 48).map { LoadTimingForecastEstimator.PlanningSlot(localMinute: $0 * 30, homeKw: 0, batteryNetChargeKw: 0) }
         let dstContext = LoadTimingForecastEstimator.PlanningContext(timeZone: "America/Los_Angeles", slots: slots, asOf: dstStart)
         let result = try #require(LoadTimingForecastEstimator.evaluate(profile: profile(), now: dstStart, timing: dstTiming,
-            forecast: [SolarForecastInterval(periodStart: dstStart, periodEnd: end, powerKw: 0)], context: dstContext,
-            balanceSourceTime: dstStart, billingCycleEnd: dstStart.addingTimeInterval(7200), currencyCode: "USD").comparison)
+                                                                       forecast: [SolarForecastInterval(periodStart: dstStart, periodEnd: end, powerKw: 0)], context: dstContext,
+                                                                       balanceSourceTime: dstStart, billingCycleEnd: dstStart.addingTimeInterval(7200), currencyCode: "USD").comparison)
         #expect(result.evaluatedStarts.contains(dstStart.addingTimeInterval(1800))) // 01:30 local.
         #expect(result.evaluatedStarts.contains(dstStart.addingTimeInterval(3600))) // 03:00 local after the skipped hour.
     }
@@ -268,27 +270,27 @@ struct LoadTimingForecastEstimatorTests {
 
     @Test func missingHistoricalBalanceSlotIsUnavailable() {
         let result = evaluate(tariffs: [tariff(0, 7200, key: "a")], balances: [:], hasCycleData: false,
-            forecast: [forecast(0, from: 0, to: 7200)])
+                              forecast: [forecast(0, from: 0, to: 7200)])
         #expect(result.unavailableReason == .incompleteBalance)
     }
 
     @Test func earlyCyclePricesUpcomingPeriodUsingZeroBalance() throws {
         let peak = tariff(0, 3600, key: "Peak", buy: 0.30, sell: 0.05)
         let result = try #require(evaluate(tariffs: [peak], balances: ["Off peak": 4],
-            pricingBalances: ["Off peak": 4, "Peak": 0], forecast: [forecast(0, from: 0, to: 3600)]).comparison)
+                                           pricingBalances: ["Off peak": 4, "Peak": 0], forecast: [forecast(0, from: 0, to: 3600)]).comparison)
         #expect(abs(result.costNow - 0.90) < 0.000_001)
     }
 
     @Test func missingUsedPricingPeriodBalanceIsIncompleteEvenWhenCycleDataExists() {
         let result = evaluate(tariffs: [tariff(0, 3600, key: "Peak")], balances: ["Off peak": 4],
-            pricingBalances: [:], hasCycleData: true, forecast: [forecast(0, from: 0, to: 3600)])
+                              pricingBalances: [:], hasCycleData: true, forecast: [forecast(0, from: 0, to: 3600)])
         #expect(result.unavailableReason == .incompleteBalance)
     }
 
     @Test func unusedFutureTariffKeyAfterCommonHorizonNeedsNoBalance() throws {
         let tariffs = [tariff(0, 3600, key: "current"), tariff(3600, 7200, key: "later", buy: .nan)]
         let result = try #require(evaluate(tariffs: tariffs, balances: ["current": 2],
-            forecast: [forecast(0, from: 0, to: 3600)]).comparison)
+                                           forecast: [forecast(0, from: 0, to: 3600)]).comparison)
         #expect(result.horizonEnd == start.addingTimeInterval(3600))
     }
 
@@ -332,9 +334,9 @@ struct LoadTimingForecastEstimatorTests {
         let missingMinute = (localMinute / 30) * 30
         let full = context()
         let futureGap = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC",
-            slots: full.slots.filter { $0.localMinute != missingMinute }, asOf: start)
+                                                                    slots: full.slots.filter { $0.localMinute != missingMinute }, asOf: start)
         let result = try #require(evaluate(tariffs: [tariff(0, 7200)], forecast: [forecast(0, from: 0, to: 7200)],
-            context: futureGap).comparison)
+                                           context: futureGap).comparison)
         #expect(result.horizonEnd == start.addingTimeInterval(3600))
         #expect(result.recommendedEnd == start.addingTimeInterval(3600))
     }
@@ -346,44 +348,44 @@ struct LoadTimingForecastEstimatorTests {
         let currentMinute = calendar.component(.hour, from: start) * 60 + calendar.component(.minute, from: start)
         let missingMinute = (currentMinute / 30) * 30
         let gap = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC",
-            slots: full.slots.filter { $0.localMinute != missingMinute }, asOf: start)
+                                                              slots: full.slots.filter { $0.localMinute != missingMinute }, asOf: start)
         let result = evaluate(tariffs: [tariff(0, 7200)], forecast: [forecast(0, from: 0, to: 7200)], context: gap)
         #expect(result.unavailableReason == .incompleteContext)
     }
 
     @Test func finiteInputsWhoseLoadPowerOverflowsAreInvalid() {
         let result = evaluate(profile: profile(1.7e308, hours: 0.5), tariffs: [tariff(0, 3600)],
-            forecast: [forecast(0, from: 0, to: 3600)])
+                              forecast: [forecast(0, from: 0, to: 3600)])
         #expect(result.unavailableReason == .invalidInput)
     }
 
     @Test func finiteDurationWhoseSecondsOverflowIsInvalid() {
         let result = evaluate(profile: profile(3, hours: 1.7e308), tariffs: [tariff(0, 3600)],
-            forecast: [forecast(0, from: 0, to: 3600)])
+                              forecast: [forecast(0, from: 0, to: 3600)])
         #expect(result.unavailableReason == .invalidInput)
     }
 
     @Test func overflowingProjectedBaselineBalanceIsInvalidInput() {
         let result = evaluate(tariffs: [tariff(0, 3600)], balances: ["p": Double.greatestFiniteMagnitude],
-            forecast: [forecast(1e308, from: 0, to: 3600)])
+                              forecast: [forecast(1e308, from: 0, to: 3600)])
         #expect(result.unavailableReason == .invalidInput)
     }
 
     @Test func overflowingCostRateProductIsInvalidInput() {
         let result = evaluate(tariffs: [tariff(0, 3600, buy: 1e308)], balances: ["p": 0],
-            forecast: [forecast(0, from: 0, to: 3600)])
+                              forecast: [forecast(0, from: 0, to: 3600)])
         #expect(result.unavailableReason == .invalidInput)
     }
 
     @Test func zeroChargeProfileHasTypedNoChargeResult() {
         let car = LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 0, durationHours: 0,
-            carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 50, targetStateOfCharge: 50, chargingLevel: .level2))
+                              carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 50, targetStateOfCharge: 50, chargingLevel: .level2))
         #expect(evaluate(profile: car, tariffs: [tariff(0, 3600)], forecast: [forecast(0, from: 0, to: 3600)]).unavailableReason == .noEnergyNeeded)
     }
 
     @Test func profileWallEnergyIsConservedAcrossBoundaries() throws {
         let result = try #require(evaluate(profile: profile(6, hours: 2), tariffs: [tariff(0, 1800), tariff(1800, 7200)],
-            balances: ["p": 0], forecast: [forecast(0, from: 0, to: 7200)]).comparison)
+                                           balances: ["p": 0], forecast: [forecast(0, from: 0, to: 7200)]).comparison)
         #expect(abs(result.costNow - 1.80) < 0.000_001)
         #expect(result.recommendedEnd == start.addingTimeInterval(7200))
         #expect(result.estimatedSolarContribution == 0)
@@ -391,8 +393,8 @@ struct LoadTimingForecastEstimatorTests {
 
     @Test func solarContributionSubtractsHomeAndPositiveBatteryCharge() throws {
         let result = try #require(evaluate(profile: profile(3, hours: 1), tariffs: [tariff(0, 3600)],
-            balances: ["p": 100], forecast: [forecast(5, from: 0, to: 3600)],
-            context: context(home: 1, battery: 1)).comparison)
+                                           balances: ["p": 100], forecast: [forecast(5, from: 0, to: 3600)],
+                                           context: context(home: 1, battery: 1)).comparison)
         #expect(abs(result.estimatedSolarContribution - 3) < 0.000_001)
     }
 
@@ -411,7 +413,7 @@ struct LoadTimingForecastEstimatorTests {
     @Test func tariffTransitionsAndTransitionMinusDurationAreEnumerated() throws {
         let tariffs = [tariff(0, 3600, key: "a", buy: 0.5, sell: 0), tariff(3600, 10800, key: "b", buy: 0.1, sell: 0)]
         let result = try #require(evaluate(profile: profile(1, hours: 1), tariffs: tariffs, balances: ["a": 0, "b": 0],
-            forecast: [forecast(0, from: 0, to: 10800)]).comparison)
+                                           forecast: [forecast(0, from: 0, to: 10800)]).comparison)
         #expect(result.evaluatedStarts.contains(start.addingTimeInterval(3600)))
         #expect(result.evaluatedStarts.contains(start.addingTimeInterval(0)))
     }
@@ -579,7 +581,7 @@ struct LoadTimingForecastEstimatorTests {
     @Test func lanesShowOnlyTouchedPeriodsAndCurrent() throws {
         // Super Off-Peak 00–06, Off-Peak 06–10, Mid 10–14, Peak 14–20, Off-Peak 20–24, on two days.
         let rates: [String: (buy: Double, sell: Double)] = [
-            "Super Off-Peak": (0.40, 0.02), "Off-Peak": (0.30, 0.04), "Mid": (0.35, 0.05), "Peak": (0.50, 0.08)
+            "Super Off-Peak": (0.40, 0.02), "Off-Peak": (0.30, 0.04), "Mid": (0.35, 0.05), "Peak": (0.50, 0.08),
         ]
         let spans: [(Double, Double, String)] = [(0, 6, "Super Off-Peak"), (6, 10, "Off-Peak"), (10, 14, "Mid"),
                                                  (14, 20, "Peak"), (20, 24, "Off-Peak")]
@@ -590,7 +592,7 @@ struct LoadTimingForecastEstimatorTests {
             }
         }
         let comparison = try #require(evaluateFlat(profile: profile(2, hours: 1), now: hours(8), tariffs: segments,
-            balances: ["Super Off-Peak": 0, "Off-Peak": 0, "Mid": 10, "Peak": 0]).comparison)
+                                                   balances: ["Super Off-Peak": 0, "Off-Peak": 0, "Mid": 10, "Peak": 0]).comparison)
 
         #expect(comparison.recommendedStart == hours(10))
         #expect(comparison.lanes.map(\.periodKey) == ["Off-Peak", "Mid"])
@@ -607,7 +609,7 @@ struct LoadTimingForecastEstimatorTests {
             LoadTimingTariffSegment(start: segment.start, end: segment.end, periodKey: segment.periodKey, name: segment.name,
                                     buyRate: segment.buyRate, sellRate: segment.periodKey == "Peak" ? 0.40 : segment.sellRate)
         }
-        let solar = (0..<96).map { index -> SolarForecastInterval in
+        let solar = (0 ..< 96).map { index -> SolarForecastInterval in
             let from = hours(Double(index) / 2), to = hours(Double(index + 1) / 2)
             let inPeak = tariffs.contains { $0.periodKey == "Peak" && $0.start <= from && from < $0.end }
             return SolarForecastInterval(periodStart: from, periodEnd: to, powerKw: inPeak ? 3 : 0)
@@ -684,7 +686,7 @@ extension LoadTimingForecastEstimatorTests {
                                            periodKey: key, name: on ? "On-Peak" : "Off-Peak",
                                            buyRate: on ? onBuy : offBuy, sellRate: on ? onSell : offSell)
         }
-        return (0..<days).flatMap { day in
+        return (0 ..< days).flatMap { day in
             onPeakDay(day)
                 ? [segment(day, 0, 8, "OFF_PEAK"), segment(day, 8, 20, "ON_PEAK"), segment(day, 20, 24, "OFF_PEAK")]
                 : [segment(day, 0, 24, "OFF_PEAK")]
@@ -717,7 +719,7 @@ extension LoadTimingForecastEstimatorTests {
     func forecastWindowThenHistory() throws {
         // Two days of 3 kW solar against 1 kW home, then history's 0.5 kW, to a cycle end five days out.
         let cycleEnd = start.addingTimeInterval(5 * 86_400)
-        let intervals = (0..<96).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+        let intervals = (0 ..< 96).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
         let context = historyContext(home: 1, grid: { _ in 0.5 })
         let result = evaluate(.forecast(intervals: intervals, context: context), now: start,
                               tariffs: [tariff(0, 5 * 86_400)], balances: ["p": 2], cycleEnd: cycleEnd)
@@ -730,7 +732,7 @@ extension LoadTimingForecastEstimatorTests {
 
     @Test("A forecast without grid history still ends at the forecast and midnight tomorrow")
     func forecastWithoutHistoryKeepsTodaysHorizon() throws {
-        let intervals = (0..<240).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+        let intervals = (0 ..< 240).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
         let result = evaluate(.forecast(intervals: intervals, context: context(home: 1)), now: start,
                               tariffs: [tariff(0, 5 * 86_400)], balances: ["p": 2], cycleEnd: start.addingTimeInterval(5 * 86_400))
 
@@ -750,7 +752,8 @@ extension LoadTimingForecastEstimatorTests {
         let weekday = { (day: Int) -> Bool in
             !calendar.isDateInWeekend(dayZero.addingTimeInterval(Double(day) * 86_400))
         }
-        let sunday = try #require((0..<7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
+        // swiftlint:disable:next line_length
+        let sunday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
         let now = dayZero.addingTimeInterval(Double(sunday) * 86_400 + 10 * 3600)
         let cycleEnd = now.addingTimeInterval(23 * 86_400)
         let car = LoadProfile(id: "car", name: "Charge the car", kind: .appliance, energyKwh: 52.7,
@@ -835,7 +838,7 @@ extension LoadTimingForecastEstimatorTests {
 extension LoadTimingForecastEstimatorTests {
     /// Half-hour intervals over [0, hours) from `start`, typical and cautious kW by hour offset.
     private func halfHourForecast(hours: Int, typical: (Double) -> Double, cautious: ((Double) -> Double?)?) -> [SolarForecastInterval] {
-        (0..<(hours * 2)).map { index in
+        (0 ..< (hours * 2)).map { index in
             let hour = Double(index) / 2
             return SolarForecastInterval(periodStart: start.addingTimeInterval(hour * 3600),
                                          periodEnd: start.addingTimeInterval((hour + 0.5) * 3600),
@@ -867,7 +870,7 @@ extension LoadTimingForecastEstimatorTests {
                        tariff(57_600, 100_800, key: "OFF", buy: 0.10, sell: 0.03), tariff(100_800, 144_000, key: "ON", buy: 0.31, sell: 0.04)]
         // Median solar of 4 kW against a 3.5 kW home banks 12 kWh across both On-Peaks;
         // a cloudy week (each interval 20% toward pv_estimate10 = 0) leaves it 7.2 short.
-        let onPeak = { (hour: Double) in (4..<16).contains(hour) || (28..<40).contains(hour) }
+        let onPeak = { (hour: Double) in (4 ..< 16).contains(hour) || (28 ..< 40).contains(hour) }
         let forecast = halfHourForecast(hours: 40, typical: { onPeak($0) ? 4 : 0 }, cautious: { _ in 0 })
         // 8 kWh in an hour: even a run straddling into On-Peak leaves it 11.2 short.
         let result = safetyEvaluate(forecast: forecast, tariffs: tariffs, balances: ["ON": 0, "OFF": -20], profile: load(8, hours: 1),
@@ -908,7 +911,7 @@ extension LoadTimingForecastEstimatorTests {
         // it nets 74 − 76 = −2 and B 72 − 76 = −4: an 8 kWh run leaves A 10 short, B 12.
         let tariffs = [tariff(0, 72_000, key: "A", buy: 0.31, sell: 0.06), tariff(72_000, 144_000, key: "B", buy: 0.31, sell: 0.04)]
         let forecast = halfHourForecast(hours: 40,
-                                        typical: { $0 < 9 || (20..<29).contains($0) ? 10 : 0 },
+                                        typical: { $0 < 9 || (20 ..< 29).contains($0) ? 10 : 0 },
                                         cautious: { $0 < 1 ? 10 : 0 })
         let result = safetyEvaluate(forecast: forecast, tariffs: tariffs, balances: ["A": 0, "B": 0], profile: load(8, hours: 0.5),
                                     home: 3.8)
@@ -994,7 +997,7 @@ extension LoadTimingForecastEstimatorTests {
         // Off-Peak has 2 kWh banked; a 30 kWh charge buys the other 28 at 10¢ whatever the weather.
         let tariffs = [tariff(0, 43_200, key: "OFF", buy: 0.10, sell: 0.03), tariff(43_200, 144_000, key: "ON", buy: 0.31, sell: 0.04)]
         let result = evaluate(.flat(timeZone: "UTC"), profile: LoadProfile(id: "car", name: "Car", kind: .appliance, energyKwh: 30,
-                                                                        durationHours: 3, carSettings: nil),
+                                                                           durationHours: 3, carSettings: nil),
                               now: start, tariffs: tariffs, balances: ["OFF": 2, "ON": -20], cycleEnd: start.addingTimeInterval(144_000))
 
         let comparison = try #require(result.comparison)
@@ -1006,7 +1009,7 @@ extension LoadTimingForecastEstimatorTests {
     @Test("A forecast that misses the start of the projection is not used with history")
     func forecastMustCoverTheProjectionStart() {
         // The batch starts half an hour after now; history must not silently stand in under the forecast label.
-        let intervals = (1..<96).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+        let intervals = (1 ..< 96).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
         let result = evaluate(.forecast(intervals: intervals, context: historyContext(home: 1, grid: { _ in 0.5 })), now: start,
                               tariffs: [tariff(0, 5 * 86_400)], balances: ["p": 2], cycleEnd: start.addingTimeInterval(5 * 86_400))
 
@@ -1026,14 +1029,15 @@ extension LoadTimingForecastEstimatorTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let dayZero = start.addingTimeInterval(-8 * 3600)
-        let sunday = try #require((0..<7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
+        // swiftlint:disable:next line_length
+        let sunday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
         let sundayStart = dayZero.addingTimeInterval(Double(sunday) * 86_400)
         let now = sundayStart.addingTimeInterval(13.2 * 3600)
         let mondayStart = sundayStart.addingTimeInterval(86_400)
-        let intervals = (0..<((48 - 13) * 2)).map { index -> SolarForecastInterval in
+        let intervals = (0 ..< ((48 - 13) * 2)).map { index -> SolarForecastInterval in
             let periodStart = sundayStart.addingTimeInterval(13 * 3600 + Double(index) * 1800)
             let hour = periodStart.timeIntervalSince(mondayStart) / 3600
-            let onPeakDaylight = (8..<20).contains(hour)
+            let onPeakDaylight = (8 ..< 20).contains(hour)
             return SolarForecastInterval(periodStart: periodStart, periodEnd: periodStart.addingTimeInterval(1800),
                                          powerKw: onPeakDaylight ? 1 + 28.0 / 12 : 0, cautiousPowerKw: onPeakDaylight ? 1 : 0)
         }
@@ -1059,7 +1063,8 @@ extension LoadTimingForecastEstimatorTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let dayZero = start.addingTimeInterval(-8 * 3600)
-        let sunday = try #require((0..<7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
+        // swiftlint:disable:next line_length
+        let sunday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
         let now = dayZero.addingTimeInterval(Double(sunday) * 86_400 + 17 * 3600 + 39 * 60 + 41.869)
         let monday = dayZero.addingTimeInterval(Double(sunday + 1) * 86_400)
         let car = LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: 36, durationHours: 4,
@@ -1154,14 +1159,15 @@ extension LoadTimingForecastEstimatorTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let dayZero = start.addingTimeInterval(-8 * 3600)
-        let monday = try #require((0..<7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 2 })
+        // swiftlint:disable:next line_length
+        let monday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 2 })
         let mondayStart = dayZero.addingTimeInterval(Double(monday) * 86_400)
         let now = mondayStart.addingTimeInterval(6 * 3600 + 4 * 60)
         let tail = [0.8, 0.7, 0.8, 0.4, 0.35, 0.25, 0.12, 0.8]
-        let intervals = (0..<(8 * 48)).map { index -> SolarForecastInterval in
+        let intervals = (0 ..< (8 * 48)).map { index -> SolarForecastInterval in
             let periodStart = mondayStart.addingTimeInterval(Double(index) * 1800)
             let hour = Double(index % 48) / 2
-            let sun = (9..<17).contains(hour) ? 4.0 : 0
+            let sun = (9 ..< 17).contains(hour) ? 4.0 : 0
             return SolarForecastInterval(periodStart: periodStart, periodEnd: periodStart.addingTimeInterval(1800),
                                          powerKw: sun, cautiousPowerKw: sun * tail[index / 48])
         }
@@ -1190,7 +1196,7 @@ extension LoadTimingForecastEstimatorTests {
         // at 08:36 starts at 08:30. History's 6 kW fills the 5 minutes between, then the
         // forecast's 3 kW of solar against a 1 kW home runs to the end of the tariff.
         let source = start.addingTimeInterval(20 * 60), now = start.addingTimeInterval(40 * 60)
-        let intervals = (1..<4).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+        let intervals = (1 ..< 4).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
         let result = Estimator.evaluate(profile: profile(0.5, hours: 0.5), now: now,
                                         timing: timing([tariff(0, 7200)], balances: ["p": 2]),
                                         projection: .forecast(intervals: intervals, context: historyContext(home: 1, grid: { _ in 6 })),
@@ -1212,7 +1218,7 @@ extension LoadTimingForecastEstimatorTests {
         // Energy data through 00:00, read at 00:33: the server's data lagged, and a
         // 30-minute limit swapped the forecast card for history. History's 6 kW
         // fills 00:05–00:30, then the forecast's 3 kW of solar against a 1 kW home.
-        let intervals = (1..<4).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
+        let intervals = (1 ..< 4).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
         func run(ageMinutes: Double) -> Estimator.Result {
             Estimator.evaluate(profile: profile(0.5, hours: 0.5), now: start.addingTimeInterval(ageMinutes * 60),
                                timing: timing([tariff(0, 7200)], balances: ["p": 2]),

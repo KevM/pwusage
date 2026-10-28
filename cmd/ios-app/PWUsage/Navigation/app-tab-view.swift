@@ -98,43 +98,43 @@ struct AppTabView: View {
 }
 
 #if DEBUG
-/// The signed-in app for an account with several sites. Switching works: the
-/// Settings site row and ⌘K open the picker, and on iPad the sidebar header is
-/// a site menu.
-@MainActor
-private struct MultiSitePreview: View {
-    @StateObject private var model: PWUsageAppModel
-    private let opensPicker: Bool
+    /// The signed-in app for an account with several sites. Switching works: the
+    /// Settings site row and ⌘K open the picker, and on iPad the sidebar header is
+    /// a site menu.
+    @MainActor
+    private struct MultiSitePreview: View {
+        @StateObject private var model: PWUsageAppModel
+        private let opensPicker: Bool
 
-    init(tab: AppTab = .home, opensPicker: Bool = false) {
-        _model = StateObject(wrappedValue: .preview(tab: tab))
-        self.opensPicker = opensPicker
-    }
+        init(tab: AppTab = .home, opensPicker: Bool = false) {
+            _model = StateObject(wrappedValue: .preview(tab: tab))
+            self.opensPicker = opensPicker
+        }
 
-    var body: some View {
-        if let coordinator = model.coordinator,
-           let site = model.sites.first(where: { $0.id == model.selectedSiteID }) {
-            AppTabView(model: model, coordinator: coordinator, site: site)
-                .task {
-                    coordinator.scenePhaseChanged(isActive: true)
-                    coordinator.authenticationRestored()
-                    if opensPicker { model.openSitePicker() }
-                }
+        var body: some View {
+            if let coordinator = model.coordinator,
+               let site = model.sites.first(where: { $0.id == model.selectedSiteID }) {
+                AppTabView(model: model, coordinator: coordinator, site: site)
+                    .task {
+                        coordinator.scenePhaseChanged(isActive: true)
+                        coordinator.authenticationRestored()
+                        if opensPicker { model.openSitePicker() }
+                    }
+            }
         }
     }
-}
 
-#Preview("Multiple sites · iPhone Settings") {
-    MultiSitePreview(tab: .settings)
-}
+    #Preview("Multiple sites · iPhone Settings") {
+        MultiSitePreview(tab: .settings)
+    }
 
-#Preview("Multiple sites · iPhone picker") {
-    MultiSitePreview(tab: .settings, opensPicker: true)
-}
+    #Preview("Multiple sites · iPhone picker") {
+        MultiSitePreview(tab: .settings, opensPicker: true)
+    }
 
-#Preview("Multiple sites · iPad sidebar", traits: .landscapeLeft, .fixedLayout(width: 1180, height: 820)) {
-    // A fixed layout alone can report a compact size class, so pin it to regular.
-    MultiSitePreview()
-        .environment(\.horizontalSizeClass, .regular)
-}
+    #Preview("Multiple sites · iPad sidebar", traits: .landscapeLeft, .fixedLayout(width: 1180, height: 820)) {
+        // A fixed layout alone can report a compact size class, so pin it to regular.
+        MultiSitePreview()
+            .environment(\.horizontalSizeClass, .regular)
+    }
 #endif

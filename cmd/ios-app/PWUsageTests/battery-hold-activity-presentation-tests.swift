@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PWUsage
+import Testing
 
 @Suite("Battery hold Live Activity presentation")
 struct BatteryHoldActivityPresentationTests {

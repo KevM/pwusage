@@ -1,7 +1,7 @@
+@testable import PWUsage
 import SwiftUI
 import Testing
 import UIKit
-@testable import PWUsage
 
 /// Renders the sign-in screen variants to PNGs for visual review, including
 /// the compressed layout that is difficult to inspect in a static preview.

@@ -1,15 +1,15 @@
 import Foundation
-import Testing
-import SwiftUI
-import WidgetKit
 @testable import PWUsage
+import SwiftUI
+import Testing
+import WidgetKit
 
 @Suite("Today's Energy Widget")
 struct TodayEnergyWidgetTests {
     let now = Date(timeIntervalSince1970: 1_792_008_000)
     func snapshot() -> TodayEnergySnapshot {
         TodayEnergySnapshot(siteID: "home", siteName: "Home", timezone: "America/Chicago", fetchedAt: now,
-            energy: TodayEnergy(localDate: TodayEnergySnapshot.localDate(now, timezone: "America/Chicago"), homeKwh: 12, solarKwh: 18, gridNetKwh: -4, batteryNetKwh: -2, energyDataThrough: now))
+                            energy: TodayEnergy(localDate: TodayEnergySnapshot.localDate(now, timezone: "America/Chicago"), homeKwh: 12, solarKwh: 18, gridNetKwh: -4, batteryNetKwh: -2, energyDataThrough: now))
     }
     @Test func widgetSessionHasBoundedTimeouts() {
         let session = TodayEnergyWidgetRefresh.makeSession()
@@ -152,7 +152,7 @@ struct TodayEnergyWidgetTests {
         let start = try #require(ISO8601DateFormatter().date(from: "2026-11-01T05:00:00Z"))
         let source = start.addingTimeInterval(24 * 3600)
         let value = TodayEnergySnapshot(siteID: "home", siteName: "Home", timezone: "America/Chicago", fetchedAt: start,
-            energy: TodayEnergy(localDate: "2026-11-01", homeKwh: 1, solarKwh: 0, gridNetKwh: 1, batteryNetKwh: 0, energyDataThrough: source))
+                                        energy: TodayEnergy(localDate: "2026-11-01", homeKwh: 1, solarKwh: 0, gridNetKwh: 1, batteryNetKwh: 0, energyDataThrough: source))
         #expect(value.nextMidnight == start.addingTimeInterval(25 * 3600))
         #expect(value.availability(at: source) == .current)
         #expect(value.availability(at: start.addingTimeInterval(25 * 3600)) == .missing)
@@ -201,7 +201,6 @@ struct TodayEnergyWidgetTests {
         #expect(appTiles[3].symbolPrefix == nil)
         let expired = TodayEnergyPreviewFixtures.snapshot(chargeAge: 2 * 3600 + 1)
         #expect(TodayEnergyPresentation.tile(for: .battery, snapshot: expired, at: TodayEnergyPreviewFixtures.date)?.symbolPrefix == nil)
-
     }
 
     @MainActor
@@ -212,13 +211,13 @@ struct TodayEnergyWidgetTests {
             ("unknown-charge", TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
             ("partial", TodayEnergyPreviewFixtures.snapshot(complete: false)),
             ("long-name", TodayEnergyPreviewFixtures.snapshot(homeKwh: 1234.5, solarKwh: 456.7, gridNetKwh: 987.6,
-                batteryNetKwh: -209.8, siteName: "Our family's home with a long site name")),
+                                                              batteryNetKwh: -209.8, siteName: "Our family's home with a long site name")),
             ("no-cost", TodayEnergyPreviewFixtures.snapshot(todayCost: nil)),
             ("net-credit", TodayEnergyPreviewFixtures.snapshot(todayCost: TodayEnergyCost(netCost: -2.5, importCharges: 0, exportCredits: 2.5, currency: "EUR"))),
-            ("missing", nil)
+            ("missing", nil),
         ]
         let smallView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
-                                               date: TodayEnergyPreviewFixtures.date, compact: true)
+                                                 date: TodayEnergyPreviewFixtures.date, compact: true)
             .padding(TodayEnergyWidgetLayout.mediumInsets).frame(width: 292, height: 141)
             .background(Color(uiColor: .secondarySystemGroupedBackground))
             .environment(\.colorScheme, .light)
@@ -262,7 +261,7 @@ struct TodayEnergyWidgetTests {
     @Test func batteryGlyphChargeBandsMatchApp() {
         for charge in [0.0, 12, 13, 37, 38, 62, 63, 87, 88, 100] {
             #expect(TodayEnergyPresentation.batterySymbol(charge)
-                    == DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: charge))
+                == DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: charge))
         }
         #expect(TodayEnergyPresentation.batterySymbol(nil) == "battery.0percent")
     }
@@ -288,7 +287,7 @@ struct TodayEnergyWidgetTests {
         for metric in TodayEnergyMetric.allCases {
             #expect(TodayEnergyPresentation.tile(for: metric, snapshot: nil, at: now) == nil)
             #expect(TodayEnergyPresentation.tile(for: metric, snapshot: value,
-                    at: TodayEnergyPreviewFixtures.date.addingTimeInterval(86400)) == nil)
+                                                 at: TodayEnergyPreviewFixtures.date.addingTimeInterval(86400)) == nil)
         }
     }
 
@@ -312,7 +311,7 @@ struct TodayEnergyWidgetTests {
             ("full-soc", .battery, TodayEnergyPreviewFixtures.snapshot(stateOfCharge: 100)),
             ("unknown-soc", .battery, TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
             ("large-number", .grid, TodayEnergyPreviewFixtures.snapshot(gridNetKwh: 1234.5)),
-            ("missing", .solar, nil)
+            ("missing", .solar, nil),
         ]
         let cases = TodayEnergyMetric.allCases.map { ($0.rawValue, $0, Optional(TodayEnergyPreviewFixtures.snapshot())) } + extras
         for (name, metric, value) in cases {
@@ -343,7 +342,7 @@ struct TodayEnergyWidgetTests {
     @Test func renderActualFamilyRoutingForCanvasOverride() throws {
         for metric in [TodayEnergyMetric.home, .battery] {
             let view = TodayEnergyWidgetFamilyContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
-                date: TodayEnergyPreviewFixtures.date, family: .systemSmall, metric: metric)
+                                                      date: TodayEnergyPreviewFixtures.date, family: .systemSmall, metric: metric)
                 .frame(width: 141, height: 141)
                 .background(Color(uiColor: .secondarySystemGroupedBackground))
                 .environment(\.colorScheme, .light)

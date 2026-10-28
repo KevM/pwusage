@@ -45,4 +45,11 @@ describe('mobile solar actuals route', () => {
         expect((start as Date).toISOString()).toBe('2026-10-13T05:00:00.000Z');
         expect((end as Date).toISOString()).toBe('2026-10-27T18:30:00.000Z');
     });
+    it('returns incomplete validated partial energy for off-grid data', async () => {
+        rawMock.mockResolvedValue([...Array.from({ length: 11 }, (_, i) => ({ timestamp: new Date(Date.parse('2026-10-27T15:00:00Z') + i * 300_000), solar_power: 100 })), { timestamp: new Date('2026-10-27T15:00:01Z'), solar_power: 100 }]);
+        const res = await GET(new Request(`${URL_BASE}?siteId=site-a`));
+        expect(res.headers.get('Cache-Control')).toBe('private, no-store, max-age=0');
+        expect((await res.json()).hours).toEqual([{ hourStart: '2026-10-27T15:00:00.000Z', wh: 1100, complete: false }]);
+    });
+
 });
