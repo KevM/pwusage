@@ -3,6 +3,22 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 // Request-local context reaches nested repositories, token refresh and importers.
 // A race alone cannot cancel a write: callers must persist uncertain outcomes.
+export class IoDeadlineError extends Error {
+  readonly code = 'IO_DEADLINE_EXCEEDED';
+  constructor() { super('I/O deadline exceeded'); this.name = 'IoDeadlineError'; }
+}
+
+/** Allowlisted diagnostics only: arbitrary cancellation reasons may contain secrets. */
+export function ioFailureDetails(error: unknown, signal?: AbortSignal) {
+  const caller = ioSignal();
+  const reason: unknown = caller?.aborted ? caller.reason : signal?.aborted ? signal.reason : error;
+  return {
+    cancellationSource: caller?.aborted ? 'caller' : signal?.aborted ? 'endpoint' : 'none',
+    failureCode: reason instanceof IoDeadlineError ? reason.code
+      : reason instanceof Error && reason.name === 'TimeoutError' ? 'REQUEST_TIMEOUT'
+      : caller?.aborted || signal?.aborted ? 'REQUEST_CANCELLED' : 'EXCHANGE_ERROR',
+  };
+}
 const context = new AsyncLocalStorage<AbortSignal>();
 export function ioSignal(): AbortSignal | undefined { return context.getStore(); }
 export function checkIoDeadline(): void { ioSignal()?.throwIfAborted(); }
@@ -19,7 +35,7 @@ export function abortable<T>(promise: Promise<T>, signal = ioSignal()): Promise<
 export async function withIoDeadline<T>(ms: number, work: () => Promise<T>, parent: AbortSignal | null | undefined = ioSignal()): Promise<T> {
   const controller = new AbortController();
   const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
-  const timer = setTimeout(() => controller.abort(new Error('I/O deadline exceeded')), ms);
+  const timer = setTimeout(() => controller.abort(new IoDeadlineError()), ms);
   try { return await context.run(signal, () => { signal.throwIfAborted(); return abortable(work(), signal); }); }
   finally { clearTimeout(timer); }
 }

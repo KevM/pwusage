@@ -1,4 +1,5 @@
 import { after } from 'next/server';
+import { IoDeadlineError, ioFailureDetails } from './io-deadline';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { flushLogEvents, logEvent, observeRoute, observePage, logSessionRejection, setLogContext } from './observability';
 
@@ -149,6 +150,22 @@ describe('production observability', () => {
         expect(JSON.stringify(entries())).not.toContain('opaque-secret');
         expect(JSON.stringify(entries())).not.toContain('private@example.com');
         expect(entries()[0].error).toMatchObject({ name: 'Error', status: 503, code: 'ETIMEDOUT' });
+    });
+
+    it('exports safe exchange diagnostics and deadline codes through the production serializer', async () => {
+        await observeRoute('/test', async () => {
+            const error = new IoDeadlineError();
+            logEvent('warn', 'tesla.refresh.exchange-failed', {
+                exchangeId: 'exchange-1', stage: 'response-body', ...ioFailureDetails(error),
+                outcomeUnknown: true, error,
+            });
+            return new Response();
+        })(new Request('https://example.test'));
+        await finishResponse();
+        expect(entries()[0]).toMatchObject({
+            exchangeId: 'exchange-1', stage: 'response-body', failureCode: 'IO_DEADLINE_EXCEEDED', outcomeUnknown: true,
+            error: { name: 'IoDeadlineError', code: 'IO_DEADLINE_EXCEEDED' },
+        });
     });
 
     it('isolates overlapping requests and captures logs from after work', async () => {

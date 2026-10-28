@@ -265,6 +265,20 @@ Tesla token refresh behavior:
   fingerprints for correlation, never actual tokens. `tesla.refresh.reused`,
   `superseded`, and `cleanup-deferred` distinguish reuse, a lost conditional write,
   and bounded cleanup failures.
+- Each exchange has an `exchangeId`, shared with the account coordinator's
+  start, persistence-started, succeeded, superseded, and failure events. Endpoint
+  events record request initiation and response headers per host; credentials-parsed
+  records successful body parsing/validation. Request initiation means fetch was
+  invoked, not proof Tesla received it. `exchange-failed` records `stage`
+  (`request` or `response-body`), host, elapsed time, safe `failureCode`,
+  `cancellationSource` (`caller`, `endpoint`, or `none`), and `outcomeUnknown`.
+  Caller deadlines use `IO_DEADLINE_EXCEEDED`; endpoint timeouts use
+  `REQUEST_TIMEOUT`; other cancellations use `REQUEST_CANCELLED`. No arbitrary
+  cancellation reasons, response bodies, or credentials are exported. A request
+  transport failure or unsuccessful reading/validation of a 2xx body leaves
+  Tesla's rotation outcome unknown. Persistence failures use `stage=persistence`
+  on `tesla.refresh.failed`; only `succeeded` confirms a guarded database save.
+  Instrumentation does not change refresh deadlines, fallback, or retry policy.
 - Home, Profile, Products, and site-page renders establish Axiom scopes alongside
   the existing API scopes. Page redirects keep their control flow and never log
   destinations, query strings, or page props. `auth.session.rejected` distinguishes
