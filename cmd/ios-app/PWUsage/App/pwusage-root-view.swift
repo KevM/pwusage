@@ -1,5 +1,5 @@
-import SwiftUI
 import Combine
+import SwiftUI
 
 struct PWUsageRootView: View {
     @StateObject private var navigationInbox = BatteryHoldNavigationInbox.shared
