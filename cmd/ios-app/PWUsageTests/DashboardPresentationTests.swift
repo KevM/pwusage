@@ -147,7 +147,8 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 63) == "battery.75percent")
         #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 87) == "battery.75percent")
         #expect(DashboardPresentation.batterySymbol(powerWatts: 0, stateOfCharge: 88) == "battery.100percent")
-        #expect(DashboardPresentation.batterySymbol(powerWatts: -900, stateOfCharge: 50) == "battery.50percent.bolt")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: -900, stateOfCharge: 50) == "battery.50percent")
+        #expect(DashboardPresentation.batterySymbol(powerWatts: -900, stateOfCharge: 88) == "battery.100percent.bolt")
         #expect(DashboardPresentation.batterySymbol(powerWatts: 900, stateOfCharge: 50) == "battery.50percent")
     }
 

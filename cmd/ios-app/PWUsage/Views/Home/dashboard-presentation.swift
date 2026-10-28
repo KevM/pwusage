@@ -127,7 +127,8 @@ enum DashboardPresentation {
         case 63 ..< 88: level = "75percent"
         default: level = "100percent"
         }
-        return isCharging ? "battery.\(level).bolt" : "battery.\(level)"
+        // SF Symbols draws a bolt only on the full battery; other bands keep their fill.
+        return isCharging && level == "100percent" ? "battery.100percent.bolt" : "battery.\(level)"
     }
 
     static func tariffPeriodTitle(_ name: String) -> String {
