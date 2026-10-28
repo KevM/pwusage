@@ -59,6 +59,7 @@ struct BillOutlookRenderTests {
                 .init(tariffName: "Home", periodName: "Off-Peak", netGridKwh: -Double(day) * 1.2,
                       buyRate: 0.12, sellRate: 0.04)])
         }
+    // swiftlint:disable:next line_length
         let history = BillOutlookHistory(points: (0 ... 20).map(point), observedThrough: now, complete: true, tariffTimeline: [])
         for large in [false, true] {
             let chart = BillOutlookChart(history: history, projected: (20 ... 25).map(point), cycleStart: start,

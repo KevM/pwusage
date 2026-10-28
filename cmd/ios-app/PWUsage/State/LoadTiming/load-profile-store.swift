@@ -186,6 +186,7 @@ final class LoadProfileStore: ObservableObject {
                   settings.capacityKwh.isFinite, settings.capacityKwh > 0,
                   settings.capacityKwh <= LoadProfile.maximumCarCapacityKwh,
                   settings.initialStateOfCharge.isFinite, (0 ... 100).contains(settings.initialStateOfCharge),
+    // swiftlint:disable:next line_length
                   settings.targetStateOfCharge.isFinite, (settings.initialStateOfCharge ... 100).contains(settings.targetStateOfCharge) else {
                 throw LoadProfileError.invalidProfile
             }

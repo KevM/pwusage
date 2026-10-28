@@ -125,8 +125,8 @@ struct BillOutlookChart: View {
         let values = all.map { energy($0, key: period.key) } + [0]
         let low = values.min() ?? 0, high = values.max() ?? 0
         let pad = max(2, (high - low) * 0.25)
-        let y = (low - pad) ... (high + pad)
-        let x = cycleStart ... max(cycleEnd, cycleStart.addingTimeInterval(3600))
+        let verticalCoord = (low - pad) ... (high + pad)
+        let horizontalCoord = cycleStart ... max(cycleEnd, cycleStart.addingTimeInterval(3600))
         return VStack(alignment: .leading, spacing: 5) {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 3) { laneTitle(period); laneBalance(period) }
