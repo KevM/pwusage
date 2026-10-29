@@ -10,6 +10,7 @@ vi.mock('./tesla-auth', async importOriginal => ({
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { createTeslaClientForUser } from './tesla-client-factory';
 import { TeslaAuthError, type EnergySiteLiveStatus } from './tesla-client';
+import { TeslaRefreshError } from './tesla-refresh-outcome';
 import { UserRepo } from './user-repo';
 
 const liveStatus: EnergySiteLiveStatus = {
@@ -37,7 +38,12 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
             fleet_api_base_url text, is_refreshing integer NOT NULL DEFAULT 0,
             refresh_lock_expires bigint NOT NULL DEFAULT 0,
             auth_status text DEFAULT 'active', is_active boolean DEFAULT true,
-            last_checked_at timestamp
+            last_checked_at timestamp,
+            tesla_credential_generation integer NOT NULL DEFAULT 0,
+            tesla_refresh_attempt_id text,
+            tesla_refresh_state text NOT NULL DEFAULT 'ready',
+            tesla_refresh_started_at timestamptz,
+            tesla_refresh_retry_after bigint NOT NULL DEFAULT 0
         )`);
         await pool.query('CREATE TEMP TABLE "Site" (id text PRIMARY KEY, user_id text)');
         query.mockImplementation((sql: string, values?: unknown[]) => pool.query(sql, values));
@@ -56,6 +62,77 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
     });
     afterEach(() => vi.restoreAllMocks());
 
+    it('never sends a second grant after response loss and lease expiry', async () => {
+        exchange.mockRejectedValue(new TeslaRefreshError('outcome_unknown'));
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        await pool.query('UPDATE "User" SET refresh_lock_expires = 0');
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        expect(exchange).toHaveBeenCalledTimes(1);
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({
+            tesla_refresh_state: 'uncertain', is_active: true,
+        });
+    });
+
+    it('suppresses a crashed worker whose lease expired with an unresolved attempt', async () => {
+        await pool.query(`UPDATE "User" SET is_refreshing = 1, refresh_lock_expires = 1,
+            tesla_refresh_state = 'in_flight', tesla_refresh_attempt_id = 'dead-worker'`);
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        expect(exchange).not.toHaveBeenCalled();
+        expect((await pool.query('SELECT * FROM "User"')).rows[0].tesla_refresh_state).toBe('uncertain');
+    });
+
+    it('keeps durable suppression when recording uncertainty fails', async () => {
+        exchange.mockRejectedValue(new TeslaRefreshError('outcome_unknown'));
+        query.mockImplementation(async (sql: string, values?: unknown[]) => {
+            if (sql.includes("tesla_refresh_state = $5")) throw new Error('write unavailable');
+            return pool.query(sql, values);
+        });
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        query.mockImplementation((sql: string, values?: unknown[]) => pool.query(sql, values));
+        await pool.query('UPDATE "User" SET refresh_lock_expires = 0');
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        expect(exchange).toHaveBeenCalledTimes(1);
+    });
+
+    it('a lost save acknowledgement never replays the old generation', async () => {
+        query.mockImplementation(async (sql: string, values?: unknown[]) => {
+            const result = await pool.query(sql, values);
+            if (sql.includes('SET access_token')) throw new Error('acknowledgement lost');
+            return result;
+        });
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        query.mockImplementation((sql: string, values?: unknown[]) => pool.query(sql, values));
+        expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).toEqual(rotated);
+        expect(exchange).toHaveBeenCalledTimes(1);
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({
+            tesla_credential_generation: 1, tesla_refresh_state: 'ready',
+        });
+    });
+
+    it('serializes two workers on the same generation', async () => {
+        let finish!: (value: typeof rotated) => void;
+        let dispatched!: () => void;
+        const started = new Promise<void>(resolve => { dispatched = resolve; });
+        exchange.mockImplementation(() => { dispatched(); return new Promise(resolve => { finish = resolve; }); });
+        const first = repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A');
+        await started;
+        const second = repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A');
+        finish(rotated);
+        expect(await first).toEqual(rotated);
+        expect(await second).toEqual(rotated);
+        expect(exchange).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['not_dispatched', 'configuration_rejected'] as const)('bounds retries for %s without revoking the user', async outcome => {
+        exchange.mockRejectedValue(new TeslaRefreshError(outcome));
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        expect(exchange).toHaveBeenCalledTimes(1);
+        const row = (await pool.query('SELECT * FROM "User"')).rows[0];
+        expect(row).toMatchObject({ tesla_refresh_state: 'ready', is_active: true });
+        expect(Number(row.tesla_refresh_retry_after)).toBeGreaterThan(Date.now());
+    });
+
     it('a browser constructed before a site refresh reuses its persisted replacement', async () => {
         const browser = await createTeslaClientForUser('owner');
         expect(await repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).toEqual(rotated);
@@ -71,7 +148,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
 
     it('does not overwrite a login committed during the old refresh', async () => {
         exchange.mockImplementation(async () => {
-            await pool.query(`UPDATE "User" SET access_token = 'login-access', refresh_token = 'login-refresh'`);
+            await pool.query(`UPDATE "User" SET access_token = 'login-access', refresh_token = 'login-refresh', tesla_credential_generation = tesla_credential_generation + 1, tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL, is_refreshing = 0, refresh_lock_expires = 0`);
             return rotated;
         });
         expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A'))
@@ -88,8 +165,8 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
 
     it('does not revoke a login committed before an old refresh is rejected', async () => {
         exchange.mockImplementation(async () => {
-            await pool.query(`UPDATE "User" SET access_token = 'login-access', refresh_token = 'login-refresh'`);
-            throw new TeslaAuthError('Rejected', 401);
+            await pool.query(`UPDATE "User" SET access_token = 'login-access', refresh_token = 'login-refresh', tesla_credential_generation = tesla_credential_generation + 1, tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL, is_refreshing = 0, refresh_lock_expires = 0`);
+            throw new TeslaRefreshError('credential_rejected');
         });
         expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A'))
             .toEqual({ access_token: 'login-access', refresh_token: 'login-refresh' });
@@ -97,10 +174,10 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
     });
 
     it('revokes a genuine rejection and makes future waiters fail without another exchange', async () => {
-        exchange.mockRejectedValue(new TeslaAuthError('Rejected', 401));
-        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow('Rejected');
-        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({ auth_status: 'revoked', is_active: false, is_refreshing: 0 });
-        await expect(repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).rejects.toThrow('auth revoked');
+        exchange.mockRejectedValue(new TeslaRefreshError('credential_rejected'));
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow('credential_rejected');
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({ tesla_refresh_state: 'reconnect_required', is_active: true, is_refreshing: 0 });
+        await expect(repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).rejects.toThrow('Reconnect Tesla');
         expect(exchange).toHaveBeenCalledTimes(1);
     });
 
@@ -120,7 +197,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
     it('a late verification failure cannot revoke a newer login', async () => {
         const result = await new UserRepo().verifyUserStatus({ id: 'owner' }, {
             createClient: async () => ({ getLiveStatus: async () => {
-                await pool.query(`UPDATE "User" SET access_token = 'login-access', refresh_token = 'login-refresh'`);
+                await pool.query(`UPDATE "User" SET access_token = 'login-access', refresh_token = 'login-refresh', tesla_credential_generation = tesla_credential_generation + 1, tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL, is_refreshing = 0, refresh_lock_expires = 0`);
                 throw new TeslaAuthError('Old grant rejected');
             } }),
         });

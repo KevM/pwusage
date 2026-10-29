@@ -1,3 +1,4 @@
+import { TeslaRefreshError } from './tesla-refresh-outcome';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SiteRepo } from './site-repo';
 
@@ -12,7 +13,7 @@ vi.mock('./tesla-auth', async importOriginal => ({
 vi.mock('./observability', () => ({ logEvent }));
 
 import { TeslaTokenRepo } from './tesla-token-repo';
-import { isTeslaAuthError, TeslaAuthError } from './tesla-client';
+import { isTeslaAuthError } from './tesla-client';
 import { checkIoDeadline, withIoDeadline, IoDeadlineError, ioSignal } from './io-deadline';
 
 const original = { access_token: 'access-A', refresh_token: 'refresh-A' };
@@ -162,24 +163,24 @@ describe('account refresh coordination', () => {
     });
 
     it('does not revoke a newer login when the old exchange is rejected', async () => {
-        exchange.mockRejectedValue(new TeslaAuthError('Rejected', 401));
+        exchange.mockRejectedValue(new TeslaRefreshError('credential_rejected'));
         query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
         query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // guarded revoke lost to login
         query.mockResolvedValue({ rowCount: 1, rows: [{ ...rotated, is_refreshing: 0, auth_status: 'active' }] });
         const handlers = setup().getLockedUserRefreshHandler('owner');
         expect(await handlers.refreshHandler(original.refresh_token)).toEqual(rotated);
-        const revoke = query.mock.calls.find(([sql]) => sql.includes("auth_status = 'revoked'"));
-        expect(revoke?.[0]).toMatch(/AND refresh_token = \$2/);
+        const revoke = query.mock.calls.find(([sql]) => sql.includes('tesla_refresh_state = $5'));
+        expect(revoke?.[0]).toMatch(/AND tesla_credential_generation = \$2/);
         expect(revoke?.[0]).toMatch(/AND refresh_lock_expires = \$3/);
     });
 
     it('atomically marks a genuine rejection revoked and releases its lease', async () => {
-        exchange.mockRejectedValue(new Error('Tesla API Error: 401 Unauthorized invalid_grant'));
+        exchange.mockRejectedValue(new TeslaRefreshError('credential_rejected'));
         query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
         query.mockResolvedValue({ rowCount: 1, rows: [] });
-        await expect(setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token)).rejects.toThrow('401');
-        expect(query).toHaveBeenCalledWith(expect.stringMatching(/SET is_refreshing = 0[\s\S]*auth_status = 'revoked'/),
-            expect.arrayContaining(['owner', original.refresh_token]));
+        await expect(setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token)).rejects.toThrow('credential_rejected');
+        expect(query).toHaveBeenCalledWith(expect.stringMatching(/SET is_refreshing = 0[\s\S]*tesla_refresh_state = \$5/),
+            expect.arrayContaining(['owner', 'reconnect_required']));
     });
 
     it('does not revoke an account on a transient failure', async () => {
@@ -187,7 +188,7 @@ describe('account refresh coordination', () => {
         query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
         query.mockResolvedValue({ rowCount: 1, rows: [] });
         await expect(setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token)).rejects.toThrow('timeout');
-        expect(query.mock.calls.some(([sql]) => sql.includes("auth_status = 'revoked'"))).toBe(false);
+        expect(query.mock.calls.find(([sql]) => sql.includes('tesla_refresh_state = $5'))?.[1]).toContain('uncertain');
     });
 
     it('does not let a waiter retry an expired access credential after the winning refresh failed transiently', async () => {

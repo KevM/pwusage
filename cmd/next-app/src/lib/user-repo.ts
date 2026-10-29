@@ -187,7 +187,9 @@ export class UserRepo {
                 email = COALESCE(EXCLUDED.email, "User".email),
                 fleet_api_base_url = COALESCE(EXCLUDED.fleet_api_base_url, "User".fleet_api_base_url),
                 auth_status = 'active',
-                is_active = true
+                tesla_credential_generation = "User".tesla_credential_generation + 1,
+                tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL,
+                tesla_refresh_retry_after = 0, is_refreshing = 0, refresh_lock_expires = 0
         `, [params.userId, params.email, params.accessToken, params.refreshToken, params.tokenExpiresAt,
             normalizeFleetBaseUrl(params.fleetApiBaseUrl)]);
     }

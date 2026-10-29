@@ -1,3 +1,4 @@
+import { TeslaRefreshError } from './tesla-refresh-outcome';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { SiteRepo } from './site-repo';
 
@@ -19,11 +20,10 @@ async function setup(terminal = false, hungCleanup = false) {
     connect = async () => ({ query, release });
   } }));
   const { abortable, withIoDeadline } = await import('./io-deadline');
-  const { TeslaAuthError } = await import('./tesla-client');
   vi.doMock('./tesla-auth', async () => ({ ...await vi.importActual<typeof import('./tesla-auth')>('./tesla-auth'), refreshAccessToken: async () => {
     if (terminal) {
       parent.abort(new Error('Parent cancelled'));
-      throw new TeslaAuthError('Refresh rejected');
+      throw new TeslaRefreshError('credential_rejected');
     }
     return abortable(new Promise<never>(() => {}));
   } }));
@@ -55,12 +55,12 @@ it('releases the refresh lock through the real database wrapper after the parent
 it('atomically revokes and releases after terminal failure even when the parent was cancelled', async () => {
   const { queries, finished } = await setup(true);
   await finished();
-  expect(queries.some(sql => sql.includes('SET is_refreshing = 0') && sql.includes("auth_status = 'revoked'"))).toBe(true);
+  expect(queries.some(sql => sql.includes('SET is_refreshing = 0') && sql.includes('tesla_refresh_state = $5'))).toBe(true);
 });
 
 it('bounds cleanup independently when its database query hangs', async () => {
   const { queries, release, finished } = await setup(false, true);
-  await vi.advanceTimersByTimeAsync(19000);
+  await vi.advanceTimersByTimeAsync(21000);
   await finished();
   expect(queries.some(sql => sql.includes('SET is_refreshing = 0'))).toBe(true);
   expect(release).toHaveBeenCalledWith(true);

@@ -6,6 +6,11 @@ export interface User {
   token_expires_at?: number;
   is_refreshing?: number;
   refresh_lock_expires?: number;
+  tesla_credential_generation?: number;
+  tesla_refresh_attempt_id?: string | null;
+  tesla_refresh_state?: 'ready' | 'in_flight' | 'uncertain' | 'reconnect_required';
+  tesla_refresh_started_at?: Date | null;
+  tesla_refresh_retry_after?: number;
   created_at?: number | string; // Added via migration
   roles?: string[]; // Added: 'admin' | 'user'
   is_active?: boolean;
