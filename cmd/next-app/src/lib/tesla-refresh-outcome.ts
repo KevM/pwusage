@@ -54,6 +54,14 @@ export function requiresTeslaReconnect(state: TeslaConnectionState): boolean {
 }
 
 /**
+ * A refresh another worker is still running. Background paths wait it out; an
+ * expired lease is not active, so they reach the refresh path that recovers it.
+ */
+export function isRefreshLeaseActive(state: TeslaConnectionState): boolean {
+    return state.tesla_refresh_state === 'in_flight' && Number(state.refresh_lock_expires) > Date.now();
+}
+
+/**
  * Gate before each Fleet request. An in-flight refresh is not an error: the
  * request either succeeds with the current access token or its 401 waits on the
  * refresh. A cooling-down refresh fails fast instead of sending a token Tesla

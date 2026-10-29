@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-    assertTeslaConnection, isTeslaConnectionRequired, requiresTeslaReconnect,
+    assertTeslaConnection, isRefreshLeaseActive, isTeslaConnectionRequired, requiresTeslaReconnect,
     TeslaConnectionRequiredError, TeslaRefreshBackoffError, TeslaRefreshError,
 } from './tesla-refresh-outcome';
 
@@ -27,6 +27,14 @@ describe('assertTeslaConnection', () => {
 
     it.each(['uncertain', 'reconnect_required'])('requires a reconnect for %s', state => {
         expect(() => assertTeslaConnection({ ...ready, tesla_refresh_state: state })).toThrow(TeslaConnectionRequiredError);
+    });
+});
+
+describe('isRefreshLeaseActive', () => {
+    it('only a live lease blocks background work; an expired one must reach recovery', () => {
+        expect(isRefreshLeaseActive({ ...ready, tesla_refresh_state: 'in_flight', refresh_lock_expires: Date.now() + 60_000 })).toBe(true);
+        expect(isRefreshLeaseActive({ ...ready, tesla_refresh_state: 'in_flight', refresh_lock_expires: 1 })).toBe(false);
+        expect(isRefreshLeaseActive(ready)).toBe(false);
     });
 });
 

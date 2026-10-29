@@ -189,6 +189,13 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         expect(Number(row.tesla_refresh_retry_after)).toBeGreaterThan(Date.now());
     });
 
+    it('verification reaches an expired lease so the account can recover', async () => {
+        await pool.query(`UPDATE "User" SET is_refreshing = 1, refresh_lock_expires = 1, tesla_refresh_state = 'in_flight'`);
+        const createClient = vi.fn(async () => ({ getLiveStatus: async () => liveStatus }));
+        await new UserRepo().verifyUserStatus({ id: 'owner' }, { createClient });
+        expect(createClient).toHaveBeenCalled();
+    });
+
     it('verification never clears uncertain exchange state or calls Tesla for it', async () => {
         await pool.query(`UPDATE "User" SET tesla_refresh_state = 'uncertain'`);
         const createClient = vi.fn();

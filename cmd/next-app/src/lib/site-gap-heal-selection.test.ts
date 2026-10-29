@@ -21,7 +21,7 @@ describe.skipIf(!socket)('gap-heal eligibility after auth recovery (PostgreSQL)'
         await pool.query(`CREATE TABLE "User" (
             id text PRIMARY KEY, is_active boolean, refresh_token text, auth_status text,
             auth_lost_at timestamptz, auth_restored_at timestamptz,
-            tesla_refresh_state text NOT NULL DEFAULT 'ready'
+            tesla_refresh_state text NOT NULL DEFAULT 'ready', refresh_lock_expires bigint NOT NULL DEFAULT 0
         ); CREATE TABLE "Site" (
             id text PRIMARY KEY, user_id text, timezone text DEFAULT 'America/Chicago',
             installed timestamptz DEFAULT '2025-01-01Z', last_live_refresh_at bigint, last_import_at bigint
@@ -38,12 +38,14 @@ describe.skipIf(!socket)('gap-heal eligibility after auth recovery (PostgreSQL)'
             { id: 'no-token', restored: now - DAY, lost: now - 2 * DAY, token: false },
             { id: 'no-outage', restored: now - DAY },
             { id: 'reconnect', live: now - DAY, refreshState: 'reconnect_required' },
+            { id: 'refreshing', live: now - DAY, refreshState: 'in_flight', lockExpires: Date.now() + 60_000 },
+            { id: 'dead-lease', live: now - DAY, refreshState: 'in_flight', lockExpires: 1, imported: 4 },
         ];
         for (const fixture of fixtures) {
-            await pool.query(`INSERT INTO "User" VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
+            await pool.query(`INSERT INTO "User" VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [
                 fixture.id, fixture.active ?? true, fixture.token === false ? null : 'test-only', fixture.status ?? 'active',
                 fixture.lost ? new Date(fixture.lost) : null, fixture.restored ? new Date(fixture.restored) : null,
-                fixture.refreshState ?? 'ready',
+                fixture.refreshState ?? 'ready', fixture.lockExpires ?? 0,
             ]);
             await pool.query(`INSERT INTO "Site" (id,user_id,last_live_refresh_at,last_import_at) VALUES ($1,$1,$2,$3)`,
                 [fixture.id, fixture.live ?? null, fixture.imported ?? null]);
@@ -54,7 +56,9 @@ describe.skipIf(!socket)('gap-heal eligibility after auth recovery (PostgreSQL)'
 
     it('includes idle recovered sites for the full recovery window while preserving auth guards and fair ordering', async () => {
         const sites = await new SiteRepo().getSitesForGapHeal(now - 7 * DAY, now - 14 * DAY);
-        expect(sites.map(site => site.id)).toEqual(['idle-recovered', 'active', 'boundary']);
+        // A live lease waits for its worker; an expired one is healed so the
+        // refresh path can recover it.
+        expect(sites.map(site => site.id)).toEqual(['idle-recovered', 'active', 'boundary', 'dead-lease']);
         expect(sites[0]).toMatchObject({
             auth_lost_at: new Date(now - 30 * DAY), auth_restored_at: new Date(now - 10 * DAY),
         });

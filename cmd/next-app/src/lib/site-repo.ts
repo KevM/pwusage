@@ -275,14 +275,17 @@ export class SiteRepo {
             WHERE u.is_active = true
               AND u.refresh_token IS NOT NULL
               AND u.auth_status IS DISTINCT FROM 'revoked'
-              AND u.tesla_refresh_state = 'ready'
+              AND (u.tesla_refresh_state = 'ready'
+                   -- An expired lease is a dead worker: healing reaches the
+                   -- refresh path that recovers it.
+                   OR (u.tesla_refresh_state = 'in_flight' AND u.refresh_lock_expires <= $3))
               AND (s.last_live_refresh_at >= $1
                    OR (u.auth_status = 'active'
                        AND u.auth_lost_at IS NOT NULL
                        AND u.auth_restored_at > u.auth_lost_at
                        AND u.auth_restored_at >= to_timestamp($2::double precision / 1000)))
             ORDER BY s.last_import_at ASC NULLS FIRST, s.id
-        `, [activeSinceMs, restoredSinceMs]);
+        `, [activeSinceMs, restoredSinceMs, Date.now()]);
         return rows;
     }
 

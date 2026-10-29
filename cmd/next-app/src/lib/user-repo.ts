@@ -1,4 +1,4 @@
-import { type TeslaConnectionState, requiresTeslaReconnect } from './tesla-refresh-outcome';
+import { type TeslaConnectionState, isRefreshLeaseActive, requiresTeslaReconnect } from './tesla-refresh-outcome';
 import { cache } from 'react';
 import { createHash, randomUUID } from 'node:crypto';
 import { flushLogEvents, logEvent } from './observability';
@@ -261,7 +261,7 @@ export class UserRepo {
             if (!authVersion) throw new Error('Account verification snapshot did not include a row version');
 
             if (initial.rows[0].is_active === false) return finish('inactive', 'account-ineligible');
-            if (requiresTeslaReconnect(initial.rows[0]) || initial.rows[0].tesla_refresh_state === 'in_flight') {
+            if (requiresTeslaReconnect(initial.rows[0]) || isRefreshLeaseActive(initial.rows[0])) {
                 return finish('reconnect_required', 'exchange-state-blocked');
             }
 

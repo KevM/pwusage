@@ -1,8 +1,9 @@
-import { isTeslaConnectionRequired } from './tesla-refresh-outcome';
+import { isTeslaConnectionRequired, requiresTeslaReconnect } from './tesla-refresh-outcome';
 import { withIoDeadline, ioSignal, checkIoDeadline } from './io-deadline';
 import { Importer } from './importer';
 import { type EnergySiteLiveStatus } from './tesla-client';
 import { SiteRepo } from './site-repo';
+import { UserRepo } from './user-repo';
 import { createEnergyRepo } from './energy-repo-factory';
 import { withImportLock } from './import-lock';
 import { createTeslaClientForSite } from './tesla-client-factory';
@@ -211,9 +212,18 @@ export async function refreshLiveStatus(
         const cachedStatus = readLiveStatus(site.live_status_cache);
         const fetchedAt = readFetchedAt(site.last_live_refresh_at);
         const useCached = options.useCached ?? true;
+        // A cached reading is not evidence the connection is healthy: clients
+        // clear their reconnect prompt on success. Keep the stored reading for
+        // callers that render it, but report the connection state.
+        let connectionChecked: Promise<boolean> | undefined;
+        const cached = async (): Promise<RefreshLiveStatusResult> => {
+            connectionChecked ??= new UserRepo().getTokensForSite(siteId)
+                .then(connection => !!connection && requiresTeslaReconnect(connection));
+            return { status: await connectionChecked ? 'connection-required' : 'cached', liveStatus: cachedStatus, fetchedAt };
+        };
 
         if (useCached && options.force !== true && cachedStatus && fetchedAt && now - fetchedAt < cacheTtlMs) {
-            return { status: 'cached', liveStatus: cachedStatus, fetchedAt };
+            return cached();
         }
 
         const state = getState(siteId);
@@ -222,7 +232,7 @@ export async function refreshLiveStatus(
             // components poll the same site concurrently and callers treat a
             // missing liveStatus as a hard failure (HTTP 500).
             if (cachedStatus && useCached) {
-                return { status: 'cached', liveStatus: cachedStatus, fetchedAt };
+                return cached();
             }
             return { status: 'in-flight' };
         }
@@ -233,7 +243,7 @@ export async function refreshLiveStatus(
             && now - state.lastLiveRefreshAt < minIntervalMs
         ) {
             if (cachedStatus && useCached) {
-                return { status: 'cached', liveStatus: cachedStatus, fetchedAt };
+                return cached();
             }
             return { status: 'throttled' };
         }
@@ -255,7 +265,7 @@ export async function refreshLiveStatus(
                 const claimed = await siteRepo.claimLiveRefresh(siteId, claimMs, minIntervalMs);
                 if (!claimed) {
                     if (cachedStatus && useCached) {
-                        return { status: 'cached', liveStatus: cachedStatus, fetchedAt };
+                        return cached();
                     }
                     return { status: 'throttled' };
                 }

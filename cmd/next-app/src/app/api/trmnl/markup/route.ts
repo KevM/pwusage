@@ -1,4 +1,4 @@
-import { requiresTeslaReconnect } from '@/lib/tesla-refresh-outcome';
+import { isRefreshLeaseActive, requiresTeslaReconnect } from '@/lib/tesla-refresh-outcome';
 import { logEvent, observeRoute, setLogContext } from '@/lib/observability';
 import {readBillingAvailability} from '@/lib/billing-availability';
 import { after, NextResponse } from 'next/server';
@@ -124,7 +124,7 @@ async function handleGET(request: Request) {
         const start = getCurrentCycleStart(site.billing_start_day || 1, now, site.timezone);
         const cycleEnd = getNextCycleStart(site.billing_start_day || 1, start, site.timezone);
 
-        const hasTeslaTokens = !!site.refresh_token && !reconnectRequired && site.tesla_refresh_state !== 'in_flight';
+        const hasTeslaTokens = !!site.refresh_token && !reconnectRequired && !isRefreshLeaseActive(site);
 
         // --- BLOCKING DATA FETCHES (DB only) ---
         let dbLatestMs = 0;

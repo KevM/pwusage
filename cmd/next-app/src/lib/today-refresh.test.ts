@@ -375,6 +375,25 @@ describe('refreshLiveStatus', () => {
         expect(teslaClientMock.getLiveStatus).not.toHaveBeenCalled();
     });
 
+    it.each(['reconnect_required', 'uncertain'])('does not present a fresh cache as healthy when the account is %s', async state => {
+        siteRepoMock.getSite.mockResolvedValue({
+            id: 'site-1',
+            live_status_cache: { percentage_charged: 61 },
+            last_live_refresh_at: Date.now(),
+        });
+        userRepoMock.getTokensForSite.mockResolvedValue({ ...tokens, tesla_refresh_state: state });
+        const { refreshLiveStatus } = await importRefreshLiveStatus();
+
+        // Routes answer 409 (clients keep the reconnect prompt); stored data
+        // is still attached for callers that render it.
+        await expect(refreshLiveStatus('site-1')).resolves.toEqual({
+            status: 'connection-required',
+            liveStatus: { percentage_charged: 61 },
+            fetchedAt: expect.any(Number),
+        });
+        expect(teslaClientMock.getLiveStatus).not.toHaveBeenCalled();
+    });
+
     it('refreshLiveStatus fetches from Tesla and updates the Site live cache', async () => {
         const liveStatus = { percentage_charged: 72 } as unknown as EnergySiteLiveStatus;
         siteRepoMock.getSite.mockResolvedValue({ id: 'site-1', live_status_cache: null, last_live_refresh_at: null });
@@ -531,7 +550,7 @@ describe('refreshLiveStatus', () => {
         });
 
         let resolveTokens: (val: typeof tokens) => void;
-        userRepoMock.getTokensForSite.mockReturnValue(new Promise((resolve) => {
+        userRepoMock.getTokensForSite.mockReturnValueOnce(new Promise((resolve) => {
             resolveTokens = resolve;
         }));
 
