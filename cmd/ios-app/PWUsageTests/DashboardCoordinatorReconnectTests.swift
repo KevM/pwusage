@@ -48,4 +48,14 @@ extension DashboardCoordinatorTests {
         await coordinator.refreshAll(trigger: .userGesture)
         #expect(coordinator.requiresTeslaReconnect)
     }
+    @Test("Site verification does not clear missing Tesla command permission")
+    func siteVerificationPreservesCommandReauthorization() async {
+        let api = DashboardAPISpy()
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
+        coordinator.handleBatteryHoldError(PWUsageAPIError.requestRejected(statusCode: 409, message: "needs_reauth"))
+        coordinator.authenticationRestored()
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(coordinator.requiresTeslaReconnect)
+        #expect(coordinator.requiresTeslaCommandReauthorization)
+    }
 }

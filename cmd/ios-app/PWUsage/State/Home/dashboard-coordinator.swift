@@ -237,7 +237,6 @@ final class DashboardCoordinator: ObservableObject {
         guard !canRequestAccountData || requiresTeslaReconnect else { return }
         sessionVerified = true
         requiresSignIn = false
-        requiresTeslaCommandReauthorization = false
         cache?.selectWidgetSite(selectedSiteID)
         live.lastAttempt = nil
         power.lastAttempt = nil
