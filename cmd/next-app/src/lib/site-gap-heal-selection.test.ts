@@ -20,7 +20,8 @@ describe.skipIf(!socket)('gap-heal eligibility after auth recovery (PostgreSQL)'
         pool = new Pool({ host: socket, port: 55439, database: 'gap_heal_selection', user: process.env.USER, max: 1 });
         await pool.query(`CREATE TABLE "User" (
             id text PRIMARY KEY, is_active boolean, refresh_token text, auth_status text,
-            auth_lost_at timestamptz, auth_restored_at timestamptz
+            auth_lost_at timestamptz, auth_restored_at timestamptz,
+            tesla_refresh_state text NOT NULL DEFAULT 'ready'
         ); CREATE TABLE "Site" (
             id text PRIMARY KEY, user_id text, timezone text DEFAULT 'America/Chicago',
             installed timestamptz DEFAULT '2025-01-01Z', last_live_refresh_at bigint, last_import_at bigint
@@ -36,11 +37,13 @@ describe.skipIf(!socket)('gap-heal eligibility after auth recovery (PostgreSQL)'
             { id: 'inactive', restored: now - DAY, lost: now - 2 * DAY, active: false },
             { id: 'no-token', restored: now - DAY, lost: now - 2 * DAY, token: false },
             { id: 'no-outage', restored: now - DAY },
+            { id: 'reconnect', live: now - DAY, refreshState: 'reconnect_required' },
         ];
         for (const fixture of fixtures) {
-            await pool.query(`INSERT INTO "User" VALUES ($1,$2,$3,$4,$5,$6)`, [
+            await pool.query(`INSERT INTO "User" VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
                 fixture.id, fixture.active ?? true, fixture.token === false ? null : 'test-only', fixture.status ?? 'active',
                 fixture.lost ? new Date(fixture.lost) : null, fixture.restored ? new Date(fixture.restored) : null,
+                fixture.refreshState ?? 'ready',
             ]);
             await pool.query(`INSERT INTO "Site" (id,user_id,last_live_refresh_at,last_import_at) VALUES ($1,$1,$2,$3)`,
                 [fixture.id, fixture.live ?? null, fixture.imported ?? null]);
