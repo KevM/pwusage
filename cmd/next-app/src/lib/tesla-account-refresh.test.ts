@@ -44,7 +44,10 @@ describe('account refresh coordination', () => {
     });
 
     it('reuses credentials rotated since the site client was constructed', async () => {
-        query.mockResolvedValue({ rowCount: 1, rows: [{ ...rotated, auth_status: 'active', is_refreshing: 1 }] });
+        // The claim only matches the caller's grant, so a stale caller never
+        // takes the lease; it adopts the stored rotation.
+        query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+        query.mockResolvedValue({ rows: [{ ...rotated, auth_status: 'active', is_refreshing: 0, tesla_refresh_state: 'ready' }] });
         const result = await setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token);
         expect(result).toEqual(rotated);
         expect(exchange).not.toHaveBeenCalled();
@@ -112,6 +115,7 @@ describe('account refresh coordination', () => {
     it('records a persistence deadline separately from an exchange failure', async () => {
         query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
         query.mockRejectedValueOnce(new IoDeadlineError());
+        query.mockRejectedValueOnce(new IoDeadlineError()); // the save's single retry
         query.mockResolvedValue({ rowCount: 1, rows: [] });
         await expect(setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token)).rejects.toMatchObject({ code: 'IO_DEADLINE_EXCEEDED' });
         expect(logEvent).toHaveBeenCalledWith('warn', 'tesla.refresh.failed', expect.objectContaining({
@@ -125,15 +129,15 @@ describe('account refresh coordination', () => {
         { failure: null, failureCode: 'IO_DEADLINE_EXCEEDED' },
     ])('attributes detached save failure $failureCode independently of an expired caller', async ({ failure, failureCode }) => {
         vi.useFakeTimers();
-        let rejectSave!: (error: Error) => void;
         let saveStarted!: () => void;
         const started = new Promise<void>(resolve => { saveStarted = resolve; });
-        query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
-        query.mockImplementationOnce(() => {
+        query.mockImplementation(async (sql: string) => {
+            if (sql.includes('SET is_refreshing = 1')) return { rowCount: 1, rows: [original] };
+            if (!sql.includes('SET access_token')) return { rowCount: 1, rows: [] };
             saveStarted();
-            return new Promise<never>((_resolve, reject) => { rejectSave = reject; });
+            // Fails after the caller's 50 ms deadline has already expired.
+            return new Promise<never>((_resolve, reject) => { if (failure) setTimeout(() => reject(failure), 100); });
         });
-        query.mockResolvedValue({ rowCount: 1, rows: [] });
         let operation!: Promise<unknown>;
         const caller = withIoDeadline(50, () => {
             operation = setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token).catch(error => error);
@@ -143,13 +147,14 @@ describe('account refresh coordination', () => {
         await vi.advanceTimersByTimeAsync(50);
         expect(await caller).toBeInstanceOf(IoDeadlineError);
         if (failure) {
-            rejectSave(failure);
+            await vi.advanceTimersByTimeAsync(200);
             expect(await operation).toBe(failure);
         } else {
-            // The save's independent 1000 ms budget expires after the caller's 50 ms.
-            await vi.advanceTimersByTimeAsync(950);
+            // The save's independent budget (two 5 s attempts) outlives the caller's 50 ms.
+            await vi.advanceTimersByTimeAsync(10_000);
             expect(await operation).toBeInstanceOf(IoDeadlineError);
         }
+        expect(query.mock.calls.filter(([sql]) => sql.includes('SET access_token'))).toHaveLength(2);
         expect(logEvent).toHaveBeenCalledWith('warn', 'tesla.refresh.failed', expect.objectContaining({
             stage: 'persistence', cancellationSource: 'none', failureCode, terminal: false,
         }));
@@ -168,7 +173,7 @@ describe('account refresh coordination', () => {
             }
             if (sql.includes('SET access_token')) saved = rotated;
             if (sql.includes('SET is_refreshing = 0')) held = false;
-            return { rowCount: 1, rows: [{ ...saved, is_refreshing: Number(held), auth_status: 'active' }] };
+            return { rowCount: 1, rows: [{ ...saved, is_refreshing: Number(held), auth_status: 'active', tesla_refresh_state: held ? 'in_flight' : 'ready', refresh_lock_expires: Date.now() + 60_000 }] };
         });
         vi.useFakeTimers();
         const repo = setup();
@@ -191,7 +196,7 @@ describe('account refresh coordination', () => {
         expect(await setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token)).toEqual(login);
         const save = query.mock.calls.find(([sql]) => sql.includes('SET access_token'));
         expect(save?.[0]).toMatch(/AND refresh_token = \$4/);
-        expect(save?.[0]).toMatch(/AND refresh_lock_expires = \$5/);
+        expect(save?.[0]).toMatch(/AND tesla_credential_generation = \$5 AND tesla_refresh_attempt_id = \$6/);
     });
 
     it('does not revoke a newer login when the old exchange is rejected', async () => {
@@ -201,9 +206,8 @@ describe('account refresh coordination', () => {
         query.mockResolvedValue({ rowCount: 1, rows: [{ ...rotated, is_refreshing: 0, auth_status: 'active' }] });
         const handlers = setup().getLockedUserRefreshHandler('owner');
         expect(await handlers.refreshHandler(original.refresh_token)).toEqual(rotated);
-        const revoke = query.mock.calls.find(([sql]) => sql.includes('tesla_refresh_state = $5'));
-        expect(revoke?.[0]).toMatch(/AND tesla_credential_generation = \$2/);
-        expect(revoke?.[0]).toMatch(/AND refresh_lock_expires = \$3/);
+        const revoke = query.mock.calls.find(([sql]) => sql.includes('tesla_refresh_state = $4'));
+        expect(revoke?.[0]).toMatch(/AND tesla_credential_generation = \$2 AND tesla_refresh_attempt_id = \$3/);
     });
 
     it('atomically marks a genuine rejection revoked and releases its lease', async () => {
@@ -211,7 +215,7 @@ describe('account refresh coordination', () => {
         query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
         query.mockResolvedValue({ rowCount: 1, rows: [] });
         await expect(setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token)).rejects.toThrow('credential_rejected');
-        expect(query).toHaveBeenCalledWith(expect.stringMatching(/SET is_refreshing = 0[\s\S]*tesla_refresh_state = \$5/),
+        expect(query).toHaveBeenCalledWith(expect.stringMatching(/SET is_refreshing = 0[\s\S]*tesla_refresh_state = \$4/),
             expect.arrayContaining(['owner', 'reconnect_required']));
     });
 
@@ -220,7 +224,10 @@ describe('account refresh coordination', () => {
         query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
         query.mockResolvedValue({ rowCount: 1, rows: [] });
         await expect(setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token)).rejects.toThrow('timeout');
-        expect(query.mock.calls.find(([sql]) => sql.includes('tesla_refresh_state = $5'))?.[1]).toContain('uncertain');
+        const outcome = query.mock.calls.find(([sql]) => sql.includes('tesla_refresh_state = $4'))?.[1];
+        // Retry the same grant after a backoff; never a reconnect.
+        expect(outcome?.[3]).toBe('ready');
+        expect(outcome?.[4]).toBeGreaterThan(Date.now());
     });
 
     it('does not let a waiter retry an expired access credential after the winning refresh failed transiently', async () => {

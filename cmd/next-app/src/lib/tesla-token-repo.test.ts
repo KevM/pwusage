@@ -1,4 +1,4 @@
-import { TeslaRefreshError, TeslaConnectionRequiredError } from './tesla-refresh-outcome';
+import { TeslaRefreshError, TeslaConnectionRequiredError, TeslaRefreshBackoffError } from './tesla-refresh-outcome';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { queryMock, refreshAccessTokenMock, userRepoUpdateTokensMock, userRepoUpdateUserStatusMock } = vi.hoisted(() => ({
@@ -55,54 +55,46 @@ function makeSiteJoinRow(overrides: Record<string, unknown> = {}) {
     };
 }
 
-describe('TeslaTokenRepo.waitForTokenRefresh', () => {
-    let siteRepo: SiteRepo;
+describe('TeslaTokenRepo refresh wait', () => {
     let tokenRepo: TeslaTokenRepo;
 
     beforeEach(() => {
         queryMock.mockReset();
-        siteRepo = new SiteRepo();
-        siteRepo.invalidateCache('site-1');
-        tokenRepo = new TeslaTokenRepo(siteRepo);
+        refreshAccessTokenMock.mockReset();
+        tokenRepo = new TeslaTokenRepo(new SiteRepo());
     });
 
-    it('throws when a concurrent refresh failed and left auth_status revoked', async () => {
-        // getSite — site scalars query, then tariff tree query
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
-        queryMock.mockResolvedValueOnce({ rows: [] });
-        // User polling: lock released, but the refresh that held it failed → revoked
-        queryMock.mockResolvedValueOnce({
-            rows: [{ access_token: 'old-token', refresh_token: 'old-refresh', is_refreshing: 0, auth_status: 'revoked' }]
-        });
+    // The claim matches nothing, so the caller polls the account row.
+    function unclaimed(row: Record<string, unknown> | undefined) {
+        queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+        queryMock.mockResolvedValueOnce({ rows: row ? [row] : [] });
+        return tokenRepo.getLockedUserRefreshHandler('user-1').refreshHandler('old-refresh');
+    }
 
-        const error = await tokenRepo.waitForTokenRefresh('site-1').catch((error: unknown) => error);
+    it('throws when a concurrent refresh failed and left auth_status revoked', async () => {
+        const error = await unclaimed({ access_token: 'old-token', refresh_token: 'old-refresh', is_refreshing: 0, auth_status: 'revoked' })
+            .catch((error: unknown) => error);
         expect(error).toBeInstanceOf(TeslaConnectionRequiredError);
         expect(isTeslaAuthError(error)).toBe(false);
     });
 
     it('returns new tokens when a concurrent refresh succeeded', async () => {
-        // getSite — site scalars query, then tariff tree query
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
-        queryMock.mockResolvedValueOnce({ rows: [] });
-        // User polling: lock released, refresh succeeded
-        queryMock.mockResolvedValueOnce({
-            rows: [{ access_token: 'new-token', refresh_token: 'new-refresh', is_refreshing: 0, auth_status: 'active' }]
-        });
+        const tokens = await unclaimed({ access_token: 'new-token', refresh_token: 'new-refresh', is_refreshing: 0, auth_status: 'active', tesla_refresh_state: 'ready' });
+        expect(tokens).toEqual({ access_token: 'new-token', refresh_token: 'new-refresh' });
+        expect(refreshAccessTokenMock).not.toHaveBeenCalled();
+    });
 
-        const tokens = await tokenRepo.waitForTokenRefresh('site-1');
-        expect(tokens.access_token).toBe('new-token');
-        expect(tokens.refresh_token).toBe('new-refresh');
+    it('fails fast with a backoff while the stored grant is cooling down', async () => {
+        const retryAfter = Date.now() + 60_000;
+        const error = await unclaimed({ access_token: 'old-token', refresh_token: 'old-refresh', is_refreshing: 0, auth_status: 'error', tesla_refresh_state: 'ready', tesla_refresh_retry_after: String(retryAfter) })
+            .catch((error: unknown) => error);
+        expect(error).toBeInstanceOf(TeslaRefreshBackoffError);
+        expect((error as TeslaRefreshBackoffError).retryAfter).toBe(retryAfter);
+        expect(refreshAccessTokenMock).not.toHaveBeenCalled();
     });
 
     it('throws a clean error when the user row no longer exists', async () => {
-        // getSite succeeds — site scalars query, then tariff tree query
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
-        queryMock.mockResolvedValueOnce({ rows: [] });
-        // User polling query returns no rows (user deleted mid-wait)
-        queryMock.mockResolvedValueOnce({ rows: [] });
-
-        await expect(tokenRepo.waitForTokenRefresh('site-1'))
-            .rejects.toThrow('Token refresh wait failed: user not found');
+        await expect(unclaimed(undefined)).rejects.toThrow('Token refresh wait failed: user not found');
     });
 });
 
@@ -230,8 +222,14 @@ describe('TeslaTokenRepo delegates User writes to UserRepo', () => {
         const handlers = tokenRepo.getLockedRefreshHandler('site-1');
         await handlers.refreshHandler('old-refresh');
 
-        expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('AND refresh_token = $4 AND refresh_lock_expires = $5'),
-            expect.arrayContaining(['new-access', 'new-refresh', 'user-1', 'old-refresh', expect.any(Number), expect.any(String)]));
+        // Guarded by credential generation and attempt, not the lease clock:
+        // Tesla already consumed the old grant, so a slow save must still land.
+        const save = queryMock.mock.calls.find(([sql]) => String(sql).includes('SET access_token = $1'));
+        expect(save?.[0]).toContain('AND refresh_token = $4');
+        expect(save?.[0]).toContain('tesla_refresh_attempt_id = $6');
+        expect(save?.[0]).toContain('is_refreshing = 0, refresh_lock_expires = 0');
+        expect(save?.[0]).not.toContain('refresh_lock_expires >');
+        expect(save?.[1]).toEqual(['new-access', 'new-refresh', 'user-1', 'old-refresh', undefined, expect.any(String)]);
     });
 
     it('errorHandler does not revoke a login that completed after the refresh lease was released', async () => {

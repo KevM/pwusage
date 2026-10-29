@@ -15,11 +15,11 @@ separate operator actions. None is performed by the implementation tests.
 | `UserRepo.updateUserStatus` | Explicit eligibility/status setter; currently no production callers. Must not be used for Tesla-only failure. |
 | Legacy `UserRepo.updateTokens` / `TeslaTokenRepo.updateSiteTokens` | No production callers; not refresh APIs. Never use these unguarded helpers for renewal or reconnect. Production writes must use the two generation-aware paths above. |
 | Session-version increment, roles, memberships | Independent app authorization. No reconnect path bypasses these checks. |
-| Additive migration | Legacy revoked rows become reconnect-required; legacy busy rows become uncertain. Eligibility is unchanged. |
+| Additive migration | Idempotent. Legacy revoked rows become reconnect-required; historical inactive accounts are reactivated so they can reconnect (every past deactivation was Tesla-health driven). |
 
-A crash after the DB claim but before dispatch can conservatively require reconnect.
-A crash after dispatch cannot tell us whether Tesla consumed the grant. Neither
-lease expiry nor a successful old access-token request proves refresh reuse safe.
+A crash after dispatch cannot tell us whether Tesla consumed the grant. It does
+not matter: the replacement was never stored, so after the two-minute retry floor
+the same grant is retried, and Tesla either rotates it or answers `invalid_grant`.
 
 ## Event reference
 
@@ -38,7 +38,9 @@ OAuth codes, cookies, response bodies, or user emails into diagnostics.
 | `tesla.refresh.state-changed` | Outcome UPDATE confirmed; `persisted=true`, `fromState` and `toState`. |
 | `tesla.refresh.outcome-superseded` / `superseded` | Guard rejected the write. Inspect newer login/save; do not count as confirmed rejection/recovery. |
 | `tesla.refresh.outcome-write-deferred` / `cleanup-deferred` | Persistence/cleanup could not be confirmed; durable marker still prevents replay. |
-| `tesla.refresh.replay-suppressed` | A waiter refused an unusable generation, including expired unresolved attempts. This counts prevented attempts, not successful replay. |
+| `tesla.refresh.replay-suppressed` | A waiter refused a reconnect-required generation. |
+| `tesla.refresh.lease-expired` | A worker died mid-exchange; the account returned to `ready` with a retry floor. |
+| `tesla.refresh.backoff` | A caller hit the retry floor and failed fast without an exchange. |
 | `tesla.connection.credentials-restored` | OAuth credentials saved with a new generation. `accountEligible=false` still means app access is denied. |
 | `tesla.refresh.paused` | Operational pause blocked a new exchange. |
 
@@ -92,9 +94,10 @@ all refresh, token-endpoint, verification, and restoration events. For orphan
 starts, compare distinct started `exchangeId`s with succeeded/failed/superseded
 IDs after the 60-second lease horizon, then corroborate with DB state, runtime
 termination logs, and delivery warnings. Correlation must span requests and sites.
-Investigate any second dispatch for a generation already marked uncertain or
-reconnect-required: target **zero**. A second legitimate attempt after explicit
-non-dispatch/configuration failure must respect the fifteen-minute retry floor.
+Investigate any second dispatch for a generation already marked
+reconnect-required: target **zero**. A retry of the same generation must respect
+its floor (two minutes after an unknown outcome, fifteen after
+non-dispatch/configuration failure).
 
 Read-only DB summary (does not select credentials or identifiers):
 
@@ -121,7 +124,7 @@ linked sites and screen sizes. Poll volume is not the number of affected people.
    save failures, source age, and app-session rejection reasons. Verify telemetry
    delivery before using a decline in errors as evidence of success.
 2. Apply the generated additive migration using the normal reviewed DB process.
-   Do not run it as an incidental part of a deploy or reactivate inactive users.
+   Do not run it as an incidental part of a deploy.
 3. Prepare the compatible release with `TESLA_REFRESH_PAUSED=1`. The pause blocks
    new coordinated refreshes only; it does not stop old releases, existing work,
    or OAuth. All active readers/writers must understand the new state.
@@ -134,11 +137,8 @@ linked sites and screen sizes. Poll volume is not the number of affected people.
 5. Resolve the overlap window explicitly. Old code can consume a grant without
    writing the new marker. If any old worker could have run after migration, do
    not treat a default `ready` row as proof of safety. Keep refresh paused and
-   OAuth quiescent while draining; require a separately reviewed reconciliation
-   that marks exposed legacy generations uncertain (potentially requiring broad
-   reconnect), or evidence that no old writer overlapped. Never reset uncertain
-   rows to ready to get traffic moving. This implementation does not perform that
-   production data operation.
+   OAuth quiescent while draining. A grant an old worker consumed fails with
+   `invalid_grant` on retry and becomes reconnect-required.
 6. Verify schema and every caller's release, then enable coordinated refresh.
    Exercise a normal rotation, reconnect, stored-data read, and suspension using
    designated test accounts. Installation links must survive reconnect.
@@ -150,9 +150,9 @@ linked sites and screen sizes. Poll volume is not the number of affected people.
 
 Rollback keeps the additive schema and replay protection. Pause new refreshes
 and retain stored-data serving while correcting the release. Never restore an
-old binary that ignores uncertain/in-flight markers. Do not clear attempts,
-decrement generation, or replay uncertain credentials as a recovery procedure.
-Only fresh OAuth credentials restore an unresolved connection safely.
+old binary that ignores in-flight markers. Do not clear attempts or decrement
+generation as a recovery procedure. Only fresh OAuth credentials restore a
+reconnect-required connection.
 
 ## Local acceptance evidence
 

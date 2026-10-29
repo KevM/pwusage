@@ -55,12 +55,13 @@ it('releases the refresh lock through the real database wrapper after the parent
 it('atomically revokes and releases after terminal failure even when the parent was cancelled', async () => {
   const { queries, finished } = await setup(true);
   await finished();
-  expect(queries.some(sql => sql.includes('SET is_refreshing = 0') && sql.includes('tesla_refresh_state = $5'))).toBe(true);
+  expect(queries.some(sql => sql.includes('SET is_refreshing = 0') && sql.includes('tesla_refresh_state = $4'))).toBe(true);
 });
 
 it('bounds cleanup independently when its database query hangs', async () => {
   const { queries, release, finished } = await setup(false, true);
-  await vi.advanceTimersByTimeAsync(21000);
+  // 18 s exchange + 5 s outcome write + 1 s cleanup, each bounded on its own.
+  await vi.advanceTimersByTimeAsync(25000);
   await finished();
   expect(queries.some(sql => sql.includes('SET is_refreshing = 0'))).toBe(true);
   expect(release).toHaveBeenCalledWith(true);

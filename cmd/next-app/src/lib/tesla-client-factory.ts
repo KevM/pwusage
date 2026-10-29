@@ -14,6 +14,13 @@ function recordFleetBaseUrl(userId: string) {
     return (baseUrl: string) => new UserRepo().setFleetApiBaseUrl(userId, baseUrl);
 }
 
+/** Gate a Fleet request on the account's connection and hand back its stored credentials. */
+async function currentTeslaConnection(userId: string) {
+    const current = await new UserRepo().getTokens(userId);
+    assertTeslaConnection(current);
+    return current;
+}
+
 /**
  * Construct a TeslaClient for a specific site, wired with site-level locked token refresh handlers.
  * Returns null if no valid refresh_token exists for the site.
@@ -35,6 +42,7 @@ export async function createTeslaClientForSite(
             const current = await new UserRepo().getTokensForSite(siteId);
             assertTeslaConnection(current);
             if (tokens.user_id !== current?.user_id) throw new Error('Site owner changed');
+            return current;
         },
         refreshToken: tokens.refresh_token,
         tokenRefreshHandler: handlers.refreshHandler,
@@ -60,7 +68,7 @@ export async function createTeslaClientForUser(
     const handlers = new TeslaTokenRepo(new SiteRepo()).getLockedUserRefreshHandler(userId);
     return new TeslaClient({
         accessToken: userTokens.access_token,
-        beforeRequest: async () => assertTeslaConnection(await new UserRepo().getTokens(userId)),
+        beforeRequest: () => currentTeslaConnection(userId),
         refreshToken: userTokens.refresh_token || undefined,
         tokenRefreshHandler: handlers.refreshHandler,
         onTokenError: handlers.errorHandler,
@@ -83,7 +91,7 @@ export function createTeslaClientForAccessToken(
         ?? (options?.userId ? recordFleetBaseUrl(options.userId) : undefined);
     return new TeslaClient({
         accessToken,
-        beforeRequest: options?.userId ? async () => assertTeslaConnection(await new UserRepo().getTokens(options.userId!)) : undefined,
+        beforeRequest: options?.userId ? () => currentTeslaConnection(options.userId!) : undefined,
         refreshToken: refreshToken || undefined,
         onTokenUpdate: options?.onTokenUpdate,
         baseUrl: options?.baseUrl,

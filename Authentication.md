@@ -241,21 +241,26 @@ Middleware/proxy (`src/proxy.ts`):
 Tesla token refresh behavior:
 - All production refresh callers share the account-level coordinator. Its atomic
   lease claim records `in_flight`, a UUID attempt ID, generation, and start time
-  **before** dispatch. A lease coordinates workers; expiry cannot prove whether
-  Tesla consumed a grant. Unresolved expired attempts become `uncertain`.
-- Rotated credentials and the next generation are saved atomically, guarded by
-  the original generation, attempt ID, refresh credential, and unexpired lease.
-  Newer OAuth login wins over stale completions. Acknowledgement loss cannot
-  authorize another exchange of the previous generation.
+  **before** dispatch, and only claims the refresh credential the caller holds:
+  a stale caller adopts the stored rotation instead. An expired lease returns to
+  `ready` with a two-minute retry floor, keeping its attempt ID.
+- Rotated credentials, the next generation and the lease release are saved in
+  one statement, guarded by the original generation, attempt ID and refresh
+  credential (not the lease clock), with one retry. Newer OAuth login wins over
+  stale completions. Acknowledgement loss cannot authorize another exchange of
+  the previous generation.
 - `not_dispatched` and `configuration_rejected` return to `ready` with a
-  fifteen-minute retry floor. Unknown dispatch/body/persistence outcomes become
-  `uncertain`; definitive credential rejection becomes `reconnect_required`
-  with `auth_status=revoked`. Both block automatic replay and Tesla operations.
-  Missing outcome writes leave the durable in-flight marker as protection.
+  fifteen-minute retry floor; unknown outcomes (429, 5xx, transport, lost body)
+  with a two-minute floor, then the same grant is retried. Only definitive
+  credential rejection becomes `reconnect_required` with `auth_status=revoked`.
+  During a retry floor, Fleet requests fail fast with `TeslaRefreshBackoffError`.
+- The dev/beta database copy clears `User` Tesla tokens: a second holder of a
+  single-use grant races prod (see `docs/dev-database-copy.md`).
 - `is_active` is account eligibility, independent of Tesla health. Refresh and
   verification never deactivate an account. OAuth replaces credentials and
   advances generation while preserving existing eligibility and session version.
-  Historical inactive accounts are not automatically reactivated.
+  The refresh-outcomes migration reactivates historical inactive accounts (all
+  were deactivated by Tesla health) so they can reconnect.
 - The detached exchange retains PR #251's independent 18-second deadline,
   request `after()` lifetime, one-second save/cleanup deadlines, and conditional
   cleanup. A caller can stop waiting without canceling a dispatched exchange.

@@ -113,9 +113,18 @@ export interface SeasonPeriod {
     toMinute: number;
 }
 
+export interface StoredTeslaCredentials {
+    access_token?: string | null;
+    refresh_token?: string | null;
+}
+
 export interface TeslaClientConfig {
     accessToken: string;
-    beforeRequest?: () => Promise<void>;
+    /**
+     * Runs before each Fleet request. It may return the account's stored
+     * credentials; a rotated pair is adopted so a stale copy never reaches Tesla.
+     */
+    beforeRequest?: () => Promise<StoredTeslaCredentials | null | void>;
     refreshToken?: string;
     onTokenUpdate?: (accessToken: string, refreshToken: string) => void;
     onTokenError?: (error: Error) => void;
@@ -233,6 +242,7 @@ function calendarTimeSeries<T>(result: unknown, kind: 'energy' | 'soe'): T[] {
 export class TeslaClient {
     private baseUrl: string;
     private config: TeslaClientConfig;
+    private retiredRefreshTokens = new Set<string>();
 
     constructor(config: TeslaClientConfig | string) {
         if (typeof config === 'string') {
@@ -260,12 +270,25 @@ export class TeslaClient {
         }
     }
 
+    /**
+     * Take another worker's rotation instead of refreshing a consumed grant.
+     * A grant this client already replaced is never adopted back.
+     */
+    private adoptStoredCredentials(stored: StoredTeslaCredentials | null | void): void {
+        if (!stored?.access_token || !stored.refresh_token) return;
+        if (stored.refresh_token === this.config.refreshToken || this.retiredRefreshTokens.has(stored.refresh_token)) return;
+        if (this.config.refreshToken) this.retiredRefreshTokens.add(this.config.refreshToken);
+        this.config.accessToken = stored.access_token;
+        this.config.refreshToken = stored.refresh_token;
+    }
+
     private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
         // The host this request last went to. Concurrent requests share this.baseUrl,
         // so a 421 is judged against the host that answered it, not the current one.
         let requestBaseUrl = this.baseUrl;
-        const makeRequest = async (token: string) => {
-            if (this.config.beforeRequest) await this.config.beforeRequest();
+        const makeRequest = async () => {
+            if (this.config.beforeRequest) this.adoptStoredCredentials(await this.config.beforeRequest());
+            const token = this.config.accessToken;
             requestBaseUrl = this.baseUrl;
             const url = `${requestBaseUrl}${path}`;
             const headers = {
@@ -282,7 +305,7 @@ export class TeslaClient {
             return abortable(fetch(url, { ...options, headers, signal }), signal);
         };
 
-        let response = await makeRequest(this.config.accessToken);
+        let response = await makeRequest();
 
         // Handle 401 (refresh once) and 429 (bounded backoff) in a single loop so
         // an expired/revoked token surfaced *after* a 429 retry still triggers the
@@ -303,6 +326,7 @@ export class TeslaClient {
                     } else {
                         newTokens = await TeslaClient.refreshAccessToken(this.config.refreshToken);
                     }
+                    if (this.config.refreshToken !== newTokens.refresh_token) this.retiredRefreshTokens.add(this.config.refreshToken);
                     this.config.accessToken = newTokens.access_token;
                     this.config.refreshToken = newTokens.refresh_token;
 
@@ -322,7 +346,7 @@ export class TeslaClient {
                 }
                 // A retry can reach Tesla and then lose its response. Keep that
                 // transport failure distinct from the original rejected request.
-                response = await makeRequest(this.config.accessToken);
+                response = await makeRequest();
                 continue;
             }
 
@@ -333,7 +357,7 @@ export class TeslaClient {
                 console.warn(`Tesla API 429, retrying in ${delayMs}ms (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`);
                 await sleep(delayMs);
                 rateLimitAttempt++;
-                response = await makeRequest(this.config.accessToken);
+                response = await makeRequest();
                 continue;
             }
 
@@ -354,7 +378,7 @@ export class TeslaClient {
                     regionRetried = true;
                     await this.adoptBaseUrl(parsed.baseUrl);
                     errorBody = undefined;
-                    response = await makeRequest(this.config.accessToken);
+                    response = await makeRequest();
                     continue;
                 }
 

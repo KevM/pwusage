@@ -11,7 +11,7 @@ vi.mock('./tesla-auth', async importOriginal => ({
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { createTeslaClientForUser } from './tesla-client-factory';
 import { TeslaAuthError, type EnergySiteLiveStatus } from './tesla-client';
-import { TeslaRefreshError } from './tesla-refresh-outcome';
+import { TeslaRefreshBackoffError, TeslaRefreshError } from './tesla-refresh-outcome';
 import { UserRepo } from './user-repo';
 
 const liveStatus: EnergySiteLiveStatus = {
@@ -24,6 +24,8 @@ const liveStatus: EnergySiteLiveStatus = {
 
 // Run with npm run test:compact -- src/lib/tesla-account-refresh.postgres.test.ts.
 // The runner creates a private local cluster; no .env or production DB is used.
+const migration = readFileSync(new URL('../../db-migrations/20261028192559_tesla_refresh_outcomes.sql', import.meta.url), 'utf8');
+
 describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh against PostgreSQL', () => {
     let pool: Pool;
     let repo: TeslaTokenRepo;
@@ -42,7 +44,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
             last_checked_at timestamp, email text, token_expires_at bigint,
             session_version integer NOT NULL DEFAULT 0, roles text[] NOT NULL DEFAULT '{}'::text[]
         )`);
-        await pool.query(readFileSync(new URL('../../db-migrations/20261028192559_tesla_refresh_outcomes.sql', import.meta.url), 'utf8'));
+        await pool.query(migration);
         await pool.query('CREATE TEMP TABLE "Site" (id text PRIMARY KEY, user_id text)');
         query.mockImplementation((sql: string, values?: unknown[]) => pool.query(sql, values));
         repo = new TeslaTokenRepo({
@@ -60,36 +62,78 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
     });
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-    it('never sends a second grant after response loss and lease expiry', async () => {
-        exchange.mockRejectedValue(new TeslaRefreshError('outcome_unknown'));
-        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
-        await pool.query('UPDATE "User" SET refresh_lock_expires = 0');
-        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+    it('backs off after response loss, then retries the same grant', async () => {
+        exchange.mockRejectedValueOnce(new TeslaRefreshError('outcome_unknown', 503));
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow('outcome_unknown');
+        const row = (await pool.query('SELECT * FROM "User"')).rows[0];
+        expect(row).toMatchObject({ tesla_refresh_state: 'ready', is_active: true, is_refreshing: 0, refresh_token: 'refresh-A' });
+        expect(Number(row.tesla_refresh_retry_after)).toBeGreaterThan(Date.now());
+        // Inside the backoff: fail fast, no exchange.
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
         expect(exchange).toHaveBeenCalledTimes(1);
+        // After it: the stored grant is retried, never a reconnect.
+        await pool.query('UPDATE "User" SET tesla_refresh_retry_after = 0');
+        expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).toEqual(rotated);
+        expect(exchange).toHaveBeenCalledTimes(2);
+        expect(exchange.mock.calls[1][0]).toBe('refresh-A');
+    });
+
+    it('recovers a crashed worker whose lease expired into a backoff, keeping its attempt id', async () => {
+        await pool.query(`UPDATE "User" SET is_refreshing = 1, refresh_lock_expires = 1,
+            tesla_refresh_state = 'in_flight', tesla_refresh_attempt_id = 'dead-worker'`);
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
+        expect(exchange).not.toHaveBeenCalled();
+        const row = (await pool.query('SELECT * FROM "User"')).rows[0];
+        expect(row).toMatchObject({ tesla_refresh_state: 'ready', is_refreshing: 0, tesla_refresh_attempt_id: 'dead-worker' });
+        expect(Number(row.tesla_refresh_retry_after)).toBeGreaterThan(Date.now());
+    });
+
+    it('a worker whose lease expired still saves the rotation it received', async () => {
+        exchange.mockImplementation(async () => {
+            await pool.query('UPDATE "User" SET refresh_lock_expires = 1');
+            await expect(new TeslaTokenRepo({ getSite: async () => ({ user_id: 'owner' }), invalidateCache: () => {} } as unknown as SiteRepo)
+                .getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
+            return rotated;
+        });
+        expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).toEqual(rotated);
         expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({
-            tesla_refresh_state: 'uncertain', is_active: true,
+            ...rotated, tesla_refresh_state: 'ready', tesla_refresh_attempt_id: null, is_refreshing: 0,
+            tesla_credential_generation: 1,
+        });
+        expect(Number((await pool.query('SELECT * FROM "User"')).rows[0].tesla_refresh_retry_after)).toBe(0);
+    });
+
+    it('a stale caller adopts the stored rotation without claiming the lease', async () => {
+        await pool.query(`UPDATE "User" SET access_token = 'access-B', refresh_token = 'refresh-B', tesla_credential_generation = 1`);
+        expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).toEqual(rotated);
+        expect(exchange).not.toHaveBeenCalled();
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({
+            tesla_refresh_state: 'ready', tesla_refresh_attempt_id: null, is_refreshing: 0,
         });
     });
 
-    it('suppresses a crashed worker whose lease expired with an unresolved attempt', async () => {
-        await pool.query(`UPDATE "User" SET is_refreshing = 1, refresh_lock_expires = 1,
-            tesla_refresh_state = 'in_flight', tesla_refresh_attempt_id = 'dead-worker'`);
-        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
-        expect(exchange).not.toHaveBeenCalled();
-        expect((await pool.query('SELECT * FROM "User"')).rows[0].tesla_refresh_state).toBe('uncertain');
-    });
-
-    it('keeps durable suppression when recording uncertainty fails', async () => {
+    it('keeps the backoff when recording the outcome fails', async () => {
         exchange.mockRejectedValue(new TeslaRefreshError('outcome_unknown'));
         query.mockImplementation(async (sql: string, values?: unknown[]) => {
-            if (sql.includes("tesla_refresh_state = $5")) throw new Error('write unavailable');
+            if (sql.includes('refresh_lock_expires = 0')) throw new Error('write unavailable');
             return pool.query(sql, values);
         });
         await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
         query.mockImplementation((sql: string, values?: unknown[]) => pool.query(sql, values));
-        await pool.query('UPDATE "User" SET refresh_lock_expires = 0');
-        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        expect((await pool.query('SELECT * FROM "User"')).rows[0].tesla_refresh_state).toBe('in_flight');
+        await pool.query('UPDATE "User" SET refresh_lock_expires = 1');
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
         expect(exchange).toHaveBeenCalledTimes(1);
+    });
+
+    it('migration lets previously revoked accounts reconnect, and re-runs cleanly', async () => {
+        await pool.query(`UPDATE "User" SET auth_status = 'revoked', is_active = false`);
+        await pool.query(migration);
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({
+            is_active: true, tesla_refresh_state: 'reconnect_required',
+        });
+        await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() });
+        expect(await repo.getLockedRefreshHandler('site').refreshHandler('login-R')).toEqual(rotated);
     });
 
     it('a lost save acknowledgement never replays the old generation', async () => {
@@ -105,6 +149,20 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({
             tesla_credential_generation: 1, tesla_refresh_state: 'ready',
         });
+    });
+
+    it('requests during an in-flight refresh proceed instead of failing', async () => {
+        let finish!: (value: typeof rotated) => void;
+        let dispatched!: () => void;
+        const started = new Promise<void>(resolve => { dispatched = resolve; });
+        exchange.mockImplementation(() => { dispatched(); return new Promise(resolve => { finish = resolve; }); });
+        const refreshing = repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A');
+        await started;
+        const browser = await createTeslaClientForUser('owner');
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ response: [] }));
+        await expect(browser?.getProducts()).resolves.toEqual([]);
+        finish(rotated);
+        await refreshing;
     });
 
     it('serializes two workers on the same generation', async () => {
@@ -155,7 +213,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('response lost after consumption'));
         const sessionVersion = (await new UserRepo().getAuthState('owner'))?.sessionVersion;
         await expect(repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).rejects.toThrow();
-        await expect(repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).rejects.toThrow();
+        await expect(repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(await new UserRepo().getAuthState('owner')).toMatchObject({ isActive: true, sessionVersion });
         await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() + 3600000 });
@@ -180,11 +238,11 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         const browser = await createTeslaClientForUser('owner');
         expect(await repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).toEqual(rotated);
         const fetchMock = vi.spyOn(globalThis, 'fetch')
-            .mockResolvedValueOnce(new Response('', { status: 401 }))
             .mockResolvedValueOnce(Response.json({ response: [] }));
         await browser?.getProducts();
         expect(exchange).toHaveBeenCalledTimes(1);
-        expect(fetchMock.mock.calls[1][1]?.headers).toMatchObject({ Authorization: 'Bearer access-B' });
+        // Adopted before the request: the consumed copy never reaches Tesla.
+        expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: 'Bearer access-B' });
         const { rows } = await pool.query('SELECT * FROM "User"');
         expect(rows[0]).toMatchObject({ ...rotated, is_refreshing: 0, auth_status: 'active', is_active: true });
     });

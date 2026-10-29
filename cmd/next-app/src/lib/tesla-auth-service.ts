@@ -605,7 +605,10 @@ export class TeslaAuthService {
         const teslaClientConfig: TeslaClientConfig = {
             accessToken: authData.access_token,
             beforeRequest: async () => {
-                if (refreshIdentity.userId) assertTeslaConnection(await userRepo.getTokens(refreshIdentity.userId));
+                if (!refreshIdentity.userId) return;
+                const current = await userRepo.getTokens(refreshIdentity.userId);
+                assertTeslaConnection(current);
+                return current;
             },
             refreshToken: authData.refresh_token,
             tokenRefreshHandler: async suppliedRefresh => {

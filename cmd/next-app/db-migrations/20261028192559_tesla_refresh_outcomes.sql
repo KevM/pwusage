@@ -11,16 +11,18 @@
 -- If using serial/sequence:
 -- GRANT ALL ON SEQUENCE "MyNewTable_id_seq" TO service_role;
 
--- Additive only: existing account eligibility is deliberately untouched.
+-- Idempotent: CI re-runs migrations against fresh prod copies.
 ALTER TABLE "User"
-    ADD COLUMN tesla_credential_generation integer NOT NULL DEFAULT 0,
-    ADD COLUMN tesla_refresh_attempt_id text,
-    ADD COLUMN tesla_refresh_state text NOT NULL DEFAULT 'ready'
+    ADD COLUMN IF NOT EXISTS tesla_credential_generation integer NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS tesla_refresh_attempt_id text,
+    ADD COLUMN IF NOT EXISTS tesla_refresh_state text NOT NULL DEFAULT 'ready'
         CHECK (tesla_refresh_state IN ('ready', 'in_flight', 'uncertain', 'reconnect_required')),
-    ADD COLUMN tesla_refresh_started_at timestamptz,
-    ADD COLUMN tesla_refresh_retry_after bigint NOT NULL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS tesla_refresh_started_at timestamptz,
+    ADD COLUMN IF NOT EXISTS tesla_refresh_retry_after bigint NOT NULL DEFAULT 0;
 
--- An old lease already in flight at migration time is not evidence of non-dispatch.
-UPDATE "User" SET tesla_refresh_state = CASE
-    WHEN auth_status = 'revoked' THEN 'reconnect_required' ELSE 'uncertain' END
-WHERE auth_status = 'revoked' OR is_refreshing <> 0;
+-- A rejected refresh grant needs a Tesla reconnect. The old revocation path was
+-- the only writer of is_active = false, and OAuth login no longer resets it, so
+-- clear it here or those users could never reconnect.
+UPDATE "User" SET tesla_refresh_state = 'reconnect_required', is_active = true
+WHERE auth_status = 'revoked' AND tesla_refresh_state = 'ready';
+UPDATE "User" SET is_active = true WHERE is_active IS DISTINCT FROM true;

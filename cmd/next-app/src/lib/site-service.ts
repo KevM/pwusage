@@ -149,7 +149,11 @@ export class SiteService {
         // (tests pin that the recovery attempt happens).
         const config: TeslaClientConfig = {
             accessToken: accessToken ?? '',
-            beforeRequest: async () => assertTeslaConnection(await new UserRepo().getTokensForSite(siteId)),
+            beforeRequest: async () => {
+                const current = await new UserRepo().getTokensForSite(siteId);
+                assertTeslaConnection(current);
+                return current;
+            },
             refreshToken: refreshToken ?? undefined,
             tokenRefreshHandler: handlers.refreshHandler,
             onTokenError: handlers.errorHandler,

@@ -33,14 +33,14 @@ export class UserRepo {
     }
 
     async getTokens(userId: string): Promise<{ access_token: string, refresh_token: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
-        const res = await pool.query('SELECT access_token, refresh_token, fleet_api_base_url, is_active, auth_status, tesla_refresh_state, refresh_lock_expires FROM "User" WHERE id = $1', [userId]);
+        const res = await pool.query('SELECT access_token, refresh_token, fleet_api_base_url, is_active, auth_status, tesla_refresh_state, refresh_lock_expires, tesla_refresh_retry_after FROM "User" WHERE id = $1', [userId]);
         if (res.rows.length === 0) return null;
         return res.rows[0];
     }
 
     async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
         const res = await pool.query(`
-            SELECT u.access_token, u.refresh_token, u.id as user_id, u.fleet_api_base_url, u.is_active, u.auth_status, u.tesla_refresh_state, u.refresh_lock_expires
+            SELECT u.access_token, u.refresh_token, u.id as user_id, u.fleet_api_base_url, u.is_active, u.auth_status, u.tesla_refresh_state, u.refresh_lock_expires, u.tesla_refresh_retry_after
             FROM "User" u
             JOIN "Site" s ON s.user_id = u.id
             WHERE s.id = $1

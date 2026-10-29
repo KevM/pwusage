@@ -284,9 +284,11 @@ raced `verifyTeslaIdToken` against a 3s timer, which had two defects:
 ### Refresh outcome, credential usability, and account eligibility (2026-10-29)
 
 **Decision:** replace the former message-substring classification and Tesla-driven
-account deactivation. A possibly consumed refresh grant must never be replayed
-automatically. The durable states are `ready`, `in_flight`, `uncertain`, and
-`reconnect_required`; lease expiry does not restore usability.
+account deactivation. Only Tesla rejecting the grant (`invalid_grant` /
+`login_required`) requires a reconnect. The durable states are `ready`,
+`in_flight` and `reconnect_required` (`uncertain` remains only for legacy rows).
+An unresolved exchange (429, 5xx, transport loss, lost response, expired lease)
+returns to `ready` with a two-minute retry floor and retries the **same** grant.
 
 Typed outcomes distinguish confirmed non-dispatch, parsed credentials, confirmed
 credential rejection, client configuration rejection, and unknown remote outcome.
@@ -294,21 +296,35 @@ Refresh host fallback is disabled after dispatch, including transport failures a
 5xx. Authorization-code fallback remains separate. HTTP status plus allowlisted
 OAuth error codes establish rejection; arbitrary messages and a bare 401 do not.
 
-**Tradeoff:** a crash between the durable claim and actual dispatch can force an
-unnecessary reconnect. There is no atomic transaction spanning PostgreSQL and
-Tesla. Conservatively requiring reconnect is preferable to repeatedly consuming
-an uncertain generation. Tesla documents a limited reuse grace period, but this
-implementation does not depend on that period to recover lost responses.
+**Why retrying is safe:** the lease serializes exchanges, so if Tesla consumed
+the grant and the response was lost, the replacement exists nowhere: refusing to
+retry cannot save it and guarantees a reconnect. Retrying succeeds whenever the
+grant was not consumed (every 429/5xx/connect failure, and Tesla's reuse grace
+window), and otherwise ends in a definitive `invalid_grant`. The first version of
+this decision made every unknown outcome a permanent reconnect, which turned
+each upstream blip into a manual re-login.
+
+**The one precondition:** no other system may hold the same grant. A second
+holder (the beta/dev copy of prod `User` rows did, until 2026-10-29) races prod
+for single-use rotations, and a retry there can trip Tesla's reuse detection
+against the grant prod is using. `scripts/sanitize-dev-copy.sql` clears copied
+Tesla tokens; never reintroduce a second holder.
 
 PR #251's detached exchange lifetime, bounded persistence/cleanup, and guarded
-save remain. Generation and attempt ID fence each write against newer login.
-OAuth advances generation and restores connection state while preserving account
-eligibility. An expired unresolved attempt is uncertain forever until replaced by
-login; it is never reclaimed for another exchange.
+save remain. Generation and attempt ID fence each write against newer login; the
+save is deliberately **not** fenced by the lease clock, because once Tesla
+rotated, losing the new grant is the one unrecoverable failure. An expired lease
+keeps its attempt ID through the backoff so a slow worker can still save. The
+claim matches the caller's refresh credential, so a stale caller adopts the
+stored rotation and never marks the account in flight. Before each Fleet request
+clients adopt newer stored credentials; an in-flight refresh elsewhere is not an
+error, and a request during the retry floor fails fast instead of sending a
+rejected access token.
 
 `is_active` represents account eligibility. Tesla health changes never suspend
-an account or revoke a valid app session. No historical inactive account is
-reactivated. Fleet verification records health only, preserves eligibility, and
+an account or revoke a valid app session. The migration reactivates historical
+inactive accounts: every past writer of `is_active = false` was Tesla-health
+driven, and OAuth login no longer resets it, so they could never reconnect. Fleet verification records health only, preserves eligibility, and
 uses the existing row-version/membership fence. Commands and background callers
 recheck persisted connection state before dispatch. App suspension, ownership,
 roles, and session-version revocation continue to deny access.
