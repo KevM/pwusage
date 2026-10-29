@@ -7,7 +7,7 @@ extension SolarForecastStore {
         guard activeAccountScopeID == accountScopeID else { return .notConfigured }
         guard !mutatingScopes.contains(scope) else { return .cancelled }
         if let existing = inFlight[scope] { return await existing.task.value }
-        guard let credential = state.credentials[scope], credential.resourceIDs.count > 0 else { return .notConfigured }
+        guard let credential = state.credentials[scope], !credential.resourceIDs.isEmpty else { return .notConfigured }
         if !manual,
            let batch = state.caches[scope], batch.credentialID == credential.credentialID,
            clock.now().timeIntervalSince(batch.fetchedAt).isFinite,

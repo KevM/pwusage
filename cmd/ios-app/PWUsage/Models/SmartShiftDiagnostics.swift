@@ -123,7 +123,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
     let planningContext: Estimator.PlanningContext?
     let result: Outcome
     /// Added when the copy is made, since reading the store is asynchronous.
-    var solarForecast: SolarForecast? = nil
+    var solarForecast: SolarForecast?
 
     init(siteId: String, app: App?, job: LoadProfile, now: Date, balanceSourceTime: Date?, billingCycleEnd: Date,
          currencyCode: String, timeZone: String, timing: LoadTiming, evaluation: SmartShiftEvaluation,

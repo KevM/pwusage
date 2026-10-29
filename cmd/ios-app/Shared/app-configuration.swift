@@ -108,7 +108,7 @@ struct AppConfiguration: Equatable {
               components.path.isEmpty || components.path == "/",
               components.query == nil,
               components.fragment == nil,
-              (scheme == "https" || (!isRelease && scheme == "http")) else {
+              scheme == "https" || (!isRelease && scheme == "http") else {
             throw ValidationError.invalidOrigin
         }
         // Required HTTPS is not the same as required *ours*: a Release

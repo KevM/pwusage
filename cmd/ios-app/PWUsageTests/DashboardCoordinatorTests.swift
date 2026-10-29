@@ -326,7 +326,7 @@ struct DashboardCoordinatorTests {
         let second = Task { await coordinator.refreshDue() }
         await Task.yield()
         #expect(api.liveSiteIDs.count == 1)
-        #expect(api.billSiteIDs.count == 0)
+        #expect(api.billSiteIDs.isEmpty)
 
         api.resumeRequests()
         await first.value
@@ -345,7 +345,7 @@ struct DashboardCoordinatorTests {
         await api.waitUntilLiveRequestStarts()
 
         #expect(api.liveSiteIDs.count == 1)
-        #expect(api.billSiteIDs.count == 0)
+        #expect(api.billSiteIDs.isEmpty)
 
         api.resumeRequests()
         await first.value
@@ -762,7 +762,7 @@ struct DashboardCoordinatorTests {
         await api.waitUntilLiveRequestStarts()
 
         #expect(api.liveSiteIDs.count == 1)
-        #expect(api.billSiteIDs.count == 0)
+        #expect(api.billSiteIDs.isEmpty)
 
         // refreshBill should execute immediately without waiting for live task to finish
         await coordinator.refreshBill(trigger: .userGesture)

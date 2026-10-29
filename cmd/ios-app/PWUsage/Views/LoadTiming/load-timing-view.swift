@@ -106,7 +106,7 @@ struct LoadTimingView: View {
                         nextStartPhraseByKey: [:]
                     )
                     // Read so a scheduled refresh re-runs this pass.
-                    let _ = staleRefreshes
+                    _ = staleRefreshes
                     let state = smartShiftState(now: Date(), timing: timingForDisplay, response: response)
                     jobCard(state)
                         .task(id: SmartShiftPresentation.nextRefresh(comparison: state.evaluation?.result.comparison, now: state.now)) {

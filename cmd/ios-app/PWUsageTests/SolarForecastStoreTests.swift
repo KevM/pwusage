@@ -357,7 +357,7 @@ struct SolarForecastStoreTests {
         _ = await h.store.refresh(accountScopeID: "account-a", siteID: "site-a")
         let before = await h.store.budget(for: "account-a", siteID: "site-a")
         try await h.store.disconnect(accountScopeID: "account-a", siteID: "site-a")
-        #expect(await h.keychain.count == 0)
+        #expect(await h.keychain.isEmpty)
         #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a") == nil)
         try await h.store.connect(apiKey: "key-a", accountScopeID: "account-a", siteID: "site-a", resourceIDs: ["east"])
         #expect(await h.store.budget(for: "account-a", siteID: "site-a") == before)
@@ -541,7 +541,7 @@ struct SolarForecastStoreTests {
         }
 
         #expect(await h.store.credential(accountScopeID: "account-a", siteID: "site-a") == nil)
-        #expect(await h.keychain.count == 0)
+        #expect(await h.keychain.isEmpty)
         let reopened = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
         #expect(await reopened.credential(accountScopeID: "account-a", siteID: "site-a") == nil)
     }
@@ -656,7 +656,7 @@ struct SolarForecastStoreTests {
         await h.transport.nextRateLimitDelay(600)
         await h.files.failNextSaveAfter(successfulSaves: 1)
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.storageFailure))
-        #expect(await h.keychain.count == 0)
+        #expect(await h.keychain.isEmpty)
 
         let restarted = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
         await restarted.activateAccountScope("account-a")
@@ -673,7 +673,7 @@ struct SolarForecastStoreTests {
         await h.transport.failResourceID("west")
         await h.files.failNextSaveAfter(successfulSaves: 1)
         #expect(await h.store.refresh(accountScopeID: "account-a", siteID: "site-a", manual: true) == .failed(.storageFailure))
-        #expect(await h.keychain.count == 0)
+        #expect(await h.keychain.isEmpty)
 
         let restarted = SolarForecastStore(clock: h.clock, keychain: h.keychain, files: h.files, transport: h.transport)
         await restarted.activateAccountScope("account-a")
@@ -912,7 +912,7 @@ struct SolarForecastStoreTests {
         await h.transport.resumeResponses()
         #expect(await refresh.value == .cancelled)
         #expect(await h.store.cachedBatch(accountScopeID: "account-a", siteID: "site-a") == nil)
-        #expect(await h.keychain.count == 0)
+        #expect(await h.keychain.isEmpty)
     }
 
     @Test("Sign-out reports persistence and keychain cleanup failures")
