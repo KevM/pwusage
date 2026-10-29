@@ -134,7 +134,7 @@ export interface BatteryHold {
   target_reserve: number;
   parked_soc: number;
   baseline_load_w: number;
-  restore_reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed' | 'reserve_changed' | null;
+  restore_reason: 'load_ended' | 'no_load_detected' | 'manual' | 'safety_timeout' | 'timer_elapsed' | 'reserve_changed' | null;
   created_at: Date;
   restored_at: Date | null;
   safety_expires_at: Date;

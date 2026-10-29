@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BatteryHold } from './db';
-const mocks = vi.hoisted(() => ({ claim: vi.fn(), release: vi.fn(), record: vi.fn(), raw: vi.fn(), refresh: vi.fn(), client: vi.fn(), restore: vi.fn(), reconcile: vi.fn(), live: vi.fn(), createRepo: vi.fn(), site: vi.fn() }));
+const mocks = vi.hoisted(() => ({ claim: vi.fn(), release: vi.fn(), record: vi.fn(), getActive: vi.fn(), raw: vi.fn(), refresh: vi.fn(), client: vi.fn(), restore: vi.fn(), reconcile: vi.fn(), live: vi.fn(), createRepo: vi.fn(), site: vi.fn() }));
 vi.mock('./battery-hold-activity-repo', () => ({ reconcileBatteryHoldActivities: mocks.reconcile }));
-vi.mock('./battery-hold-repo', () => ({ BatteryHoldRepo: class { claimHold = mocks.claim; releaseHold = mocks.release; recordMonitoring = mocks.record; } }));
+vi.mock('./battery-hold-repo', () => ({ BatteryHoldRepo: class { claimHold = mocks.claim; releaseHold = mocks.release; recordMonitoring = mocks.record; getActiveHold = mocks.getActive; } }));
 vi.mock('./energy-repo-factory', () => ({ createEnergyRepo: mocks.createRepo }));
 vi.mock('./site-repo', () => ({ SiteRepo: class { getSite = mocks.site; } }));
 vi.mock('./today-refresh', () => ({ refreshTodayData: mocks.refresh, refreshLiveStatus: mocks.live }));
 vi.mock('./battery-hold-service', () => ({ createSiteTeslaClient: mocks.client, restoreBattery: mocks.restore }));
 vi.mock('./nilm/tesla-adapter', () => ({ adaptTeslaData: (x: unknown) => x }));
-import { monitorBatteryHolds } from './battery-hold-monitor-service';
+import { monitorBatteryHolds as monitor } from './battery-hold-monitor-service';
+function monitorBatteryHolds(holds: BatteryHold[]) {
+  mocks.getActive.mockImplementation(async (siteId: string) => holds.find(h => h.site_id === siteId) ?? null);
+  return monitor(holds);
+}
 const NOW = new Date('2026-10-14T12:00:00Z');
 function hold(id: number, overrides: Partial<BatteryHold> = {}): BatteryHold {
   return { id, site_id: String(id), status: 'active', mode: 'auto', original_reserve: 20, target_reserve: 100,
@@ -27,6 +31,12 @@ describe('bounded hold monitoring', () => {
     mocks.live.mockResolvedValue({ status: 'error' });
   });
   afterEach(() => vi.useRealTimers());
+  it('restores after the second fresh check without a detected job', async () => {
+    mocks.raw.mockResolvedValue([{ timestamp: new Date(NOW.getTime() - 5 * 60000).toISOString(), powerWatts: 500 }]);
+    const previous = { phase: 'watching' as const, checked_at: new Date(NOW.getTime() - 15 * 60000).toISOString(), next_check_at: NOW.toISOString(), sampled_at: new Date(NOW.getTime() - 20 * 60000).toISOString(), estimated_load_w: null, no_load_checks: 1, no_load_last_checked_at: new Date(NOW.getTime() - 15 * 60000).toISOString(), no_load_last_sample_at: new Date(NOW.getTime() - 20 * 60000).toISOString() };
+    await monitorBatteryHolds([hold(1, { monitoring: previous })]);
+    expect(mocks.restore).toHaveBeenCalledWith(expect.objectContaining({ reason: 'no_load_detected' }));
+  });
   it('attempts ten slow sites within 120 seconds with at most three workers and a failed site', async () => {
     let active = 0; let peak = 0;
     mocks.refresh.mockImplementation(async (site: string) => {

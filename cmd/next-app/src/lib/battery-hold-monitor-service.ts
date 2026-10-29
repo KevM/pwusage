@@ -45,6 +45,9 @@ async function processHold(hold: BatteryHold): Promise<MonitorResult> {
   try {
     return await withIoDeadline(MONITOR_SITE_BUDGET_MS, async () => {
       if (!await repo.claimHold(hold.id, owner)) return { siteId: hold.site_id, status: 'skipped' };
+      const current = await repo.getActiveHold(hold.site_id);
+      if (!current || current.id !== hold.id) return { siteId: hold.site_id, status: 'skipped' };
+      hold = current;
       let now = new Date();
       let samples: PowerData[] = [];
       // Both timer and Auto safety deadlines precede any billable history work.
@@ -71,6 +74,11 @@ async function processHold(hold: BatteryHold): Promise<MonitorResult> {
         }
       }
       const monitoring = summarizeHoldMonitoring(hold, samples, now, decision, live);
+      if (!decision && !hold.restore_attempted_at && hold.mode === 'auto'
+        && !monitoring.job_detected && (monitoring.no_load_checks ?? 0) >= 2) {
+        decision = { restore: true, reason: 'no_load_detected' };
+        monitoring.phase = 'restoring';
+      }
       if (!decision && !hold.restore_attempted_at) { await record(monitoring); return { siteId: hold.site_id, status: 'holding' }; }
       const client = await createSiteTeslaClient(hold.site_id);
       if (!client) { await record({ ...monitoring, phase: 'check_failed' }); return { siteId: hold.site_id, status: 'failed', restore: 'no-tokens' }; }

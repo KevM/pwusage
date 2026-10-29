@@ -109,6 +109,8 @@ struct BatteryHoldActivityPresentationTests {
         #expect(status(restored)?.text == "Stopped in pwusage")
         restored.restoreReason = .loadEnded
         #expect(status(restored)?.text == "Home use dropped")
+        restored.restoreReason = .noLoadDetected
+        #expect(status(restored)?.text == "No job detected")
         restored.restoreReason = .safetyTimeout
         #expect(status(restored)?.text == "8-hour safety limit")
         restored.restoreReason = .timerElapsed

@@ -60,7 +60,7 @@ export class BatteryHoldRepo {
     return result.rows.length === 1;
   }
 
-  async recordRestoreAttempt(id: number, owner: string, reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed'): Promise<boolean> {
+  async recordRestoreAttempt(id: number, owner: string, reason: 'load_ended' | 'no_load_detected' | 'manual' | 'safety_timeout' | 'timer_elapsed'): Promise<boolean> {
     const result = await pool.query(`UPDATE "BatteryHold" SET restore_attempted_at = clock_timestamp(), restore_reason = $3
       WHERE id = $1 AND status = 'active' AND processing_owner = $2::uuid
         AND processing_expires_at > clock_timestamp()
@@ -125,7 +125,7 @@ export class BatteryHoldRepo {
     [id, JSON.stringify(monitoring), monitoring.checked_at]);
   }
 
-  async markRestored(id: number, reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed', owner?: string): Promise<boolean> {
+  async markRestored(id: number, reason: 'load_ended' | 'no_load_detected' | 'manual' | 'safety_timeout' | 'timer_elapsed', owner?: string): Promise<boolean> {
     const result = await pool.query(`
       UPDATE "BatteryHold"
       SET status = 'restored', restore_reason = $2, restored_at = now()

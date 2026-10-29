@@ -53,6 +53,7 @@ struct BatteryHoldActivityAttributes: ActivityAttributes {
         enum RestoreReason: String, Codable, Hashable {
             case manual, cancelled
             case loadEnded = "load_ended"
+            case noLoadDetected = "no_load_detected"
             case safetyTimeout = "safety_timeout"
             case timerElapsed = "timer_elapsed"
             case reserveChanged = "reserve_changed"

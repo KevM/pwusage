@@ -1,9 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import type { BatteryHold } from './db';
-const state = vi.hoisted(() => ({ active: 0, peak: 0, attempted: new Set<number>(), reconciles: 0 }));
+const state = vi.hoisted(() => ({ active: 0, peak: 0, attempted: new Set<number>(), reconciles: 0, holds: [] as BatteryHold[] }));
 vi.mock('./battery-hold-repo', () => ({ BatteryHoldRepo: class {
   async claimHold(id: number) { state.active++; state.peak = Math.max(state.peak, state.active); state.attempted.add(id); return true; }
+  async getActiveHold(siteId: string) { return state.holds.find(hold => hold.site_id === siteId) ?? null; }
   async releaseHold() { state.active--; }
   async recordMonitoring() {}
 } }));
@@ -37,6 +38,7 @@ it('times ten hung sites, including timer and expired Auto restoration attempts'
     status: 'active', original_reserve: 20, target_reserve: 100, baseline_load_w: 500,
     created_at: new Date(now.getTime() - 3600000), safety_expires_at: i === 9 ? new Date(now.getTime() + 3600000) : now,
   } as BatteryHold));
+  state.holds = holds;
   // Future timer holds need no I/O and release immediately; Auto telemetry and
   // elapsed deadline restores deliberately never settle, modeling worst-case I/O.
   const pending = monitorBatteryHolds(holds);

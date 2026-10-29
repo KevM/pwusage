@@ -62,6 +62,7 @@ enum BatteryHoldActivityPresentation {
         case .restored:
             switch state.restoreReason {
             case .loadEnded: return info("Home use dropped")
+            case .noLoadDetected: return info("No job detected")
             case .manual: return info("Stopped in pwusage")
             case .safetyTimeout: return info("8-hour safety limit")
             case .timerElapsed: return info("Stop time reached")
