@@ -1,5 +1,5 @@
 # SwiftLint for the iOS app. Run from the repository root:
-#   swiftlint lint --strict --baseline .swiftlint-baseline.json
+#   swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json
 # Budgets are the campaign targets. The checked-in baseline records the debt
 # that predates them; regenerate it only when a PR lowers the count.
 included:
