@@ -54,7 +54,7 @@ extension DashboardCoordinator {
                 if let hold = result.hold { reportBatteryHold(.started(hold), siteID: siteID) }
             } else if case .restore = command {
                 batteryHold.response = .init(hold: nil, notice: batteryHold.response?.notice)
-                if result.status == .ok, let previousHoldID { reportBatteryHold(.stopped(holdID: previousHoldID), siteID: siteID) }
+                if result.status == .operational, let previousHoldID { reportBatteryHold(.stopped(holdID: previousHoldID), siteID: siteID) }
             }
             let response = try await holdAPI.fetchBatteryHold(siteID: siteID).validating(siteID: siteID)
             guard generation == siteGeneration, canRequestAccountData else { return }
