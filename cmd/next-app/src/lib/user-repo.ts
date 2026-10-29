@@ -1,3 +1,4 @@
+import { type TeslaConnectionState, requiresTeslaReconnect } from './tesla-refresh-outcome';
 import { cache } from 'react';
 import { createHash, randomUUID } from 'node:crypto';
 import { flushLogEvents, logEvent } from './observability';
@@ -17,7 +18,7 @@ export interface UserAuthState {
     roles: string[];
 }
 
-interface VerificationState {
+interface VerificationState extends TeslaConnectionState {
     auth_version: string;
     auth_status: string | null;
     is_active: boolean | null;
@@ -31,15 +32,15 @@ export class UserRepo {
         return res.rows[0];
     }
 
-    async getTokens(userId: string): Promise<{ access_token: string, refresh_token: string, fleet_api_base_url: string | null } | null> {
-        const res = await pool.query('SELECT access_token, refresh_token, fleet_api_base_url FROM "User" WHERE id = $1', [userId]);
+    async getTokens(userId: string): Promise<{ access_token: string, refresh_token: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
+        const res = await pool.query('SELECT access_token, refresh_token, fleet_api_base_url, is_active, auth_status, tesla_refresh_state, refresh_lock_expires FROM "User" WHERE id = $1', [userId]);
         if (res.rows.length === 0) return null;
         return res.rows[0];
     }
 
-    async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string, fleet_api_base_url: string | null } | null> {
+    async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
         const res = await pool.query(`
-            SELECT u.access_token, u.refresh_token, u.id as user_id, u.fleet_api_base_url
+            SELECT u.access_token, u.refresh_token, u.id as user_id, u.fleet_api_base_url, u.is_active, u.auth_status, u.tesla_refresh_state, u.refresh_lock_expires
             FROM "User" u
             JOIN "Site" s ON s.user_id = u.id
             WHERE s.id = $1
@@ -244,13 +245,18 @@ export class UserRepo {
             // network check must supersede every eventual verification write.
             // No transaction/row lock is held across a Tesla request.
             const initial = await pool.query<VerificationState>(
-                'SELECT xmin::text AS auth_version, auth_status, is_active FROM "User" WHERE id = $1', [user.id],
+                'SELECT xmin::text AS auth_version, auth_status, is_active, tesla_refresh_state, refresh_lock_expires FROM "User" WHERE id = $1', [user.id],
             );
             const authVersion = initial.rows[0]?.auth_version;
             if (!initial.rows.length) return finish('missing', 'account-missing');
             if (!authVersion) throw new Error('Account verification snapshot did not include a row version');
 
-            const commitStatus = async (outcome: string, active: boolean, reason: string, error?: unknown, errorMessage?: string) => {
+            if (initial.rows[0].is_active === false) return finish('inactive', 'account-ineligible');
+            if (requiresTeslaReconnect(initial.rows[0]) || initial.rows[0].tesla_refresh_state === 'in_flight') {
+                return finish('reconnect_required', 'exchange-state-blocked');
+            }
+
+            const commitStatus = async (outcome: string, reason: string, error?: unknown, errorMessage?: string) => {
                 phase = 'status-write';
                 const updated = await pool.query(`
                     UPDATE "User" SET auth_status = $1, is_active = $2, last_checked_at = NOW()
@@ -261,7 +267,7 @@ export class UserRepo {
                       AND ($1 <> 'no_sites' OR NOT EXISTS (
                           SELECT 1 FROM "Site" WHERE user_id = $3
                       ))
-                `, [outcome, active, user.id, authVersion, siteId ?? null]);
+                `, [outcome, initial.rows[0].is_active, user.id, authVersion, siteId ?? null]);
                 if (updated.rowCount) return finish(outcome, reason, error, errorMessage);
 
                 const current = await pool.query<Pick<VerificationState, 'auth_status' | 'is_active'>>(
@@ -287,7 +293,7 @@ export class UserRepo {
             const sitesRes = await pool.query('SELECT id FROM "Site" WHERE user_id = $1 LIMIT 1', [user.id]);
             if (sitesRes.rows.length === 0) {
                 // No sites - can't verify credentials
-                return await commitStatus('no_sites', false, 'no-linked-site');
+                return await commitStatus('no_sites', 'no-linked-site');
             }
             siteId = sitesRes.rows[0].id as string;
             logEvent('info', 'tesla.user-verification.checking', { verificationId, siteId, ...snapshot });
@@ -306,7 +312,7 @@ export class UserRepo {
             phase = 'client-construction';
             const client = await createClient(siteId);
             if (!client) {
-                return await commitStatus('no_token', false, 'no-credentials');
+                return await commitStatus('no_token', 'no-credentials');
             }
 
             try {
@@ -317,7 +323,7 @@ export class UserRepo {
                 const errorMsg = err instanceof Error ? err.message : String(err);
 
                 if (isTeslaAuthError(err)) {
-                    return await commitStatus('revoked', false, 'terminal-auth-failure', err, errorMsg);
+                    return await commitStatus('revoked', 'terminal-auth-failure', err, errorMsg);
                 }
 
                 // Transient failure (Tesla 5xx, network, exhausted 429 retries):
@@ -325,9 +331,9 @@ export class UserRepo {
                 // authenticated route and JWT refresh, locking the user out over
                 // a blip. auth_status='error' keeps the user in the cron's
                 // "troubled" bucket so it re-verifies next run.
-                return await commitStatus('error', true, 'transient-failure', err, errorMsg);
+                return await commitStatus('error', 'transient-failure', err, errorMsg);
             }
-            return await commitStatus('active', true, 'live-status-succeeded');
+            return await commitStatus('active', 'live-status-succeeded');
         } catch (error) {
             // Includes site lookup, client construction, and failed status writes.
             // A start without a completion also exposes platform termination.

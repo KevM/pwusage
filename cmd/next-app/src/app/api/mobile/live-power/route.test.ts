@@ -57,6 +57,10 @@ describe('foreground live power', () => {
         expect(response.status).toBe(503);
         expect(await response.json()).toEqual({ error: 'Live readings unavailable' });
         refresh.mockResolvedValue({ status: 'no-tokens' });
-        expect((await GET(request())).status).toBe(401);
+        expect((await GET(request())).status).toBe(409);
+        refresh.mockResolvedValue({ status: 'connection-required' });
+        const reconnect = await GET(request());
+        expect(reconnect.status).toBe(409);
+        expect(await reconnect.json()).toMatchObject({ code: 'TESLA_CONNECTION_REQUIRED' });
     });
 });

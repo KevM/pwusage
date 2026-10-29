@@ -59,6 +59,15 @@ describe('TeslaClientFactory', () => {
     });
 
     describe('createTeslaClientForSite', () => {
+        it('checks current connection state again before using a constructed client', async () => {
+            mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true, tesla_refresh_state: 'ready' });
+            const client = await createTeslaClientForSite('site-1');
+            mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true, tesla_refresh_state: 'uncertain' });
+            const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ response: [] }));
+            await expect(client?.getProducts()).rejects.toMatchObject({ code: 'TESLA_CONNECTION_REQUIRED' });
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
+
         it('returns null if no tokens or no refresh_token exists for site', async () => {
             mockGetTokensForSite.mockResolvedValue(null);
             const client1 = await createTeslaClientForSite('site-1');

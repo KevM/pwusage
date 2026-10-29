@@ -1,3 +1,4 @@
+import { assertTeslaConnection } from './tesla-refresh-outcome';
 import { Site, SiteWithTariffs, TrmnlInstallation } from './db';
 import { TeslaClient, TeslaClientConfig, isTeslaAuthError } from './tesla-client';
 import { SiteRepo } from './site-repo';
@@ -148,6 +149,7 @@ export class SiteService {
         // (tests pin that the recovery attempt happens).
         const config: TeslaClientConfig = {
             accessToken: accessToken ?? '',
+            beforeRequest: async () => assertTeslaConnection(await new UserRepo().getTokensForSite(siteId)),
             refreshToken: refreshToken ?? undefined,
             tokenRefreshHandler: handlers.refreshHandler,
             onTokenError: handlers.errorHandler,

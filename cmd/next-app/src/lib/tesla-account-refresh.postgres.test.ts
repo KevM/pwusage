@@ -133,6 +133,22 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         expect(Number(row.tesla_refresh_retry_after)).toBeGreaterThan(Date.now());
     });
 
+    it('verification never clears uncertain exchange state or calls Tesla for it', async () => {
+        await pool.query(`UPDATE "User" SET tesla_refresh_state = 'uncertain'`);
+        const createClient = vi.fn();
+        await new UserRepo().verifyUserStatus({ id: 'owner' }, { createClient });
+        expect(createClient).not.toHaveBeenCalled();
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({ tesla_refresh_state: 'uncertain', is_active: true });
+    });
+
+    it('verification never reactivates a suspended account', async () => {
+        await pool.query(`UPDATE "User" SET is_active = false`);
+        await new UserRepo().verifyUserStatus({ id: 'owner' }, {
+            createClient: async () => ({ getLiveStatus: async () => liveStatus }),
+        });
+        expect((await pool.query('SELECT * FROM "User"')).rows[0].is_active).toBe(false);
+    });
+
     it('a browser constructed before a site refresh reuses its persisted replacement', async () => {
         const browser = await createTeslaClientForUser('owner');
         expect(await repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).toEqual(rotated);
@@ -255,7 +271,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         const row = (await pool.query('SELECT * FROM "User"')).rows[0];
         expect(result.status).toBe(expected);
         expect(row.auth_status).toBe(expected);
-        expect(row.is_active).toBe(outcome === 'success' || outcome === 'transient');
+        expect(row.is_active).toBe(true);
         expect(row.last_checked_at).toBeInstanceOf(Date);
     });
 });

@@ -1,3 +1,4 @@
+import { assertTeslaConnection } from './tesla-refresh-outcome';
 import { TeslaClient } from './tesla-client';
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
@@ -30,6 +31,11 @@ export async function createTeslaClientForSite(
     const handlers = tokenRepo.getLockedRefreshHandler(siteId);
     return new TeslaClient({
         accessToken: tokens.access_token || 'expired',
+        beforeRequest: async () => {
+            const current = await new UserRepo().getTokensForSite(siteId);
+            assertTeslaConnection(current);
+            if (tokens.user_id !== current?.user_id) throw new Error('Site owner changed');
+        },
         refreshToken: tokens.refresh_token,
         tokenRefreshHandler: handlers.refreshHandler,
         onTokenError: handlers.errorHandler,
@@ -54,6 +60,7 @@ export async function createTeslaClientForUser(
     const handlers = new TeslaTokenRepo(new SiteRepo()).getLockedUserRefreshHandler(userId);
     return new TeslaClient({
         accessToken: userTokens.access_token,
+        beforeRequest: async () => assertTeslaConnection(await new UserRepo().getTokens(userId)),
         refreshToken: userTokens.refresh_token || undefined,
         tokenRefreshHandler: handlers.refreshHandler,
         onTokenError: handlers.errorHandler,
@@ -76,6 +83,7 @@ export function createTeslaClientForAccessToken(
         ?? (options?.userId ? recordFleetBaseUrl(options.userId) : undefined);
     return new TeslaClient({
         accessToken,
+        beforeRequest: options?.userId ? async () => assertTeslaConnection(await new UserRepo().getTokens(options.userId!)) : undefined,
         refreshToken: refreshToken || undefined,
         onTokenUpdate: options?.onTokenUpdate,
         baseUrl: options?.baseUrl,

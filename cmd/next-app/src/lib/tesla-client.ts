@@ -115,6 +115,7 @@ export interface SeasonPeriod {
 
 export interface TeslaClientConfig {
     accessToken: string;
+    beforeRequest?: () => Promise<void>;
     refreshToken?: string;
     onTokenUpdate?: (accessToken: string, refreshToken: string) => void;
     onTokenError?: (error: Error) => void;
@@ -264,6 +265,7 @@ export class TeslaClient {
         // so a 421 is judged against the host that answered it, not the current one.
         let requestBaseUrl = this.baseUrl;
         const makeRequest = async (token: string) => {
+            await this.config.beforeRequest?.();
             requestBaseUrl = this.baseUrl;
             const url = `${requestBaseUrl}${path}`;
             const headers = {

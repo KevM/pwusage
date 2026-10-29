@@ -1,3 +1,4 @@
+import { isTeslaConnectionRequired } from './tesla-refresh-outcome';
 import { withIoDeadline, ioSignal, checkIoDeadline } from './io-deadline';
 import { Importer } from './importer';
 import { type EnergySiteLiveStatus } from './tesla-client';
@@ -64,7 +65,7 @@ export interface RefreshTodayOptions {
 
 export interface RefreshTodayResult {
     /** `not-due`: Tesla cannot have a sample newer than the latest stored one yet. */
-    status: 'persisted' | 'no-new-rows' | 'not-due' | 'throttled' | 'in-flight' | 'no-tokens' | 'error';
+    status: 'persisted' | 'no-new-rows' | 'not-due' | 'throttled' | 'in-flight' | 'connection-required' | 'no-tokens' | 'error';
     rowsPersisted?: number;
     errorMessage?: string;
 }
@@ -80,7 +81,7 @@ export interface RefreshLiveStatusOptions {
 }
 
 export interface RefreshLiveStatusResult {
-    status: 'refreshed' | 'cached' | 'in-flight' | 'throttled' | 'no-tokens' | 'site-not-found' | 'error';
+    status: 'refreshed' | 'cached' | 'in-flight' | 'throttled' | 'connection-required' | 'no-tokens' | 'site-not-found' | 'error';
     liveStatus?: EnergySiteLiveStatus;
     fetchedAt?: number;
     errorMessage?: string;
@@ -118,7 +119,7 @@ export async function refreshTodayData(
 ): Promise<RefreshTodayResult> {
     return withIoDeadline(options.timeoutMs ?? TESLA_FETCH_TIMEOUT_MS,
         () => refreshTodayDataWithinDeadline(siteId, options), options.signal ?? ioSignal())
-        .catch(error => ({ status: 'error' as const, errorMessage: error instanceof Error ? error.message : String(error) }));
+        .catch(error => ({ status: isTeslaConnectionRequired(error) ? 'connection-required' as const : 'error' as const, errorMessage: error instanceof Error ? error.message : String(error) }));
 }
 
 async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTodayOptions): Promise<RefreshTodayResult> {
@@ -170,7 +171,7 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
                 return { status: 'persisted', rowsPersisted };
             } catch (error) {
                 return {
-                    status: 'error',
+                    status: isTeslaConnectionRequired(error) ? 'connection-required' : 'error',
                     errorMessage: error instanceof Error ? error.message : String(error)
                 };
             } finally {
@@ -282,7 +283,7 @@ export async function refreshLiveStatus(
         }
     } catch (error) {
         return {
-            status: 'error',
+            status: isTeslaConnectionRequired(error) ? 'connection-required' : 'error',
             errorMessage: error instanceof Error ? error.message : String(error)
         };
     }

@@ -1,3 +1,4 @@
+import { isTeslaConnectionRequired } from './tesla-refresh-outcome';
 import { randomUUID } from 'node:crypto';
 import { withIoDeadline, checkIoDeadline, abortable } from './io-deadline';
 import { TeslaClient, TeslaAuthError, isTeslaAuthError } from './tesla-client';
@@ -52,7 +53,7 @@ export async function parkBattery(
       client.getLiveStatus(siteId), client.getEnergySiteInfo(siteId), repo.getLatestRestoredHold(siteId),
     ]);
   } catch (e) {
-    return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+    return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
   }
 
   const originalReserve = info?.backup_reserve_percent;
@@ -96,7 +97,7 @@ export async function parkBattery(
       console.warn(`[BatteryHold] unexpected clamp for ${siteId}: sent ${target}, got "${resp.Message}"`);
     }
   } catch (e) {
-    return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
+    return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
   }
   let hold: BatteryHold;
   try {
@@ -180,7 +181,7 @@ async function restoreClaimedBattery({ client, repo, siteId, reason, expectedHol
   if (hold.restore_attempted_at || (reason !== 'manual' && !isRecent)) {
     let current: number;
     try { current = (await client.getEnergySiteInfo(siteId)).backup_reserve_percent; }
-    catch (e) { return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) }; }
+    catch (e) { return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) }; }
     if (!Number.isInteger(current) || current < 0 || current > 100) return { status: 'error', message: 'Tesla did not return a valid backup reserve.' };
     if (current !== hold.target_reserve && current !== hold.original_reserve) {
       checkIoDeadline();
@@ -209,7 +210,7 @@ async function restoreClaimedBattery({ client, repo, siteId, reason, expectedHol
       try { await repo.clearRestoreAttempt(hold.id, leaseOwner); }
       catch { console.warn(`[BatteryHold] Rejected attempt cleanup deferred for hold ${hold.id}`); }
     }
-    return isTeslaAuthError(e) ? { status: 'needs_reauth' } : { status: 'error', message: 'Restoration outcome is uncertain; the next check will reconcile it.' };
+    return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: 'Restoration outcome is uncertain; the next check will reconcile it.' };
   }
   checkIoDeadline();
   if (!await repo.markRestored(hold.id, reason, leaseOwner)) return { status: 'error', message: 'Restoration acknowledgement could not be saved; the next check will reconcile it.' };

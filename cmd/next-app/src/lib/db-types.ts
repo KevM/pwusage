@@ -23,6 +23,8 @@ export interface User {
 }
 
 export interface Site {
+  tesla_refresh_state?: User['tesla_refresh_state'];
+  refresh_lock_expires?: number;
   id: string;
   user_id?: string | null; // FK to User
   name: string;

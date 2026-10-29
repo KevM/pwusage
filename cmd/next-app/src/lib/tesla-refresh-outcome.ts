@@ -24,3 +24,27 @@ export class TeslaConnectionRequiredError extends Error {
         this.name = 'TeslaConnectionRequiredError';
     }
 }
+
+export interface TeslaConnectionState {
+    is_active?: boolean | null;
+    auth_status?: string | null;
+    tesla_refresh_state?: string;
+    refresh_lock_expires?: number;
+}
+
+export function requiresTeslaReconnect(state: TeslaConnectionState): boolean {
+    return state.auth_status === 'revoked' || state.tesla_refresh_state === 'uncertain'
+        || state.tesla_refresh_state === 'reconnect_required'
+        || (state.tesla_refresh_state === 'in_flight' && Number(state.refresh_lock_expires) <= Date.now());
+}
+
+export function assertTeslaConnection(state: TeslaConnectionState | null): void {
+    if (!state || (state.is_active === false || state.is_active === null) || requiresTeslaReconnect(state)) throw new TeslaConnectionRequiredError();
+    if (state.tesla_refresh_state === 'in_flight') throw new Error('Tesla connection is updating. Try again shortly.');
+}
+
+export function isTeslaConnectionRequired(error: unknown): boolean {
+    return error instanceof TeslaConnectionRequiredError
+        || (error instanceof TeslaRefreshError
+            && (error.outcome === 'credential_rejected' || error.outcome === 'outcome_unknown'));
+}
