@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => {
         getTariffsForSite: vi.fn(),
         getSchedulesForSite: vi.fn(),
         after: vi.fn(),
+        refreshLive: vi.fn(),
+        refreshToday: vi.fn(),
     };
 });
 
@@ -23,6 +25,8 @@ vi.mock('next/server', async (importOriginal) => {
         after: mocks.after,
     };
 });
+
+vi.mock('@/lib/today-refresh', () => ({ refreshLiveStatus: mocks.refreshLive, refreshTodayData: mocks.refreshToday }));
 
 vi.mock('@/lib/auth-checks', () => ({
     verifySiteAccess: mocks.verifySiteAccess
@@ -92,6 +96,25 @@ describe('/api/trmnl/markup', () => {
         mocks.getRawEnergyData.mockResolvedValue([]);
         mocks.getTariffsForSite.mockResolvedValue([]);
         mocks.getSchedulesForSite.mockResolvedValue([]);
+    });
+
+    it('returns DB markup on a cache miss without awaiting Tesla', async () => {
+        mocks.getSite.mockResolvedValue({ id: 'site-1', name: 'Home', timezone: 'UTC', tariffs: [], refresh_token: 'r' });
+        mocks.refreshLive.mockImplementation(() => new Promise(() => {}));
+        const response = await GET(new Request('http://localhost/api/trmnl/markup?site_id=site-1'));
+        expect(response.status).toBe(200);
+        expect(mocks.refreshLive).not.toHaveBeenCalled();
+        expect(mocks.after).toHaveBeenCalled();
+    }, 1000);
+
+    it.each(['uncertain', 'reconnect_required'])('renders stored data and a reconnect message for %s', async state => {
+        mocks.getSite.mockResolvedValue({ id: 'site-1', name: 'Home', timezone: 'UTC', tariffs: [], refresh_token: 'r', tesla_refresh_state: state });
+        const response = await GET(new Request('http://localhost/api/trmnl/markup?site_id=site-1'));
+        const body = await response.json();
+        expect(response.status).toBe(200);
+        for (const markup of Object.values(body)) expect(markup).toContain('Reconnect Tesla to update your data.');
+        expect(mocks.refreshLive).not.toHaveBeenCalled();
+        expect(mocks.after).not.toHaveBeenCalled();
     });
 
     it('renders live and chart sections while clearly withholding an incompletely priced bill',async()=>{
