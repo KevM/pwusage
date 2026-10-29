@@ -375,6 +375,28 @@ describe('refreshLiveStatus', () => {
         expect(teslaClientMock.getLiveStatus).not.toHaveBeenCalled();
     });
 
+    it('keeps the stored reading on a transient failure so routes degrade instead of failing', async () => {
+        const { TeslaRefreshBackoffError } = await import('./tesla-refresh-outcome');
+        const staleAt = Date.now() - 17 * 60 * 1000; // past the 16-min TTL
+        siteRepoMock.getSite.mockResolvedValue({ id: 'site-1', live_status_cache: { percentage_charged: 61 }, last_live_refresh_at: staleAt });
+        teslaClientMock.getLiveStatus.mockRejectedValue(new TeslaRefreshBackoffError(Date.now() + 60_000));
+        const { refreshLiveStatus } = await importRefreshLiveStatus();
+
+        await expect(refreshLiveStatus('site-1')).resolves.toMatchObject({
+            status: 'error', liveStatus: { percentage_charged: 61 }, fetchedAt: staleAt,
+        });
+    });
+
+    it.each([
+        ['an inactive account', { is_active: false }],
+        ['no refresh grant', { refresh_token: null }],
+    ])('does not present a fresh cache as healthy for %s', async (_label, connection) => {
+        siteRepoMock.getSite.mockResolvedValue({ id: 'site-1', live_status_cache: { percentage_charged: 61 }, last_live_refresh_at: Date.now() });
+        userRepoMock.getTokensForSite.mockResolvedValue({ ...tokens, ...connection });
+        const { refreshLiveStatus } = await importRefreshLiveStatus();
+        await expect(refreshLiveStatus('site-1')).resolves.toMatchObject({ status: 'connection-required' });
+    });
+
     it.each(['reconnect_required', 'uncertain'])('does not present a fresh cache as healthy when the account is %s', async state => {
         siteRepoMock.getSite.mockResolvedValue({
             id: 'site-1',

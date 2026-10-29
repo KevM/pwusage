@@ -29,6 +29,15 @@ BEGIN
         EXECUTE 'UPDATE public."User" SET access_token = NULL, refresh_token = NULL, auth_status = ''revoked''
             WHERE access_token IS NOT NULL OR refresh_token IS NOT NULL';
     END IF;
+    -- Match the refresh state once prod has it: the migration that derives it
+    -- from auth_status will not re-run on later copies, and a copy can catch
+    -- prod mid-refresh.
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'User' AND column_name = 'tesla_refresh_state') THEN
+        EXECUTE 'UPDATE public."User" SET tesla_refresh_state = ''reconnect_required'', is_refreshing = 0,
+                refresh_lock_expires = 0, tesla_refresh_attempt_id = NULL
+            WHERE tesla_refresh_state IS DISTINCT FROM ''reconnect_required'' OR is_refreshing <> 0';
+    END IF;
     -- Live Activity push tokens: beta must never push to copied prod registrations.
     IF to_regclass('public."BatteryHoldActivity"') IS NOT NULL THEN
         EXECUTE 'DELETE FROM public."BatteryHoldActivity"';

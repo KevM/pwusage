@@ -566,3 +566,51 @@ describe('TeslaClient regional base URL', () => {
         expect(onBaseUrlChange).not.toHaveBeenCalled();
     });
 });
+
+describe('TeslaClient concurrent 401s on one client', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('refreshes once when parallel requests both hit an expired token', async () => {
+        const live = { percentage_charged: 50 };
+        let releaseFirst401!: () => void;
+        const firstGate = new Promise<void>(resolve => { releaseFirst401 = resolve; });
+        const seen: string[] = [];
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+            const auth = (init?.headers as Record<string, string>).Authorization;
+            seen.push(auth);
+            if (auth === 'Bearer access-A') {
+                // The second request's 401 lands after the first already refreshed.
+                if (seen.length === 2) await firstGate;
+                return new Response('', { status: 401 });
+            }
+            return Response.json({ response: live });
+        });
+        const tokenRefreshHandler = vi.fn(async () => {
+            const tokens = { access_token: 'access-B', refresh_token: 'refresh-B' };
+            setTimeout(releaseFirst401, 0);
+            return tokens;
+        });
+        const client = new TeslaClient({ accessToken: 'access-A', refreshToken: 'refresh-A', tokenRefreshHandler });
+
+        await Promise.all([client.getLiveStatus('site'), client.getLiveStatus('site')]);
+
+        expect(tokenRefreshHandler).toHaveBeenCalledTimes(1);
+        expect(tokenRefreshHandler).toHaveBeenCalledWith('refresh-A');
+        expect(seen.filter(auth => auth === 'Bearer access-B')).toHaveLength(2);
+    });
+
+    it('refreshes with the grant the request was sent with, not one rotated meanwhile', async () => {
+        const tokenRefreshHandler = vi.fn(async () => ({ access_token: 'access-B', refresh_token: 'refresh-B' }));
+        let calls = 0;
+        const client = new TeslaClient({
+            accessToken: 'access-A', refreshToken: 'refresh-A', tokenRefreshHandler,
+            // Another worker's rotation is adopted before the first request.
+            beforeRequest: async () => (calls++ === 0 ? { access_token: 'access-A2', refresh_token: 'refresh-A2' } : undefined),
+        });
+        vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(new Response('', { status: 401 }))
+            .mockResolvedValueOnce(Response.json({ response: { percentage_charged: 1 } }));
+        await client.getLiveStatus('site');
+        expect(tokenRefreshHandler).toHaveBeenCalledWith('refresh-A2');
+    });
+});

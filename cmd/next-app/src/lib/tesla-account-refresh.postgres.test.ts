@@ -78,8 +78,23 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         expect(exchange.mock.calls[1][0]).toBe('refresh-A');
     });
 
+    it('recovers a long-dead lease in a single pass', async () => {
+        // A 15-minute TRMNL poll or 2-hour heal finds leases long past their grace.
+        await pool.query(`UPDATE "User" SET is_refreshing = 1, refresh_lock_expires = $1,
+            tesla_refresh_state = 'in_flight', tesla_refresh_attempt_id = 'dead-worker'`, [Date.now() - 10 * 60_000]);
+        expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).toEqual(rotated);
+        expect(exchange).toHaveBeenCalledTimes(1);
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({ ...rotated, tesla_refresh_state: 'ready', is_refreshing: 0 });
+    });
+
+    it('verification releases a dead lease even when the access token still works', async () => {
+        await pool.query(`UPDATE "User" SET is_refreshing = 1, refresh_lock_expires = $1, tesla_refresh_state = 'in_flight'`, [Date.now() - 10 * 60_000]);
+        await new UserRepo().verifyUserStatus({ id: 'owner' }, { createClient: async () => ({ getLiveStatus: async () => liveStatus }) });
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({ tesla_refresh_state: 'ready', is_refreshing: 0 });
+    });
+
     it('recovers a crashed worker whose lease expired into a backoff, keeping its attempt id', async () => {
-        await pool.query(`UPDATE "User" SET is_refreshing = 1, refresh_lock_expires = 1,
+        await pool.query(`UPDATE "User" SET is_refreshing = 1, refresh_lock_expires = ${Date.now() - 1000},
             tesla_refresh_state = 'in_flight', tesla_refresh_attempt_id = 'dead-worker'`);
         await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
         expect(exchange).not.toHaveBeenCalled();
@@ -90,7 +105,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
 
     it('a worker whose lease expired still saves the rotation it received', async () => {
         exchange.mockImplementation(async () => {
-            await pool.query('UPDATE "User" SET refresh_lock_expires = 1');
+            await pool.query('UPDATE "User" SET refresh_lock_expires = $1', [Date.now() - 1]);
             await expect(new TeslaTokenRepo({ getSite: async () => ({ user_id: 'owner' }), invalidateCache: () => {} } as unknown as SiteRepo)
                 .getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
             return rotated;
@@ -121,7 +136,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
         query.mockImplementation((sql: string, values?: unknown[]) => pool.query(sql, values));
         expect((await pool.query('SELECT * FROM "User"')).rows[0].tesla_refresh_state).toBe('in_flight');
-        await pool.query('UPDATE "User" SET refresh_lock_expires = 1');
+        await pool.query('UPDATE "User" SET refresh_lock_expires = $1', [Date.now() - 1]);
         await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
         expect(exchange).toHaveBeenCalledTimes(1);
     });

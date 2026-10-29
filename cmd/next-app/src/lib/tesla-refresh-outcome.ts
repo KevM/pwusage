@@ -25,6 +25,10 @@ export class TeslaConnectionRequiredError extends Error {
     }
 }
 
+// Long enough for a slow worker to finish its 18s exchange and save before the
+// grant can be claimed again; short enough that a 429/5xx blip is not an outage.
+export const TRANSIENT_BACKOFF_MS = 2 * 60_000;
+
 /** A refresh failed transiently; the stored grant is retried after `retryAfter`. */
 export class TeslaRefreshBackoffError extends Error {
     readonly code = 'TESLA_REFRESH_BACKOFF';

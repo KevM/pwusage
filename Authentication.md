@@ -243,7 +243,10 @@ Tesla token refresh behavior:
   lease claim records `in_flight`, a UUID attempt ID, generation, and start time
   **before** dispatch, and only claims the refresh credential the caller holds:
   a stale caller adopts the stored rotation instead. An expired lease returns to
-  `ready` with a two-minute retry floor, keeping its attempt ID.
+  `ready` with a two-minute retry floor counted from lease expiry (so a lease
+  found long after it died is claimed in the same pass), keeping its attempt ID.
+  Verification releases dead leases too. Parallel requests on one client judge a
+  401 by the credentials they sent, so only one of them refreshes.
 - Rotated credentials, the next generation and the lease release are saved in
   one statement, guarded by the original generation, attempt ID and refresh
   credential (not the lease clock), with one retry. Newer OAuth login wins over

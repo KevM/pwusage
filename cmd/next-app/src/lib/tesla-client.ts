@@ -286,9 +286,15 @@ export class TeslaClient {
         // The host this request last went to. Concurrent requests share this.baseUrl,
         // so a 421 is judged against the host that answered it, not the current one.
         let requestBaseUrl = this.baseUrl;
+        // The credentials this request was sent with. Parallel requests share
+        // this.config, so a 401 is judged against what it actually sent.
+        let sentAccessToken = this.config.accessToken;
+        let sentRefreshToken = this.config.refreshToken;
         const makeRequest = async () => {
             if (this.config.beforeRequest) this.adoptStoredCredentials(await this.config.beforeRequest());
             const token = this.config.accessToken;
+            sentAccessToken = token;
+            sentRefreshToken = this.config.refreshToken;
             requestBaseUrl = this.baseUrl;
             const url = `${requestBaseUrl}${path}`;
             const headers = {
@@ -316,17 +322,23 @@ export class TeslaClient {
         let regionError: TeslaRegionError | undefined;
         let errorBody: string | undefined;
         while (true) {
-            if (response.status === 401 && this.config.refreshToken && !refreshAttempted) {
+            if (response.status === 401 && sentRefreshToken && !refreshAttempted) {
                 refreshAttempted = true;
+                if (this.config.accessToken !== sentAccessToken) {
+                    // A parallel request on this client already refreshed:
+                    // retry with its credentials instead of rotating again.
+                    response = await makeRequest();
+                    continue;
+                }
                 console.log('Tesla API 401, attempting refresh...');
                 try {
                     let newTokens: { access_token: string; refresh_token: string };
                     if (this.config.tokenRefreshHandler) {
-                        newTokens = await abortable(this.config.tokenRefreshHandler(this.config.refreshToken));
+                        newTokens = await abortable(this.config.tokenRefreshHandler(sentRefreshToken));
                     } else {
-                        newTokens = await TeslaClient.refreshAccessToken(this.config.refreshToken);
+                        newTokens = await TeslaClient.refreshAccessToken(sentRefreshToken);
                     }
-                    if (this.config.refreshToken !== newTokens.refresh_token) this.retiredRefreshTokens.add(this.config.refreshToken);
+                    if (sentRefreshToken !== newTokens.refresh_token) this.retiredRefreshTokens.add(sentRefreshToken);
                     this.config.accessToken = newTokens.access_token;
                     this.config.refreshToken = newTokens.refresh_token;
 

@@ -1,4 +1,6 @@
-import { type TeslaConnectionState, isRefreshLeaseActive, requiresTeslaReconnect } from './tesla-refresh-outcome';
+import { type TeslaConnectionState, isRefreshLeaseActive, requiresTeslaReconnect, TRANSIENT_BACKOFF_MS } from './tesla-refresh-outcome';
+
+const DEAD_LEASE = `tesla_refresh_state = 'in_flight' AND refresh_lock_expires <= $6`;
 import { cache } from 'react';
 import { createHash, randomUUID } from 'node:crypto';
 import { flushLogEvents, logEvent } from './observability';
@@ -268,7 +270,14 @@ export class UserRepo {
             const commitStatus = async (outcome: string, reason: string, error?: unknown, errorMessage?: string) => {
                 phase = 'status-write';
                 const updated = await pool.query(`
-                    UPDATE "User" SET auth_status = $1, is_active = $2, last_checked_at = NOW()
+                    UPDATE "User" SET auth_status = $1, is_active = $2, last_checked_at = NOW(),
+                        -- A dead refresh worker's lease is released here too, as
+                        -- the refresh waiter would (floor counted from expiry):
+                        -- a still-valid access token never reaches that waiter.
+                        is_refreshing = CASE WHEN ${DEAD_LEASE} THEN 0 ELSE is_refreshing END,
+                        tesla_refresh_retry_after = CASE WHEN ${DEAD_LEASE} THEN refresh_lock_expires + $7 ELSE tesla_refresh_retry_after END,
+                        refresh_lock_expires = CASE WHEN ${DEAD_LEASE} THEN 0 ELSE refresh_lock_expires END,
+                        tesla_refresh_state = CASE WHEN ${DEAD_LEASE} THEN 'ready' ELSE tesla_refresh_state END
                     WHERE id = $3 AND xmin::text = $4
                       AND ($5::text IS NULL OR EXISTS (
                           SELECT 1 FROM "Site" WHERE id = $5 AND user_id = $3
@@ -276,7 +285,7 @@ export class UserRepo {
                       AND ($1 <> 'no_sites' OR NOT EXISTS (
                           SELECT 1 FROM "Site" WHERE user_id = $3
                       ))
-                `, [outcome, initial.rows[0].is_active, user.id, authVersion, siteId ?? null]);
+                `, [outcome, initial.rows[0].is_active, user.id, authVersion, siteId ?? null, Date.now(), TRANSIENT_BACKOFF_MS]);
                 if (updated.rowCount) return finish(outcome, reason, error, errorMessage);
 
                 const current = await pool.query<Pick<VerificationState, 'auth_status' | 'is_active'>>(
