@@ -1,3 +1,4 @@
+import { TeslaRefreshError } from './tesla-refresh-outcome';
 import { logEvent } from './observability';
 import { ioSignal, checkIoDeadline, abortable, ioFailureDetails } from './io-deadline';
 // Tesla's Fleet API documentation states that calls to /token must use the
@@ -93,12 +94,15 @@ export async function postToTeslaTokenEndpoint(
                 // target receives nothing.
                 redirect: 'manual',
                 signal,
-            }));
+            }), signal);
         } catch (err) {
             if (context) logEvent('warn', 'tesla.refresh.exchange-failed', {
                 ...fields, stage: 'request', durationMs: Date.now() - startedAt,
                 ...ioFailureDetails(err, signal), outcomeUnknown: requestInitiated,
             });
+            if (params.grant_type === 'refresh_token') {
+                throw new TeslaRefreshError(requestInitiated ? 'outcome_unknown' : 'not_dispatched');
+            }
             checkIoDeadline();
             // A transport failure is not an HTTP status. Clear any 5xx seen on
             // an earlier host so `status` and the message cannot disagree, and
@@ -125,6 +129,11 @@ export async function postToTeslaTokenEndpoint(
         // second origin would mask the real error and re-send client_secret.
         if (response.status >= 400 && response.status < 500) {
             return { response, host, signal };
+        }
+
+        if (params.grant_type === 'refresh_token') {
+            discardBody(response);
+            throw new TeslaRefreshError('outcome_unknown', response.status);
         }
 
         // Everything else that is neither 2xx nor 4xx: an unexpected 1xx/2xx/3xx,

@@ -413,9 +413,9 @@ describe('TeslaClient authentication errors', () => {
         expect(isTeslaAuthError(thrownError)).toBe(true);
     });
 
-    it('identifies standard strings with 401 or login_required as isTeslaAuthError', () => {
-        expect(isTeslaAuthError(new Error('Tesla API Error: 401 Unauthorized'))).toBe(true);
-        expect(isTeslaAuthError(new Error('login_required'))).toBe(true);
+    it('does not classify arbitrary response text as credential rejection', () => {
+        expect(isTeslaAuthError(new Error('Tesla API Error: 401 Unauthorized'))).toBe(false);
+        expect(isTeslaAuthError(new Error('login_required'))).toBe(false);
         expect(isTeslaAuthError(new Error('some random error'))).toBe(false);
     });
 });

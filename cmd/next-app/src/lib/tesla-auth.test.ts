@@ -39,6 +39,33 @@ describe('refreshAccessToken', () => {
         restoreEnvVar('TESLA_OAUTH_SECRET');
     });
 
+    it.each(['lost-response', 'timeout', 'server-error', 'truncated', 'malformed'])('does not replay a dispatched refresh after %s', async kind => {
+        const fetchMock = vi.fn().mockImplementation(async () => {
+            if (kind === 'lost-response') throw new TypeError('connection reset');
+            if (kind === 'timeout') throw new DOMException('timeout', 'TimeoutError');
+            if (kind === 'server-error') return new Response('', { status: 503 });
+            return new Response(kind === 'truncated' ? '{' : '{}', { status: 200 });
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        await expect(refreshAccessToken('consumed')).rejects.toMatchObject({ outcome: 'outcome_unknown' });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('classifies a missing deployment secret before dispatch', async () => {
+        delete process.env.TESLA_OAUTH_SECRET;
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        await expect(refreshAccessToken('unused')).rejects.toMatchObject({ outcome: 'not_dispatched' });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['invalid_client', 'unauthorized_client'])('does not revoke credentials on 401 %s', async error => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ error }, { status: 401 })));
+        const result = await refreshAccessToken('unused').catch((error: unknown) => error);
+        expect(result).toMatchObject({ outcome: 'configuration_rejected', status: 401, errorCode: error });
+        expect(isTeslaAuthError(result)).toBe(false);
+    });
+
     it('logs the access token lifetime and estimated expiry after refresh', async () => {
         const log = vi.spyOn(observability, 'logEvent');
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse({ access_token: 'a', refresh_token: 'r', expires_in: 3600 })));
@@ -133,7 +160,7 @@ describe('refreshAccessToken', () => {
             text: async () => '{"error":"login_required"}',
         } as unknown as Response));
 
-        await expect(refreshAccessToken('old-refresh')).rejects.toBeInstanceOf(TeslaAuthError);
+        await expect(refreshAccessToken('old-refresh')).rejects.toMatchObject({ outcome: 'credential_rejected' });
     });
 
     // The 401 half of the decision table. Deleting `response.status === 401 ||`
@@ -143,7 +170,7 @@ describe('refreshAccessToken', () => {
     // into `auth_status = 'revoked', is_active = false` for every affected user.
     // Unconditional on body, because a 401 from this endpoint is not
     // distinguishable from a dead credential without reading the body.
-    it('raises TeslaAuthError on a 401 regardless of the response body', async () => {
+    it('treats a bare 401 as unknown rather than credential revocation', async () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
             ok: false,
             status: 401,
@@ -152,7 +179,7 @@ describe('refreshAccessToken', () => {
             text: async () => 'Unauthorized',
         } as unknown as Response));
 
-        await expect(refreshAccessToken('old-refresh')).rejects.toBeInstanceOf(TeslaAuthError);
+        await expect(refreshAccessToken('old-refresh')).rejects.toMatchObject({ outcome: 'outcome_unknown' });
     });
 
     // The mirror guard, and the inverse of the test above: a 400 whose body does
@@ -241,64 +268,10 @@ describe('refreshAccessToken', () => {
         expect((thrown as Error).message).toMatch(/access_token/);
     });
 
-    it('falls back to auth.tesla.com when the primary host returns 5xx', async () => {
-        // `text` is on the 5xx fixture even though the fixed code never reads it
-        // (the helper retries on 5xx), so that any failure here is the URL/order
-        // assertion rather than a TypeError from an incomplete mock.
-        const fetchMock = vi
-            .fn()
-            .mockResolvedValueOnce({ ok: false, status: 502, text: async () => '' } as unknown as Response)
-            .mockResolvedValueOnce(okResponse({ access_token: 'a', refresh_token: 'r' }));
+    it('does not retry an ambiguous 5xx refresh on another host', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 503 }));
         vi.stubGlobal('fetch', fetchMock);
-
-        const result = await refreshAccessToken('old-refresh');
-
-        // Without consuming the fallback's body, the URL assertions below would
-        // still hold even if the second response were discarded.
-        expect(result).toEqual({ access_token: 'a', refresh_token: 'r' });
-
-        // The ordered sequence, not just that both hosts were tried.
-        expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
-            'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token',
-            'https://auth.tesla.com/oauth2/v3/token',
-        ]);
-    });
-
-    it('surfaces a non-terminal token-endpoint failure when every host 5xxs', async () => {
-        const fetchMock = vi.fn().mockResolvedValue({
-            ok: false,
-            status: 503,
-            text: async () => '',
-        } as unknown as Response);
-        vi.stubGlobal('fetch', fetchMock);
-
-        // Both hosts tried, then the helper's own error surfaces. This is a
-        // caller-visible change from the old single-host "Failed to refresh
-        // token: 503 ..." Error, so pin it.
-        const thrown = await refreshAccessToken('old-refresh').catch((err: unknown) => err);
-
-        expect(thrown).toBeInstanceOf(Error);
-        expect((thrown as Error).message).toMatch(/Tesla token endpoints failed/);
-
-        // Non-terminal, and the previous name of this test said the opposite.
-        // A 503 from both hosts is an outage, not evidence about the user's
-        // credential: DesignDecisions.md §5 has TeslaTokenRepo release the
-        // refresh lock rather than revoke. The old wording invited a reader to
-        // "fix" this by classifying it as terminal, which would take the account
-        // offline whenever Tesla had a bad minute.
-        expect(thrown).not.toBeInstanceOf(TeslaAuthError);
-
-        // isTeslaAuthError also matches message substrings, so the thrown
-        // message must not carry a revoke trigger either. This catches a
-        // regression that folds an upstream or intermediary body into a
-        // classified message: a 503 whose cause read "... invalid_grant from
-        // proxy" would otherwise flip this to terminal. parseRefreshedTokens
-        // gets the same guard.
-        expect((thrown as Error).message).not.toMatch(/login_required|invalid_grant|invalid authentication/i);
-
-        expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
-            'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token',
-            'https://auth.tesla.com/oauth2/v3/token',
-        ]);
+        await expect(refreshAccessToken('old-refresh')).rejects.toMatchObject({ outcome: 'outcome_unknown', status: 503 });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 });
