@@ -190,7 +190,8 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
             if (500 ..< 600).contains(http.statusCode) {
                 throw PWUsageAPIError.recoverableServerError(statusCode: http.statusCode)
             }
-            let message = (try? JSONDecoder().decode(ErrorResponse.self, from: data).error)
+            let failure = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            let message = failure?.code == "TESLA_CONNECTION_REQUIRED" ? failure?.code : failure?.error
             throw PWUsageAPIError.requestRejected(statusCode: http.statusCode, message: message)
         }
         return data
@@ -209,7 +210,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     private struct SessionResponse: Decodable { let ok: Bool }
-    private struct ErrorResponse: Decodable { let error: String? }
+    private struct ErrorResponse: Decodable { let error: String?; let code: String? }
 }
 
 // Every retroactive conformance this type has, in one place. Each protocol is
