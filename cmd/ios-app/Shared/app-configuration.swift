@@ -10,6 +10,8 @@ struct AppConfiguration: Equatable {
     /// talk to anyway.
     static let debugFallbackAPIOrigin = URL(string: "https://pwusagebeta.fm.rodeo")!
 
+    static let debugFallback = AppConfiguration(fallbackOrigin: debugFallbackAPIOrigin, reason: "debugFallback")
+
     /// The only hosts a Release configuration may name. Release rules apply to
     /// every configuration the app ships, so this is enforced by default rather
     /// than by a call site that has to remember. Debug is deliberately

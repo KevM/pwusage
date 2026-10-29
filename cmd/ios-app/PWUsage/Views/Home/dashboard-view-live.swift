@@ -53,8 +53,8 @@ extension DashboardView {
                 LoadingCard(title: "Loading live readings")
             }
         }
-        .onGeometryChange(for: CGRect.self) {
-            $0.frame(in: .named(Self.scrollContentSpace))
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .named(DashboardView.scrollContentSpace))
         } action: {
             liveCardFrameChanged($0)
         }

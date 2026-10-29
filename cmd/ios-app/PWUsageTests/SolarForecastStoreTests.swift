@@ -1012,6 +1012,7 @@ private actor TestCredentialKeychain: SolcastCredentialKeychain {
     private var shouldHoldNextDelete = false
     private var heldDelete: CheckedContinuation<Void, Never>?
     var count: Int { values.count }
+    var isEmpty: Bool { values.isEmpty }
     func save(key: String, accountScopeID: String, siteID: String, credentialID: String) async throws {
         if let remaining = successfulSavesBeforeFailure {
             if remaining == 0 { successfulSavesBeforeFailure = nil; throw TestFileError.failedWrite }

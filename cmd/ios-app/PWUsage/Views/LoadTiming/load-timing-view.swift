@@ -94,30 +94,7 @@ struct LoadTimingView: View {
                     AvailabilityBanner(message: "Smart Shift could not be refreshed. Showing saved data.", symbol: "clock.badge.exclamationmark")
                 }
                 if let response {
-                    let timingForDisplay = timing ?? LoadTiming(
-                        hasTariff: false,
-                        hasCycleData: false,
-                        activeIsCheapest: false,
-                        periods: [],
-                        pricingPeriods: [],
-                        tariffTimeline: [],
-                        nextCheaper: nil,
-                        nextCheaperPhrase: nil,
-                        nextStartPhraseByKey: [:]
-                    )
-                    // Read so a scheduled refresh re-runs this pass.
-                    _ = staleRefreshes
-                    let state = smartShiftState(now: Date(), timing: timingForDisplay, response: response)
-                    jobCard(state)
-                        .task(id: SmartShiftPresentation.nextRefresh(comparison: state.evaluation?.result.comparison, now: state.now)) {
-                            guard let refresh = SmartShiftPresentation.nextRefresh(
-                                comparison: state.evaluation?.result.comparison, now: state.now) else { return }
-                            // A second past the boundary, so the next pass sees it as passed.
-                            let delay = max(0, refresh.timeIntervalSinceNow) + 1
-                            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-                            staleRefreshes &+= 1
-                        }
-                    metadata(response)
+                    loadedContent(response)
                 } else if coordinator.bill.isUnavailable {
                     noResponseJobCard
                 } else {
@@ -180,6 +157,38 @@ struct LoadTimingView: View {
             // TabView retains this observer after switching to another tab.
             Task { await coordinator.loadTimingDetailForegrounded(isSelected: isSelected) }
         }
+    }
+
+    @ViewBuilder
+    private func loadedContent(_ response: MobileBillResponse) -> some View {
+        let timingForDisplay = timing ?? LoadTiming(
+            hasTariff: false,
+            hasCycleData: false,
+            activeIsCheapest: false,
+            periods: [],
+            pricingPeriods: [],
+            tariffTimeline: [],
+            nextCheaper: nil,
+            nextCheaperPhrase: nil,
+            nextStartPhraseByKey: [:]
+        )
+        // Read so a scheduled refresh re-runs this pass.
+        // swiftlint:disable:next redundant_discardable_let
+        let _ = staleRefreshes
+        let state = smartShiftState(now: Date(), timing: timingForDisplay, response: response)
+        let evaluationResult = state.evaluation?.result
+        let comparison = evaluationResult?.comparison
+        let now = state.now
+        let nextRefreshDate = SmartShiftPresentation.nextRefresh(comparison: comparison, now: now)
+        jobCard(state)
+            .task(id: nextRefreshDate) {
+                guard let refresh = nextRefreshDate else { return }
+                // A second past the boundary, so the next pass sees it as passed.
+                let delay = max(0, refresh.timeIntervalSinceNow) + 1
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                staleRefreshes &+= 1
+            }
+        metadata(response)
     }
 
     func refreshBatteryHoldWhileVisible() async {
