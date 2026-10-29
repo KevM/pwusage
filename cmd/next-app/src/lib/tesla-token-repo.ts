@@ -1,4 +1,4 @@
-import { logEvent } from './observability';
+import { logEvent, flushLogEvents } from './observability';
 import { ioDelay, checkIoDeadline, withIoDeadline, ioFailureDetails } from './io-deadline';
 import { pool } from './db';
 import { SiteRepo } from './site-repo';
@@ -39,20 +39,21 @@ export class TeslaTokenRepo {
     private async waitForUserRefresh(userId: string, timeoutMs = 20000, siteId?: string, start = Date.now(), suppliedRefresh?: string): Promise<RefreshedTokens> {
         const fields = { siteId, accountId: credentialId(userId) };
         while (Date.now() - start < timeoutMs) {
-            const res = await pool.query<AccountCredentials>(`SELECT access_token, refresh_token, is_refreshing, auth_status, is_active, refresh_lock_expires, tesla_refresh_state FROM "User" WHERE id = $1`, [userId]);
+            const res = await pool.query<AccountCredentials>(`SELECT access_token, refresh_token, is_refreshing, auth_status, is_active, refresh_lock_expires, tesla_refresh_state, tesla_credential_generation, tesla_refresh_attempt_id FROM "User" WHERE id = $1`, [userId]);
             const row = res.rows[0];
             if (!row) {
                 throw new Error('Token refresh wait failed: user not found');
             }
             if (row.tesla_refresh_state === 'in_flight' && Number(row.refresh_lock_expires) <= Date.now()) {
-                await pool.query(`UPDATE "User" SET tesla_refresh_state = 'uncertain', is_refreshing = 0
+                const expired = await pool.query(`UPDATE "User" SET tesla_refresh_state = 'uncertain', auth_status = 'error', is_refreshing = 0
                     WHERE id = $1 AND tesla_refresh_state = 'in_flight' AND refresh_lock_expires <= $2`, [userId, Date.now()]);
-                logEvent('warn', 'tesla.refresh.replay-suppressed', { ...fields, reason: 'expired-unresolved-attempt' });
+                if (!expired.rowCount) continue;
+                logEvent('warn', 'tesla.refresh.replay-suppressed', { ...fields, reason: 'expired-unresolved-attempt', exchangeId: row.tesla_refresh_attempt_id, generationId: credentialId(`${userId}:${row.tesla_credential_generation}`), fromState: 'in_flight', toState: 'uncertain' });
                 throw new TeslaConnectionRequiredError();
             }
             if (row.is_active === false || row.auth_status === 'revoked'
                 || row.tesla_refresh_state === 'uncertain' || row.tesla_refresh_state === 'reconnect_required') {
-                logEvent('warn', 'tesla.refresh.replay-suppressed', { ...fields, state: row.tesla_refresh_state });
+                logEvent('warn', 'tesla.refresh.replay-suppressed', { ...fields, exchangeId: row.tesla_refresh_attempt_id, generationId: credentialId(`${userId}:${row.tesla_credential_generation}`), currentState: row.tesla_refresh_state, reason: row.is_active === false ? 'account-ineligible' : 'unusable-generation' });
                 throw new TeslaConnectionRequiredError();
             }
             if (!row.is_refreshing) {
@@ -111,6 +112,10 @@ export class TeslaTokenRepo {
 
     private async refreshUser(userId: string, suppliedRefresh: string, siteId?: string): Promise<RefreshedTokens> {
         checkIoDeadline();
+        if (process.env.TESLA_REFRESH_PAUSED === '1') {
+            logEvent('info', 'tesla.refresh.paused', { accountId: credentialId(userId), siteId });
+            throw new TeslaRefreshError('not_dispatched', null, null, 'Tesla refresh is paused');
+        }
         const now = Date.now();
         const lease = now + 60000;
         const exchangeId = randomUUID();
@@ -150,6 +155,7 @@ export class TeslaTokenRepo {
         const generation = current.tesla_credential_generation;
         let unused = false;
         const exchangeFields = { ...fields, exchangeId, generationId: credentialId(`${userId}:${generation}`) };
+        const startedAt = Date.now();
         let stage: 'exchange' | 'persistence' = 'exchange';
         let previousRefresh: string | undefined;
         try {
@@ -162,7 +168,8 @@ export class TeslaTokenRepo {
                 });
                 return parseRefreshedTokens(current);
             }
-            logEvent('info', 'tesla.refresh.started', { ...exchangeFields, credentialId: credentialId(previousRefresh) });
+            logEvent('info', 'tesla.refresh.started', { ...exchangeFields, fromState: 'ready', toState: 'in_flight', persisted: true, leaseExpiresAt: new Date(lease).toISOString() });
+            flushLogEvents();
             const { refreshAccessToken } = await import('./tesla-auth');
             const next = await withIoDeadline(18000, () => refreshAccessToken(previousRefresh!, exchangeFields), null);
             stage = 'persistence';
@@ -175,7 +182,7 @@ export class TeslaTokenRepo {
                 UPDATE "User" SET access_token = $1, refresh_token = $2,
                     tesla_credential_generation = tesla_credential_generation + 1,
                     tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL,
-                    tesla_refresh_retry_after = 0
+                    auth_status = 'active', tesla_refresh_retry_after = 0
                 WHERE id = $3 AND refresh_token = $4 AND refresh_lock_expires = $5
                   AND is_refreshing = 1 AND refresh_lock_expires > $6
                   AND auth_status IS DISTINCT FROM 'revoked' AND is_active = true
@@ -190,6 +197,8 @@ export class TeslaTokenRepo {
                 if (siteId) this.siteRepo.invalidateCache(siteId);
                 logEvent('info', 'tesla.refresh.succeeded', {
                     ...exchangeFields, previousCredentialId: credentialId(previousRefresh), credentialId: credentialId(next.refresh_token),
+                    fromState: 'in_flight', toState: 'ready', persisted: true, outcome: 'credentials_received',
+                    durationMs: Date.now() - startedAt, nextGenerationId: credentialId(`${userId}:${generation + 1}`),
                 });
                 return next;
             }
@@ -199,20 +208,25 @@ export class TeslaTokenRepo {
             const state = terminal ? 'reconnect_required'
                 : outcome === 'not_dispatched' || outcome === 'configuration_rejected' ? 'ready' : 'uncertain';
             logEvent('warn', 'tesla.refresh.failed', {
-                ...exchangeFields, stage, ...ioFailureDetails(error, undefined, false), terminal, outcome,
+                ...exchangeFields, stage, ...ioFailureDetails(error, undefined, false), terminal, outcome, durationMs: Date.now() - startedAt,
+                status: error instanceof TeslaRefreshError ? error.status : null,
+                errorCode: error instanceof TeslaRefreshError ? error.errorCode : null,
             });
             try {
                 const recorded = await withIoDeadline(1000, () => pool.query(`
                     UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0,
-                        tesla_refresh_state = $5, tesla_refresh_retry_after = $6
+                        tesla_refresh_state = $5, tesla_refresh_retry_after = $6,
+                        auth_status = CASE WHEN $5 = 'reconnect_required' THEN 'revoked' ELSE 'error' END
                     WHERE id = $1 AND tesla_credential_generation = $2 AND refresh_lock_expires = $3
                       AND tesla_refresh_attempt_id = $4 AND tesla_refresh_state = 'in_flight'
                 `, [userId, generation, lease, exchangeId, state, state === 'ready' ? Date.now() + 900000 : 0]), null);
+                if (!recorded.rowCount) logEvent('info', 'tesla.refresh.outcome-superseded', { ...exchangeFields, outcome, attemptedState: state });
                 if (!recorded.rowCount && terminal) {
                     // A login may have superseded this rejected generation.
                     return await withIoDeadline(1000, () => this.waitForUserRefresh(userId, 1000, siteId, Date.now(), suppliedRefresh), null);
                 }
-                logEvent('warn', 'tesla.refresh.state-changed', { ...exchangeFields, state, outcome });
+                if (recorded.rowCount) logEvent('warn', 'tesla.refresh.state-changed', { ...exchangeFields, fromState: 'in_flight', toState: state, persisted: true, outcome, durationMs: Date.now() - startedAt });
+                flushLogEvents();
             } catch {
                 // The pre-dispatch marker is authoritative if this write fails.
                 logEvent('warn', 'tesla.refresh.outcome-write-deferred', exchangeFields);
@@ -229,7 +243,7 @@ export class TeslaTokenRepo {
                       AND (tesla_refresh_attempt_id = $3 OR tesla_refresh_attempt_id IS NULL)
                 `, [userId, lease, exchangeId, unused]), null);
             } catch {
-                logEvent('warn', 'tesla.refresh.cleanup-deferred', fields);
+                logEvent('warn', 'tesla.refresh.cleanup-deferred', exchangeFields);
             }
         }
         return this.waitForUserRefresh(userId, 20000, siteId, Date.now(), suppliedRefresh);

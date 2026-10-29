@@ -98,6 +98,18 @@ describe('/api/trmnl/markup', () => {
         mocks.getSchedulesForSite.mockResolvedValue([]);
     });
 
+    it.each(['old', 'missing', 'future'])('does not treat a recently cached %s source as fresh SOC', async kind => {
+        const timestamp = kind === 'missing' ? undefined
+            : new Date(Date.now() + (kind === 'old' ? -3600000 : 3600000)).toISOString();
+        mocks.getSite.mockResolvedValue({
+            id: 'site-1', name: 'Home', timezone: 'UTC', tariffs: [],
+            last_live_refresh_at: Date.now(), live_status_cache: { percentage_charged: 87, timestamp },
+        });
+        const response = await GET(new Request('https://pwusage.test/api/trmnl/markup?site_id=site-1'));
+        expect(response.status).toBe(200);
+        expect(response.headers.get('X-SOC-Age-Minutes')).toMatch(/^stale:/);
+    });
+
     it('returns DB markup on a cache miss without awaiting Tesla', async () => {
         mocks.getSite.mockResolvedValue({ id: 'site-1', name: 'Home', timezone: 'UTC', tariffs: [], refresh_token: 'r' });
         mocks.refreshLive.mockImplementation(() => new Promise(() => {}));

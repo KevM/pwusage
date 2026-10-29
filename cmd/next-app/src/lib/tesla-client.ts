@@ -199,7 +199,7 @@ export class TeslaRegionError extends Error {
         }
     }
 }
-export function isTeslaAuthError(error: unknown): error is TeslaAuthError {
+export function isTeslaAuthError(error: unknown): boolean {
     if (error instanceof TeslaAuthError || (error instanceof Error && error.name === 'TeslaAuthError')) {
         return true;
     }
@@ -265,7 +265,7 @@ export class TeslaClient {
         // so a 421 is judged against the host that answered it, not the current one.
         let requestBaseUrl = this.baseUrl;
         const makeRequest = async (token: string) => {
-            await this.config.beforeRequest?.();
+            if (this.config.beforeRequest) await this.config.beforeRequest();
             requestBaseUrl = this.baseUrl;
             const url = `${requestBaseUrl}${path}`;
             const headers = {

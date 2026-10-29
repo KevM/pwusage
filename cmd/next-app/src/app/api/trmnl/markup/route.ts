@@ -198,7 +198,7 @@ async function handleGET(request: Request) {
 
         if (site.live_status_cache) {
             const cachedAgeMs = nowMs - Number(site.last_live_refresh_at || 0);
-            if (cachedAgeMs < LIVE_STATUS_CACHE_TTL_MS) {
+            if (cachedAgeMs >= 0 && cachedAgeMs < LIVE_STATUS_CACHE_TTL_MS) {
                 liveStatus = site.live_status_cache as EnergySiteLiveStatus;
                 hasCachedLiveStatus = true;
             }
@@ -280,7 +280,10 @@ async function handleGET(request: Request) {
         let batteryStatus: 'charging' | 'discharging' | 'idle' = 'idle';
 
         const latestLiveStatus = liveStatus as EnergySiteLiveStatus | undefined;
-        const liveStatusAgeMs = lastLiveRefreshAt > 0 ? Math.max(0, nowMs - lastLiveRefreshAt) : null;
+        const sourceTime = latestLiveStatus?.timestamp ? Date.parse(latestLiveStatus.timestamp) : NaN;
+        const liveStatusAgeMs = lastLiveRefreshAt > 0 && lastLiveRefreshAt <= nowMs
+            && Number.isFinite(sourceTime) && sourceTime <= nowMs
+            ? nowMs - Math.min(lastLiveRefreshAt, sourceTime) : null;
         const isSocStale = liveStatusAgeMs === null || liveStatusAgeMs > SOC_STALE_AFTER_MS;
         const isFresh = (ts: Date | null | undefined): ts is Date => {
             if (!ts) return false;

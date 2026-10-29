@@ -16,8 +16,6 @@ vi.mock('./db', () => ({
 import { UserRepo } from './user-repo';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { TeslaAuthError } from './tesla-client';
-import { TeslaTokenRepo } from './tesla-token-repo';
-import { SiteRepo } from './site-repo';
 
 describe('UserRepo admin ordering', () => {
     beforeEach(() => {
@@ -262,15 +260,15 @@ describe('UserRepo.verifyUserStatus', () => {
         }));
     });
 
-    it('marks the user revoked and inactive on a terminal auth error', async () => {
+    it('records a Fleet access rejection without claiming refresh revocation', async () => {
         queryMock
             .mockResolvedValueOnce({ rows: [{ id: 'site-1' }] })
             .mockResolvedValueOnce({ rows: [], rowCount: 1 });
         const repo = new UserRepo();
         const client = { getLiveStatus: vi.fn().mockRejectedValue(new TeslaAuthError('Tesla API Error: 401 invalid token', 401)) };
         const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => client as never });
-        expect(result.status).toBe('revoked');
-        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['revoked', true, 'u1', '100', 'site-1']);
+        expect(result.status).toBe('error');
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['error', true, 'u1', '100', 'site-1']);
     });
 
     it('marks the user active on success', async () => {

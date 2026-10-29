@@ -188,8 +188,8 @@ describe('getLockedRefreshHandler', () => {
                 !(call[0] as string).includes('is_refreshing = 1'),
         );
         expect(lockReleaseCall, 'expected a normal lock-release query').toBeDefined();
-        // auth_status must NOT be touched — just a plain release for transient failures
-        expect(lockReleaseCall![0], 'non-terminal release must not touch auth_status').not.toMatch(/auth_status/);
+        // Connection health may record the outage, but account eligibility must not change.
+        expect(lockReleaseCall![0]).not.toMatch(/is_active\s*=/);
     });
 });
 

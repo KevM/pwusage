@@ -90,11 +90,11 @@ export class UserRepo {
         const tokenCols = options.includeTokens ? ', u.access_token, u.refresh_token' : '';
         // Fetch users and check for Trmnl integration in a single query using subquery (efficiently handles the join logic)
         const userRes = await pool.query(`
-            SELECT u.id, u.email, u.roles, u.is_active, u.auth_status, u.last_checked_at, u.auth_lost_at, u.auth_restored_at, u.created_at${tokenCols}, 
+            SELECT u.id, u.email, u.roles, u.is_active, u.auth_status, u.tesla_refresh_state, u.tesla_refresh_started_at, u.last_checked_at, u.auth_lost_at, u.auth_restored_at, u.created_at${tokenCols},
             EXISTS (
-                SELECT 1 
-                FROM "TrmnlInstallation" ti 
-                JOIN "Site" s ON s.id = ti.site_id 
+                SELECT 1
+                FROM "TrmnlInstallation" ti
+                JOIN "Site" s ON s.id = ti.site_id
                 WHERE s.user_id = u.id
             ) as has_trmnl_integration,
             (
@@ -179,7 +179,7 @@ export class UserRepo {
         /** The account's regional Fleet host; unknown keeps the stored one. */
         fleetApiBaseUrl?: string | null;
     }): Promise<void> {
-        await pool.query(`
+        const saved = await pool.query<{ tesla_credential_generation: number; is_active: boolean }>(`
             INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active, fleet_api_base_url)
             VALUES ($1, $2, $3, $4, $5, 'active', true, $6)
             ON CONFLICT (id) DO UPDATE SET
@@ -191,8 +191,17 @@ export class UserRepo {
                 tesla_credential_generation = "User".tesla_credential_generation + 1,
                 tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL,
                 tesla_refresh_retry_after = 0, is_refreshing = 0, refresh_lock_expires = 0
+            RETURNING tesla_credential_generation, is_active
         `, [params.userId, params.email, params.accessToken, params.refreshToken, params.tokenExpiresAt,
             normalizeFleetBaseUrl(params.fleetApiBaseUrl)]);
+        if (saved?.rows[0]) {
+            logEvent('info', 'tesla.connection.credentials-restored', {
+                accountId: createHash('sha256').update(params.userId).digest('hex').slice(0, 16),
+                generationId: createHash('sha256').update(`${params.userId}:${saved.rows[0].tesla_credential_generation}`).digest('hex').slice(0, 16),
+                toState: 'ready', persisted: true, source: 'oauth-login', accountEligible: saved.rows[0].is_active,
+            });
+            flushLogEvents();
+        }
     }
 
     /** Record the account's regional Fleet host. Only allowlisted Tesla hosts are stored. */
@@ -323,7 +332,7 @@ export class UserRepo {
                 const errorMsg = err instanceof Error ? err.message : String(err);
 
                 if (isTeslaAuthError(err)) {
-                    return await commitStatus('revoked', 'terminal-auth-failure', err, errorMsg);
+                    return await commitStatus('error', 'fleet-access-rejected', err, errorMsg);
                 }
 
                 // Transient failure (Tesla 5xx, network, exhausted 429 retries):

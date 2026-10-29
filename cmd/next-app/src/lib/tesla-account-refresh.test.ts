@@ -10,7 +10,7 @@ vi.mock('./db', () => ({ pool: { query } }));
 vi.mock('./tesla-auth', async importOriginal => ({
     ...await importOriginal<typeof import('./tesla-auth')>(), refreshAccessToken: exchange,
 }));
-vi.mock('./observability', () => ({ logEvent }));
+vi.mock('./observability', () => ({ logEvent, flushLogEvents: vi.fn() }));
 
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { isTeslaAuthError } from './tesla-client';
@@ -33,6 +33,15 @@ describe('account refresh coordination', () => {
         exchange.mockResolvedValue(rotated);
     });
     afterEach(() => vi.useRealTimers());
+
+    it('pauses new refresh attempts before acquiring a lease during cutover', async () => {
+        vi.stubEnv('TESLA_REFRESH_PAUSED', '1');
+        try {
+            await expect(setup().getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow('paused');
+            expect(query).not.toHaveBeenCalled();
+            expect(exchange).not.toHaveBeenCalled();
+        } finally { vi.unstubAllEnvs(); }
+    });
 
     it('reuses credentials rotated since the site client was constructed', async () => {
         query.mockResolvedValue({ rowCount: 1, rows: [{ ...rotated, auth_status: 'active', is_refreshing: 1 }] });
@@ -65,6 +74,29 @@ describe('account refresh coordination', () => {
             expect.arrayContaining([rotated.access_token, rotated.refresh_token, 'owner', original.refresh_token]));
         expect(query.mock.calls.findIndex(([sql]) => sql.includes('SET access_token')))
             .toBeLessThan(query.mock.calls.findIndex(([sql]) => sql.includes('SET is_refreshing = 0')));
+    });
+
+    it('reports confirmed rejection separately from an unknown rotation without logging credentials', async () => {
+        query.mockResolvedValueOnce({ rowCount: 1, rows: [{ ...original, tesla_credential_generation: 7 }] });
+        query.mockResolvedValue({ rowCount: 1, rows: [] });
+        exchange.mockRejectedValue(new TeslaRefreshError('credential_rejected', 401, 'login_required'));
+        await expect(setup().getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        expect(logEvent).toHaveBeenCalledWith('warn', 'tesla.refresh.failed', expect.objectContaining({
+            outcome: 'credential_rejected', status: 401, errorCode: 'login_required', generationId: expect.any(String),
+        }));
+        expect(logEvent).toHaveBeenCalledWith('warn', 'tesla.refresh.state-changed', expect.objectContaining({
+            fromState: 'in_flight', toState: 'reconnect_required', persisted: true,
+        }));
+        expect(JSON.stringify(logEvent.mock.calls)).not.toContain('refresh-A');
+    });
+
+    it('does not report an uncommitted state transition when a guarded outcome write is superseded', async () => {
+        query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
+        query.mockResolvedValue({ rowCount: 0, rows: [] });
+        exchange.mockRejectedValue(new TeslaRefreshError('outcome_unknown'));
+        await expect(setup().getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        expect(logEvent.mock.calls.some(([, event]) => event === 'tesla.refresh.state-changed')).toBe(false);
+        expect(logEvent).toHaveBeenCalledWith('info', 'tesla.refresh.outcome-superseded', expect.any(Object));
     });
 
     it('correlates the exchange, persistence start and confirmed save', async () => {

@@ -31,14 +31,6 @@ export class TeslaTokenEndpointError extends Error {
     }
 }
 
-function describeErrorForLog(err: unknown): string {
-    if (err instanceof Error) {
-        const cause = err.cause instanceof Error ? `: ${err.cause.message}` : '';
-        return `${err.message}${cause}`;
-    }
-    return String(err);
-}
-
 // ReadableStream.cancel() rejects when the stream is already errored, which
 // undici can produce mid-read while an upstream is flapping. Without a catch
 // that becomes an unhandled rejection — a 500 where a clean 502 was intended.
@@ -50,13 +42,10 @@ function discardBody(response: Response): void {
  * POST form-encoded parameters to Tesla's /token endpoint, preferring the
  * documented fleet-auth host.
  *
- * Falls back to the secondary host only on transport failures and 5xx. A 4xx is
- * a genuine authentication failure: retrying it elsewhere would mask the real
- * error and re-send our client_secret to a second origin.
- *
- * Throws TeslaTokenEndpointError only when no host produced a usable response.
- * `status` carries the last HTTP status seen, so callers can distinguish an
- * upstream outage (5xx) from a network failure (null).
+ * Authorization-code exchange falls back on transport failures and 5xx.
+ * Refresh exchange never replays after dispatch: loss of the response may hide
+ * consumption of the grant. HTTP 4xx responses are classified by the caller.
+ * Redirects are never followed, so credentials stay on the selected origin.
  */
 export async function postToTeslaTokenEndpoint(
     params: Record<string, string>,
@@ -108,12 +97,10 @@ export async function postToTeslaTokenEndpoint(
             // an earlier host so `status` and the message cannot disagree, and
             // so Task 6 does not report 503 for what was a network failure.
             lastStatus = null;
-            // The thrown message is classified by isTeslaAuthError, so it must
-            // not carry transport or proxy text. Details stay in this log line.
+            // Keep transport/proxy details out of errors and logs: they can contain secrets.
             lastFailure = 'transport error';
             console.warn(
-                `[TeslaTokenEndpoint] Transport failure calling ${host}; trying next host: `
-                + describeErrorForLog(err)
+                `[TeslaTokenEndpoint] Transport failure calling ${host}; trying next host`
             );
             continue;
         }

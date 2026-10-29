@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Pool } from 'pg';
 import type { SiteRepo } from './site-repo';
@@ -38,13 +39,10 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
             fleet_api_base_url text, is_refreshing integer NOT NULL DEFAULT 0,
             refresh_lock_expires bigint NOT NULL DEFAULT 0,
             auth_status text DEFAULT 'active', is_active boolean DEFAULT true,
-            last_checked_at timestamp,
-            tesla_credential_generation integer NOT NULL DEFAULT 0,
-            tesla_refresh_attempt_id text,
-            tesla_refresh_state text NOT NULL DEFAULT 'ready',
-            tesla_refresh_started_at timestamptz,
-            tesla_refresh_retry_after bigint NOT NULL DEFAULT 0
+            last_checked_at timestamp, email text, token_expires_at bigint,
+            session_version integer NOT NULL DEFAULT 0, roles text[] NOT NULL DEFAULT '{}'::text[]
         )`);
+        await pool.query(readFileSync(new URL('../../db-migrations/20261028192559_tesla_refresh_outcomes.sql', import.meta.url), 'utf8'));
         await pool.query('CREATE TEMP TABLE "Site" (id text PRIMARY KEY, user_id text)');
         query.mockImplementation((sql: string, values?: unknown[]) => pool.query(sql, values));
         repo = new TeslaTokenRepo({
@@ -60,7 +58,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         await pool.query(`INSERT INTO "User" (id, access_token, refresh_token) VALUES ('owner', 'access-A', 'refresh-A')`);
         await pool.query(`INSERT INTO "Site" (id, user_id) VALUES ('site', 'owner')`);
     });
-    afterEach(() => vi.restoreAllMocks());
+    afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
     it('never sends a second grant after response loss and lease expiry', async () => {
         exchange.mockRejectedValue(new TeslaRefreshError('outcome_unknown'));
@@ -147,6 +145,35 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
             createClient: async () => ({ getLiveStatus: async () => liveStatus }),
         });
         expect((await pool.query('SELECT * FROM "User"')).rows[0].is_active).toBe(false);
+    });
+
+    it('preserves app access through response loss and restores the linked site after reconnect', async () => {
+        const realAuth = await vi.importActual<typeof import('./tesla-auth')>('./tesla-auth');
+        exchange.mockImplementation(realAuth.refreshAccessToken);
+        vi.stubEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID', 'synthetic-client');
+        vi.stubEnv('TESLA_OAUTH_SECRET', 'synthetic-secret');
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('response lost after consumption'));
+        const sessionVersion = (await new UserRepo().getAuthState('owner'))?.sessionVersion;
+        await expect(repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).rejects.toThrow();
+        await expect(repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).rejects.toThrow();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(await new UserRepo().getAuthState('owner')).toMatchObject({ isActive: true, sessionVersion });
+        await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() + 3600000 });
+        expect((await pool.query('SELECT user_id FROM "Site" WHERE id = $1', ['site'])).rows[0].user_id).toBe('owner');
+        fetchMock.mockResolvedValue(Response.json(rotated));
+        expect(await repo.getLockedRefreshHandler('site').refreshHandler('login-R')).toEqual(rotated);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(await new UserRepo().getAuthState('owner')).toMatchObject({ isActive: true, sessionVersion });
+    });
+
+    it('OAuth replaces the credential generation without reactivating a suspended account', async () => {
+        await pool.query(`UPDATE "User" SET is_active = false, tesla_refresh_state = 'uncertain'`);
+        await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() });
+        expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({
+            is_active: false, tesla_refresh_state: 'ready', tesla_credential_generation: 1,
+        });
+        await expect(repo.getLockedRefreshHandler('site').refreshHandler('login-R')).rejects.toThrow();
+        expect(exchange).not.toHaveBeenCalled();
     });
 
     it('a browser constructed before a site refresh reuses its persisted replacement', async () => {
@@ -267,7 +294,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
                 return liveStatus;
             } },
         });
-        const expected = { success: 'active', terminal: 'revoked', transient: 'error', 'no-token': 'no_token', 'no-sites': 'no_sites' }[outcome];
+        const expected = { success: 'active', terminal: 'error', transient: 'error', 'no-token': 'no_token', 'no-sites': 'no_sites' }[outcome];
         const row = (await pool.query('SELECT * FROM "User"')).rows[0];
         expect(result.status).toBe(expected);
         expect(row.auth_status).toBe(expected);
