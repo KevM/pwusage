@@ -7,7 +7,7 @@ struct TodayEnergy: Codable, Equatable, Sendable {
     var solarKwh: Double
     var gridNetKwh: Double
     var batteryNetKwh: Double
-    var activeTariff: String? = nil
+    var activeTariff: String?
     var todayComplete = true
     var energyDataThrough: Date?
 }
@@ -37,9 +37,9 @@ struct TodayEnergySnapshot: Codable, Equatable, Sendable {
     let timezone: String
     let fetchedAt: Date
     var energy: TodayEnergy
-    var todayCost: TodayEnergyCost? = nil
-    var batteryStateOfCharge: Double? = nil
-    var batteryStateOfChargeAt: Date? = nil
+    var todayCost: TodayEnergyCost?
+    var batteryStateOfCharge: Double?
+    var batteryStateOfChargeAt: Date?
 
     /// SOC freshness is independent of the daily energy source. Match the app's two-hour rule.
     func stateOfCharge(at date: Date) -> Double? {

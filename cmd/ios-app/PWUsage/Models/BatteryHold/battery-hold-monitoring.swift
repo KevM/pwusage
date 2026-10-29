@@ -13,10 +13,10 @@ struct BatteryHoldMonitoring: Decodable, Equatable {
     let nextCheckAt: Date
     let sampledAt: Date?
     let estimatedLoadW: Double?
-    var baselineLoadW: Double? = nil
-    var homeLoadW: Double? = nil
-    var peakLoadW: Double? = nil
-    var batteryPercent: Double? = nil
+    var baselineLoadW: Double?
+    var homeLoadW: Double?
+    var peakLoadW: Double?
+    var batteryPercent: Double?
 
     private enum CodingKeys: String, CodingKey {
         case phase

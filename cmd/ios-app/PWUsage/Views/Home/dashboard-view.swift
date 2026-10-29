@@ -7,7 +7,7 @@ struct DashboardView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
     let onOpenTab: (AppTab) -> Void
-    var onRefresh: (() async -> Void)? = nil
+    var onRefresh: (() async -> Void)?
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) var reduceMotion
@@ -77,8 +77,7 @@ struct DashboardView: View {
             updateLiveCardVisibility()
         }
         .refreshable {
-            if let onRefresh { await onRefresh() }
-            else { await coordinator.refreshAll(trigger: .userGesture) }
+            if let onRefresh { await onRefresh() } else { await coordinator.refreshAll(trigger: .userGesture) }
         }
         .task {
             while !Task.isCancelled {

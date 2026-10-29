@@ -116,7 +116,7 @@ struct SmartShiftEvaluation: Equatable {
     let result: LoadTimingForecastEstimator.Result
     let forecast: ForecastAvailability
     /// The projection that priced `result`; `nil` when none could run.
-    var projection: LoadTimingForecastEstimator.Projection.Kind? = nil
+    var projection: LoadTimingForecastEstimator.Projection.Kind?
 }
 
 /// Every Smart Shift sentence and display decision, kept out of the views so it can be tested.

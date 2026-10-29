@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct StatusCard<Content: View>: View {
-    var theme: SectionTheme? = nil
+    var theme: SectionTheme?
     /// Where the content sits when the card is stretched to fill its row.
     var fillAlignment: Alignment = .topLeading
     @ViewBuilder let content: Content

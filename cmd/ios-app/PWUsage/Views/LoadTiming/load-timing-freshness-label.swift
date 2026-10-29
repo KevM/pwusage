@@ -54,8 +54,8 @@ struct LoadTimingFreshnessAnnouncement: ViewModifier {
 }
 
 struct LoadTimingCard<Content: View>: View {
-    var title: String? = nil
-    var symbol: String? = nil
+    var title: String?
+    var symbol: String?
     @ViewBuilder let content: Content
 
     init(title: String? = nil, symbol: String? = nil, @ViewBuilder content: () -> Content) {
