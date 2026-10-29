@@ -1103,7 +1103,7 @@ private actor TestSolarForecastFiles: SolarForecastPersistence {
         guard let batch = state.caches[key] else { return }
         state.caches[key] = SolarForecastBatch(credentialID: batch.credentialID, resourceIDs: batch.resourceIDs, intervals: batch.intervals, fetchedAt: date)
     }
-    func persistedPayloadContains(_ value: String) -> Bool { String(decoding: payload, as: UTF8.self).contains(value) }
+    func persistedPayloadContains(_ value: String) -> Bool { (String(bytes: payload, encoding: .utf8) ?? "").contains(value) }
 }
 
 private enum TestFileError: Error { case failedWrite }

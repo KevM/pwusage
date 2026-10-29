@@ -174,7 +174,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
     /// what a debugging session would want to see.
     func json() throws -> String {
         let data = try Self.encoder().encode(self)
-        return String(decoding: data, as: UTF8.self)
+        return String(bytes: data, encoding: .utf8) ?? ""
     }
 
     static func encoder() -> JSONEncoder {

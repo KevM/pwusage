@@ -29,8 +29,7 @@ struct SolcastClientTests {
     func sendsAuthenticatedRequestsToFixedEndpoints() async throws {
         let transport = RecordingSolcastTransport { request in
             let body: String
-            if request.url?.path == "/rooftop_sites" { body = #"{"sites":[]}"# }
-            else { body = #"{"forecasts":[]}"# }
+            if request.url?.path == "/rooftop_sites" { body = #"{"sites":[]}"# } else { body = #"{"forecasts":[]}"# }
             return (Data(body.utf8), HTTPURLResponse(url: try #require(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!)
         }
         let client = SolcastClient(apiKey: "synthetic-key", transport: transport)

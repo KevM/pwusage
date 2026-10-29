@@ -498,8 +498,7 @@ final class FakeActivityAPI: BatteryHoldActivityAPI {
             pauseRegistration = false
             isPaused = true
             // Like URLSession, a paused request gives up when its task is cancelled.
-            do { while isPaused { try await Task.sleep(for: .milliseconds(2)) } }
-            catch { cancelledRegistrations += 1; throw error }
+            do { while isPaused { try await Task.sleep(for: .milliseconds(2)) } } catch { cancelledRegistrations += 1; throw error }
         }
         if !registerErrors.isEmpty { throw registerErrors.removeFirst() }
         registrations.append(.init(siteID: siteID, registration: registration))

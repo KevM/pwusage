@@ -235,8 +235,7 @@ extension DashboardCoordinator {
         guard timerTask == nil, let timerInterval else { return }
         timerTask = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: timerInterval) }
-                catch { return }
+                do { try await Task.sleep(for: timerInterval) } catch { return }
                 guard let self, self.isForeground, self.canRequestAccountData else { return }
                 await self.refreshDue()
             }

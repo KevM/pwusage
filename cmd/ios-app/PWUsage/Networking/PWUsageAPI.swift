@@ -38,8 +38,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
 
     func fetchSites() async throws -> [MobileSite] {
         let data = try await request(path: "/api/sites")
-        do { return try MobileContractDecoder.make().decode([MobileSite].self, from: data) }
-        catch { throw PWUsageAPIError.invalidResponse }
+        do { return try MobileContractDecoder.make().decode([MobileSite].self, from: data) } catch { throw PWUsageAPIError.invalidResponse }
     }
 
     func fetchLive(siteID: String) async throws -> MobileLiveResponse {
@@ -47,8 +46,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         let data = try await request(url: url)
         do {
             return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: data).validating(siteID: siteID)
-        } catch let error as MobileLiveResponse.ContractError { throw error }
-        catch { throw PWUsageAPIError.invalidResponse }
+        } catch let error as MobileLiveResponse.ContractError { throw error } catch { throw PWUsageAPIError.invalidResponse }
     }
 
     func fetchLivePower(siteID: String) async throws -> MobileLivePowerResponse {
@@ -67,8 +65,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         let data = try await request(url: url)
         do {
             return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: data).validating(siteID: siteID)
-        } catch let error as MobileBillResponse.ContractError { throw error }
-        catch { throw PWUsageAPIError.invalidResponse }
+        } catch let error as MobileBillResponse.ContractError { throw error } catch { throw PWUsageAPIError.invalidResponse }
     }
 
     func fetchTariffs(siteID: String) async throws -> MobileTariffsResponse {
@@ -143,8 +140,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         let data = try await request(url: url)
         do {
             return try MobileContractDecoder.make().decode(MobileLoadPlanningContextResponse.self, from: data)
-        } catch let error as MobileLoadPlanningContextResponse.ContractError { throw error }
-        catch { throw PWUsageAPIError.invalidResponse }
+        } catch let error as MobileLoadPlanningContextResponse.ContractError { throw error } catch { throw PWUsageAPIError.invalidResponse }
     }
 
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {

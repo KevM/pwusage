@@ -28,7 +28,7 @@
             guard mode == .ambiguous else { return live }
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
-            let json = String(decoding: try encoder.encode(live), as: UTF8.self)
+            let json = String(bytes: try encoder.encode(live), encoding: .utf8) ?? ""
                 .replacingOccurrences(of: "\"stateOfCharge\":72", with: "\"stateOfCharge\":90")
             return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(json.utf8))
         }

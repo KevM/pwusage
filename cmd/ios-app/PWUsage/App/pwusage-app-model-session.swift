@@ -19,9 +19,7 @@ extension PWUsageAppModel {
         signInMessage = nil
         teardownCoordinator()
         var cleanupFailed = false
-        do { try await authService.logout() }
-        catch let error as MobileAuthService.AuthError where error == .forecastCleanupFailed { cleanupFailed = true }
-        catch { /* A remote logout failure does not prevent local sign-out. */ }
+        do { try await authService.logout() } catch let error as MobileAuthService.AuthError where error == .forecastCleanupFailed { cleanupFailed = true } catch { /* A remote logout failure does not prevent local sign-out. */ }
         coordinator = nil
         coordinatorAuthSubscription = nil
         sites = []
@@ -44,8 +42,7 @@ extension PWUsageAppModel {
         teardownCoordinator()
         await liveActivities?.sessionInvalidated()
         var cleanupFailed = false
-        do { try await authService.invalidateAuthenticatedSession() }
-        catch { cleanupFailed = true }
+        do { try await authService.invalidateAuthenticatedSession() } catch { cleanupFailed = true }
         isSitePickerPresented = false
         coordinator = nil
         coordinatorAuthSubscription = nil
