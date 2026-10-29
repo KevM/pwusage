@@ -243,6 +243,7 @@ extension DashboardCoordinator {
     }
 
     private func teslaConnectionRestored() {
+        guard !requiresTeslaCommandReauthorization else { return }
         if requiresTeslaReconnect, batteryHold.failure == .needsReauthentication {
             batteryHold.failure = nil
         }

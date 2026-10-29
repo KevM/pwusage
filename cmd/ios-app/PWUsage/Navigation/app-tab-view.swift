@@ -9,6 +9,23 @@ struct AppTabView: View {
     let site: MobileSite
 
     var body: some View {
+        Group {
+            if coordinator.requiresTeslaReconnect {
+                SignInView(
+                    isWorking: model.isSigningIn,
+                    message: model.signInMessage,
+                    onSignIn: { Task { await model.reconnectTesla() } },
+                    title: "Reconnect Tesla",
+                    subtitle: "Reconnect your Tesla account to update your energy data.",
+                    buttonTitle: "Reconnect Tesla"
+                )
+            } else {
+                tabs
+            }
+        }
+    }
+
+    private var tabs: some View {
         TabView(selection: Binding(get: { model.selectedTab }, set: { model.selectTab($0) })) {
             ForEach(AppTab.allCases) { tab in
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {

@@ -34,6 +34,7 @@ final class DashboardCoordinator: ObservableObject {
     @Published var refreshSettled = false
     @Published var requiresSignIn = false
     @Published var requiresTeslaReconnect = false
+    var requiresTeslaCommandReauthorization = false
     /// The dashboard presents one sheet at a time. Keeping that in a single
     /// published value means an external Battery Hold launch can clear whatever
     /// is on screen, so the root view's alert and loading overlay are not left
@@ -233,12 +234,13 @@ final class DashboardCoordinator: ObservableObject {
 
     /// Call after the app verifies both the session and authorized site access.
     func authenticationRestored() {
-        guard !canRequestAccountData else { return }
+        guard !canRequestAccountData || requiresTeslaReconnect else { return }
         sessionVerified = true
         requiresSignIn = false
-        requiresTeslaReconnect = false
+        requiresTeslaCommandReauthorization = false
         cache?.selectWidgetSite(selectedSiteID)
         live.lastAttempt = nil
+        power.lastAttempt = nil
         bill.lastAttempt = nil
         guard sceneIsActive else { return }
         isForeground = true
@@ -281,6 +283,7 @@ final class DashboardCoordinator: ObservableObject {
         refreshSettled = false
         batteryHold = BatteryHoldState()
         requiresTeslaReconnect = false
+        requiresTeslaCommandReauthorization = false
         live.reset()
         power.reset()
         bill.reset()
