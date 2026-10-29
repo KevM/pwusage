@@ -40,13 +40,13 @@ actor DeviceSolcastCredentialStore: SolcastCredentialKeychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrSynchronizable as String: false,
+            kSecAttrSynchronizable as String: false
         ]
         let attributes: [String: Any] = [
             kSecValueData as String: Data(key.utf8),
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecAttrSynchronizable as String: false,
-            kSecAttrLabel as String: credentialID,
+            kSecAttrLabel as String: credentialID
         ]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
@@ -67,7 +67,7 @@ actor DeviceSolcastCredentialStore: SolcastCredentialKeychain {
             kSecAttrSynchronizable as String: false,
             kSecReturnAttributes as String: true,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -86,7 +86,7 @@ actor DeviceSolcastCredentialStore: SolcastCredentialKeychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: Self.account(accountScopeID: accountScopeID, siteID: siteID),
-            kSecAttrSynchronizable as String: false,
+            kSecAttrSynchronizable as String: false
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError.status(status) }
@@ -96,7 +96,7 @@ actor DeviceSolcastCredentialStore: SolcastCredentialKeychain {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError.status(status) }

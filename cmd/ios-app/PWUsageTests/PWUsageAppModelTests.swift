@@ -903,7 +903,7 @@ struct PWUsageAppModelTests {
 
     @Test("Reconnect cancellation and web failures preserve the signed-in dashboard", arguments: [
         ASWebAuthenticationSessionError.Code.canceledLogin,
-        .presentationContextInvalid,
+        .presentationContextInvalid
     ])
     func reconnectFailurePreservesSession(code: ASWebAuthenticationSessionError.Code) async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
@@ -942,7 +942,7 @@ struct PWUsageAppModelTests {
     }
 
     @Test("Reconnect handles exchange, site reload and confirmed expiry", arguments: [
-        "exchangeFailure", "siteFailure", "success", "expired",
+        "exchangeFailure", "siteFailure", "success", "expired"
     ])
     func reconnectCompletion(outcome: String) async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])

@@ -139,7 +139,7 @@
             MobileSite(id: "preview-cabin", name: "Lakeside Cabin", utility: "North Shore Electric"),
             MobileSite(id: "preview-office", name: "Main Street Office", utility: "City Power & Light"),
             MobileSite(id: "preview-ranch", name: "Hill Country Ranch", utility: "Pedernales Co-op"),
-            MobileSite(id: "preview-rental", name: "Elm Street Rental", utility: "Demo utility"),
+            MobileSite(id: "preview-rental", name: "Elm Street Rental", utility: "Demo utility")
         ]
 
         let sites: [MobileSite]

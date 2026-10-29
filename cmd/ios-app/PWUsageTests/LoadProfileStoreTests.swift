@@ -179,7 +179,7 @@ struct LoadProfileStoreTests {
             LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 2, durationHours: 1.5, carSettings: nil),
             LoadProfile(id: "dryer", name: "Dryer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil),
             LoadProfile(id: "washer-dryer-combo", name: "Washer–Dryer Combo", kind: .appliance, energyKwh: 8, durationHours: 3, carSettings: nil),
-            LoadProfile(id: poolPumpID, name: "Pool pump", kind: .custom, energyKwh: 4, durationHours: 2, carSettings: nil),
+            LoadProfile(id: poolPumpID, name: "Pool pump", kind: .custom, energyKwh: 4, durationHours: 2, carSettings: nil)
         ], selectedProfileID: "dryer")
         defaults.set(try JSONEncoder().encode(saved), forKey: LoadProfileStore.storageKey)
 
@@ -200,7 +200,7 @@ struct LoadProfileStoreTests {
         for (savedName, expected) in [("Custom", "Bake bread"), ("Hot tub", "Hot tub")] {
             let defaults = Fixture.emptyDefaults()
             let saved = VersionOneCollection(version: 1, profiles: VersionOneCollection.builtIns + [
-                LoadProfile(id: "custom-example", name: savedName, kind: .custom, energyKwh: 20, durationHours: 4, carSettings: nil),
+                LoadProfile(id: "custom-example", name: savedName, kind: .custom, energyKwh: 20, durationHours: 4, carSettings: nil)
             ], selectedProfileID: nil)
             defaults.set(try JSONEncoder().encode(saved), forKey: LoadProfileStore.storageKey)
 
@@ -216,7 +216,7 @@ struct LoadProfileStoreTests {
             (.invalidProfile, "Enter a name for custom loads, and energy and duration greater than zero. Check the car charge settings too."),
             (.profileNotFound, "That load profile is no longer available. Close and reopen load profiles."),
             (.cannotDeleteBuiltIn, "Built-in load profiles can’t be deleted. Edit them instead, or reset them to their default settings."),
-            (.cannotResetCustom, "Custom loads can’t be reset to defaults. Delete the load and add it again instead."),
+            (.cannotResetCustom, "Custom loads can’t be reset to defaults. Delete the load and add it again instead.")
         ]
         for (error, expected) in cases {
             #expect(error.errorDescription == expected)
@@ -257,6 +257,6 @@ private struct VersionOneCollection: Codable {
         LoadProfile(id: "dishwasher", name: "Dishwasher", kind: .appliance, energyKwh: 5, durationHours: 2, carSettings: nil),
         LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 2, durationHours: 1.5, carSettings: nil),
         LoadProfile(id: "dryer", name: "Dryer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil),
-        LoadProfile(id: "washer-dryer-combo", name: "Washer–Dryer Combo", kind: .appliance, energyKwh: 8, durationHours: 3, carSettings: nil),
+        LoadProfile(id: "washer-dryer-combo", name: "Washer–Dryer Combo", kind: .appliance, energyKwh: 8, durationHours: 3, carSettings: nil)
     ]
 }

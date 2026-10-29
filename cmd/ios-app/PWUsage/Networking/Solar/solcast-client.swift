@@ -57,8 +57,7 @@ struct SolcastClient: Sendable {
 
     func discoverSites() async throws -> [SolcastSite] {
         let data = try await get(path: "/rooftop_sites")
-        do { return try JSONDecoder().decode(SolcastSitesResponse.self, from: data).sites }
-        catch { throw SolcastClientError.decodingFailure }
+        do { return try JSONDecoder().decode(SolcastSitesResponse.self, from: data).sites } catch { throw SolcastClientError.decodingFailure }
     }
 
     func fetchForecast(resourceID: String) async throws -> [SolcastForecastPoint] {
@@ -66,8 +65,7 @@ struct SolcastClient: Sendable {
         // Seven days: the bill-date projection uses the forecast this far. Still one request.
         let data = try await get(path: "/rooftop_sites/\(resourceID)/forecasts",
                                  query: [URLQueryItem(name: "hours", value: "168")])
-        do { return try JSONDecoder().decode(SolcastForecastResponse.self, from: data).forecasts }
-        catch { throw SolcastClientError.decodingFailure }
+        do { return try JSONDecoder().decode(SolcastForecastResponse.self, from: data).forecasts } catch { throw SolcastClientError.decodingFailure }
     }
 
     private func get(path: String, query: [URLQueryItem] = []) async throws -> Data {
@@ -80,8 +78,7 @@ struct SolcastClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let data: Data
         let response: URLResponse
-        do { (data, response) = try await transport.data(for: request) }
-        catch {
+        do { (data, response) = try await transport.data(for: request) } catch {
             // A cancelled request is not a network failure: it must not be recorded
             // against the forecast or charged to the request budget.
             if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
@@ -123,7 +120,7 @@ struct SolcastClient: Sendable {
         guard !value.contains("..") else { return false }
         let forbidden: Set<Unicode.Scalar> = [
             "/", "\\", "?", "#", "%", "&", "=", ":", "@", ";", ",", " ",
-            "\u{0}", "\t", "\n", "\r",
+            "\u{0}", "\t", "\n", "\r"
         ]
         return value.unicodeScalars.allSatisfy { scalar in
             !forbidden.contains(scalar) && !CharacterSet.controlCharacters.contains(scalar)

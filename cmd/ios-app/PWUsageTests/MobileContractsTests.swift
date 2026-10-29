@@ -210,7 +210,7 @@ struct MobileContractsTests {
         billBase + #""estimatedCost":1,"periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":false,"periods":[{"name":"Peak","marginalCost":"-inf","basis":"buy","cycleNetExportKwh":0,"isActive":true,"nextStartPhrase":null,"buyRate":0.3,"sellRate":0.1}],"pricingPeriods":[]}}"#,
         billBase + #""estimatedCost":1,"periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":false,"periods":[],"pricingPeriods":[{"name":"Peak","marginalCost":0.3,"basis":"buy","cycleNetExportKwh":0,"isActive":true,"nextStartPhrase":null,"buyRate":"nan","sellRate":0.1}]}}"#,
         billBase + #""estimatedCost":1,"periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":false,"periods":[],"pricingPeriods":[],"tariffTimeline":[{"start":"2026-09-23T23:30:00Z","end":"2026-09-24T00:00:00Z","periodKey":"p","name":"Peak","buyRate":0.3,"sellRate":"inf"}]}}"#,
-        billBase + #""estimatedCost":1,"periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":false,"periods":[],"pricingPeriods":[],"nextCheaper":{"name":"Off","marginalCost":"nan","phrase":"soon"}}}"#,
+        billBase + #""estimatedCost":1,"periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":false,"periods":[],"pricingPeriods":[],"nextCheaper":{"name":"Off","marginalCost":"nan","phrase":"soon"}}}"#
     ])
     func rejectsNonFiniteBillAmounts(fixture: String) throws {
         let response = try Self.nonConformingDecoder().decode(MobileBillResponse.self, from: Data(fixture.utf8))
@@ -230,7 +230,7 @@ struct MobileContractsTests {
         #""currentBill":{"estimatedCost":"inf","currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]}"#,
         #""currentBill":{"estimatedCost":1,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[{"tariffName":"R","periodName":"Peak","netGridKwh":1,"cost":"nan"}]}"#,
         #""activeLoadTiming":{"periodName":"Peak","buyRate":"nan","sellRate":0.1,"marginalCost":null,"basis":"buy","balanceKwh":null,"energyDataThrough":null}"#,
-        #""activeLoadTiming":{"periodName":"Peak","buyRate":0.3,"sellRate":0.1,"marginalCost":"-inf","basis":"buy","balanceKwh":null,"energyDataThrough":null}"#,
+        #""activeLoadTiming":{"periodName":"Peak","buyRate":0.3,"sellRate":0.1,"marginalCost":"-inf","basis":"buy","balanceKwh":null,"energyDataThrough":null}"#
     ])
     func rejectsNonFiniteLiveAmounts(field: String) throws {
         let fixture = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC","localDate":"2026-09-23"},"live":{"solarPower":0,"loadPower":0,"batteryPower":0,"gridPower":0},"today":{"homeKwh":1,"solarKwh":1,"gridNetKwh":0,"batteryNetKwh":0},"todayComplete":false,"sources":{"energyDataThrough":null},"# + field + "}"

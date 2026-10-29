@@ -425,14 +425,12 @@ final class MobileAuthServiceTests {
         let service = try makeService(isAuthenticated: true)
         var cancelled = false
         let attempt = Task {
-            do { try await service.signIn() }
-            catch { cancelled = (error as? MobileAuthService.AuthError) == .cancelled }
+            do { try await service.signIn() } catch { cancelled = (error as? MobileAuthService.AuthError) == .cancelled }
         }
         defer { attempt.cancel() }
         try #require(await waitUpTo { fakeSession.startCount == 1 })
         let callback = try #require(fakeSession.takeCompletion())
-        if invalidate { try await service.invalidateAuthenticatedSession() }
-        else { try await service.logout() }
+        if invalidate { try await service.invalidateAuthenticatedSession() } else { try await service.logout() }
         #expect(await waitUpTo { cancelled })
         #expect(fakeSession.cancelCount == 1)
         #expect(!service.pendingContinuationForTesting)
@@ -544,10 +542,10 @@ final class MobileAuthServiceTests {
 
         let origin = URL(string: "https://pwusage.test")!
         let siteCookie = try #require(HTTPCookie(properties: [
-            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "session-secret", .secure: "TRUE",
+            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "session-secret", .secure: "TRUE"
         ]))
         let preferenceCookie = try #require(HTTPCookie(properties: [
-            .domain: "pwusage.test", .path: "/", .name: "display", .value: "compact",
+            .domain: "pwusage.test", .path: "/", .name: "display", .value: "compact"
         ]))
         cookieStorage.setCookie(siteCookie)
         cookieStorage.setCookie(preferenceCookie)

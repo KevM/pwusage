@@ -41,8 +41,7 @@ extension BatteryHoldActivityCoordinator {
         let others = host.activities().filter { $0.attributes.siteID == siteID && $0.attributes.holdID != hold.id }
         Task {
             for handle in others {
-                if let item = tracked[handle.id] { await end(item, as: nil, immediately: true) }
-                else { await handle.end(nil, immediately: true) }
+                if let item = tracked[handle.id] { await end(item, as: nil, immediately: true) } else { await handle.end(nil, immediately: true) }
             }
         }
         guard host.activitiesEnabled else { return }
@@ -102,7 +101,7 @@ extension BatteryHoldActivityCoordinator {
                 for await lifecycle in lifecycles where lifecycle == .ended || lifecycle == .dismissed {
                     await self?.observedEnd(activityID: activityID)
                 }
-            },
+            }
         ]
         tracked[activityID] = item
         shownHoldIDs.insert(handle.attributes.holdID)
