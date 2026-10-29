@@ -1,7 +1,9 @@
+import { isTeslaConnectionRequired, requiresTeslaReconnect } from './tesla-refresh-outcome';
 import { withIoDeadline, ioSignal, checkIoDeadline } from './io-deadline';
 import { Importer } from './importer';
 import { type EnergySiteLiveStatus } from './tesla-client';
 import { SiteRepo } from './site-repo';
+import { UserRepo } from './user-repo';
 import { createEnergyRepo } from './energy-repo-factory';
 import { withImportLock } from './import-lock';
 import { createTeslaClientForSite } from './tesla-client-factory';
@@ -64,7 +66,7 @@ export interface RefreshTodayOptions {
 
 export interface RefreshTodayResult {
     /** `not-due`: Tesla cannot have a sample newer than the latest stored one yet. */
-    status: 'persisted' | 'no-new-rows' | 'not-due' | 'throttled' | 'in-flight' | 'no-tokens' | 'error';
+    status: 'persisted' | 'no-new-rows' | 'not-due' | 'throttled' | 'in-flight' | 'connection-required' | 'no-tokens' | 'error';
     rowsPersisted?: number;
     errorMessage?: string;
 }
@@ -80,7 +82,7 @@ export interface RefreshLiveStatusOptions {
 }
 
 export interface RefreshLiveStatusResult {
-    status: 'refreshed' | 'cached' | 'in-flight' | 'throttled' | 'no-tokens' | 'site-not-found' | 'error';
+    status: 'refreshed' | 'cached' | 'in-flight' | 'throttled' | 'connection-required' | 'no-tokens' | 'site-not-found' | 'error';
     liveStatus?: EnergySiteLiveStatus;
     fetchedAt?: number;
     errorMessage?: string;
@@ -118,7 +120,7 @@ export async function refreshTodayData(
 ): Promise<RefreshTodayResult> {
     return withIoDeadline(options.timeoutMs ?? TESLA_FETCH_TIMEOUT_MS,
         () => refreshTodayDataWithinDeadline(siteId, options), options.signal ?? ioSignal())
-        .catch(error => ({ status: 'error' as const, errorMessage: error instanceof Error ? error.message : String(error) }));
+        .catch(error => ({ status: isTeslaConnectionRequired(error) ? 'connection-required' as const : 'error' as const, errorMessage: error instanceof Error ? error.message : String(error) }));
 }
 
 async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTodayOptions): Promise<RefreshTodayResult> {
@@ -170,7 +172,7 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
                 return { status: 'persisted', rowsPersisted };
             } catch (error) {
                 return {
-                    status: 'error',
+                    status: isTeslaConnectionRequired(error) ? 'connection-required' : 'error',
                     errorMessage: error instanceof Error ? error.message : String(error)
                 };
             } finally {
@@ -195,6 +197,9 @@ export async function refreshLiveStatus(
     options: RefreshLiveStatusOptions = {}
 ): Promise<RefreshLiveStatusResult> {
     const siteRepo = new SiteRepo();
+    // The stored reading, kept for a transient failure (e.g. a refresh backoff)
+    // so routes degrade to it instead of failing.
+    let fallback: Pick<RefreshLiveStatusResult, 'liveStatus' | 'fetchedAt'> = {};
 
     try {
         const site = options.liveOnly
@@ -210,9 +215,19 @@ export async function refreshLiveStatus(
         const cachedStatus = readLiveStatus(site.live_status_cache);
         const fetchedAt = readFetchedAt(site.last_live_refresh_at);
         const useCached = options.useCached ?? true;
+        if (cachedStatus && useCached) fallback = { liveStatus: cachedStatus, fetchedAt };
+        // A cached reading is not evidence the connection is healthy: clients
+        // clear their reconnect prompt on success. Keep the stored reading for
+        // callers that render it, but report the connection state.
+        let connectionChecked: Promise<boolean> | undefined;
+        const cached = async (): Promise<RefreshLiveStatusResult> => {
+            connectionChecked ??= new UserRepo().getTokensForSite(siteId)
+                .then(connection => !connection?.refresh_token || connection.is_active === false || requiresTeslaReconnect(connection));
+            return { status: await connectionChecked ? 'connection-required' : 'cached', liveStatus: cachedStatus, fetchedAt };
+        };
 
         if (useCached && options.force !== true && cachedStatus && fetchedAt && now - fetchedAt < cacheTtlMs) {
-            return { status: 'cached', liveStatus: cachedStatus, fetchedAt };
+            return cached();
         }
 
         const state = getState(siteId);
@@ -221,7 +236,7 @@ export async function refreshLiveStatus(
             // components poll the same site concurrently and callers treat a
             // missing liveStatus as a hard failure (HTTP 500).
             if (cachedStatus && useCached) {
-                return { status: 'cached', liveStatus: cachedStatus, fetchedAt };
+                return cached();
             }
             return { status: 'in-flight' };
         }
@@ -232,7 +247,7 @@ export async function refreshLiveStatus(
             && now - state.lastLiveRefreshAt < minIntervalMs
         ) {
             if (cachedStatus && useCached) {
-                return { status: 'cached', liveStatus: cachedStatus, fetchedAt };
+                return cached();
             }
             return { status: 'throttled' };
         }
@@ -254,7 +269,7 @@ export async function refreshLiveStatus(
                 const claimed = await siteRepo.claimLiveRefresh(siteId, claimMs, minIntervalMs);
                 if (!claimed) {
                     if (cachedStatus && useCached) {
-                        return { status: 'cached', liveStatus: cachedStatus, fetchedAt };
+                        return cached();
                     }
                     return { status: 'throttled' };
                 }
@@ -281,8 +296,10 @@ export async function refreshLiveStatus(
             state.liveInFlight = false;
         }
     } catch (error) {
+        const connectionRequired = isTeslaConnectionRequired(error);
         return {
-            status: 'error',
+            status: connectionRequired ? 'connection-required' : 'error',
+            ...(connectionRequired ? {} : fallback),
             errorMessage: error instanceof Error ? error.message : String(error)
         };
     }

@@ -5,9 +5,9 @@ import Testing
 @MainActor
 @Suite("PWUsage API Tests", .serialized)
 final class PWUsageAPITests {
-    private var cookieStorage: HTTPCookieStorage
-    private var session: URLSession
-    private var api: PWUsageAPI
+    var cookieStorage: HTTPCookieStorage
+    var session: URLSession
+    var api: PWUsageAPI
 
     init() throws {
         let configuration = URLSessionConfiguration.ephemeral
@@ -514,7 +514,7 @@ final class PWUsageAPITests {
         """
     }
 
-    private static func response(_ request: URLRequest, status: Int) throws -> HTTPURLResponse {
+    static func response(_ request: URLRequest, status: Int) throws -> HTTPURLResponse {
         guard let url = request.url,
               let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else {
             throw URLError(.badServerResponse)
@@ -539,7 +539,7 @@ final class PWUsageAPITests {
     }
 }
 
-private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
+final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var _requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
     nonisolated(unsafe) private static var _cookieStorage: HTTPCookieStorage?

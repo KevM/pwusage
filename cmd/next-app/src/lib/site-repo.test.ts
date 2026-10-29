@@ -523,7 +523,8 @@ describe('SiteRepo.getSitesForGapHeal', () => {
         const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
         expect(sql).toContain('SELECT s.id, s.timezone, s.installed');
         expect(sql).toContain('s.last_live_refresh_at >= $1');
-        expect(params).toEqual([1_000, 500]);
+        expect(params).toEqual([1_000, 500, expect.any(Number)]);
+        expect(sql).toContain("u.tesla_refresh_state = 'in_flight' AND u.refresh_lock_expires <= $3");
         expect(sql).toContain('u.is_active = true');
         expect(sql).toContain('u.refresh_token IS NOT NULL');
         expect(sql).toContain(`u.auth_status IS DISTINCT FROM 'revoked'`);

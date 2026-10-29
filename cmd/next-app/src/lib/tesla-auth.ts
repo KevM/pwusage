@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { logEvent } from './observability';
 import { abortable, ioFailureDetails } from './io-deadline';
-import { TeslaAuthError } from './tesla-client';
+import { TeslaRefreshError, type TeslaOAuthErrorCode } from './tesla-refresh-outcome';
 import { requireEnv } from './env';
 import { postToTeslaTokenEndpoint, type RefreshExchangeContext } from './tesla-token-endpoint';
 
@@ -15,12 +15,13 @@ import { postToTeslaTokenEndpoint, type RefreshExchangeContext } from './tesla-t
 // here and has no environment variable.
 const REFRESH_SCOPE = 'openid email offline_access';
 
-function parseTokenErrorCode(body: string): string | null {
+function parseTokenErrorCode(body: string): TeslaOAuthErrorCode | null {
     try {
         const parsed: unknown = JSON.parse(body);
         if (typeof parsed !== 'object' || parsed === null) return null;
         const { error } = parsed as Record<string, unknown>;
-        return typeof error === 'string' ? error : null;
+        return error === 'invalid_grant' || error === 'login_required' || error === 'invalid_client'
+            || error === 'unauthorized_client' || error === 'unsupported_grant_type' || error === 'invalid_request' ? error : null;
     } catch {
         return null;
     }
@@ -73,10 +74,18 @@ export function parseRefreshedTokens(payload: unknown): RefreshedTokens {
 }
 
 export async function refreshAccessToken(refreshToken: string, context: RefreshExchangeContext = { exchangeId: randomUUID() }): Promise<RefreshedTokens> {
+    let clientId: string;
+    let clientSecret: string;
+    try {
+        clientId = requireEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID');
+        clientSecret = requireEnv('TESLA_OAUTH_SECRET');
+    } catch (error) {
+        throw new TeslaRefreshError('not_dispatched', null, null, error instanceof Error ? error.message : 'Missing Tesla configuration');
+    }
     const { response, host, signal } = await postToTeslaTokenEndpoint({
         grant_type: 'refresh_token',
-        client_id: requireEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID'),
-        client_secret: requireEnv('TESLA_OAUTH_SECRET'),
+        client_id: clientId,
+        client_secret: clientSecret,
         refresh_token: refreshToken,
         scope: REFRESH_SCOPE,
     }, fetch, context);
@@ -84,28 +93,22 @@ export async function refreshAccessToken(refreshToken: string, context: RefreshE
     const startedAt = Date.now();
     try {
         if (!response.ok) {
-            const body = await abortable(response.text());
+            const body = await abortable(response.text(), signal);
             const errorCode = parseTokenErrorCode(body);
-            const terminalCode = response.status === 400
+            const terminal = (response.status === 400 || response.status === 401)
                 && (errorCode === 'invalid_grant' || errorCode === 'login_required');
-            const terminal = response.status === 401 || terminalCode;
-            // Never interpolate the body: isTeslaAuthError matches message
-            // substrings, so arbitrary upstream text could otherwise revoke a user.
-            // Only a recognized terminal code is safe to echo.
-            const detail = terminalCode ? ` ${errorCode}` : '';
-            const message = `Failed to refresh token: ${response.status}${detail}`;
+            const configuration = (response.status === 400 || response.status === 401)
+                && (errorCode === 'invalid_client' || errorCode === 'unauthorized_client'
+                    || errorCode === 'unsupported_grant_type' || errorCode === 'invalid_request');
+            const outcome = terminal ? 'credential_rejected' : configuration ? 'configuration_rejected' : 'outcome_unknown';
             logEvent('warn', 'tesla.token-endpoint.rejected', {
-                ...context, host, status: response.status, terminal,
-                errorCode: errorCode === 'invalid_grant' || errorCode === 'login_required'
-                    || errorCode === 'invalid_client' ? errorCode : 'other',
+                ...context, host, status: response.status, outcome, errorCode,
             });
-            if (terminal) {
-                throw new TeslaAuthError(message, response.status);
-            }
-            throw new Error(message);
+            throw new TeslaRefreshError(outcome, response.status, errorCode);
+
         }
 
-        const payload: unknown = await abortable(response.json());
+        const payload: unknown = await abortable(response.json(), signal);
         const next = parseRefreshedTokens(payload);
         const expiresIn = (payload as Record<string, unknown>).expires_in;
         const expiryMs = typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn >= 0
@@ -120,6 +123,8 @@ export async function refreshAccessToken(refreshToken: string, context: RefreshE
             durationMs: Date.now() - startedAt, ...ioFailureDetails(error, signal),
             outcomeUnknown: response.ok,
         });
-        throw error;
+        if (error instanceof TeslaRefreshError) throw error;
+        throw new TeslaRefreshError('outcome_unknown', response.status, null,
+            'Tesla response could not be read or did not include valid access_token and refresh_token');
     }
 }

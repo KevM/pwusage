@@ -19,8 +19,11 @@ export async function GET(request: Request) {
         // shared refresh implementation and its in-flight coalescing; force is
         // the existing supported path around the background cache/claim cadence.
         const result = await refreshLiveStatus(siteID, { force: true, liveOnly: true });
-        if (result.status === 'no-tokens' || result.status === 'site-not-found') {
-            return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+        if (result.status === 'connection-required' || result.status === 'no-tokens') {
+            return NextResponse.json({ error: 'Reconnect Tesla to update your data.', code: 'TESLA_CONNECTION_REQUIRED' }, { status: 409, headers: { 'Cache-Control': 'private, no-store' } });
+        }
+        if (result.status === 'site-not-found') {
+            return NextResponse.json({ error: 'Site not found' }, { status: 404 });
         }
         if (!result.liveStatus) {
             return NextResponse.json({ error: 'Live readings unavailable' }, { status: 503 });

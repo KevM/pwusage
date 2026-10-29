@@ -7,7 +7,7 @@ import Testing
 struct DashboardCoordinatorTests {
     @Test("Fast power polls each minute while history and bill stay on thirty minute cadences")
     func fastPowerDoesNotPollHistory() async throws {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
@@ -25,7 +25,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Foregrounding refreshes power even inside its poll cadence without repeating summaries")
     func raiseRefreshesPowerOnly() async throws {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
@@ -40,7 +40,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Raising unsettles Home until its first refresh finishes, so stale cache never flashes a notice")
     func raiseUnsettlesUntilRefreshFinishes() async throws {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
         #expect(!coordinator.refreshSettled)
@@ -65,7 +65,7 @@ struct DashboardCoordinatorTests {
 
     @Test("A failed refresh still settles; a site switch unsettles until the new site refreshes")
     func failureSettlesAndSiteSwitchUnsettles() async throws {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
         api.powerError = PWUsageAPIError.recoverableServerError(statusCode: 503)
         api.summary.liveError = URLError(.notConnectedToInternet)
@@ -103,7 +103,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Fast power updates preserve summary source times and are persisted on backgrounding")
     func fastPowerPreservesSummaryAndWidgetTimes() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -129,7 +129,7 @@ struct DashboardCoordinatorTests {
 
     @Test("An older server retains the combined endpoint cadence")
     func fastPowerRouteMissingFallsBack() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
         api.powerError = PWUsageAPIError.requestRejected(statusCode: 404, message: nil)
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
@@ -142,7 +142,7 @@ struct DashboardCoordinatorTests {
 
     @Test("On an older server a combined-endpoint failure marks live power unavailable")
     func fallbackFailureMarksLivePowerUnavailable() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
         api.powerError = PWUsageAPIError.requestRejected(statusCode: 404, message: nil)
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
@@ -158,7 +158,7 @@ struct DashboardCoordinatorTests {
 
     @Test("With the fast endpoint, live power availability follows that endpoint alone")
     func fastEndpointOwnsLivePowerAvailability() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
         await coordinator.refreshAll(trigger: .userGesture)
@@ -241,7 +241,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Initial foreground load and exact sixty minute request counts")
     func initialForegroundLoadAndExactSixtyMinuteRequestCounts() async throws {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
 
@@ -261,7 +261,7 @@ struct DashboardCoordinatorTests {
 
     @Test("A clock moved backwards does not stall the poll")
     func backwardsClockDoesNotStallThePoll() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
 
@@ -277,7 +277,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Background suspends polling and foreground return makes one due request")
     func backgroundSuspendsPollingAndForegroundReturnMakesOneDueRequest() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: .seconds(3_600))
         coordinator.scenePhaseChanged(isActive: true)
@@ -300,7 +300,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Duplicate scene and timer events do not fetch before endpoint is due")
     func duplicateSceneAndTimerEventsDoNotFetchBeforeEndpointIsDue() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
@@ -354,7 +354,7 @@ struct DashboardCoordinatorTests {
 
     @Test("A bill fetched while live was still importing history is recalculated once after live")
     func billFetchedDuringLiveWaitIsRecalculatedAfterLive() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         api.holdLive = true
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
@@ -378,7 +378,7 @@ struct DashboardCoordinatorTests {
 
     @Test("A bill still in flight when live finishes is recalculated once after it")
     func billInFlightWhenLiveFinishesIsRecalculatedAfterIt() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         api.holdLive = true
         api.holdBill = true
@@ -402,7 +402,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Site switch resets cadence and ignores old site response")
     func siteSwitchResetsCadenceAndIgnoresOldSiteResponse() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         api.holdLive = true
         api.holdBill = true
@@ -451,7 +451,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Server failure keeps stale response and separates attempt from success")
     func serverFailureKeepsStaleResponseAndSeparatesAttemptFromSuccess() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
@@ -527,7 +527,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Screen appearances put a five minute floor under the bill request")
     func screenAppearancesFloorTheBillRequest() async throws {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         let coordinator = DashboardCoordinator(
@@ -551,7 +551,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Smart Shift diagnostics gather the forecast store's bookkeeping")
     func diagnosticsGatherTheForecastStoresBookkeeping() async throws {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         let coordinator = DashboardCoordinator(
@@ -575,7 +575,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Reopening the detail inside the bill floor keeps the enhancement")
     func reopeningInsideTheBillFloorKeepsTheEnhancement() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         let coordinator = DashboardCoordinator(
@@ -595,7 +595,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Manual refresh with a missing planning context re-fetches the context")
     func manualRefreshRefetchesAMissingPlanningContext() async throws {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         let coordinator = DashboardCoordinator(
@@ -622,7 +622,7 @@ struct DashboardCoordinatorTests {
 
     @Test("Regression pin: a non-manual forecast refresh does not re-fetch a missing planning context")
     func automaticRefreshDoesNotRefetchAMissingPlanningContext() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         let coordinator = DashboardCoordinator(
@@ -657,7 +657,7 @@ struct DashboardCoordinatorTests {
     /// construction; this one covers the far more common lifetime expiry.
     @Test("A cached entry that has aged out is replaced by the next fetch")
     func poisonedCacheEntryIsReplacedOnNextFetch() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         api.contextAsOf = clock.now.addingTimeInterval(-60)
@@ -689,7 +689,7 @@ struct DashboardCoordinatorTests {
     /// entry on every read rather than refetching" claim has to be true or false.
     @Test("A cached entry that fails re-validation while still in its lifetime is refetched and replaced")
     func revalidationFailureInsideTheLifetimeRefetchesAndReplaces() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         // Exactly at the 24h `maximumAge` edge, which `validating` accepts (`<=`).
@@ -717,7 +717,7 @@ struct DashboardCoordinatorTests {
 
     @Test("A user-gesture refreshAll bypasses interval checks and fetches both live and bill")
     func userGestureRefreshAllBypassesIntervalChecksAndFetchesBoth() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
@@ -735,7 +735,7 @@ struct DashboardCoordinatorTests {
 
     @Test("A user-gesture refreshBill bypasses interval checks and fetches only bill")
     func userGestureRefreshBillBypassesIntervalChecksAndFetchesOnlyBill() async {
-        let clock = TestClock()
+        let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
@@ -840,7 +840,7 @@ struct DashboardCoordinatorTests {
 }
 
 @MainActor
-private final class TestClock {
+final class DashboardTestClock {
     private(set) var now = Date(timeIntervalSince1970: 1_800_000_000)
 
     func advance(minutes: Int) {
@@ -849,7 +849,7 @@ private final class TestClock {
 }
 
 @MainActor
-private final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
+final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
     private(set) var liveSiteIDs: [String] = []
     private(set) var billSiteIDs: [String] = []
     private(set) var contextSiteIDs: [String] = []

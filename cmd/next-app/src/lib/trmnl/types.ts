@@ -18,6 +18,7 @@ export interface TariffGroup {
 
 export interface RenderContext {
     siteName: string;
+    connectionMessage?: string;
     dateRange: string;
     tariffGroups: TariffGroup[];
     totalCost: number;

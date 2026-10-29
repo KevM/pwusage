@@ -137,6 +137,7 @@ extension DashboardCoordinator {
                 power.response = response
                 power.lastSuccess = now()
                 power.isUnavailable = false
+                teslaConnectionRestored()
             } catch {
                 guard generation == siteGeneration, canRequestAccountData else { return }
                 if error as? PWUsageAPIError == .signInRequired {
@@ -149,6 +150,11 @@ extension DashboardCoordinator {
                     livePowerEndpointAvailable = false
                     power.isUnavailable = false
                 } else {
+                    if error as? PWUsageAPIError
+                        == .requestRejected(statusCode: 409, message: "TESLA_CONNECTION_REQUIRED") {
+                        requiresTeslaReconnect = true
+                        batteryHold.failure = .needsReauthentication
+                    }
                     power.isUnavailable = true
                 }
             }
@@ -176,6 +182,7 @@ extension DashboardCoordinator {
             let snapshot = power.response.map { MobileLiveResponse(snapshot: response, power: $0) } ?? response
             cache?.storeLive(snapshot, at: successTime)
             live.isUnavailable = false
+            teslaConnectionRestored()
             live.unavailableStatusCode = nil
         } catch {
             handle(error, generation: generation, endpoint: .live)
@@ -215,6 +222,10 @@ extension DashboardCoordinator {
             stopTimer()
             return
         }
+        if error as? PWUsageAPIError == .requestRejected(statusCode: 409, message: "TESLA_CONNECTION_REQUIRED") {
+            requiresTeslaReconnect = true
+            batteryHold.failure = .needsReauthentication
+        }
         switch endpoint {
         case .live:
             live.isUnavailable = true
@@ -229,6 +240,13 @@ extension DashboardCoordinator {
                 return statusCode
             }
         }
+    }
+
+    private func teslaConnectionRestored() {
+        if requiresTeslaReconnect, batteryHold.failure == .needsReauthentication {
+            batteryHold.failure = nil
+        }
+        requiresTeslaReconnect = false
     }
 
     func startTimer() {

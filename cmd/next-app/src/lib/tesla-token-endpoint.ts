@@ -1,3 +1,4 @@
+import { TeslaRefreshError } from './tesla-refresh-outcome';
 import { logEvent } from './observability';
 import { ioSignal, checkIoDeadline, abortable, ioFailureDetails } from './io-deadline';
 // Tesla's Fleet API documentation states that calls to /token must use the
@@ -30,14 +31,6 @@ export class TeslaTokenEndpointError extends Error {
     }
 }
 
-function describeErrorForLog(err: unknown): string {
-    if (err instanceof Error) {
-        const cause = err.cause instanceof Error ? `: ${err.cause.message}` : '';
-        return `${err.message}${cause}`;
-    }
-    return String(err);
-}
-
 // ReadableStream.cancel() rejects when the stream is already errored, which
 // undici can produce mid-read while an upstream is flapping. Without a catch
 // that becomes an unhandled rejection — a 500 where a clean 502 was intended.
@@ -49,13 +42,10 @@ function discardBody(response: Response): void {
  * POST form-encoded parameters to Tesla's /token endpoint, preferring the
  * documented fleet-auth host.
  *
- * Falls back to the secondary host only on transport failures and 5xx. A 4xx is
- * a genuine authentication failure: retrying it elsewhere would mask the real
- * error and re-send our client_secret to a second origin.
- *
- * Throws TeslaTokenEndpointError only when no host produced a usable response.
- * `status` carries the last HTTP status seen, so callers can distinguish an
- * upstream outage (5xx) from a network failure (null).
+ * Authorization-code exchange falls back on transport failures and 5xx.
+ * Refresh exchange never replays after dispatch: loss of the response may hide
+ * consumption of the grant. HTTP 4xx responses are classified by the caller.
+ * Redirects are never followed, so credentials stay on the selected origin.
  */
 export async function postToTeslaTokenEndpoint(
     params: Record<string, string>,
@@ -93,23 +83,24 @@ export async function postToTeslaTokenEndpoint(
                 // target receives nothing.
                 redirect: 'manual',
                 signal,
-            }));
+            }), signal);
         } catch (err) {
             if (context) logEvent('warn', 'tesla.refresh.exchange-failed', {
                 ...fields, stage: 'request', durationMs: Date.now() - startedAt,
                 ...ioFailureDetails(err, signal), outcomeUnknown: requestInitiated,
             });
+            if (params.grant_type === 'refresh_token') {
+                throw new TeslaRefreshError(requestInitiated ? 'outcome_unknown' : 'not_dispatched');
+            }
             checkIoDeadline();
             // A transport failure is not an HTTP status. Clear any 5xx seen on
             // an earlier host so `status` and the message cannot disagree, and
             // so Task 6 does not report 503 for what was a network failure.
             lastStatus = null;
-            // The thrown message is classified by isTeslaAuthError, so it must
-            // not carry transport or proxy text. Details stay in this log line.
+            // Keep transport/proxy details out of errors and logs: they can contain secrets.
             lastFailure = 'transport error';
             console.warn(
-                `[TeslaTokenEndpoint] Transport failure calling ${host}; trying next host: `
-                + describeErrorForLog(err)
+                `[TeslaTokenEndpoint] Transport failure calling ${host}; trying next host`
             );
             continue;
         }
@@ -125,6 +116,11 @@ export async function postToTeslaTokenEndpoint(
         // second origin would mask the real error and re-send client_secret.
         if (response.status >= 400 && response.status < 500) {
             return { response, host, signal };
+        }
+
+        if (params.grant_type === 'refresh_token') {
+            discardBody(response);
+            throw new TeslaRefreshError('outcome_unknown', response.status);
         }
 
         // Everything else that is neither 2xx nor 4xx: an unexpected 1xx/2xx/3xx,

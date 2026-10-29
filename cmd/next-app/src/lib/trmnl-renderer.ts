@@ -40,7 +40,7 @@ export class TrmnlRenderer {
         const markup = `
             <div class="view view--full">
                 <div class="layout layout--col gap--small h--full">
-                    ${html.live ?? ''}
+                    ${ctx.connectionMessage ? `<span class="label label--small">${escapeHtml(ctx.connectionMessage)}</span>` : ''}${html.live ?? ''}
                     ${html.energyChart ?? ''}
                     ${html.soc ?? ''}
                     ${/* loadTiming rides the bill slot so a disabled section adds zero bytes — a separate template line would inject blank-line whitespace into every feature-off screen */ ''}${html.bill ?? ''}${html.loadTiming ?? ''}

@@ -1,3 +1,4 @@
+import { TeslaAuthError } from './tesla-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeTargetReserve, parkBattery, restoreBattery } from './battery-hold-service';
 import type { BatteryHold } from './db';
@@ -159,7 +160,7 @@ describe('parkBattery', () => {
 
   it('maps a 403 to needs_reauth', async () => {
     const repo = fakeRepo(null);
-    const client = fakeClient({ setBackupReserve: vi.fn().mockRejectedValue(new Error('Tesla API Error: 403 forbidden')) });
+    const client = fakeClient({ setBackupReserve: vi.fn().mockRejectedValue(new TeslaAuthError('Tesla permission required', 403)) });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res = await parkBattery({ client: client as any, repo: repo as any, siteId: 's', reserveChoice: 100 });
     expect(res.status).toBe('needs_reauth');

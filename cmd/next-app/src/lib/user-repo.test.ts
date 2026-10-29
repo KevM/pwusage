@@ -16,8 +16,6 @@ vi.mock('./db', () => ({
 import { UserRepo } from './user-repo';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { TeslaAuthError } from './tesla-client';
-import { TeslaTokenRepo } from './tesla-token-repo';
-import { SiteRepo } from './site-repo';
 
 describe('UserRepo admin ordering', () => {
     beforeEach(() => {
@@ -119,7 +117,7 @@ describe('UserRepo class methods (folded from module functions)', () => {
         const result = await repo.getTokens('u1');
         expect(result).toEqual({ access_token: 'a', refresh_token: 'r' });
         expect(queryMock).toHaveBeenCalledWith(
-            'SELECT access_token, refresh_token, fleet_api_base_url FROM "User" WHERE id = $1',
+            expect.stringContaining('SELECT access_token, refresh_token, fleet_api_base_url'),
             ['u1']
         );
     });
@@ -210,38 +208,13 @@ describe('UserRepo.verifyUserStatus', () => {
 
     const UPDATE_STATUS_SQL = expect.stringContaining('WHERE id = $3 AND xmin::text = $4');
 
-    it('keeps a revoked account inactive when the real refresh waiter observes revocation', async () => {
-        const siteRepo = new SiteRepo();
-        vi.spyOn(siteRepo, 'getSite').mockResolvedValue({
-            id: 'site-1', user_id: 'u1', name: 'Home', timezone: 'America/Chicago',
-            billing_start_day: 1, updated: new Date(), installed: new Date(), tariffs: [], json: null,
+    it('does not turn a connection-required response into account ineligibility', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 'site-1' }] }).mockResolvedValueOnce({ rowCount: 1, rows: [] });
+        const result = await new UserRepo().verifyUserStatus({ id: 'u1' }, {
+            createClient: async () => ({ getLiveStatus: async () => { throw new Error('Connection unavailable'); } }),
         });
-        const tokens = new TeslaTokenRepo(siteRepo);
-        queryMock
-            .mockResolvedValueOnce({ rows: [{ id: 'site-1' }] })
-            .mockResolvedValueOnce({ rows: [{ is_refreshing: 0, auth_status: 'revoked' }] })
-            .mockResolvedValueOnce({ rows: [], rowCount: 1 });
-        const client = { getLiveStatus: async () => {
-            await tokens.waitForTokenRefresh('site-1');
-            throw new Error('Unexpected waiter success');
-        } };
-
-        const result = await new UserRepo().verifyUserStatus({
-            id: 'u1', auth_status: 'revoked', is_active: false,
-        }, { createClient: async () => client });
-
-        expect(result.status).toBe('revoked');
-        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['revoked', false, 'u1', '100', 'site-1']);
-        expect(queryMock).not.toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['error', true, 'u1', '100', 'site-1']);
-        expect(logEventMock).toHaveBeenCalledWith('warn', 'tesla.refresh.wait-revoked', expect.objectContaining({
-            siteId: 'site-1', authStatus: 'revoked', waitedMs: expect.any(Number),
-        }));
-        const started = logEventMock.mock.calls.find(call => call[1] === 'tesla.user-verification.started');
-        expect(logEventMock).toHaveBeenCalledWith('warn', 'tesla.user-verification.completed', expect.objectContaining({
-            verificationId: started?.[2].verificationId, siteId: 'site-1',
-            selectedAuthStatus: 'revoked', selectedIsActive: false,
-            outcome: 'revoked', reason: 'terminal-auth-failure', durationMs: expect.any(Number),
-        }));
+        expect(result.status).toBe('error');
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['error', true, 'u1', '100', 'site-1', expect.any(Number), 120_000]);
     });
 
     it('logs an interrupted verification when client construction fails without changing account status', async () => {
@@ -281,21 +254,21 @@ describe('UserRepo.verifyUserStatus', () => {
         const client = { getLiveStatus: vi.fn().mockRejectedValue(new Error('Tesla API Error: 503 upstream unavailable')) };
         const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => client as never });
         expect(result.status).toBe('error');
-        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['error', true, 'u1', '100', 'site-1']);
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['error', true, 'u1', '100', 'site-1', expect.any(Number), 120_000]);
         expect(logEventMock).toHaveBeenCalledWith('warn', 'tesla.user-verification.completed', expect.objectContaining({
             outcome: 'error', reason: 'transient-failure', siteId: 'site-1',
         }));
     });
 
-    it('marks the user revoked and inactive on a terminal auth error', async () => {
+    it('records a Fleet access rejection without claiming refresh revocation', async () => {
         queryMock
             .mockResolvedValueOnce({ rows: [{ id: 'site-1' }] })
             .mockResolvedValueOnce({ rows: [], rowCount: 1 });
         const repo = new UserRepo();
         const client = { getLiveStatus: vi.fn().mockRejectedValue(new TeslaAuthError('Tesla API Error: 401 invalid token', 401)) };
         const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => client as never });
-        expect(result.status).toBe('revoked');
-        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['revoked', false, 'u1', '100', 'site-1']);
+        expect(result.status).toBe('error');
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['error', true, 'u1', '100', 'site-1', expect.any(Number), 120_000]);
     });
 
     it('marks the user active on success', async () => {
@@ -307,7 +280,7 @@ describe('UserRepo.verifyUserStatus', () => {
         const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => client as never });
         expect(result.status).toBe('active');
         expect(client.getLiveStatus).toHaveBeenCalledWith('site-1');
-        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['active', true, 'u1', '100', 'site-1']);
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['active', true, 'u1', '100', 'site-1', expect.any(Number), 120_000]);
     });
 
     it('marks no_token when the client factory finds no credentials', async () => {
@@ -317,7 +290,7 @@ describe('UserRepo.verifyUserStatus', () => {
         const repo = new UserRepo();
         const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => null });
         expect(result.status).toBe('no_token');
-        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['no_token', false, 'u1', '100', 'site-1']);
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['no_token', true, 'u1', '100', 'site-1', expect.any(Number), 120_000]);
     });
 
     it('marks no_sites when the user has no sites', async () => {
@@ -327,7 +300,7 @@ describe('UserRepo.verifyUserStatus', () => {
         const repo = new UserRepo();
         const result = await repo.verifyUserStatus({ id: 'u1' }, { createClient: async () => null });
         expect(result.status).toBe('no_sites');
-        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['no_sites', false, 'u1', '100', null]);
+        expect(queryMock).toHaveBeenCalledWith(UPDATE_STATUS_SQL, ['no_sites', true, 'u1', '100', null, expect.any(Number), 120_000]);
     });
 });
 

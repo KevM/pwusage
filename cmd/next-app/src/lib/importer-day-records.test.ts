@@ -143,11 +143,11 @@ describe('range imports', () => {
         expect(store.writeDay).toHaveBeenCalledWith('site', day, expect.any(Array), expect.any(Date), expect.any(Date));
     });
 
-    it('marks the owner revoked when Tesla rejects the token', async () => {
+    it('preserves account eligibility when Tesla rejects a request', async () => {
         const client = teslaClient();
         client.getEnergyHistory.mockRejectedValue(new Error('Tesla API Error: 401 unauthorized'));
         await expect(new Importer(client as unknown as TeslaClient, dayStore()).ensureDataForRange('site', day, nextDay)).rejects.toThrow();
-        expect(mocks.updateUserStatus).toHaveBeenCalledWith('owner', 'revoked', false);
+        expect(mocks.updateUserStatus).not.toHaveBeenCalled();
     });
 });
 

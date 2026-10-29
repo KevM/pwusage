@@ -1,9 +1,9 @@
-import { logEvent } from './observability';
+import { logEvent, flushLogEvents } from './observability';
 import { ioDelay, checkIoDeadline, withIoDeadline, ioFailureDetails } from './io-deadline';
 import { pool } from './db';
 import { SiteRepo } from './site-repo';
 import { UserRepo } from './user-repo';
-import { isTeslaAuthError, TeslaAuthError } from './tesla-client';
+import { TeslaConnectionRequiredError, TeslaRefreshBackoffError, TeslaRefreshError, TRANSIENT_BACKOFF_MS } from './tesla-refresh-outcome';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseRefreshedTokens, type RefreshedTokens } from './tesla-auth';
 import { after } from 'next/server';
@@ -13,6 +13,25 @@ interface AccountCredentials {
     refresh_token: string | null;
     is_refreshing: number;
     auth_status: string | null;
+    is_active: boolean;
+    refresh_lock_expires: number;
+    tesla_credential_generation: number;
+    tesla_refresh_attempt_id: string;
+    tesla_refresh_state: 'ready' | 'in_flight' | 'uncertain' | 'reconnect_required';
+    tesla_refresh_retry_after: number | string;
+}
+
+const LEASE_MS = 60_000;
+/** The wait found the grant ready and unrotated: the caller should claim it. */
+const RETRY_CLAIM = Symbol('retry-claim');
+const CONFIGURATION_BACKOFF_MS = 15 * 60_000;
+const SAVE_ATTEMPTS = 2;
+const SAVE_DEADLINE_MS = 5000;
+
+/** After this worker's own attempt, an unrotated grant is a failure, not a new claim. */
+function settled(result: RefreshedTokens | typeof RETRY_CLAIM): RefreshedTokens {
+    if (result === RETRY_CLAIM) throw new Error('Concurrent credential renewal did not update stored credentials');
+    return result;
 }
 
 function credentialId(value: string): string {
@@ -23,43 +42,51 @@ export class TeslaTokenRepo {
     constructor(private siteRepo: SiteRepo, private userRepo: UserRepo = new UserRepo()) {}
 
     // === Queries ===
-    async waitForTokenRefresh(siteId: string, timeoutMs = 20000): Promise<{ access_token: string; refresh_token: string }> {
-        const start = Date.now();
-        const site = await this.siteRepo.getSite(siteId);
-        if (!site || !site.user_id) throw new Error('Site/User not found for refresh wait');
-
-        return this.waitForUserRefresh(site.user_id, timeoutMs, siteId, start);
-    }
-
-    private async waitForUserRefresh(userId: string, timeoutMs = 20000, siteId?: string, start = Date.now(), suppliedRefresh?: string): Promise<RefreshedTokens> {
+    private async waitForUserRefresh(userId: string, suppliedRefresh: string, siteId?: string, timeoutMs = 20000, start = Date.now()): Promise<RefreshedTokens | typeof RETRY_CLAIM> {
         const fields = { siteId, accountId: credentialId(userId) };
         while (Date.now() - start < timeoutMs) {
-            const res = await pool.query<AccountCredentials>(`SELECT access_token, refresh_token, is_refreshing, auth_status FROM "User" WHERE id = $1`, [userId]);
+            const res = await pool.query<AccountCredentials>(`SELECT access_token, refresh_token, is_refreshing, auth_status, is_active, refresh_lock_expires, tesla_refresh_state, tesla_refresh_retry_after, tesla_credential_generation, tesla_refresh_attempt_id FROM "User" WHERE id = $1`, [userId]);
             const row = res.rows[0];
             if (!row) {
                 throw new Error('Token refresh wait failed: user not found');
             }
-            if (!row.is_refreshing) {
-                if (row.auth_status === 'revoked') {
-                    logEvent('warn', 'tesla.refresh.wait-revoked', {
+            if (row.tesla_refresh_state === 'in_flight' && Number(row.refresh_lock_expires) <= Date.now()) {
+                // The worker died mid-exchange. Its grant is retried after a
+                // backoff: if Tesla consumed it, the replacement was never
+                // stored, so a retry cannot lose anything we hold. The floor
+                // counts from lease expiry (a merely slow worker can still save
+                // under its kept attempt id), so a lease found long after it
+                // died is claimable in this same pass.
+                const now = Date.now();
+                const retryAfter = Number(row.refresh_lock_expires) + TRANSIENT_BACKOFF_MS;
+                const expired = await pool.query(`UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0,
+                        tesla_refresh_state = 'ready', tesla_refresh_retry_after = $3, auth_status = 'error'
+                    WHERE id = $1 AND tesla_refresh_state = 'in_flight' AND refresh_lock_expires <= $2`, [userId, now, retryAfter]);
+                if (expired.rowCount) logEvent('warn', 'tesla.refresh.lease-expired', { ...fields, exchangeId: row.tesla_refresh_attempt_id, generationId: credentialId(`${userId}:${row.tesla_credential_generation}`), fromState: 'in_flight', toState: 'ready', retryAfter: new Date(Math.max(retryAfter, now)).toISOString() });
+                continue;
+            }
+            if (row.is_active === false || row.auth_status === 'revoked'
+                || row.tesla_refresh_state === 'uncertain' || row.tesla_refresh_state === 'reconnect_required') {
+                logEvent('warn', 'tesla.refresh.replay-suppressed', { ...fields, exchangeId: row.tesla_refresh_attempt_id, generationId: credentialId(`${userId}:${row.tesla_credential_generation}`), currentState: row.tesla_refresh_state, reason: row.is_active === false ? 'account-ineligible' : 'unusable-generation' });
+                throw new TeslaConnectionRequiredError();
+            }
+            if (!row.is_refreshing || row.tesla_refresh_state !== 'in_flight') {
+                if (row.refresh_token && row.refresh_token !== suppliedRefresh) {
+                    const current = parseRefreshedTokens(row);
+                    logEvent('info', 'tesla.refresh.wait-completed', {
                         ...fields, authStatus: row.auth_status, waitedMs: Date.now() - start,
+                        previousCredentialId: credentialId(suppliedRefresh), credentialId: credentialId(current.refresh_token),
                     });
-                    // Preserve the terminal classification across the lock boundary.
-                    // A plain Error here let account verification reactivate the user.
-                    throw new TeslaAuthError('Token refresh failed: auth revoked');
+                    return current;
                 }
-                const current = parseRefreshedTokens(row);
-                if (suppliedRefresh === current.refresh_token) {
-                    // A transient failure released the lease without rotating.
-                    // Returning the expired access credential would turn the
-                    // waiter's retry into a misleading terminal Fleet 401.
-                    throw new Error('Concurrent credential renewal did not update stored credentials');
+                const retryAfter = Number(row.tesla_refresh_retry_after ?? 0);
+                if (retryAfter > Date.now()) {
+                    logEvent('info', 'tesla.refresh.backoff', { ...fields, retryAfter: new Date(retryAfter).toISOString() });
+                    throw new TeslaRefreshBackoffError(retryAfter);
                 }
-                logEvent('info', 'tesla.refresh.wait-completed', {
-                    ...fields, authStatus: row.auth_status, waitedMs: Date.now() - start,
-                    credentialId: credentialId(current.refresh_token),
-                });
-                return current;
+                // Ready, unrotated and past any floor: the lease was released
+                // (or recovered above) without a rotation, so claim it again.
+                return RETRY_CLAIM;
             }
             await ioDelay(1000);
         }
@@ -103,26 +130,46 @@ export class TeslaTokenRepo {
 
     private async refreshUser(userId: string, suppliedRefresh: string, siteId?: string): Promise<RefreshedTokens> {
         checkIoDeadline();
-        const now = Date.now();
-        const lease = now + 60000;
+        if (process.env.TESLA_REFRESH_PAUSED === '1') {
+            logEvent('info', 'tesla.refresh.paused', { accountId: credentialId(userId), siteId });
+            throw new TeslaRefreshError('not_dispatched', null, null, 'Tesla refresh is paused');
+        }
         const fields = { siteId, accountId: credentialId(userId) };
-        // UPDATE RETURNING reads the credentials in the same atomic operation
-        // that acquires the account lease. Never exchange a caller's stale copy.
+        // A recovered lease is claimed again once; more than that is a race
+        // worth surfacing rather than looping on.
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const result = await this.claimAndRefresh(userId, suppliedRefresh, siteId, fields);
+            if (result !== RETRY_CLAIM) return result;
+        }
+        throw new Error('Concurrent credential renewal did not update stored credentials');
+    }
+
+    private async claimAndRefresh(userId: string, suppliedRefresh: string, siteId: string | undefined, fields: { siteId: string | undefined; accountId: string }): Promise<RefreshedTokens | typeof RETRY_CLAIM> {
+        const now = Date.now();
+        const lease = now + LEASE_MS;
+        const exchangeId = randomUUID();
+        // Claim only the grant the caller holds. A stale caller (another worker
+        // already rotated) must never mark the account in flight: it adopts the
+        // stored rotation from the wait below instead.
         const claim = await pool.query<AccountCredentials>(`
             UPDATE "User"
-            SET is_refreshing = 1, refresh_lock_expires = $1
+            SET is_refreshing = 1, refresh_lock_expires = $1,
+                tesla_refresh_state = 'in_flight', tesla_refresh_attempt_id = $4,
+                tesla_refresh_started_at = NOW()
             WHERE id = $2 AND (is_refreshing = 0 OR refresh_lock_expires < $3)
-              AND auth_status IS DISTINCT FROM 'revoked'
-            RETURNING access_token, refresh_token
-        `, [lease, userId, now]);
+              AND auth_status IS DISTINCT FROM 'revoked' AND is_active = true
+              AND tesla_refresh_state = 'ready' AND tesla_refresh_retry_after <= $3
+              AND refresh_token = $5
+            RETURNING access_token, refresh_token, tesla_credential_generation, tesla_refresh_attempt_id
+        `, [lease, userId, now, exchangeId, suppliedRefresh]);
         if (!claim.rowCount) {
-            logEvent('info', 'tesla.refresh.waiting', fields);
-            return this.waitForUserRefresh(userId, 20000, siteId, Date.now(), suppliedRefresh);
+            logEvent('info', 'tesla.refresh.not-claimed', fields);
+            return this.waitForUserRefresh(userId, suppliedRefresh, siteId);
         }
 
         // The caller may stop waiting, but a dispatched rotation must run through
         // persistence under its own deadline and the serverless request lifecycle.
-        const operation = this.refreshClaimedUser(userId, suppliedRefresh, siteId, lease, claim.rows[0], fields);
+        const operation = this.refreshClaimedUser(userId, suppliedRefresh, siteId, lease, claim.rows[0], fields, exchangeId);
         try {
             after(async () => { await operation.catch(() => undefined); });
         } catch {
@@ -131,81 +178,117 @@ export class TeslaTokenRepo {
         return operation;
     }
 
+    /**
+     * Save a rotated pair. Tesla has already consumed the old grant, so this is
+     * guarded only by what proves no newer credential write happened (generation,
+     * attempt id, old grant), not by the lease clock: a slow save must still land.
+     */
+    private async saveRotation(userId: string, next: RefreshedTokens, previousRefresh: string, generation: number, exchangeId: string): Promise<boolean> {
+        const save = () => pool.query(`
+            UPDATE "User" SET access_token = $1, refresh_token = $2,
+                tesla_credential_generation = tesla_credential_generation + 1,
+                tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL,
+                auth_status = 'active', tesla_refresh_retry_after = 0,
+                is_refreshing = 0, refresh_lock_expires = 0
+            WHERE id = $3 AND refresh_token = $4
+              AND tesla_credential_generation = $5 AND tesla_refresh_attempt_id = $6
+        `, [next.access_token, next.refresh_token, userId, previousRefresh, generation, exchangeId]);
+        let lastError: unknown;
+        for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt++) {
+            try {
+                // Once Tesla has rotated the grant, saving it must survive the
+                // caller's cancellation, just like releasing the lease does.
+                return Boolean((await withIoDeadline(SAVE_DEADLINE_MS, save, null)).rowCount);
+            } catch (error) {
+                // A lost acknowledgement may have committed; the guard makes
+                // the retry a no-op then, and the waiter reads the saved pair.
+                lastError = error;
+            }
+        }
+        throw lastError;
+    }
+
     private async refreshClaimedUser(
         userId: string, suppliedRefresh: string, siteId: string | undefined,
-        lease: number, current: AccountCredentials, fields: { siteId: string | undefined; accountId: string },
+        lease: number, current: AccountCredentials, fields: { siteId: string | undefined; accountId: string }, exchangeId: string,
     ): Promise<RefreshedTokens> {
-        const exchangeId = randomUUID();
-        const exchangeFields = { ...fields, exchangeId };
+        const generation = current.tesla_credential_generation;
+        const exchangeFields = { ...fields, exchangeId, generationId: credentialId(`${userId}:${generation}`) };
+        const startedAt = Date.now();
         let stage: 'exchange' | 'persistence' = 'exchange';
-        let previousRefresh: string | undefined;
         try {
-            if (!current?.refresh_token) throw new Error('Stored Tesla credentials do not include a renewal grant');
-            previousRefresh = current.refresh_token;
-            if (previousRefresh !== suppliedRefresh && current.access_token) {
-                logEvent('info', 'tesla.refresh.reused', {
-                    ...exchangeFields, previousCredentialId: credentialId(suppliedRefresh), credentialId: credentialId(previousRefresh),
-                });
-                return parseRefreshedTokens(current);
-            }
-            logEvent('info', 'tesla.refresh.started', { ...exchangeFields, credentialId: credentialId(previousRefresh) });
+            const previousRefresh = current.refresh_token;
+            if (!previousRefresh) throw new TeslaRefreshError('credential_rejected');
+            logEvent('info', 'tesla.refresh.started', { ...exchangeFields, fromState: 'ready', toState: 'in_flight', persisted: true, leaseExpiresAt: new Date(lease).toISOString() });
+            flushLogEvents();
             const { refreshAccessToken } = await import('./tesla-auth');
-            const next = await withIoDeadline(18000, () => refreshAccessToken(previousRefresh!, exchangeFields), null);
+            const next = await withIoDeadline(18000, () => refreshAccessToken(previousRefresh, exchangeFields), null);
             stage = 'persistence';
             logEvent('info', 'tesla.refresh.persistence-started', {
                 ...exchangeFields, credentialId: credentialId(next.refresh_token),
             });
-            // Once Tesla has rotated the grant, saving it must survive the
-            // caller's cancellation, just like releasing the lease does.
-            const saved = await withIoDeadline(1000, () => pool.query(`
-                UPDATE "User" SET access_token = $1, refresh_token = $2
-                WHERE id = $3 AND refresh_token = $4 AND refresh_lock_expires = $5
-                  AND is_refreshing = 1 AND refresh_lock_expires > $6
-                  AND auth_status IS DISTINCT FROM 'revoked'
-            `, [next.access_token, next.refresh_token, userId, previousRefresh, lease, Date.now()]), null);
-            if (!saved.rowCount) {
-                logEvent('info', 'tesla.refresh.superseded', exchangeFields);
-                // Our finally block releases only our lease, then the waiter
-                // observes the winning login/worker's credentials.
-            } else {
+            if (await this.saveRotation(userId, next, previousRefresh, generation, exchangeId)) {
                 if (siteId) this.siteRepo.invalidateCache(siteId);
                 logEvent('info', 'tesla.refresh.succeeded', {
                     ...exchangeFields, previousCredentialId: credentialId(previousRefresh), credentialId: credentialId(next.refresh_token),
+                    fromState: 'in_flight', toState: 'ready', persisted: true, outcome: 'credentials_received',
+                    durationMs: Date.now() - startedAt, nextGenerationId: credentialId(`${userId}:${generation + 1}`),
                 });
                 return next;
             }
+            // A login or a lost-but-committed save superseded this attempt; the
+            // waiter below observes the winning credentials.
+            logEvent('info', 'tesla.refresh.superseded', exchangeFields);
         } catch (error) {
-            const terminal = isTeslaAuthError(error);
-            // Persistence has a detached deadline; this catch is back in the
-            // caller's context, whose cancellation cannot explain a save failure.
+            const outcome = stage === 'exchange' && error instanceof TeslaRefreshError ? error.outcome : 'outcome_unknown';
+            const terminal = outcome === 'credential_rejected';
+            // Only Tesla rejecting the grant needs a reconnect. Everything else
+            // (429, 5xx, transport loss, our own config) retries the same grant
+            // after a backoff.
+            const state = terminal ? 'reconnect_required' : 'ready';
+            const retryAfter = terminal ? 0 : Date.now()
+                + (outcome === 'not_dispatched' || outcome === 'configuration_rejected' ? CONFIGURATION_BACKOFF_MS : TRANSIENT_BACKOFF_MS);
             logEvent('warn', 'tesla.refresh.failed', {
-                ...exchangeFields, stage, ...ioFailureDetails(error, undefined, false), terminal, error, credentialId: previousRefresh ? credentialId(previousRefresh) : undefined,
+                ...exchangeFields, stage, ...ioFailureDetails(error, undefined, false), terminal, outcome, durationMs: Date.now() - startedAt,
+                status: error instanceof TeslaRefreshError ? error.status : null,
+                errorCode: error instanceof TeslaRefreshError ? error.errorCode : null,
             });
-            if (!terminal || !previousRefresh) throw error;
-            // Cleanup has its own budget so a parent cancellation does not skip
-            // terminal revocation. Compare credentials as well as lease ownership:
-            // a successful login may replace them without acquiring this lease.
-            const revoked = await withIoDeadline(1000, () => pool.query(`
-                UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0,
-                    auth_status = 'revoked', is_active = false
-                WHERE id = $1 AND refresh_token = $2 AND refresh_lock_expires = $3
-                  AND is_refreshing = 1 AND refresh_lock_expires > $4
-            `, [userId, previousRefresh, lease, Date.now()]), null);
-            if (revoked.rowCount) {
-                if (siteId) this.siteRepo.invalidateCache(siteId);
-                logEvent('warn', 'tesla.auth.revoked', { ...fields, reason: 'terminal-refresh-failure' });
-                throw error;
+            try {
+                // Guarded by attempt id, not the lease: a late outcome from a
+                // worker whose lease expired is still this grant's outcome.
+                const recorded = await withIoDeadline(SAVE_DEADLINE_MS, () => pool.query(`
+                    UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0,
+                        tesla_refresh_state = $4, tesla_refresh_retry_after = $5,
+                        auth_status = CASE WHEN $4 = 'reconnect_required' THEN 'revoked' ELSE 'error' END
+                    WHERE id = $1 AND tesla_credential_generation = $2 AND tesla_refresh_attempt_id = $3
+                `, [userId, generation, exchangeId, state, retryAfter]), null);
+                if (!recorded.rowCount) logEvent('info', 'tesla.refresh.outcome-superseded', { ...exchangeFields, outcome, attemptedState: state });
+                if (!recorded.rowCount && terminal) {
+                    // A login may have superseded this rejected generation.
+                    return settled(await withIoDeadline(1000, () => this.waitForUserRefresh(userId, suppliedRefresh, siteId, 1000), null));
+                }
+                if (recorded.rowCount) logEvent('warn', 'tesla.refresh.state-changed', { ...exchangeFields, fromState: 'in_flight', toState: state, persisted: true, outcome, durationMs: Date.now() - startedAt, ...(retryAfter ? { retryAfter: new Date(retryAfter).toISOString() } : {}) });
+                flushLogEvents();
+            } catch {
+                // The lease expires into a backoff if this write fails.
+                logEvent('warn', 'tesla.refresh.outcome-write-deferred', exchangeFields);
             }
+            throw error;
+
         } finally {
             try {
+                // Release a lease nothing else resolved (superseded, or the
+                // outcome write failed) into a backoff, never leave it in flight.
                 await withIoDeadline(1000, () => pool.query(`
-                    UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0
-                    WHERE id = $1 AND refresh_lock_expires = $2
-                `, [userId, lease]), null);
+                    UPDATE "User" SET is_refreshing = 0, refresh_lock_expires = 0,
+                        tesla_refresh_retry_after = CASE WHEN tesla_refresh_state = 'in_flight' THEN $4 ELSE tesla_refresh_retry_after END,
+                        tesla_refresh_state = CASE WHEN tesla_refresh_state = 'in_flight' THEN 'ready' ELSE tesla_refresh_state END
+                    WHERE id = $1 AND refresh_lock_expires = $2 AND tesla_refresh_attempt_id = $3
+                `, [userId, lease, exchangeId, Date.now() + TRANSIENT_BACKOFF_MS]), null);
             } catch {
-                logEvent('warn', 'tesla.refresh.cleanup-deferred', fields);
+                logEvent('warn', 'tesla.refresh.cleanup-deferred', exchangeFields);
             }
         }
-        return this.waitForUserRefresh(userId, 20000, siteId, Date.now(), suppliedRefresh);
+        return settled(await this.waitForUserRefresh(userId, suppliedRefresh, siteId));
     }
 }

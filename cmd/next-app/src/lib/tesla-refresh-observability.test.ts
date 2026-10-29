@@ -40,7 +40,7 @@ describe('refresh exchange diagnostics', () => {
         expect(logEvent.mock.calls.some(([, event]) => event === 'tesla.refresh.credentials-parsed')).toBe(false);
         expect(JSON.stringify(logEvent.mock.calls)).not.toContain('private-');
     });
-    it('distinguishes endpoint timeout and preserves the caller context across host fallback', async () => {
+    it('distinguishes endpoint timeout and preserves caller context without replay', async () => {
         const timeout = new AbortController();
         vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal);
         const fetchMock = vi.fn().mockImplementationOnce(() => {
@@ -48,14 +48,14 @@ describe('refresh exchange diagnostics', () => {
             return Promise.reject(timeout.signal.reason);
         }).mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'private-access', refresh_token: 'private-new' })));
         vi.stubGlobal('fetch', fetchMock);
-        await refreshAccessToken('private-old', { exchangeId: 'exchange-1', siteId: 'site-1', accountId: 'hashed-account' });
+        await expect(refreshAccessToken('private-old', { exchangeId: 'exchange-1', siteId: 'site-1', accountId: 'hashed-account' })).rejects.toMatchObject({ outcome: 'outcome_unknown' });
         expect(logEvent).toHaveBeenCalledWith('warn', 'tesla.refresh.exchange-failed', expect.objectContaining({
             stage: 'request', cancellationSource: 'endpoint', failureCode: 'REQUEST_TIMEOUT', outcomeUnknown: true,
             exchangeId: 'exchange-1', siteId: 'site-1', accountId: 'hashed-account',
         }));
         const requests = logEvent.mock.calls.filter(([, event]) => event === 'tesla.refresh.request-started');
         expect(requests.map(([, , fields]) => fields.host)).toEqual([
-            'https://fleet-auth.prd.vn.cloud.tesla.com', 'https://auth.tesla.com',
+            'https://fleet-auth.prd.vn.cloud.tesla.com',
         ]);
         expect(JSON.stringify(logEvent.mock.calls)).not.toContain('private-');
     });
@@ -69,7 +69,7 @@ describe('refresh exchange diagnostics', () => {
                 throw new TypeError('private-body-error');
             },
         }));
-        await expect(refreshAccessToken('private-old')).rejects.toBeInstanceOf(TypeError);
+        await expect(refreshAccessToken('private-old')).rejects.toMatchObject({ outcome: 'outcome_unknown' });
         expect(logEvent).toHaveBeenCalledWith('warn', 'tesla.refresh.exchange-failed', expect.objectContaining({
             stage: 'response-body', cancellationSource: 'endpoint', failureCode: 'REQUEST_TIMEOUT', outcomeUnknown: true,
         }));

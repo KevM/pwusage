@@ -57,7 +57,7 @@ describe('account verification races', () => {
         expect(committed).toBe(0);
         expect(result).toEqual({ status: 'active' });
         expect(logEvent).toHaveBeenCalledWith('info', 'tesla.user-verification.superseded', expect.objectContaining({
-            attemptedOutcome: 'revoked', currentAuthStatus: 'active', siteId: 'site-1', verificationId: expect.any(String),
+            attemptedOutcome: 'error', currentAuthStatus: 'active', siteId: 'site-1', verificationId: expect.any(String),
         }));
     });
 
@@ -143,7 +143,7 @@ describe('account verification races', () => {
                 return liveStatus;
             } },
         });
-        const expected = { success: 'active', terminal: 'revoked', transient: 'error', 'no-token': 'no_token', 'no-sites': 'no_sites' }[outcome];
+        const expected = { success: 'active', terminal: 'error', transient: 'error', 'no-token': 'no_token', 'no-sites': 'no_sites' }[outcome];
         expect(result.status).toBe(expected);
         expect(committed).toBe(1);
         expect(state.last_checked_at).toBe('checked');

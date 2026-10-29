@@ -1,3 +1,4 @@
+import { assertTeslaConnection } from './tesla-refresh-outcome';
 import jwt from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
 import { TeslaTokenRepo } from './tesla-token-repo';
@@ -603,6 +604,12 @@ export class TeslaAuthService {
         const refreshIdentity: { userId?: string } = {};
         const teslaClientConfig: TeslaClientConfig = {
             accessToken: authData.access_token,
+            beforeRequest: async () => {
+                if (!refreshIdentity.userId) return;
+                const current = await userRepo.getTokens(refreshIdentity.userId);
+                assertTeslaConnection(current);
+                return current;
+            },
             refreshToken: authData.refresh_token,
             tokenRefreshHandler: async suppliedRefresh => {
                 // Before identity verification there is no safe account row to

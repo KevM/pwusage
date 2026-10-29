@@ -61,8 +61,11 @@ async function handleGET(request: Request) {
                 repo.getBucketedEnergyData(siteId, sparklineScaleStart, now),
             ]);
 
-            if (liveResult.status === 'no-tokens' || liveResult.status === 'site-not-found') {
-                return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+        if (liveResult.status === 'connection-required' || liveResult.status === 'no-tokens') {
+            return NextResponse.json({ error: 'Reconnect Tesla to update your data.', code: 'TESLA_CONNECTION_REQUIRED' }, { status: 409, headers: { 'Cache-Control': 'private, no-store' } });
+        }
+            if (liveResult.status === 'site-not-found') {
+                return NextResponse.json({ error: 'Site not found' }, { status: 404 });
             }
 
             if (!liveResult.liveStatus) {
@@ -264,7 +267,7 @@ async function handleGET(request: Request) {
         } catch (error) {
             console.error('Site live data error:', error);
             if (isTeslaAuthError(error)) {
-                return NextResponse.json({ error: 'Authentication failed' }, { status: 401 });
+                return NextResponse.json({ error: 'Reconnect Tesla to update your data.', code: 'TESLA_CONNECTION_REQUIRED' }, { status: 409 });
             }
 
             return NextResponse.json({ error: 'Failed to fetch site live data' }, { status: 500 });

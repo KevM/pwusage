@@ -1,3 +1,4 @@
+import { assertTeslaConnection } from './tesla-refresh-outcome';
 import { TeslaClient } from './tesla-client';
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
@@ -11,6 +12,13 @@ export interface TeslaClientFactoryOptions {
 /** Store a regional Fleet host Tesla pointed this user at (best effort; see TeslaClient). */
 function recordFleetBaseUrl(userId: string) {
     return (baseUrl: string) => new UserRepo().setFleetApiBaseUrl(userId, baseUrl);
+}
+
+/** Gate a Fleet request on the account's connection and hand back its stored credentials. */
+async function currentTeslaConnection(userId: string) {
+    const current = await new UserRepo().getTokens(userId);
+    assertTeslaConnection(current);
+    return current;
 }
 
 /**
@@ -30,6 +38,12 @@ export async function createTeslaClientForSite(
     const handlers = tokenRepo.getLockedRefreshHandler(siteId);
     return new TeslaClient({
         accessToken: tokens.access_token || 'expired',
+        beforeRequest: async () => {
+            const current = await new UserRepo().getTokensForSite(siteId);
+            assertTeslaConnection(current);
+            if (tokens.user_id !== current?.user_id) throw new Error('Site owner changed');
+            return current;
+        },
         refreshToken: tokens.refresh_token,
         tokenRefreshHandler: handlers.refreshHandler,
         onTokenError: handlers.errorHandler,
@@ -54,6 +68,7 @@ export async function createTeslaClientForUser(
     const handlers = new TeslaTokenRepo(new SiteRepo()).getLockedUserRefreshHandler(userId);
     return new TeslaClient({
         accessToken: userTokens.access_token,
+        beforeRequest: () => currentTeslaConnection(userId),
         refreshToken: userTokens.refresh_token || undefined,
         tokenRefreshHandler: handlers.refreshHandler,
         onTokenError: handlers.errorHandler,
@@ -74,9 +89,14 @@ export function createTeslaClientForAccessToken(
 ): TeslaClient {
     const onBaseUrlChange = options?.onBaseUrlChange
         ?? (options?.userId ? recordFleetBaseUrl(options.userId) : undefined);
+    // An account's grant is only ever refreshed through its lease.
+    const handlers = options?.userId ? new TeslaTokenRepo(new SiteRepo()).getLockedUserRefreshHandler(options.userId) : undefined;
     return new TeslaClient({
         accessToken,
+        beforeRequest: options?.userId ? () => currentTeslaConnection(options.userId!) : undefined,
         refreshToken: refreshToken || undefined,
+        tokenRefreshHandler: handlers?.refreshHandler,
+        onTokenError: handlers?.errorHandler,
         onTokenUpdate: options?.onTokenUpdate,
         baseUrl: options?.baseUrl,
         onBaseUrlChange

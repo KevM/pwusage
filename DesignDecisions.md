@@ -281,98 +281,67 @@ raced `verifyTeslaIdToken` against a 3s timer, which had two defects:
   `handleTeslaCallback`, so such a test passes with or without the race. It must
   drive the real verifier and inject the delay at the fetch boundary.
 
-### Terminal vs transient failures (`isTeslaAuthError` matches substrings)
+### Refresh outcome, credential usability, and account eligibility (2026-10-29)
 
-**Decision:** a refresh failure is "terminal" only if the credential is actually
-dead. `isTeslaAuthError` (`cmd/next-app/src/lib/tesla-client.ts:154`) is the
-predicate, and it is **broader than it looks**: besides `instanceof TeslaAuthError`
-it matches any `Error` whose **message contains** `Tesla API Error: 401`,
-`Tesla API Error: 403`, `login_required`, `invalid_grant`, or `invalid
-authentication`.
+**Decision:** replace the former message-substring classification and Tesla-driven
+account deactivation. Only Tesla rejecting the grant (`invalid_grant` /
+`login_required`) requires a reconnect. The durable states are `ready`,
+`in_flight` and `reconnect_required` (`uncertain` remains only for legacy rows).
+An unresolved exchange (429, 5xx, transport loss, lost response, expired lease)
+returns to `ready` with a two-minute retry floor and retries the **same** grant.
 
-**Why it matters:** `TeslaTokenRepo.getLockedRefreshHandler` treats a terminal
-error as proof the refresh token is revoked and, in one atomic write, sets
-`auth_status = 'revoked'` and `is_active = false`. That is the correct response to
-a real `login_required`. It is catastrophic for anything that merely *looks* like
-one.
+Typed outcomes distinguish confirmed non-dispatch, parsed credentials, confirmed
+credential rejection, client configuration rejection, and unknown remote outcome.
+Refresh host fallback is disabled after dispatch, including transport failures and
+5xx. Authorization-code fallback remains separate. HTTP status plus allowlisted
+OAuth error codes establish rejection; arbitrary messages and a bare 401 do not.
 
-**Consequences for error construction — do not violate these:**
+**Why retrying is safe:** the lease serializes exchanges, so if Tesla consumed
+the grant and the response was lost, the replacement exists nowhere: refusing to
+retry cannot save it and guarantees a reconnect. Retrying succeeds whenever the
+grant was not consumed (every 429/5xx/connect failure, and Tesla's reuse grace
+window), and otherwise ends in a definitive `invalid_grant`. The first version of
+this decision made every unknown outcome a permanent reconnect, which turned
+each upstream blip into a manual re-login.
 
-- A **malformed-but-200** upstream body must throw a plain `Error` whose message
-  contains **neither** `login_required` **nor** `invalid_grant`.
-  `parseRefreshedTokens` in `src/lib/tesla-auth.ts` does exactly that, and so does
-  `calendarTimeSeries` in `src/lib/tesla-client.ts` (it logs the body instead). Echoing
-  upstream text verbatim into the message would match the substring test and
-  mass-de-authenticate every user during a transient upstream malformation - a
-  credential incident with no credential cause.
-- Do not throw `TeslaAuthError` for anything that is not an authentication
-  rejection. A missing required-env variable (`requireEnv`) is deliberately a
-  plain `Error`: a deployment misconfiguration should produce one alert and a
-  released lock, not a wave of revoked users.
-- Anything genuinely unclassifiable should land on the **non-terminal** side.
-  `TeslaTokenEndpointError` (every token host 5xx'd) is a plain `Error` subclass
-  and is non-terminal; `TeslaTokenRepo` releases the lock and `tesla-client.ts`
-  falls through to the original 401.
+**The one precondition:** no other system may hold the same grant. A second
+holder (the beta/dev copy of prod `User` rows did, until 2026-10-29) races prod
+for single-use rotations, and a retry there can trip Tesla's reuse detection
+against the grant prod is using. `scripts/sanitize-dev-copy.sql` clears copied
+Tesla tokens; never reintroduce a second holder.
 
-**Guardrails — do not "simplify" by:**
-- Replacing the substring checks with `instanceof` alone. This is not
-  hypothetical. `isTeslaAuthError` has **11 non-test call sites across 6 files**
-  (`site-live-data/route.ts` :235, `battery-hold-service.ts` :46/:76/:129/:140,
-  `importer/index.ts` :320/:357, `site-service.ts` :160/:178,
-  `tesla-token-repo.ts` :72, `user-repo.ts` :184 — counted, not estimated), and
-  **none of the six imports `TeslaAuthError`** — they import only
-  `isTeslaAuthError`, whose declared return type (`error is TeslaAuthError`) makes
-  `instanceof`-only look entirely plausible on a read, with nothing at the call
-  site to hint at a substring branch. It is nevertheless **load-bearing**:
-  `tesla-token-repo.test.ts`
-  rejects with a *plain* `Error('Tesla API Error: 401 Unauthorized invalid_grant')`
-  and asserts the atomic `auth_status = 'revoked'` write fires. That test passes
-  **only** via the substring branch. Narrowing the predicate silently stops
-  users being revoked on a genuine 401. Treat the substring list as part of the
-  contract, not as a shortcut.
-- Interpolating an upstream response body into an error message on a path whose
-  error is inspected by `isTeslaAuthError`. If a body must be quoted, check it
-  against the substring list first.
-- Deleting the `expect(...).not.toMatch(/login_required|invalid_grant/)`
-  assertion in `tesla-auth.test.ts`. It looks redundant next to the
-  `not.toBeInstanceOf(TeslaAuthError)` check; it is the only thing guarding the
-  substring half of the predicate.
+PR #251's detached exchange lifetime, bounded persistence/cleanup, and guarded
+save remain. Generation and attempt ID fence each write against newer login; the
+save is deliberately **not** fenced by the lease clock, because once Tesla
+rotated, losing the new grant is the one unrecoverable failure. An expired lease
+keeps its attempt ID through the backoff so a slow worker can still save. The
+claim matches the caller's refresh credential, so a stale caller adopts the
+stored rotation and never marks the account in flight. Before each Fleet request
+clients adopt newer stored credentials; an in-flight refresh elsewhere is not an
+error, and a request during the retry floor fails fast instead of sending a
+rejected access token.
 
-**Pinned by:** `throws a plain, non-terminal error when a 200 response omits the
-tokens` in `cmd/next-app/src/lib/tesla-auth.test.ts` (its fixture carries
-`error: 'invalid_grant'` precisely so an interpolating implementation fails), and
-the `never posts "undefined" as the client secret when the secret env var is
-unset` guard for the non-terminal missing-env path. The 400/401 decision table itself is
-pinned by `raises TeslaAuthError on a 401 regardless of the response body` and
-`does not raise TeslaAuthError on a 400 with a non-trigger body` — before those,
-deleting the 401 branch, or widening the 400 branch to bare `status === 400`,
-both left the suite green.
+`is_active` represents account eligibility. Tesla health changes never suspend
+an account or revoke a valid app session. The migration reactivates historical
+inactive accounts: every past writer of `is_active = false` was Tesla-health
+driven, and OAuth login no longer resets it, so they could never reconnect. Fleet verification records health only, preserves eligibility, and
+uses the existing row-version/membership fence. Commands and background callers
+recheck persisted connection state before dispatch. App suspension, ownership,
+roles, and session-version revocation continue to deny access.
 
-### Previously known violations (fixed 2026-10-25)
+TRMNL markup reads stored data and schedules lifecycle-retained work after the
+response. Reconnect preserves installation linking, renders the reconnect message,
+and suppresses background Tesla work. Web/native clients preserve stored data
+and timestamps on connection-required responses; invalid app access still fails.
 
-Two paths broke these rules. Both are fixed; the rules above are enforced again.
+**Observability:** only confirmed database transitions claim `persisted=true`.
+Attempt/account/generation correlation distinguishes a lost response from an
+actual rejection, configuration outage, superseded save, and OAuth restoration.
+See [operational verification and safe cutover](docs/tesla-auth-remediation-operations.md).
 
-1. **`cmd/next-app/src/lib/tesla-auth.ts` — raw body interpolated into a
-   non-terminal error.** The refresh fallthrough used to throw
-   ``Error(`Failed to refresh token: ${status} ${body}`)``. A 403 body containing
-   `login_required`, or a 400 body containing `invalid authentication`, was
-   non-terminal to `refreshAccessToken` yet terminal to `isTeslaAuthError`, so
-   `TeslaTokenRepo` performed the atomic revoke. It now parses the JSON `error`
-   code, treats only 401 and 400 `invalid_grant` / `login_required` as terminal,
-   and echoes only that recognized code — never the raw body.
-
-2. **`cmd/next-app/src/lib/tesla-token-endpoint.ts` — transport details folded
-   into the thrown message.** `describeError` used to include `err.message` and
-   `err.cause.message` verbatim, so a proxy/TLS cause carrying a trigger
-   substring made `TeslaTokenEndpointError` classify as terminal. Full details
-   now go only to `console.warn`; the thrown summary is the fixed text
-   `transport error`, which cannot match a classification substring.
-
-**Pinned by:** the trigger-body table cases in `tesla-auth.test.ts`
-(`403 login_required`, `400 invalid authentication`) and
-`keeps transport error text out of the thrown message` in
-`tesla-token-endpoint.test.ts`. The load-bearing substring list and its
-`tesla-token-repo.test.ts` guard are unchanged.
+**Pinned by:** fetch-boundary tests for lost/truncated responses and login fallback,
+real PostgreSQL crash/concurrency/persistence tests, API session/ownership tests,
+TRMNL DB-only rendering tests, and native reconnect/cache tests.
 
 ---
 
