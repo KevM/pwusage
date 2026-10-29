@@ -52,10 +52,14 @@ struct BatteryHoldCoordinatorTests {
         api.error = PWUsageAPIError.requestRejected(statusCode: 409, message: "needs_reauth")
         await coordinator.sendBatteryHoldCommand(.park(.init(mode: .auto)))
         #expect(coordinator.batteryHold.failure == .needsReauthentication)
+        #expect(coordinator.requiresTeslaReconnect)
+        let choiceCoordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
+        api.error = nil
+        await choiceCoordinator.refreshBatteryHold()
         api.error = PWUsageAPIError.requestRejected(statusCode: 422, message: "needs_choice")
-        await coordinator.sendBatteryHoldCommand(.park(.init(mode: .auto)))
-        #expect(coordinator.batteryHold.requiresReserveChoice)
-        #expect(coordinator.batteryHold.failure == .needsChoice)
+        await choiceCoordinator.sendBatteryHoldCommand(.park(.init(mode: .auto)))
+        #expect(choiceCoordinator.batteryHold.requiresReserveChoice)
+        #expect(choiceCoordinator.batteryHold.failure == .needsChoice)
     }
 
     @Test("A pending Tesla reserve sync reports a safe retry without losing confirmed state")

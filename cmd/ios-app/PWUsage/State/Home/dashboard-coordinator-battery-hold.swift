@@ -93,6 +93,11 @@ extension DashboardCoordinator {
         }
         switch error as? PWUsageAPIError {
         case .requestRejected(_, "needs_reauth"):
+            requiresTeslaCommandReauthorization = true
+            requiresTeslaReconnect = true
+            batteryHold.failure = .needsReauthentication
+        case .requestRejected(_, "TESLA_CONNECTION_REQUIRED"):
+            requiresTeslaReconnect = true
             batteryHold.failure = .needsReauthentication
         case .requestRejected(_, "reserve_sync_pending"):
             batteryHold.failure = .reserveSyncPending

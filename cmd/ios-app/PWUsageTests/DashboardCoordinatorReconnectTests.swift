@@ -26,4 +26,36 @@ extension DashboardCoordinatorTests {
         #expect(!coordinator.requiresTeslaReconnect)
         #expect(coordinator.batteryHold.failure == nil)
     }
+    @Test("Restoring authorization immediately retries a disconnected Tesla account")
+    func reconnectImmediatelyRefreshes() async throws {
+        let clock = DashboardTestClock()
+        let api = DashboardAPISpy()
+        api.liveError = PWUsageAPIError.requestRejected(statusCode: 409, message: "TESLA_CONNECTION_REQUIRED")
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        #expect(coordinator.requiresTeslaReconnect)
+        let attempts = api.liveSiteIDs.count
+        api.liveError = nil
+        coordinator.authenticationRestored()
+        try await eventually { api.liveSiteIDs.count > attempts && !coordinator.requiresTeslaReconnect }
+    }
+    @Test("Successful readings do not hide a missing Tesla command permission")
+    func commandPermissionRequiresReconnect() async {
+        let api = DashboardAPISpy()
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
+        coordinator.handleBatteryHoldError(PWUsageAPIError.requestRejected(statusCode: 409, message: "needs_reauth"))
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(coordinator.requiresTeslaReconnect)
+    }
+    @Test("Site verification does not clear missing Tesla command permission")
+    func siteVerificationPreservesCommandReauthorization() async {
+        let api = DashboardAPISpy()
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
+        coordinator.handleBatteryHoldError(PWUsageAPIError.requestRejected(statusCode: 409, message: "needs_reauth"))
+        coordinator.authenticationRestored()
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(coordinator.requiresTeslaReconnect)
+        #expect(coordinator.requiresTeslaCommandReauthorization)
+    }
 }

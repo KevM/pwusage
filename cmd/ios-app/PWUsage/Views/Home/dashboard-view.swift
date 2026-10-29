@@ -9,7 +9,6 @@ struct DashboardView: View {
     let onOpenTab: (AppTab) -> Void
     var onRefresh: (() async -> Void)? = nil
 
-    @Environment(\.reconnectTesla) private var reconnectTesla
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -40,15 +39,6 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                if coordinator.requiresTeslaReconnect {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Reconnect Tesla to update your data.")
-                        Button("Reconnect Tesla") {
-                            Task { await reconnectTesla?.perform() }
-                        }
-                        .disabled(reconnectTesla == nil)
-                    }
-                }
                 staleNotice
                 if usesTwoColumns {
                     Grid(alignment: .topLeading, horizontalSpacing: 22, verticalSpacing: 22) {
