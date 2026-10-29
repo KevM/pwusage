@@ -175,7 +175,7 @@
                 .appendingPathComponent("\(suiteName)-\(UUID().uuidString).json"))
             cache.storeSites(api.sites)
             return PWUsageAppModel(
-                configuration: try! AppConfiguration(apiOriginString: AppConfiguration.debugFallbackAPIOrigin.absoluteString, isRelease: false),
+                configuration: AppConfiguration.debugFallback,
                 api: api,
                 userDefaults: defaults,
                 coordinatorFactory: { siteID, _ in DashboardCoordinator(siteID: siteID, api: api, timerInterval: nil) },
