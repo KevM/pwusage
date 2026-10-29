@@ -24,6 +24,8 @@ CREATE TABLE public."TrmnlInstallation" (uuid text PRIMARY KEY, access_token tex
 INSERT INTO public."Site" VALUES ('s1');
 INSERT INTO public."MobileLoginHandoff" VALUES ('00000000-0000-0000-0000-000000000001', 'u1');
 INSERT INTO public."TrmnlInstallation" VALUES ('t1', 'inbound-token', 'unused-refresh-token');
+CREATE TABLE public."User" (id text PRIMARY KEY, email text, access_token text, refresh_token text, auth_status text);
+INSERT INTO public."User" VALUES ('u1', 'owner@example.com', 'prod-access', 'prod-refresh', 'active');
 CREATE TABLE public."BatteryHoldActivity" (id serial PRIMARY KEY, push_token text);
 INSERT INTO public."BatteryHoldActivity" (push_token) VALUES ('device-token');
 CREATE TABLE public."EnergyDayArchive" (
@@ -115,6 +117,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         handoffs: await rows(`SELECT count(*)::int AS n FROM public."MobileLoginHandoff"`),
         trmnl: await rows(`SELECT access_token, refresh_token FROM public."TrmnlInstallation"`),
         activities: await rows(`SELECT count(*)::int AS n FROM public."BatteryHoldActivity"`),
+        users: await rows(`SELECT access_token, refresh_token FROM public."User"`),
     });
 
     it.each([
@@ -154,6 +157,9 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
             .toEqual([{ access_token: 'inbound-token', refresh_token: null }]);
         expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 1 }]);
         expect(await rows(`SELECT count(*)::int AS n FROM public."BatteryHoldActivity"`)).toEqual([{ n: 0 }]);
+        // Prod's single-use Tesla grant must never be refreshable from beta.
+        expect(await rows(`SELECT email, access_token, refresh_token, auth_status FROM public."User"`))
+            .toEqual([{ email: 'owner@example.com', access_token: null, refresh_token: null, auth_status: 'revoked' }]);
         // Idempotent.
         expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
     });
@@ -168,7 +174,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
     });
 
     it('skips rules for tables that do not exist yet', async () => {
-        await target!.query(`${MARK_DEV} DROP TABLE public."MobileLoginHandoff"; DROP TABLE public."TrmnlInstallation"; DROP TABLE public."BatteryHoldActivity"; DROP TABLE public."EnergyDaySummary"; DROP TABLE public."EnergyDayArchive";`);
+        await target!.query(`${MARK_DEV} DROP TABLE public."MobileLoginHandoff"; DROP TABLE public."TrmnlInstallation"; DROP TABLE public."BatteryHoldActivity"; DROP TABLE public."User"; DROP TABLE public."EnergyDaySummary"; DROP TABLE public."EnergyDayArchive";`);
         expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
         expect((await psql('scripts/prune-dev-copy.sql')).code).toBe(0);
     });
