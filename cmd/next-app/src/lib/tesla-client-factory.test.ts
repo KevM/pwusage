@@ -173,6 +173,20 @@ describe('TeslaClientFactory', () => {
             expect(client.getBaseUrl()).toBe(EU);
         });
 
+        it('refreshes an account-backed client through the account lease, never directly', async () => {
+            mockGetTokens.mockResolvedValue({ access_token: 'old-access', refresh_token: 'account-refresh', is_active: true, tesla_refresh_state: 'ready' });
+            mockUserRefresh.mockResolvedValue({ access_token: 'new-access', refresh_token: 'new-refresh' });
+            const direct = vi.spyOn(TeslaClient, 'refreshAccessToken');
+            const fetchMock = vi.spyOn(globalThis, 'fetch')
+                .mockResolvedValueOnce(new Response('', { status: 401 }))
+                .mockResolvedValueOnce(Response.json({ response: [] }));
+            const client = createTeslaClientForAccessToken('old-access', undefined, { userId: 'user-1' });
+            await client.getProducts();
+            expect(direct).not.toHaveBeenCalled();
+            expect(mockUserRefresh).toHaveBeenCalledWith('account-refresh');
+            expect(fetchMock.mock.calls[1][1]?.headers).toMatchObject({ Authorization: 'Bearer new-access' });
+        });
+
         it('persists a learned Fleet host for the token owner', async () => {
             const client = createTeslaClientForAccessToken('raw-access-token', undefined, { userId: 'user-1' });
 

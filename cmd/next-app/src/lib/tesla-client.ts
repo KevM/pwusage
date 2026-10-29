@@ -272,10 +272,17 @@ export class TeslaClient {
 
     /**
      * Take another worker's rotation instead of refreshing a consumed grant.
-     * A grant this client already replaced is never adopted back.
+     * A grant this client already replaced is never adopted back, and a client
+     * without a coordinated refresh handler takes only the access token: it
+     * would otherwise exchange the account's grant outside the lease and lose
+     * the replacement.
      */
     private adoptStoredCredentials(stored: StoredTeslaCredentials | null | void): void {
         if (!stored?.access_token || !stored.refresh_token) return;
+        if (!this.config.tokenRefreshHandler) {
+            this.config.accessToken = stored.access_token;
+            return;
+        }
         if (stored.refresh_token === this.config.refreshToken || this.retiredRefreshTokens.has(stored.refresh_token)) return;
         if (this.config.refreshToken) this.retiredRefreshTokens.add(this.config.refreshToken);
         this.config.accessToken = stored.access_token;

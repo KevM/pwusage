@@ -89,10 +89,14 @@ export function createTeslaClientForAccessToken(
 ): TeslaClient {
     const onBaseUrlChange = options?.onBaseUrlChange
         ?? (options?.userId ? recordFleetBaseUrl(options.userId) : undefined);
+    // An account's grant is only ever refreshed through its lease.
+    const handlers = options?.userId ? new TeslaTokenRepo(new SiteRepo()).getLockedUserRefreshHandler(options.userId) : undefined;
     return new TeslaClient({
         accessToken,
         beforeRequest: options?.userId ? () => currentTeslaConnection(options.userId!) : undefined,
         refreshToken: refreshToken || undefined,
+        tokenRefreshHandler: handlers?.refreshHandler,
+        onTokenError: handlers?.errorHandler,
         onTokenUpdate: options?.onTokenUpdate,
         baseUrl: options?.baseUrl,
         onBaseUrlChange

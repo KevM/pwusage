@@ -614,3 +614,20 @@ describe('TeslaClient concurrent 401s on one client', () => {
         expect(tokenRefreshHandler).toHaveBeenCalledWith('refresh-A2');
     });
 });
+
+describe('TeslaClient stored-credential adoption', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('never adopts a refresh grant into a client that cannot coordinate a refresh', async () => {
+        const direct = vi.spyOn(TeslaClient, 'refreshAccessToken');
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 401 }));
+        const client = new TeslaClient({
+            accessToken: 'access-A',
+            beforeRequest: async () => ({ access_token: 'access-B', refresh_token: 'account-refresh' }),
+        });
+        await expect(client.getLiveStatus('site')).rejects.toThrow();
+        // The newer access token is still used; the account's grant is not.
+        expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: 'Bearer access-B' });
+        expect(direct).not.toHaveBeenCalled();
+    });
+});
