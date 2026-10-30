@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { describePlanes } from './SolarBetaManager';
+import { describeLocationSource, describePlanes } from './SolarBetaManager';
+
+describe('describeLocationSource', () => {
+    it('labels a phone location and an admin estimate', () => {
+        expect(describeLocationSource({ latitude: 43.39, locationSource: 'device' })).toBe('from phone');
+        expect(describeLocationSource({ latitude: 43.39, locationSource: 'estimated' })).toBe('estimated');
+    });
+
+    it('treats a legacy location with no recorded source as estimated', () => {
+        expect(describeLocationSource({ latitude: 43.39, locationSource: null })).toBe('estimated');
+    });
+
+    it('shows nothing without a location', () => {
+        expect(describeLocationSource({ latitude: null, locationSource: null })).toBeNull();
+    });
+});
 
 describe('describePlanes', () => {
     it('summarises each plane with compass point, tilt and size', () => {

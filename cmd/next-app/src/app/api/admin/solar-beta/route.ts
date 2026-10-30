@@ -68,7 +68,12 @@ export async function PUT(request: Request) {
         if (!(await new SolarBetaAdminRepo().siteOwnerHasBeta(siteId))) {
             return NextResponse.json({ error: 'Site owner is not in the solar forecast beta' }, { status: 409 });
         }
-        await new SolarLayoutRepo().setLocation(siteId, latitude, longitude);
+        const outcome = await new SolarLayoutRepo().setLocation(siteId, latitude, longitude, 'estimated', {
+            overwriteDevice: body?.overwrite === true,
+        });
+        if (outcome === 'device-location-kept') {
+            return NextResponse.json({ error: 'This site already has a location from the phone' }, { status: 409 });
+        }
         return noContent();
     } catch (error) {
         console.error('[admin-solar-beta] location failed:', error);
