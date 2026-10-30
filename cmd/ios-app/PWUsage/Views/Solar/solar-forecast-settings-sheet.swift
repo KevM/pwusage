@@ -38,6 +38,7 @@ struct SolarForecastSettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                SolarForecastAutomaticSection(coordinator: coordinator)
                 Section("Connection") {
                     // Deliberately no `.textContentType`: the password AutoFill
                     // flow can offer to save the key into the user's iCloud
@@ -175,6 +176,7 @@ struct SolarForecastSettingsSheet: View {
                 if isWorking { ProgressView().controlSize(.large) }
             }
             .task { await loadStatus() }
+            .task { await coordinator.solarSettingsAppeared() }
         }
     }
 

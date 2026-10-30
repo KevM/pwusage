@@ -29,6 +29,7 @@ targets:
         # environment its entitlement actually uses.
         PWUSAGE_APS_ENVIRONMENT: "$(PWUSAGE_APS_ENVIRONMENT)"
         NSSupportsLiveActivities: true
+        NSLocationWhenInUseUsageDescription: "PWUsage uses your home's approximate location once to work out which way your solar panels face."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         ITSAppUsesNonExemptEncryption: false

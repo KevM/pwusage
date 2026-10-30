@@ -117,6 +117,7 @@ struct LoadTimingView: View {
                             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
                             staleRefreshes &+= 1
                         }
+                    SolarLocationInvitationCard(coordinator: coordinator)
                     metadata(response)
                 } else if coordinator.bill.isUnavailable {
                     noResponseJobCard
