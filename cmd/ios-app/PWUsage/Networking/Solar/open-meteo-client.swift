@@ -95,8 +95,7 @@ struct OpenMeteoClient: Sendable {
             URLQueryItem(name: "timezone", value: "GMT"),
             URLQueryItem(name: "timeformat", value: "unixtime"),
             URLQueryItem(name: "past_days", value: "1"),
-            URLQueryItem(name: "forecast_days", value: "3")
-        ]
+            URLQueryItem(name: "forecast_days", value: "3")]
         return url.url
     }
 

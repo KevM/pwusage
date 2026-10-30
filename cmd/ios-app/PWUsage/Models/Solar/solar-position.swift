@@ -22,7 +22,7 @@ struct SolarPosition: Sendable {
         let omega = (125.04 - 1934.136 * century) * radians
         let apparentLongitude = (meanLongitude + center - 0.00569 - 0.00478 * sin(omega)) * radians
         let obliquity = (23 + (26 + (21.448 - century
-            * (46.815 + century * (0.00059 - century * 0.001813))) / 60) / 60
+                * (46.815 + century * (0.00059 - century * 0.001813))) / 60) / 60
             + 0.00256 * cos(omega)) * radians
         let declination = asin(sin(obliquity) * sin(apparentLongitude))
         let equation = equationOfTime(
@@ -35,7 +35,7 @@ struct SolarPosition: Sendable {
         let cosineZenith = sin(lat) * sin(declination) + cos(lat) * cos(declination) * cos(hourAngle)
         let zenith = acos(min(1, max(-1, cosineZenith))) / radians
         let azimuth = mod(atan2(sin(hourAngle), cos(hourAngle) * sin(lat)
-            - tan(declination) * cos(lat)) / radians + 180, by: 360)
+                - tan(declination) * cos(lat)) / radians + 180, by: 360)
         let elevation = 90 - zenith
         return SolarPosition(
             apparentZenith: zenith - refraction(elevation), azimuth: azimuth,

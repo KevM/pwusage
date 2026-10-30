@@ -31,7 +31,7 @@ enum OpenMeteoArrayModel {
         let tilt = plane.tilt * radians
         let zenith = sun.apparentZenith * radians
         let projection = min(1, max(-1, cos(tilt) * cos(zenith)
-            + sin(tilt) * sin(zenith) * cos((sun.azimuth - plane.azimuth) * radians)))
+                + sin(tilt) * sin(zenith) * cos((sun.azimuth - plane.azimuth) * radians)))
         let beam = max(0, dni * projection) * physicalIam(cosineIncidence: projection)
         let anisotropy = dni / sun.extraterrestrialDni
         let ratio = max(0, projection) / max(cos(zenith), 0.01745)

@@ -28,7 +28,7 @@ enum OpenMeteoFixture {
         return try JSONEncoder().encode(Body(
             utcOffsetSeconds: 0,
             units: ["time": "unixtime", "shortwave_radiation": "W/m²",
-                           "direct_normal_irradiance": "W/m²", "diffuse_radiation": "W/m²"],
+                    "direct_normal_irradiance": "W/m²", "diffuse_radiation": "W/m²"],
             hourly: Hourly(time: time, ghi: values,
                            dni: values, dhi: values)))
     }
@@ -125,8 +125,7 @@ struct OpenMeteoClientTests {
         let variants = [
             OpenMeteoWeather.Hourly(time: [stamp, stamp], ghi: [0, 0], dni: [0, 0], dhi: [0, 0]),
             OpenMeteoWeather.Hourly(time: [stamp], ghi: [], dni: [0], dhi: [0]),
-            OpenMeteoWeather.Hourly(time: [stamp], ghi: [-1], dni: [0], dhi: [0])
-        ]
+            OpenMeteoWeather.Hourly(time: [stamp], ghi: [-1], dni: [0], dhi: [0])]
         let units = ["time": "unixtime", "shortwave_radiation": "W/m²",
                      "direct_normal_irradiance": "W/m²", "diffuse_radiation": "W/m²"]
         let window = DateInterval(start: Date(timeIntervalSince1970: stamp - 3600), duration: 3600)
@@ -143,5 +142,4 @@ struct OpenMeteoClientTests {
                                   location: SolarProviderFixture.location, window: window)
         }
     }
-
 }
