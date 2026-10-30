@@ -58,7 +58,7 @@ jobs:
           if ! command -v swiftlint &> /dev/null; then
             HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install swiftlint
           fi
-          swiftlint lint --strict --baseline .swiftlint-baseline.json --reporter github-actions-logging
+          swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json --reporter github-actions-logging
 
       - name: Run iOS Tests
         env:

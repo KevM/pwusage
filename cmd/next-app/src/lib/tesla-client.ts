@@ -1,3 +1,4 @@
+import { TeslaRefreshError } from './tesla-refresh-outcome';
 import { ioSignal, checkIoDeadline, abortable, ioDelay } from './io-deadline';
 import {
     DEFAULT_FLEET_BASE_URL,
@@ -112,8 +113,18 @@ export interface SeasonPeriod {
     toMinute: number;
 }
 
+export interface StoredTeslaCredentials {
+    access_token?: string | null;
+    refresh_token?: string | null;
+}
+
 export interface TeslaClientConfig {
     accessToken: string;
+    /**
+     * Runs before each Fleet request. It may return the account's stored
+     * credentials; a rotated pair is adopted so a stale copy never reaches Tesla.
+     */
+    beforeRequest?: () => Promise<StoredTeslaCredentials | null | void>;
     refreshToken?: string;
     onTokenUpdate?: (accessToken: string, refreshToken: string) => void;
     onTokenError?: (error: Error) => void;
@@ -197,21 +208,11 @@ export class TeslaRegionError extends Error {
         }
     }
 }
-export function isTeslaAuthError(error: unknown): error is TeslaAuthError {
+export function isTeslaAuthError(error: unknown): boolean {
     if (error instanceof TeslaAuthError || (error instanceof Error && error.name === 'TeslaAuthError')) {
         return true;
     }
-    if (error instanceof Error) {
-        const msg = error.message;
-        return (
-            msg.includes('Tesla API Error: 401') ||
-            msg.includes('Tesla API Error: 403') ||
-            msg.includes('login_required') ||
-            msg.includes('invalid_grant') ||
-            msg.includes('invalid authentication')
-        );
-    }
-    return false;
+    return error instanceof TeslaRefreshError && error.outcome === 'credential_rejected';
 }
 
 /**
@@ -241,6 +242,7 @@ function calendarTimeSeries<T>(result: unknown, kind: 'energy' | 'soe'): T[] {
 export class TeslaClient {
     private baseUrl: string;
     private config: TeslaClientConfig;
+    private retiredRefreshTokens = new Set<string>();
 
     constructor(config: TeslaClientConfig | string) {
         if (typeof config === 'string') {
@@ -268,11 +270,38 @@ export class TeslaClient {
         }
     }
 
+    /**
+     * Take another worker's rotation instead of refreshing a consumed grant.
+     * A grant this client already replaced is never adopted back, and a client
+     * without a coordinated refresh handler takes only the access token: it
+     * would otherwise exchange the account's grant outside the lease and lose
+     * the replacement.
+     */
+    private adoptStoredCredentials(stored: StoredTeslaCredentials | null | void): void {
+        if (!stored?.access_token || !stored.refresh_token) return;
+        if (!this.config.tokenRefreshHandler) {
+            this.config.accessToken = stored.access_token;
+            return;
+        }
+        if (stored.refresh_token === this.config.refreshToken || this.retiredRefreshTokens.has(stored.refresh_token)) return;
+        if (this.config.refreshToken) this.retiredRefreshTokens.add(this.config.refreshToken);
+        this.config.accessToken = stored.access_token;
+        this.config.refreshToken = stored.refresh_token;
+    }
+
     private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
         // The host this request last went to. Concurrent requests share this.baseUrl,
         // so a 421 is judged against the host that answered it, not the current one.
         let requestBaseUrl = this.baseUrl;
-        const makeRequest = async (token: string) => {
+        // The credentials this request was sent with. Parallel requests share
+        // this.config, so a 401 is judged against what it actually sent.
+        let sentAccessToken = this.config.accessToken;
+        let sentRefreshToken = this.config.refreshToken;
+        const makeRequest = async () => {
+            if (this.config.beforeRequest) this.adoptStoredCredentials(await this.config.beforeRequest());
+            const token = this.config.accessToken;
+            sentAccessToken = token;
+            sentRefreshToken = this.config.refreshToken;
             requestBaseUrl = this.baseUrl;
             const url = `${requestBaseUrl}${path}`;
             const headers = {
@@ -289,7 +318,7 @@ export class TeslaClient {
             return abortable(fetch(url, { ...options, headers, signal }), signal);
         };
 
-        let response = await makeRequest(this.config.accessToken);
+        let response = await makeRequest();
 
         // Handle 401 (refresh once) and 429 (bounded backoff) in a single loop so
         // an expired/revoked token surfaced *after* a 429 retry still triggers the
@@ -300,16 +329,23 @@ export class TeslaClient {
         let regionError: TeslaRegionError | undefined;
         let errorBody: string | undefined;
         while (true) {
-            if (response.status === 401 && this.config.refreshToken && !refreshAttempted) {
+            if (response.status === 401 && sentRefreshToken && !refreshAttempted) {
                 refreshAttempted = true;
+                if (this.config.accessToken !== sentAccessToken) {
+                    // A parallel request on this client already refreshed:
+                    // retry with its credentials instead of rotating again.
+                    response = await makeRequest();
+                    continue;
+                }
                 console.log('Tesla API 401, attempting refresh...');
                 try {
                     let newTokens: { access_token: string; refresh_token: string };
                     if (this.config.tokenRefreshHandler) {
-                        newTokens = await abortable(this.config.tokenRefreshHandler(this.config.refreshToken));
+                        newTokens = await abortable(this.config.tokenRefreshHandler(sentRefreshToken));
                     } else {
-                        newTokens = await TeslaClient.refreshAccessToken(this.config.refreshToken);
+                        newTokens = await TeslaClient.refreshAccessToken(sentRefreshToken);
                     }
+                    if (sentRefreshToken !== newTokens.refresh_token) this.retiredRefreshTokens.add(sentRefreshToken);
                     this.config.accessToken = newTokens.access_token;
                     this.config.refreshToken = newTokens.refresh_token;
 
@@ -329,7 +365,7 @@ export class TeslaClient {
                 }
                 // A retry can reach Tesla and then lose its response. Keep that
                 // transport failure distinct from the original rejected request.
-                response = await makeRequest(this.config.accessToken);
+                response = await makeRequest();
                 continue;
             }
 
@@ -340,7 +376,7 @@ export class TeslaClient {
                 console.warn(`Tesla API 429, retrying in ${delayMs}ms (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`);
                 await sleep(delayMs);
                 rateLimitAttempt++;
-                response = await makeRequest(this.config.accessToken);
+                response = await makeRequest();
                 continue;
             }
 
@@ -361,7 +397,7 @@ export class TeslaClient {
                     regionRetried = true;
                     await this.adoptBaseUrl(parsed.baseUrl);
                     errorBody = undefined;
-                    response = await makeRequest(this.config.accessToken);
+                    response = await makeRequest();
                     continue;
                 }
 

@@ -2308,6 +2308,7 @@ describe('TeslaAuthService regional Fleet host', () => {
 
     function makeService() {
         const userRepo = {
+            getTokens: vi.fn().mockResolvedValue({ is_active: true, tesla_refresh_state: 'ready' }),
             upsertOnTeslaAuth: vi.fn(),
             getById: vi.fn().mockResolvedValue({ id: 'eu-sub', roles: [] }),
             getByEmail: vi.fn().mockResolvedValue(null),

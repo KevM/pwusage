@@ -342,11 +342,9 @@ export class Importer {
 
     private async revokeOnAuthError(site: SiteWithTariffs, err: unknown): Promise<void> {
         if (!isTeslaAuthError(err)) return;
-        console.warn(`[Import] Auth error for user ${site.user_id}, marking as revoked`);
-        if (site.user_id) {
-            await this.userRepo.updateUserStatus(site.user_id, 'revoked', false);
-            this.siteRepo.invalidateCache(site.id);
-        }
+        // Only the generation-guarded refresh coordinator can retire a grant.
+        // A Fleet rejection here may belong to a superseded login or missing scope.
+        this.siteRepo.invalidateCache(site.id);
     }
 
     /**
@@ -444,13 +442,6 @@ export class Importer {
 
             return this.siteRepo.getSite(siteId);
         } catch (e: unknown) {
-            if (isTeslaAuthError(e)) {
-                const siteForUser = await this.siteRepo.getSite(siteId);
-                if (siteForUser?.user_id) {
-                    console.warn(`[Import] Auth error in ensureSite for user ${siteForUser.user_id}, marking revoked`);
-                    await this.userRepo.updateUserStatus(siteForUser.user_id, 'revoked', false);
-                }
-            }
             console.error(`Error ensuring site ${siteId}`, e);
             throw e;
         }

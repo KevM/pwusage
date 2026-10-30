@@ -1,3 +1,5 @@
+import { requiresTeslaReconnect } from '@/lib/tesla-refresh-outcome';
+import { UserRepo } from '@/lib/user-repo';
 import { observePage, setLogContext } from '@/lib/observability';
 import { SiteRepo } from '@/lib/site-repo';
 import { SiteService } from '@/lib/site-service';
@@ -6,7 +8,6 @@ import Link from 'next/link';
 
 import { BillSummary } from '@/components/BillSummary';
 import { DataSyncer } from '@/components/DataSyncer';
-import { redirect } from 'next/navigation';
 import { SiteSetup } from '@/components/SiteSetup';
 import { BillDateNav } from '@/components/BillDateNav';
 
@@ -66,8 +67,9 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
     }
 
     if (result.status === 'auth-failure') {
-        console.log('Redirecting to login due to auth failure...');
-        redirect('/login');
+        return <PageShell><Alert><AlertTitle>Reconnect Tesla to update your data.</AlertTitle>
+            <Link href={`/login?callback=${encodeURIComponent(`/site/${id}`)}`} prefetch={false}>Reconnect Tesla</Link>
+        </Alert></PageShell>;
     }
 
     if (result.status === 'not-found') {
@@ -112,6 +114,9 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
         refDate
     } = result;
 
+    const connection = await new UserRepo().getTokensForSite(id);
+    const reconnectRequired = !connection || requiresTeslaReconnect(connection);
+
     return (
         <PageShell maxWidth="7xl" padding="compact">
             <PageHeader
@@ -119,7 +124,11 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
                 description="Monitor history, billing, and settings for this site."
                 className="mb-4"
             />
-            <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />
+            {reconnectRequired ? <Alert className="mb-4">
+                <AlertTitle>Reconnect Tesla to update your data.</AlertTitle>
+                <AlertDescription>Stored history is still available. Check each reading’s timestamp.</AlertDescription>
+                <Link href={`/login?callback=${encodeURIComponent(`/site/${id}`)}`} prefetch={false}>Reconnect Tesla</Link>
+            </Alert> : <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />}
 
             <SiteTabs
                 historySlot={

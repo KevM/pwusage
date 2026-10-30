@@ -1,3 +1,4 @@
+import { TeslaAuthError } from './tesla-client';
 
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { SiteService } from './site-service';
@@ -389,7 +390,7 @@ describe('SiteService Security', () => {
             };
 
             mockEnergyRepo.hasData.mockResolvedValue(false);
-            mockImporter.ensureSite.mockRejectedValue(new Error('Tesla API Error: 401 Unauthorized'));
+            mockImporter.ensureSite.mockRejectedValue(new TeslaAuthError('Tesla request rejected', 401));
 
             const service = new SiteService({
                 siteRepo: mockSiteRepo as unknown as SiteRepo,

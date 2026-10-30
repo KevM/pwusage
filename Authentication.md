@@ -187,21 +187,18 @@ path, not a local invariant. It is tracked for narrowing in `TODO.md`.
 
 ### Token endpoint hosts
 
-Tesla's documentation requires `/token` calls from application servers to use
-`https://fleet-auth.prd.vn.cloud.tesla.com`, which carries different rate limits
-than the browser-facing host. The OIDC discovery document still declares
-`auth.tesla.com`, so `src/lib/tesla-token-endpoint.ts` tries `fleet-auth` first
-and falls back to `auth.tesla.com` on transport failure or 5xx **only**.
+Tesla's documented server token host is
+`https://fleet-auth.prd.vn.cloud.tesla.com`. Authorization-code exchange retains
+fallback to `auth.tesla.com` on transport failure or 5xx. Refresh exchange does
+**not** fall back or replay after invoking fetch: a lost response, 5xx, redirect,
+or malformed/truncated success may conceal a consumed grant. Redirects remain
+manual so secrets cannot be forwarded to a response-selected origin.
 
-Two cases are deliberately *not* retried against the second host:
-
-- **4xx** — a genuine authentication failure. Retrying would mask the real error
-  and re-send `client_secret` to a second origin.
-- **3xx** — thrown as `TeslaTokenEndpointError`. Redirects are followed with
-  `redirect: 'manual'` because a 307/308 preserves the method and body, which
-  would hand `client_secret` to whatever origin the redirect names. This was
-  verified against a real local server: default redirect handling re-POSTed the
-  secret to the redirect target.
+Refresh classification uses HTTP status and allowlisted OAuth codes, never
+message substrings or arbitrary response text. Only 400/401 `invalid_grant` or
+`login_required` confirms credential rejection. Client configuration codes such
+as `invalid_client` and `unauthorized_client` are separate. Bare 401 and ambiguous
+responses require reconnect without claiming Tesla revoked permission.
 
 ### Email uniqueness
 
@@ -242,68 +239,66 @@ Middleware/proxy (`src/proxy.ts`):
   to the current DB version only while the DB version is still 0.
 
 Tesla token refresh behavior:
-- `TeslaClient` retries once on Fleet API 401 when refresh token exists.
-- Site, TRMNL, cron, Profile, Products, and post-identity OAuth provisioning
-  refreshes share `TeslaTokenRepo`'s account-level handler and the DB lease on
-  `User`. Site handlers resolve the owner, so multiple sites and browser tabs
-  coordinate on the same account.
-- Lease acquisition atomically reads current credentials. A stale caller reuses
-  newer stored credentials instead of exchanging an old refresh token. Waiters
-  fail transiently if the owner released the lease without replacing credentials,
-  rather than retrying Fleet with the expired access token.
-- Replacement credentials are saved before returning, with an independent short
-  persistence deadline after a successful exchange. Save, revocation, and cleanup
-  writes check lease ownership; save/revocation also compare the credential
-  generation, protecting a newer login or worker. Revocation releases the lease
-  atomically. No unconditional post-refresh revocation callback runs afterward.
-- OAuth provisioning persists login credentials once, before product/site work;
-  later host changes update only the Fleet host. Site linking never rewrites
-  credentials or releases a background worker's lease. Before identity is
-  established, OAuth Fleet calls cannot silently rotate credentials in memory.
-- Refresh events include hashed `accountId` and `credentialId` values, plus
-  `previousCredentialId` on successful rotation. These are truncated SHA-256
-  fingerprints for correlation, never actual tokens. `tesla.refresh.reused`,
-  `superseded`, and `cleanup-deferred` distinguish reuse, a lost conditional write,
-  and bounded cleanup failures.
-- Each exchange has an `exchangeId`, shared with the account coordinator's
-  start, persistence-started, succeeded, superseded, and failure events. Endpoint
-  events record request initiation and response headers per host; credentials-parsed
-  records successful body parsing/validation. Request initiation means fetch was
-  invoked, not proof Tesla received it. `exchange-failed` records `stage`
-  (`request` or `response-body`), host, elapsed time, safe `failureCode`,
-  `cancellationSource` (`caller`, `endpoint`, or `none`), and `outcomeUnknown`.
-  Caller deadlines use `IO_DEADLINE_EXCEEDED`; endpoint timeouts use
-  `REQUEST_TIMEOUT`; other cancellations use `REQUEST_CANCELLED`. No arbitrary
-  cancellation reasons, response bodies, or credentials are exported. A request
-  transport failure or unsuccessful reading/validation of a 2xx body leaves
-  Tesla's rotation outcome unknown. Persistence failures use `stage=persistence`
-  on `tesla.refresh.failed`; only `succeeded` confirms a guarded database save.
-  Instrumentation does not change refresh deadlines, fallback, or retry policy.
-- Home, Profile, Products, and site-page renders establish Axiom scopes alongside
-  the existing API scopes. Page redirects keep their control flow and never log
-  destinations, query strings, or page props. `auth.session.rejected` distinguishes
-  missing cookies, expired/invalid JWTs, missing/inactive accounts, revoked
-  sessions, and denied site membership, using the same hashed account identity
-  where available. JWT renewal diagnostics in the proxy still use runtime logs;
-  Axiom delivery failures also remain runtime-only.
-- Terminal auth failures can mark user `auth_status='revoked'`.
+- All production refresh callers share the account-level coordinator. Its atomic
+  lease claim records `in_flight`, a UUID attempt ID, generation, and start time
+  **before** dispatch, and only claims the refresh credential the caller holds:
+  a stale caller adopts the stored rotation instead. An expired lease returns to
+  `ready` with a two-minute retry floor counted from lease expiry (so a lease
+  found long after it died is claimed in the same pass), keeping its attempt ID.
+  Verification releases dead leases too. Parallel requests on one client judge a
+  401 by the credentials they sent, so only one of them refreshes.
+- Rotated credentials, the next generation and the lease release are saved in
+  one statement, guarded by the original generation, attempt ID and refresh
+  credential (not the lease clock), with one retry. Newer OAuth login wins over
+  stale completions. Acknowledgement loss cannot authorize another exchange of
+  the previous generation.
+- `not_dispatched` and `configuration_rejected` return to `ready` with a
+  fifteen-minute retry floor; unknown outcomes (429, 5xx, transport, lost body)
+  with a two-minute floor, then the same grant is retried. Only definitive
+  credential rejection becomes `reconnect_required` with `auth_status=revoked`.
+  During a retry floor, Fleet requests fail fast with `TeslaRefreshBackoffError`.
+- The dev/beta database copy clears `User` Tesla tokens: a second holder of a
+  single-use grant races prod (see `docs/dev-database-copy.md`).
+- `is_active` is account eligibility, independent of Tesla health. Refresh and
+  verification never deactivate an account. OAuth replaces credentials and
+  advances generation while preserving existing eligibility and session version.
+  The refresh-outcomes migration reactivates historical inactive accounts (all
+  were deactivated by Tesla health) so they can reconnect.
+- The detached exchange retains PR #251's independent 18-second deadline,
+  request `after()` lifetime, one-second save/cleanup deadlines, and conditional
+  cleanup. A caller can stop waiting without canceling a dispatched exchange.
+  Process death and response loss still cannot be transparently recovered.
+- `TESLA_REFRESH_PAUSED=1` blocks new coordinated refresh exchanges. It does not
+  cancel running exchanges or disable login. See the cutover requirements in the
+  [operations guide](docs/tesla-auth-remediation-operations.md).
+- Every live request rechecks persisted connection state and eligibility. API
+  `409` with `code=TESLA_CONNECTION_REQUIRED` means “Reconnect Tesla to update
+  your data.” It does not invalidate an otherwise valid app session. Existing
+  suspension, session-version revocation, roles, and site ownership checks remain.
+- Web/iOS retain authorized stored readings and source timestamps. iOS disables
+  unavailable battery commands; widgets preserve cached data on reconnect and
+  still discard it on app authorization rejection. TRMNL authenticates its own
+  installation token and renders stored data without awaiting Tesla. Its
+  background refresh is suppressed for unresolved generations, and stale SoC
+  is unknown rather than fresh.
+- Structured events correlate `exchangeId`, hashed `accountId` and `generationId`,
+  request context, stage, duration, status, and allowlisted error code. Confirmed
+  transitions have `persisted=true` and `fromState`/`toState`. Superseded writes
+  emit separate events. Credentials, OAuth codes, bodies, and arbitrary error
+  messages are never diagnostic fields. Start/outcome/login checkpoints use the
+  existing bounded Axiom delivery; runtime logs remain the delivery fallback.
 
 Account verification (`UserRepo.verifyUserStatus`):
-- Captures the `User` row's PostgreSQL version (`xmin`) before checking Fleet.
-  Every final active/error/revoked/no-token/no-sites write requires that same
-  version, and rechecks site ownership or the absence of sites as applicable.
-  These membership checks use the final UPDATE's statement snapshot; they do
-  not serialize independent concurrent Site-only changes.
-- A concurrent login, refresh, revocation, or session-version change supersedes
-  the check. The verifier preserves and reports the current account state,
-  emits `tesla.user-verification.superseded`, and leaves `last_checked_at`
-  unchanged. Its completion reason is `auth-state-changed`; old errors are not
-  returned alongside a successful newer login.
-  Verification events include the same hashed account identity as refresh events.
-- This is conservative: even a refresh performed by verification itself skips
-  the final status write. The next eligible check uses the new credentials.
-  No database transaction or row lock spans a Tesla call. Normal unchanged
-  outcomes retain their terminal/transient classification.
+- Captures PostgreSQL `xmin` before checking Fleet, then fences health writes
+  with that version and current site ownership. Inactive/unresolved accounts
+  do not dispatch a probe. A healthy probe cannot clear refresh uncertainty.
+- All outcomes preserve eligibility. Fleet access rejection records `error`,
+  not refresh-token revocation. Only a typed refresh rejection proves that
+  generation unusable; ordinary endpoint 401/403 is insufficient evidence.
+- A concurrent login, refresh, suspension, or session-version change supersedes
+  the check. It reports retained state and leaves `last_checked_at` unchanged.
+  No transaction/row lock spans a Tesla call; membership guards use the final
+  statement snapshot. Even a rotation triggered by the probe supersedes it.
 
 ### 5. Logout
 Local logout — Route: `GET|POST /logout`

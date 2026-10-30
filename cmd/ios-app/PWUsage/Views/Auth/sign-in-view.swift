@@ -5,6 +5,9 @@ struct SignInView: View {
     var workingTitle: String = "Connecting…"
     let message: String?
     let onSignIn: () -> Void
+    var title: String = "Your energy, at a glance"
+    var subtitle: String = "Sign in to view live home power and your current bill."
+    var buttonTitle: String = "Sign in"
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -49,11 +52,11 @@ struct SignInView: View {
 
     private var heading: some View {
         VStack(spacing: 10) {
-            Text("Your energy, at a glance")
+            Text(title)
                 .font(.largeTitle.weight(.bold))
                 .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
-            Text("Sign in to view live home power and your current bill.")
+            Text(subtitle)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -108,7 +111,7 @@ struct SignInView: View {
                         .controlSize(.small)
                         .tint(buttonForeground)
                 }
-                Text(isWorking ? workingTitle : "Sign in")
+                Text(isWorking ? workingTitle : buttonTitle)
                     .font(.headline)
             }
             .frame(maxWidth: .infinity, minHeight: 54)

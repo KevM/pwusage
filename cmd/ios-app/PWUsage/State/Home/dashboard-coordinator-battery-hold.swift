@@ -31,7 +31,7 @@ extension DashboardCoordinator {
     }
 
     func sendBatteryHoldCommand(_ command: BatteryHoldCommand) async {
-        guard canRequestAccountData, !Task.isCancelled, !batteryHold.isBusy,
+        guard canRequestAccountData, !requiresTeslaReconnect, !Task.isCancelled, !batteryHold.isBusy,
               batteryHold.statusIsCurrent(at: now()),
               let holdAPI = api as? any MobileBatteryHoldDataAPI else { return }
         if case .park(let choice) = command, !choice.isValid { return }
@@ -93,6 +93,11 @@ extension DashboardCoordinator {
         }
         switch error as? PWUsageAPIError {
         case .requestRejected(_, "needs_reauth"):
+            requiresTeslaCommandReauthorization = true
+            requiresTeslaReconnect = true
+            batteryHold.failure = .needsReauthentication
+        case .requestRejected(_, "TESLA_CONNECTION_REQUIRED"):
+            requiresTeslaReconnect = true
             batteryHold.failure = .needsReauthentication
         case .requestRejected(_, "reserve_sync_pending"):
             batteryHold.failure = .reserveSyncPending

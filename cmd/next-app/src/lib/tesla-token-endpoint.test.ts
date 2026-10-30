@@ -46,7 +46,7 @@ describe('postToTeslaTokenEndpoint', () => {
             .mockResolvedValueOnce({ ok: false, status: 503 } as unknown as Response)
             .mockResolvedValueOnce(okResponse());
 
-        const { host } = await postToTeslaTokenEndpoint({ grant_type: 'refresh_token' }, fetchImpl);
+        const { host } = await postToTeslaTokenEndpoint({ grant_type: 'authorization_code' }, fetchImpl);
 
         expect(host).toBe('https://auth.tesla.com');
         expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -54,7 +54,7 @@ describe('postToTeslaTokenEndpoint', () => {
         // The reused URLSearchParams body must still carry the parameters on the
         // retry; asserting only the URL would not catch a corrupted second send.
         expect(String((fetchImpl.mock.calls[1] as [string, RequestInit])[1].body))
-            .toBe('grant_type=refresh_token');
+            .toBe('grant_type=authorization_code');
     });
 
     it('falls back to auth.tesla.com when the primary host throws a network error', async () => {
@@ -63,7 +63,7 @@ describe('postToTeslaTokenEndpoint', () => {
             .mockRejectedValueOnce(new Error('ECONNRESET'))
             .mockResolvedValueOnce(okResponse());
 
-        const { host } = await postToTeslaTokenEndpoint({ grant_type: 'refresh_token' }, fetchImpl);
+        const { host } = await postToTeslaTokenEndpoint({ grant_type: 'authorization_code' }, fetchImpl);
 
         expect(host).toBe('https://auth.tesla.com');
     });

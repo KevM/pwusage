@@ -66,9 +66,11 @@ does not exist.
 | `MobileLoginHandoff` | All rows deleted | Short-lived one-time login codes |
 | `TrmnlInstallation` | `refresh_token` set to NULL | Stored but never used by the app |
 | `BatteryHoldActivity` | All rows deleted | Live Activity push tokens; beta must never push to copied prod registrations |
+| `User` | `access_token`, `refresh_token` set to NULL; `auth_status = 'revoked'` | Tesla refresh tokens are single-use. A copied token is prod's live grant: whichever environment rotates it second presents a consumed token, failing with `invalid_grant` and risking Tesla's reuse detection revoking prod's grant. Beta logs are not sent to Axiom, so this looked like unexplained prod failures |
 
-Kept on purpose: `TrmnlInstallation.access_token` (inbound-only), `User` Tesla
-tokens and emails. Beta's cron jobs rely on the Tesla tokens.
+Kept on purpose: `TrmnlInstallation.access_token` (inbound-only) and `User`
+emails. Beta's Tesla crons skip users without tokens; sign in on beta to give
+it its own grant (it lasts until the next copy).
 
 When a table holds new secrets, add its rule to `sanitize-dev-copy.sql` in the
 same PR that creates the table.

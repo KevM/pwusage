@@ -151,7 +151,7 @@ Example APL queries (adjust dataset name if needed):
 
 ```apl
 ['pwusage']
-| where event == 'tesla.auth.revoked'
+| where event == 'tesla.refresh.state-changed' and toState == 'reconnect_required'
 | summarize count() by bin(_time, 15m), siteId
 ```
 
@@ -170,13 +170,19 @@ To trace account verification and refresh-lock decisions together:
 Use `requestId` to follow the entire cron invocation and `verificationId` to
 pair a user's start and outcome. Use `siteId` on checking/results to correlate
 TRMNL polls. An `outcome='error'` with `reason='transient-failure'` records the
-path that keeps an account active; `outcome='revoked'` records terminal failure.
+connection-health failure without changing account eligibility. Confirmed refresh
+rejection is recorded separately by `tesla.refresh.state-changed` with
+`toState='reconnect_required'`; a generic Fleet rejection is not proof of revocation.
 If only a start/checking checkpoint exists, inspect platform timeouts and the
 count-only export-failure diagnostics before assuming the account changed state.
 
 After measuring normal volume, configure Axiom monitors for an unusual increase
-in `tesla.auth.revoked`, failed cron requests and TRMNL errors. Monitor rules and
+in confirmed reconnect-required transitions, unknown refresh outcomes, guarded-save
+failures, failed cron requests and TRMNL errors. Monitor rules and
 notification destinations are account configuration, not installed by this code.
 
 References: https://axiom.co/docs/send-data/nextjs and
 https://nextjs.org/docs/app/api-reference/functions/after.
+
+For generation correlation, unique-account queries, safe cutover, and rollback, see
+[Tesla refresh operations](../tesla-auth-remediation-operations.md).

@@ -59,6 +59,15 @@ describe('TeslaClientFactory', () => {
     });
 
     describe('createTeslaClientForSite', () => {
+        it('checks current connection state again before using a constructed client', async () => {
+            mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true, tesla_refresh_state: 'ready' });
+            const client = await createTeslaClientForSite('site-1');
+            mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true, tesla_refresh_state: 'uncertain' });
+            const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ response: [] }));
+            await expect(client?.getProducts()).rejects.toMatchObject({ code: 'TESLA_CONNECTION_REQUIRED' });
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
+
         it('returns null if no tokens or no refresh_token exists for site', async () => {
             mockGetTokensForSite.mockResolvedValue(null);
             const client1 = await createTeslaClientForSite('site-1');
@@ -162,6 +171,20 @@ describe('TeslaClientFactory', () => {
         it('accepts a stored Fleet host', () => {
             const client = createTeslaClientForAccessToken('raw-access-token', undefined, { baseUrl: EU });
             expect(client.getBaseUrl()).toBe(EU);
+        });
+
+        it('refreshes an account-backed client through the account lease, never directly', async () => {
+            mockGetTokens.mockResolvedValue({ access_token: 'old-access', refresh_token: 'account-refresh', is_active: true, tesla_refresh_state: 'ready' });
+            mockUserRefresh.mockResolvedValue({ access_token: 'new-access', refresh_token: 'new-refresh' });
+            const direct = vi.spyOn(TeslaClient, 'refreshAccessToken');
+            const fetchMock = vi.spyOn(globalThis, 'fetch')
+                .mockResolvedValueOnce(new Response('', { status: 401 }))
+                .mockResolvedValueOnce(Response.json({ response: [] }));
+            const client = createTeslaClientForAccessToken('old-access', undefined, { userId: 'user-1' });
+            await client.getProducts();
+            expect(direct).not.toHaveBeenCalled();
+            expect(mockUserRefresh).toHaveBeenCalledWith('account-refresh');
+            expect(fetchMock.mock.calls[1][1]?.headers).toMatchObject({ Authorization: 'Bearer new-access' });
         });
 
         it('persists a learned Fleet host for the token owner', async () => {

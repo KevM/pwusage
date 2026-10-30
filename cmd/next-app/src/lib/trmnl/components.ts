@@ -145,7 +145,7 @@ export function renderHalfVertical(ctx: RenderContext): string {
 
     return `
         <div class="view view--half-vertical">
-             <div class="layout layout--col" style="padding: 10px; height: 100%;">
+             <div class="layout layout--col" style="padding: 10px; height: 100%;">${ctx.connectionMessage ? `<span class="label label--small">${escapeHtml(ctx.connectionMessage)}</span>` : ''}
                 
                 <div class="flex flex--row flex--center-y" style="justify-content: space-between; width: 100%; margin-bottom: 10px;">
                      <span class="title title--small">${escapeHtml(ctx.siteName)}</span>
@@ -179,7 +179,7 @@ export function renderHalfHorizontal(ctx: RenderContext): string {
 
     return `
         <div class="view view--half-horizontal">
-            <div class="layout layout--col" style="padding: 15px; height: 100%;">
+            <div class="layout layout--col" style="padding: 15px; height: 100%;">${ctx.connectionMessage ? `<span class="label label--small">${escapeHtml(ctx.connectionMessage)}</span>` : ''}
                 <div class="flex flex--row flex--center-y" style="justify-content: space-between; width: 100%;">
                     <div class="flex flex--col">
                         <span class="title title--small">${escapeHtml(ctx.siteName)}</span>
@@ -208,7 +208,7 @@ export function renderHalfHorizontal(ctx: RenderContext): string {
 export function renderQuadrant(ctx: RenderContext): string {
     return `
         <div class="view view--quadrant">
-            <div class="layout layout--col layout--center" style="padding: 10px; width: 100%; height: 100%;">
+            <div class="layout layout--col layout--center" style="padding: 10px; width: 100%; height: 100%;">${ctx.connectionMessage ? `<span class="label label--small">${escapeHtml(ctx.connectionMessage)}</span>` : ''}
                 <span class="label mb-2">${escapeHtml(ctx.costLabel)}</span>
                 <span class="title title--medium">${escapeHtml(ctx.displayCost)}</span>
             </div>

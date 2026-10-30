@@ -15,6 +15,12 @@ struct DashboardView: View {
     @State private var availableWidth: Double = 0
     /// Re-checks the stale notice each minute; readings age without the view otherwise redrawing.
     @State private var clock = Date.now
+    /// False once the Live card scrolls away, which adds the scoreboard under the bar's title.
+    @State private var liveCardIsVisible = true
+    /// Last measured Live card frame and scroll edge. A class box, so scrolling
+    /// updates them without redrawing; only the visibility flip redraws.
+    @State private var liveCardTracking = LiveCardTracking()
+    static let scrollContentSpace = "homeScrollContent"
 
     var live: MobileLiveResponse? { coordinator.live.response }
     var power: MobileLivePowerResponse? {
@@ -59,8 +65,17 @@ struct DashboardView: View {
             .padding(.bottom, 28)
             .frame(maxWidth: usesTwoColumns ? 1100 : 760)
             .frame(maxWidth: .infinity)
+            .coordinateSpace(name: Self.scrollContentSpace)
         }
         .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { availableWidth = $0 }
+        // Measured against the edge below the bar: visibility APIs count content
+        // under the translucent bar as on screen, so the card would seem visible too long.
+        .onScrollGeometryChange(for: Double.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top
+        } action: { _, visibleTop in
+            liveCardTracking.visibleTop = visibleTop
+            updateLiveCardVisibility()
+        }
         .refreshable {
             if let onRefresh { await onRefresh() }
             else { await coordinator.refreshAll(trigger: .userGesture) }
@@ -74,6 +89,31 @@ struct DashboardView: View {
         .background(SectionTheme.groupedBackground)
         .navigationTitle(site.name)
         .inlineNavigationTitle()
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                // Ticks like the Live card so stale readings drop back to the name.
+                TimelineView(.periodic(from: .now, by: 60)) { _ in
+                    HomeLiveTitle(
+                        siteName: site.name,
+                        scoreboard: liveCardIsVisible ? nil : liveScoreboard(now: .now)
+                    )
+                }
+            }
+        }
+    }
+
+    /// Re-run on scroll and when the card moves without one (banner, layout or loading change).
+    func liveCardFrameChanged(_ frame: CGRect) {
+        liveCardTracking.cardFrame = frame
+        updateLiveCardVisibility()
+    }
+
+    private func updateLiveCardVisibility() {
+        let isVisible = DashboardPresentation.liveCardIsVisible(
+            cardMinY: liveCardTracking.cardFrame.minY, cardMaxY: liveCardTracking.cardFrame.maxY,
+            visibleTop: liveCardTracking.visibleTop
+        )
+        if isVisible != liveCardIsVisible { liveCardIsVisible = isVisible }
     }
 
     /// Waits for the raise/site-switch refresh to finish, so it appears only
@@ -262,3 +302,9 @@ extension EnvironmentValues {
 
 // All four cards keep their identity as the layout changes their column and row.
 // This animates role changes without repeated energy-flow animation or duplicate views.
+
+/// Scroll-driven measurements kept out of SwiftUI's change tracking.
+final class LiveCardTracking {
+    var cardFrame: CGRect = .zero
+    var visibleTop: Double = 0
+}

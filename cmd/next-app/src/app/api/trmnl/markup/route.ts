@@ -1,3 +1,4 @@
+import { isRefreshLeaseActive, requiresTeslaReconnect } from '@/lib/tesla-refresh-outcome';
 import { logEvent, observeRoute, setLogContext } from '@/lib/observability';
 import {readBillingAvailability} from '@/lib/billing-availability';
 import { after, NextResponse } from 'next/server';
@@ -116,18 +117,14 @@ async function handleGET(request: Request) {
 
         setLogContext({ siteId: site.id });
 
-        // --- TESLA AUTH CHECK (Revoked) ---
-        if (site.auth_status === 'revoked') {
-            logEvent('warn', 'trmnl.auth-required', { siteId: site.id });
-            return getQrResponse(request, uuid, site.id, 'Tesla Auth Expired', 'Scan to Re-authenticate');
-        }
+        const reconnectRequired = requiresTeslaReconnect(site);
 
         // Calculate bill for current period using site-local time components
         const now = new Date();
         const start = getCurrentCycleStart(site.billing_start_day || 1, now, site.timezone);
         const cycleEnd = getNextCycleStart(site.billing_start_day || 1, start, site.timezone);
 
-        const hasTeslaTokens = !!site.refresh_token;
+        const hasTeslaTokens = !!site.refresh_token && !reconnectRequired && !isRefreshLeaseActive(site);
 
         // --- BLOCKING DATA FETCHES (DB only) ---
         let dbLatestMs = 0;
@@ -201,7 +198,7 @@ async function handleGET(request: Request) {
 
         if (site.live_status_cache) {
             const cachedAgeMs = nowMs - Number(site.last_live_refresh_at || 0);
-            if (cachedAgeMs < LIVE_STATUS_CACHE_TTL_MS) {
+            if (cachedAgeMs >= 0 && cachedAgeMs < LIVE_STATUS_CACHE_TTL_MS) {
                 liveStatus = site.live_status_cache as EnergySiteLiveStatus;
                 hasCachedLiveStatus = true;
             }
@@ -210,55 +207,8 @@ async function handleGET(request: Request) {
 
         let fetchStatus = hasTeslaTokens ? 'background-throttled' : 'skipped';
         let backgroundStatus = hasTeslaTokens ? 'throttled' : 'skipped';
-        let liveInlineMs = 0;
-        let liveInlineStatus = 'skipped';
-
-        // On cache miss, do a short inline live-status fetch to avoid blank SoC on this response.
-        if (hasTeslaTokens && !liveStatus) {
-            const liveInlineStart = Date.now();
-            try {
-                const inlineResult = await refreshLiveStatus(site.id, {
-                    timeoutMs: 900,
-                    useCached: false,
-                });
-                liveInlineMs = Date.now() - liveInlineStart;
-                if (inlineResult.status === 'refreshed' && inlineResult.liveStatus) {
-                    liveInlineStatus = 'success';
-                    liveStatus = inlineResult.liveStatus;
-                    hasCachedLiveStatus = true;
-                    fetchStatus = 'live-inline';
-                    lastLiveRefreshAt = inlineResult.fetchedAt ?? Date.now();
-                } else if (inlineResult.errorMessage?.includes('timeout')) {
-                    liveInlineStatus = 'timeout';
-                    fetchStatus = 'inline-timeout';
-                    logEvent('info', 'trmnl.live-refresh.timed-out', { siteId: site.id, outcome: inlineResult.status, durationMs: liveInlineMs });
-                    console.info('[TrmnlMarkup] Inline live status fetch timed out; continuing with stale-while-refresh.', {
-                        siteId: site.id,
-                        status: inlineResult.status,
-                        durationMs: liveInlineMs,
-                        error: inlineResult.errorMessage,
-                    });
-                } else {
-                    liveInlineStatus = inlineResult.status === 'error' ? 'error' : inlineResult.status;
-                    logEvent(inlineResult.status === 'error' ? 'warn' : 'info', 'trmnl.live-refresh.no-fresh-data', { siteId: site.id, outcome: inlineResult.status, durationMs: liveInlineMs });
-                    const log = inlineResult.status === 'error' ? console.warn : console.info;
-                    log('[TrmnlMarkup] Inline live status fetch did not return fresh data; continuing with stale-while-refresh.', {
-                        siteId: site.id,
-                        status: inlineResult.status,
-                        durationMs: liveInlineMs,
-                        error: inlineResult.errorMessage ?? null,
-                    });
-                }
-            } catch (error) {
-                liveInlineStatus = 'error';
-                logEvent('warn', 'trmnl.live-refresh.threw', { siteId: site.id, durationMs: Date.now() - liveInlineStart, error });
-                console.warn('[TrmnlMarkup] Inline live status fetch threw; continuing with stale-while-refresh.', {
-                    siteId: site.id,
-                    durationMs: Date.now() - liveInlineStart,
-                    error: error instanceof Error ? error.message : String(error),
-                });
-            }
-        }
+        const liveInlineMs = 0;
+        const liveInlineStatus = 'disabled';
 
         // --- TESLA REFRESH (lifecycle-bound background) ---
         if (hasTeslaTokens) {
@@ -330,8 +280,11 @@ async function handleGET(request: Request) {
         let batteryStatus: 'charging' | 'discharging' | 'idle' = 'idle';
 
         const latestLiveStatus = liveStatus as EnergySiteLiveStatus | undefined;
-        const liveStatusAgeMs = lastLiveRefreshAt > 0 ? Math.max(0, nowMs - lastLiveRefreshAt) : null;
-        const isSocStale = liveStatusAgeMs !== null && liveStatusAgeMs > SOC_STALE_AFTER_MS;
+        const sourceTime = latestLiveStatus?.timestamp ? Date.parse(latestLiveStatus.timestamp) : NaN;
+        const liveStatusAgeMs = lastLiveRefreshAt > 0 && lastLiveRefreshAt <= nowMs
+            && Number.isFinite(sourceTime) && sourceTime <= nowMs
+            ? nowMs - Math.min(lastLiveRefreshAt, sourceTime) : null;
+        const isSocStale = liveStatusAgeMs === null || liveStatusAgeMs > SOC_STALE_AFTER_MS;
         const isFresh = (ts: Date | null | undefined): ts is Date => {
             if (!ts) return false;
             const ageMs = nowMs - ts.getTime();
@@ -376,6 +329,7 @@ async function handleGET(request: Request) {
 
         const renderCtx = {
             siteName: displayName,
+            connectionMessage: reconnectRequired ? 'Reconnect Tesla to update your data.' : undefined,
             dateRange: `${start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: tz })} - ${cycleEnd.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: tz })}`,
             tariffGroups: billingAvailable ? tariffGroups : [],
             totalCost: totalBillCost,
@@ -451,6 +405,7 @@ async function handleGET(request: Request) {
                 'Server-Timing': serverTiming,
                 'X-Debug-Live-Status': fetchStatus,
                 'X-Debug-Battery-SOC': batterySoc !== null ? String(batterySoc) : 'null',
+                'X-Tesla-Connection': reconnectRequired ? 'reconnect-required' : 'connected',
                 'X-Billing-Status': billing.status,
                 'X-Data-Age-Minutes': dataAgeMinutes,
                 'X-SOC-Age-Minutes': socAgeHeader,

@@ -1,3 +1,4 @@
+import { assertTeslaConnection, isTeslaConnectionRequired } from './tesla-refresh-outcome';
 import { Site, SiteWithTariffs, TrmnlInstallation } from './db';
 import { TeslaClient, TeslaClientConfig, isTeslaAuthError } from './tesla-client';
 import { SiteRepo } from './site-repo';
@@ -148,6 +149,11 @@ export class SiteService {
         // (tests pin that the recovery attempt happens).
         const config: TeslaClientConfig = {
             accessToken: accessToken ?? '',
+            beforeRequest: async () => {
+                const current = await new UserRepo().getTokensForSite(siteId);
+                assertTeslaConnection(current);
+                return current;
+            },
             refreshToken: refreshToken ?? undefined,
             tokenRefreshHandler: handlers.refreshHandler,
             onTokenError: handlers.errorHandler,
@@ -176,7 +182,7 @@ export class SiteService {
             }
         } catch (error) {
             console.error('Failed to ensure site:', error);
-            if (isTeslaAuthError(error)) {
+            if (isTeslaAuthError(error) || isTeslaConnectionRequired(error)) {
                 console.log('Returning auth-failure due to auth failure...');
                 return { status: 'auth-failure' };
             }
@@ -194,7 +200,7 @@ export class SiteService {
                 await importer.ensureSite(siteId);
             } catch (error) {
                 console.error('Failed to ensure site on ghost-site recovery:', error);
-                if (isTeslaAuthError(error)) {
+                if (isTeslaAuthError(error) || isTeslaConnectionRequired(error)) {
                     return { status: 'auth-failure' };
                 }
                 throw error;

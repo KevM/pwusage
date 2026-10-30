@@ -113,7 +113,7 @@ export class SiteRepo {
 
     private async loadSitesFromDB(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
         const jsonCol = options?.includeJson ? ', s.json' : '';
-        const tokenCols = options?.includeTokens ? ', u.access_token, u.refresh_token, u.auth_status, u.fleet_api_base_url' : '';
+        const tokenCols = options?.includeTokens ? ', u.access_token, u.refresh_token, u.auth_status, u.fleet_api_base_url, u.tesla_refresh_state, u.refresh_lock_expires' : '';
         const userJoin = options?.includeTokens ? 'LEFT JOIN "User" u ON u.id = s.user_id' : '';
         // Site-level columns are fetched one row per site, separately from the
         // tariff tree. Selecting them through the Site × Tariff × Season ×
@@ -188,6 +188,8 @@ export class SiteRepo {
                 json: options?.includeJson ? row.json : undefined,
                 access_token: options?.includeTokens ? (row.access_token as string | null) ?? null : undefined,
                 refresh_token: options?.includeTokens ? (row.refresh_token as string | null) ?? null : undefined,
+                tesla_refresh_state: options?.includeTokens ? row.tesla_refresh_state as SiteWithTariffs['tesla_refresh_state'] : undefined,
+                refresh_lock_expires: options?.includeTokens ? Number(row.refresh_lock_expires) : undefined,
                 auth_status: options?.includeTokens ? (row.auth_status as string | null) ?? null : undefined,
                 fleet_api_base_url: options?.includeTokens ? (row.fleet_api_base_url as string | null) ?? null : undefined,
                 tariffs: [],
@@ -273,13 +275,17 @@ export class SiteRepo {
             WHERE u.is_active = true
               AND u.refresh_token IS NOT NULL
               AND u.auth_status IS DISTINCT FROM 'revoked'
+              AND (u.tesla_refresh_state = 'ready'
+                   -- An expired lease is a dead worker: healing reaches the
+                   -- refresh path that recovers it.
+                   OR (u.tesla_refresh_state = 'in_flight' AND u.refresh_lock_expires <= $3))
               AND (s.last_live_refresh_at >= $1
                    OR (u.auth_status = 'active'
                        AND u.auth_lost_at IS NOT NULL
                        AND u.auth_restored_at > u.auth_lost_at
                        AND u.auth_restored_at >= to_timestamp($2::double precision / 1000)))
             ORDER BY s.last_import_at ASC NULLS FIRST, s.id
-        `, [activeSinceMs, restoredSinceMs]);
+        `, [activeSinceMs, restoredSinceMs, Date.now()]);
         return rows;
     }
 

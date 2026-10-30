@@ -203,6 +203,7 @@ final class PWUsageAppModel: ObservableObject {
             return
         }
         guard generation == siteInstallGeneration else { return }
+        coordinator?.requiresTeslaCommandReauthorization = false
         await reloadSitesAfterSignIn()
     }
 

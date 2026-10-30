@@ -1,3 +1,21 @@
+# Tesla authentication remediation (2026-10-28)
+
+- [x] Typed exchange outcomes and no refresh fallback after dispatch.
+- [x] Durable generation/attempt state and PostgreSQL concurrency tests.
+- [x] Separate app eligibility from Tesla health; preserve authorization.
+- [x] DB-only TRMNL rendering and background suppression.
+- [x] Consistent reconnect presentation across clients.
+- [x] Full verification, operational documentation, and commits.
+
+No deployment or historical account reactivation authorized.
+
+Implementation verified with 1,720 web tests and 27 isolated PostgreSQL checks;
+production Webpack build passed. Default Turbopack is blocked by local worker
+socket restrictions. Native suites passed 93 tests with a successful runner exit after correcting the
+invalidated-session test fixture. Reconnect tests live in separate files so strict
+SwiftLint passes without increasing the legacy baseline. No production migration, deployment, or 48-hour observation
+has been performed. Operational steps: `docs/tesla-auth-remediation-operations.md`.
+
 # Tesla verification status races (2026-10-27)
 
 - [x] Post refresh/observability draft PR #240 and isolate the follow-up branch.
