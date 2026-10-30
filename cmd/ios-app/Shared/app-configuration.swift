@@ -4,11 +4,8 @@ import OSLog
 struct AppConfiguration: Equatable {
     static let defaultAPIOrigin = URL(string: "https://pwusage.fm.rodeo")!
 
-    /// Where a Debug build points when the configured origin is unusable. Never
-    /// production: a Debug build that quietly talks to production is the failure
-    /// this exists to prevent, and beta is the host a Debug build is meant to
-    /// talk to anyway.
-    static let debugFallbackAPIOrigin = URL(string: "https://pwusagebeta.fm.rodeo")!
+    /// Where a Debug build points when the configured origin is unusable.
+    static let debugFallbackAPIOrigin = URL(string: "https://pwusage.fm.rodeo")!
 
     /// The only hosts a Release configuration may name. Release rules apply to
     /// every configuration the app ships, so this is enforced by default rather
@@ -108,7 +105,7 @@ struct AppConfiguration: Equatable {
               components.path.isEmpty || components.path == "/",
               components.query == nil,
               components.fragment == nil,
-              (scheme == "https" || (!isRelease && scheme == "http")) else {
+              scheme == "https" || (!isRelease && scheme == "http") else {
             throw ValidationError.invalidOrigin
         }
         // Required HTTPS is not the same as required *ours*: a Release

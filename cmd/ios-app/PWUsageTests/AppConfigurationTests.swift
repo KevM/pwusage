@@ -144,15 +144,15 @@ struct AppConfigurationTests {
         #expect(configuration.apiOrigin.absoluteString == "http://localhost:5174")
     }
 
-    @Test("Debug falls back to beta, never production, when the origin is invalid")
-    func debugFallsBackToBetaAPIOrigin() throws {
+    @Test("Debug falls back to production when the origin is invalid")
+    func debugFallsBackToProductionAPIOrigin() throws {
         let configuration = try AppConfiguration.fromBundle(
             environment: ["PWUSAGE_API_ORIGIN": "not a url"],
             isDebug: true
         )
 
         #expect(configuration.apiOrigin == AppConfiguration.debugFallbackAPIOrigin)
-        #expect(configuration.apiOrigin.host == "pwusagebeta.fm.rodeo")
+        #expect(configuration.apiOrigin.host == "pwusage.fm.rodeo")
         #expect(configuration.initializationError != nil)
     }
 
