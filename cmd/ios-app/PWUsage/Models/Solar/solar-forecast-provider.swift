@@ -6,6 +6,7 @@ import Foundation
 struct SolarForecastProviderID: RawRepresentable, Codable, Hashable, Sendable {
     let rawValue: String
     static let solcast = SolarForecastProviderID(rawValue: "solcast")
+    static let openMeteo = SolarForecastProviderID(rawValue: "open-meteo")
     static let forecastSolar = SolarForecastProviderID(rawValue: "forecast-solar")
 }
 

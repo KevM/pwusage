@@ -35,13 +35,16 @@ protocol SolarForecastRawHistoryRecording: Sendable {
 /// Raw forecasts kept for 15 days so correction can compare them with what was produced.
 /// Every fetch is kept, so a later same-day update never replaces day-ahead training.
 actor SolarForecastHistory: SolarForecastRawHistoryRecording {
-    static let shared = SolarForecastHistory(file: ProtectedSolarForecastFile(name: "history.json"))
+    static let shared = SolarForecastHistory(
+        file: ProtectedSolarForecastFile(name: "history.json", backgroundAccessible: true)
+    )
     static let retention: TimeInterval = 15 * 24 * 60 * 60
 
     private let file: any SolarForecastFileStoring<[SolarForecastHistoryEntry]>
     private let clock: any SolarForecastClock
     private var entries: [SolarForecastHistoryEntry] = []
     private var loaded = false
+    private var generation = 0
 
     init(
         file: any SolarForecastFileStoring<[SolarForecastHistoryEntry]>,
@@ -53,7 +56,9 @@ actor SolarForecastHistory: SolarForecastRawHistoryRecording {
 
     /// Best effort: a write failure keeps the entry in memory and never fails the caller.
     func record(identity: SolarForecastHistoryIdentity, intervals: [SolarForecastInterval], fetchedAt: Date) async {
+        let started = generation
         await loadIfNeeded()
+        guard started == generation else { return }
         guard !entries.contains(where: { $0.identity == identity && $0.fetchedAt == fetchedAt }) else { return }
         let hours = Self.utcHours(intervals)
         guard !hours.isEmpty else { return }
@@ -71,7 +76,9 @@ actor SolarForecastHistory: SolarForecastRawHistoryRecording {
         to end: Date,
         siteTimeZone: TimeZone
     ) async -> [Date: Double] {
+        let started = generation
         await loadIfNeeded()
+        guard started == generation else { return [:] }
         prune()
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = siteTimeZone
@@ -95,6 +102,8 @@ actor SolarForecastHistory: SolarForecastRawHistoryRecording {
     }
 
     func clearAccountData() async throws {
+        // Invalidate callers suspended in load before they can append or save old data.
+        generation += 1
         loaded = true
         entries.removeAll()
         try await file.save(entries)
@@ -102,8 +111,9 @@ actor SolarForecastHistory: SolarForecastRawHistoryRecording {
 
     private func loadIfNeeded() async {
         guard !loaded else { return }
+        let started = generation
         let saved = (try? await file.load()) ?? []
-        guard !loaded else { return }
+        guard started == generation, !loaded else { return }
         loaded = true
         entries = saved + entries
     }

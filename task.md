@@ -1119,3 +1119,14 @@ verify preserved samples/summaries, legacy-row refusal, empty-record invariants,
 idempotency and service-only access. Full suite: 1,625 passed, 81 configured skips;
 dev-copy PostgreSQL scripts: 12 passed. Lint and production build passed.
 
+
+
+# Open-Meteo on PR #258
+
+Approved direction: make Open-Meteo the automatic beta provider using the existing provider seam. Solcast retains credential priority; history remains fallback. Fetch irradiance only; port the reference Hay-Davies model to Swift, reuse rolling correction, and refresh opportunistically in the background with Low Data Mode respected.
+
+- [x] Baseline and synthetic pvlib reference fixtures
+- [x] Swift array model and hardened Open-Meteo client
+- [x] Provider integration, attribution and privacy
+- [x] Background refresh, cancellation and locked-device storage
+- [x] Tests, lint, build, commit and push PR #258

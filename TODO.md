@@ -64,7 +64,7 @@ Smart Shift now projects rate-period banks to the bill date from 7 days of Solca
 Server side is in: `SiteSolarLayout`, the TypeScript layout detector (`src/lib/solar-layout/`), the `detect-solar-layouts` cron and `/api/mobile/solar-layout` + `/api/mobile/solar-actuals`, all gated by the `solar-forecast-beta` role. See the [spec](docs/superpowers/specs/2026-10-27-auto-solar-forecast-design.md).
 
 - [ ] **iOS plan:** provider refactor, `ForecastSolarClient`, location prompt, hourly correction from `/api/mobile/solar-actuals`, settings UI. Not started.
-- [ ] **Provider decision rule:** the forward capture (`.forecast-compare/capture.py`, `score.py`, local only) keeps running until it has 20+ scored days; ship Forecast.Solar only if its day-ahead forecast beats the 14-day history median on both daily and hourly error, else try Open-Meteo.
+- [ ] **Provider decision rule:** the forward capture (`.forecast-compare/capture.py`, `score.py`, local only) keeps running until it has 20+ scored days; Open-Meteo is now the preferred automatic beta provider. Before wider release, its matched day-ahead forecasts must beat the 14-day history median on both daily and hourly error; the retrospective fixed-lead Harrison backtest supports the trial but does not replace this gate.
 - [ ] **Grant the beta role** to test users only after the iOS side lands; run detection on Dev for sites with a location and review the confidence spread first.
 - [ ] **Location check threshold:** the solar-noon check flags a location more than 3° of longitude off (not the spec's 1.5°): terrain shifts one research site's sunrise/sunset edges by ~2.4°. Revisit with more sites.
 
@@ -347,4 +347,4 @@ verification path.
 (`.forecast-compare/score.py`, `solcast_corrected` vs `solcast`) had only 4 scored day-ahead
 days for one site — under the 10-day minimum. Re-run the scoring once at least 10 day-ahead
 days exist and switch it on only if the corrected forecast beats raw Solcast on both daily and
-hourly error. This is separate from the ≥20-day Forecast.Solar release gate.
+hourly error. This is separate from the ≥20-day automatic-provider release gate.

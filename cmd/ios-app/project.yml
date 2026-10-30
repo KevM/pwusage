@@ -29,6 +29,10 @@ targets:
         # environment its entitlement actually uses.
         PWUSAGE_APS_ENVIRONMENT: "$(PWUSAGE_APS_ENVIRONMENT)"
         NSSupportsLiveActivities: true
+        BGTaskSchedulerPermittedIdentifiers:
+          - fm.rodeo.pwusage.solar-forecast-refresh
+        UIBackgroundModes:
+          - fetch
         NSLocationWhenInUseUsageDescription: "PWUsage uses your home's approximate location once to work out which way your solar panels face."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
